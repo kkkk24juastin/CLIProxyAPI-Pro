@@ -189,6 +189,7 @@ jobs:
         run: |
           gh release create "${{ needs.check-version.outputs.release_tag }}" \
             upstream/dist/management.html \
+            --repo "${{ github.repository }}" \
             --title "${{ needs.check-version.outputs.release_tag }}" \
             --notes-file release-notes.md
 
