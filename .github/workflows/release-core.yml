@@ -107,15 +107,15 @@ jobs:
         continue-on-error: true
         env:
           USAGE_BACKUP_TARGETS: ${{ secrets.CLIPROXY_USAGE_BACKUP_TARGETS }}
-          LEGACY_CLIPROXY_API_URL: ${{ secrets.CLIPROXY_API_URL }}
-          LEGACY_CLIPROXY_MANAGEMENT_PASSWORD: ${{ secrets.CLIPROXY_MANAGEMENT_PASSWORD }}
-          LEGACY_WEBDAV_URL: ${{ secrets.WEBDAV_URL }}
-          LEGACY_WEBDAV_USERNAME: ${{ secrets.WEBDAV_USERNAME }}
-          LEGACY_WEBDAV_PASSWORD: ${{ secrets.WEBDAV_PASSWORD }}
         run: |
           set -euo pipefail
 
           TIMESTAMP=$(date -u +"%Y%m%d_%H%M%S")
+
+          if [ -z "$USAGE_BACKUP_TARGETS" ]; then
+            echo "⚠️ CLIPROXY_USAGE_BACKUP_TARGETS is not configured. Skipping usage backup."
+            exit 0
+          fi
 
           backup_target() {
             local name="$1"
@@ -127,25 +127,30 @@ jobs:
             local filename="usage-export-${TIMESTAMP}.jsonl"
 
             if [ -z "$api_url" ] || [ -z "$management_password" ] || [ -z "$webdav_url" ] || [ -z "$webdav_username" ] || [ -z "$webdav_password" ]; then
-              echo "❌ Usage backup target '$name' is missing required configuration."
-              exit 1
+              echo "⚠️ Usage backup target '$name' is missing required configuration. Skipping."
+              return 0
             fi
 
             echo "Exporting usage statistics for $name..."
-            curl -sf -H "Authorization: Bearer $management_password" \
+            if ! curl -sf -H "Authorization: Bearer $management_password" \
               "$api_url/v0/management/usage/export" \
-              -o "$filename"
+              -o "$filename"; then
+              echo "⚠️ Failed to export usage statistics for $name. Skipping."
+              rm -f "$filename"
+              return 0
+            fi
 
             echo "Uploading $filename to WebDAV for $name..."
             HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -T "$filename" \
               -u "$webdav_username:$webdav_password" \
-              "$webdav_url/$filename")
+              "$webdav_url/$filename" || echo "000")
 
             if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
               echo "✅ Usage backup uploaded successfully for $name."
             else
-              echo "❌ Failed to upload usage backup for $name. HTTP Status: $HTTP_STATUS"
-              exit 1
+              echo "⚠️ Failed to upload usage backup for $name. HTTP Status: $HTTP_STATUS. Skipping cleanup."
+              rm -f "$filename"
+              return 0
             fi
 
             echo "Cleaning up old backups for $name (keeping last 7)..."
@@ -158,74 +163,73 @@ jobs:
               echo "Deleting $OLD_FILE for $name..."
               curl -s -X DELETE \
                 -u "$webdav_username:$webdav_password" \
-                "$webdav_url/$OLD_FILE" >/dev/null
+                "$webdav_url/$OLD_FILE" >/dev/null || true
             done
 
             rm -f "$filename"
             echo "✅ Cleanup completed for $name."
           }
 
-          if [ -n "$USAGE_BACKUP_TARGETS" ]; then
-            echo "$USAGE_BACKUP_TARGETS" | jq -e 'type == "array"' >/dev/null
-            echo "$USAGE_BACKUP_TARGETS" | jq -c '.[]' | while IFS= read -r target; do
-              backup_target \
-                "$(echo "$target" | jq -r '.name // "default"')" \
-                "$(echo "$target" | jq -r '.api_url // empty')" \
-                "$(echo "$target" | jq -r '.management_password // empty')" \
-                "$(echo "$target" | jq -r '.webdav_url // empty')" \
-                "$(echo "$target" | jq -r '.webdav_username // empty')" \
-                "$(echo "$target" | jq -r '.webdav_password // empty')"
-            done
-          else
-            backup_target \
-              "default" \
-              "$LEGACY_CLIPROXY_API_URL" \
-              "$LEGACY_CLIPROXY_MANAGEMENT_PASSWORD" \
-              "$LEGACY_WEBDAV_URL" \
-              "$LEGACY_WEBDAV_USERNAME" \
-              "$LEGACY_WEBDAV_PASSWORD"
+          if ! echo "$USAGE_BACKUP_TARGETS" | jq -e 'type == "array"' >/dev/null; then
+            echo "⚠️ CLIPROXY_USAGE_BACKUP_TARGETS must be a JSON array. Skipping usage backup."
+            exit 0
           fi
+
+          echo "$USAGE_BACKUP_TARGETS" | jq -c '.[]' | while IFS= read -r target; do
+            backup_target \
+              "$(echo "$target" | jq -r 'if type == "object" then (.name // "default") else "default" end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.api_url // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.management_password // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_url // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_username // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_password // empty) else empty end')"
+          done
 
           echo "✅ Usage backup completed."
 
       - name: Trigger Render Deployment
         if: steps.compare_versions.outputs.should_build == 'true'
+        continue-on-error: true
         env:
           RENDER_DEPLOY_HOOKS: ${{ secrets.CLIPROXY_RENDER_DEPLOY_HOOKS }}
-          LEGACY_RENDER_DEPLOY_HOOK: ${{ secrets.CLIPROXY_RENDER_DEPLOY_HOOK }}
         run: |
           set -euo pipefail
+
+          if [ -z "$RENDER_DEPLOY_HOOKS" ]; then
+            echo "⚠️ CLIPROXY_RENDER_DEPLOY_HOOKS is not configured. Skipping Render deployment."
+            exit 0
+          fi
 
           trigger_render_deploy() {
             local name="$1"
             local hook_url="$2"
 
             if [ -z "$hook_url" ]; then
-              echo "❌ Render deployment target '$name' is missing hook URL."
-              exit 1
+              echo "⚠️ Render deployment target '$name' is missing hook URL. Skipping."
+              return 0
             fi
 
             echo "Triggering Render deployment for $name..."
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$hook_url")
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$hook_url" || echo "000")
 
             if [ "$HTTP_STATUS" -eq 200 ]; then
               echo "✅ Render deployment triggered successfully for $name."
             else
-              echo "❌ Failed to trigger Render deployment for $name. HTTP Status: $HTTP_STATUS"
-              exit 1
+              echo "⚠️ Failed to trigger Render deployment for $name. HTTP Status: $HTTP_STATUS. Continuing."
+              return 0
             fi
           }
 
-          if [ -n "$RENDER_DEPLOY_HOOKS" ]; then
-            echo "$RENDER_DEPLOY_HOOKS" | jq -e 'type == "array"' >/dev/null
-            echo "$RENDER_DEPLOY_HOOKS" | jq -c '.[]' | while IFS= read -r target; do
-              trigger_render_deploy \
-                "$(echo "$target" | jq -r '.name // "default"')" \
-                "$(echo "$target" | jq -r '.hook_url // .url // empty')"
-            done
-          else
-            trigger_render_deploy "default" "$LEGACY_RENDER_DEPLOY_HOOK"
+          if ! echo "$RENDER_DEPLOY_HOOKS" | jq -e 'type == "array"' >/dev/null; then
+            echo "⚠️ CLIPROXY_RENDER_DEPLOY_HOOKS must be a JSON array. Skipping Render deployment."
+            exit 0
           fi
+
+          echo "$RENDER_DEPLOY_HOOKS" | jq -c '.[]' | while IFS= read -r target; do
+            trigger_render_deploy \
+              "$(echo "$target" | jq -r 'if type == "object" then (.name // "default") else "default" end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.hook_url // .url // empty) else empty end')"
+          done
 
       - name: Send Telegram notification
         if: steps.compare_versions.outputs.should_build == 'true'
