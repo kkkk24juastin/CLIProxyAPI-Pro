@@ -1,0 +1,320 @@
+name: Publish CLIProxyAPI Pro Image
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */3 * * *'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Get latest release info
+        id: get_latest_tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest)
+          
+          if echo "$RESPONSE" | grep -q "API rate limit"; then
+             echo "Error: API rate limit exceeded."
+             exit 1
+          fi
+
+          LATEST_TAG=$(echo "$RESPONSE" | jq -r .tag_name)
+          RELEASE_BODY=$(echo "$RESPONSE" | jq -r .body)
+          
+          if [ "$LATEST_TAG" == "null" ] || [ -z "$LATEST_TAG" ]; then
+            echo "Error: Could not retrieve latest tag."
+            exit 1
+          fi
+
+          echo "Latest tag: $LATEST_TAG"
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          
+          {
+            echo "release_body<<EOF"
+            echo "$RELEASE_BODY"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Get current Docker image version
+        id: get_current_version
+        run: |
+          CURRENT_TAG=$(curl -s https://hub.docker.com/v2/repositories/${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro/tags/ | jq -r '.results[]?.name // empty' | grep -v "latest" | sort -V | tail -n 1)
+          
+          if [ -z "$CURRENT_TAG" ]; then
+            CURRENT_TAG="0.0.0"
+          fi
+          
+          echo "Current Docker image version: $CURRENT_TAG"
+          echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
+
+      - name: Compare versions
+        id: compare_versions
+        run: |
+          LATEST_TAG="${{ steps.get_latest_tag.outputs.latest_tag }}"
+          CURRENT_TAG="${{ steps.get_current_version.outputs.current_tag }}"
+
+          LATEST_VERSION=$(echo "$LATEST_TAG" | sed 's/^v//')
+          CURRENT_VERSION=$(echo "$CURRENT_TAG" | sed 's/^v//')
+
+          if [ "$LATEST_VERSION" == "$CURRENT_VERSION" ]; then
+            echo "Versions match ($LATEST_VERSION). No build required."
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            HIGHER_VERSION=$(echo -e "$LATEST_VERSION\n$CURRENT_VERSION" | sort -V | tail -n 1)
+            
+            if [ "$HIGHER_VERSION" == "$LATEST_VERSION" ]; then
+               echo "New version detected: $LATEST_VERSION > $CURRENT_VERSION"
+               echo "should_build=true" >> $GITHUB_OUTPUT
+            else
+               echo "Current version ($CURRENT_VERSION) is higher or equal to latest ($LATEST_VERSION). Skipping."
+               echo "should_build=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.compare_versions.outputs.should_build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: steps.compare_versions.outputs.should_build == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        if: steps.compare_versions.outputs.should_build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./CPA-Plus-Core
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            CLIPROXY_VERSION=${{ steps.get_latest_tag.outputs.latest_tag }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro:latest
+            ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro:${{ steps.get_latest_tag.outputs.latest_tag }}
+
+      - name: Backup usage statistics to WebDAV
+        if: steps.compare_versions.outputs.should_build == 'true'
+        continue-on-error: true
+        env:
+          USAGE_BACKUP_TARGETS: ${{ secrets.CLIPROXY_USAGE_BACKUP_TARGETS }}
+          LEGACY_CLIPROXY_API_URL: ${{ secrets.CLIPROXY_API_URL }}
+          LEGACY_CLIPROXY_MANAGEMENT_PASSWORD: ${{ secrets.CLIPROXY_MANAGEMENT_PASSWORD }}
+          LEGACY_WEBDAV_URL: ${{ secrets.WEBDAV_URL }}
+          LEGACY_WEBDAV_USERNAME: ${{ secrets.WEBDAV_USERNAME }}
+          LEGACY_WEBDAV_PASSWORD: ${{ secrets.WEBDAV_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          TIMESTAMP=$(date -u +"%Y%m%d_%H%M%S")
+
+          backup_target() {
+            local name="$1"
+            local api_url="$2"
+            local management_password="$3"
+            local webdav_url="$4"
+            local webdav_username="$5"
+            local webdav_password="$6"
+            local filename="usage-export-${TIMESTAMP}.jsonl"
+
+            if [ -z "$api_url" ] || [ -z "$management_password" ] || [ -z "$webdav_url" ] || [ -z "$webdav_username" ] || [ -z "$webdav_password" ]; then
+              echo "❌ Usage backup target '$name' is missing required configuration."
+              exit 1
+            fi
+
+            echo "Exporting usage statistics for $name..."
+            curl -sf -H "Authorization: Bearer $management_password" \
+              "$api_url/v0/management/usage/export" \
+              -o "$filename"
+
+            echo "Uploading $filename to WebDAV for $name..."
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -T "$filename" \
+              -u "$webdav_username:$webdav_password" \
+              "$webdav_url/$filename")
+
+            if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+              echo "✅ Usage backup uploaded successfully for $name."
+            else
+              echo "❌ Failed to upload usage backup for $name. HTTP Status: $HTTP_STATUS"
+              exit 1
+            fi
+
+            echo "Cleaning up old backups for $name (keeping last 7)..."
+            OLD_FILES=$(curl -s -X PROPFIND \
+              -u "$webdav_username:$webdav_password" \
+              "$webdav_url/" \
+              -H "Depth: 1" | grep -oP 'usage-export-[0-9_]+\.(jsonl|json)' | sort -r | tail -n +8 || true)
+
+            for OLD_FILE in $OLD_FILES; do
+              echo "Deleting $OLD_FILE for $name..."
+              curl -s -X DELETE \
+                -u "$webdav_username:$webdav_password" \
+                "$webdav_url/$OLD_FILE" >/dev/null
+            done
+
+            rm -f "$filename"
+            echo "✅ Cleanup completed for $name."
+          }
+
+          if [ -n "$USAGE_BACKUP_TARGETS" ]; then
+            echo "$USAGE_BACKUP_TARGETS" | jq -e 'type == "array"' >/dev/null
+            echo "$USAGE_BACKUP_TARGETS" | jq -c '.[]' | while IFS= read -r target; do
+              backup_target \
+                "$(echo "$target" | jq -r '.name // "default"')" \
+                "$(echo "$target" | jq -r '.api_url // empty')" \
+                "$(echo "$target" | jq -r '.management_password // empty')" \
+                "$(echo "$target" | jq -r '.webdav_url // empty')" \
+                "$(echo "$target" | jq -r '.webdav_username // empty')" \
+                "$(echo "$target" | jq -r '.webdav_password // empty')"
+            done
+          else
+            backup_target \
+              "default" \
+              "$LEGACY_CLIPROXY_API_URL" \
+              "$LEGACY_CLIPROXY_MANAGEMENT_PASSWORD" \
+              "$LEGACY_WEBDAV_URL" \
+              "$LEGACY_WEBDAV_USERNAME" \
+              "$LEGACY_WEBDAV_PASSWORD"
+          fi
+
+          echo "✅ Usage backup completed."
+
+      - name: Trigger Render Deployment
+        if: steps.compare_versions.outputs.should_build == 'true'
+        env:
+          RENDER_DEPLOY_HOOKS: ${{ secrets.CLIPROXY_RENDER_DEPLOY_HOOKS }}
+          LEGACY_RENDER_DEPLOY_HOOK: ${{ secrets.CLIPROXY_RENDER_DEPLOY_HOOK }}
+        run: |
+          set -euo pipefail
+
+          trigger_render_deploy() {
+            local name="$1"
+            local hook_url="$2"
+
+            if [ -z "$hook_url" ]; then
+              echo "❌ Render deployment target '$name' is missing hook URL."
+              exit 1
+            fi
+
+            echo "Triggering Render deployment for $name..."
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$hook_url")
+
+            if [ "$HTTP_STATUS" -eq 200 ]; then
+              echo "✅ Render deployment triggered successfully for $name."
+            else
+              echo "❌ Failed to trigger Render deployment for $name. HTTP Status: $HTTP_STATUS"
+              exit 1
+            fi
+          }
+
+          if [ -n "$RENDER_DEPLOY_HOOKS" ]; then
+            echo "$RENDER_DEPLOY_HOOKS" | jq -e 'type == "array"' >/dev/null
+            echo "$RENDER_DEPLOY_HOOKS" | jq -c '.[]' | while IFS= read -r target; do
+              trigger_render_deploy \
+                "$(echo "$target" | jq -r '.name // "default"')" \
+                "$(echo "$target" | jq -r '.hook_url // .url // empty')"
+            done
+          else
+            trigger_render_deploy "default" "$LEGACY_RENDER_DEPLOY_HOOK"
+          fi
+
+      - name: Send Telegram notification
+        if: steps.compare_versions.outputs.should_build == 'true'
+        env:
+          GITHUB_REPO: ${{ github.repository }} 
+          RELEASE_TAG: ${{ steps.get_latest_tag.outputs.latest_tag }}
+          RELEASE_BODY: ${{ steps.get_latest_tag.outputs.release_body }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          cat << 'EOF' > telegram_notify.py
+          import os
+          import re
+          import html
+          import json
+          import urllib.request
+          
+          repo = os.environ.get('GITHUB_REPO', '')
+          tag = os.environ.get('RELEASE_TAG', 'Unknown')
+          body = os.environ.get('RELEASE_BODY', '')
+          chat_id = os.environ.get('CHAT_ID')
+          bot_token = os.environ.get('BOT_TOKEN')
+          docker_username = os.environ.get('DOCKER_USERNAME', 'unknown')
+          
+          docker_url = f'https://hub.docker.com/r/{docker_username}/cliproxyapi-pro/tags'
+          repo_url = f'https://github.com/{repo}'
+
+          def process_changelog(text):
+              if not text: 
+                  return "No changelog provided."
+              
+              text = re.sub(r'^##\s*Changelog.*$', '', text, flags=re.MULTILINE | re.IGNORECASE).strip()
+              text = html.escape(text)
+              
+              def hash_replacer(match):
+                  return f'• <a href="{repo_url}/commit/{match.group(2)}">{match.group(2)[:7]}</a>'
+              text = re.sub(r'(^\* )([a-f0-9]{40})', hash_replacer, text, flags=re.MULTILINE)
+
+              text = re.sub(r'(?<!\w)#(\d+)', f'<a href="{repo_url}/pull/\\1">#\\1</a>', text)
+              text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+              text = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'<a href="\2">\1</a>', text)
+              return text
+
+          formatted_body = process_changelog(body)
+
+          msg_header = f'🚀 <b>New CLIProxyAPI Pro Image Pushed!</b>\n'
+          msg_deploy = f'☁️ <b>Render Deploy Triggered</b>\n\n'
+          msg_info = f'📦 <b>Version:</b> <code>{tag}</code>\n🐳 <a href="{docker_url}">DockerHub</a>\n\n'
+          msg_content = f'<b>📝 Changelog:</b>\n\n{formatted_body}'
+          
+          full_text = msg_header + msg_deploy + msg_info + msg_content
+
+          payload = {
+              'chat_id': chat_id, 
+              'text': full_text, 
+              'parse_mode': 'HTML', 
+              'disable_web_page_preview': True
+          }
+
+          req = urllib.request.Request(
+              f'https://api.telegram.org/bot{bot_token}/sendMessage',
+              data=json.dumps(payload).encode('utf-8'),
+              headers={'Content-Type': 'application/json'}
+          )
+          
+          try:
+              if bot_token and chat_id:
+                  with urllib.request.urlopen(req) as response:
+                      print('✅ Notification sent.')
+              else:
+                  print("⚠️ Telegram details missing.")
+          except Exception as e:
+              print(f'❌ Error: {e}')
+          EOF
+
+          python3 telegram_notify.py
+
+  cleanup-runs:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 7
+          keep_minimum_runs: 6
