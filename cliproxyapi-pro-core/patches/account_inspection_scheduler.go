@@ -1918,9 +1918,25 @@ func antigravityProjectID(auth *coreauth.Auth) string {
 }
 
 func geminiCLIProjectID(auth *coreauth.Auth) string {
-	account := firstNonEmptyAuthValue(auth, "account")
-	matches := regexpLastParen(account)
-	return matches
+	if auth == nil {
+		return ""
+	}
+	for _, source := range []map[string]any{auth.Metadata, stringMapToAnyMap(auth.Attributes)} {
+		if value := firstNonEmptyStringValue(
+			stringFromAny(source["project_id"]),
+			stringFromAny(source["projectId"]),
+			stringFromAny(source["cloudaicompanionProject"]),
+		); value != "" {
+			return value
+		}
+	}
+	_, accountInfo := auth.AccountInfo()
+	for _, account := range []string{firstNonEmptyAuthValue(auth, "account"), accountInfo} {
+		if projectID := regexpLastParen(account); projectID != "" {
+			return projectID
+		}
+	}
+	return ""
 }
 
 func codexAccountID(auth *coreauth.Auth) string {
