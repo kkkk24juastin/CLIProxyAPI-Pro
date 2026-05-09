@@ -43,7 +43,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 支持 WebDAV usage 备份恢复。
 - 支持 SQLite-backed quota cache。
 - 支持模型价格持久化。
-- 支持后端账号巡检调度器。
+- 支持后端账号巡检调度器和执行器，巡检探测前可刷新 token。
 - 支持 Komari agent 可选启动。
 - 将 `/` 跳转到 `/management.html`。
 - 增强 `/healthz` 返回信息。
@@ -65,7 +65,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 模型价格 SQLite 持久化。
 - quota cache SQLite 持久化。
 - 配额卡片缓存时间显示和单卡刷新。
-- 前端巡检与后端定时巡检集成。
+- 对接后端账号巡检，负责运行控制、状态轮询、结果展示和操作确认。
 - 账号禁用、启用、删除建议与执行。
 - 多语言文案补丁。
 - 最小化 overlay + patch 应用流程。
@@ -88,8 +88,18 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 /v0/management/usage/quota-cache
 /v0/management/usage/model-prices
 /v0/management/account-inspection/schedule
+/v0/management/account-inspection/status
+/v0/management/account-inspection/logs
 /v0/management/account-inspection/run
+/v0/management/account-inspection/pause
+/v0/management/account-inspection/resume
+/v0/management/account-inspection/stop
+/v0/management/account-inspection/actions
 ```
+
+账号巡检只由后端执行。管理端负责配置调度、启动和控制巡检、轮询状态/进度/结果，通过 WebSocket/WSS 接收日志和实时状态，并确认手动操作。
+
+后端巡检时，如果认证记录本来已经进入正常刷新窗口，会在配额/账号探测前尝试刷新 token。巡检刷新路径会跳过 API key 账号、未到刷新窗口的账号，以及仍受 `NextRefreshAfter` 限制的账号；disabled 账号允许刷新。刷新成功后使用刷新后的 auth 继续探测；刷新失败时保留该账号，并跳过该账号本次探测。
 
 如果只使用 upstream 后端，管理端中的请求监控、SQLite 持久化、模型价格和后端账号巡检等功能会显示错误或空数据。
 

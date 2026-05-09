@@ -43,7 +43,7 @@ Main capabilities:
 - Supports WebDAV usage backup restore.
 - Supports SQLite-backed quota cache.
 - Supports model price persistence.
-- Adds a backend account-inspection scheduler.
+- Adds a backend account-inspection scheduler and executor with token refresh before probing.
 - Optionally starts the Komari agent.
 - Redirects `/` to `/management.html`.
 - Enhances the `/healthz` response.
@@ -65,7 +65,7 @@ Main capabilities:
 - Persists model prices through SQLite.
 - Persists quota cache through SQLite.
 - Shows quota-card cache timestamps and supports single-card refresh.
-- Integrates frontend inspection with backend scheduled inspection.
+- Integrates with backend account inspection for run control, polling, results, and actions.
 - Supports suggested account disable, enable, and delete actions.
 - Adds locale patches.
 - Uses a minimal overlay + patch application flow.
@@ -88,8 +88,18 @@ Core dependent routes:
 /v0/management/usage/quota-cache
 /v0/management/usage/model-prices
 /v0/management/account-inspection/schedule
+/v0/management/account-inspection/status
+/v0/management/account-inspection/logs
 /v0/management/account-inspection/run
+/v0/management/account-inspection/pause
+/v0/management/account-inspection/resume
+/v0/management/account-inspection/stop
+/v0/management/account-inspection/actions
 ```
+
+Account inspection is executed by the backend only. The management UI configures schedules, starts or controls runs, polls status/progress/results, streams logs and live status over WebSocket/WSS, and confirms manual actions.
+
+During backend inspection, eligible auth records are refreshed before quota/account probing when they are already in their normal refresh window. The inspection refresh path skips API-key accounts, accounts not yet due for refresh, and accounts still blocked by `NextRefreshAfter`; disabled accounts are allowed to refresh. If refresh succeeds, probing uses the refreshed auth. If refresh fails, the account is kept and probing is skipped for that account.
 
 If the management UI is used with the unmodified upstream backend, request monitoring, SQLite persistence, model prices, and backend account inspection will show errors or empty data.
 
