@@ -736,6 +736,10 @@ export function MonitoringCenterPage() {
     await Promise.all([loadUsage(), refreshMeta(false)]);
   }, [loadUsage, refreshMeta]);
 
+  const refreshUsageOnly = useCallback(async () => {
+    await loadUsage();
+  }, [loadUsage]);
+
   const handleExportUsage = useCallback(async () => {
     if (connectionStatus !== 'connected') {
       showNotification(t('notification.connection_required'), 'warning');
@@ -807,7 +811,7 @@ export function MonitoringCenterPage() {
   useHeaderRefresh(refreshAll);
   useInterval(
     () => {
-      void refreshAll().catch(() => {});
+      void refreshUsageOnly().catch(() => {});
     },
     connectionStatus === 'connected' && Number(autoRefreshMs) > 0 ? Number(autoRefreshMs) : null
   );
