@@ -506,14 +506,13 @@ const normalizeAuthMeta = (entry: AuthFileItem): MonitoringAuthMeta | null => {
   );
 
   const provider = readString(entry.provider) || readString(entry.type) || '-';
-  const account = readString(entry.account) || readNestedString(entry, ['id_token', 'account']);
   const email = readString(entry.email) || readNestedString(entry, ['id_token', 'email']);
-  const normalizedProvider = normalizeProviderLabel(provider);
+  const name = readString(entry.name);
 
   return {
     authIndex,
     label,
-    account: account && normalizeProviderLabel(account) !== normalizedProvider ? account : email || label,
+    account: email || name || '-',
     provider,
     status: readString(entry.status) || 'unknown',
     disabled: parseBoolean(entry.disabled),

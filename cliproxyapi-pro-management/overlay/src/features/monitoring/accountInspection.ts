@@ -37,6 +37,8 @@ export interface AccountInspectionAccount {
   key: string;
   fileName: string;
   displayAccount: string;
+  email?: string;
+  name?: string;
   authIndex: string | null;
   accountId: string | null;
   provider: string;
@@ -105,6 +107,8 @@ export interface AccountInspectionExecutionOutcome {
   action: AccountInspectionExecutionAction;
   fileName: string;
   displayAccount: string;
+  email?: string;
+  name?: string;
   provider: string;
   authIndex: string | null;
   success: boolean;
@@ -198,10 +202,12 @@ const normalizeAutoErrorAction = (value: unknown): AccountInspectionAutoErrorAct
 };
 
 export const formatAccountInspectionIdentity = (
-  item: Pick<AccountInspectionAccount, 'displayAccount' | 'provider' | 'fileName' | 'authIndex'>
+  item: Pick<AccountInspectionAccount, 'displayAccount' | 'email' | 'name'>
 ) => {
-  const authIndex = item.authIndex ? ` · auth ${item.authIndex}` : '';
-  return `${item.displayAccount} [${item.provider} · ${item.fileName}${authIndex}]`;
+  if (item.email && item.name) {
+    return `${item.email}[${item.name}]`;
+  }
+  return item.displayAccount;
 };
 
 const readAuthFileName = (file: AuthFileItem) => {
@@ -213,19 +219,23 @@ const readAuthFileName = (file: AuthFileItem) => {
   return authIndex || 'unknown-auth-file';
 };
 
+const readAuthEmail = (file: AuthFileItem) => {
+  const idToken = file.id_token;
+  return readString(file.email) ||
+    (typeof idToken === 'object' && idToken !== null ? readString((idToken as Record<string, unknown>).email) : '');
+};
+
 const readDisplayAccount = (file: AuthFileItem) =>
-  readString(file.account) ||
-  readString(file.email) ||
-  readString(file.label) ||
+  readAuthEmail(file) ||
   readString(file.name) ||
-  readString(file.id) ||
-  normalizeAuthIndex(file['auth_index'] ?? file.authIndex) ||
   '-';
 
 const toInspectionAccount = (file: AuthFileItem): AccountInspectionAccount => ({
   key: `${readAuthFileName(file)}::${normalizeAuthIndex(file['auth_index'] ?? file.authIndex) || '-'}`,
   fileName: readAuthFileName(file),
   displayAccount: readDisplayAccount(file),
+  email: readAuthEmail(file) || undefined,
+  name: readString(file.name) || undefined,
   authIndex: normalizeAuthIndex(file['auth_index'] ?? file.authIndex),
   accountId: resolveCodexChatgptAccountId(file),
   provider: resolveAuthProvider(file),

@@ -412,6 +412,8 @@ const backendResultToFrontendItem = (
   key: item.key,
   fileName: item.fileName,
   displayAccount: item.displayName,
+  email: item.email,
+  name: item.name,
   authIndex: item.authIndex || null,
   accountId: null,
   provider: item.provider,
@@ -846,6 +848,8 @@ export function AccountInspectionPage() {
             action: item.action,
             fileName: item.fileName,
             displayAccount: item.displayName,
+            email: item.email,
+            name: item.name,
             provider: item.provider,
             authIndex: item.authIndex || null,
             success: item.success,
@@ -1354,8 +1358,7 @@ export function AccountInspectionPage() {
                       <td>
                         <div className={styles.primaryCell}>
                           <span>{item.displayAccount}</span>
-                          <small>{`${item.provider} · ${item.fileName}`}</small>
-                          <small>{item.authIndex ? `auth ${item.authIndex}` : '-'}</small>
+                          <small>{item.provider}</small>
                         </div>
                       </td>
                       <td>{formatCurrentStateLabel(item, t)}</td>

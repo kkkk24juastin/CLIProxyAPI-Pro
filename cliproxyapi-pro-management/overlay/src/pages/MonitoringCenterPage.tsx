@@ -1064,6 +1064,11 @@ export function MonitoringCenterPage() {
       value: formatCompactNumber(scopedSummary.cachedTokens),
       meta: `${t('monitoring.of_input_tokens')} ${formatPercent(scopedSummary.inputTokens > 0 ? scopedSummary.cachedTokens / scopedSummary.inputTokens : 0)}`,
     },
+    {
+      label: t('monitoring.total_tokens'),
+      value: formatCompactNumber(scopedSummary.totalTokens),
+      meta: `${t('monitoring.reasoning_tokens')} ${formatCompactNumber(scopedSummary.reasoningTokens)}`,
+    },
   ];
 
   const restoreFocusSnapshot = useCallback(() => {

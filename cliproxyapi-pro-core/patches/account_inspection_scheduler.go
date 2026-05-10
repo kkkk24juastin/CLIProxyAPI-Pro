@@ -88,6 +88,8 @@ type accountInspectionResult struct {
 	Provider     string                  `json:"provider"`
 	FileName     string                  `json:"fileName"`
 	DisplayName  string                  `json:"displayName"`
+	Email        string                  `json:"email"`
+	Name         string                  `json:"name"`
 	AuthIndex    string                  `json:"authIndex"`
 	Disabled     bool                    `json:"disabled"`
 	Action       accountInspectionAction `json:"action"`
@@ -190,6 +192,8 @@ type accountInspectionAccount struct {
 	Provider    string
 	FileName    string
 	DisplayName string
+	Email       string
+	Name        string
 	AuthIndex   string
 	Disabled    bool
 }
@@ -214,6 +218,8 @@ type accountInspectionActionOutcome struct {
 	Action      accountInspectionAction `json:"action"`
 	FileName    string                  `json:"fileName"`
 	DisplayName string                  `json:"displayName"`
+	Email       string                  `json:"email"`
+	Name        string                  `json:"name"`
 	Provider    string                  `json:"provider"`
 	AuthIndex   string                  `json:"authIndex"`
 	Success     bool                    `json:"success"`
@@ -892,9 +898,11 @@ func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 	if fileName == "" {
 		fileName = strings.TrimSpace(auth.ID)
 	}
-	displayName := firstNonEmptyAuthValue(auth, "account", "email", "label", "name")
+	name := firstNonEmptyAuthValue(auth, "name")
+	email := accountInspectionAuthEmail(auth)
+	displayName := firstNonEmptyStringValue(email, name)
 	if displayName == "" {
-		displayName = firstNonEmptyStringValue(auth.Label, fileName, auth.ID, auth.Index)
+		displayName = "-"
 	}
 	return accountInspectionAccount{
 		Auth:        auth,
@@ -902,6 +910,8 @@ func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 		Provider:    provider,
 		FileName:    fileName,
 		DisplayName: displayName,
+		Email:       email,
+		Name:        name,
 		AuthIndex:   auth.Index,
 		Disabled:    auth.Disabled,
 	}
@@ -1023,6 +1033,8 @@ func (account accountInspectionAccount) baseResult() accountInspectionResult {
 		Provider:     account.Provider,
 		FileName:     account.FileName,
 		DisplayName:  account.DisplayName,
+		Email:        account.Email,
+		Name:         account.Name,
 		AuthIndex:    account.AuthIndex,
 		Disabled:     account.Disabled,
 		Action:       accountInspectionActionKeep,
@@ -1031,11 +1043,10 @@ func (account accountInspectionAccount) baseResult() accountInspectionResult {
 }
 
 func (account accountInspectionAccount) identity() string {
-	authIndex := ""
-	if account.AuthIndex != "" {
-		authIndex = " · auth " + account.AuthIndex
+	if account.Email != "" && account.Name != "" {
+		return fmt.Sprintf("%s[%s]", account.Email, account.Name)
 	}
-	return fmt.Sprintf("%s [%s · %s%s]", account.DisplayName, account.Provider, account.FileName, authIndex)
+	return account.DisplayName
 }
 
 func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth.Auth, method string, url string, headers map[string]string, data string, timeoutMS int) (accountInspectionHTTPResult, error) {
@@ -1388,7 +1399,7 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 		if action == accountInspectionActionKeep || action == "" {
 			continue
 		}
-		outcome := accountInspectionActionOutcome{Action: action, FileName: item.FileName, DisplayName: item.DisplayName, Provider: item.Provider, AuthIndex: item.AuthIndex}
+		outcome := accountInspectionActionOutcome{Action: action, FileName: item.FileName, DisplayName: item.DisplayName, Email: item.Email, Name: item.Name, Provider: item.Provider, AuthIndex: item.AuthIndex}
 		if err := s.executeAction(ctx, item, action); err != nil {
 			outcome.Error = err.Error()
 			s.appendLog("error", fmt.Sprintf("%s -> %s 执行失败：%s", resultIdentity(item), action, err.Error()))
@@ -1584,11 +1595,10 @@ func limitAccountInspectionResults(results []accountInspectionResult, limit int)
 }
 
 func resultIdentity(result accountInspectionResult) string {
-	authIndex := ""
-	if result.AuthIndex != "" {
-		authIndex = " · auth " + result.AuthIndex
+	if result.Email != "" && result.Name != "" {
+		return fmt.Sprintf("%s[%s]", result.Email, result.Name)
 	}
-	return fmt.Sprintf("%s [%s · %s%s]", result.DisplayName, result.Provider, result.FileName, authIndex)
+	return result.DisplayName
 }
 
 func quotaSuccessState(values map[string]any) map[string]any {
@@ -2501,6 +2511,16 @@ func idTokenClaim(raw any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func accountInspectionAuthEmail(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	if value := firstNonEmptyAuthValue(auth, "email"); value != "" {
+		return value
+	}
+	return idTokenClaim(auth.Metadata["id_token"], "email")
 }
 
 func regexpLastParen(value string) string {

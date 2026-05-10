@@ -44,6 +44,8 @@ export type AccountInspectionBackendStatus = {
   results: Array<
     Omit<AccountInspectionResultItem, 'displayAccount' | 'accountId' | 'status' | 'state' | 'raw'> & {
       displayName: string;
+      email?: string;
+      name?: string;
       executed?: boolean;
       executeError?: string;
     }
@@ -62,6 +64,8 @@ export type AccountInspectionActionOutcome = {
   action: 'delete' | 'disable' | 'enable';
   fileName: string;
   displayName: string;
+  email?: string;
+  name?: string;
   provider: string;
   authIndex: string;
   success: boolean;
