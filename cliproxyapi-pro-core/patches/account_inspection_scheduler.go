@@ -1043,10 +1043,14 @@ func (account accountInspectionAccount) baseResult() accountInspectionResult {
 }
 
 func (account accountInspectionAccount) identity() string {
-	if account.Email != "" && account.Name != "" {
-		return fmt.Sprintf("%s[%s]", account.Email, account.Name)
+	label := firstNonEmptyStringValue(account.Email, account.Name, account.DisplayName)
+	if label != "" && label != "-" {
+		if account.FileName != "" {
+			return fmt.Sprintf("%s[%s]", label, account.FileName)
+		}
+		return label
 	}
-	return account.DisplayName
+	return account.FileName
 }
 
 func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth.Auth, method string, url string, headers map[string]string, data string, timeoutMS int) (accountInspectionHTTPResult, error) {
@@ -1595,10 +1599,14 @@ func limitAccountInspectionResults(results []accountInspectionResult, limit int)
 }
 
 func resultIdentity(result accountInspectionResult) string {
-	if result.Email != "" && result.Name != "" {
-		return fmt.Sprintf("%s[%s]", result.Email, result.Name)
+	label := firstNonEmptyStringValue(result.Email, result.Name, result.DisplayName)
+	if label != "" && label != "-" {
+		if result.FileName != "" {
+			return fmt.Sprintf("%s[%s]", label, result.FileName)
+		}
+		return label
 	}
-	return result.DisplayName
+	return result.FileName
 }
 
 func quotaSuccessState(values map[string]any) map[string]any {

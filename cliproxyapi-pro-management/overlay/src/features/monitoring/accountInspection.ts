@@ -202,12 +202,13 @@ const normalizeAutoErrorAction = (value: unknown): AccountInspectionAutoErrorAct
 };
 
 export const formatAccountInspectionIdentity = (
-  item: Pick<AccountInspectionAccount, 'displayAccount' | 'email' | 'name'>
+  item: Pick<AccountInspectionAccount, 'displayAccount' | 'email' | 'name' | 'fileName'>
 ) => {
-  if (item.email && item.name) {
-    return `${item.email}[${item.name}]`;
+  const label = item.email || item.name || item.displayAccount;
+  if (label && label !== '-') {
+    return item.fileName ? `${label}[${item.fileName}]` : label;
   }
-  return item.displayAccount;
+  return item.fileName;
 };
 
 const readAuthFileName = (file: AuthFileItem) => {

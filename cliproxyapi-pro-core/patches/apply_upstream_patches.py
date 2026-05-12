@@ -186,6 +186,12 @@ rewrite_module_imports(ROOT / 'internal/embeddedusage/server.go')
 rewrite_module_imports(ROOT / 'internal/embeddedusage/service.go')
 rewrite_module_imports(ROOT / 'internal/embeddedusage/store.go')
 
+patch_dir = Path(__file__).resolve().parent
+redisqueue_plugin = ROOT / 'internal/redisqueue/plugin.go'
+redisqueue_usage_toggle = ROOT / 'internal/redisqueue/usage_toggle.go'
+redisqueue_plugin.write_text(re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, (patch_dir / 'redisqueue_plugin.go').read_text()))
+redisqueue_usage_toggle.write_text((patch_dir / 'redisqueue_usage_toggle.go').read_text())
+
 add_go_import(server, '"' + import_path('internal/config') + '"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
 
 replace_go_call_block(

@@ -1357,7 +1357,7 @@ export function AccountInspectionPage() {
                     <tr key={item.key}>
                       <td>
                         <div className={styles.primaryCell}>
-                          <span>{item.displayAccount}</span>
+                          <span>{formatAccountInspectionIdentity(item)}</span>
                           <small>{item.provider}</small>
                         </div>
                       </td>

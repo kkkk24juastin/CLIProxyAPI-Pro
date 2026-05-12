@@ -27,6 +27,9 @@ func Start(ctx context.Context) (*Service, error) {
 		return nil, err
 	}
 
+	redisqueue.SetEnabled(true)
+	redisqueue.SetUsageStatisticsEnabled(true)
+
 	service := &Service{
 		cfg:   cfg,
 		store: store,
@@ -61,6 +64,9 @@ func (s *Service) collect(ctx context.Context) {
 			return
 		default:
 		}
+
+		redisqueue.SetEnabled(true)
+		redisqueue.SetUsageStatisticsEnabled(true)
 
 		items := redisqueue.PopOldest(s.cfg.BatchSize)
 		if len(items) == 0 {

@@ -30,6 +30,8 @@ RUN set -eux; \
 COPY embeddedusage ./internal/embeddedusage
 COPY patches/apply_upstream_patches.py /tmp/apply_upstream_patches.py
 COPY patches/account_inspection_scheduler.go /tmp/account_inspection_scheduler.go
+COPY patches/redisqueue_plugin.go /tmp/redisqueue_plugin.go
+COPY patches/redisqueue_usage_toggle.go /tmp/redisqueue_usage_toggle.go
 
 RUN python3 /tmp/apply_upstream_patches.py
 
