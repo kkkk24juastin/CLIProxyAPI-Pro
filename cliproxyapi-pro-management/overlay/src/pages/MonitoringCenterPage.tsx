@@ -1349,64 +1349,6 @@ export function MonitoringCenterPage() {
           </div>
           <p className={styles.subtitle}>{t('monitoring.console_subtitle')}</p>
         </div>
-
-        <div className={styles.mastheadControls}>
-          <div className={styles.mastheadControlRow}>
-            <div className={styles.segmentedControl}>
-              {TIME_RANGE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`${styles.segmentButton} ${timeRange === option.value ? styles.segmentButtonActive : ''}`}
-                  onClick={() => setTimeRange(option.value)}
-                >
-                  {t(option.labelKey)}
-                </button>
-              ))}
-            </div>
-
-            <div className={styles.refreshCluster}>
-              <span className={styles.syncPill}>
-                {t('monitoring.last_sync')}:{' '}
-                {lastRefreshedAt ? lastRefreshedAt.toLocaleTimeString(i18n.language) : '--'}
-              </span>
-
-              <div className={styles.refreshControls}>
-                <div className={styles.autoRefreshField}>
-                  <span className={styles.autoRefreshLabel}>
-                    <IconTimer size={16} />
-                    {t('monitoring.auto_refresh')}
-                  </span>
-                  <Select
-                    className={styles.autoRefreshSelect}
-                    triggerClassName={styles.autoRefreshSelectTrigger}
-                    value={autoRefreshMs}
-                    options={AUTO_REFRESH_OPTIONS.map((option) => ({
-                      value: option.value,
-                      label: t(option.labelKey),
-                    }))}
-                    onChange={setAutoRefreshMs}
-                    ariaLabel={t('monitoring.auto_refresh')}
-                    fullWidth={false}
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  className={styles.refreshButton}
-                  onClick={() => void refreshAll()}
-                  disabled={overallLoading}
-                >
-                  <IconRefreshCw
-                    size={16}
-                    className={overallLoading ? styles.refreshIconSpinning : styles.refreshIcon}
-                  />
-                  <span className={styles.refreshButtonLabel}>{t('usage_stats.refresh')}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
       </section>
 
       <Panel
@@ -1434,6 +1376,58 @@ export function MonitoringCenterPage() {
           </div>
         }
       >
+        <div className={styles.toolbarControlRow}>
+          <div className={styles.segmentedControl}>
+            {TIME_RANGE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`${styles.segmentButton} ${timeRange === option.value ? styles.segmentButtonActive : ''}`}
+                onClick={() => setTimeRange(option.value)}
+              >
+                {t(option.labelKey)}
+              </button>
+            ))}
+          </div>
+
+          <div className={styles.refreshCluster}>
+            <span className={styles.syncPill}>
+              {t('monitoring.last_sync')}: {lastRefreshedAt ? lastRefreshedAt.toLocaleTimeString(i18n.language) : '--'}
+            </span>
+
+            <div className={styles.refreshControls}>
+              <div className={styles.autoRefreshField}>
+                <span className={styles.autoRefreshLabel}>
+                  <IconTimer size={16} />
+                  {t('monitoring.auto_refresh')}
+                </span>
+                <Select
+                  className={styles.autoRefreshSelect}
+                  triggerClassName={styles.autoRefreshSelectTrigger}
+                  value={autoRefreshMs}
+                  options={AUTO_REFRESH_OPTIONS.map((option) => ({
+                    value: option.value,
+                    label: t(option.labelKey),
+                  }))}
+                  onChange={setAutoRefreshMs}
+                  ariaLabel={t('monitoring.auto_refresh')}
+                  fullWidth={false}
+                />
+              </div>
+
+              <button
+                type="button"
+                className={styles.refreshButton}
+                onClick={() => void refreshAll()}
+                disabled={overallLoading}
+              >
+                <IconRefreshCw size={16} className={overallLoading ? styles.refreshIconSpinning : styles.refreshIcon} />
+                <span className={styles.refreshButtonLabel}>{t('usage_stats.refresh')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div className={styles.filterGrid}>
           <Select
             value={selectedAccount}

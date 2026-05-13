@@ -1453,22 +1453,42 @@ func codexDecision(account accountInspectionAccount, status int, used *float64, 
 }
 
 func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, items []accountInspectionResult) []accountInspectionActionOutcome {
-	outcomes := make([]accountInspectionActionOutcome, 0, len(items))
-	for _, item := range dedupeExecutionItems(items) {
-		action := item.Action
-		if action == accountInspectionActionKeep || action == "" {
-			continue
-		}
-		outcome := accountInspectionActionOutcome{Action: action, FileName: item.FileName, DisplayName: item.DisplayName, Email: item.Email, Name: item.Name, Provider: item.Provider, AuthIndex: item.AuthIndex}
-		if err := s.executeAction(ctx, item, action); err != nil {
-			outcome.Error = err.Error()
-			s.appendLog("error", fmt.Sprintf("%s -> %s 执行失败：%s", resultIdentity(item), action, err.Error()))
-		} else {
-			outcome.Success = true
-			s.appendLog("success", fmt.Sprintf("%s %s 成功", resultIdentity(item), action))
-		}
-		outcomes = append(outcomes, outcome)
+	executableItems := dedupeExecutionItems(items)
+	outcomes := make([]accountInspectionActionOutcome, len(executableItems))
+	cursor := 0
+	workers := accountInspectionMaxDeleteWorkers
+	if workers <= 0 {
+		workers = 1
 	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for i := 0; i < workers && i < len(executableItems); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				mu.Lock()
+				index := cursor
+				cursor++
+				mu.Unlock()
+				if index >= len(executableItems) {
+					return
+				}
+				item := executableItems[index]
+				action := item.Action
+				outcome := accountInspectionActionOutcome{Action: action, FileName: item.FileName, DisplayName: item.DisplayName, Email: item.Email, Name: item.Name, Provider: item.Provider, AuthIndex: item.AuthIndex}
+				if err := s.executeAction(ctx, item, action); err != nil {
+					outcome.Error = err.Error()
+					s.appendLog("error", fmt.Sprintf("%s -> %s 执行失败：%s", resultIdentity(item), action, err.Error()))
+				} else {
+					outcome.Success = true
+					s.appendLog("success", fmt.Sprintf("%s %s 成功", resultIdentity(item), action))
+				}
+				outcomes[index] = outcome
+			}
+		}()
+	}
+	wg.Wait()
 	return outcomes
 }
 

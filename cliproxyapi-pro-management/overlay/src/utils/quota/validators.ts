@@ -4,6 +4,18 @@
 
 import type { AuthFileItem } from '@/types';
 import { GEMINI_CLI_IGNORED_MODEL_PREFIXES } from './constants';
+import { normalizeNumberValue } from './parsers';
+
+export function readBooleanValue(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  }
+  return false;
+}
 
 export function resolveAuthProvider(file: AuthFileItem): string {
   const raw = file.provider ?? file.type ?? file.typo ?? '';
@@ -58,13 +70,32 @@ export function isDisabledAuthFile(file: AuthFileItem): boolean {
   if (normalizedStatus === 'disabled' || normalizedStatus === 'inactive') {
     return true;
   }
-  if (typeof raw === 'boolean') return raw;
-  if (typeof raw === 'number') return raw !== 0;
-  if (typeof raw === 'string') {
-    const normalized = raw.trim().toLowerCase();
-    return normalized === 'true' || normalized === '1';
-  }
-  return false;
+  return readBooleanValue(raw);
+}
+
+export function isQuotaLowState(quota: unknown): boolean {
+  if (!quota || typeof quota !== 'object' || Array.isArray(quota)) return false;
+  const quotaRecord = quota as Record<string, unknown>;
+  if (quotaRecord.status !== 'success') return false;
+
+  return ['windows', 'groups', 'buckets', 'rows'].some((key) => {
+    const value = quotaRecord[key];
+    return Array.isArray(value) && value.some(isQuotaLowWindow);
+  });
+}
+
+function isQuotaLowWindow(window: unknown): boolean {
+  if (!window || typeof window !== 'object' || Array.isArray(window)) return false;
+  const windowRecord = window as Record<string, unknown>;
+  const usedPercent = normalizeNumberValue(windowRecord.usedPercent ?? windowRecord.used_percent);
+  if (usedPercent !== null && usedPercent >= 100) return true;
+  const remainingFraction = normalizeNumberValue(windowRecord.remainingFraction ?? windowRecord.remaining_fraction);
+  if (remainingFraction !== null && remainingFraction <= 0) return true;
+  const remainingAmount = normalizeNumberValue(windowRecord.remainingAmount ?? windowRecord.remaining_amount ?? windowRecord.remaining);
+  if (remainingAmount !== null && remainingAmount <= 0) return true;
+  const limit = normalizeNumberValue(windowRecord.limit);
+  const used = normalizeNumberValue(windowRecord.used);
+  return limit !== null && limit > 0 && used !== null && used >= limit;
 }
 
 export function isIgnoredGeminiCliModel(modelId: string): boolean {

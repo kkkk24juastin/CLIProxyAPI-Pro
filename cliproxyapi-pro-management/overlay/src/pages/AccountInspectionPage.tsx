@@ -41,7 +41,7 @@ import {
 import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem, AuthFilesResponse } from '@/types';
-import { isDisabledAuthFile, resolveAuthProvider } from '@/utils/quota';
+import { isDisabledAuthFile, isQuotaLowState, readBooleanValue, resolveAuthProvider } from '@/utils/quota';
 import styles from './AccountInspectionPage.module.scss';
 
 type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
@@ -373,56 +373,12 @@ const hasAuthFileLastError = (file: AuthFileItem) => {
   return true;
 };
 
-const readBooleanValue = (value: unknown) => {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value !== 0;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
-    if (['false', '0', 'no', 'off'].includes(normalized)) return false;
-  }
-  return false;
-};
-
 const isAuthFileAbnormal = (file: AuthFileItem) => {
   if (readBooleanValue(file.unavailable ?? file['unavailable'])) return true;
   if (hasAuthFileLastError(file)) return true;
   const status = String(file.status ?? file.state ?? '').trim().toLowerCase();
   if (status && !['active', 'disabled', 'pending', 'refreshing'].includes(status)) return true;
   return readAuthFileStatusMessage(file).length > 0;
-};
-
-const isRecordValue = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const readFiniteNumber = (value: unknown) => {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
-
-const hasQuotaLowWindow = (window: unknown) => {
-  if (!isRecordValue(window)) return false;
-  const usedPercent = readFiniteNumber(window.usedPercent ?? window.used_percent);
-  if (usedPercent !== null && usedPercent >= 100) return true;
-  const remainingFraction = readFiniteNumber(window.remainingFraction ?? window.remaining_fraction);
-  if (remainingFraction !== null && remainingFraction <= 0) return true;
-  const remainingAmount = readFiniteNumber(window.remainingAmount ?? window.remaining_amount ?? window.remaining);
-  if (remainingAmount !== null && remainingAmount <= 0) return true;
-  const limit = readFiniteNumber(window.limit);
-  const used = readFiniteNumber(window.used);
-  return limit !== null && limit > 0 && used !== null && used >= limit;
-};
-
-const isQuotaLowState = (quota: unknown) => {
-  if (!isRecordValue(quota) || quota.status !== 'success') return false;
-  return ['windows', 'groups', 'buckets', 'rows'].some((key) => {
-    const value = quota[key];
-    return Array.isArray(value) && value.some(hasQuotaLowWindow);
-  });
 };
 
 const buildAuthFileAccountStats = (
