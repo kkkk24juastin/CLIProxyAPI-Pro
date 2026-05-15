@@ -6,7 +6,16 @@ import type { AuthFileItem } from '@/types';
 import { GEMINI_CLI_IGNORED_MODEL_PREFIXES } from './constants';
 import { normalizeNumberValue } from './parsers';
 
-export function readBooleanValue(value: unknown): boolean {
+export function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function readStringValue(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  return String(value).trim();
+}
+
+export function readBooleanValue(value: unknown, fallback = false): boolean {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value !== 0;
   if (typeof value === 'string') {
@@ -14,7 +23,7 @@ export function readBooleanValue(value: unknown): boolean {
     if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
     if (['false', '0', 'no', 'off'].includes(normalized)) return false;
   }
-  return false;
+  return fallback;
 }
 
 export function resolveAuthProvider(file: AuthFileItem): string {

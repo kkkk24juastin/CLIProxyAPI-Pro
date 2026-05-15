@@ -13,10 +13,11 @@ import {
 import {
   ACCOUNT_INSPECTION_SETTING_LIMITS,
   applyAccountInspectionExecutionResult,
+  buildAccountInspectionBackendViewState,
   buildExecutionFailureMessage,
   clearAccountInspectionConfigurableSettings,
+  createIdleAccountInspectionProgressSnapshot,
   DEFAULT_ACCOUNT_INSPECTION_SETTINGS,
-  formatAccountInspectionIdentity,
   hasAccountInspectionAutoExecutePolicies,
   isSuggestedAction,
   loadAccountInspectionConfigurableSettings,
@@ -51,6 +52,11 @@ type ResultHealthStatus = 'healthy' | 'disabled' | 'authInvalid' | 'quotaExhaust
 type ResultFilter = 'all' | 'pending' | 'authInvalid' | 'quotaExhausted' | 'inspectionError' | 'recoverable' | 'processed';
 
 type ManualAccountInspectionAction = Exclude<AccountInspectionAction, 'keep'>;
+
+type QuotaAccountStatsState = Pick<
+  ReturnType<typeof useQuotaStore.getState>,
+  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'kimiQuota'
+>;
 
 type HealthCounts = {
   total: number;
@@ -383,7 +389,7 @@ const isAuthFileAbnormal = (file: AuthFileItem) => {
 
 const buildAuthFileAccountStats = (
   files: AuthFileItem[],
-  quotaStore: ReturnType<typeof useQuotaStore.getState>
+  quotaStore: QuotaAccountStatsState
 ): AuthFileAccountStats => {
   const providers = new Set<string>();
   const stats: AuthFileAccountStats = {
@@ -568,78 +574,6 @@ const countActions = (items: AccountInspectionResultItem[]) => {
   return summary;
 };
 
-const createIdleProgressSnapshot = (): AccountInspectionProgressSnapshot => ({
-  total: 0,
-  completed: 0,
-  inFlight: 0,
-  pending: 0,
-  percent: 0,
-  status: 'idle',
-  summary: {
-    totalFiles: 0,
-    probeSetCount: 0,
-    sampledCount: 0,
-    disabledCount: 0,
-    enabledCount: 0,
-    deleteCount: 0,
-    disableCount: 0,
-    enableCount: 0,
-    keepCount: 0,
-    errorCount: 0,
-  },
-  startedAt: Date.now(),
-  updatedAt: Date.now(),
-});
-
-const backendResultToFrontendItem = (
-  item: NonNullable<AccountInspectionScheduleResponse['status']['results']>[number]
-): AccountInspectionResultItem => ({
-  key: item.key,
-  fileName: item.fileName,
-  displayAccount: item.displayName,
-  email: item.email,
-  name: item.name,
-  authIndex: item.authIndex || null,
-  accountId: null,
-  provider: item.provider,
-  disabled: item.disabled,
-  status: '',
-  state: '',
-  raw: {
-    name: item.fileName,
-    type: item.provider,
-    provider: item.provider,
-    authIndex: item.authIndex,
-    disabled: item.disabled,
-  },
-  action: item.action,
-  actionReason: item.actionReason,
-  statusCode: item.statusCode ?? null,
-  usedPercent: item.usedPercent ?? null,
-  isQuota: item.isQuota,
-  error: item.executeError || item.error || '',
-  executed: item.executed,
-});
-
-const backendProgressStatus = (status: AccountInspectionScheduleResponse['status']): AccountInspectionProgressSnapshot['status'] => {
-  if (status.state === 'paused') return 'paused';
-  if (status.state === 'running' || status.state === 'stopping') return 'running';
-  if (status.state === 'stopped') return 'stopped';
-  if (status.state === 'completed' || status.state === 'partial' || status.lastFinishedAt > 0) return 'completed';
-  return 'idle';
-};
-
-const backendRunStatus = (status: AccountInspectionScheduleResponse['status']): RunStatus => {
-  if (status.state === 'paused') return 'paused';
-  if (status.state === 'running' || status.state === 'stopping') return 'running';
-  if (status.state === 'failed') return 'error';
-  if (status.state === 'stopped') return 'idle';
-  if (status.state === 'completed' || status.state === 'partial' || status.lastFinishedAt > 0) {
-    return status.lastError ? 'error' : 'success';
-  }
-  return 'idle';
-};
-
 const applyIfChanged = <T,>(setValue: Dispatch<SetStateAction<T>>, isEqual: (next: T, previous: T) => boolean) =>
   (next: T) => setValue((previous) => (isEqual(next, previous) ? previous : next));
 
@@ -731,81 +665,18 @@ const applyBackendInspectionResponse = (
     setRunStatus?: (status: RunStatus) => void;
   }
 ) => {
-  const settings = response.schedule.settings;
-  setters.setInspectionSettings(settings);
-  setters.setSettingsDraft(toSettingsDraft(settings));
-  setters.setScheduleDraft({
-    enabled: response.schedule.enabled,
-    intervalMinutes: String(response.schedule.intervalMinutes),
-  });
+  const viewState = buildAccountInspectionBackendViewState(response);
+  setters.setInspectionSettings(viewState.settings);
+  setters.setSettingsDraft(toSettingsDraft(viewState.settings));
+  setters.setScheduleDraft(viewState.scheduleDraft);
   setters.setScheduleResponse(response);
-  const isSnapshot = Array.isArray(response.status.logs) || Array.isArray(response.status.results);
-  if (isSnapshot) {
-    setters.setLogs(
-      (response.status.logs ?? []).map((entry, index) => ({
-        id: `backend-${entry.time}-${index}`,
-        level: entry.level,
-        message: entry.message,
-        timestamp: entry.time,
-      }))
-    );
+  if (viewState.logs) {
+    setters.setLogs(viewState.logs);
   }
-
-  const startedAt = response.status.lastStartedAt || Date.now();
-  const finishedAt = response.status.lastFinishedAt || startedAt;
-  const backendResults = (response.status.results ?? []).map(backendResultToFrontendItem);
-  setters.setAutoExecutionCounts({
-    delete: response.status.summary.executedDeleteCount ?? 0,
-    disable: response.status.summary.executedDisableCount ?? 0,
-    enable: response.status.summary.executedEnableCount ?? 0,
-  });
-  if (backendResults.length > 0 || response.status.lastFinishedAt > 0) {
-    setters.setResult({
-      settings: {
-        baseUrl: '',
-        token: '',
-        targetType: settings.targetType,
-        workers: settings.workers,
-        deleteWorkers: settings.deleteWorkers,
-        timeout: settings.timeout,
-        retries: settings.retries,
-        usedPercentThreshold: settings.usedPercentThreshold,
-        sampleSize: settings.sampleSize,
-      },
-      files: [],
-      results: backendResults,
-      summary: {
-        ...response.status.summary,
-        usedPercentThreshold: settings.usedPercentThreshold,
-        sampled: settings.sampleSize > 0,
-        plannedActionPreview: backendResults
-          .filter((item) => item.action !== 'keep')
-          .slice(0, 10)
-          .map((item) => `${formatAccountInspectionIdentity(item)} -> ${item.action}`),
-      },
-      startedAt,
-      finishedAt,
-    });
-  }
-  const backendProgress = response.status.progress;
-  const total = backendProgress?.total ?? response.status.summary.sampledCount ?? backendResults.length;
-  const isBackendActive = response.status.state === 'running' || response.status.state === 'paused' || response.status.state === 'stopping';
-  const completed = backendProgress?.completed ?? (isBackendActive ? 0 : total);
-  const inFlight = backendProgress?.inFlight ?? (response.status.state === 'running' ? 1 : 0);
-  const pending = backendProgress?.pending ?? Math.max(0, total - completed - inFlight);
-  const progressStatus = backendProgressStatus(response.status);
-  setters.setProgress({
-    total,
-    completed,
-    inFlight,
-    pending,
-    percent: total > 0 ? Math.round((completed / total) * 100) : progressStatus === 'completed' ? 100 : 0,
-    status: progressStatus,
-    summary: response.status.summary,
-    startedAt,
-    updatedAt: Date.now(),
-  });
-  setters.setRunStatus?.(backendRunStatus(response.status));
+  setters.setAutoExecutionCounts(viewState.autoExecutionCounts);
+  setters.setResult(viewState.result);
+  setters.setProgress(viewState.progress);
+  setters.setRunStatus?.(viewState.runStatus);
 };
 
 export function AccountInspectionPage() {
@@ -816,7 +687,11 @@ export function AccountInspectionPage() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
-  const quotaStore = useQuotaStore((state) => state);
+  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
+  const claudeQuota = useQuotaStore((state) => state.claudeQuota);
+  const codexQuota = useQuotaStore((state) => state.codexQuota);
+  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);
+  const kimiQuota = useQuotaStore((state) => state.kimiQuota);
 
   const [inspectionSettings, setInspectionSettings] = useState<AccountInspectionConfigurableSettings>(() =>
     loadAccountInspectionConfigurableSettings(config)
@@ -833,7 +708,7 @@ export function AccountInspectionPage() {
   const [resultFilter, setResultFilter] = useState<ResultFilter>('pending');
   const [logLevelFilter, setLogLevelFilter] = useState<AccountInspectionLogLevel | 'all'>('all');
   const [runStatus, setRunStatus] = useState<RunStatus>('idle');
-  const [progress, setProgress] = useState<AccountInspectionProgressSnapshot>(createIdleProgressSnapshot);
+  const [progress, setProgress] = useState<AccountInspectionProgressSnapshot>(createIdleAccountInspectionProgressSnapshot);
   const [result, setResult] = useState<AccountInspectionRunResult | null>(null);
   const [authFiles, setAuthFiles] = useState<AuthFileItem[]>([]);
   const [authFilesLoaded, setAuthFilesLoaded] = useState(false);
@@ -991,7 +866,7 @@ export function AccountInspectionPage() {
       setRunStatus('running');
       setLogsCollapsed(false);
       setAutoExecutionCounts(emptyAutoExecutionCounts());
-      setProgress({ ...createIdleProgressSnapshot(), status: 'running', startedAt: Date.now(), updatedAt: Date.now() });
+      setProgress({ ...createIdleAccountInspectionProgressSnapshot(), status: 'running', startedAt: Date.now(), updatedAt: Date.now() });
 
       try {
         const response = await accountInspectionApi.runNow();
@@ -1084,7 +959,21 @@ export function AccountInspectionPage() {
       const currentResult = result;
       if (!currentResult) return;
       const targets = items.filter(isSuggestedAction);
-      if (targets.length === 0) {
+      const actionItems = targets.flatMap((item) => {
+        if (item.action === 'keep') return [];
+        return [{
+          key: item.key,
+          provider: item.provider,
+          fileName: item.fileName,
+          displayName: item.displayAccount,
+          email: item.email,
+          name: item.name,
+          authIndex: item.authIndex,
+          disabled: item.disabled,
+          action: item.action,
+        }];
+      });
+      if (actionItems.length === 0) {
         showNotification(t('monitoring.account_inspection_no_pending_actions'), 'info');
         return;
       }
@@ -1094,7 +983,7 @@ export function AccountInspectionPage() {
       appendLog('info', t('monitoring.account_inspection_execute_started'));
 
       try {
-        const response = await accountInspectionApi.executeActions(targets);
+        const response = await accountInspectionApi.executeActions(actionItems);
         const execution: AccountInspectionExecutionResult = {
           outcomes: response.outcomes.map((item) => ({
             action: item.action,
@@ -1210,6 +1099,11 @@ export function AccountInspectionPage() {
       });
     },
     [executeItems, showConfirmation, t]
+  );
+
+  const quotaStore = useMemo(
+    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota }),
+    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota]
   );
 
   const authFileStats = useMemo(

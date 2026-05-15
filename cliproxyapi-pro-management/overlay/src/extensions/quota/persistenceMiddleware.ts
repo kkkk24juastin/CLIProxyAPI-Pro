@@ -19,8 +19,8 @@ class QuotaPersistenceMiddleware {
   private syncQueue = new Set<string>();
   private isFlushing = false;
   private syncedVersions = new Map<string, number>();
-  private lastLoadedAt = 0;
-  private backendUpdatedAt = 0;
+  private loadedThrough = 0;
+  private reloadRequestedAt = 0;
   private ensureFreshPromise: Promise<void> | null = null;
 
   /**
@@ -163,9 +163,9 @@ class QuotaPersistenceMiddleware {
 
     this.ensureFreshPromise = (async () => {
       const stats = await sqliteQuotaCache.getStats();
-      this.backendUpdatedAt = Math.max(this.backendUpdatedAt, stats.updatedAt);
-      if (stats.updatedAt <= 0 || stats.updatedAt <= this.lastLoadedAt) return;
-      await this.preloadCache();
+      const targetUpdatedAt = Math.max(this.reloadRequestedAt, stats.updatedAt);
+      if (targetUpdatedAt <= 0 || targetUpdatedAt <= this.loadedThrough) return;
+      await this.preloadCache(targetUpdatedAt);
     })().finally(() => {
       this.ensureFreshPromise = null;
     });
@@ -174,20 +174,20 @@ class QuotaPersistenceMiddleware {
   }
 
   markStale(updatedAt = Date.now()) {
-    this.backendUpdatedAt = Math.max(this.backendUpdatedAt, updatedAt);
+    this.reloadRequestedAt = Math.max(this.reloadRequestedAt, updatedAt);
   }
 
   /**
    * Preload cache from SQLite quota cache to Zustand store
    */
-  private async preloadCache() {
+  private async preloadCache(loadedAt = Date.now()) {
     this.isPreloading = true;
     let latestCachedAt = 0;
 
     try {
       const cachedEntries = await sqliteQuotaCache.getAll();
       if (cachedEntries.length === 0) {
-        this.lastLoadedAt = Math.max(this.lastLoadedAt, this.backendUpdatedAt);
+        this.loadedThrough = Math.max(this.loadedThrough, loadedAt);
         return;
       }
 
@@ -204,7 +204,7 @@ class QuotaPersistenceMiddleware {
       entriesByProvider.forEach((entries, provider) => {
         this.preloadProvider(provider, entries);
       });
-      this.lastLoadedAt = Math.max(this.lastLoadedAt, latestCachedAt, this.backendUpdatedAt);
+      this.loadedThrough = Math.max(this.loadedThrough, latestCachedAt, loadedAt);
     } catch (err) {
       console.error('QuotaPersistenceMiddleware: Failed to preload cache:', err);
     } finally {

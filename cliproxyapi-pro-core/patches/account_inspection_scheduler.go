@@ -41,6 +41,7 @@ const (
 	accountInspectionMaxProviderConcurrency = 2
 	accountInspectionMaxRefreshConcurrency  = 2
 	accountInspectionWebSocketWriteTimeout  = 5 * time.Second
+	accountInspectionProgressBroadcastGap   = 500 * time.Millisecond
 )
 
 var accountInspectionWebSocketUpgrader = websocket.Upgrader{
@@ -175,15 +176,16 @@ type accountInspectionLogStreamMessage struct {
 }
 
 type accountInspectionScheduler struct {
-	h           *Handler
-	path        string
-	trigger     chan struct{}
-	mu          sync.Mutex
-	pause       *sync.Cond
-	cancel      context.CancelFunc
-	schedule    accountInspectionSchedule
-	status      accountInspectionStatus
-	subscribers map[chan accountInspectionLogStreamMessage]struct{}
+	h                       *Handler
+	path                    string
+	trigger                 chan struct{}
+	mu                      sync.Mutex
+	pause                   *sync.Cond
+	cancel                  context.CancelFunc
+	schedule                accountInspectionSchedule
+	status                  accountInspectionStatus
+	subscribers             map[chan accountInspectionLogStreamMessage]struct{}
+	lastProgressBroadcastAt int64
 }
 
 type accountInspectionAccount struct {
@@ -210,8 +212,20 @@ type accountInspectionDecision struct {
 	IsQuota      bool
 }
 
+type accountInspectionActionItem struct {
+	Key         string                  `json:"key"`
+	Provider    string                  `json:"provider"`
+	FileName    string                  `json:"fileName"`
+	DisplayName string                  `json:"displayName"`
+	Email       string                  `json:"email"`
+	Name        string                  `json:"name"`
+	AuthIndex   string                  `json:"authIndex"`
+	Disabled    bool                    `json:"disabled"`
+	Action      accountInspectionAction `json:"action"`
+}
+
 type accountInspectionActionRequest struct {
-	Items []accountInspectionResult `json:"items"`
+	Items []accountInspectionActionItem `json:"items"`
 }
 
 type accountInspectionActionOutcome struct {
@@ -579,14 +593,25 @@ func (s *accountInspectionScheduler) appendLog(level string, message string) {
 	s.broadcastLogLocked(entry)
 }
 
-func (s *accountInspectionScheduler) updateProgress(total int, completed int, inFlight int) {
+func (s *accountInspectionScheduler) updateProgress(total int, completed int, inFlight int, force bool) {
 	pending := total - completed - inFlight
 	if pending < 0 {
 		pending = 0
 	}
+	now := time.Now().UnixMilli()
 	s.mu.Lock()
-	s.status.Progress = accountInspectionProgress{Total: total, Completed: completed, InFlight: inFlight, Pending: pending}
-	s.broadcastStatusLocked(false)
+	previous := s.status.Progress
+	next := accountInspectionProgress{Total: total, Completed: completed, InFlight: inFlight, Pending: pending}
+	if previous == next {
+		s.mu.Unlock()
+		return
+	}
+	s.status.Progress = next
+	shouldBroadcast := force || completed == total || now-s.lastProgressBroadcastAt >= accountInspectionProgressBroadcastGap.Milliseconds()
+	if shouldBroadcast {
+		s.lastProgressBroadcastAt = now
+		s.broadcastStatusLocked(false)
+	}
 	s.mu.Unlock()
 }
 
@@ -763,7 +788,7 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 		}
 		runErrOnce.Do(func() { runErr = err })
 	}
-	s.updateProgress(len(accounts), 0, 0)
+	s.updateProgress(len(accounts), 0, 0, true)
 	for i := 0; i < workers && i < len(accounts); i++ {
 		wg.Add(1)
 		go func() {
@@ -793,14 +818,14 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 				}
 				progressMu.Lock()
 				inFlight++
-				s.updateProgress(len(accounts), completed, inFlight)
+				s.updateProgress(len(accounts), completed, inFlight, false)
 				progressMu.Unlock()
 				results[index] = s.inspectAccount(ctx, account, settings, refreshLimiter)
 				<-limiter
 				progressMu.Lock()
 				inFlight--
 				completed++
-				s.updateProgress(len(accounts), completed, inFlight)
+				s.updateProgress(len(accounts), completed, inFlight, false)
 				progressMu.Unlock()
 			}
 		}()
@@ -1389,7 +1414,7 @@ func (s *accountInspectionScheduler) syncInspectionAuthStatus(ctx context.Contex
 	if !isInspectionAuthRecoveryStatus(status) {
 		return
 	}
-	if auth.Status == coreauth.StatusError && strings.HasPrefix(auth.StatusMessage, "HTTP ") {
+	if auth.Status == coreauth.StatusError && auth.LastError != nil && auth.LastError.Code == "inspection_http_error" {
 		if auth.Disabled {
 			auth.Status = coreauth.StatusDisabled
 		} else {
@@ -1452,8 +1477,30 @@ func codexDecision(account accountInspectionAccount, status int, used *float64, 
 	return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: "无需处理", UsedPercent: used, IsQuota: false}
 }
 
-func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, items []accountInspectionResult) []accountInspectionActionOutcome {
-	executableItems := dedupeExecutionItems(items)
+func (item accountInspectionActionItem) toResult() accountInspectionResult {
+	return accountInspectionResult{
+		Key:         item.Key,
+		Provider:    item.Provider,
+		FileName:    item.FileName,
+		DisplayName: item.DisplayName,
+		Email:       item.Email,
+		Name:        item.Name,
+		AuthIndex:   item.AuthIndex,
+		Disabled:    item.Disabled,
+		Action:      item.Action,
+	}
+}
+
+func actionItemsToResults(items []accountInspectionActionItem) []accountInspectionResult {
+	results := make([]accountInspectionResult, 0, len(items))
+	for _, item := range items {
+		results = append(results, item.toResult())
+	}
+	return results
+}
+
+func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, items []accountInspectionActionItem) []accountInspectionActionOutcome {
+	executableItems := dedupeExecutionItems(actionItemsToResults(items))
 	outcomes := make([]accountInspectionActionOutcome, len(executableItems))
 	cursor := 0
 	workers := accountInspectionMaxDeleteWorkers

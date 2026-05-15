@@ -48,8 +48,7 @@
 }
 
 .masthead,
-.panel,
-.summaryCard {
+.panel {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--monitor-line);
@@ -59,10 +58,7 @@
 }
 
 .masthead {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 18px;
+  display: block;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -76,15 +72,15 @@
 
 .mastheadCopy {
   display: grid;
-  gap: 7px;
+  gap: 14px;
   min-width: 0;
 }
 
 .titleRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 20px;
   min-width: 0;
 }
 
@@ -103,6 +99,11 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--monitor-surface) 74%, transparent);
+  box-shadow: 0 12px 28px -26px rgba(15, 23, 42, 0.5);
 }
 
 .hiddenFileInput {
@@ -120,6 +121,21 @@
 .mastheadActionButton {
   flex: 0 0 auto;
   align-self: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--monitor-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.mastheadActionButton:hover {
+  border-color: color-mix(in srgb, var(--monitor-accent) 20%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 8%, var(--monitor-surface));
+  color: var(--monitor-ink);
+  box-shadow: none;
 }
 
 .segmentedControl {
@@ -373,21 +389,6 @@
   flex-shrink: 0;
 }
 
-.toolbarPanel {
-  padding: 18px;
-  border-radius: 12px;
-  background: var(--monitor-surface);
-}
-
-.toolbarPanel .panelHeader {
-  align-items: center;
-  margin-bottom: 14px;
-}
-
-.toolbarPanel .panelSubtitle {
-  display: none;
-}
-
 .toolbarHeaderActions {
   display: inline-flex;
   align-items: center;
@@ -498,26 +499,667 @@
   background: color-mix(in srgb, var(--monitor-accent) 8%, var(--monitor-surface));
 }
 
-.summaryGrid {
+.usageStatsHero {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.usageStatsGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
-.rankingGrid {
+.usageStatsCard {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 13px;
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 86%, transparent);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 90% 10%, color-mix(in srgb, var(--usage-accent, var(--monitor-accent)) 10%, transparent), transparent 34%),
+    color-mix(in srgb, var(--monitor-surface) 96%, var(--monitor-bg));
+  box-shadow: 0 14px 34px -30px rgba(15, 23, 42, 0.72);
 }
 
-.rankingCard,
-.focusPanel {
+.usageStatsCard:nth-child(1) {
+  --usage-accent: #2563eb;
+}
+
+.usageStatsCard:nth-child(2) {
+  --usage-accent: #7c3aed;
+}
+
+.usageStatsCard:nth-child(3) {
+  --usage-accent: #16a34a;
+}
+
+.usageStatsCard:nth-child(4) {
+  --usage-accent: #d97706;
+}
+
+.usageStatsCard:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--usage-accent) 30%, var(--monitor-line));
+}
+
+.usageStatsCard {
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.usageStatsCard:hover {
+  box-shadow: 0 16px 34px -28px var(--usage-accent);
+}
+
+.usageStatsCardHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--monitor-ink);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.usageStatsIcon {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: var(--usage-accent-soft);
+  color: var(--usage-accent);
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.usageStatsIcon::before,
+.usageStatsIcon::after {
+  content: '';
+  position: absolute;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.usageStatsIcon::before {
+  left: 8px;
+  right: 8px;
+  bottom: 7px;
+  height: 4px;
+}
+
+.usageStatsIcon::after {
+  width: 5px;
+  height: 12px;
+  right: 9px;
+  bottom: 10px;
+  box-shadow: -7px 4px 0 currentColor;
+}
+
+.usageStatsIconblue {
+  --usage-accent: #2563eb;
+  --usage-accent-soft: rgba(37, 99, 235, 0.12);
+}
+
+.usageStatsIconpurple {
+  --usage-accent: #7c3aed;
+  --usage-accent-soft: rgba(124, 58, 237, 0.12);
+}
+
+.usageStatsIcongreen {
+  --usage-accent: #16a34a;
+  --usage-accent-soft: rgba(22, 163, 74, 0.12);
+}
+
+.usageStatsIconamber {
+  --usage-accent: #d97706;
+  --usage-accent-soft: rgba(217, 119, 6, 0.12);
+}
+
+.usageStatsBody {
+  display: grid;
+  gap: 8px;
+}
+
+.usageStatsBody span,
+.usageStatsFooter span {
+  color: var(--monitor-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.usageStatsBody strong {
   min-width: 0;
-  padding: 18px;
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usageStatsFooter {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--monitor-line);
+}
+
+.usageStatsFooter div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.usageStatsFooter strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usageStatsCardTokens .usageStatsFooter {
+  grid-template-columns: minmax(0, 0.68fr) minmax(0, 1.32fr);
+  column-gap: 6px;
+}
+
+.usageTrendSection {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  overflow: visible;
+  position: relative;
+  z-index: 3;
+}
+
+.usageTrendHeader,
+.usageTrendCollapsed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+}
+
+.usageTrendCopy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.usageTrendCopy h2,
+.usageTrendCollapsed h2 {
+  margin: 0;
+  color: var(--monitor-ink);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.usageTrendCopy p,
+.usageTrendCollapsed p {
+  margin: 0;
+  color: var(--monitor-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.usageTrendActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.usageTrendRangeControl {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.usageTrendRangeControl::-webkit-scrollbar {
+  display: none;
+}
+
+.usageTrendRangeButton {
+  flex: 0 0 auto;
+  min-width: 50px;
+  padding: 0 12px;
+}
+
+.usageTrendHideButton {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 80%, transparent);
+  background: color-mix(in srgb, var(--monitor-surface-muted) 78%, var(--monitor-surface));
+}
+
+.usageTrendHideButton:hover {
+  color: var(--monitor-ink);
+}
+
+.usageTrendCollapsed {
+  padding: 18px 20px;
+  border: 1px dashed color-mix(in srgb, var(--monitor-line) 82%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--monitor-surface) 72%, transparent);
+}
+
+.usageTrendInsightsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.22fr) minmax(360px, 0.78fr);
+  gap: 16px;
+  align-items: stretch;
+  --ranking-card-height: 500px;
+}
+
+.usageTrendChartCard {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  min-width: 0;
+  height: 500px;
+  padding: 20px;
   border: 1px solid var(--monitor-line);
   border-radius: 12px;
   background: var(--monitor-surface);
   box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.tokenDistributionCard {
+  overflow: visible;
+}
+
+.usageTrendLineCard,
+.tokenDistributionCard {
+  background: var(--monitor-surface);
+}
+
+.trendCardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.trendCardHeader > div:first-child {
+  min-width: 0;
+}
+
+.trendCardHeader h3 {
+  margin: 0;
+  color: var(--monitor-ink);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.trendCardHeader p {
+  margin: 6px 0 0;
+  color: var(--monitor-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.trendHeaderStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(64px, auto));
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.trendHeaderStats div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+  background: color-mix(in srgb, var(--monitor-surface-muted) 48%, var(--monitor-surface));
+}
+
+.trendHeaderStats span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.trendHeaderStats strong {
+  color: var(--monitor-ink);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+.trendLegend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 16px;
+  min-width: 0;
+}
+
+.trendLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.trendLegend span::before {
+  content: '';
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--series-color);
+}
+
+.professionalChartShell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.trendSummaryStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.trendSummaryItem {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px 12px 12px 14px;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 74%, transparent);
+  background: color-mix(in srgb, var(--monitor-surface-muted) 54%, var(--monitor-surface));
+}
+
+.trendSummaryItem::before {
+  content: '';
+  position: absolute;
+  inset: 12px auto 12px 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--series-color);
+}
+
+.trendSummaryItem span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trendSummaryItem strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usageTrendSvg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: visible;
+}
+
+.chartGridLine {
+  stroke: color-mix(in srgb, var(--monitor-line) 78%, transparent);
+  stroke-dasharray: 4 8;
+  stroke-width: 1;
+}
+
+.chartAxisBase {
+  stroke: color-mix(in srgb, var(--monitor-line-strong) 58%, transparent);
+  stroke-width: 1.1;
+}
+
+.chartAxisLabel,
+.chartXAxisLabel {
+  fill: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 600;
+  dominant-baseline: middle;
+}
+
+.chartAxisLabel {
+  text-anchor: end;
+}
+
+.chartXAxisLabel {
+  text-anchor: middle;
+}
+
+.trendAreaFill {
+  fill: url(#usageTrendFill);
+}
+
+.trendSeriesLine {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+.trendSeriesDot {
+  fill: var(--monitor-surface);
+  stroke-width: 2.4;
+  transition: r 0.15s ease;
+}
+
+.trendHoverTarget {
+  outline: none;
+}
+
+.trendHoverGuide {
+  stroke: color-mix(in srgb, var(--monitor-muted) 35%, transparent);
+  stroke-width: 1;
+}
+
+.trendTooltipLayer rect {
+  fill: color-mix(in srgb, var(--monitor-surface) 98%, var(--monitor-bg));
+  stroke: color-mix(in srgb, var(--monitor-line-strong) 68%, transparent);
+  stroke-width: 1;
+  filter: drop-shadow(0 14px 26px rgba(15, 23, 42, 0.18));
+}
+
+.trendTooltipLayer text {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.trendTooltipTitle {
+  fill: var(--monitor-ink);
+  font-size: 14px !important;
+  font-weight: 800 !important;
+}
+
+.trendTooltipMetric {
+  font-size: 13px !important;
+}
+
+.tokenStatCardList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: stretch;
+  grid-auto-rows: minmax(78px, 1fr);
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+}
+
+.tokenStatCard {
+  --token-stat-accent: #6366f1;
+  --token-stat-border: color-mix(in srgb, var(--token-stat-accent) 32%, var(--monitor-line));
+  --token-stat-bg: color-mix(in srgb, var(--token-stat-accent) 8%, var(--monitor-surface));
+
+  display: grid;
+  align-content: space-between;
+  gap: 7px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--token-stat-border);
+  border-radius: 12px;
+  background: var(--token-stat-bg);
+}
+
+.tokenStatCardPurple {
+  --token-stat-accent: #6d5dfc;
+}
+
+.tokenStatCardBlue {
+  --token-stat-accent: #3b82f6;
+}
+
+.tokenStatCardCyan {
+  --token-stat-accent: #06b6d4;
+}
+
+.tokenStatCardGreen {
+  --token-stat-accent: #22c55e;
+}
+
+.tokenStatCardAmber {
+  --token-stat-accent: #f59e0b;
+}
+
+.tokenStatCardRose {
+  --token-stat-accent: #fb7185;
+}
+
+.tokenStatCardIndigo {
+  --token-stat-accent: #8b5cf6;
+}
+
+.tokenStatCardSlate {
+  --token-stat-accent: #64748b;
+}
+
+.tokenStatCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.tokenStatCardHeader span,
+.tokenStatCardHeader strong {
+  color: color-mix(in srgb, var(--monitor-ink) 78%, var(--monitor-muted));
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.tokenStatCardHeader strong {
+  flex: 0 0 auto;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+
+.tokenStatCardValue {
+  color: var(--monitor-ink);
+  font-size: clamp(21px, 2.5vw, 28px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.tokenStatProgressTrack {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--monitor-line) 58%, transparent);
+}
+
+.tokenStatProgressTrack span {
+  display: block;
+  width: var(--token-stat-width, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--token-stat-accent);
+}
+
+.rankingGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.22fr) minmax(360px, 0.78fr);
+  gap: 16px;
+  align-items: stretch;
+  --ranking-card-height: 500px;
+}
+
+.modelStatsCard,
+.apiKeyRankingCard {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 12px;
+  background: var(--monitor-surface);
+  box-shadow: var(--shadow);
+}
+
+.modelStatsCard,
+.apiKeyRankingCard {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: var(--ranking-card-height);
+}
+
+.modelStatsCard {
+  overflow: visible;
+}
+
+.apiKeyRankingCard {
+  overflow: hidden;
+}
+
+.modelStatsCard {
+  position: relative;
+  z-index: 2;
+  --donut-color-0: #2563eb;
+  --donut-color-1: #22c55e;
+  --donut-color-2: #f97316;
+  --donut-color-3: #8b5cf6;
+  --donut-color-4: #06b6d4;
 }
 
 .rankingHeader {
@@ -525,42 +1167,135 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 18px;
 }
 
 .rankingHeader h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.rankingHeader > div:first-child {
+  min-width: 0;
+}
+
+.rankingMetricSwitch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 80%, transparent);
+  background: color-mix(in srgb, var(--monitor-surface-muted) 78%, var(--monitor-surface));
+}
+
+.rankingMetricButton {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.rankingMetricButton:hover:not(:disabled) {
+  color: var(--monitor-ink);
+}
+
+.rankingMetricButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.rankingMetricButtonActive {
+  background: var(--monitor-accent);
+  color: var(--primary-contrast, #fff);
+  box-shadow: 0 8px 18px -14px rgba(0, 0, 0, 0.45);
 }
 
 .rankingHeader p {
   margin: 6px 0 0;
   color: var(--monitor-muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
-.rankingList,
-.analysisList {
+.modelStatsLayout {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+  gap: 16px;
+  align-items: stretch;
+  min-height: 0;
+  overflow: visible;
+}
+
+.modelStatsLayout > * {
+  min-height: 0;
+  max-height: 100%;
+}
+
+.modelStatsList,
+.apiKeyRankingScroll {
+  display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 10px;
 }
 
-.rankingRow,
-.analysisRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  padding: 12px;
-  border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--monitor-line) 70%, transparent);
-  background: color-mix(in srgb, var(--monitor-surface-elevated) 76%, var(--monitor-surface));
+.modelStatsList,
+.apiKeyRankingScroll {
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
 }
 
-.analysisRow {
-  justify-content: space-between;
+.apiKeyRankingList {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.modelStatsRow,
+.apiKeyRankingRow {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 82%, var(--monitor-surface));
+}
+
+.modelStatsRow {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.modelStatsRow,
+.apiKeyRankingRow {
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.modelStatsRow:hover,
+.apiKeyRankingRow:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--monitor-accent) 28%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 5%, var(--monitor-surface-elevated));
 }
 
 .rankingIndex {
@@ -577,57 +1312,1070 @@
   font-weight: 800;
 }
 
-.rankingMain {
+.modelStatsMain,
+.apiKeyRankingRow {
   display: grid;
-  gap: 7px;
+  gap: 9px;
   min-width: 0;
-  flex: 1 1 auto;
 }
 
-.rankingTitleLine,
-.rankingMetaLine {
+.modelStatsTitleLine,
+.apiKeyRankingTopLine,
+.apiKeyRankingName,
+.modelStatsMetaLine,
+.apiKeyRankingMetaLine {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
   min-width: 0;
 }
 
-.rankingTitleLine strong {
+.modelStatsTitleLine,
+.apiKeyRankingTopLine {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modelStatsTitleLine strong,
+.apiKeyRankingName strong {
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  color: var(--monitor-ink);
+  font-size: 14px;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.rankingTitleLine span {
+.modelStatsTitleLine span,
+.apiKeyRankingTopLine > span {
+  flex: 0 0 auto;
   color: var(--monitor-ink);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
-.rankingMetaLine {
-  justify-content: flex-start;
+.modelStatsTitleLine span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--monitor-accent-soft);
+  color: var(--monitor-accent-strong);
+}
+
+.modelStatsMetaLine,
+.apiKeyRankingMetaLine {
+  flex-wrap: wrap;
+  gap: 8px 12px;
   color: var(--monitor-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
-.rankingBar {
+.modelStatsBar,
+.apiKeyRankingBar {
   position: relative;
   overflow: hidden;
-  height: 6px;
+  height: 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--monitor-line) 72%, transparent);
+  background: color-mix(in srgb, var(--monitor-line) 70%, transparent);
 }
 
-.rankingBar::after {
+.modelStatsBar::before,
+.apiKeyRankingBar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  opacity: 0.35;
+}
+
+.modelStatsBar::after,
+.apiKeyRankingBar::after {
   content: '';
   position: absolute;
   inset: 0 auto 0 0;
   width: var(--ranking-width, 0%);
   border-radius: inherit;
+}
+
+.modelStatsBar::after {
   background: linear-gradient(90deg, var(--monitor-accent), var(--monitor-cyan));
+}
+
+.apiKeyRankingBar::after {
+  background: linear-gradient(90deg, #22c55e, #86efac);
+}
+
+.modelSharePanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, auto) auto;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--monitor-accent) 16%, var(--monitor-line));
+  background:
+    radial-gradient(circle at 50% 20%, color-mix(in srgb, var(--monitor-accent) 10%, transparent), transparent 38%),
+    color-mix(in srgb, var(--monitor-surface-muted) 72%, var(--monitor-surface));
+}
+
+.modelShareHeader {
+  display: grid;
+  gap: 4px;
+  justify-self: stretch;
+  text-align: left;
+}
+
+.modelShareHeader strong {
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.modelShareHeader span {
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.donutChart {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(170px, 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--donut-bg);
+}
+
+.donutChart::after {
+  content: '';
+  position: absolute;
+  inset: 22%;
+  border-radius: 50%;
+  background: var(--monitor-surface);
+  box-shadow: inset 0 0 0 1px var(--monitor-line);
+}
+
+.donutCenter {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  max-width: 78%;
+  text-align: center;
+}
+
+.donutCenter span {
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.donutCenter strong {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 18px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.donutTooltip {
+  position: absolute;
+  right: 50%;
+  bottom: calc(100% + 12px);
+  z-index: 5;
+  width: min(300px, calc(100vw - 48px));
+  max-height: 260px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--monitor-line);
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 96%, var(--monitor-bg));
+  box-shadow: 0 18px 42px -26px rgba(15, 23, 42, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(50%, 6px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.donutChart:hover .donutTooltip,
+.donutChart:focus-within .donutTooltip {
+  opacity: 1;
+  transform: translate(50%, 0);
+}
+
+.donutTooltip strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--monitor-ink);
+  font-size: 12px;
+}
+
+.donutTooltip div {
+  display: grid;
+  gap: 7px;
+}
+
+.donutTooltip span {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.donutTooltip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.donutTooltip em {
+  min-width: 0;
+  overflow: hidden;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.donutTooltip b {
+  color: var(--monitor-ink);
+  font-size: 12px;
+}
+
+.modelSharePanel .donutTooltip {
+  right: auto;
+  bottom: auto;
+  left: calc(100% + 14px);
+  top: 50%;
+  transform: translate(0, -50%);
+}
+
+.modelSharePanel .donutChart:hover .donutTooltip,
+.modelSharePanel .donutChart:focus-within .donutTooltip {
+  transform: translate(0, -50%);
+}
+
+.modelSharePanel .modelLegend {
+  margin-top: 2px;
+}
+
+.modelLegend {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+}
+
+.modelLegendItem {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.modelLegendItem span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelLegendItem strong {
+  color: var(--monitor-ink);
+  font-size: 12px;
+}
+
+.modelLegendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--legend-color, var(--donut-color-0));
+}
+
+.apiKeyRankingCard {
+  display: grid;
+  align-self: start;
+  align-content: start;
+}
+
+.apiKeyRankingName {
+  gap: 10px;
+}
+
+.apiKeyRankingSummary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: end;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, #22c55e 24%, var(--monitor-line));
+  background:
+    radial-gradient(circle at 100% 0%, rgba(34, 197, 94, 0.14), transparent 42%),
+    color-mix(in srgb, #22c55e 7%, var(--monitor-surface));
+}
+
+.apiKeyRankingSummary span,
+.apiKeyRankingSummary small {
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.apiKeyRankingSummary strong {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  color: var(--monitor-ink);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.apiKeyRankingSummary small {
+  grid-column: 1;
+}
+
+.apiKeyRankingList {
+  gap: 14px;
+}
+
+.accountStatsCard {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 12px;
+  background: var(--monitor-surface);
+  box-shadow: var(--shadow);
+  overflow: visible;
+}
+
+.accountOverviewCardGrid {
+  --account-card-min-width: 330px;
+
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--account-card-min-width)), 1fr));
+  align-items: start;
+  justify-content: start;
+  gap: 16px;
+}
+
+.accountCardPagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.accountCardPageButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface);
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.accountCardPageButton:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong));
+  background: var(--monitor-surface-hover);
+}
+
+.accountCardPageButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.accountCardPageInfo {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.accountOverviewCard {
+  display: grid;
+  gap: 14px;
+  align-self: start;
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 84%, transparent);
+  border-radius: 22px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--monitor-accent) 3%, var(--monitor-surface)) 0%,
+    var(--monitor-surface) 100%
+  );
+  box-shadow: var(--shadow);
+}
+
+.accountOverviewCardExpanded {
+  border-color: color-mix(in srgb, var(--monitor-accent) 26%, var(--monitor-line));
+}
+
+.accountOverviewCardFocused {
+  border-color: color-mix(in srgb, var(--monitor-accent) 42%, var(--monitor-line));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--monitor-accent) 18%, transparent),
+    var(--shadow-lg);
+}
+
+.accountOverviewCardHeader {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.accountTitleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.accountExpandGlyph {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: var(--monitor-muted);
+  align-self: center;
+}
+
+.accountIdentityLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.accountStatusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+.accountStatusDotEnabled {
+  color: var(--monitor-green);
+}
+
+.accountStatusDotDisabled,
+.accountStatusDotUnavailable {
+  color: var(--monitor-red);
+}
+
+.accountStatusDotMixed {
+  color: var(--monitor-amber);
+}
+
+.accountHealthBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.accountHealthBadgegood {
+  color: var(--monitor-green);
+  border-color: color-mix(in srgb, var(--monitor-green) 26%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-green) 11%, var(--monitor-surface));
+}
+
+.accountHealthBadgewarn {
+  color: color-mix(in srgb, var(--monitor-amber) 86%, #78350f);
+  border-color: color-mix(in srgb, var(--monitor-amber) 30%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-amber) 15%, var(--monitor-surface));
+}
+
+.accountHealthBadgebad {
+  color: var(--monitor-red);
+  border-color: color-mix(in srgb, var(--monitor-red) 26%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-red) 11%, var(--monitor-surface));
+}
+
+.accountOverviewCardTimestamp {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountMetaRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.accountMetaRow .inlineActionButton {
+  margin-left: auto;
+}
+
+.accountFocusButton {
+  min-height: 26px;
+  padding: 0 8px;
+  gap: 5px;
+  border-color: color-mix(in srgb, var(--monitor-line) 56%, transparent);
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 58%, transparent);
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.accountMetaSeparator {
+  color: var(--monitor-muted);
+}
+
+.accountOverviewStatusSection,
+.accountTokenStructurePanel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 86%, var(--monitor-surface));
+}
+
+.accountScopeText {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.accountTokenPanel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.accountSectionInfo {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--monitor-muted) 30%, transparent);
+  color: var(--monitor-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.healthMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.healthMetricItem {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.healthMetricItem span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.healthMetricItem strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-size: 16px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.healthMetricItem .successFailureValue,
+.healthMetricItem .successFailureValue span {
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.monitoringStatusBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.monitoringStatusBlocks {
+  display: flex;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.monitoringStatusBlockWrapper {
+  flex: 1;
+  min-width: 6px;
+  position: relative;
+}
+
+.monitoringStatusBlockButton {
+  width: 100%;
+  padding: 3px 0;
+  display: flex;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.monitoringStatusBlockButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--monitor-accent) 78%, white);
+  outline-offset: 2px;
+}
+
+.monitoringStatusBlockActive .monitoringStatusBlock,
+.monitoringStatusBlockButton:hover .monitoringStatusBlock,
+.monitoringStatusBlockButton:focus-visible .monitoringStatusBlock {
+  transform: scaleY(1.35);
+  opacity: 1;
+}
+
+.monitoringStatusBlock {
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  opacity: 0.92;
+  transform-origin: center;
+  transition:
+    transform 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.monitoringStatusBlockIdle {
+  background-color: color-mix(in srgb, var(--monitor-line) 82%, transparent);
+}
+
+.monitoringStatusTooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 6px 10px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface);
+  box-shadow: var(--shadow-lg);
+  color: var(--monitor-ink);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.monitoringStatusTooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--monitor-surface);
+}
+
+.monitoringStatusTooltip::before {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--monitor-line);
+}
+
+.monitoringStatusTooltipLeft {
+  left: 0;
+  transform: translateX(0);
+}
+
+.monitoringStatusTooltipLeft::after,
+.monitoringStatusTooltipLeft::before {
+  left: 8px;
+  transform: none;
+}
+
+.monitoringStatusTooltipRight {
+  left: auto;
+  right: 0;
+  transform: translateX(0);
+}
+
+.monitoringStatusTooltipRight::after,
+.monitoringStatusTooltipRight::before {
+  left: auto;
+  right: 8px;
+  transform: none;
+}
+
+.monitoringTooltipTime {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--monitor-muted);
+}
+
+.monitoringTooltipStats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.monitoringTooltipSuccess {
+  color: var(--monitor-green);
+}
+
+.monitoringTooltipFailure {
+  color: var(--monitor-red);
+}
+
+.monitoringTooltipRate {
+  color: var(--monitor-muted);
+}
+
+.monitoringStatusRate {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 88%, var(--monitor-surface));
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.monitoringStatusRatePlaceholder {
+  display: none;
+}
+
+.monitoringStatusRateHigh {
+  color: var(--monitor-green);
+  background: color-mix(in srgb, var(--monitor-green) 14%, var(--monitor-surface));
+}
+
+.monitoringStatusRateMedium {
+  color: color-mix(in srgb, var(--monitor-amber) 86%, #78350f);
+  background: color-mix(in srgb, var(--monitor-amber) 16%, var(--monitor-surface));
+}
+
+.monitoringStatusRateLow {
+  color: var(--monitor-red);
+  background: color-mix(in srgb, var(--monitor-red) 14%, var(--monitor-surface));
+}
+
+.accountOverviewMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.accountOverviewMetricCard {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  min-height: 68px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 80%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 88%, var(--monitor-surface));
+}
+
+.accountOverviewMetricLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--monitor-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.accountMetricIcon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--monitor-accent) 11%, var(--monitor-surface));
+  color: var(--monitor-accent-strong);
+}
+
+.accountMetricIcon::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.accountMetricIconTotal {
+  background: color-mix(in srgb, var(--monitor-accent) 13%, var(--monitor-surface));
+  color: var(--monitor-accent-strong);
+}
+
+.accountMetricIconInput {
+  background: color-mix(in srgb, var(--monitor-green) 13%, var(--monitor-surface));
+  color: var(--monitor-green);
+}
+
+.accountMetricIconOutput {
+  background: color-mix(in srgb, var(--monitor-amber) 17%, var(--monitor-surface));
+  color: var(--monitor-amber);
+}
+
+.accountMetricIconCached {
+  background: color-mix(in srgb, var(--monitor-cyan) 14%, var(--monitor-surface));
+  color: var(--monitor-cyan);
+}
+
+.accountOverviewMetricValue {
+  font-size: 16px;
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.accountOverviewCardBody {
+  display: grid;
+  gap: 14px;
+  padding-top: 2px;
+  min-width: 0;
+}
+
+.accountModelListPanel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.accountModelViewAllButton {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--monitor-accent-strong);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.accountModelViewAllButton:hover {
+  transform: none;
+  color: var(--monitor-accent);
+}
+
+.accountModelList {
+  display: grid;
+  min-width: 0;
+}
+
+.accountModelItem {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 84%, transparent);
+}
+
+.accountModelItem:first-child {
+  border-top: 0;
+}
+
+.accountModelRow {
+  display: grid;
+  align-items: start;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.accountModelRow:hover {
+  transform: none;
+  color: var(--monitor-accent-strong);
+}
+
+.accountModelStat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  min-width: 0;
+  text-align: left;
+}
+
+.accountModelStat small {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.accountModelStat strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountModelMetaLine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  color: var(--monitor-muted);
+}
+
+.accountModelMetaLine .accountModelStat {
+  min-width: 0;
+}
+
+.accountModelChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 14px;
+  min-width: 14px;
+  height: 16px;
+  color: var(--monitor-muted);
+  line-height: 1;
+}
+
+.accountModelExpanded {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 12px;
+  padding: 8px 10px 4px;
+  border-top: 1px dashed color-mix(in srgb, var(--monitor-line) 80%, transparent);
+}
+
+.accountModelExpandedItem {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.accountModelExpandedItem small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountModelExpandedItem strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountModelName {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .summaryCard {
@@ -1559,6 +3307,78 @@
   font-size: 12px;
 }
 
+.accountSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.accountSectionHeader strong {
+  min-width: 0;
+  color: var(--monitor-ink);
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.accountOverviewCard .accountButton {
+  align-items: center;
+}
+
+.accountOverviewCard .accountButtonLabel {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+  line-height: 1.45;
+}
+
+.accountOverviewCard .accountButton small {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.accountOverviewCardBody .quotaRefreshButton {
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 11px;
+}
+
+.accountOverviewCardBody .quotaSection {
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.accountOverviewCardBody .quotaSectionHeader {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.accountOverviewCardBody .quotaEntryGrid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.accountOverviewCardBody .quotaEntryCard {
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
+  background: color-mix(in srgb, var(--monitor-surface) 78%, var(--monitor-surface-elevated));
+}
+
 .realtimeTable .primaryCell small {
   white-space: normal;
   word-break: break-word;
@@ -1578,136 +3398,6 @@
 //.logRowFailed:hover td {
 //  background: color-mix(in srgb, var(--monitor-red) 5%, var(--monitor-surface-hover));
 //}
-
-.focusPanel {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(0, 2.4fr) auto;
-  align-items: center;
-  gap: 16px;
-}
-
-.focusHeader {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.focusKicker,
-.focusMetrics span {
-  color: var(--monitor-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.focusHeader strong {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.focusMetrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.focusMetrics div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--monitor-surface-elevated);
-}
-
-.focusMetrics strong {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 15px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.analysisTabs {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 16px;
-  padding: 3px;
-  border-radius: 999px;
-  border: 1px solid var(--monitor-line);
-  background: var(--monitor-surface-muted);
-}
-
-.analysisTabButton {
-  min-height: 32px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--monitor-muted);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.analysisTabButtonActive {
-  background: var(--monitor-accent);
-  color: var(--primary-contrast, #fff);
-}
-
-.trendGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(42px, 1fr));
-  align-items: end;
-  gap: 8px;
-  min-height: 220px;
-  padding: 16px;
-  border-radius: 10px;
-  border: 1px solid var(--monitor-line);
-  background: var(--monitor-surface-elevated);
-}
-
-.trendItem {
-  display: grid;
-  grid-template-rows: 1fr auto auto;
-  gap: 6px;
-  align-items: end;
-  justify-items: center;
-  min-width: 0;
-  height: 188px;
-}
-
-.trendBarTrack {
-  position: relative;
-  display: block;
-  width: 100%;
-  max-width: 34px;
-  height: 128px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--monitor-line) 72%, transparent);
-}
-
-.trendBarFill {
-  position: absolute;
-  inset: auto 0 0;
-  height: var(--trend-height, 0%);
-  border-radius: inherit;
-  background: linear-gradient(180deg, var(--monitor-cyan), var(--monitor-accent));
-}
-
-.trendItem strong {
-  font-size: 12px;
-}
-
-.trendItem span:last-child {
-  color: var(--monitor-muted);
-  font-size: 11px;
-}
 
 .emptyBlock,
 .emptyTable,
@@ -1738,6 +3428,12 @@
   }
 }
 
+@container monitoring-page (max-width: 760px) {
+  .usageStatsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @container monitoring-page (max-width: 1120px) {
   .toolbarControlRow {
     flex-wrap: wrap;
@@ -1750,9 +3446,32 @@
 }
 
 @container monitoring-page (max-width: 900px) {
-  .summaryGrid,
+  .usageTrendHeader,
+  .usageTrendCollapsed {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .usageTrendActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .usageTrendRangeControl {
+    flex: 1 1 auto;
+  }
+
+  .usageTrendHideButton {
+    flex: 0 0 auto;
+  }
+
+  .usageTrendInsightsGrid,
   .rankingGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
+  }
+
+  .modelStatsLayout {
+    grid-template-columns: minmax(0, 1fr) minmax(210px, 240px);
   }
 
   .priceGrid {
@@ -1796,10 +3515,151 @@
   }
 }
 
+@container monitoring-page (max-width: 680px) {
+  .usageTrendActions {
+    align-items: stretch;
+    flex-direction: column;
+    overflow-x: visible;
+  }
+
+  .usageTrendRangeControl {
+    flex: 0 0 auto;
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .usageTrendRangeControl::-webkit-scrollbar {
+    display: none;
+  }
+
+  .usageTrendRangeButton {
+    flex: 1 0 auto;
+    min-width: 58px;
+    padding: 0 12px;
+  }
+
+  .usageTrendHideButton {
+    width: 100%;
+  }
+
+  .accountOverviewCardGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .healthMetricGrid,
+  .accountOverviewMetricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trendCardHeader,
+  .rankingHeader {
+    flex-direction: column;
+  }
+
+  .trendLegend,
+  .tokenDistributionLegend {
+    justify-content: flex-start;
+  }
+
+  .trendMetricStrip,
+  .tokenTypeSummaryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modelStatsLayout {
+    grid-template-columns: minmax(0, 1fr) minmax(190px, 220px);
+  }
+
+  .modelStatsCard .modelSharePanel {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 8px;
+  }
+
+  .modelStatsCard .modelShareHeader,
+  .modelStatsCard .modelLegend,
+  .modelStatsCard .donutChart {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .modelStatsCard .donutChart {
+    width: min(150px, 100%);
+  }
+}
+
+@container monitoring-page (max-width: 520px) {
+  .usageStatsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .rankingHeader {
+    flex-wrap: wrap;
+  }
+
+  .rankingMetricSwitch {
+    justify-content: flex-start;
+    max-width: 100%;
+  }
+
+  .rankingMetricButton {
+    padding: 0 9px;
+  }
+
+  .trendMetricStrip,
+  .tokenTypeSummaryGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .usageTrendChartCard {
+    min-height: 320px;
+    padding: 16px;
+  }
+
+  .modelStatsLayout {
+    grid-template-columns: minmax(0, 1fr) minmax(160px, 190px);
+    gap: 12px;
+  }
+
+  .modelStatsCard .modelSharePanel {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 8px;
+  }
+
+  .modelStatsCard .modelShareHeader,
+  .modelStatsCard .modelLegend,
+  .modelStatsCard .donutChart {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .modelStatsCard .donutChart {
+    width: min(140px, 100%);
+  }
+
+  .modelStatsCard .modelLegend {
+    gap: 4px;
+  }
+
+  .modelSharePanel .donutTooltip {
+    right: auto;
+    bottom: auto;
+    left: 50%;
+    top: calc(100% + 12px);
+    transform: translate(-50%, 0);
+  }
+
+  .modelSharePanel .donutChart:hover .donutTooltip,
+  .modelSharePanel .donutChart:focus-within .donutTooltip {
+    transform: translate(-50%, 0);
+  }
+}
+
 @container monitoring-page (max-width: 768px) {
   .masthead,
-  .panel,
-  .summaryCard {
+  .panel {
     border-radius: 12px;
   }
 
@@ -1811,8 +3671,14 @@
     gap: 16px;
   }
 
-  .mastheadCopy {
-    gap: 8px;
+  .titleRow {
+    grid-template-columns: 1fr;
+  }
+
+  .titleActions {
+    justify-content: flex-start;
+    width: fit-content;
+    max-width: 100%;
   }
 
   .title {
@@ -1826,11 +3692,6 @@
     overflow: hidden;
     font-size: 12px;
     line-height: 1.5;
-  }
-
-  .titleRow {
-    align-items: flex-start;
-    justify-content: space-between;
   }
 
   .mastheadActionButton {
@@ -1868,13 +3729,13 @@
     flex: 0 0 auto;
   }
 
-  .toolbarPanel .panelHeader {
+  .realtimePanel .panelHeader {
     flex-direction: column;
     align-items: stretch;
     gap: 10px;
   }
 
-  .toolbarPanel .panelTitle {
+  .realtimePanel .panelTitle {
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
@@ -1883,7 +3744,7 @@
     white-space: nowrap;
   }
 
-  .toolbarPanel .panelExtra {
+  .realtimePanel .panelExtra {
     flex: 1 1 auto;
     min-width: 0;
     width: 100%;
@@ -1954,17 +3815,24 @@
     min-width: 42px;
   }
 
+  .usageStatsCard {
+    padding: 13px;
+  }
+
+  .usageStatsBody strong {
+    font-size: 22px;
+  }
+
+  .usageStatsFooter {
+    gap: 6px;
+  }
+
   .filterGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .rankingGrid,
-  .focusPanel {
+  .rankingGrid {
     grid-template-columns: 1fr;
-  }
-
-  .focusMetrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .filterGrid :global(.select-trigger) {
@@ -2014,15 +3882,6 @@
 
   .filterGrid {
     gap: 8px;
-  }
-
-  .summaryCard {
-    min-height: 112px;
-    padding: 14px;
-  }
-
-  .summaryValue {
-    font-size: clamp(22px, 7vw, 30px);
   }
 
   .priceActionsBar {

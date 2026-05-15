@@ -1,5 +1,5 @@
 import type { Config, AuthFileItem } from '@/types';
-import { isDisabledAuthFile, normalizeNumberValue, resolveAuthProvider, resolveCodexChatgptAccountId } from '@/utils/quota';
+import { isDisabledAuthFile, isRecordValue, normalizeNumberValue, readBooleanValue, readStringValue, resolveAuthProvider, resolveCodexChatgptAccountId } from '@/utils/quota';
 import { normalizeAuthIndex } from '@/utils/usage';
 
 export type AccountInspectionLogLevel = 'info' | 'success' | 'warning' | 'error';
@@ -108,6 +108,58 @@ export interface AccountInspectionProgressSnapshot {
   updatedAt: number;
 }
 
+export type AccountInspectionBackendRunState = 'idle' | 'running' | 'paused' | 'stopping' | 'stopped' | 'completed' | 'partial' | 'failed';
+
+export type AccountInspectionBackendProgress = {
+  total: number;
+  completed: number;
+  inFlight: number;
+  pending: number;
+};
+
+export type AccountInspectionBackendLog = {
+  time: number;
+  level: AccountInspectionLogLevel;
+  message: string;
+};
+
+export type AccountInspectionBackendStatus = {
+  state: AccountInspectionBackendRunState;
+  lastStartedAt: number;
+  lastFinishedAt: number;
+  lastError: string;
+  progress?: AccountInspectionBackendProgress;
+  summary: AccountInspectionSummary & {
+    executedDeleteCount?: number;
+    executedDisableCount?: number;
+    executedEnableCount?: number;
+  };
+  logs: AccountInspectionBackendLog[] | null;
+  results: Array<
+    Omit<AccountInspectionResultItem, 'displayAccount' | 'accountId' | 'status' | 'state' | 'raw'> & {
+      displayName: string;
+      email?: string;
+      name?: string;
+      executed?: boolean;
+      executeError?: string;
+    }
+  > | null;
+};
+
+export type AccountInspectionBackendSchedule = {
+  enabled: boolean;
+  intervalMinutes: number;
+  nextRunAt: number;
+  settings: AccountInspectionConfigurableSettings;
+};
+
+export type AccountInspectionBackendResponse = {
+  schedule: AccountInspectionBackendSchedule;
+  status: AccountInspectionBackendStatus;
+};
+
+export type AccountInspectionDisplayRunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
+
 export interface AccountInspectionExecutionOutcome {
   action: AccountInspectionExecutionAction;
   fileName: string;
@@ -153,9 +205,6 @@ export const DEFAULT_ACCOUNT_INSPECTION_SETTINGS: AccountInspectionConfigurableS
   autoExecuteAccountErrorAction: 'none',
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 type IntegerBounds = {
   min: number;
   max?: number;
@@ -185,24 +234,8 @@ const normalizeThreshold = (value: number | undefined) => {
   return value;
 };
 
-const readString = (value: unknown) => {
-  if (value === undefined || value === null) return '';
-  return String(value).trim();
-};
-
-const readBoolean = (value: unknown, fallback: boolean) => {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value !== 0;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
-    if (['false', '0', 'no', 'off'].includes(normalized)) return false;
-  }
-  return fallback;
-};
-
 const normalizeAutoErrorAction = (value: unknown): AccountInspectionAutoErrorAction => {
-  const normalized = readString(value).toLowerCase();
+  const normalized = readStringValue(value).toLowerCase();
   return normalized === 'disable' || normalized === 'delete' ? normalized : 'none';
 };
 
@@ -217,9 +250,9 @@ export const formatAccountInspectionIdentity = (
 };
 
 const readAuthFileName = (file: AuthFileItem) => {
-  const name = readString(file.name);
+  const name = readStringValue(file.name);
   if (name) return name;
-  const id = readString(file.id);
+  const id = readStringValue(file.id);
   if (id) return id;
   const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
   return authIndex || 'unknown-auth-file';
@@ -227,13 +260,13 @@ const readAuthFileName = (file: AuthFileItem) => {
 
 const readAuthEmail = (file: AuthFileItem) => {
   const idToken = file.id_token;
-  return readString(file.email) ||
-    (typeof idToken === 'object' && idToken !== null ? readString((idToken as Record<string, unknown>).email) : '');
+  return readStringValue(file.email) ||
+    (typeof idToken === 'object' && idToken !== null ? readStringValue((idToken as Record<string, unknown>).email) : '');
 };
 
 const readDisplayAccount = (file: AuthFileItem) =>
   readAuthEmail(file) ||
-  readString(file.name) ||
+  readStringValue(file.name) ||
   '-';
 
 const toInspectionAccount = (file: AuthFileItem): AccountInspectionAccount => ({
@@ -241,13 +274,13 @@ const toInspectionAccount = (file: AuthFileItem): AccountInspectionAccount => ({
   fileName: readAuthFileName(file),
   displayAccount: readDisplayAccount(file),
   email: readAuthEmail(file) || undefined,
-  name: readString(file.name) || undefined,
+  name: readStringValue(file.name) || undefined,
   authIndex: normalizeAuthIndex(file['auth_index'] ?? file.authIndex),
   accountId: resolveCodexChatgptAccountId(file),
   provider: resolveAuthProvider(file),
   disabled: isDisabledAuthFile(file),
-  status: readString(file.status),
-  state: readString(file.state),
+  status: readStringValue(file.status),
+  state: readStringValue(file.state),
   raw: file,
 });
 
@@ -256,7 +289,7 @@ const readConfigurableSettingsFromConfig = (
 ): Partial<AccountInspectionConfigurableSettings> => {
   const clean = config?.clean ?? null;
   return {
-    targetType: readString(clean?.targetType),
+    targetType: readStringValue(clean?.targetType),
     workers: normalizeNumberValue(clean?.workers) ?? undefined,
     deleteWorkers: normalizeNumberValue(clean?.deleteWorkers) ?? undefined,
     timeout: normalizeNumberValue(clean?.timeout) ?? undefined,
@@ -285,7 +318,7 @@ const normalizeConfigurableSettings = (
   );
 
   return {
-    targetType: readString(merged.targetType).toLowerCase() || DEFAULT_ACCOUNT_INSPECTION_SETTINGS.targetType,
+    targetType: readStringValue(merged.targetType).toLowerCase() || DEFAULT_ACCOUNT_INSPECTION_SETTINGS.targetType,
     workers,
     deleteWorkers: clampInteger(
       normalizeNumberValue(merged.deleteWorkers),
@@ -314,11 +347,11 @@ const normalizeConfigurableSettings = (
       DEFAULT_ACCOUNT_INSPECTION_SETTINGS.sampleSize,
       ACCOUNT_INSPECTION_SETTING_LIMITS.sampleSize
     ),
-    autoExecuteQuotaLimitDisable: readBoolean(
+    autoExecuteQuotaLimitDisable: readBooleanValue(
       merged.autoExecuteQuotaLimitDisable,
       DEFAULT_ACCOUNT_INSPECTION_SETTINGS.autoExecuteQuotaLimitDisable
     ),
-    autoExecuteQuotaRecoveryEnable: readBoolean(
+    autoExecuteQuotaRecoveryEnable: readBooleanValue(
       merged.autoExecuteQuotaRecoveryEnable,
       DEFAULT_ACCOUNT_INSPECTION_SETTINGS.autoExecuteQuotaRecoveryEnable
     ),
@@ -340,7 +373,7 @@ export const loadAccountInspectionConfigurableSettings = (
       return normalizeConfigurableSettings(configSettings);
     }
     const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed)) {
+    if (!isRecordValue(parsed)) {
       return normalizeConfigurableSettings(configSettings);
     }
     return normalizeConfigurableSettings({
@@ -406,6 +439,161 @@ const summarizeResults = (results: AccountInspectionResultItem[]) => {
       .map((item) => `${formatAccountInspectionIdentity(item)} -> ${item.action}`),
   };
 };
+
+export const createIdleAccountInspectionProgressSnapshot = (): AccountInspectionProgressSnapshot => ({
+  total: 0,
+  completed: 0,
+  inFlight: 0,
+  pending: 0,
+  percent: 0,
+  status: 'idle',
+  summary: {
+    totalFiles: 0,
+    probeSetCount: 0,
+    sampledCount: 0,
+    disabledCount: 0,
+    enabledCount: 0,
+    deleteCount: 0,
+    disableCount: 0,
+    enableCount: 0,
+    keepCount: 0,
+    errorCount: 0,
+  },
+  startedAt: Date.now(),
+  updatedAt: Date.now(),
+});
+
+export const accountInspectionBackendResultToItem = (
+  item: NonNullable<AccountInspectionBackendStatus['results']>[number]
+): AccountInspectionResultItem => ({
+  key: item.key,
+  fileName: item.fileName,
+  displayAccount: item.displayName,
+  email: item.email,
+  name: item.name,
+  authIndex: item.authIndex || null,
+  accountId: null,
+  provider: item.provider,
+  disabled: item.disabled,
+  status: '',
+  state: '',
+  raw: {
+    name: item.fileName,
+    type: item.provider,
+    provider: item.provider,
+    authIndex: item.authIndex,
+    disabled: item.disabled,
+  },
+  action: item.action,
+  actionReason: item.actionReason,
+  statusCode: item.statusCode ?? null,
+  usedPercent: item.usedPercent ?? null,
+  isQuota: item.isQuota,
+  error: item.executeError || item.error || '',
+  executed: item.executed,
+});
+
+export const accountInspectionBackendProgressStatus = (
+  status: AccountInspectionBackendStatus
+): AccountInspectionProgressSnapshot['status'] => {
+  if (status.state === 'paused') return 'paused';
+  if (status.state === 'running' || status.state === 'stopping') return 'running';
+  if (status.state === 'stopped') return 'stopped';
+  if (status.state === 'completed' || status.state === 'partial' || status.lastFinishedAt > 0) return 'completed';
+  return 'idle';
+};
+
+export const accountInspectionBackendRunStatus = (
+  status: AccountInspectionBackendStatus
+): AccountInspectionDisplayRunStatus => {
+  if (status.state === 'paused') return 'paused';
+  if (status.state === 'running' || status.state === 'stopping') return 'running';
+  if (status.state === 'failed') return 'error';
+  if (status.state === 'stopped') return 'idle';
+  if (status.state === 'completed' || status.state === 'partial' || status.lastFinishedAt > 0) {
+    return status.lastError ? 'error' : 'success';
+  }
+  return 'idle';
+};
+
+export const buildAccountInspectionBackendViewState = (
+  response: AccountInspectionBackendResponse,
+  now = Date.now()
+) => {
+  const settings = response.schedule.settings;
+  const startedAt = response.status.lastStartedAt || now;
+  const finishedAt = response.status.lastFinishedAt || startedAt;
+  const results = (response.status.results ?? []).map(accountInspectionBackendResultToItem);
+  const progressStatus = accountInspectionBackendProgressStatus(response.status);
+  const total = response.status.progress?.total ?? response.status.summary.sampledCount ?? results.length;
+  const isBackendActive = response.status.state === 'running' || response.status.state === 'paused' || response.status.state === 'stopping';
+  const completed = response.status.progress?.completed ?? (isBackendActive ? 0 : total);
+  const inFlight = response.status.progress?.inFlight ?? (response.status.state === 'running' ? 1 : 0);
+  const pending = response.status.progress?.pending ?? Math.max(0, total - completed - inFlight);
+  const hasSnapshot = Array.isArray(response.status.logs) || Array.isArray(response.status.results);
+
+  return {
+    settings,
+    scheduleDraft: {
+      enabled: response.schedule.enabled,
+      intervalMinutes: String(response.schedule.intervalMinutes),
+    },
+    logs: hasSnapshot
+      ? (response.status.logs ?? []).map((entry, index) => ({
+          id: `backend-${entry.time}-${index}`,
+          level: entry.level,
+          message: entry.message,
+          timestamp: entry.time,
+        }))
+      : undefined,
+    autoExecutionCounts: {
+      delete: response.status.summary.executedDeleteCount ?? 0,
+      disable: response.status.summary.executedDisableCount ?? 0,
+      enable: response.status.summary.executedEnableCount ?? 0,
+    },
+    result: results.length > 0 || response.status.lastFinishedAt > 0
+      ? {
+          settings: {
+            baseUrl: '',
+            token: '',
+            targetType: settings.targetType,
+            workers: settings.workers,
+            deleteWorkers: settings.deleteWorkers,
+            timeout: settings.timeout,
+            retries: settings.retries,
+            usedPercentThreshold: settings.usedPercentThreshold,
+            sampleSize: settings.sampleSize,
+          },
+          files: [],
+          results,
+          summary: {
+            ...response.status.summary,
+            usedPercentThreshold: settings.usedPercentThreshold,
+            sampled: settings.sampleSize > 0,
+            plannedActionPreview: results
+              .filter((item) => item.action !== 'keep')
+              .slice(0, 10)
+              .map((item) => `${formatAccountInspectionIdentity(item)} -> ${item.action}`),
+          },
+          startedAt,
+          finishedAt,
+        }
+      : null,
+    progress: {
+      total,
+      completed,
+      inFlight,
+      pending,
+      percent: total > 0 ? Math.round((completed / total) * 100) : progressStatus === 'completed' ? 100 : 0,
+      status: progressStatus,
+      summary: response.status.summary,
+      startedAt,
+      updatedAt: now,
+    },
+    runStatus: accountInspectionBackendRunStatus(response.status),
+  };
+};
+
 
 export const buildExecutionFailureMessage = (outcome: AccountInspectionExecutionOutcome) =>
   `${formatAccountInspectionIdentity(outcome)}：${outcome.error || '执行失败'}`;
