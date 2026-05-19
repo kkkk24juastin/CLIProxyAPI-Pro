@@ -1476,7 +1476,7 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 		used := antigravityClaudeGptUsedPercent(groups)
 		decision := quotaDecision(account, used, used != nil, settings.UsedPercentThreshold)
 		if settings.AntigravityDeepProbeEnabled && antigravityShouldDeepProbe(decision) {
-			return s.applyAntigravityDeepProbe(ctx, account, settings, groups, decision, status)
+			return s.applyAntigravityDeepProbe(ctx, account, settings, groups, decision, status, appendLog)
 		}
 		return decision, status, nil
 	}
@@ -1509,7 +1509,7 @@ func antigravityShouldDeepProbe(decision accountInspectionDecision) bool {
 	return decision.Action == accountInspectionActionKeep || decision.Action == accountInspectionActionEnable
 }
 
-func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, groups []map[string]any, decision accountInspectionDecision, quotaStatus *int) (accountInspectionDecision, *int, error) {
+func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, groups []map[string]any, decision accountInspectionDecision, quotaStatus *int, appendLog func(string, string)) (accountInspectionDecision, *int, error) {
 	model := selectAntigravityDeepProbeModel(groups)
 	projectID := antigravityProjectID(account.Auth)
 	if model == "" || projectID == "" {
@@ -1519,9 +1519,11 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 		} else {
 			decision.DeepProbeError = "missing Antigravity project id"
 		}
+		appendLog("warning", fmt.Sprintf("%s Antigravity 深度检测跳过：%s", account.identity(), decision.DeepProbeError))
 		return decision, quotaStatus, nil
 	}
 
+	appendLog("info", fmt.Sprintf("%s Antigravity 深度检测开始：%s", account.identity(), model))
 	body := buildAntigravityDeepProbeBody(projectID, model)
 	var lastStatus *int
 	var lastMessage string
@@ -1544,6 +1546,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 			s.clearInspectionAuthError(ctx, account)
 			decision.DeepProbeStatus = accountInspectionDeepProbeSuccess
 			decision.DeepProbeError = ""
+			appendLog("success", fmt.Sprintf("%s Antigravity 深度检测通过", account.identity()))
 			return decision, lastStatus, nil
 		case accountInspectionDeepProbeAuthError:
 			s.syncInspectionAuthStatus(ctx, account, resp.StatusCode)
@@ -1551,6 +1554,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 			probeDecision.UsedPercent = decision.UsedPercent
 			probeDecision.DeepProbeStatus = accountInspectionDeepProbeAuthError
 			probeDecision.DeepProbeError = probeMessage
+			appendLog("warning", fmt.Sprintf("%s Antigravity 深度检测授权异常：%s", account.identity(), probeMessage))
 			return probeDecision, lastStatus, nil
 		case accountInspectionDeepProbeQuota:
 			s.clearInspectionAuthError(ctx, account)
@@ -1559,6 +1563,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 				probeDecision.Action = accountInspectionActionKeep
 				probeDecision.ActionReason = "Antigravity 深度检测返回额度不可用，但账号已禁用"
 			}
+			appendLog("warning", fmt.Sprintf("%s Antigravity 深度检测额度不可用：%s", account.identity(), probeMessage))
 			return probeDecision, lastStatus, nil
 		default:
 			lastMessage = probeMessage
@@ -1576,6 +1581,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 	decision.Error = lastMessage
 	decision.DeepProbeStatus = accountInspectionDeepProbeTransientError
 	decision.DeepProbeError = lastMessage
+	appendLog("warning", fmt.Sprintf("%s Antigravity 深度检测临时异常：%s", account.identity(), lastMessage))
 	return decision, firstStatus(lastStatus, quotaStatus), nil
 }
 
@@ -3341,10 +3347,18 @@ func firstNonEmptyStringValue(values ...string) string {
 }
 
 func anySlice(value any) []any {
-	if items, ok := value.([]any); ok {
+	switch items := value.(type) {
+	case []any:
 		return items
+	case []string:
+		out := make([]any, 0, len(items))
+		for _, item := range items {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return nil
 	}
-	return nil
 }
 
 func normalizeGeminiCLIModelID(value string) string {

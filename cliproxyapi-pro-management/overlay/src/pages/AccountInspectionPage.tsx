@@ -613,6 +613,9 @@ const formatQuotaRemainingLabel = (value: number | null) => {
   return `${Math.max(0, 100 - value).toFixed(1)}%`;
 };
 
+const shouldShowDeepProbeBadge = (item: AccountInspectionResultItem) =>
+  Boolean(item.deepProbeTriggered && item.deepProbeStatus && item.deepProbeStatus !== 'skipped');
+
 const formatDeepProbeLabel = (
   item: AccountInspectionResultItem,
   t: ReturnType<typeof useTranslation>['t']
@@ -686,7 +689,7 @@ const formatInspectionVerdictSecondary = (
   t: ReturnType<typeof useTranslation>['t']
 ) => {
   const parts = [formatActionLabel(item.action, t)];
-  if (item.deepProbeTriggered) {
+  if (shouldShowDeepProbeBadge(item)) {
     const label = formatDeepProbeLabel(item, t);
     if (label) parts.push(label);
   }
@@ -2245,7 +2248,7 @@ export function AccountInspectionPage() {
                           <td>
                             <div className={styles.verdictCell}>
                               <strong>{formatInspectionVerdictPrimary(item, healthStatus, t)}</strong>
-                              {item.deepProbeTriggered && item.deepProbeStatus ? (
+                              {shouldShowDeepProbeBadge(item) ? (
                                 <small className={`${styles.statePill} ${deepProbeToneClass(item.deepProbeStatus)}`} title={item.deepProbeError || undefined}>
                                   {formatDeepProbeLabel(item, t)}
                                 </small>
