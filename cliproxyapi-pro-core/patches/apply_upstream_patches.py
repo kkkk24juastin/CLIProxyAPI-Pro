@@ -274,7 +274,10 @@ func metadataInt(value any) int {
 patch_dir = Path(__file__).resolve().parent
 embeddedusage_source = patch_dir.parent / 'embeddedusage'
 embeddedusage_target = ROOT / 'internal/embeddedusage'
-shutil.copytree(embeddedusage_source, embeddedusage_target, dirs_exist_ok=True)
+if embeddedusage_source.is_dir():
+    shutil.copytree(embeddedusage_source, embeddedusage_target, dirs_exist_ok=True)
+elif not embeddedusage_target.is_dir():
+    raise SystemExit(f'embeddedusage source not found: {embeddedusage_source}')
 rewrite_module_imports(embeddedusage_target / 'server.go')
 rewrite_module_imports(embeddedusage_target / 'service.go')
 rewrite_module_imports(embeddedusage_target / 'store.go')
