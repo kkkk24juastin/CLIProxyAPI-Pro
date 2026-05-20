@@ -94,6 +94,14 @@ const readSseMessage = (block: string): { event: string; data: string } | null =
   return dataLines.length > 0 ? { event, data: dataLines.join('\n') } : null;
 };
 
+const parseUsageSsePayload = (block: string): UsagePayload | null => {
+  const message = readSseMessage(block);
+  if (message?.event !== 'usage') return null;
+  return JSON.parse(message.data) as UsagePayload;
+};
+
+const nextUsageReconnectDelay = (currentDelay: number) => Math.min(currentDelay * 2, 30000);
+
 export function useUsageData(): UseUsageDataReturn {
   const [usage, setUsage] = useState<UsagePayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -226,10 +234,11 @@ export function useUsageData(): UseUsageDataReturn {
           const parts = buffer.split('\n\n');
           buffer = parts.pop() ?? '';
           parts.forEach((part) => {
-            const message = readSseMessage(part);
-            if (message?.event !== 'usage') return;
             try {
-              applyUsagePayload(JSON.parse(message.data) as UsagePayload);
+              const payload = parseUsageSsePayload(part);
+              if (payload) {
+                applyUsagePayload(payload);
+              }
             } catch {
               void loadUsageIncremental();
             }
@@ -246,7 +255,7 @@ export function useUsageData(): UseUsageDataReturn {
           void loadUsageIncremental();
           void connect();
         }, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+        reconnectDelay = nextUsageReconnectDelay(reconnectDelay);
       }
     };
 

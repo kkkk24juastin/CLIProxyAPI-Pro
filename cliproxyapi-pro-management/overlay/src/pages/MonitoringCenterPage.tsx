@@ -172,7 +172,7 @@ const getNextAccountStatusBlockIndex = (currentIndex: number, key: string, count
 
 const formatAccountOverviewScopeText = (rangeLabel: string, t: TFunction) => t('monitoring.account_scope_text', { range: rangeLabel });
 
-const buildAccountStatusRange = (rows: MonitoringEventRow[], range: MonitoringTimeRange, nowMs = Date.now()): AccountStatusRange => {
+const buildAccountStatusRange = (rows: MonitoringAccountRow[], range: MonitoringTimeRange, nowMs = Date.now()): AccountStatusRange => {
   if (range !== 'all') {
     return {
       startTime: getRangeStartMs(range, nowMs),
@@ -180,10 +180,12 @@ const buildAccountStatusRange = (rows: MonitoringEventRow[], range: MonitoringTi
     };
   }
 
-  const minTimestamp = rows.reduce(
-    (min, row) => Math.min(min, row.timestampMs),
-    Number.POSITIVE_INFINITY
-  );
+  let minTimestamp = Number.POSITIVE_INFINITY;
+  rows.forEach((row) => {
+    row.rows?.forEach((event) => {
+      minTimestamp = Math.min(minTimestamp, event.timestampMs);
+    });
+  });
   return {
     startTime: Number.isFinite(minTimestamp) ? minTimestamp : nowMs - ACCOUNT_STATUS_BLOCK_COUNT * ACCOUNT_STATUS_BLOCK_DURATION_MS,
     endTime: nowMs,
@@ -2096,12 +2098,20 @@ function AccountStatsPanel({
   const itemsPerPage = gridCols * ROWS_PER_PAGE;
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / itemsPerPage));
   const safePageIndex = Math.min(cardPage, totalPages - 1);
-  const visibleRows = filteredRows.slice(safePageIndex * itemsPerPage, (safePageIndex + 1) * itemsPerPage);
+  const visibleRows = useMemo(
+    () => filteredRows.slice(safePageIndex * itemsPerPage, (safePageIndex + 1) * itemsPerPage),
+    [filteredRows, itemsPerPage, safePageIndex]
+  );
 
   const accountStatusRange = useMemo(
-    () => buildAccountStatusRange(rows.flatMap((row) => row.rows ?? []), range),
+    () => buildAccountStatusRange(rows, range),
     [rows, range]
   );
+
+  const accountStatusDataById = useMemo(() => {
+    const entries = visibleRows.map((row) => [row.id, buildAccountStatusData(row.rows ?? [], accountStatusRange)] as const);
+    return new Map(entries);
+  }, [accountStatusRange, visibleRows]);
 
   useEffect(() => {
     setCardPage(0);
@@ -2200,7 +2210,7 @@ function AccountStatsPanel({
           <>
             <div ref={gridRef} className={styles.accountOverviewCardGrid}>
               {visibleRows.map((row) => {
-                const statusData = buildAccountStatusData(row.rows ?? [], accountStatusRange);
+                const statusData = accountStatusDataById.get(row.id) ?? buildAccountStatusData([], accountStatusRange);
                 return (
                   <AccountOverviewCard
                     key={row.id}

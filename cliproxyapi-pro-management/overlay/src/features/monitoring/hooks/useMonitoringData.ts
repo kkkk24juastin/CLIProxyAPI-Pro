@@ -289,8 +289,6 @@ export type MonitoringEventRow = {
   accountMasked: string;
   authIndex: string;
   authIndexMasked: string;
-  apiKeyHash: string;
-  apiKeyMasked: string;
   clientApiKey: MonitoringApiKeyIdentity;
   authLabel: string;
   provider: string;
@@ -731,8 +729,7 @@ export const buildAccountRows = (
       id: string;
       account: string;
       accountMasked: string;
-      apiKeyHash: string;
-      apiKeyMasked: string;
+      apiKey: MonitoringApiKeyIdentity;
       authLabels: Set<string>;
       authIndices: Set<string>;
       channels: Set<string>;
@@ -773,8 +770,7 @@ export const buildAccountRows = (
         id: row.clientApiKey.id,
         account: row.clientApiKey.masked,
         accountMasked: row.clientApiKey.masked,
-        apiKeyHash: row.clientApiKey.hash,
-        apiKeyMasked: row.clientApiKey.masked,
+        apiKey: row.clientApiKey,
       };
     }
     if (groupBy === 'model') {
@@ -782,8 +778,11 @@ export const buildAccountRows = (
         id: `model:${row.model}`,
         account: row.model,
         accountMasked: row.model,
-        apiKeyHash: '-',
-        apiKeyMasked: '-',
+        apiKey: {
+          id: 'clientApiKey:none',
+          hash: '-',
+          masked: '-',
+        },
       };
     }
     const accountKey = row.account || row.authLabel || row.source;
@@ -791,8 +790,7 @@ export const buildAccountRows = (
       id: `account:${accountKey}`,
       account: row.account,
       accountMasked: row.accountMasked,
-      apiKeyHash: row.apiKeyHash,
-      apiKeyMasked: row.apiKeyMasked,
+      apiKey: row.clientApiKey,
     };
   };
 
@@ -802,8 +800,7 @@ export const buildAccountRows = (
       id: identity.id,
       account: identity.account,
       accountMasked: identity.accountMasked,
-      apiKeyHash: identity.apiKeyHash,
-      apiKeyMasked: identity.apiKeyMasked,
+      apiKey: identity.apiKey,
       authLabels: new Set<string>(),
       authIndices: new Set<string>(),
       channels: new Set<string>(),
@@ -877,8 +874,8 @@ export const buildAccountRows = (
       id: item.id,
       group: groupBy,
       model: groupBy === 'model' ? item.account : '-',
-      apiKeyHash: item.apiKeyHash,
-      apiKeyMasked: item.apiKeyMasked,
+      apiKeyHash: item.apiKey.hash,
+      apiKeyMasked: item.apiKey.masked,
       account: item.account,
       accountMasked: item.accountMasked,
       authLabels: Array.from(item.authLabels).sort(),
@@ -1430,13 +1427,18 @@ const buildEventRows = (
       const apiKeyHash = readStringValue(detail.api_key_hash) || '-';
       const configuredApiKey = apiKeyHash === '-' ? null : configuredApiKeys.byHash.get(apiKeyHash);
       const singleConfiguredApiKey = configuredApiKeys.keys.length === 1 ? configuredApiKeys.keys[0] : null;
-      const clientApiKey = configuredApiKey || (apiKeyHash === '-' ? singleConfiguredApiKey : null);
-      const apiKeyMasked = apiKeyHash === '-' ? '-' : (configuredApiKey?.masked ?? maskHash(apiKeyHash));
-      const clientApiKeyIdentity: MonitoringApiKeyIdentity = clientApiKey ?? {
-        id: 'clientApiKey:unknown',
-        hash: '-',
-        masked: 'Unknown API Key',
-      };
+      const clientApiKeyIdentity: MonitoringApiKeyIdentity = configuredApiKey
+        ?? (apiKeyHash !== '-'
+          ? {
+              id: `clientApiKey:${apiKeyHash}`,
+              hash: apiKeyHash,
+              masked: maskHash(apiKeyHash),
+            }
+          : singleConfiguredApiKey ?? {
+              id: 'clientApiKey:unknown',
+              hash: '-',
+              masked: 'Unknown API Key',
+            });
       const statsIncluded = detail.failed === true || inputTokens > 0 || outputTokens > 0;
       const dayKey = buildLocalDayKey(timestampMs);
       const hourLabel = buildHourLabel(timestampMs);
@@ -1460,8 +1462,6 @@ const buildEventRows = (
         accountMasked,
         authIndex,
         authIndexMasked: maskAuthIndex(authIndex),
-        apiKeyHash,
-        apiKeyMasked,
         clientApiKey: clientApiKeyIdentity,
         authLabel: authMeta?.label || sourceMasked,
         provider: authMeta?.provider || sourceMeta.type || '-',
@@ -1491,7 +1491,6 @@ const buildEventRows = (
           endpointMethod,
           authMeta?.provider,
           authMeta?.planType,
-          apiKeyMasked,
           clientApiKeyIdentity.masked
         ),
       } satisfies MonitoringEventRow;

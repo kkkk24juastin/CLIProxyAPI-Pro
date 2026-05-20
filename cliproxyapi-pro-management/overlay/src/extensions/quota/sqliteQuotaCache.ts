@@ -112,7 +112,14 @@ class SqliteQuotaCache {
   async getStats(): Promise<{ totalEntries: number; updatedAt: number }> {
     try {
       const stats = await apiClient.get<QuotaCacheStatsResponse>('/usage/quota-cache', { params: { stats: '1' } });
-      return { totalEntries: stats.totalEntries ?? 0, updatedAt: stats.updatedAt ?? 0 };
+      if (typeof stats.totalEntries === 'number') {
+        return { totalEntries: stats.totalEntries, updatedAt: stats.updatedAt ?? 0 };
+      }
+      const items = await this.getAll();
+      return {
+        totalEntries: items.length,
+        updatedAt: items.reduce((latest, entry) => Math.max(latest, entry.cachedAt, entry.accessedAt), stats.updatedAt ?? 0),
+      };
     } catch (err) {
       console.error('SQLite quota cache getStats error:', err);
       return { totalEntries: 0, updatedAt: 0 };

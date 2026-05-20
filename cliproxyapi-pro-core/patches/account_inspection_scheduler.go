@@ -836,13 +836,13 @@ func (s *accountInspectionScheduler) mergeTokenRefreshResultLocked(result accoun
 			current.TokenRefreshError = result.TokenRefreshError
 			current.NextRefreshAt = result.NextRefreshAt
 			s.status.Results[index] = current
-			s.status.Results = limitAccountInspectionResults(sortAccountInspectionResults(s.status.Results), 500)
+			s.status.Results = sortAccountInspectionResults(s.status.Results)
 			return
 		}
 	}
 
 	s.status.Summary = adjustAccountInspectionSummaryForResult(s.status.Summary, result, 1)
-	s.status.Results = limitAccountInspectionResults(sortAccountInspectionResults(append(s.status.Results, result)), 500)
+	s.status.Results = sortAccountInspectionResults(append(s.status.Results, result))
 }
 
 func (s *accountInspectionScheduler) mergeSingleInspectionResultLocked(result accountInspectionResult) {
@@ -861,7 +861,7 @@ func (s *accountInspectionScheduler) mergeSingleInspectionResultLocked(result ac
 		}
 	}
 
-	s.status.Results = limitAccountInspectionResults(sortAccountInspectionResults(s.status.Results), 500)
+	s.status.Results = sortAccountInspectionResults(s.status.Results)
 }
 
 func (s *accountInspectionScheduler) executeSingleInspection(ctx context.Context, settings accountInspectionSettings, item accountInspectionActionItem) (accountInspectionResult, accountInspectionSummary, error) {
@@ -907,7 +907,7 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 	s.setRunStateLocked(state)
 	s.status.LastFinishedAt = finishedAt
 	s.status.Summary = summary
-	s.status.Results = limitAccountInspectionResults(results, 500)
+	s.status.Results = results
 	completed := s.status.Progress.Completed
 	if state == accountInspectionStateCompleted {
 		completed = len(results)
@@ -1257,9 +1257,14 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 	}
 	if refreshed, refreshTriggered, refreshErr := s.refreshAccountIfDue(ctx, account, refreshLimiter); refreshErr != nil {
 		result.TokenRefreshTriggered = refreshTriggered
+		result.NextRefreshAt = account.nextRefreshAtMillis()
+		if errors.Is(refreshErr, context.Canceled) || errors.Is(refreshErr, context.DeadlineExceeded) {
+			result.Error = refreshErr.Error()
+			result.ActionReason = "巡检已取消，保留账号"
+			return result
+		}
 		result.TokenRefreshStatus = "failed"
 		result.TokenRefreshError = refreshErr.Error()
-		result.NextRefreshAt = account.nextRefreshAtMillis()
 		result.Error = refreshErr.Error()
 		result.ActionReason = "刷新令牌失败，保留账号"
 		s.syncInspectionAuthError(ctx, account, "inspection_probe_error", refreshErr.Error(), 0)
@@ -1347,7 +1352,7 @@ func (s *accountInspectionScheduler) refreshAccountIfDue(ctx context.Context, ac
 		case refreshLimiter <- struct{}{}:
 			defer func() { <-refreshLimiter }()
 		case <-ctx.Done():
-			return account, true, ctx.Err()
+			return account, false, ctx.Err()
 		}
 	}
 	updated, refreshed, err := s.h.authManager.RefreshIfDueForInspection(ctx, account.Auth.ID)
@@ -2103,12 +2108,11 @@ func (s *accountInspectionScheduler) applyManualActionResultLocked(result accoun
 			s.status.Summary = adjustAccountInspectionSummaryForResult(s.status.Summary, current, -1)
 			s.status.Summary = adjustAccountInspectionSummaryForResult(s.status.Summary, merged, 1)
 			s.status.Results[index] = merged
-			s.status.Results = limitAccountInspectionResults(sortAccountInspectionResults(s.status.Results), 500)
 			return
 		}
 	}
 	s.status.Summary = adjustAccountInspectionSummaryForResult(s.status.Summary, result, 1)
-	s.status.Results = limitAccountInspectionResults(sortAccountInspectionResults(append(s.status.Results, result)), 500)
+	s.status.Results = append(s.status.Results, result)
 }
 
 func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, items []accountInspectionActionItem) []accountInspectionActionOutcome {
@@ -2148,6 +2152,7 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 		}
 		s.applyManualActionResultLocked(result)
 	}
+	s.status.Results = sortAccountInspectionResults(s.status.Results)
 	broadcast := s.statusBroadcastLocked(true)
 	s.mu.Unlock()
 	broadcast.send()
@@ -2323,13 +2328,6 @@ func summarizeAccountInspection(totalFiles int, probeSetCount int, accounts []ac
 		}
 	}
 	return summary
-}
-
-func limitAccountInspectionResults(results []accountInspectionResult, limit int) []accountInspectionResult {
-	if len(results) <= limit {
-		return results
-	}
-	return results[:limit]
 }
 
 func sortAccountInspectionResults(results []accountInspectionResult) []accountInspectionResult {

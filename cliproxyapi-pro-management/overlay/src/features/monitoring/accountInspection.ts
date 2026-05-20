@@ -5,7 +5,7 @@ import { normalizeAuthIndex } from '@/utils/usage';
 export type AccountInspectionLogLevel = 'info' | 'success' | 'warning' | 'error';
 export type AccountInspectionAction = 'keep' | 'delete' | 'disable' | 'enable';
 export type AccountInspectionExecutionAction = Exclude<AccountInspectionAction, 'keep'>;
-export type AccountInspectionProgressStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'completed';
+export type AccountInspectionProgressStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'completed' | 'failed';
 export type AccountInspectionDeepProbeStatus = 'success' | 'quota' | 'auth_error' | 'transient_error' | 'skipped' | '';
 export type AccountInspectionAutoErrorAction = 'none' | 'disable' | 'delete';
 export type AccountInspectionAntigravityQuotaMode = 'max-used' | 'claude-gpt';
@@ -461,6 +461,12 @@ const sortResults = (items: AccountInspectionResultItem[]) =>
       left.key.localeCompare(right.key)
   );
 
+const buildPlannedActionPreview = (results: AccountInspectionResultItem[]) =>
+  results
+    .filter((item) => item.action !== 'keep')
+    .slice(0, 10)
+    .map((item) => `${formatAccountInspectionIdentity(item)} -> ${item.action}`);
+
 const summarizeResults = (results: AccountInspectionResultItem[]) => {
   const deleteCount = results.filter((item) => item.action === 'delete').length;
   const disableCount = results.filter((item) => item.action === 'disable').length;
@@ -472,10 +478,7 @@ const summarizeResults = (results: AccountInspectionResultItem[]) => {
     enableCount,
     keepCount: results.length - deleteCount - disableCount - enableCount,
     errorCount,
-    plannedActionPreview: results
-      .filter((item) => item.action !== 'keep')
-      .slice(0, 10)
-      .map((item) => `${formatAccountInspectionIdentity(item)} -> ${item.action}`),
+    plannedActionPreview: buildPlannedActionPreview(results),
   };
 };
 
@@ -544,6 +547,7 @@ export const accountInspectionBackendProgressStatus = (
 ): AccountInspectionProgressSnapshot['status'] => {
   if (status.state === 'paused') return 'paused';
   if (status.state === 'running' || status.state === 'stopping') return 'running';
+  if (status.state === 'failed') return 'failed';
   if (status.state === 'stopped') return 'stopped';
   if (status.state === 'completed' || status.state === 'partial' || status.lastFinishedAt > 0) return 'completed';
   return 'idle';
@@ -577,10 +581,7 @@ const buildAccountInspectionBackendRunResult = (
       ...response.status.summary,
       usedPercentThreshold: settings.usedPercentThreshold,
       sampled: settings.sampleSize > 0,
-      plannedActionPreview: results
-        .filter((item) => item.action !== 'keep')
-        .slice(0, 10)
-        .map((item) => `${formatAccountInspectionIdentity(item)} -> ${item.action}`),
+      plannedActionPreview: buildPlannedActionPreview(results),
     },
     startedAt,
     finishedAt,
