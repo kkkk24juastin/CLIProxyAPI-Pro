@@ -2695,6 +2695,7 @@
 
 .settingsField {
   display: grid;
+  align-content: start;
   gap: 8px;
   min-width: 0;
   color: var(--monitor-ink);
@@ -2720,6 +2721,7 @@
 .settingsGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 12px;
 }
 
