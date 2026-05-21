@@ -378,6 +378,32 @@ jobs:
           management_sha="$(git -C upstream-management rev-parse HEAD)"
           customization_sha="$(git -C customizations-repo rev-parse HEAD)"
 
+          format_upstream_notes() {
+            local repo="$1"
+            local notes="$2"
+            REPO="${repo}" NOTES="${notes}" python3 <<'PY'
+          import os
+          import re
+
+          repo = os.environ['REPO']
+          notes = os.environ['NOTES']
+          commit_pattern = re.compile(r'^([0-9a-fA-F]{7,40})(\s+)')
+          pr_pattern = re.compile(r'(?<![\w/\]])#([0-9]+)\b')
+
+          for line in notes.splitlines():
+              line = commit_pattern.sub(
+                  lambda match: f'[{match.group(1)[:7]}](https://github.com/{repo}/commit/{match.group(1)}){match.group(2)}',
+                  line,
+                  count=1,
+              )
+              line = pr_pattern.sub(
+                  lambda match: f'[#{match.group(1)}](https://github.com/{repo}/pull/{match.group(1)})',
+                  line,
+              )
+              print(line)
+          PY
+          }
+
           : > release-notes.md
           {
             echo "CLIProxyAPI Pro release built from the latest core and management upstream releases."
@@ -402,7 +428,7 @@ jobs:
             echo "## Core upstream release notes"
             echo
             if [ -n "${core_notes}" ]; then
-              printf '%s\n' "${core_notes}"
+              format_upstream_notes "${CORE_UPSTREAM_REPO}" "${core_notes}"
             else
               echo "No core upstream release notes were provided."
             fi
@@ -412,7 +438,7 @@ jobs:
             echo "## Management upstream release notes"
             echo
             if [ -n "${management_notes}" ]; then
-              printf '%s\n' "${management_notes}"
+              format_upstream_notes "${MANAGEMENT_UPSTREAM_REPO}" "${management_notes}"
             else
               echo "No management upstream release notes were provided."
             fi
@@ -543,6 +569,7 @@ jobs:
     needs:
       - check-version
       - publish-release
+      - backup-usage-statistics
     if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
     runs-on: ubuntu-latest
 
@@ -608,6 +635,7 @@ jobs:
         env:
           GITHUB_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
+          MANAGEMENT_VERSION: ${{ needs.check-version.outputs.management_version }}
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -620,6 +648,8 @@ jobs:
 
           repo = os.environ.get('GITHUB_REPO', '')
           tag = os.environ.get('RELEASE_TAG', 'Unknown')
+          core_version = tag
+          management_version = f"v{os.environ.get('MANAGEMENT_VERSION', 'Unknown')}-pro"
           chat_id = os.environ.get('CHAT_ID')
           bot_token = os.environ.get('BOT_TOKEN')
           docker_username = os.environ.get('DOCKER_USERNAME', 'unknown')
@@ -628,7 +658,9 @@ jobs:
 
           full_text = (
               '🚀 <b>New CLIProxyAPI Pro Release Published!</b>\n\n'
-              f'📦 <b>Version:</b> <code>{html.escape(tag)}</code>\n'
+              f'📦 <b>Release:</b> <code>{html.escape(tag)}</code>\n'
+              f'🧩 <b>Core:</b> <code>{html.escape(core_version)}</code>\n'
+              f'🖥️ <b>Management:</b> <code>{html.escape(management_version)}</code>\n'
               f'🐳 <a href="{html.escape(docker_url)}">DockerHub</a>\n'
               f'📝 <a href="{html.escape(release_url)}">Release notes</a>'
           )
