@@ -381,27 +381,28 @@ jobs:
           format_upstream_notes() {
             local repo="$1"
             local notes="$2"
-            REPO="${repo}" NOTES="${notes}" python3 <<'PY'
+            printf '%s\n' "${notes}" | REPO="${repo}" python3 -c '
           import os
           import re
+          import sys
 
-          repo = os.environ['REPO']
-          notes = os.environ['NOTES']
-          commit_pattern = re.compile(r'^([0-9a-fA-F]{7,40})(\s+)')
-          pr_pattern = re.compile(r'(?<![\w/\]])#([0-9]+)\b')
+          repo = os.environ["REPO"]
+          commit_pattern = re.compile(r"^(\s*(?:[-*]\s+)?)?([0-9a-fA-F]{7,40})(\s+)")
+          pr_pattern = re.compile(r"(?<![\w/\]])#([0-9]+)\b")
 
-          for line in notes.splitlines():
-              line = commit_pattern.sub(
-                  lambda match: f'[{match.group(1)[:7]}](https://github.com/{repo}/commit/{match.group(1)}){match.group(2)}',
-                  line,
-                  count=1,
-              )
+          def format_commit(match):
+              prefix = match.group(1) or ""
+              full_hash = match.group(2)
+              return f"{prefix}[{full_hash[:7]}](https://github.com/{repo}/commit/{full_hash}){match.group(3)}"
+
+          for line in sys.stdin.read().splitlines():
+              line = commit_pattern.sub(format_commit, line, count=1)
               line = pr_pattern.sub(
-                  lambda match: f'[#{match.group(1)}](https://github.com/{repo}/pull/{match.group(1)})',
+                  lambda match: f"[#{match.group(1)}](https://github.com/{repo}/pull/{match.group(1)})",
                   line,
               )
               print(line)
-          PY
+          '
           }
 
           : > release-notes.md
@@ -624,6 +625,7 @@ jobs:
     needs:
       - check-version
       - publish-release
+      - trigger-render-deployment
     if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
     runs-on: ubuntu-latest
 
