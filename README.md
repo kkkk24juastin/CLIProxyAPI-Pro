@@ -92,13 +92,13 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 <div align="center">
 
 ### 请求监控
-![请求监控](assets/01.jpeg)
+![请求监控](assets/01.png)
 
 ### 请求监控
-![请求监控全览](assets/02.jpeg)
+![请求监控全览](assets/02.png)
 
 ### 账号巡检
-![账号巡检全览](assets/03.jpeg)
+![账号巡检全览](assets/03.png)
 
 </div>
 
