@@ -1466,20 +1466,6 @@ const buildEventRows = (
       const authIndex = normalizeAuthIndex(detail.auth_index) ?? '-';
       const authMeta = authMetaMap.get(authIndex);
       const sourceMeta = resolveSourceDisplay(detail.source, detail.auth_index, sourceInfoMap, authFileMap);
-      const hasAuthIndex = authIndex !== '-';
-      const hasKnownAuthIndex = hasAuthIndex && (
-        authMetaMap.has(authIndex) ||
-        authFileMap.has(authIndex) ||
-        channelByAuthIndex.has(authIndex) ||
-        sourceInfoMap.byAuthIndex.has(authIndex)
-      );
-      const isDeletedCredential = hasAuthIndex && !hasKnownAuthIndex;
-      const sourceLabel = isDeletedCredential
-        ? deletedCredentialLabel
-        : authMeta?.label || sourceMeta.displayName || authIndex;
-      const sourceMasked = maskEmailLike(sourceLabel);
-      const account = isDeletedCredential ? sourceLabel : authMeta?.account || sourceLabel;
-      const accountMasked = maskEmailLike(account);
       const resolvedProvider = (detail.provider || authMeta?.provider || sourceMeta.type || '-').toLowerCase();
       const resolvedAuthType = detail.auth_type || (authMeta ? (authMeta.runtimeOnly ? '' : 'oauth') : '');
       const channelMeta = channelByAuthIndex.get(authIndex)
@@ -1488,6 +1474,27 @@ const buildEventRows = (
             ?? channelByAuthIndex.get(`provider:oauth:${resolvedProvider}`)
             ?? channelByAuthIndex.get(`provider:apikey:${resolvedProvider}`))
           : undefined);
+      const hasAuthIndex = authIndex !== '-';
+      const hasKnownAuthIndex = hasAuthIndex && (
+        authMetaMap.has(authIndex) ||
+        authFileMap.has(authIndex) ||
+        channelByAuthIndex.has(authIndex) ||
+        sourceInfoMap.byAuthIndex.has(authIndex)
+      );
+      const sourceIdentityKey = sourceMeta.identityKey || '';
+      const isConfiguredSourceCredential = Boolean(sourceIdentityKey) &&
+        !sourceIdentityKey.startsWith('auth:') &&
+        !sourceIdentityKey.startsWith('source:');
+      const isApiKeyCredential = resolvedAuthType === 'apikey' ||
+        channelMeta?.authType === 'apikey' ||
+        (isConfiguredSourceCredential && !authMeta);
+      const isDeletedCredential = hasAuthIndex && !hasKnownAuthIndex && !isApiKeyCredential;
+      const sourceLabel = isDeletedCredential
+        ? deletedCredentialLabel
+        : authMeta?.label || sourceMeta.displayName || authIndex;
+      const sourceMasked = maskEmailLike(sourceLabel);
+      const account = isDeletedCredential ? sourceLabel : authMeta?.account || sourceLabel;
+      const accountMasked = maskEmailLike(account);
       const channelLabel = channelMeta?.name || resolvedProvider;
       const endpoint = readStringValue(detail.__endpoint) || '-';
       const endpointMethod = readStringValue(detail.__endpointMethod) || '-';
