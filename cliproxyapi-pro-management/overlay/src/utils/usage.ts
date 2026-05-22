@@ -149,6 +149,10 @@ export function normalizeUsageSourceId(
   const trimmed = raw.trim();
   if (!trimmed) return '';
 
+  if (trimmed.startsWith(USAGE_SOURCE_PREFIX_MASKED)) {
+    return `${USAGE_SOURCE_PREFIX_MASKED}${trimmed.slice(USAGE_SOURCE_PREFIX_MASKED.length)}`;
+  }
+
   const extracted = extractRawSecretFromText(trimmed);
   if (extracted) return `${USAGE_SOURCE_PREFIX_KEY}${fnv1a64Hex(extracted)}`;
   if (MASKED_TOKEN_HINT_REGEX.test(trimmed)) {

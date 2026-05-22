@@ -152,6 +152,7 @@ type MonitoringChannelMeta = {
   disabled: boolean;
   authIndices: string[];
   modelNames: string[];
+  authType?: 'oauth' | 'apikey' | '';
 };
 
 type MonitoringAuthMeta = {
@@ -809,8 +810,10 @@ export const buildAccountRows = ({
       };
     }
     const accountKey = row.account || row.authLabel || row.source;
+    const channelKey = row.channel && row.channel !== '-' ? row.channel : '';
+    const groupId = channelKey ? `account:${accountKey}::${channelKey}` : `account:${accountKey}`;
     return {
-      id: `account:${accountKey}`,
+      id: groupId,
       account: row.account,
       accountMasked: row.accountMasked,
       apiKey: row.clientApiKey,
@@ -1443,8 +1446,13 @@ const buildEventRows = (
       const account = authMeta?.account || sourceLabel;
       const accountMasked = maskEmailLike(account);
       const resolvedProvider = (detail.provider || authMeta?.provider || sourceMeta.type || '-').toLowerCase();
+      const resolvedAuthType = detail.auth_type || (authMeta ? (authMeta.runtimeOnly ? '' : 'oauth') : '');
       const channelMeta = channelByAuthIndex.get(authIndex)
-        ?? (resolvedProvider !== '-' ? channelByAuthIndex.get(`provider:${resolvedProvider}`) : undefined);
+        ?? (resolvedProvider !== '-'
+          ? (channelByAuthIndex.get(`provider:${resolvedAuthType === 'apikey' ? 'apikey' : 'oauth'}:${resolvedProvider}`)
+            ?? channelByAuthIndex.get(`provider:oauth:${resolvedProvider}`)
+            ?? channelByAuthIndex.get(`provider:apikey:${resolvedProvider}`))
+          : undefined);
       const channelLabel = channelMeta?.name || resolvedProvider;
       const endpoint = readStringValue(detail.__endpoint) || '-';
       const endpointMethod = readStringValue(detail.__endpointMethod) || '-';
@@ -1535,22 +1543,21 @@ const buildNativeProviderChannels = (
   config: Config | null | undefined,
   authFiles: AuthFileItem[]
 ): MonitoringChannelMeta[] => {
-  const providerMap = new Map<string, {
+  type ChannelBucket = {
     authIndices: Set<string>;
     modelNames: Set<string>;
     disabled: boolean;
-  }>();
+  };
 
-  const ensureProvider = (provider: string) => {
-    if (!provider || provider === '-') return null;
-    const key = provider.trim().toLowerCase();
-    if (!key) return null;
-    let entry = providerMap.get(key);
-    if (!entry) {
-      entry = { authIndices: new Set(), modelNames: new Set(), disabled: false };
-      providerMap.set(key, entry);
+  const bucketMap = new Map<string, ChannelBucket>();
+
+  const ensureBucket = (key: string) => {
+    let bucket = bucketMap.get(key);
+    if (!bucket) {
+      bucket = { authIndices: new Set(), modelNames: new Set(), disabled: false };
+      bucketMap.set(key, bucket);
     }
-    return entry;
+    return bucket;
   };
 
   const apiKeyProviders: Array<{
@@ -1565,39 +1572,44 @@ const buildNativeProviderChannels = (
 
   apiKeyProviders.forEach(({ items, type }) => {
     if (!items?.length) return;
-    const entry = ensureProvider(type);
-    if (!entry) return;
+    const key = `apikey:${type}`;
+    const bucket = ensureBucket(key);
     items.forEach((item) => {
       const authIndex = normalizeAuthIndex(item.authIndex);
-      if (authIndex) entry.authIndices.add(authIndex);
+      if (authIndex) bucket.authIndices.add(authIndex);
       if (Array.isArray(item.models)) {
         item.models.forEach((m) => {
           const name = typeof m === 'string' ? m.trim() : '';
-          if (name) entry.modelNames.add(name);
+          if (name) bucket.modelNames.add(name);
         });
       }
     });
   });
 
   authFiles.forEach((file) => {
-    const provider = readStringValue(file.provider) || readStringValue(file.type);
+    const provider = (readStringValue(file.provider) || readStringValue(file.type)).toLowerCase();
     if (!provider) return;
-    const entry = ensureProvider(provider);
-    if (!entry) return;
+    const key = `oauth:${provider}`;
+    const bucket = ensureBucket(key);
     const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
-    if (authIndex) entry.authIndices.add(authIndex);
+    if (authIndex) bucket.authIndices.add(authIndex);
   });
 
   const channels: MonitoringChannelMeta[] = [];
-  providerMap.forEach((entry, provider) => {
+  bucketMap.forEach((bucket, bucketKey) => {
+    if (bucket.authIndices.size === 0) return;
+    const [authType, provider] = bucketKey.split(':', 2) as ['oauth' | 'apikey', string];
+    const label = resolveProviderDisplayLabel(provider);
+    const suffix = authType === 'apikey' ? ' (API Key)' : '';
     channels.push({
-      key: `provider:${provider}`,
-      name: resolveProviderDisplayLabel(provider),
+      key: `provider:${bucketKey}`,
+      name: `${label}${suffix}`,
       baseUrl: '',
       host: provider,
-      disabled: entry.disabled,
-      authIndices: Array.from(entry.authIndices),
-      modelNames: Array.from(entry.modelNames),
+      disabled: bucket.disabled,
+      authIndices: Array.from(bucket.authIndices),
+      modelNames: Array.from(bucket.modelNames),
+      authType,
     });
   });
 

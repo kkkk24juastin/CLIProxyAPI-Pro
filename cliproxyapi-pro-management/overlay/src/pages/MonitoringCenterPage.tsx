@@ -1894,7 +1894,7 @@ function AccountQuotaPanel({
   const lastQuotaSync = quotaState?.lastRefreshedAt && Number.isFinite(quotaState.lastRefreshedAt)
     ? new Date(quotaState.lastRefreshedAt).toLocaleString(locale)
     : '';
-  const quotaTitle = quotaEntries.length === 1 ? quotaEntries[0].providerLabel : quotaEntries.length > 1 ? t('quota_management.title') : t('codex_quota.title');
+  const quotaTitle = quotaEntries.length === 1 ? quotaEntries[0].providerLabel : t('quota_management.title');
 
   const renderRefreshButton = () => (
     <button type="button" className={styles.quotaRefreshButton} onClick={onRefreshQuota} disabled={quotaLoading}>
