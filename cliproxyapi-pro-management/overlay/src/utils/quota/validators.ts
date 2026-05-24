@@ -6,11 +6,23 @@ import type { AuthFileItem } from '@/types';
 import { GEMINI_CLI_IGNORED_MODEL_PREFIXES } from './constants';
 import { normalizeNumberValue } from './parsers';
 
-export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi';
+export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';
 
 type QuotaProviderMetadata = {
-  quotaMapName: 'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'kimiQuota';
-  setterName: 'setAntigravityQuota' | 'setClaudeQuota' | 'setCodexQuota' | 'setGeminiCliQuota' | 'setKimiQuota';
+  quotaMapName:
+    | 'antigravityQuota'
+    | 'claudeQuota'
+    | 'codexQuota'
+    | 'geminiCliQuota'
+    | 'kimiQuota'
+    | 'xaiQuota';
+  setterName:
+    | 'setAntigravityQuota'
+    | 'setClaudeQuota'
+    | 'setCodexQuota'
+    | 'setGeminiCliQuota'
+    | 'setKimiQuota'
+    | 'setXaiQuota';
 };
 
 export const QUOTA_PROVIDER_METADATA: Record<QuotaProviderType, QuotaProviderMetadata> = {
@@ -19,6 +31,7 @@ export const QUOTA_PROVIDER_METADATA: Record<QuotaProviderType, QuotaProviderMet
   codex: { quotaMapName: 'codexQuota', setterName: 'setCodexQuota' },
   'gemini-cli': { quotaMapName: 'geminiCliQuota', setterName: 'setGeminiCliQuota' },
   kimi: { quotaMapName: 'kimiQuota', setterName: 'setKimiQuota' },
+  xai: { quotaMapName: 'xaiQuota', setterName: 'setXaiQuota' },
 };
 
 export const QUOTA_PROVIDER_TYPES = Object.keys(QUOTA_PROVIDER_METADATA) as QuotaProviderType[];
@@ -57,7 +70,9 @@ export function readBooleanValue(value: unknown, fallback = false): boolean {
 
 export function resolveAuthProvider(file: AuthFileItem): string {
   const raw = file.provider ?? file.type ?? file.typo ?? '';
-  return String(raw).trim().toLowerCase();
+  const key = String(raw).trim().toLowerCase().replace(/_/g, '-');
+  if (key === 'x-ai' || key === 'grok') return 'xai';
+  return key;
 }
 
 export function isAntigravityFile(file: AuthFileItem): boolean {
@@ -91,6 +106,10 @@ export function isGeminiCliFile(file: AuthFileItem): boolean {
 
 export function isKimiFile(file: AuthFileItem): boolean {
   return resolveAuthProvider(file) === 'kimi';
+}
+
+export function isXaiFile(file: AuthFileItem): boolean {
+  return resolveAuthProvider(file) === 'xai';
 }
 
 export function isRuntimeOnlyAuthFile(file: AuthFileItem): boolean {
