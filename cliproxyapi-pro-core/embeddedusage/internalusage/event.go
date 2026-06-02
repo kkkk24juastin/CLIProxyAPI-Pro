@@ -69,12 +69,15 @@ type APIAggregate struct {
 }
 
 type Payload struct {
-	TotalRequests int64                    `json:"total_requests"`
-	SuccessCount  int64                    `json:"success_count"`
-	FailureCount  int64                    `json:"failure_count"`
-	TotalTokens   int64                    `json:"total_tokens"`
-	LatestID      int64                    `json:"latest_id"`
-	APIs          map[string]*APIAggregate `json:"apis"`
+	TotalRequests  int64                    `json:"total_requests"`
+	SuccessCount   int64                    `json:"success_count"`
+	FailureCount   int64                    `json:"failure_count"`
+	TotalTokens    int64                    `json:"total_tokens"`
+	LatestID       int64                    `json:"latest_id"`
+	DetailsCount   int64                    `json:"details_count,omitempty"`
+	DetailsLimit   int64                    `json:"details_limit,omitempty"`
+	DetailsLimited bool                     `json:"details_limited,omitempty"`
+	APIs           map[string]*APIAggregate `json:"apis"`
 }
 
 var endpointPattern = regexp.MustCompile(`^(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+(\S+)`)
@@ -162,7 +165,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 }
 
 func BuildPayload(events []Event) Payload {
-	payload := Payload{APIs: map[string]*APIAggregate{}}
+	payload := Payload{DetailsCount: int64(len(events)), APIs: map[string]*APIAggregate{}}
 	for _, event := range events {
 		payload.TotalRequests++
 		if event.Failed {

@@ -2301,6 +2301,16 @@
   color: var(--inspect-muted);
 }
 
+.renderLimitHint {
+  padding: 10px 12px;
+  border: 1px solid var(--inspect-line);
+  border-radius: 8px;
+  background: var(--inspect-surface-muted);
+  color: var(--inspect-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .previewSection {
   display: grid;
   gap: 12px;

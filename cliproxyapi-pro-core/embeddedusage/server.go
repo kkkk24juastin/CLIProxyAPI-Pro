@@ -120,24 +120,80 @@ func parseQueryInt(c *gin.Context, key string, fallback int) int {
 	}
 	return parsed
 }
+
+func usageEventPageLimit(requestedLimit int) int {
+	if requestedLimit <= 0 || requestedLimit > usageEventsPageLimit {
+		return usageEventsPageLimit
+	}
+	return requestedLimit
+}
+
+func (s *Server) loadUsageEventPage(ctx context.Context, afterID int64, requestedLimit int) ([]internalusage.Event, int, bool, error) {
+	limit := usageEventPageLimit(requestedLimit)
+	events, err := s.store.EventsAfter(ctx, afterID, limit+1)
+	if err != nil {
+		return nil, limit, false, err
+	}
+	detailsLimited := len(events) > limit
+	if detailsLimited {
+		events = events[:limit]
+	}
+	return events, limit, detailsLimited, nil
+}
+
+func usagePayloadWithDetailLimit(events []internalusage.Event, limit int, detailsLimited bool) internalusage.Payload {
+	payload := internalusage.BuildPayload(events)
+	payload.DetailsLimit = int64(limit)
+	payload.DetailsLimited = detailsLimited
+	return payload
+}
+
 func (s *Server) handleUsage(c *gin.Context) {
-	events, err := s.store.RecentEvents(c.Request.Context(), s.cfg.QueryLimit)
+	limit := parseQueryInt(c, "limit", s.cfg.QueryLimit)
+	if limit <= 0 {
+		limit = s.cfg.QueryLimit
+	}
+	if limit <= 0 {
+		limit = 50000
+	}
+	latestID, _, err := s.store.LatestCursor(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, internalusage.BuildPayload(events))
+	events, err := s.store.RecentEvents(c.Request.Context(), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	payload := internalusage.BuildPayload(events)
+	if latestID > payload.LatestID {
+		payload.LatestID = latestID
+	}
+	summary, err := s.store.UsageSummary(c.Request.Context(), payload.LatestID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	payload.TotalRequests = summary.TotalRequests
+	payload.SuccessCount = summary.SuccessCount
+	payload.FailureCount = summary.FailureCount
+	payload.TotalTokens = summary.TotalTokens
+	if limit > 0 {
+		payload.DetailsLimit = int64(limit)
+		payload.DetailsLimited = summary.TotalRequests > payload.DetailsCount
+	}
+	c.JSON(http.StatusOK, payload)
 }
 
 func (s *Server) handleUsageEvents(c *gin.Context) {
 	afterID := parseQueryInt64(c, "after_id", 0)
-	limit := parseQueryInt(c, "limit", s.cfg.BatchSize)
-	events, err := s.store.EventsAfter(c.Request.Context(), afterID, limit)
+	events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), afterID, parseQueryInt(c, "limit", s.cfg.BatchSize))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, internalusage.BuildPayload(events))
+	c.JSON(http.StatusOK, usagePayloadWithDetailLimit(events, limit, detailsLimited))
 }
 
 func (s *Server) handleUsageStream(c *gin.Context) {
@@ -148,7 +204,7 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 	}
 
 	lastID := parseQueryInt64(c, "after_id", 0)
-	initialEvents, err := s.store.EventsAfter(c.Request.Context(), lastID, s.cfg.BatchSize)
+	initialEvents, initialLimit, initialDetailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -179,7 +235,7 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 			return
 		}
 	} else {
-		payload := internalusage.BuildPayload(initialEvents)
+		payload := usagePayloadWithDetailLimit(initialEvents, initialLimit, initialDetailsLimited)
 		lastID = payload.LatestID
 		if !writeEvent("usage", payload) {
 			return
@@ -191,7 +247,7 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 		case <-c.Request.Context().Done():
 			return
 		case <-ticker.C:
-			events, err := s.store.EventsAfter(c.Request.Context(), lastID, s.cfg.BatchSize)
+			events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
 			if err != nil {
 				return
 			}
@@ -202,7 +258,7 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 				flusher.Flush()
 				continue
 			}
-			payload := internalusage.BuildPayload(events)
+			payload := usagePayloadWithDetailLimit(events, limit, detailsLimited)
 			lastID = payload.LatestID
 			if !writeEvent("usage", payload) {
 				return

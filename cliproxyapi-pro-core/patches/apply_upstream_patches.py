@@ -62,6 +62,18 @@ def insert_before(path: Path, marker: str, insertion: str, present: str) -> None
     write(path, text.replace(marker, insertion + marker, 1))
 
 
+def ensure_go_require(path: Path, module: str, version: str) -> None:
+    text = read(path)
+    if re.search(rf'^\s*{re.escape(module)}\s+', text, re.MULTILINE):
+        return
+    line = f'\t{module} {version}\n'
+    marker = 'require (\n'
+    if marker in text:
+        write(path, text.replace(marker, marker + line, 1))
+        return
+    write(path, text.rstrip() + f'\n\nrequire {module} {version}\n')
+
+
 def insert_before_nth(path: Path, marker: str, insertion: str, occurrence: int, present: str) -> None:
     text = read(path)
     if present in text:
@@ -187,10 +199,14 @@ insert_before(
 server = ROOT / 'internal/api/server.go'
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 management_scheduler = ROOT / 'internal/api/handlers/management/account_inspection_scheduler.go'
+management_scheduler_test = ROOT / 'internal/api/handlers/management/account_inspection_scheduler_test.go'
 scheduler_source = Path('/tmp/account_inspection_scheduler.go')
 if not scheduler_source.is_file():
     scheduler_source = Path(__file__).resolve().parent / 'account_inspection_scheduler.go'
 management_scheduler.write_text(re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, scheduler_source.read_text()))
+scheduler_test_source = Path(__file__).resolve().parent / 'account_inspection_scheduler_test.go'
+if scheduler_test_source.is_file():
+    management_scheduler_test.write_text(re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, scheduler_test_source.read_text()))
 replace_once(
     auth_files,
     '''		"unavailable":    auth.Unavailable,
@@ -278,9 +294,9 @@ if embeddedusage_source.is_dir():
     shutil.copytree(embeddedusage_source, embeddedusage_target, dirs_exist_ok=True)
 elif not embeddedusage_target.is_dir():
     raise SystemExit(f'embeddedusage source not found: {embeddedusage_source}')
-rewrite_module_imports(embeddedusage_target / 'server.go')
-rewrite_module_imports(embeddedusage_target / 'service.go')
-rewrite_module_imports(embeddedusage_target / 'store.go')
+ensure_go_require(ROOT / 'go.mod', 'modernc.org/sqlite', 'v1.51.0')
+for embeddedusage_file in embeddedusage_target.rglob('*.go'):
+    rewrite_module_imports(embeddedusage_file)
 
 redisqueue_plugin = ROOT / 'internal/redisqueue/plugin.go'
 redisqueue_usage_toggle = ROOT / 'internal/redisqueue/usage_toggle.go'

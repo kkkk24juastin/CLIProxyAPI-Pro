@@ -19,6 +19,23 @@ type InsertResult struct {
 	Skipped  int `json:"skipped"`
 }
 
+type UsageSummary struct {
+	TotalRequests int64
+	SuccessCount  int64
+	FailureCount  int64
+	TotalTokens   int64
+}
+
+type usageSummarySnapshot struct {
+	LatestID int64
+	Summary  UsageSummary
+}
+
+type cachedUsageSummary struct {
+	LatestID int64
+	Summary  UsageSummary
+}
+
 type QuotaCacheEntry struct {
 	ID         string          `json:"id"`
 	Provider   string          `json:"provider"`
@@ -82,6 +99,8 @@ const monitoringSettingsExportRecordType = "monitoring_settings"
 type Store struct {
 	db           *sql.DB
 	quotaCacheMu sync.Mutex
+	summaryMu    sync.RWMutex
+	summaryCache *cachedUsageSummary
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -105,7 +124,15 @@ func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	db := s.db
+	s.db = nil
+	return db.Close()
+}
+
+func (s *Store) invalidateUsageSummaryCache() {
+	s.summaryMu.Lock()
+	s.summaryCache = nil
+	s.summaryMu.Unlock()
 }
 
 func (s *Store) init() error {
@@ -141,9 +168,19 @@ func (s *Store) init() error {
 			created_at_ms integer not null
 		)`,
 		`create index if not exists idx_usage_events_timestamp on usage_events(timestamp_ms)`,
+		`create index if not exists idx_usage_events_recent on usage_events(timestamp_ms desc, id desc)`,
 		`create index if not exists idx_usage_events_request_id on usage_events(request_id)`,
 		`create index if not exists idx_usage_events_model on usage_events(model)`,
 		`create index if not exists idx_usage_events_auth_index on usage_events(auth_index)`,
+		`create table if not exists usage_summary (
+			id integer primary key check (id = 1),
+			latest_event_id integer not null default 0,
+			total_requests integer not null default 0,
+			success_count integer not null default 0,
+			failure_count integer not null default 0,
+			total_tokens integer not null default 0,
+			updated_at_ms integer not null
+		)`,
 		`create table if not exists dead_letter_events (
 			id integer primary key autoincrement,
 			payload text not null,
@@ -180,7 +217,7 @@ func (s *Store) init() error {
 			return err
 		}
 	}
-	return nil
+	return s.ensureUsageSummary()
 }
 
 func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) (InsertResult, error) {
@@ -205,6 +242,8 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 	defer stmt.Close()
 
 	result := InsertResult{}
+	summaryDelta := UsageSummary{}
+	latestInsertedID := int64(0)
 	for _, event := range events {
 		failed := 0
 		if event.Failed {
@@ -223,14 +262,139 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 		affected, _ := res.RowsAffected()
 		if affected > 0 {
 			result.Inserted++
+			summaryDelta.TotalRequests++
+			if event.Failed {
+				summaryDelta.FailureCount++
+			} else {
+				summaryDelta.SuccessCount++
+			}
+			summaryDelta.TotalTokens += event.TotalTokens
+			if insertedID, err := res.LastInsertId(); err == nil && insertedID > latestInsertedID {
+				latestInsertedID = insertedID
+			}
 		} else {
 			result.Skipped++
+		}
+	}
+	if result.Inserted > 0 {
+		if latestInsertedID <= 0 {
+			if err := tx.QueryRowContext(ctx, `select coalesce(max(id), 0) from usage_events`).Scan(&latestInsertedID); err != nil {
+				return InsertResult{}, err
+			}
+		}
+		if err := s.applyUsageSummaryDelta(ctx, tx, latestInsertedID, summaryDelta); err != nil {
+			return InsertResult{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return InsertResult{}, err
 	}
+	if result.Inserted > 0 {
+		s.invalidateUsageSummaryCache()
+	}
 	return result, nil
+}
+
+func (s *Store) ensureUsageSummary() error {
+	snapshot, err := s.readUsageSummarySnapshot(context.Background())
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	latestID, _, cursorErr := s.LatestCursor(context.Background())
+	if cursorErr != nil {
+		return cursorErr
+	}
+	if err == sql.ErrNoRows || snapshot.LatestID != latestID {
+		return s.rebuildUsageSummary(context.Background())
+	}
+	return nil
+}
+
+func (s *Store) readUsageSummarySnapshot(ctx context.Context) (usageSummarySnapshot, error) {
+	var snapshot usageSummarySnapshot
+	err := s.db.QueryRowContext(ctx, `select
+		latest_event_id,
+		total_requests,
+		success_count,
+		failure_count,
+		total_tokens
+		from usage_summary
+		where id = 1`).Scan(
+		&snapshot.LatestID,
+		&snapshot.Summary.TotalRequests,
+		&snapshot.Summary.SuccessCount,
+		&snapshot.Summary.FailureCount,
+		&snapshot.Summary.TotalTokens,
+	)
+	return snapshot, err
+}
+
+func (s *Store) applyUsageSummaryDelta(ctx context.Context, tx *sql.Tx, latestID int64, delta UsageSummary) error {
+	_, err := tx.ExecContext(ctx, `insert into usage_summary(
+		id,
+		latest_event_id,
+		total_requests,
+		success_count,
+		failure_count,
+		total_tokens,
+		updated_at_ms
+	) values(1, ?, ?, ?, ?, ?, ?)
+	on conflict(id) do update set
+		latest_event_id = max(usage_summary.latest_event_id, excluded.latest_event_id),
+		total_requests = usage_summary.total_requests + excluded.total_requests,
+		success_count = usage_summary.success_count + excluded.success_count,
+		failure_count = usage_summary.failure_count + excluded.failure_count,
+		total_tokens = usage_summary.total_tokens + excluded.total_tokens,
+		updated_at_ms = excluded.updated_at_ms`,
+		latestID,
+		delta.TotalRequests,
+		delta.SuccessCount,
+		delta.FailureCount,
+		delta.TotalTokens,
+		time.Now().UnixMilli(),
+	)
+	return err
+}
+
+func (s *Store) rebuildUsageSummary(ctx context.Context) error {
+	var latestID sql.NullInt64
+	var totalRequests, successCount, failureCount, totalTokens sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `select
+		coalesce(max(id), 0),
+		count(*),
+		coalesce(sum(case when failed = 0 then 1 else 0 end), 0),
+		coalesce(sum(case when failed != 0 then 1 else 0 end), 0),
+		coalesce(sum(total_tokens), 0)
+		from usage_events`).Scan(&latestID, &totalRequests, &successCount, &failureCount, &totalTokens); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `insert into usage_summary(
+		id,
+		latest_event_id,
+		total_requests,
+		success_count,
+		failure_count,
+		total_tokens,
+		updated_at_ms
+	) values(1, ?, ?, ?, ?, ?, ?)
+	on conflict(id) do update set
+		latest_event_id = excluded.latest_event_id,
+		total_requests = excluded.total_requests,
+		success_count = excluded.success_count,
+		failure_count = excluded.failure_count,
+		total_tokens = excluded.total_tokens,
+		updated_at_ms = excluded.updated_at_ms`,
+		latestID.Int64,
+		totalRequests.Int64,
+		successCount.Int64,
+		failureCount.Int64,
+		totalTokens.Int64,
+		time.Now().UnixMilli(),
+	)
+	if err == nil {
+		s.invalidateUsageSummaryCache()
+	}
+	return err
 }
 
 func (s *Store) AddDeadLetter(ctx context.Context, payload string, parseErr error) error {
@@ -286,7 +450,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]internalusage.Ev
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
 		latency_ms, failed, raw_json, created_at_ms
-		from usage_events
+		from usage_events indexed by idx_usage_events_recent
 		order by timestamp_ms desc, id desc
 		limit ?`, limit)
 	if err != nil {
@@ -297,8 +461,8 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]internalusage.Ev
 }
 
 func (s *Store) EventsAfter(ctx context.Context, afterID int64, limit int) ([]internalusage.Event, error) {
-	if limit <= 0 || limit > 5000 {
-		limit = 5000
+	if limit <= 0 || limit > usageEventsSentinelLimit {
+		limit = usageEventsSentinelLimit
 	}
 	rows, err := s.db.QueryContext(ctx, `select
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
@@ -334,6 +498,84 @@ func (s *Store) LatestCursor(ctx context.Context) (int64, int64, error) {
 		latestTimestamp = timestamp.Int64
 	}
 	return latestID, latestTimestamp, nil
+}
+
+func (s *Store) UsageSummary(ctx context.Context, maxID int64) (UsageSummary, error) {
+	if maxID <= 0 {
+		return UsageSummary{}, nil
+	}
+	latestID, _, err := s.LatestCursor(ctx)
+	if err != nil {
+		return UsageSummary{}, err
+	}
+	if maxID == latestID {
+		s.summaryMu.RLock()
+		if s.summaryCache != nil && s.summaryCache.LatestID == maxID {
+			summary := s.summaryCache.Summary
+			s.summaryMu.RUnlock()
+			return summary, nil
+		}
+		s.summaryMu.RUnlock()
+
+		snapshot, err := s.readUsageSummarySnapshot(ctx)
+		if err != nil {
+			if err != sql.ErrNoRows {
+				return UsageSummary{}, err
+			}
+		} else if snapshot.LatestID == maxID {
+			s.summaryMu.Lock()
+			s.summaryCache = &cachedUsageSummary{LatestID: maxID, Summary: snapshot.Summary}
+			s.summaryMu.Unlock()
+			return snapshot.Summary, nil
+		}
+		if err := s.rebuildUsageSummary(ctx); err != nil {
+			return UsageSummary{}, err
+		}
+		snapshot, err = s.readUsageSummarySnapshot(ctx)
+		if err != nil {
+			return UsageSummary{}, err
+		}
+		if snapshot.LatestID == maxID {
+			s.summaryMu.Lock()
+			s.summaryCache = &cachedUsageSummary{LatestID: maxID, Summary: snapshot.Summary}
+			s.summaryMu.Unlock()
+			return snapshot.Summary, nil
+		}
+	}
+
+	var summary UsageSummary
+	var totalRequests, successCount, failureCount, totalTokens sql.NullInt64
+	query := `select
+		count(*),
+		coalesce(sum(case when failed = 0 then 1 else 0 end), 0),
+		coalesce(sum(case when failed != 0 then 1 else 0 end), 0),
+		coalesce(sum(total_tokens), 0)
+		from usage_events`
+	args := []any{}
+	query += ` where id <= ?`
+	args = append(args, maxID)
+	err = s.db.QueryRowContext(ctx, query, args...).Scan(&totalRequests, &successCount, &failureCount, &totalTokens)
+	if err != nil {
+		return summary, err
+	}
+	if totalRequests.Valid {
+		summary.TotalRequests = totalRequests.Int64
+	}
+	if successCount.Valid {
+		summary.SuccessCount = successCount.Int64
+	}
+	if failureCount.Valid {
+		summary.FailureCount = failureCount.Int64
+	}
+	if totalTokens.Valid {
+		summary.TotalTokens = totalTokens.Int64
+	}
+	if maxID == latestID {
+		s.summaryMu.Lock()
+		s.summaryCache = &cachedUsageSummary{LatestID: maxID, Summary: summary}
+		s.summaryMu.Unlock()
+	}
+	return summary, nil
 }
 
 func (s *Store) Counts(ctx context.Context) (events int64, deadLetters int64, err error) {
@@ -470,11 +712,62 @@ func (s *Store) DeleteEventsBefore(ctx context.Context, beforeMs int64) (int64, 
 	if beforeMs <= 0 {
 		return 0, nil
 	}
-	result, err := s.db.ExecContext(ctx, `delete from usage_events where timestamp_ms < ?`, beforeMs)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	defer func() { _ = tx.Rollback() }()
+
+	var deleted UsageSummary
+	if err := tx.QueryRowContext(ctx, `select
+		count(*),
+		coalesce(sum(case when failed = 0 then 1 else 0 end), 0),
+		coalesce(sum(case when failed != 0 then 1 else 0 end), 0),
+		coalesce(sum(total_tokens), 0)
+		from usage_events
+		where timestamp_ms < ?`, beforeMs).Scan(&deleted.TotalRequests, &deleted.SuccessCount, &deleted.FailureCount, &deleted.TotalTokens); err != nil {
+		return 0, err
+	}
+	if deleted.TotalRequests == 0 {
+		return 0, nil
+	}
+
+	result, err := tx.ExecContext(ctx, `delete from usage_events where timestamp_ms < ?`, beforeMs)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if affected > 0 {
+		var latestID int64
+		if err := tx.QueryRowContext(ctx, `select coalesce(max(id), 0) from usage_events`).Scan(&latestID); err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `update usage_summary set
+			latest_event_id = ?,
+			total_requests = max(total_requests - ?, 0),
+			success_count = max(success_count - ?, 0),
+			failure_count = max(failure_count - ?, 0),
+			total_tokens = max(total_tokens - ?, 0),
+			updated_at_ms = ?
+			where id = 1`,
+			latestID,
+			deleted.TotalRequests,
+			deleted.SuccessCount,
+			deleted.FailureCount,
+			deleted.TotalTokens,
+			time.Now().UnixMilli(),
+		); err != nil {
+			return 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+		s.invalidateUsageSummaryCache()
+	}
+	return affected, nil
 }
 
 func (s *Store) ApplyRetention(ctx context.Context, now time.Time) (int64, error) {

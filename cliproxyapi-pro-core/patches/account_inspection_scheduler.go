@@ -134,6 +134,16 @@ type accountInspectionSummary struct {
 	ExecutedEnableCount  int `json:"executedEnableCount"`
 }
 
+type accountInspectionHealthCounts struct {
+	Total           int `json:"total"`
+	Healthy         int `json:"healthy"`
+	Disabled        int `json:"disabled"`
+	AuthInvalid     int `json:"authInvalid"`
+	QuotaExhausted  int `json:"quotaExhausted"`
+	InspectionError int `json:"inspectionError"`
+	Recoverable     int `json:"recoverable"`
+}
+
 type accountInspectionRunState string
 
 type accountInspectionStreamMessageType string
@@ -190,14 +200,43 @@ type accountInspectionProgress struct {
 }
 
 type accountInspectionStatus struct {
-	State          accountInspectionRunState   `json:"state"`
-	LastStartedAt  int64                       `json:"lastStartedAt"`
-	LastFinishedAt int64                       `json:"lastFinishedAt"`
-	LastError      string                      `json:"lastError"`
-	Progress       accountInspectionProgress   `json:"progress"`
-	Summary        accountInspectionSummary    `json:"summary"`
-	Logs           []accountInspectionLogEntry `json:"logs"`
-	Results        []accountInspectionResult   `json:"results"`
+	State          accountInspectionRunState      `json:"state"`
+	LastStartedAt  int64                          `json:"lastStartedAt"`
+	LastFinishedAt int64                          `json:"lastFinishedAt"`
+	LastError      string                         `json:"lastError"`
+	Progress       accountInspectionProgress      `json:"progress"`
+	Summary        accountInspectionSummary       `json:"summary"`
+	HealthCounts   *accountInspectionHealthCounts `json:"healthCounts,omitempty"`
+	LogsLimited    bool                           `json:"logsLimited,omitempty"`
+	ResultsLimited bool                           `json:"resultsLimited,omitempty"`
+	Logs           []accountInspectionLogEntry    `json:"logs"`
+	Results        []accountInspectionResult      `json:"results"`
+}
+
+type accountInspectionSnapshotOptions struct {
+	IncludeDetails bool
+	ResultLimit    int
+	LogLimit       int
+}
+
+type accountInspectionHealthBucket string
+
+const (
+	accountInspectionHealthHealthy         accountInspectionHealthBucket = "healthy"
+	accountInspectionHealthDisabled        accountInspectionHealthBucket = "disabled"
+	accountInspectionHealthAuthInvalid     accountInspectionHealthBucket = "authInvalid"
+	accountInspectionHealthQuotaExhausted  accountInspectionHealthBucket = "quotaExhausted"
+	accountInspectionHealthInspectionError accountInspectionHealthBucket = "inspectionError"
+	accountInspectionHealthRecoverable     accountInspectionHealthBucket = "recoverable"
+)
+
+var accountInspectionHealthBuckets = [...]accountInspectionHealthBucket{
+	accountInspectionHealthHealthy,
+	accountInspectionHealthDisabled,
+	accountInspectionHealthAuthInvalid,
+	accountInspectionHealthQuotaExhausted,
+	accountInspectionHealthInspectionError,
+	accountInspectionHealthRecoverable,
 }
 
 type accountInspectionLogStreamMessage struct {
@@ -216,6 +255,7 @@ type accountInspectionScheduler struct {
 	cancel                  context.CancelFunc
 	schedule                accountInspectionSchedule
 	status                  accountInspectionStatus
+	healthCounts            accountInspectionHealthCounts
 	subscribers             map[chan accountInspectionLogStreamMessage]struct{}
 	lastProgressBroadcastAt int64
 }
@@ -468,41 +508,240 @@ func (s *accountInspectionScheduler) saveLocked() error {
 	return os.WriteFile(s.path, append(raw, '\n'), 0o600)
 }
 
-func (s *accountInspectionScheduler) snapshot() gin.H {
+func (s *accountInspectionScheduler) snapshotWithOptions(options accountInspectionSnapshotOptions) gin.H {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return gin.H{
 		"schedule": s.schedule,
-		"status":   s.status,
+		"status":   s.streamStatusLocked(options),
 	}
 }
 
-func (s *accountInspectionScheduler) streamStatusLocked(includeDetails bool) accountInspectionStatus {
+func accountInspectionRequestSnapshotOptions(c *gin.Context) accountInspectionSnapshotOptions {
+	value := strings.ToLower(strings.TrimSpace(c.Query("details")))
+	return accountInspectionSnapshotOptions{
+		IncludeDetails: value != "0" && value != "false" && value != "summary",
+		ResultLimit:    parseAccountInspectionQueryInt(c, "result_limit", 0),
+		LogLimit:       parseAccountInspectionQueryInt(c, "log_limit", 0),
+	}
+}
+
+func parseAccountInspectionQueryInt(c *gin.Context, key string, fallback int) int {
+	value := strings.TrimSpace(c.Query(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func (s *accountInspectionScheduler) snapshotForRequest(c *gin.Context) gin.H {
+	return s.snapshotWithOptions(accountInspectionRequestSnapshotOptions(c))
+}
+
+func accountInspectionResultHealthCounts(results []accountInspectionResult) accountInspectionHealthCounts {
+	counts := accountInspectionHealthCounts{Total: len(results)}
+	for _, result := range results {
+		switch accountInspectionResultHealthBucketOf(result) {
+		case accountInspectionHealthAuthInvalid:
+			counts.AuthInvalid++
+		case accountInspectionHealthInspectionError:
+			counts.InspectionError++
+		case accountInspectionHealthQuotaExhausted:
+			counts.QuotaExhausted++
+		case accountInspectionHealthRecoverable:
+			counts.Recoverable++
+		case accountInspectionHealthDisabled:
+			counts.Disabled++
+		default:
+			counts.Healthy++
+		}
+	}
+	return counts
+}
+
+func adjustAccountInspectionHealthCountsForResult(counts accountInspectionHealthCounts, result accountInspectionResult, delta int) accountInspectionHealthCounts {
+	counts.Total += delta
+	switch accountInspectionResultHealthBucketOf(result) {
+	case accountInspectionHealthAuthInvalid:
+		counts.AuthInvalid += delta
+	case accountInspectionHealthInspectionError:
+		counts.InspectionError += delta
+	case accountInspectionHealthQuotaExhausted:
+		counts.QuotaExhausted += delta
+	case accountInspectionHealthRecoverable:
+		counts.Recoverable += delta
+	case accountInspectionHealthDisabled:
+		counts.Disabled += delta
+	default:
+		counts.Healthy += delta
+	}
+	return counts
+}
+
+func (s *accountInspectionScheduler) healthCountsLocked() accountInspectionHealthCounts {
+	if s.healthCounts.Total == len(s.status.Results) {
+		return s.healthCounts
+	}
+	s.healthCounts = accountInspectionResultHealthCounts(s.status.Results)
+	return s.healthCounts
+}
+
+func accountInspectionResultHealthBucketOf(result accountInspectionResult) accountInspectionHealthBucket {
+	switch {
+	case result.Action == accountInspectionActionDelete || isAccountErrorStatusPtr(result.StatusCode):
+		return accountInspectionHealthAuthInvalid
+	case result.Error != "":
+		return accountInspectionHealthInspectionError
+	case result.IsQuota || result.Action == accountInspectionActionDisable:
+		return accountInspectionHealthQuotaExhausted
+	case result.Action == accountInspectionActionEnable:
+		return accountInspectionHealthRecoverable
+	case result.Disabled:
+		return accountInspectionHealthDisabled
+	default:
+		return accountInspectionHealthHealthy
+	}
+}
+
+func isAccountErrorStatusPtr(status *int) bool {
+	return status != nil && isAccountErrorStatus(*status)
+}
+
+func limitAccountInspectionLogs(logs []accountInspectionLogEntry, limit int) ([]accountInspectionLogEntry, bool) {
+	if limit > 0 && len(logs) > limit {
+		return append([]accountInspectionLogEntry(nil), logs[len(logs)-limit:]...), true
+	}
+	return append([]accountInspectionLogEntry(nil), logs...), false
+}
+
+func minInt(left int, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func maxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func accountInspectionHealthBucketTotal(counts accountInspectionHealthCounts, bucket accountInspectionHealthBucket) int {
+	switch bucket {
+	case accountInspectionHealthAuthInvalid:
+		return counts.AuthInvalid
+	case accountInspectionHealthInspectionError:
+		return counts.InspectionError
+	case accountInspectionHealthQuotaExhausted:
+		return counts.QuotaExhausted
+	case accountInspectionHealthRecoverable:
+		return counts.Recoverable
+	case accountInspectionHealthDisabled:
+		return counts.Disabled
+	default:
+		return counts.Healthy
+	}
+}
+
+func accountInspectionPendingActionCount(summary accountInspectionSummary) int {
+	return maxInt(
+		0,
+		summary.DeleteCount+summary.DisableCount+summary.EnableCount-
+			summary.ExecutedDeleteCount-summary.ExecutedDisableCount-summary.ExecutedEnableCount,
+	)
+}
+
+func accountInspectionHealthBucketsSatisfied(counts map[accountInspectionHealthBucket]int, targets accountInspectionHealthCounts, limit int) bool {
+	for _, bucket := range accountInspectionHealthBuckets {
+		target := minInt(limit, accountInspectionHealthBucketTotal(targets, bucket))
+		if counts[bucket] < target {
+			return false
+		}
+	}
+	return true
+}
+
+func limitAccountInspectionResults(results []accountInspectionResult, limit int, healthCounts accountInspectionHealthCounts, pendingTarget int) ([]accountInspectionResult, bool) {
+	if limit > 0 && len(results) > limit {
+		if healthCounts.Total != len(results) {
+			healthCounts = accountInspectionResultHealthCounts(results)
+		}
+		pendingTarget = minInt(limit, maxInt(0, pendingTarget))
+		limited := make([]accountInspectionResult, 0, minInt(len(results), limit*6))
+		seen := make(map[string]struct{})
+		bucketCounts := make(map[accountInspectionHealthBucket]int)
+		pendingCount := 0
+		for _, result := range results {
+			key := result.Key
+			if key == "" {
+				key = result.Provider + "::" + result.FileName + "::" + result.AuthIndex
+			}
+			_, alreadySeen := seen[key]
+			shouldInclude := false
+			bucket := accountInspectionResultHealthBucketOf(result)
+			if bucketCounts[bucket] < limit {
+				bucketCounts[bucket]++
+				shouldInclude = true
+			}
+			if result.Action != accountInspectionActionKeep && !result.Executed && pendingCount < pendingTarget {
+				pendingCount++
+				shouldInclude = true
+			}
+			if shouldInclude && !alreadySeen {
+				seen[key] = struct{}{}
+				limited = append(limited, result)
+			}
+			if pendingCount >= pendingTarget && accountInspectionHealthBucketsSatisfied(bucketCounts, healthCounts, limit) {
+				break
+			}
+		}
+		return limited, true
+	}
+	return append([]accountInspectionResult(nil), results...), false
+}
+
+func (s *accountInspectionScheduler) streamStatusLocked(options accountInspectionSnapshotOptions) accountInspectionStatus {
 	status := s.status
-	if includeDetails {
-		status.Logs = append([]accountInspectionLogEntry(nil), s.status.Logs...)
-		status.Results = append([]accountInspectionResult(nil), s.status.Results...)
+	if options.IncludeDetails {
+		healthCounts := s.healthCountsLocked()
+		status.HealthCounts = &healthCounts
+		status.Logs, status.LogsLimited = limitAccountInspectionLogs(s.status.Logs, options.LogLimit)
+		status.Results, status.ResultsLimited = limitAccountInspectionResults(
+			s.status.Results,
+			options.ResultLimit,
+			healthCounts,
+			accountInspectionPendingActionCount(s.status.Summary),
+		)
 	} else {
+		status.HealthCounts = nil
 		status.Logs = nil
 		status.Results = nil
+		status.LogsLimited = false
+		status.ResultsLimited = false
 	}
 	return status
 }
 
-func (s *accountInspectionScheduler) streamMessageLocked(messageType accountInspectionStreamMessageType, includeDetails bool, logEntry *accountInspectionLogEntry) accountInspectionLogStreamMessage {
-	return accountInspectionLogStreamMessage{Type: messageType, Schedule: s.schedule, Status: s.streamStatusLocked(includeDetails), Log: logEntry}
+func (s *accountInspectionScheduler) streamMessageLocked(messageType accountInspectionStreamMessageType, options accountInspectionSnapshotOptions, logEntry *accountInspectionLogEntry) accountInspectionLogStreamMessage {
+	return accountInspectionLogStreamMessage{Type: messageType, Schedule: s.schedule, Status: s.streamStatusLocked(options), Log: logEntry}
 }
 
-func (s *accountInspectionScheduler) snapshotStreamMessageLocked() accountInspectionLogStreamMessage {
-	return s.streamMessageLocked(accountInspectionStreamSnapshot, true, nil)
+func (s *accountInspectionScheduler) snapshotStreamMessageLocked(options accountInspectionSnapshotOptions) accountInspectionLogStreamMessage {
+	return s.streamMessageLocked(accountInspectionStreamSnapshot, options, nil)
 }
 
-func (s *accountInspectionScheduler) statusStreamMessageLocked(snapshot bool) accountInspectionLogStreamMessage {
-	return s.streamMessageLocked(accountInspectionStreamStatus, snapshot, nil)
+func (s *accountInspectionScheduler) statusStreamMessageLocked(includeDetails bool) accountInspectionLogStreamMessage {
+	return s.streamMessageLocked(accountInspectionStreamStatus, accountInspectionSnapshotOptions{IncludeDetails: includeDetails}, nil)
 }
 
 func (s *accountInspectionScheduler) logStreamMessageLocked(entry accountInspectionLogEntry) accountInspectionLogStreamMessage {
-	return s.streamMessageLocked(accountInspectionStreamLog, false, &entry)
+	return s.streamMessageLocked(accountInspectionStreamLog, accountInspectionSnapshotOptions{}, &entry)
 }
 
 type accountInspectionBroadcast struct {
@@ -527,10 +766,10 @@ func (s *accountInspectionScheduler) subscribersLocked() []chan accountInspectio
 	return subscribers
 }
 
-func (s *accountInspectionScheduler) statusBroadcastLocked(snapshot bool) accountInspectionBroadcast {
+func (s *accountInspectionScheduler) statusBroadcastLocked() accountInspectionBroadcast {
 	return accountInspectionBroadcast{
 		subscribers: s.subscribersLocked(),
-		message:     s.statusStreamMessageLocked(snapshot),
+		message:     s.statusStreamMessageLocked(false),
 	}
 }
 
@@ -541,12 +780,12 @@ func (s *accountInspectionScheduler) logBroadcastLocked(entry accountInspectionL
 	}
 }
 
-func (s *accountInspectionScheduler) subscribeLogs() (chan accountInspectionLogStreamMessage, accountInspectionLogStreamMessage) {
+func (s *accountInspectionScheduler) subscribeLogs(options accountInspectionSnapshotOptions) (chan accountInspectionLogStreamMessage, accountInspectionLogStreamMessage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	subscriber := make(chan accountInspectionLogStreamMessage, 16)
 	s.subscribers[subscriber] = struct{}{}
-	return subscriber, s.snapshotStreamMessageLocked()
+	return subscriber, s.snapshotStreamMessageLocked(options)
 }
 
 func (s *accountInspectionScheduler) unsubscribeLogs(subscriber chan accountInspectionLogStreamMessage) {
@@ -655,6 +894,7 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 	s.status.Summary = accountInspectionSummary{}
 	s.status.Logs = nil
 	s.status.Results = nil
+	s.healthCounts = accountInspectionHealthCounts{}
 	schedule := s.schedule
 	s.mu.Unlock()
 
@@ -698,7 +938,7 @@ func (s *accountInspectionScheduler) updateProgress(total int, completed int, in
 	var broadcast accountInspectionBroadcast
 	if shouldBroadcast {
 		s.lastProgressBroadcastAt = now
-		broadcast = s.statusBroadcastLocked(false)
+		broadcast = s.statusBroadcastLocked()
 	}
 	s.mu.Unlock()
 	broadcast.send()
@@ -721,7 +961,7 @@ func (s *accountInspectionScheduler) pauseRun() {
 	s.mu.Lock()
 	if s.isRunningLocked() && !s.isStoppingLocked() {
 		s.setRunStateLocked(accountInspectionStatePaused)
-		broadcast = s.statusBroadcastLocked(false)
+		broadcast = s.statusBroadcastLocked()
 	}
 	s.mu.Unlock()
 	broadcast.send()
@@ -732,7 +972,7 @@ func (s *accountInspectionScheduler) resumeRun() {
 	s.mu.Lock()
 	if s.isRunningLocked() && s.isPausedLocked() {
 		s.setRunStateLocked(accountInspectionStateRunning)
-		broadcast = s.statusBroadcastLocked(false)
+		broadcast = s.statusBroadcastLocked()
 		s.pause.Broadcast()
 	}
 	s.mu.Unlock()
@@ -745,7 +985,7 @@ func (s *accountInspectionScheduler) stopRun() {
 	cancel := s.cancel
 	if s.isRunningLocked() {
 		s.setRunStateLocked(accountInspectionStateStopping)
-		broadcast = s.statusBroadcastLocked(false)
+		broadcast = s.statusBroadcastLocked()
 		s.pause.Broadcast()
 	}
 	s.mu.Unlock()
@@ -780,7 +1020,7 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 		s.mergeSingleInspectionResultLocked(result)
 		s.status.Results = sortAccountInspectionResults(s.status.Results)
 	}
-	broadcast := s.statusBroadcastLocked(true)
+	broadcast := s.statusBroadcastLocked()
 	s.mu.Unlock()
 	broadcast.send()
 	return result, nil
@@ -858,6 +1098,8 @@ func (s *accountInspectionScheduler) updateInspectionResultLocked(result account
 				s.status.Summary = adjustAccountInspectionSummaryForResult(s.status.Summary, current, -1)
 				s.status.Summary = adjustAccountInspectionSummaryForResult(s.status.Summary, merged, 1)
 			}
+			s.healthCounts = adjustAccountInspectionHealthCountsForResult(s.healthCounts, current, -1)
+			s.healthCounts = adjustAccountInspectionHealthCountsForResult(s.healthCounts, merged, 1)
 			s.status.Results[index] = merged
 			return true
 		}
@@ -867,6 +1109,7 @@ func (s *accountInspectionScheduler) updateInspectionResultLocked(result account
 		return false
 	}
 	s.status.Summary = adjustAccountInspectionSummaryForResult(s.status.Summary, result, 1)
+	s.healthCounts = adjustAccountInspectionHealthCountsForResult(s.healthCounts, result, 1)
 	s.status.Results = append(s.status.Results, result)
 	return true
 }
@@ -940,6 +1183,7 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 	s.status.LastFinishedAt = finishedAt
 	s.status.Summary = summary
 	s.status.Results = results
+	s.healthCounts = accountInspectionResultHealthCounts(results)
 	completed := s.status.Progress.Completed
 	if state == accountInspectionStateCompleted {
 		completed = len(results)
@@ -955,7 +1199,7 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 		s.status.LastError = ""
 	}
 	s.cancel = nil
-	broadcast := s.statusBroadcastLocked(true)
+	broadcast := s.statusBroadcastLocked()
 	if s.schedule.Enabled && !manual {
 		s.schedule.NextRunAt = time.Now().Add(time.Duration(s.schedule.IntervalMinutes) * time.Minute).UnixMilli()
 		if err := s.saveLocked(); err != nil {
@@ -984,7 +1228,7 @@ func (s *accountInspectionScheduler) streamLogs(c *gin.Context) {
 	done := make(chan struct{})
 	go readAccountInspectionWebSocket(conn, done)
 
-	subscriber, snapshot := s.subscribeLogs()
+	subscriber, snapshot := s.subscribeLogs(accountInspectionRequestSnapshotOptions(c))
 	defer s.unsubscribeLogs(subscriber)
 
 	pingTicker := time.NewTicker(accountInspectionWebSocketPingPeriod)
@@ -2164,6 +2408,7 @@ func (s *accountInspectionScheduler) removeInspectionResultLocked(result account
 			continue
 		}
 		s.status.Summary = adjustAccountInspectionSummaryForResult(s.status.Summary, current, -1)
+		s.healthCounts = adjustAccountInspectionHealthCountsForResult(s.healthCounts, current, -1)
 		s.status.Results = append(s.status.Results[:index], s.status.Results[index+1:]...)
 		return true
 	}
@@ -2236,7 +2481,7 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 		s.applyManualActionResultLocked(result)
 	}
 	s.status.Results = sortAccountInspectionResults(s.status.Results)
-	broadcast := s.statusBroadcastLocked(true)
+	broadcast := s.statusBroadcastLocked()
 	s.mu.Unlock()
 	broadcast.send()
 	return outcomes
@@ -3631,7 +3876,7 @@ func (h *Handler) GetAccountInspectionSchedule(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account inspection scheduler unavailable"})
 		return
 	}
-	c.JSON(http.StatusOK, scheduler.snapshot())
+	c.JSON(http.StatusOK, scheduler.snapshotForRequest(c))
 }
 
 func (h *Handler) PutAccountInspectionSchedule(c *gin.Context) {
@@ -3649,7 +3894,7 @@ func (h *Handler) PutAccountInspectionSchedule(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, scheduler.snapshot())
+	c.JSON(http.StatusOK, scheduler.snapshotForRequest(c))
 }
 
 func (h *Handler) RunAccountInspection(c *gin.Context) {
@@ -3659,10 +3904,10 @@ func (h *Handler) RunAccountInspection(c *gin.Context) {
 		return
 	}
 	if err := scheduler.startRun(true); err != nil {
-		c.JSON(http.StatusConflict, scheduler.snapshot())
+		c.JSON(http.StatusConflict, scheduler.snapshotForRequest(c))
 		return
 	}
-	c.JSON(http.StatusAccepted, scheduler.snapshot())
+	c.JSON(http.StatusAccepted, scheduler.snapshotForRequest(c))
 }
 
 func (h *Handler) InspectOneAccount(c *gin.Context) {
@@ -3677,7 +3922,7 @@ func (h *Handler) InspectOneAccount(c *gin.Context) {
 		return
 	}
 	result, err := scheduler.inspectOne(c.Request.Context(), request.Item)
-	snapshot := scheduler.snapshot()
+	snapshot := scheduler.snapshotForRequest(c)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"error": err.Error(), "result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
 		return
@@ -3702,10 +3947,10 @@ func (h *Handler) RefreshAccountInspectionToken(c *gin.Context) {
 		scheduler.mergeTokenRefreshResultLocked(result)
 		scheduler.status.Results = sortAccountInspectionResults(scheduler.status.Results)
 	}
-	broadcast := scheduler.statusBroadcastLocked(true)
+	broadcast := scheduler.statusBroadcastLocked()
 	scheduler.mu.Unlock()
 	broadcast.send()
-	snapshot := scheduler.snapshot()
+	snapshot := scheduler.snapshotForRequest(c)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"error": err.Error(), "result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
 		return
@@ -3720,7 +3965,7 @@ func (h *Handler) PauseAccountInspection(c *gin.Context) {
 		return
 	}
 	scheduler.pauseRun()
-	c.JSON(http.StatusOK, scheduler.snapshot())
+	c.JSON(http.StatusOK, scheduler.snapshotForRequest(c))
 }
 
 func (h *Handler) ResumeAccountInspection(c *gin.Context) {
@@ -3730,7 +3975,7 @@ func (h *Handler) ResumeAccountInspection(c *gin.Context) {
 		return
 	}
 	scheduler.resumeRun()
-	c.JSON(http.StatusOK, scheduler.snapshot())
+	c.JSON(http.StatusOK, scheduler.snapshotForRequest(c))
 }
 
 func (h *Handler) StopAccountInspection(c *gin.Context) {
@@ -3740,7 +3985,7 @@ func (h *Handler) StopAccountInspection(c *gin.Context) {
 		return
 	}
 	scheduler.stopRun()
-	c.JSON(http.StatusOK, scheduler.snapshot())
+	c.JSON(http.StatusOK, scheduler.snapshotForRequest(c))
 }
 
 func (h *Handler) ExecuteAccountInspectionActions(c *gin.Context) {
@@ -3755,7 +4000,7 @@ func (h *Handler) ExecuteAccountInspectionActions(c *gin.Context) {
 		return
 	}
 	outcomes := scheduler.executeManualActions(c.Request.Context(), request.Items)
-	snapshot := scheduler.snapshot()
+	snapshot := scheduler.snapshotForRequest(c)
 	c.JSON(http.StatusOK, gin.H{
 		"outcomes": outcomes,
 		"summary":  summarizeManualActionOutcomes(outcomes),
@@ -3779,5 +4024,5 @@ func (h *Handler) GetAccountInspectionStatus(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account inspection scheduler unavailable"})
 		return
 	}
-	c.JSON(http.StatusOK, scheduler.snapshot())
+	c.JSON(http.StatusOK, scheduler.snapshotForRequest(c))
 }

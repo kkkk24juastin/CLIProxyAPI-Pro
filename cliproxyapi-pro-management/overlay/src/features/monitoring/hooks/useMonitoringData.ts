@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useState } from 'react';
 import { authFilesApi } from '@/services/api/authFiles';
 import { apiClient } from '@/services/api/client';
 import type { AuthFileItem } from '@/types/authFile';
@@ -57,6 +57,28 @@ export const getRangeStartMs = (range: MonitoringTimeRange, nowMs: number) => {
 };
 
 const DELETED_CREDENTIAL_FALLBACK_LABEL = 'Deleted credential';
+const EMPTY_MONITORING_SUMMARY: MonitoringSummary = {
+  totalCalls: 0,
+  successCalls: 0,
+  failureCalls: 0,
+  successRate: 1,
+  inputTokens: 0,
+  outputTokens: 0,
+  reasoningTokens: 0,
+  cachedTokens: 0,
+  totalTokens: 0,
+  totalCost: 0,
+  averageLatencyMs: null,
+  rpm30m: 0,
+  tpm30m: 0,
+  avgDailyRequests: 0,
+  avgDailyTokens: 0,
+  approxTasks: 0,
+  approxTaskFailures: 0,
+  approxTaskSuccessRate: 1,
+  zeroTokenCalls: 0,
+  zeroTokenModels: [],
+};
 
 const maskEmailLike = (value: string) => {
   const trimmed = value.trim();
@@ -117,9 +139,6 @@ const buildSearchText = (...parts: Array<string | number | boolean | null | unde
     .map((part) => (part === null || part === undefined ? '' : String(part).trim().toLowerCase()))
     .filter(Boolean)
     .join(' ');
-
-const shouldIncludeInStats = (row: Pick<MonitoringEventRow, 'failed' | 'inputTokens' | 'outputTokens'>) =>
-  row.failed || row.inputTokens > 0 || row.outputTokens > 0;
 
 const buildConfiguredApiKeyMap = (apiKeys: readonly string[] | undefined) => {
   const keys = (apiKeys || [])
@@ -423,6 +442,7 @@ export interface UseMonitoringDataParams {
   modelPrices: Record<string, ModelPrice>;
   timeRange: MonitoringTimeRange;
   searchQuery: string;
+  filteredRowLimit?: number;
   deletedCredentialLabel?: string;
 }
 
@@ -445,6 +465,7 @@ export interface UseMonitoringDataReturn {
   recentFailures: MonitoringFailureRow[];
   allRows: MonitoringEventRow[];
   filteredRows: MonitoringEventRow[];
+  filteredRowCount: number;
   refreshMeta: (showLoading?: boolean) => Promise<void>;
 }
 
@@ -581,100 +602,49 @@ const normalizeAuthMeta = (entry: AuthFileItem): MonitoringAuthMeta | null => {
 const buildRangeFilteredRows = (
   rows: MonitoringEventRow[],
   timeRange: MonitoringTimeRange,
-  searchQuery: string
+  searchQuery: string,
+  limit = 0
 ) => {
   const nowMs = Date.now();
   const startMs = getRangeStartMs(timeRange, nowMs);
   const normalizedQuery = searchQuery.trim().toLowerCase();
+  const matchedRows: MonitoringEventRow[] = [];
+  let total = 0;
 
-  return rows.filter((row) => {
+  rows.forEach((row) => {
     if (row.timestampMs > nowMs || row.timestampMs < startMs) {
-      return false;
+      return;
     }
 
     if (normalizedQuery && !row.searchText.includes(normalizedQuery)) {
-      return false;
+      return;
     }
 
-    return true;
+    total += 1;
+    if (limit <= 0 || matchedRows.length < limit) {
+      matchedRows.push(row);
+    }
   });
+
+  return { rows: matchedRows, total };
 };
 
-const buildTimeline = (
-  rows: MonitoringEventRow[],
-  timeRange: MonitoringTimeRange
-): { granularity: 'hour' | 'day'; points: MonitoringTimelinePoint[] } => {
-  if (timeRange === 'today') {
-    const map = new Map<string, MonitoringTimelinePoint>();
-
-    for (let hour = 0; hour < 24; hour += 1) {
-      const label = `${padNumber(hour)}:00`;
-      map.set(label, { label, requests: 0, tokens: 0, cost: 0 });
+const addRecentPatternRow = (recentRows: MonitoringEventRow[], row: MonitoringEventRow, limit = 10) => {
+  const insertAt = recentRows.findIndex((item) => row.timestampMs > item.timestampMs);
+  if (insertAt < 0) {
+    if (recentRows.length < limit) {
+      recentRows.push(row);
     }
-
-    rows.forEach((row) => {
-      const bucket = map.get(row.hourLabel);
-      if (!bucket) return;
-      bucket.requests += 1;
-      bucket.tokens += row.totalTokens;
-      bucket.cost += row.totalCost;
-    });
-
-    return { granularity: 'hour', points: Array.from(map.values()) };
+    return;
   }
-
-  const grouped = new Map<string, MonitoringTimelinePoint>();
-
-  rows.forEach((row) => {
-    const existing = grouped.get(row.dayKey) ?? {
-      label: buildDayLabel(row.dayKey),
-      requests: 0,
-      tokens: 0,
-      cost: 0,
-    };
-    existing.requests += 1;
-    existing.tokens += row.totalTokens;
-    existing.cost += row.totalCost;
-    grouped.set(row.dayKey, existing);
-  });
-
-  const sortedKeys = Array.from(grouped.keys()).sort((left, right) => left.localeCompare(right));
-  const limitedKeys =
-    sortedKeys.length > 30 ? sortedKeys.slice(sortedKeys.length - 30) : sortedKeys;
-
-  return {
-    granularity: 'day',
-    points: limitedKeys.map((key) => grouped.get(key)!).filter(Boolean),
-  };
+  recentRows.splice(insertAt, 0, row);
+  if (recentRows.length > limit) {
+    recentRows.pop();
+  }
 };
 
-const buildHourlyDistribution = (rows: MonitoringEventRow[]) => {
-  const buckets = Array.from({ length: 24 }, (_, hour) => ({
-    label: `${padNumber(hour)}:00`,
-    requests: 0,
-    tokens: 0,
-    cost: 0,
-  }));
-
-  rows.forEach((row) => {
-    const hour = Number(row.hourLabel.slice(0, 2));
-    const bucket = Number.isFinite(hour) ? buckets[hour] : null;
-    if (!bucket) return;
-    bucket.requests += 1;
-    bucket.tokens += row.totalTokens;
-    bucket.cost += row.totalCost;
-  });
-
-  return buckets;
-};
-
-const buildRecentPattern = (rows: MonitoringEventRow[], limit = 10) =>
-  rows
-    .slice()
-    .sort((left, right) => right.timestampMs - left.timestampMs)
-    .slice(0, limit)
-    .reverse()
-    .map((row) => !row.failed);
+const recentPatternFromRows = (recentRows: MonitoringEventRow[]) =>
+  [...recentRows].reverse().map((row) => !row.failed);
 
 export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSummary => {
   const totalCalls = rows.length;
@@ -793,6 +763,7 @@ export const buildAccountRows = ({
         }
       >;
       rows: MonitoringEventRow[];
+      recentRows: MonitoringEventRow[];
       totalCalls: number;
       successCalls: number;
       failureCalls: number;
@@ -857,6 +828,7 @@ export const buildAccountRows = ({
       providers: new Set<string>(),
       modelMap: new Map(),
       rows: [] as MonitoringEventRow[],
+      recentRows: [] as MonitoringEventRow[],
       totalCalls: 0,
       successCalls: 0,
       failureCalls: 0,
@@ -872,6 +844,7 @@ export const buildAccountRows = ({
 
     if (includeRows) {
       existing.rows.push(row);
+      addRecentPatternRow(existing.recentRows, row);
     }
     existing.authLabels.add(row.authLabel);
     existing.authIndices.add(row.authIndexMasked);
@@ -943,7 +916,7 @@ export const buildAccountRows = ({
       totalCost: item.totalCost,
       averageLatencyMs: item.latencyCount > 0 ? item.latencySum / item.latencyCount : null,
       lastSeenAt: item.lastSeenAt,
-      recentPattern: includeRows ? buildRecentPattern(item.rows) : [],
+      recentPattern: includeRows ? recentPatternFromRows(item.recentRows) : [],
       rows: includeRows ? item.rows : undefined,
       models: Array.from(item.modelMap.values())
         .map((model) => ({
@@ -983,6 +956,7 @@ export const buildRealtimeMonitorRows = (rows: MonitoringEventRow[]): Monitoring
       model: string;
       channel: string;
       rows: MonitoringEventRow[];
+      recentRows: MonitoringEventRow[];
       latestFailed: boolean;
       successCalls: number;
       failureCalls: number;
@@ -1020,6 +994,7 @@ export const buildRealtimeMonitorRows = (rows: MonitoringEventRow[]): Monitoring
       model: row.model,
       channel: row.channel,
       rows: [] as MonitoringEventRow[],
+      recentRows: [] as MonitoringEventRow[],
       latestFailed: row.failed,
       successCalls: 0,
       failureCalls: 0,
@@ -1035,6 +1010,7 @@ export const buildRealtimeMonitorRows = (rows: MonitoringEventRow[]): Monitoring
     };
 
     existing.rows.push(row);
+    addRecentPatternRow(existing.recentRows, row);
     existing.successCalls += row.failed ? 0 : 1;
     existing.failureCalls += row.failed ? 1 : 0;
     existing.inputTokens += row.inputTokens;
@@ -1083,7 +1059,7 @@ export const buildRealtimeMonitorRows = (rows: MonitoringEventRow[]): Monitoring
         totalTokens: item.totalTokens,
         totalCost: item.totalCost,
         lastSeenAt: item.lastSeenAt,
-        recentPattern: buildRecentPattern(item.rows),
+        recentPattern: recentPatternFromRows(item.recentRows),
       };
     })
     .sort((left, right) => right.lastSeenAt - left.lastSeenAt || right.totalCalls - left.totalCalls);
@@ -1121,328 +1097,6 @@ const buildStatusChips = (metadata: MonitoringMetadata): MonitoringStatusChip[] 
   },
 ];
 
-const buildModelShareRows = (rows: MonitoringEventRow[]) => {
-  const grouped = new Map<
-    string,
-    { model: string; requests: number; failures: number; totalTokens: number; totalCost: number }
-  >();
-
-  rows.forEach((row) => {
-    const existing = grouped.get(row.model) ?? {
-      model: row.model,
-      requests: 0,
-      failures: 0,
-      totalTokens: 0,
-      totalCost: 0,
-    };
-    existing.requests += 1;
-    existing.failures += row.failed ? 1 : 0;
-    existing.totalTokens += row.totalTokens;
-    existing.totalCost += row.totalCost;
-    grouped.set(row.model, existing);
-  });
-
-  return Array.from(grouped.values())
-    .map((item) => ({
-      model: item.model,
-      requests: item.requests,
-      totalTokens: item.totalTokens,
-      totalCost: item.totalCost,
-      successRate: item.requests > 0 ? (item.requests - item.failures) / item.requests : 1,
-    }))
-    .sort((left, right) => right.requests - left.requests);
-};
-
-const buildChannelRows = (rows: MonitoringEventRow[]) => {
-  const grouped = new Map<
-    string,
-    {
-      id: string;
-      label: string;
-      host: string;
-      provider: string;
-      disabled: boolean;
-      authLabels: Set<string>;
-      planTypes: Set<string>;
-      models: Set<string>;
-      requests: number;
-      failures: number;
-      totalTokens: number;
-      totalCost: number;
-      latencySum: number;
-      latencyCount: number;
-    }
-  >();
-
-  rows.forEach((row) => {
-    const key = `${row.channel}::${row.channelHost}`;
-    const existing = grouped.get(key) ?? {
-      id: key,
-      label: row.channel,
-      host: row.channelHost,
-      provider: row.provider,
-      disabled: row.channelDisabled,
-      authLabels: new Set<string>(),
-      planTypes: new Set<string>(),
-      models: new Set<string>(),
-      requests: 0,
-      failures: 0,
-      totalTokens: 0,
-      totalCost: 0,
-      latencySum: 0,
-      latencyCount: 0,
-    };
-    existing.disabled = existing.disabled || row.channelDisabled;
-    existing.authLabels.add(row.authLabel);
-    if (row.planType && row.planType !== '-') {
-      existing.planTypes.add(row.planType);
-    }
-    existing.models.add(row.model);
-    existing.requests += 1;
-    existing.failures += row.failed ? 1 : 0;
-    existing.totalTokens += row.totalTokens;
-    existing.totalCost += row.totalCost;
-    if (row.latencyMs !== null) {
-      existing.latencySum += row.latencyMs;
-      existing.latencyCount += 1;
-    }
-    grouped.set(key, existing);
-  });
-
-  return Array.from(grouped.values())
-    .map((item) => ({
-      id: item.id,
-      label: item.label,
-      host: item.host,
-      provider: item.provider,
-      planTypes: Array.from(item.planTypes).sort(),
-      disabled: item.disabled,
-      authCount: item.authLabels.size,
-      modelCount: item.models.size,
-      requests: item.requests,
-      failures: item.failures,
-      successRate: item.requests > 0 ? (item.requests - item.failures) / item.requests : 1,
-      totalTokens: item.totalTokens,
-      totalCost: item.totalCost,
-      averageLatencyMs: item.latencyCount > 0 ? item.latencySum / item.latencyCount : null,
-      authLabels: Array.from(item.authLabels).sort(),
-    }))
-    .sort((left, right) => right.requests - left.requests);
-};
-
-const buildModelRows = (rows: MonitoringEventRow[]) => {
-  const grouped = new Map<
-    string,
-    {
-      model: string;
-      requests: number;
-      failures: number;
-      totalTokens: number;
-      totalCost: number;
-      latencySum: number;
-      latencyCount: number;
-      sources: Set<string>;
-      channels: Set<string>;
-    }
-  >();
-
-  rows.forEach((row) => {
-    const existing = grouped.get(row.model) ?? {
-      model: row.model,
-      requests: 0,
-      failures: 0,
-      totalTokens: 0,
-      totalCost: 0,
-      latencySum: 0,
-      latencyCount: 0,
-      sources: new Set<string>(),
-      channels: new Set<string>(),
-    };
-
-    existing.requests += 1;
-    existing.failures += row.failed ? 1 : 0;
-    existing.totalTokens += row.totalTokens;
-    existing.totalCost += row.totalCost;
-    existing.sources.add(row.source);
-    existing.channels.add(row.channel);
-    if (row.latencyMs !== null) {
-      existing.latencySum += row.latencyMs;
-      existing.latencyCount += 1;
-    }
-
-    grouped.set(row.model, existing);
-  });
-
-  return Array.from(grouped.values())
-    .map((item) => ({
-      model: item.model,
-      requests: item.requests,
-      failures: item.failures,
-      successRate: item.requests > 0 ? (item.requests - item.failures) / item.requests : 1,
-      totalTokens: item.totalTokens,
-      totalCost: item.totalCost,
-      averageLatencyMs: item.latencyCount > 0 ? item.latencySum / item.latencyCount : null,
-      sources: item.sources.size,
-      channels: item.channels.size,
-    }))
-    .sort((left, right) => right.requests - left.requests);
-};
-
-const buildFailureSourceRows = (rows: MonitoringEventRow[]) => {
-  const grouped = new Map<
-    string,
-    {
-      id: string;
-      label: string;
-      channel: string;
-      failures: number;
-      totalRequests: number;
-      lastSeenAt: number;
-      latencySum: number;
-      latencyCount: number;
-    }
-  >();
-
-  rows.forEach((row) => {
-    const key = `${row.source}::${row.channel}`;
-    const existing = grouped.get(key) ?? {
-      id: key,
-      label: row.sourceMasked,
-      channel: row.channel,
-      failures: 0,
-      totalRequests: 0,
-      lastSeenAt: 0,
-      latencySum: 0,
-      latencyCount: 0,
-    };
-
-    existing.totalRequests += 1;
-    existing.lastSeenAt = Math.max(existing.lastSeenAt, row.timestampMs);
-    if (row.failed) {
-      existing.failures += 1;
-      if (row.latencyMs !== null) {
-        existing.latencySum += row.latencyMs;
-        existing.latencyCount += 1;
-      }
-    }
-
-    grouped.set(key, existing);
-  });
-
-  return Array.from(grouped.values())
-    .filter((item) => item.failures > 0)
-    .map((item) => ({
-      id: item.id,
-      label: item.label,
-      channel: item.channel,
-      failures: item.failures,
-      totalRequests: item.totalRequests,
-      failureRate: item.totalRequests > 0 ? item.failures / item.totalRequests : 0,
-      lastSeenAt: item.lastSeenAt,
-      averageLatencyMs: item.latencyCount > 0 ? item.latencySum / item.latencyCount : null,
-    }))
-    .sort((left, right) => right.failures - left.failures || right.lastSeenAt - left.lastSeenAt);
-};
-
-const buildTaskBuckets = (rows: MonitoringEventRow[]) => {
-  const grouped = new Map<
-    string,
-    {
-      id: string;
-      timestampMs: number;
-      timestamp: string;
-      source: string;
-      sourceMasked: string;
-      channel: string;
-      authLabel: string;
-      planType: string;
-      calls: number;
-      failedCalls: number;
-      models: Set<string>;
-      endpoints: Set<string>;
-      totalTokens: number;
-      totalCost: number;
-      latencySum: number;
-      latencyCount: number;
-      maxLatencyMs: number | null;
-    }
-  >();
-
-  rows.forEach((row) => {
-    const existing = grouped.get(row.taskKey) ?? {
-      id: row.taskKey,
-      timestampMs: row.timestampMs,
-      timestamp: row.timestamp,
-      source: row.source,
-      sourceMasked: row.sourceMasked,
-      channel: row.channel,
-      authLabel: row.authLabel,
-      planType: row.planType,
-      calls: 0,
-      failedCalls: 0,
-      models: new Set<string>(),
-      endpoints: new Set<string>(),
-      totalTokens: 0,
-      totalCost: 0,
-      latencySum: 0,
-      latencyCount: 0,
-      maxLatencyMs: null,
-    };
-
-    existing.calls += 1;
-    existing.failedCalls += row.failed ? 1 : 0;
-    existing.models.add(row.model);
-    existing.endpoints.add(row.endpointPath || row.endpoint);
-    existing.totalTokens += row.totalTokens;
-    existing.totalCost += row.totalCost;
-    if (row.latencyMs !== null) {
-      existing.latencySum += row.latencyMs;
-      existing.latencyCount += 1;
-      existing.maxLatencyMs = Math.max(existing.maxLatencyMs ?? 0, row.latencyMs);
-    }
-
-    grouped.set(row.taskKey, existing);
-  });
-
-  return Array.from(grouped.values())
-    .map((item) => ({
-      id: item.id,
-      timestampMs: item.timestampMs,
-      timestamp: item.timestamp,
-      source: item.source,
-      sourceMasked: item.sourceMasked,
-      channel: item.channel,
-      authLabel: item.authLabel,
-      planType: item.planType,
-      calls: item.calls,
-      failedCalls: item.failedCalls,
-      failed: item.failedCalls > 0,
-      modelsText: joinUnique(item.models, 3),
-      totalTokens: item.totalTokens,
-      totalCost: item.totalCost,
-      averageLatencyMs: item.latencyCount > 0 ? item.latencySum / item.latencyCount : null,
-      maxLatencyMs: item.maxLatencyMs,
-      endpointsText: joinUnique(item.endpoints, 2),
-    }))
-    .sort((left, right) => right.timestampMs - left.timestampMs);
-};
-
-const buildFailureRows = (rows: MonitoringEventRow[]) =>
-  rows
-    .filter((row) => row.failed)
-    .map((row) => ({
-      id: row.id,
-      timestampMs: row.timestampMs,
-      timestamp: row.timestamp,
-      model: row.model,
-      source: row.sourceMasked,
-      channel: row.channel,
-      authIndex: row.authIndexMasked,
-      latencyMs: row.latencyMs,
-    }))
-    .sort((left, right) => right.timestampMs - left.timestampMs)
-    .slice(0, 8);
-
 const buildEventRows = (
   details: UsageDetailWithEndpoint[],
   authMetaMap: Map<string, MonitoringAuthMeta>,
@@ -1452,135 +1106,146 @@ const buildEventRows = (
   configuredApiKeys: ReturnType<typeof buildConfiguredApiKeyMap>,
   modelPrices: Record<string, ModelPrice>,
   deletedCredentialLabel: string
-) =>
-  details
-    .map((detail, index) => {
-      const timestampMs =
-        typeof detail.__timestampMs === 'number' && detail.__timestampMs > 0
-          ? detail.__timestampMs
-          : Date.parse(detail.timestamp);
-      if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
-        return null;
-      }
+) => {
+  const rows: MonitoringEventRow[] = [];
+  let isDescending = true;
+  let previousTimestampMs = Number.POSITIVE_INFINITY;
 
-      const authIndex = normalizeAuthIndex(detail.auth_index) ?? '-';
-      const authMeta = authMetaMap.get(authIndex);
-      const sourceMeta = resolveSourceDisplay(detail.source, detail.auth_index, sourceInfoMap, authFileMap);
-      const resolvedProvider = (detail.provider || authMeta?.provider || sourceMeta.type || '-').toLowerCase();
-      const resolvedAuthType = detail.auth_type || (authMeta ? (authMeta.runtimeOnly ? '' : 'oauth') : '');
-      const channelMeta = channelByAuthIndex.get(authIndex)
-        ?? (resolvedProvider !== '-'
-          ? (channelByAuthIndex.get(`provider:${resolvedAuthType === 'apikey' ? 'apikey' : 'oauth'}:${resolvedProvider}`)
-            ?? channelByAuthIndex.get(`provider:oauth:${resolvedProvider}`)
-            ?? channelByAuthIndex.get(`provider:apikey:${resolvedProvider}`))
-          : undefined);
-      const hasAuthIndex = authIndex !== '-';
-      const hasKnownAuthIndex = hasAuthIndex && (
-        authMetaMap.has(authIndex) ||
-        authFileMap.has(authIndex) ||
-        channelByAuthIndex.has(authIndex) ||
-        sourceInfoMap.byAuthIndex.has(authIndex)
-      );
-      const sourceIdentityKey = sourceMeta.identityKey || '';
-      const isConfiguredSourceCredential = Boolean(sourceIdentityKey) &&
-        !sourceIdentityKey.startsWith('auth:') &&
-        !sourceIdentityKey.startsWith('source:');
-      const isApiKeyCredential = resolvedAuthType === 'apikey' ||
-        channelMeta?.authType === 'apikey' ||
-        (isConfiguredSourceCredential && !authMeta);
-      const isDeletedCredential = hasAuthIndex && !hasKnownAuthIndex && !isApiKeyCredential;
-      const sourceLabel = isDeletedCredential
-        ? deletedCredentialLabel
-        : authMeta?.label || sourceMeta.displayName || authIndex;
-      const sourceMasked = maskEmailLike(sourceLabel);
-      const account = isDeletedCredential ? sourceLabel : authMeta?.account || sourceLabel;
-      const accountMasked = maskEmailLike(account);
-      const channelLabel = channelMeta?.name || resolvedProvider;
-      const endpoint = readStringValue(detail.__endpoint) || '-';
-      const endpointMethod = readStringValue(detail.__endpointMethod) || '-';
-      const endpointPath = readStringValue(detail.__endpointPath) || endpoint;
-      const inputTokens = Math.max(Number(detail.tokens?.input_tokens) || 0, 0);
-      const outputTokens = Math.max(Number(detail.tokens?.output_tokens) || 0, 0);
-      const reasoningTokens = Math.max(Number(detail.tokens?.reasoning_tokens) || 0, 0);
-      const cachedTokens = Math.max(
-        Math.max(Number(detail.tokens?.cached_tokens) || 0, 0),
-        Math.max(Number(detail.tokens?.cache_tokens) || 0, 0)
-      );
-      const totalTokens = Math.max(Number(detail.tokens?.total_tokens) || 0, extractTotalTokens(detail));
-      const totalCost = calculateCost(detail, modelPrices);
-      const apiKeyHash = readStringValue(detail.api_key_hash) || '-';
-      const configuredApiKey = apiKeyHash === '-' ? null : configuredApiKeys.byHash.get(apiKeyHash);
-      const singleConfiguredApiKey = configuredApiKeys.keys.length === 1 ? configuredApiKeys.keys[0] : null;
-      const clientApiKeyIdentity: MonitoringApiKeyIdentity = configuredApiKey
-        ?? (apiKeyHash !== '-'
-          ? {
-              id: `clientApiKey:${apiKeyHash}`,
-              hash: apiKeyHash,
-              masked: maskHash(apiKeyHash),
-            }
-          : singleConfiguredApiKey ?? {
-              id: 'clientApiKey:unknown',
-              hash: '-',
-              masked: 'Unknown API Key',
-            });
-      const statsIncluded = detail.failed === true || inputTokens > 0 || outputTokens > 0;
-      const dayKey = buildLocalDayKey(timestampMs);
-      const hourLabel = buildHourLabel(timestampMs);
-      const sourceKey = sourceMeta.identityKey || `source:${sourceLabel}`;
-      const taskKey = `${detail.timestamp}|${sourceKey}|${authIndex}`;
+  details.forEach((detail, index) => {
+    const timestampMs =
+      typeof detail.__timestampMs === 'number' && detail.__timestampMs > 0
+        ? detail.__timestampMs
+        : Date.parse(detail.timestamp);
+    if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+      return;
+    }
+    if (timestampMs > previousTimestampMs) {
+      isDescending = false;
+    }
+    previousTimestampMs = timestampMs;
 
-      return {
-        id: `${detail.timestamp}-${detail.__modelName || '-'}-${sourceKey}-${authIndex}-${index}`,
-        timestamp: detail.timestamp,
-        timestampMs,
-        dayKey,
-        hourLabel,
-        model: readStringValue(detail.__modelName) || '-',
-        endpoint,
-        endpointMethod,
-        endpointPath,
-        sourceKey,
-        source: sourceLabel,
-        sourceMasked,
-        account,
-        accountMasked,
+    const authIndex = normalizeAuthIndex(detail.auth_index) ?? '-';
+    const authMeta = authMetaMap.get(authIndex);
+    const sourceMeta = resolveSourceDisplay(detail.source, detail.auth_index, sourceInfoMap, authFileMap);
+    const resolvedProvider = (detail.provider || authMeta?.provider || sourceMeta.type || '-').toLowerCase();
+    const resolvedAuthType = detail.auth_type || (authMeta ? (authMeta.runtimeOnly ? '' : 'oauth') : '');
+    const channelMeta = channelByAuthIndex.get(authIndex)
+      ?? (resolvedProvider !== '-'
+        ? (channelByAuthIndex.get(`provider:${resolvedAuthType === 'apikey' ? 'apikey' : 'oauth'}:${resolvedProvider}`)
+          ?? channelByAuthIndex.get(`provider:oauth:${resolvedProvider}`)
+          ?? channelByAuthIndex.get(`provider:apikey:${resolvedProvider}`))
+        : undefined);
+    const hasAuthIndex = authIndex !== '-';
+    const hasKnownAuthIndex = hasAuthIndex && (
+      authMetaMap.has(authIndex) ||
+      authFileMap.has(authIndex) ||
+      channelByAuthIndex.has(authIndex) ||
+      sourceInfoMap.byAuthIndex.has(authIndex)
+    );
+    const sourceIdentityKey = sourceMeta.identityKey || '';
+    const isConfiguredSourceCredential = Boolean(sourceIdentityKey) &&
+      !sourceIdentityKey.startsWith('auth:') &&
+      !sourceIdentityKey.startsWith('source:');
+    const isApiKeyCredential = resolvedAuthType === 'apikey' ||
+      channelMeta?.authType === 'apikey' ||
+      (isConfiguredSourceCredential && !authMeta);
+    const isDeletedCredential = hasAuthIndex && !hasKnownAuthIndex && !isApiKeyCredential;
+    const sourceLabel = isDeletedCredential
+      ? deletedCredentialLabel
+      : authMeta?.label || sourceMeta.displayName || authIndex;
+    const sourceMasked = maskEmailLike(sourceLabel);
+    const account = isDeletedCredential ? sourceLabel : authMeta?.account || sourceLabel;
+    const accountMasked = maskEmailLike(account);
+    const channelLabel = channelMeta?.name || resolvedProvider;
+    const endpoint = readStringValue(detail.__endpoint) || '-';
+    const endpointMethod = readStringValue(detail.__endpointMethod) || '-';
+    const endpointPath = readStringValue(detail.__endpointPath) || endpoint;
+    const inputTokens = Math.max(Number(detail.tokens?.input_tokens) || 0, 0);
+    const outputTokens = Math.max(Number(detail.tokens?.output_tokens) || 0, 0);
+    const reasoningTokens = Math.max(Number(detail.tokens?.reasoning_tokens) || 0, 0);
+    const cachedTokens = Math.max(
+      Math.max(Number(detail.tokens?.cached_tokens) || 0, 0),
+      Math.max(Number(detail.tokens?.cache_tokens) || 0, 0)
+    );
+    const totalTokens = Math.max(Number(detail.tokens?.total_tokens) || 0, extractTotalTokens(detail));
+    const totalCost = calculateCost(detail, modelPrices);
+    const apiKeyHash = readStringValue(detail.api_key_hash) || '-';
+    const configuredApiKey = apiKeyHash === '-' ? null : configuredApiKeys.byHash.get(apiKeyHash);
+    const singleConfiguredApiKey = configuredApiKeys.keys.length === 1 ? configuredApiKeys.keys[0] : null;
+    const clientApiKeyIdentity: MonitoringApiKeyIdentity = configuredApiKey
+      ?? (apiKeyHash !== '-'
+        ? {
+            id: `clientApiKey:${apiKeyHash}`,
+            hash: apiKeyHash,
+            masked: maskHash(apiKeyHash),
+          }
+        : singleConfiguredApiKey ?? {
+            id: 'clientApiKey:unknown',
+            hash: '-',
+            masked: 'Unknown API Key',
+          });
+    const statsIncluded = detail.failed === true || inputTokens > 0 || outputTokens > 0;
+    const dayKey = buildLocalDayKey(timestampMs);
+    const hourLabel = buildHourLabel(timestampMs);
+    const sourceKey = sourceMeta.identityKey || `source:${sourceLabel}`;
+    const taskKey = `${detail.timestamp}|${sourceKey}|${authIndex}`;
+
+    rows.push({
+      id: `${detail.timestamp}-${detail.__modelName || '-'}-${sourceKey}-${authIndex}-${index}`,
+      timestamp: detail.timestamp,
+      timestampMs,
+      dayKey,
+      hourLabel,
+      model: readStringValue(detail.__modelName) || '-',
+      endpoint,
+      endpointMethod,
+      endpointPath,
+      sourceKey,
+      source: sourceLabel,
+      sourceMasked,
+      account,
+      accountMasked,
+      authIndex,
+      authIndexMasked: maskAuthIndex(authIndex),
+      clientApiKey: clientApiKeyIdentity,
+      authLabel: isDeletedCredential ? deletedCredentialLabel : authMeta?.label || sourceMasked,
+      provider: resolvedProvider,
+      planType: authMeta?.planType || '-',
+      channel: channelLabel,
+      channelHost: channelMeta?.host || '-',
+      channelDisabled: channelMeta?.disabled || false,
+      credentialDeleted: isDeletedCredential,
+      failed: detail.failed === true,
+      statsIncluded,
+      latencyMs: typeof detail.latency_ms === 'number' ? detail.latency_ms : null,
+      inputTokens,
+      outputTokens,
+      reasoningTokens,
+      cachedTokens,
+      totalTokens,
+      totalCost,
+      taskKey,
+      searchText: buildSearchText(
+        detail.__modelName,
+        isDeletedCredential ? deletedCredentialLabel : sourceLabel,
+        isDeletedCredential ? '' : authMeta?.account,
+        authMeta?.label,
         authIndex,
-        authIndexMasked: maskAuthIndex(authIndex),
-        clientApiKey: clientApiKeyIdentity,
-        authLabel: isDeletedCredential ? deletedCredentialLabel : authMeta?.label || sourceMasked,
-        provider: resolvedProvider,
-        planType: authMeta?.planType || '-',
-        channel: channelLabel,
-        channelHost: channelMeta?.host || '-',
-        channelDisabled: channelMeta?.disabled || false,
-        credentialDeleted: isDeletedCredential,
-        failed: detail.failed === true,
-        statsIncluded,
-        latencyMs: typeof detail.latency_ms === 'number' ? detail.latency_ms : null,
-        inputTokens,
-        outputTokens,
-        reasoningTokens,
-        cachedTokens,
-        totalTokens,
-        totalCost,
-        taskKey,
-        searchText: buildSearchText(
-          detail.__modelName,
-          isDeletedCredential ? deletedCredentialLabel : sourceLabel,
-          isDeletedCredential ? '' : authMeta?.account,
-          authMeta?.label,
-          authIndex,
-          channelLabel,
-          channelMeta?.host,
-          endpointPath,
-          endpointMethod,
-          resolvedProvider,
-          authMeta?.planType,
-          clientApiKeyIdentity.masked
-        ),
-      } satisfies MonitoringEventRow;
-    })
-    .filter(Boolean) as MonitoringEventRow[];
+        channelLabel,
+        channelMeta?.host,
+        endpointPath,
+        endpointMethod,
+        resolvedProvider,
+        authMeta?.planType,
+        clientApiKeyIdentity.masked
+      ),
+    });
+  });
+
+  return isDescending
+    ? rows
+    : rows.sort((left, right) => right.timestampMs - left.timestampMs);
+};
 
 const buildNativeProviderChannels = (
   config: Config | null | undefined,
@@ -1719,12 +1384,27 @@ export function useMonitoringData({
   modelPrices,
   timeRange,
   searchQuery,
+  filteredRowLimit = 0,
   deletedCredentialLabel = DELETED_CREDENTIAL_FALLBACK_LABEL,
 }: UseMonitoringDataParams): UseMonitoringDataReturn {
   const [authFiles, setAuthFiles] = useState<AuthFileItem[]>([]);
   const [channels, setChannels] = useState<MonitoringChannelMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const applyMetaPayload = useCallback((payload: MonitoringMetaPayload, deferred = false) => {
+    const apply = () => {
+      setAuthFiles(payload.authFiles);
+      setChannels(payload.channels);
+      setError(payload.error);
+      setLoading(false);
+    };
+    if (deferred) {
+      startTransition(apply);
+      return;
+    }
+    apply();
+  }, []);
 
   const refreshMeta = useCallback(async (showLoading: boolean = true) => {
     if (showLoading) {
@@ -1733,27 +1413,22 @@ export function useMonitoringData({
     }
 
     const payload = await loadMonitoringMetaPayload(config);
-    setAuthFiles(payload.authFiles);
-    setChannels(payload.channels);
-    setError(payload.error);
-    setLoading(false);
-  }, [config]);
+    applyMetaPayload(payload, true);
+  }, [applyMetaPayload, config]);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
 
     loadMonitoringMetaPayload(config).then((payload) => {
       if (cancelled) return;
-      setAuthFiles(payload.authFiles);
-      setChannels(payload.channels);
-      setError(payload.error);
-      setLoading(false);
+      applyMetaPayload(payload, true);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [config]);
+  }, [applyMetaPayload, config]);
 
   const authMetaMap = useMemo(() => {
     const map = new Map<string, MonitoringAuthMeta>();
@@ -1817,25 +1492,15 @@ export function useMonitoringData({
       configuredApiKeys,
       modelPrices,
       deletedCredentialLabel
-    ).sort((left, right) => right.timestampMs - left.timestampMs);
+    );
   }, [authFileMap, authMetaMap, channelByAuthIndex, configuredApiKeys, deletedCredentialLabel, modelPrices, sourceInfoMap, usage]);
 
-  const filteredRows = useMemo(
-    () => buildRangeFilteredRows(allRows, timeRange, searchQuery),
-    [allRows, searchQuery, timeRange]
+  const filteredRowState = useMemo(
+    () => buildRangeFilteredRows(allRows, timeRange, searchQuery, filteredRowLimit),
+    [allRows, filteredRowLimit, searchQuery, timeRange]
   );
-  const statsRows = useMemo(() => filteredRows.filter(shouldIncludeInStats), [filteredRows]);
-
-  const summary = useMemo(() => buildMonitoringSummary(statsRows), [statsRows]);
-  const timelineData = useMemo(() => buildTimeline(statsRows, timeRange), [statsRows, timeRange]);
-  const hourlyDistribution = useMemo(() => buildHourlyDistribution(statsRows), [statsRows]);
-  const modelShareRows = useMemo(() => buildModelShareRows(statsRows), [statsRows]);
-  const channelRows = useMemo(() => buildChannelRows(statsRows), [statsRows]);
-  const modelRows = useMemo(() => buildModelRows(statsRows), [statsRows]);
-  const failureSourceRows = useMemo(() => buildFailureSourceRows(statsRows), [statsRows]);
-  const taskBuckets = useMemo(() => buildTaskBuckets(statsRows), [statsRows]);
-  const recentFailures = useMemo(() => buildFailureRows(statsRows), [statsRows]);
-
+  const filteredRows = filteredRowState.rows;
+  const filteredRowCount = filteredRowState.total;
   const metadata = useMemo<MonitoringMetadata>(() => {
     const planTypes = Array.from(
       new Set(Array.from(authMetaMap.values()).map((item) => item.planType).filter((item) => item && item !== '-'))
@@ -1862,20 +1527,21 @@ export function useMonitoringData({
     error,
     authFiles,
     channels,
-    summary,
+    summary: EMPTY_MONITORING_SUMMARY,
     metadata,
     statusChips,
-    timeline: timelineData.points,
-    timelineGranularity: timelineData.granularity,
-    hourlyDistribution,
-    modelShareRows,
-    channelRows,
-    modelRows,
-    failureSourceRows,
-    taskBuckets,
-    recentFailures,
+    timeline: [],
+    timelineGranularity: 'day',
+    hourlyDistribution: [],
+    modelShareRows: [],
+    channelRows: [],
+    modelRows: [],
+    failureSourceRows: [],
+    taskBuckets: [],
+    recentFailures: [],
     allRows,
     filteredRows,
+    filteredRowCount,
     refreshMeta,
   };
 }

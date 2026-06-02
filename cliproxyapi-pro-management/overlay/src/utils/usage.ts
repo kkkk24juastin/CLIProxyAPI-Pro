@@ -308,6 +308,8 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
 
   const details: UsageDetailWithEndpoint[] = [];
   const sourceCache = new Map<string, string>();
+  let previousTimestampMs = Number.POSITIVE_INFINITY;
+  let isDescending = true;
 
   Object.entries(apis).forEach(([endpoint, apiEntry]) => {
     if (!isRecord(apiEntry)) return;
@@ -325,17 +327,25 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
       modelDetails.forEach((detailRaw) => {
         const detail = buildUsageDetail(detailRaw, modelName, sourceCache);
         if (!detail) return;
+        const timestampMs = detail.__timestampMs ?? 0;
+        if (timestampMs > previousTimestampMs) {
+          isDescending = false;
+        }
+        previousTimestampMs = timestampMs;
         details.push({
           ...detail,
           __endpoint: endpoint,
           __endpointMethod: endpointMethod,
           __endpointPath: endpointPath,
-          __timestampMs: detail.__timestampMs ?? 0,
+          __timestampMs: timestampMs,
         });
       });
     });
   });
 
+  if (!isDescending) {
+    details.sort((left, right) => right.__timestampMs - left.__timestampMs);
+  }
   if (cacheKey) usageDetailsWithEndpointCache.set(cacheKey, details);
   return details;
 }

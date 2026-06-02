@@ -100,11 +100,23 @@ export interface AccountInspectionProgressSummary {
   errorCount: number;
 }
 
+export interface AccountInspectionHealthCounts {
+  total: number;
+  healthy: number;
+  disabled: number;
+  authInvalid: number;
+  quotaExhausted: number;
+  inspectionError: number;
+  recoverable: number;
+}
+
 export interface AccountInspectionRunResult {
   results: AccountInspectionResultItem[];
   summary: AccountInspectionSummary;
   startedAt: number;
   finishedAt: number;
+  healthCounts?: AccountInspectionHealthCounts;
+  resultsLimited?: boolean;
 }
 
 export interface AccountInspectionProgressSnapshot {
@@ -153,6 +165,9 @@ export type AccountInspectionBackendStatus = {
     executedDisableCount?: number;
     executedEnableCount?: number;
   };
+  healthCounts?: AccountInspectionHealthCounts;
+  logsLimited?: boolean;
+  resultsLimited?: boolean;
   logs: AccountInspectionBackendLog[] | null;
   results: AccountInspectionBackendResultItem[] | null;
 };
@@ -523,6 +538,16 @@ const summarizeResults = (results: AccountInspectionResultItem[]) => {
   return summary;
 };
 
+const buildPlannedActionPreview = (results: AccountInspectionResultItem[]) => {
+  const preview: string[] = [];
+  for (const item of results) {
+    if (item.action === 'keep') continue;
+    preview.push(`${formatAccountInspectionIdentity(item)} -> ${item.action}`);
+    if (preview.length >= 10) break;
+  }
+  return preview;
+};
+
 export const createIdleAccountInspectionProgressSnapshot = (): AccountInspectionProgressSnapshot => ({
   total: 0,
   completed: 0,
@@ -616,17 +641,18 @@ const buildAccountInspectionBackendRunResult = (
   if (results.length === 0 && response.status.lastFinishedAt <= 0) return null;
 
   const settings = normalizeConfigurableSettings(response.schedule.settings);
-  const summary = summarizeResults(results);
   return {
     results,
     summary: {
       ...response.status.summary,
       usedPercentThreshold: settings.usedPercentThreshold,
       sampled: settings.sampleSize > 0,
-      plannedActionPreview: summary.plannedActionPreview,
+      plannedActionPreview: buildPlannedActionPreview(results),
     },
     startedAt,
     finishedAt,
+    healthCounts: response.status.healthCounts,
+    resultsLimited: response.status.resultsLimited ?? false,
   };
 };
 
@@ -666,7 +692,9 @@ export const buildAccountInspectionBackendViewState = (
       disable: response.status.summary.executedDisableCount ?? 0,
       enable: response.status.summary.executedEnableCount ?? 0,
     },
-    result: buildAccountInspectionBackendRunResult(response, results, startedAt, finishedAt),
+    result: hasSnapshot
+      ? buildAccountInspectionBackendRunResult(response, results, startedAt, finishedAt)
+      : undefined,
     progress: {
       total,
       completed,

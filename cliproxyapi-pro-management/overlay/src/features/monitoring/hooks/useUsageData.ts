@@ -16,6 +16,9 @@ export interface UsagePayload {
   failure_count?: number;
   total_tokens?: number;
   latest_id?: number;
+  details_count?: number;
+  details_limit?: number;
+  details_limited?: boolean;
   apis?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -34,13 +37,145 @@ const toNumber = (value: unknown) => (Number.isFinite(Number(value)) ? Number(va
 
 type UsageModelEntry = { details?: unknown[]; [key: string]: unknown };
 type UsageApiEntry = { models?: Record<string, UsageModelEntry>; [key: string]: unknown };
+type UsageDetailRef = {
+  endpoint: string;
+  model: string;
+  detail: unknown;
+  timestampMs: number;
+  index: number;
+};
 
 const asUsageApiEntry = (value: unknown): UsageApiEntry =>
   isRecordValue(value) ? (value as UsageApiEntry) : {};
 
+const USAGE_DETAIL_RETENTION_LIMIT = 15000;
+const USAGE_DETAIL_RETENTION_TRIM_BUFFER = 1000;
+
+const usageDetailKey = (endpoint: string, model: string) => `${endpoint}\n${model}`;
+
+const countUsagePayloadDetails = (payload: UsagePayload | null) => {
+  if (!payload?.apis) return 0;
+  let count = 0;
+  Object.values(payload.apis).forEach((apiEntry) => {
+    Object.values(asUsageApiEntry(apiEntry).models ?? {}).forEach((modelEntry) => {
+      count += Array.isArray(modelEntry.details) ? modelEntry.details.length : 0;
+    });
+  });
+  return count;
+};
+
+const readDetailTimestampMs = (detail: unknown) => {
+  if (!isRecordValue(detail)) return 0;
+  const explicitTimestampMs = Number(detail.__timestampMs ?? detail.timestamp_ms ?? detail.timestampMs);
+  if (Number.isFinite(explicitTimestampMs) && explicitTimestampMs > 0) return explicitTimestampMs;
+  const timestamp = typeof detail.timestamp === 'string' ? Date.parse(detail.timestamp) : NaN;
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const isUsageDetailRefAhead = (left: UsageDetailRef, right: UsageDetailRef) =>
+  left.timestampMs > right.timestampMs ||
+  (left.timestampMs === right.timestampMs && left.index > right.index);
+
+const isSameUsageDetailRefPosition = (left: UsageDetailRef, right: UsageDetailRef) =>
+  left.timestampMs === right.timestampMs && left.index === right.index;
+
+const compareUsageDetailRefsDescending = (left: UsageDetailRef, right: UsageDetailRef) =>
+  right.timestampMs - left.timestampMs || right.index - left.index;
+
+const partitionUsageDetailRefs = (values: UsageDetailRef[], left: number, right: number, pivotIndex: number) => {
+  const pivotValue = values[pivotIndex];
+  [values[pivotIndex], values[right]] = [values[right], values[pivotIndex]];
+  let storeIndex = left;
+  for (let index = left; index < right; index += 1) {
+    if (isUsageDetailRefAhead(values[index], pivotValue)) {
+      [values[storeIndex], values[index]] = [values[index], values[storeIndex]];
+      storeIndex += 1;
+    }
+  }
+  [values[right], values[storeIndex]] = [values[storeIndex], values[right]];
+  return storeIndex;
+};
+
+const selectUsageDetailRef = (values: UsageDetailRef[], targetIndex: number) => {
+  let left = 0;
+  let right = values.length - 1;
+  while (left <= right) {
+    const pivotIndex = left + Math.floor((right - left) / 2);
+    const nextPivotIndex = partitionUsageDetailRefs(values, left, right, pivotIndex);
+    if (nextPivotIndex === targetIndex) return values[nextPivotIndex];
+    if (targetIndex < nextPivotIndex) {
+      right = nextPivotIndex - 1;
+    } else {
+      left = nextPivotIndex + 1;
+    }
+  }
+  return values[targetIndex] ?? 0;
+};
+
+const trimUsagePayloadDetails = (payload: UsagePayload | null): UsagePayload | null => {
+  if (!payload?.apis) return payload;
+
+  const detailsCount = countUsagePayloadDetails(payload);
+  if (detailsCount <= USAGE_DETAIL_RETENTION_LIMIT + USAGE_DETAIL_RETENTION_TRIM_BUFFER) {
+    return {
+      ...payload,
+      details_count: detailsCount,
+      details_limited: Boolean(payload.details_limited),
+    };
+  }
+
+  const refs: UsageDetailRef[] = [];
+  let index = 0;
+  Object.entries(payload.apis).forEach(([endpoint, apiEntry]) => {
+    Object.entries(asUsageApiEntry(apiEntry).models ?? {}).forEach(([model, modelEntry]) => {
+      const details = Array.isArray(modelEntry.details) ? modelEntry.details : [];
+      details.forEach((detail) => {
+        refs.push({ endpoint, model, detail, timestampMs: readDetailTimestampMs(detail), index });
+        index += 1;
+      });
+    });
+  });
+
+  const cutoffRef = selectUsageDetailRef([...refs], USAGE_DETAIL_RETENTION_LIMIT - 1);
+  const retainedRefs = refs
+    .filter((ref) => isUsageDetailRefAhead(ref, cutoffRef) || isSameUsageDetailRefPosition(ref, cutoffRef))
+    .sort(compareUsageDetailRefsDescending);
+  const retained = new Map<string, unknown[]>();
+  let retainedCount = 0;
+
+  retainedRefs.forEach((ref) => {
+    const key = usageDetailKey(ref.endpoint, ref.model);
+    const details = retained.get(key) ?? [];
+    details.push(ref.detail);
+    retained.set(key, details);
+    retainedCount += 1;
+  });
+
+  const apis: Record<string, unknown> = {};
+  Object.entries(payload.apis).forEach(([endpoint, apiEntry]) => {
+    const existingApi = asUsageApiEntry(apiEntry);
+    const models: Record<string, UsageModelEntry> = {};
+    Object.entries(existingApi.models ?? {}).forEach(([model, modelEntry]) => {
+      const details = retained.get(usageDetailKey(endpoint, model));
+      if (!details || details.length === 0) return;
+      models[model] = { ...modelEntry, details: [...details].reverse() };
+    });
+    if (Object.keys(models).length > 0) {
+      apis[endpoint] = { ...existingApi, models };
+    }
+  });
+
+  return {
+    ...payload,
+    details_count: retainedCount,
+    details_limited: true,
+    apis,
+  };
+};
+
 const mergeUsagePayload = (current: UsagePayload | null, next: UsagePayload | null): UsagePayload | null => {
   if (!next) return current;
-  if (!current) return next;
+  if (!current) return trimUsagePayloadDetails(next);
 
   const currentLatestId = toNumber(current.latest_id);
   const nextLatestId = toNumber(next.latest_id);
@@ -73,15 +208,18 @@ const mergeUsagePayload = (current: UsagePayload | null, next: UsagePayload | nu
     };
   });
 
-  return {
+  return trimUsagePayloadDetails({
     ...current,
     total_requests: toNumber(current.total_requests) + toNumber(next.total_requests),
     success_count: toNumber(current.success_count) + toNumber(next.success_count),
     failure_count: toNumber(current.failure_count) + toNumber(next.failure_count),
     total_tokens: toNumber(current.total_tokens) + toNumber(next.total_tokens),
     latest_id: nextLatestId,
+    details_count: toNumber(current.details_count) + toNumber(next.details_count),
+    details_limit: Math.max(toNumber(current.details_limit), toNumber(next.details_limit)),
+    details_limited: Boolean(current.details_limited || next.details_limited),
     apis: mergedApis,
-  };
+  });
 };
 
 const buildUsageStreamUrl = (apiBase: string, afterId: number) => {
@@ -120,6 +258,10 @@ type UsageStateWriter = {
   setLastRefreshedAt: (date: Date | null) => void;
 };
 
+const USAGE_INITIAL_LIMIT = 12000;
+const USAGE_INCREMENTAL_LIMIT = 3000;
+const USAGE_INCREMENTAL_FLUSH_DELAY_MS = 150;
+
 const loadUsageSnapshot = async ({
   requestIdRef,
   latestIdRef,
@@ -137,10 +279,10 @@ const loadUsageSnapshot = async ({
   setError('');
 
   try {
-    const payload = await apiClient.get<UsagePayload>('/usage');
+    const payload = await apiClient.get<UsagePayload>('/usage', { params: { limit: USAGE_INITIAL_LIMIT } });
     if (requestIdRef.current !== requestId) return;
     latestIdRef.current = toNumber(payload?.latest_id);
-    setUsage(payload ?? null);
+    setUsage(trimUsagePayloadDetails(payload ?? null));
     setLastRefreshedAt(new Date());
   } catch (err) {
     if (requestIdRef.current !== requestId) return;
@@ -181,8 +323,13 @@ const loadUsageIncrementalSnapshot = async ({
       }
 
       try {
-        const payload = await apiClient.get<UsagePayload>(`/usage/events?after_id=${afterId}&limit=5000`);
+        const payload = await apiClient.get<UsagePayload>('/usage/events', {
+          params: { after_id: afterId, limit: USAGE_INCREMENTAL_LIMIT },
+        });
         applyUsagePayload(payload ?? null);
+        if (payload?.details_limited) {
+          incrementalPendingRef.current = true;
+        }
       } catch {
         await loadUsage();
       }
@@ -232,6 +379,9 @@ const connectUsageStream = async ({
         const payload = parseUsageSsePayload(part);
         if (payload) {
           applyUsagePayload(payload);
+          if (payload.details_limited) {
+            void loadUsageIncremental();
+          }
         }
       } catch {
         void loadUsageIncremental();
@@ -253,23 +403,51 @@ export function useUsageData(): UseUsageDataReturn {
   const latestIdRef = useRef(0);
   const incrementalLoadingRef = useRef(false);
   const incrementalPendingRef = useRef(false);
+  const pendingUsagePayloadRef = useRef<UsagePayload | null>(null);
+  const pendingUsageFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadUsage = useCallback(() => loadUsageSnapshot({
-    requestIdRef,
-    latestIdRef,
-    setUsage,
-    setLoading,
-    setError,
-    setLastRefreshedAt,
-  }), []);
+  const clearPendingUsagePayload = useCallback(() => {
+    pendingUsagePayloadRef.current = null;
+    if (pendingUsageFlushTimerRef.current) {
+      clearTimeout(pendingUsageFlushTimerRef.current);
+      pendingUsageFlushTimerRef.current = null;
+    }
+  }, []);
+
+  const flushPendingUsagePayload = useCallback(() => {
+    if (pendingUsageFlushTimerRef.current) {
+      clearTimeout(pendingUsageFlushTimerRef.current);
+      pendingUsageFlushTimerRef.current = null;
+    }
+    const payload = pendingUsagePayloadRef.current;
+    pendingUsagePayloadRef.current = null;
+    if (!payload) return;
+    setUsage((current) => mergeUsagePayload(current, payload));
+    setLastRefreshedAt(new Date());
+  }, []);
+
+  const loadUsage = useCallback(() => {
+    clearPendingUsagePayload();
+    return loadUsageSnapshot({
+      requestIdRef,
+      latestIdRef,
+      setUsage,
+      setLoading,
+      setError,
+      setLastRefreshedAt,
+    });
+  }, [clearPendingUsagePayload]);
 
   const applyUsagePayload = useCallback((payload: UsagePayload | null) => {
     const nextLatestId = toNumber(payload?.latest_id);
     if (nextLatestId <= latestIdRef.current) return;
     latestIdRef.current = nextLatestId;
-    setUsage((current) => mergeUsagePayload(current, payload));
-    setLastRefreshedAt(new Date());
-  }, []);
+    pendingUsagePayloadRef.current = pendingUsagePayloadRef.current
+      ? mergeUsagePayload(pendingUsagePayloadRef.current, payload)
+      : trimUsagePayloadDetails(payload);
+    if (pendingUsageFlushTimerRef.current) return;
+    pendingUsageFlushTimerRef.current = setTimeout(flushPendingUsagePayload, USAGE_INCREMENTAL_FLUSH_DELAY_MS);
+  }, [flushPendingUsagePayload]);
 
   const loadUsageIncremental = useCallback(() => loadUsageIncrementalSnapshot({
     latestIdRef,
@@ -307,6 +485,8 @@ export function useUsageData(): UseUsageDataReturn {
       cancelled = true;
     };
   }, [loadUsage]);
+
+  useEffect(() => clearPendingUsagePayload, [clearPendingUsagePayload]);
 
   useEffect(() => {
     if (connectionStatus !== 'connected' || !apiBase || !managementKey) return;

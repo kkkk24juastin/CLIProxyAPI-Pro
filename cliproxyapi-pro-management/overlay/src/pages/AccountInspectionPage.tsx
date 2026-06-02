@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -45,9 +45,10 @@ import {
   type AccountInspectionLogStreamMessage,
   type AccountInspectionScheduleResponse,
 } from '@/services/api';
+import { authFilesApi } from '@/services/api/authFiles';
 import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
-import type { AuthFileItem, AuthFilesResponse } from '@/types';
+import type { AuthFileItem } from '@/types';
 import { isDisabledAuthFile, isQuotaLowState, isRecordValue, normalizeNumberValue, readBooleanValue, readStringValue, resolveAuthProvider } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/utils/sourceResolver';
 import styles from './AccountInspectionPage.module.scss';
@@ -159,9 +160,9 @@ type InspectionResultViewRow = {
 type InspectionResultsViewState = {
   rows: InspectionResultViewRow[];
   healthCounts: HealthCounts;
-  actionableResults: AccountInspectionResultItem[];
   actionableActionCounts: AutoExecutionCounts;
   filterRows: Record<ResultFilter, InspectionResultViewRow[]>;
+  filterRowCounts: Record<ResultFilter, number>;
 };
 
 type AuthFileExportEntry = {
@@ -187,6 +188,15 @@ const crcTable = Array.from({ length: 256 }, (_, index) => {
 });
 
 const ACCOUNT_INSPECTION_LOG_LIMIT = 200;
+const ACCOUNT_INSPECTION_VISIBLE_RESULT_LIMIT = 300;
+const ACCOUNT_INSPECTION_VISIBLE_LOG_LIMIT = 120;
+const ACCOUNT_INSPECTION_DETAILS_IDLE_DELAY_MS = 250;
+const ACCOUNT_INSPECTION_AUTH_FILES_IDLE_DELAY_MS = 300;
+const ACCOUNT_INSPECTION_ASSET_STATS_CHUNK_SIZE = 500;
+const ACCOUNT_INSPECTION_EXPORT_DOWNLOAD_CONCURRENCY = 4;
+const ACCOUNT_INSPECTION_EXPORT_ZIP_CONCURRENCY = 4;
+
+type AccountInspectionIdleCallback = (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void;
 
 const appendInspectionLogEntry = (entries: InspectionLogEntry[], entry: InspectionLogEntry) =>
   [...entries, entry].slice(-ACCOUNT_INSPECTION_LOG_LIMIT);
@@ -298,8 +308,10 @@ const compressZipData = async (data: Uint8Array): Promise<{ data: Uint8Array; me
 const buildZipArchive = async (entries: AuthFileExportEntry[]) => {
   const encoder = new TextEncoder();
   const usedPaths = new Set<string>();
-  const files: ZipFileEntry[] = await Promise.all(
-    entries.map(async (entry) => {
+  const files: ZipFileEntry[] = await mapWithConcurrency(
+    entries,
+    ACCOUNT_INSPECTION_EXPORT_ZIP_CONCURRENCY,
+    async (entry) => {
       const path = getAuthFileZipPath(entry, usedPaths);
       const data = encoder.encode(entry.content);
       const compressed = await compressZipData(data);
@@ -310,7 +322,7 @@ const buildZipArchive = async (entries: AuthFileExportEntry[]) => {
         compressionMethod: compressed.method,
         crc32: getCrc32(data),
       };
-    })
+    }
   );
   const timestamp = getDosTimestamp(new Date());
   const parts: Uint8Array[] = [];
@@ -370,6 +382,27 @@ const buildZipArchive = async (entries: AuthFileExportEntry[]) => {
     [...parts, centralDirectory, endOfCentralDirectory].map(toArrayBuffer),
     { type: 'application/zip' }
   );
+};
+
+const mapWithConcurrency = async <Input, Output>(
+  items: Input[],
+  concurrency: number,
+  mapper: (item: Input, index: number) => Promise<Output>
+) => {
+  if (items.length === 0) return [] as Output[];
+  const results = new Array<Output>(items.length);
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  let nextIndex = 0;
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }));
+
+  return results;
 };
 
 const downloadBlobFile = (fileName: string, blob: Blob) => {
@@ -506,6 +539,27 @@ const emptyProviderAccountStats = (provider: string): ProviderAccountStats => ({
   requestError: 0,
 });
 
+const createEmptyAuthFileAccountStats = (): AuthFileAccountStats => ({
+  total: 0,
+  providerCount: 0,
+  enabled: 0,
+  highAvailable: 0,
+  disabled: 0,
+  quotaLow: 0,
+  accountInvalid: 0,
+  requestError: 0,
+  providers: [],
+});
+
+const finalizeAuthFileAccountStats = (
+  stats: AuthFileAccountStats,
+  providerStats: Map<string, ProviderAccountStats>
+) => ({
+  ...stats,
+  providerCount: providerStats.size,
+  providers: [...providerStats.values()].sort((left, right) => right.total - left.total || left.provider.localeCompare(right.provider)),
+});
+
 const quotaUsedPercentFromRemaining = (item: unknown): number | null => {
   if (!isRecordValue(item)) return null;
   const usedPercent = normalizeNumberValue(item.usedPercent ?? item.used_percent);
@@ -567,58 +621,111 @@ const isProviderQuotaLow = (
   }
 };
 
-const buildAuthFileAccountStats = (
-  files: AuthFileItem[],
+const accumulateAuthFileAccountStats = (
+  stats: AuthFileAccountStats,
+  providerStats: Map<string, ProviderAccountStats>,
+  file: AuthFileItem,
   quotaStore: QuotaAccountStatsState,
   usedPercentThreshold: number,
   antigravityQuotaMode: AccountInspectionAntigravityQuotaMode
-): AuthFileAccountStats => {
-  const inspectableFiles = files.filter(isInspectableAccountInspectionAuthFile);
+) => {
+  if (!isInspectableAccountInspectionAuthFile(file)) return;
+
+  const provider = resolveAuthProvider(file) || 'unknown';
+  const disabled = isDisabledAuthFile(file);
+  const quotaLow = isProviderQuotaLow(
+    provider,
+    quotaStore,
+    file.name,
+    usedPercentThreshold,
+    antigravityQuotaMode
+  );
+  const accountInvalid = isAuthFileAccountInvalid(file);
+  const requestError = isAuthFileRequestError(file);
+  const highAvailable = !disabled && !quotaLow && !accountInvalid && !requestError;
+
+  stats.total += 1;
+  if (disabled) {
+    stats.disabled += 1;
+  } else {
+    stats.enabled += 1;
+  }
+  if (highAvailable) stats.highAvailable += 1;
+  if (accountInvalid) stats.accountInvalid += 1;
+  if (requestError) stats.requestError += 1;
+  if (quotaLow) stats.quotaLow += 1;
+
+  const providerEntry = providerStats.get(provider) ?? emptyProviderAccountStats(provider);
+  incrementProviderStats(providerEntry, disabled, highAvailable, quotaLow, accountInvalid, requestError);
+  providerStats.set(provider, providerEntry);
+};
+
+type AuthFileAccountStatsJob = {
+  cancelled: boolean;
+  handle: number | null;
+  cancelHandle: ((handle: number) => void) | null;
+};
+
+const scheduleAuthFileAccountStats = (
+  job: AuthFileAccountStatsJob,
+  files: AuthFileItem[],
+  quotaStore: QuotaAccountStatsState,
+  usedPercentThreshold: number,
+  antigravityQuotaMode: AccountInspectionAntigravityQuotaMode,
+  onComplete: (stats: AuthFileAccountStats) => void
+) => {
   const providerStats = new Map<string, ProviderAccountStats>();
-  const stats: AuthFileAccountStats = {
-    total: inspectableFiles.length,
-    providerCount: 0,
-    enabled: 0,
-    highAvailable: 0,
-    disabled: 0,
-    quotaLow: 0,
-    accountInvalid: 0,
-    requestError: 0,
-    providers: [],
+  const stats = createEmptyAuthFileAccountStats();
+  let index = 0;
+  const windowWithIdleCallback = window as Window & {
+    requestIdleCallback?: (callback: AccountInspectionIdleCallback, options?: { timeout?: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
   };
 
-  inspectableFiles.forEach((file) => {
-    const provider = resolveAuthProvider(file) || 'unknown';
-    const disabled = isDisabledAuthFile(file);
-    const quotaLow = isProviderQuotaLow(
-      provider,
-      quotaStore,
-      file.name,
-      usedPercentThreshold,
-      antigravityQuotaMode
-    );
-    const accountInvalid = isAuthFileAccountInvalid(file);
-    const requestError = isAuthFileRequestError(file);
-    const highAvailable = !disabled && !quotaLow && !accountInvalid && !requestError;
+  const finish = () => {
+    if (job.cancelled) return;
+    const nextStats = finalizeAuthFileAccountStats(stats, providerStats);
+    startTransition(() => {
+      if (!job.cancelled) onComplete(nextStats);
+    });
+  };
 
-    if (disabled) {
-      stats.disabled += 1;
-    } else {
-      stats.enabled += 1;
+  const scheduleNextChunk = () => {
+    if (windowWithIdleCallback.requestIdleCallback && windowWithIdleCallback.cancelIdleCallback) {
+      job.cancelHandle = windowWithIdleCallback.cancelIdleCallback.bind(windowWithIdleCallback);
+      job.handle = windowWithIdleCallback.requestIdleCallback(runChunk, { timeout: 250 });
+      return;
     }
-    if (highAvailable) stats.highAvailable += 1;
-    if (accountInvalid) stats.accountInvalid += 1;
-    if (requestError) stats.requestError += 1;
-    if (quotaLow) stats.quotaLow += 1;
+    job.cancelHandle = window.clearTimeout.bind(window);
+    job.handle = window.setTimeout(() => runChunk(), 0);
+  };
 
-    const providerEntry = providerStats.get(provider) ?? emptyProviderAccountStats(provider);
-    incrementProviderStats(providerEntry, disabled, highAvailable, quotaLow, accountInvalid, requestError);
-    providerStats.set(provider, providerEntry);
-  });
+  const runChunk = (deadline?: { timeRemaining: () => number }) => {
+    if (job.cancelled) return;
+    do {
+      const chunkEnd = Math.min(index + ACCOUNT_INSPECTION_ASSET_STATS_CHUNK_SIZE, files.length);
+      while (index < chunkEnd) {
+        accumulateAuthFileAccountStats(
+          stats,
+          providerStats,
+          files[index],
+          quotaStore,
+          usedPercentThreshold,
+          antigravityQuotaMode
+        );
+        index += 1;
+      }
+    } while (index < files.length && deadline && deadline.timeRemaining() > 8);
 
-  stats.providers = [...providerStats.values()].sort((left, right) => right.total - left.total || left.provider.localeCompare(right.provider));
-  stats.providerCount = stats.providers.length;
-  return stats;
+    if (index >= files.length) {
+      finish();
+      return;
+    }
+
+    scheduleNextChunk();
+  };
+
+  runChunk();
 };
 
 const emptyHealthCounts = (): HealthCounts => ({
@@ -643,45 +750,83 @@ const buildInspectionResultsViewState = (items: AccountInspectionResultItem[]): 
   const healthCounts = emptyHealthCounts();
   const actionableActionCounts = emptyAutoExecutionCounts();
   const filterRows = createEmptyFilterRows();
+  const filterRowCounts: Record<ResultFilter, number> = {
+    highAvailable: 0,
+    accountInvalid: 0,
+    quotaExhausted: 0,
+    requestError: 0,
+    recoverable: 0,
+    pending: 0,
+  };
   const rows: InspectionResultViewRow[] = [];
-  const actionableResults: AccountInspectionResultItem[] = [];
+  const pushLimitedRow = (
+    target: InspectionResultViewRow[],
+    createRow: () => InspectionResultViewRow
+  ) => {
+    if (target.length >= ACCOUNT_INSPECTION_VISIBLE_RESULT_LIMIT) return null;
+    const row = createRow();
+    target.push(row);
+    return row;
+  };
+
+  const pushResultRow = (
+    target: InspectionResultViewRow[],
+    item: AccountInspectionResultItem,
+    healthStatus: ResultHealthStatus,
+    existingRow: InspectionResultViewRow | null
+  ) => {
+    if (target.length >= ACCOUNT_INSPECTION_VISIBLE_RESULT_LIMIT) return existingRow;
+    if (existingRow) {
+      target.push(existingRow);
+      return existingRow;
+    }
+    return pushLimitedRow(target, () => ({
+      item,
+      healthStatus,
+      manualActions: getManualActionsByHealthStatus(item, healthStatus),
+    }));
+  };
 
   healthCounts.total = items.length;
   items.forEach((item) => {
     const healthStatus = resolveResultHealthStatus(item);
-    const manualActions = getManualActionsByHealthStatus(item, healthStatus);
-    const row = { item, healthStatus, manualActions };
-    rows.push(row);
+    let row: InspectionResultViewRow | null = null;
+    row = pushResultRow(rows, item, healthStatus, row);
 
     switch (healthStatus) {
       case 'healthy':
         healthCounts.healthy += 1;
-        filterRows.highAvailable.push(row);
+        filterRowCounts.highAvailable += 1;
+        row = pushResultRow(filterRows.highAvailable, item, healthStatus, row);
         break;
       case 'disabled':
         healthCounts.disabled += 1;
         break;
       case 'authInvalid':
         healthCounts.authInvalid += 1;
-        filterRows.accountInvalid.push(row);
+        filterRowCounts.accountInvalid += 1;
+        row = pushResultRow(filterRows.accountInvalid, item, healthStatus, row);
         break;
       case 'quotaExhausted':
         healthCounts.quotaExhausted += 1;
-        filterRows.quotaExhausted.push(row);
+        filterRowCounts.quotaExhausted += 1;
+        row = pushResultRow(filterRows.quotaExhausted, item, healthStatus, row);
         break;
       case 'inspectionError':
         healthCounts.inspectionError += 1;
-        filterRows.requestError.push(row);
+        filterRowCounts.requestError += 1;
+        row = pushResultRow(filterRows.requestError, item, healthStatus, row);
         break;
       case 'recoverable':
         healthCounts.recoverable += 1;
-        filterRows.recoverable.push(row);
+        filterRowCounts.recoverable += 1;
+        row = pushResultRow(filterRows.recoverable, item, healthStatus, row);
         break;
     }
 
     if (isSuggestedAction(item) && !item.executed) {
-      actionableResults.push(item);
-      filterRows.pending.push(row);
+      filterRowCounts.pending += 1;
+      row = pushResultRow(filterRows.pending, item, healthStatus, row);
       if (item.action === 'delete') actionableActionCounts.delete += 1;
       if (item.action === 'disable') actionableActionCounts.disable += 1;
       if (item.action === 'enable') actionableActionCounts.enable += 1;
@@ -691,10 +836,20 @@ const buildInspectionResultsViewState = (items: AccountInspectionResultItem[]): 
   return {
     rows,
     healthCounts,
-    actionableResults,
     actionableActionCounts,
     filterRows,
+    filterRowCounts,
   };
+};
+
+const collectActionableInspectionResults = (items: AccountInspectionResultItem[]) => {
+  const targets: AccountInspectionResultItem[] = [];
+  items.forEach((item) => {
+    if (isSuggestedAction(item) && !item.executed) {
+      targets.push(item);
+    }
+  });
+  return targets;
 };
 
 const buildManualActionItem = (
@@ -1226,7 +1381,10 @@ const applyBackendViewState = (
   if (viewState.logs) {
     nextState = withChanged(nextState, 'logs', viewState.logs, Object.is);
   }
-  return withChanged(nextState, 'result', viewState.result, Object.is);
+  if (viewState.result !== undefined) {
+    nextState = withChanged(nextState, 'result', viewState.result, Object.is);
+  }
+  return nextState;
 };
 
 const inspectionBackendReducer = (
@@ -1330,7 +1488,10 @@ export function AccountInspectionPage() {
   const [logLevelFilter, setLogLevelFilter] = useState<AccountInspectionLogLevel | 'all'>('all');
   const [authFiles, setAuthFiles] = useState<AuthFileItem[]>([]);
   const [authFilesLoaded, setAuthFilesLoaded] = useState(false);
+  const [authFileStats, setAuthFileStats] = useState<AuthFileAccountStats>(() => createEmptyAuthFileAccountStats());
+  const [authFileStatsReady, setAuthFileStatsReady] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [loadingFullInspectionDetails, setLoadingFullInspectionDetails] = useState(false);
   const [recheckingKey, setRecheckingKey] = useState<string | null>(null);
   const [refreshingTokenKey, setRefreshingTokenKey] = useState<string | null>(null);
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
@@ -1347,6 +1508,7 @@ export function AccountInspectionPage() {
     auto: null,
   });
   const refreshedBackendFinishedAtRef = useRef(0);
+  const loadedBackendDetailsFinishedAtRef = useRef(0);
 
 
   useEffect(() => {
@@ -1372,10 +1534,12 @@ export function AccountInspectionPage() {
     }
 
     try {
-      const response = await apiClient.get<AuthFilesResponse>('/auth-files');
-      const files = Array.isArray(response.files) ? response.files.filter(isInspectableAccountInspectionAuthFile) : [];
-      setAuthFiles(files);
-      setAuthFilesLoaded(true);
+      const response = await authFilesApi.list();
+      const files = Array.isArray(response.files) ? response.files : [];
+      startTransition(() => {
+        setAuthFiles(files);
+        setAuthFilesLoaded(true);
+      });
     } catch {
       setAuthFiles([]);
       setAuthFilesLoaded(false);
@@ -1383,11 +1547,43 @@ export function AccountInspectionPage() {
   }, [connectionStatus]);
 
   useEffect(() => {
-    void loadAuthFiles();
-  }, [loadAuthFiles]);
+    if (connectionStatus !== 'connected') {
+      void loadAuthFiles();
+      return;
+    }
 
-  const applyBackendResponse = useCallback((response: AccountInspectionScheduleResponse) => {
-    dispatchBackendState({ type: 'backendResponseReceived', response });
+    let cancelled = false;
+    const loadWhenReady = () => {
+      if (!cancelled) void loadAuthFiles();
+    };
+    const windowWithIdleCallback = window as Window & {
+      requestIdleCallback?: (callback: AccountInspectionIdleCallback, options?: { timeout?: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (windowWithIdleCallback.requestIdleCallback) {
+      const idleHandle = windowWithIdleCallback.requestIdleCallback(loadWhenReady, {
+        timeout: 1200,
+      });
+      return () => {
+        cancelled = true;
+        windowWithIdleCallback.cancelIdleCallback?.(idleHandle);
+      };
+    }
+
+    const timeoutId = window.setTimeout(loadWhenReady, ACCOUNT_INSPECTION_AUTH_FILES_IDLE_DELAY_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [connectionStatus, loadAuthFiles]);
+
+  const applyBackendResponse = useCallback((response: AccountInspectionScheduleResponse, deferred = false) => {
+    const applyState = () => dispatchBackendState({ type: 'backendResponseReceived', response });
+    if (deferred) {
+      startTransition(applyState);
+    } else {
+      applyState();
+    }
 
     if (
       response.status.state !== 'running' &&
@@ -1463,6 +1659,48 @@ export function AccountInspectionPage() {
     };
   }, [apiBase, applyBackendResponse, connectionStatus, managementKey]);
 
+  useEffect(() => {
+    if (connectionStatus !== 'connected') return;
+    if (progress.status === 'running' || progress.status === 'paused') return;
+    if (progress.startedAt <= 0 || (progress.total <= 0 && progress.summary.totalFiles <= 0)) return;
+    if (result && result.startedAt === progress.startedAt) return;
+    if (loadedBackendDetailsFinishedAtRef.current === progress.startedAt) return;
+
+    let cancelled = false;
+    const loadDetails = async () => {
+      try {
+        const response = await accountInspectionApi.getStatus({
+          includeDetails: true,
+          resultLimit: ACCOUNT_INSPECTION_VISIBLE_RESULT_LIMIT,
+          logLimit: ACCOUNT_INSPECTION_VISIBLE_LOG_LIMIT,
+        });
+        if (cancelled) return;
+        loadedBackendDetailsFinishedAtRef.current = response.status.lastStartedAt || progress.startedAt;
+        applyBackendResponse(response, true);
+      } catch {
+        // Keep the detail fetch retryable; a transient miss should not leave the table empty.
+      }
+    };
+    const windowWithIdleCallback = window as Window & {
+      requestIdleCallback?: (callback: AccountInspectionIdleCallback, options?: { timeout?: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (windowWithIdleCallback.requestIdleCallback) {
+      const idleHandle = windowWithIdleCallback.requestIdleCallback(() => void loadDetails(), {
+        timeout: 1500,
+      });
+      return () => {
+        cancelled = true;
+        windowWithIdleCallback.cancelIdleCallback?.(idleHandle);
+      };
+    }
+    const timeoutId = window.setTimeout(() => void loadDetails(), ACCOUNT_INSPECTION_DETAILS_IDLE_DELAY_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [applyBackendResponse, connectionStatus, progress.startedAt, progress.status, progress.summary.totalFiles, progress.total, result]);
+
   const appendLog = useCallback((level: AccountInspectionLogLevel, message: string) => {
     dispatchBackendState({ type: 'appendLog', level, message, timestamp: Date.now() });
   }, []);
@@ -1524,26 +1762,27 @@ export function AccountInspectionPage() {
 
     setExportingAuthFiles(true);
     try {
-      const response = await apiClient.get<AuthFilesResponse>('/auth-files');
+      const response = await authFilesApi.list();
       const files = Array.isArray(response.files)
         ? response.files.filter(isInspectableAccountInspectionAuthFile)
         : [];
-      const entries = await Promise.all(
-        files
-          .filter((file) => typeof file.name === 'string' && file.name.trim())
-          .map(async (file) => {
-            const name = file.name.trim();
-            const downloadResponse = await apiClient.getRaw(`/auth-files/download?name=${encodeURIComponent(name)}`, {
-              responseType: 'blob',
-            });
-            const blob = downloadResponse.data instanceof Blob
-              ? downloadResponse.data
-              : new Blob([downloadResponse.data], { type: 'application/json' });
-            return {
-              name,
-              content: await blob.text(),
-            };
-          })
+      const downloadableFiles = files.filter((file) => typeof file.name === 'string' && file.name.trim());
+      const entries = await mapWithConcurrency(
+        downloadableFiles,
+        ACCOUNT_INSPECTION_EXPORT_DOWNLOAD_CONCURRENCY,
+        async (file) => {
+          const name = file.name.trim();
+          const downloadResponse = await apiClient.getRaw(`/auth-files/download?name=${encodeURIComponent(name)}`, {
+            responseType: 'blob',
+          });
+          const blob = downloadResponse.data instanceof Blob
+            ? downloadResponse.data
+            : new Blob([downloadResponse.data], { type: 'application/json' });
+          return {
+            name,
+            content: await blob.text(),
+          };
+        }
       );
 
       if (entries.length === 0) {
@@ -1648,10 +1887,11 @@ export function AccountInspectionPage() {
 
   const {
     healthCounts,
-    actionableResults,
     actionableActionCounts,
     filterRows,
+    filterRowCounts,
   } = resultsViewState;
+  const displayedHealthCounts = result?.healthCounts ?? healthCounts;
 
   const hasAutoExecutionPolicy = hasAccountInspectionAutoExecutePolicies(inspectionSettings);
 
@@ -1659,32 +1899,84 @@ export function AccountInspectionPage() {
     if (resultFilter === 'pending' && hasAutoExecutionPolicy) return resultsViewState.rows;
     return filterRows[resultFilter];
   }, [filterRows, hasAutoExecutionPolicy, resultFilter, resultsViewState.rows]);
+  const filteredResultRowCount = (() => {
+    if (!result?.resultsLimited) {
+      return resultFilter === 'pending' && hasAutoExecutionPolicy
+        ? allResults.length
+        : filterRowCounts[resultFilter];
+    }
+    if (resultFilter === 'pending') {
+      return result.summary.deleteCount + result.summary.disableCount + result.summary.enableCount;
+    }
+    if (resultFilter === 'accountInvalid') return displayedHealthCounts.authInvalid;
+    if (resultFilter === 'requestError') return displayedHealthCounts.inspectionError;
+    if (resultFilter === 'quotaExhausted') return displayedHealthCounts.quotaExhausted;
+    if (resultFilter === 'recoverable') return displayedHealthCounts.recoverable;
+    return displayedHealthCounts.healthy;
+  })();
+  const visibleResultRows = useMemo(
+    () => filteredResultRows.slice(0, ACCOUNT_INSPECTION_VISIBLE_RESULT_LIMIT),
+    [filteredResultRows]
+  );
+  const hiddenResultRowCount = Math.max(filteredResultRowCount - visibleResultRows.length, 0);
 
   const filteredLogs = useMemo(
     () => (logLevelFilter === 'all' ? logs : logs.filter((entry) => entry.level === logLevelFilter)),
     [logLevelFilter, logs]
   );
+  const visibleLogs = useMemo(
+    () => filteredLogs.slice(-ACCOUNT_INSPECTION_VISIBLE_LOG_LIMIT),
+    [filteredLogs]
+  );
+  const hiddenLogCount = Math.max(filteredLogs.length - visibleLogs.length, 0);
 
   const handleExecutePlanned = useCallback(() => {
     if (!result) return;
 
-    const targets = actionableResults;
+    const confirmTargets = (targets: AccountInspectionResultItem[]) => {
+      const counts = countActions(targets);
+      showConfirmation({
+        title: t('monitoring.account_inspection_execute_confirm_title'),
+        message: buildExecuteConfirmationMessage(
+          targets,
+          t,
+          hasAccountInspectionAutoExecutePolicies(inspectionSettings)
+        ),
+        confirmText: t('monitoring.account_inspection_execute_confirm_button', {
+          count: targets.length,
+        }),
+        cancelText: t('common.cancel'),
+        variant: counts.delete > 0 ? 'danger' : 'primary',
+        onConfirm: () => executeItems(targets),
+      });
+    };
+
+    if (result.resultsLimited) {
+      setLoadingFullInspectionDetails(true);
+      void accountInspectionApi.getStatus(true)
+        .then((response) => {
+          applyBackendResponse(response, true);
+          const fullResult = buildAccountInspectionBackendViewState(response).result;
+          const fullTargets = (fullResult?.results ?? []).filter((item) => isSuggestedAction(item) && !item.executed);
+          if (fullTargets.length === 0) {
+            showNotification(t('monitoring.account_inspection_no_pending_actions'), 'info');
+            return;
+          }
+          confirmTargets(fullTargets);
+        })
+        .catch((error) => handleAccountInspectionControlError(error, appendLog, showNotification, t('common.unknown_error')))
+        .finally(() => setLoadingFullInspectionDetails(false));
+      return;
+    }
+
+    const targets = collectActionableInspectionResults(allResults);
     const counts = countActions(targets);
-    showConfirmation({
-      title: t('monitoring.account_inspection_execute_confirm_title'),
-      message: buildExecuteConfirmationMessage(
-        targets,
-        t,
-        hasAccountInspectionAutoExecutePolicies(inspectionSettings)
-      ),
-      confirmText: t('monitoring.account_inspection_execute_confirm_button', {
-        count: targets.length,
-      }),
-      cancelText: t('common.cancel'),
-      variant: counts.delete > 0 ? 'danger' : 'primary',
-      onConfirm: () => executeItems(targets),
-    });
-  }, [actionableResults, executeItems, inspectionSettings, result, showConfirmation, t]);
+    if (counts.delete + counts.disable + counts.enable <= 0) {
+      showNotification(t('monitoring.account_inspection_no_pending_actions'), 'info');
+      return;
+    }
+    confirmTargets(targets);
+  }, [allResults, appendLog, applyBackendResponse, executeItems, inspectionSettings, result, showConfirmation, showNotification, t]);
 
   const handleExecuteSingle = useCallback(
     (item: AccountInspectionResultItem, manualAction?: ManualAccountInspectionAction) => {
@@ -1790,21 +2082,39 @@ export function AccountInspectionPage() {
     [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota]
   );
 
-  const authFileStats = useMemo(
-    () => buildAuthFileAccountStats(
+  useEffect(() => {
+    if (!authFilesLoaded) {
+      setAuthFileStats(createEmptyAuthFileAccountStats());
+      setAuthFileStatsReady(false);
+      return;
+    }
+
+    setAuthFileStatsReady(false);
+    const job: AuthFileAccountStatsJob = { cancelled: false, handle: null, cancelHandle: null };
+    scheduleAuthFileAccountStats(
+      job,
       authFiles,
       quotaStore,
       inspectionSettings.usedPercentThreshold,
-      inspectionSettings.antigravityQuotaMode
-    ),
-    [authFiles, inspectionSettings.antigravityQuotaMode, inspectionSettings.usedPercentThreshold, quotaStore]
-  );
+      inspectionSettings.antigravityQuotaMode,
+      (nextStats) => {
+        setAuthFileStats(nextStats);
+        setAuthFileStatsReady(true);
+      }
+    );
+
+    return () => {
+      job.cancelled = true;
+      if (job.handle !== null) job.cancelHandle?.(job.handle);
+    };
+  }, [authFiles, authFilesLoaded, inspectionSettings.antigravityQuotaMode, inspectionSettings.usedPercentThreshold, quotaStore]);
 
   useEffect(() => {
+    if (!authFileStatsReady) return;
     if (selectedAssetProvider === 'all') return;
     if (authFileStats.providers.some((provider) => provider.provider === selectedAssetProvider)) return;
     setSelectedAssetProvider('all');
-  }, [authFileStats.providers, selectedAssetProvider]);
+  }, [authFileStats.providers, authFileStatsReady, selectedAssetProvider]);
 
   const selectedAssetStats = useMemo<AuthFileAccountStats | ProviderAccountStats>(() => {
     if (selectedAssetProvider === 'all') return authFileStats;
@@ -1819,64 +2129,67 @@ export function AccountInspectionPage() {
     {
       key: 'total',
       label: t('monitoring.account_inspection_account_total'),
-      value: authFilesLoaded ? String(selectedAssetStats.total) : '--',
+      value: authFileStatsReady ? String(selectedAssetStats.total) : '--',
       description: selectedAssetLabel,
     },
     {
       key: 'enabled',
       label: t('monitoring.account_inspection_account_enabled'),
-      value: authFilesLoaded ? String(selectedAssetStats.enabled) : '--',
+      value: authFileStatsReady ? String(selectedAssetStats.enabled) : '--',
       description: t('monitoring.account_inspection_inventory_health'),
-      tone: authFilesLoaded && selectedAssetStats.enabled > 0 ? 'good' : 'neutral',
+      tone: authFileStatsReady && selectedAssetStats.enabled > 0 ? 'good' : 'neutral',
     },
     {
       key: 'disabled',
       label: t('monitoring.account_inspection_account_disabled'),
-      value: authFilesLoaded ? String(selectedAssetStats.disabled) : '--',
+      value: authFileStatsReady ? String(selectedAssetStats.disabled) : '--',
       description: t('monitoring.account_inspection_blast_radius'),
-      tone: authFilesLoaded && selectedAssetStats.disabled > 0 ? 'warn' : 'neutral',
+      tone: authFileStatsReady && selectedAssetStats.disabled > 0 ? 'warn' : 'neutral',
     },
     {
       key: 'quotaLow',
       label: t('monitoring.account_inspection_account_quota_low'),
-      value: authFilesLoaded ? String(selectedAssetStats.quotaLow) : '--',
+      value: authFileStatsReady ? String(selectedAssetStats.quotaLow) : '--',
       description: t('monitoring.account_inspection_settings_auto_execute_quota_limit_disable_label'),
-      tone: authFilesLoaded && selectedAssetStats.quotaLow > 0 ? 'bad' : 'neutral',
+      tone: authFileStatsReady && selectedAssetStats.quotaLow > 0 ? 'bad' : 'neutral',
     },
     {
       key: 'accountInvalid',
       label: t('monitoring.account_inspection_account_invalid'),
-      value: authFilesLoaded ? String(selectedAssetStats.accountInvalid) : '--',
+      value: authFileStatsReady ? String(selectedAssetStats.accountInvalid) : '--',
       description: t('monitoring.account_inspection_settings_auto_execute_account_invalid_action_label'),
-      tone: authFilesLoaded && selectedAssetStats.accountInvalid > 0 ? 'bad' : 'neutral',
+      tone: authFileStatsReady && selectedAssetStats.accountInvalid > 0 ? 'bad' : 'neutral',
     },
     {
       key: 'requestError',
       label: t('monitoring.account_inspection_account_request_error'),
-      value: authFilesLoaded ? String(selectedAssetStats.requestError) : '--',
+      value: authFileStatsReady ? String(selectedAssetStats.requestError) : '--',
       description: t('monitoring.account_inspection_settings_auto_execute_request_error_action_label'),
-      tone: authFilesLoaded && selectedAssetStats.requestError > 0 ? 'bad' : 'neutral',
+      tone: authFileStatsReady && selectedAssetStats.requestError > 0 ? 'bad' : 'neutral',
     },
-  ], [authFilesLoaded, selectedAssetLabel, selectedAssetStats, t]);
+  ], [authFileStatsReady, selectedAssetLabel, selectedAssetStats, t]);
 
   const actionStats = useMemo(() => {
     const autoTotal = autoExecutionCounts.delete + autoExecutionCounts.disable + autoExecutionCounts.enable;
-    const manualTotal = actionableActionCounts.delete + actionableActionCounts.disable + actionableActionCounts.enable;
+    const manualDelete = result?.resultsLimited ? (result.summary.deleteCount ?? 0) : actionableActionCounts.delete;
+    const manualDisable = result?.resultsLimited ? (result.summary.disableCount ?? 0) : actionableActionCounts.disable;
+    const manualEnable = result?.resultsLimited ? (result.summary.enableCount ?? 0) : actionableActionCounts.enable;
+    const manualTotal = manualDelete + manualDisable + manualEnable;
     return {
       autoTotal,
       manualTotal,
       autoDelete: autoExecutionCounts.delete,
       autoDisable: autoExecutionCounts.disable,
       autoEnable: autoExecutionCounts.enable,
-      manualDelete: actionableActionCounts.delete,
-      manualDisable: actionableActionCounts.disable,
-      manualEnable: actionableActionCounts.enable,
+      manualDelete,
+      manualDisable,
+      manualEnable,
       keep: result?.summary.keepCount ?? 0,
       error: result?.summary.errorCount ?? 0,
     };
   }, [actionableActionCounts, autoExecutionCounts, result]);
 
-  const pendingActionCount = actionableResults.length;
+  const pendingActionCount = result?.resultsLimited ? actionStats.manualTotal : filterRowCounts.pending;
   const inspectionScopeLabel = inspectionSettings.targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
     ? t('monitoring.filter_all_providers')
     : resolveProviderDisplayLabel(inspectionSettings.targetType);
@@ -1910,7 +2223,7 @@ export function AccountInspectionPage() {
   }, []);
 
   const operationPhase = useMemo(() => {
-    if (executing) return t('monitoring.account_inspection_phase_executing');
+    if (executing || loadingFullInspectionDetails) return t('monitoring.account_inspection_phase_executing');
     if (runStatus === 'paused') return t('monitoring.account_inspection_phase_paused');
     if (runStatus === 'running') {
       if (progress.completed <= 0 && progress.inFlight <= 0) {
@@ -1922,7 +2235,7 @@ export function AccountInspectionPage() {
     if (result && pendingActionCount > 0) return t('monitoring.account_inspection_phase_review');
     if (result) return t('monitoring.account_inspection_phase_completed');
     return t('monitoring.account_inspection_phase_idle');
-  }, [executing, pendingActionCount, progress.completed, progress.inFlight, result, runStatus, t]);
+  }, [executing, loadingFullInspectionDetails, pendingActionCount, progress.completed, progress.inFlight, result, runStatus, t]);
 
   const resultEmptyMessage = runStatus === 'running'
     ? t('monitoring.account_inspection_results_generating')
@@ -2215,7 +2528,7 @@ export function AccountInspectionPage() {
             <div className={styles.providerDistributionHeader}>
               <div>
                 <h3>{t('monitoring.account_inspection_provider_distribution_title')}</h3>
-                <p>{authFilesLoaded ? t('monitoring.account_inspection_provider_distribution_desc', { count: authFileStats.providerCount }) : t('common.loading')}</p>
+                <p>{authFileStatsReady ? t('monitoring.account_inspection_provider_distribution_desc', { count: authFileStats.providerCount }) : t('common.loading')}</p>
               </div>
               <span>{selectedAssetLabel}</span>
             </div>
@@ -2232,10 +2545,10 @@ export function AccountInspectionPage() {
                     <span className={styles.providerLogoFallback} aria-hidden="true">Σ</span>
                     <strong>{t('monitoring.account_inspection_account_summary_title')}</strong>
                   </span>
-                  <span>{`${authFileStats.total} ${t('monitoring.account_inspection_account_total')}`}</span>
+                  <span>{authFileStatsReady ? `${authFileStats.total} ${t('monitoring.account_inspection_account_total')}` : t('common.loading')}</span>
                 </div>
                 <span aria-hidden="true">
-                  <i style={{ '--bar-width': authFileStats.total > 0 ? '100%' : '0%', '--bar-color': DONUT_COLORS[0] } as CSSProperties} />
+                  <i style={{ '--bar-width': authFileStatsReady && authFileStats.total > 0 ? '100%' : '0%', '--bar-color': DONUT_COLORS[0] } as CSSProperties} />
                 </span>
               </button>
               {authFileStats.providers.length > 0 ? authFileStats.providers.map((provider, index) => {
@@ -2265,7 +2578,7 @@ export function AccountInspectionPage() {
                     </span>
                   </button>
                 );
-              }) : <div className={styles.emptyBlockSmall}>{authFilesLoaded ? t('monitoring.account_inspection_empty') : t('common.loading')}</div>}
+              }) : <div className={styles.emptyBlockSmall}>{authFileStatsReady ? t('monitoring.account_inspection_empty') : t('common.loading')}</div>}
             </div>
           </Card>
         </div>
@@ -2370,27 +2683,27 @@ export function AccountInspectionPage() {
               <div className={styles.resultOverviewGrid}>
                 <span>
                   <small>{t('monitoring.account_inspection_result_total')}</small>
-                  <strong>{healthCounts.total}</strong>
+                  <strong>{displayedHealthCounts.total}</strong>
                 </span>
                 <span className={styles.resultOverviewGood}>
                   <small>{t('monitoring.account_inspection_high_available')}</small>
-                  <strong>{healthCounts.healthy}</strong>
+                  <strong>{displayedHealthCounts.healthy}</strong>
                 </span>
                 <span>
                   <small>{t('monitoring.account_inspection_health_recoverable')}</small>
-                  <strong>{healthCounts.recoverable}</strong>
+                  <strong>{displayedHealthCounts.recoverable}</strong>
                 </span>
                 <span className={styles.resultOverviewWarn}>
                   <small>{t('monitoring.account_inspection_health_quota_exhausted')}</small>
-                  <strong>{healthCounts.quotaExhausted}</strong>
+                  <strong>{displayedHealthCounts.quotaExhausted}</strong>
                 </span>
                 <span className={styles.resultOverviewBad}>
                   <small>{t('monitoring.account_inspection_account_invalid')}</small>
-                  <strong>{healthCounts.authInvalid}</strong>
+                  <strong>{displayedHealthCounts.authInvalid}</strong>
                 </span>
                 <span className={styles.resultOverviewBad}>
                   <small>{t('monitoring.account_inspection_account_request_error')}</small>
-                  <strong>{healthCounts.inspectionError}</strong>
+                  <strong>{displayedHealthCounts.inspectionError}</strong>
                 </span>
               </div>
             </div>
@@ -2436,10 +2749,10 @@ export function AccountInspectionPage() {
                         variant="primary"
                         size="sm"
                         onClick={handleExecutePlanned}
-                        loading={executing}
-                        disabled={!result || runStatus === 'running' || executing || pendingActionCount === 0}
+                        loading={executing || loadingFullInspectionDetails}
+                        disabled={!result || runStatus === 'running' || executing || loadingFullInspectionDetails || pendingActionCount === 0}
                       >
-                        {executing ? t('monitoring.account_inspection_executing') : t('monitoring.account_inspection_execute_now')}
+                        {executing || loadingFullInspectionDetails ? t('monitoring.account_inspection_executing') : t('monitoring.account_inspection_execute_now')}
                       </Button>
                     </div>
                   </div>
@@ -2507,7 +2820,7 @@ export function AccountInspectionPage() {
                 </thead>
                 <tbody>
                   {filteredResultRows.length > 0 ? (
-                    filteredResultRows.map(({ item, healthStatus, manualActions }) => {
+                    visibleResultRows.map(({ item, healthStatus, manualActions }) => {
                       const tokenRefreshDetail = formatTokenRefreshDetail(item, i18n.language, t);
                       return (
                         <tr key={item.key}>
@@ -2561,6 +2874,15 @@ export function AccountInspectionPage() {
                 </tbody>
               </table>
             </div>
+            {hiddenResultRowCount > 0 ? (
+              <div className={styles.renderLimitHint}>
+                {t('monitoring.request_events_limit_hint', {
+                  shown: visibleResultRows.length,
+                  total: filteredResultRowCount,
+                  defaultValue: `Showing ${visibleResultRows.length} of ${filteredResultRowCount} rows to keep rendering responsive.`,
+                })}
+              </div>
+            ) : null}
           </>
         ) : (
           <div className={styles.emptyState}>
@@ -2595,7 +2917,16 @@ export function AccountInspectionPage() {
         <Card className={styles.panel}>
           {!logsCollapsed ? (
             <div ref={logListRef} className={styles.logList}>
-              {filteredLogs.length > 0 ? filteredLogs.map((entry) => (
+              {hiddenLogCount > 0 ? (
+                <div className={styles.renderLimitHint}>
+                  {t('monitoring.request_events_limit_hint', {
+                    shown: visibleLogs.length,
+                    total: filteredLogs.length,
+                    defaultValue: `Showing ${visibleLogs.length} of ${filteredLogs.length} rows to keep rendering responsive.`,
+                  })}
+                </div>
+              ) : null}
+              {filteredLogs.length > 0 ? visibleLogs.map((entry) => (
                 <div key={entry.id} className={`${styles.logRow} ${levelClassMap[entry.level]}`}>
                   <span className={styles.logTime}>{formatTimestamp(entry.timestamp, i18n.language)}</span>
                   <span className={styles.logMessage}>{entry.message}</span>

@@ -16,6 +16,9 @@ type Config struct {
 	QueryLimit   int
 }
 
+const usageEventsPageLimit = 5000
+const usageEventsSentinelLimit = usageEventsPageLimit + 1
+
 func LoadConfig() Config {
 	dataDir := env("USAGE_DATA_DIR", "/CLIProxyAPI/usage")
 	return Config{
