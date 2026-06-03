@@ -3540,9 +3540,18 @@ export function MonitoringCenterPage() {
           ) : null}
         </div>
 
-        {realtimeLogRows.length > 0 ? (
-          <div className={styles.paginationBar}>
-            <span>
+        {realtimeLogPagination.totalPages > 1 ? (
+          <div className={quotaStyles.pagination}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setRealtimeLogPage((page) => Math.max(1, page - 1))}
+              disabled={!realtimeLogPagination.hasPrevious}
+              aria-label={t('monitoring.previous_page')}
+            >
+              {t('monitoring.pagination_previous')}
+            </Button>
+            <div className={quotaStyles.pageInfo}>
               {t('monitoring.pagination_info', {
                 from: realtimeLogPagination.from,
                 to: realtimeLogPagination.to,
@@ -3551,15 +3560,16 @@ export function MonitoringCenterPage() {
                 totalPages: realtimeLogPagination.totalPages,
                 defaultValue: `${realtimeLogPagination.from}-${realtimeLogPagination.to} / ${realtimeLogPagination.total}`,
               })}
-            </span>
-            <div className={styles.paginationActions}>
-              <Button size="sm" variant="secondary" onClick={() => setRealtimeLogPage((page) => Math.max(1, page - 1))} disabled={!realtimeLogPagination.hasPrevious}>
-                {t('monitoring.pagination_previous')}
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => setRealtimeLogPage((page) => page + 1)} disabled={!realtimeLogPagination.hasNext}>
-                {t('monitoring.pagination_next')}
-              </Button>
             </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setRealtimeLogPage((page) => page + 1)}
+              disabled={!realtimeLogPagination.hasNext}
+              aria-label={t('monitoring.next_page')}
+            >
+              {t('monitoring.pagination_next')}
+            </Button>
           </div>
         ) : null}
 

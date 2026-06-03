@@ -52,6 +52,7 @@ import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } fro
 import type { AuthFileItem } from '@/types';
 import { isDisabledAuthFile, isQuotaLowState, isRecordValue, normalizeNumberValue, readBooleanValue, readStringValue, resolveAuthProvider } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/utils/sourceResolver';
+import quotaStyles from '@/pages/QuotaPage.module.scss';
 import styles from './AccountInspectionPage.module.scss';
 
 type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
@@ -1964,7 +1965,6 @@ export function AccountInspectionPage() {
     healthCounts,
     actionableActionCounts,
     filterRows,
-    filterRowCounts,
   } = resultsViewState;
   const displayedHealthCounts = result?.healthCounts ?? healthCounts;
 
@@ -1974,7 +1974,6 @@ export function AccountInspectionPage() {
     return filterRows[resultFilter];
   }, [filterRows, resultFilter]);
   const resultPageInfo = result?.resultsPage ?? null;
-  const filteredResultRowCount = resultPageInfo?.total ?? filterRowCounts[resultFilter];
   const visibleResultRows = filteredResultRows;
 
   const filteredLogs = useMemo(
@@ -2930,9 +2929,18 @@ export function AccountInspectionPage() {
                 </tbody>
               </table>
             </div>
-            {filteredResultRowCount > 0 ? (
-              <div className={styles.paginationBar}>
-                <span>
+            {resultPagination.totalPages > 1 ? (
+              <div className={quotaStyles.pagination}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setResultPage((page) => Math.max(1, page - 1))}
+                  disabled={!resultPagination.hasPrevious}
+                  aria-label={t('monitoring.previous_page')}
+                >
+                  {t('monitoring.pagination_previous')}
+                </Button>
+                <div className={quotaStyles.pageInfo}>
                   {t('monitoring.pagination_info', {
                     from: resultPagination.from,
                     to: resultPagination.to,
@@ -2941,15 +2949,16 @@ export function AccountInspectionPage() {
                     totalPages: resultPagination.totalPages,
                     defaultValue: `${resultPagination.from}-${resultPagination.to} / ${resultPagination.total}`,
                   })}
-                </span>
-                <div className={styles.paginationActions}>
-                  <Button size="sm" variant="secondary" onClick={() => setResultPage((page) => Math.max(1, page - 1))} disabled={!resultPagination.hasPrevious}>
-                    {t('monitoring.pagination_previous')}
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => setResultPage((page) => page + 1)} disabled={!resultPagination.hasNext}>
-                    {t('monitoring.pagination_next')}
-                  </Button>
                 </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setResultPage((page) => page + 1)}
+                  disabled={!resultPagination.hasNext}
+                  aria-label={t('monitoring.next_page')}
+                >
+                  {t('monitoring.pagination_next')}
+                </Button>
               </div>
             ) : null}
           </>
@@ -2986,9 +2995,18 @@ export function AccountInspectionPage() {
         <Card className={styles.panel}>
           {!logsCollapsed ? (
             <div ref={logListRef} className={styles.logList}>
-              {(logPageInfo?.total ?? filteredLogs.length) > 0 ? (
-                <div className={styles.paginationBar}>
-                  <span>
+              {logPagination.totalPages > 1 ? (
+                <div className={quotaStyles.pagination}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setLogPage((page) => Math.max(1, page - 1))}
+                    disabled={!logPagination.hasPrevious}
+                    aria-label={t('monitoring.previous_page')}
+                  >
+                    {t('monitoring.pagination_previous')}
+                  </Button>
+                  <div className={quotaStyles.pageInfo}>
                     {t('monitoring.pagination_info', {
                       from: logPagination.from,
                       to: logPagination.to,
@@ -2997,15 +3015,16 @@ export function AccountInspectionPage() {
                       totalPages: logPagination.totalPages,
                       defaultValue: `${logPagination.from}-${logPagination.to} / ${logPagination.total}`,
                     })}
-                  </span>
-                  <div className={styles.paginationActions}>
-                    <Button size="sm" variant="secondary" onClick={() => setLogPage((page) => Math.max(1, page - 1))} disabled={!logPagination.hasPrevious}>
-                      {t('monitoring.pagination_previous')}
-                    </Button>
-                    <Button size="sm" variant="secondary" onClick={() => setLogPage((page) => page + 1)} disabled={!logPagination.hasNext}>
-                      {t('monitoring.pagination_next')}
-                    </Button>
                   </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setLogPage((page) => page + 1)}
+                    disabled={!logPagination.hasNext}
+                    aria-label={t('monitoring.next_page')}
+                  >
+                    {t('monitoring.pagination_next')}
+                  </Button>
                 </div>
               ) : null}
               {filteredLogs.length > 0 ? visibleLogs.map((entry) => (

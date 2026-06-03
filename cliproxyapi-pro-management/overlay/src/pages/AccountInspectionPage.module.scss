@@ -2311,26 +2311,6 @@
   line-height: 1.45;
 }
 
-.paginationBar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--inspect-line);
-  border-radius: 8px;
-  background: var(--inspect-surface-muted);
-  color: var(--inspect-muted);
-  font-size: 12px;
-}
-
-.paginationActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .previewSection {
   display: grid;
   gap: 12px;
@@ -3005,15 +2985,6 @@
   .progressFooter {
     flex-direction: column;
     align-items: stretch;
-  }
-
-  .paginationBar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .paginationActions {
-    justify-content: flex-start;
   }
 
   .progressActions {

@@ -484,27 +484,6 @@
   font-size: 12px;
 }
 
-.paginationBar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--monitor-line);
-  background: var(--monitor-surface-elevated);
-  color: var(--monitor-muted);
-  font-size: 12px;
-}
-
-.paginationActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .errorBox,
 .callout {
   display: grid;
@@ -4276,15 +4255,6 @@
 
   .priceActionsBar :global(.btn) {
     flex: 1 1 0;
-  }
-
-  .paginationBar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .paginationActions {
-    justify-content: flex-start;
   }
 
   .table {
