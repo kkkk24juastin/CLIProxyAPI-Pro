@@ -45,7 +45,7 @@ RUN set -eux; \
       -ldflags="-s -w -X 'main.Version=${CLIPROXY_BUILD_VERSION}' -X 'main.Commit=release-${CLIPROXY_SOURCE_VERSION}' -X 'main.BuildDate=${BUILD_DATE}'" \
       -o /out/CLIProxyAPI ./cmd/server/
 
-FROM alpine:3.22.0
+FROM alpine:latest
 
 RUN mkdir -p /CLIProxyAPI/usage
 
