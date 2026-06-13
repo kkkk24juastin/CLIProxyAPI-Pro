@@ -698,7 +698,7 @@ jobs:
             echo
             echo "- Pro core default desktop/Linux binaries are built with CGO enabled and support dynamic library plugins when the target platform supports them."
             echo "- Pro core \`_no-plugin\` binaries are CGO-free portable builds for static or constrained environments."
-            echo "- Pro Docker images remain CGO-free portable builds."
+            echo "- Pro Docker images follow upstream with CGO-enabled Debian builds and dynamic library plugin support."
             echo "- Pro management panel is published as management.html for automatic panel updates."
             echo
             echo "<!-- cli-proxyapi-pro-core-start -->"

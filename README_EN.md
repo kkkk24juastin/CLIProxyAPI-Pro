@@ -155,7 +155,7 @@ v7.1.18-pro
 
 During Docker builds, `CLIPROXY_VERSION` selects the upstream core tag to download, while `CLIPROXY_BUILD_VERSION` sets the runtime version. This lets the image and binary report `v7.1.18-pro` while still building from upstream `v7.1.18` source.
 
-Binary asset platforms and archive formats match upstream CLIProxyAPI. The version already carries the Pro release tag, so the asset prefix remains `CLIProxyAPI`. Default desktop/Linux archives support dynamic-library plugins; `_no-plugin` archives are for static or constrained environments. Docker images remain CGO-free portable builds:
+Binary asset platforms and archive formats match upstream CLIProxyAPI. The version already carries the Pro release tag, so the asset prefix remains `CLIProxyAPI`. Default desktop/Linux archives support dynamic-library plugins; `_no-plugin` archives are for static or constrained environments. Docker images follow upstream with CGO-enabled Debian builds and dynamic-library plugin support:
 
 ```text
 CLIProxyAPI_7.1.18-pro_linux_amd64.tar.gz

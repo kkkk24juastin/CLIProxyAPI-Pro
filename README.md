@@ -180,7 +180,7 @@ v7.1.18-pro
 
 Docker 构建参数中 `CLIPROXY_VERSION` 用于下载 upstream core tag，`CLIPROXY_BUILD_VERSION` 用于写入运行时版本号，因此镜像和二进制显示的版本是 `v7.1.18-pro`，但源码仍来自 upstream `v7.1.18`。
 
-二进制资产平台和压缩格式与 upstream CLIProxyAPI 保持一致，版本号使用 Pro release tag，因此资产名前缀保持为 `CLIProxyAPI`。默认桌面/Linux 包支持动态库插件；`_no-plugin` 包用于静态或受限环境。Docker 镜像保持 CGO-free 便携构建：
+二进制资产平台和压缩格式与 upstream CLIProxyAPI 保持一致，版本号使用 Pro release tag，因此资产名前缀保持为 `CLIProxyAPI`。默认桌面/Linux 包支持动态库插件；`_no-plugin` 包用于静态或受限环境。Docker 镜像对齐 upstream，使用 CGO-enabled Debian 构建并支持动态库插件：
 
 ```text
 CLIProxyAPI_7.1.18-pro_linux_amd64.tar.gz

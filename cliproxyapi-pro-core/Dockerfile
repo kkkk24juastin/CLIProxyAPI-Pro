@@ -1,6 +1,6 @@
-FROM --platform=$BUILDPLATFORM golang:alpine AS builder
+FROM golang:1.26-bookworm AS builder
 
-RUN apk add --no-cache ca-certificates curl jq tar python3
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl jq python3 build-essential git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src/CLIProxyAPI
 
@@ -41,17 +41,17 @@ RUN set -eux; \
     CLIPROXY_SOURCE_VERSION="$(cat /tmp/cliproxy-version)"; \
     if [ -z "$CLIPROXY_BUILD_VERSION" ]; then CLIPROXY_BUILD_VERSION="$CLIPROXY_SOURCE_VERSION"; fi; \
     BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
+    CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -buildvcs=false \
       -ldflags="-s -w -X 'main.Version=${CLIPROXY_BUILD_VERSION}' -X 'main.Commit=release-${CLIPROXY_SOURCE_VERSION}' -X 'main.BuildDate=${BUILD_DATE}'" \
       -o /out/CLIProxyAPI ./cmd/server/
 
-FROM alpine:latest
+FROM debian:bookworm
 
 RUN mkdir -p /CLIProxyAPI/usage
 
 COPY --from=ghcr.io/komari-monitor/komari-agent:latest /app/komari-agent /CLIProxyAPI/komari-agent
 
-RUN apk add --no-cache ca-certificates curl tzdata
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tzdata && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /CLIProxyAPI
 
