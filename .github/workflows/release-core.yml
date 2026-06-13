@@ -396,6 +396,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang lld wget
 
+      - name: Prepare workspace git metadata for FreeBSD plugin build
+        if: matrix.kind == 'freebsd-plugin'
+        run: |
+          set -euo pipefail
+          git init .
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "Prepare workspace metadata for cgo action"
+
       - name: Build FreeBSD plugin-capable binary
         if: matrix.kind == 'freebsd-plugin'
         uses: go-cross/cgo-actions@v1
