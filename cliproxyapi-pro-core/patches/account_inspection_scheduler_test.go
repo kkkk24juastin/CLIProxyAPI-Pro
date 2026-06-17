@@ -309,6 +309,26 @@ func TestBuildAntigravityGroupsSupportsWrappedBody(t *testing.T) {
 	}
 }
 
+func TestAntigravityUsedPercentFallsBackWhenClaudeGroupNameChanges(t *testing.T) {
+	groups := []map[string]any{{
+		"id":    "quota-group-1",
+		"label": "Premium Models",
+		"buckets": []map[string]any{{
+			"id":                "weekly",
+			"label":             "Weekly",
+			"remainingFraction": 0.35,
+		}},
+	}}
+
+	used := antigravityUsedPercent(groups, accountInspectionAntigravityQuotaModeClaudeGpt)
+	if used == nil || *used != 65 {
+		t.Fatalf("used percent = %v, want 65 fallback from buckets", used)
+	}
+	if model := selectAntigravityDeepProbeModel(groups, ""); model != "claude-sonnet-4-6" {
+		t.Fatalf("deep probe model = %q, want default claude-sonnet-4-6", model)
+	}
+}
+
 func TestBuildAntigravityGroupsRejectsLegacyModelsShape(t *testing.T) {
 	body := `{
 		"models": {

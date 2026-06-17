@@ -609,6 +609,32 @@ const maxQuotaUsedPercent = (items: unknown): number | null => {
   return Math.max(...values);
 };
 
+const antigravityGroupUsedPercent = (group: unknown): number | null => {
+  if (!isRecordValue(group)) return null;
+  return maxQuotaUsedPercent(group.buckets);
+};
+
+const maxAntigravityGroupUsedPercent = (groups: unknown[]): number | null => {
+  const values = groups
+    .map(antigravityGroupUsedPercent)
+    .filter((value): value is number => value !== null);
+  if (values.length === 0) return null;
+  return Math.max(...values);
+};
+
+const isAntigravityClaudeGptGroup = (group: unknown): boolean => {
+  if (!isRecordValue(group)) return false;
+  const normalize = (value: unknown) =>
+    typeof value === 'string'
+      ? value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+      : '';
+  const id = normalize(group.id);
+  const label = normalize(group.label);
+  if (id === 'claude-gpt' || label === 'claude-gpt') return true;
+  const combined = `${id}-${label}`;
+  return combined.includes('claude') && (combined.includes('gpt') || combined.includes('openai'));
+};
+
 const isGeminiCliQuotaLow = (quota: unknown, usedPercentThreshold: number) => {
   if (!isRecordValue(quota) || quota.status !== 'success') return false;
   const used = maxQuotaUsedPercent(quota.buckets);
@@ -623,8 +649,8 @@ const isAntigravityQuotaLow = (
   if (!isRecordValue(quota) || quota.status !== 'success') return false;
   const groups = Array.isArray(quota.groups) ? quota.groups : [];
   const used = quotaMode === 'max-used'
-    ? maxQuotaUsedPercent(groups)
-    : maxQuotaUsedPercent(groups.filter((group) => isRecordValue(group) && group.id === 'claude-gpt'));
+    ? maxAntigravityGroupUsedPercent(groups)
+    : (maxAntigravityGroupUsedPercent(groups.filter(isAntigravityClaudeGptGroup)) ?? maxAntigravityGroupUsedPercent(groups));
   return used !== null && used >= usedPercentThreshold;
 };
 

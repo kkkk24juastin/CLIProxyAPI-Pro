@@ -1949,12 +1949,7 @@ func selectAntigravityDeepProbeModel(groups []map[string]any, preferredModel str
 	if model := strings.TrimSpace(preferredModel); model != "" {
 		return model
 	}
-	for _, group := range groups {
-		if stringFromAny(group["id"]) == "claude-gpt" || strings.EqualFold(stringFromAny(group["label"]), "Claude/GPT") {
-			return "claude-sonnet-4-6"
-		}
-	}
-	return ""
+	return "claude-sonnet-4-6"
 }
 
 func buildAntigravityDeepProbeBody(projectID string, model string) string {
@@ -3059,15 +3054,22 @@ func anyMapSlice(value any) []map[string]any {
 
 func antigravityUsedPercent(groups []map[string]any, mode accountInspectionAntigravityQuotaMode) *float64 {
 	if mode == accountInspectionAntigravityQuotaModeMaxUsed {
-		values := make([]float64, 0, len(groups))
-		for _, group := range groups {
-			if used := antigravityGroupUsedPercent(group); used != nil {
-				values = append(values, *used)
-			}
-		}
-		return maxFloatPtr(values)
+		return antigravityMaxUsedPercent(groups)
 	}
-	return antigravityClaudeGptUsedPercent(groups)
+	if used := antigravityClaudeGptUsedPercent(groups); used != nil {
+		return used
+	}
+	return antigravityMaxUsedPercent(groups)
+}
+
+func antigravityMaxUsedPercent(groups []map[string]any) *float64 {
+	values := make([]float64, 0, len(groups))
+	for _, group := range groups {
+		if used := antigravityGroupUsedPercent(group); used != nil {
+			values = append(values, *used)
+		}
+	}
+	return maxFloatPtr(values)
 }
 
 func antigravityGroupUsedPercent(group map[string]any) *float64 {
@@ -3088,12 +3090,22 @@ func antigravityGroupRemainingFraction(group map[string]any) (float64, bool) {
 
 func antigravityClaudeGptUsedPercent(groups []map[string]any) *float64 {
 	for _, group := range groups {
-		if stringFromAny(group["id"]) != "claude-gpt" {
+		if !isAntigravityClaudeGptGroup(group) {
 			continue
 		}
 		return antigravityGroupUsedPercent(group)
 	}
 	return nil
+}
+
+func isAntigravityClaudeGptGroup(group map[string]any) bool {
+	id := normalizeWindowID(stringFromAny(group["id"]))
+	label := normalizeWindowID(stringFromAny(group["label"]))
+	if id == "claude-gpt" || label == "claude-gpt" {
+		return true
+	}
+	combined := id + "-" + label
+	return strings.Contains(combined, "claude") && (strings.Contains(combined, "gpt") || strings.Contains(combined, "openai"))
 }
 
 func buildClaudeWindows(body string) ([]map[string]any, any, error) {
