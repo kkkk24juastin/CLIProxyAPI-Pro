@@ -1,6 +1,7 @@
 package management
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -275,6 +276,9 @@ func TestBuildAntigravityGroupsSupportsSummaryBuckets(t *testing.T) {
 	if len(groups) != 1 {
 		t.Fatalf("groups len = %d, want 1", len(groups))
 	}
+	if groups[0]["id"] != "claude-gpt" {
+		t.Fatalf("group id = %#v, want claude-gpt", groups[0]["id"])
+	}
 	buckets, ok := groups[0]["buckets"].([]map[string]any)
 	if !ok || len(buckets) != 2 {
 		t.Fatalf("buckets = %#v, want two parsed buckets", groups[0]["buckets"])
@@ -288,6 +292,44 @@ func TestBuildAntigravityGroupsSupportsSummaryBuckets(t *testing.T) {
 	used := antigravityGroupUsedPercent(map[string]any{"buckets": buckets})
 	if used == nil || *used != 75 {
 		t.Fatalf("used percent = %v, want 75", used)
+	}
+}
+
+func TestBuildAntigravityGroupsCanonicalizesLatestGroups(t *testing.T) {
+	body := `{
+		"groups": [
+			{
+				"buckets": [
+					{"bucketId": "gemini-weekly", "displayName": "Weekly Limit", "window": "weekly", "resetTime": "2026-06-20T00:39:10Z", "remainingFraction": 0.9997293},
+					{"bucketId": "gemini-5h", "displayName": "Five Hour Limit", "window": "5h", "resetTime": "2026-06-17T15:04:15Z", "remainingFraction": 1}
+				],
+				"displayName": "Gemini Models",
+				"description": "Models within this group: Gemini Flash, Gemini Pro"
+			},
+			{
+				"buckets": [
+					{"bucketId": "3p-weekly", "displayName": "Weekly Limit", "window": "weekly", "resetTime": "2026-06-24T04:38:44Z", "remainingFraction": 0.9914995},
+					{"bucketId": "3p-5h", "displayName": "Five Hour Limit", "window": "5h", "resetTime": "2026-06-17T12:12:15Z", "remainingFraction": 0.999886}
+				],
+				"displayName": "Claude and GPT models",
+				"description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS"
+			}
+		]
+	}`
+
+	groups, err := buildAntigravityGroups(body)
+	if err != nil {
+		t.Fatalf("buildAntigravityGroups() error = %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("groups len = %d, want 2", len(groups))
+	}
+	if groups[0]["id"] != "gemini" || groups[1]["id"] != "claude-gpt" {
+		t.Fatalf("group ids = %#v/%#v, want gemini/claude-gpt", groups[0]["id"], groups[1]["id"])
+	}
+	used := antigravityUsedPercent(groups, accountInspectionAntigravityQuotaModeClaudeGpt)
+	if used == nil || math.Abs(*used-0.85005) > 0.0001 {
+		t.Fatalf("claude-gpt used percent = %v, want about 0.85005", used)
 	}
 }
 

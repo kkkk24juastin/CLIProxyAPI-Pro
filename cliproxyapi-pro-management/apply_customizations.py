@@ -352,6 +352,26 @@ def patch_quota_card(target: Path) -> None:
     )
 
 
+def patch_antigravity_quota_builders(target: Path) -> None:
+    path = target / 'src/utils/quota/builders.ts'
+    insert_once(
+        path,
+        "\nfunction getAntigravityWindowOrder(bucket: AntigravityQuotaBucket): number {\n",
+        "\nfunction getCanonicalAntigravityGroupId(label: string, description?: string): string {\n  const normalizedLabel = toStableId(label, '');\n  const normalizedDescription = description ? toStableId(description, '') : '';\n  const combined = `${normalizedLabel}-${normalizedDescription}`;\n  if (combined.includes('claude') && (combined.includes('gpt') || combined.includes('gpt-oss') || combined.includes('openai'))) {\n    return 'claude-gpt';\n  }\n  if (combined.includes('gemini')) {\n    return 'gemini';\n  }\n  return normalizedLabel;\n}\n\nfunction getAntigravityWindowOrder(bucket: AntigravityQuotaBucket): number {\n",
+        "getCanonicalAntigravityGroupId",
+    )
+    replace_once(
+        path,
+        "      const groupId = toStableId(label, `quota-group-${groupIndex + 1}`);\n      const buckets = Array.isArray(group.buckets) ? group.buckets : [];\n",
+        "      const description = normalizeStringValue(group.description) ?? undefined;\n      const groupId = getCanonicalAntigravityGroupId(label, description) || `quota-group-${groupIndex + 1}`;\n      const buckets = Array.isArray(group.buckets) ? group.buckets : [];\n",
+    )
+    replace_once(
+        path,
+        "        description: normalizeStringValue(group.description) ?? undefined,\n",
+        "        description,\n",
+    )
+
+
 def patch_quota_styles(target: Path) -> None:
     return
 
@@ -529,6 +549,7 @@ def main() -> None:
     patch_icons(target)
     patch_quota_types(target)
     patch_quota_configs(target)
+    patch_antigravity_quota_builders(target)
     patch_quota_page(target)
     patch_quota_card(target)
     patch_supporting_api_and_types(target)

@@ -2928,7 +2928,8 @@ func buildAntigravitySummaryGroups(payload map[string]any) []map[string]any {
 			continue
 		}
 		label := firstNonEmptyStringValue(stringFromAny(firstAny(group, "displayName", "display_name")), fmt.Sprintf("Quota Group %d", groupIndex+1))
-		groupID := normalizeWindowID(label)
+		description := firstNonEmptyStringValue(stringFromAny(group["description"]))
+		groupID := canonicalAntigravityGroupID(label, description)
 		if groupID == "" {
 			groupID = fmt.Sprintf("quota-group-%d", groupIndex+1)
 		}
@@ -2974,12 +2975,26 @@ func buildAntigravitySummaryGroups(payload map[string]any) []map[string]any {
 			return stringFromAny(buckets[i]["label"]) < stringFromAny(buckets[j]["label"])
 		})
 		parsedGroup := map[string]any{"id": groupID, "label": label, "buckets": buckets}
-		if description := firstNonEmptyStringValue(stringFromAny(group["description"])); description != "" {
+		if description != "" {
 			parsedGroup["description"] = description
 		}
 		groups = append(groups, parsedGroup)
 	}
 	return groups
+}
+
+func canonicalAntigravityGroupID(label string, description string) string {
+	normalizedLabel := normalizeWindowID(label)
+	normalizedDescription := normalizeWindowID(description)
+	combined := normalizedLabel + "-" + normalizedDescription
+	switch {
+	case strings.Contains(combined, "claude") && (strings.Contains(combined, "gpt") || strings.Contains(combined, "gpt-oss") || strings.Contains(combined, "openai")):
+		return "claude-gpt"
+	case strings.Contains(combined, "gemini"):
+		return "gemini"
+	default:
+		return normalizedLabel
+	}
 }
 
 func antigravityBucketWindowOrder(window string) int {
