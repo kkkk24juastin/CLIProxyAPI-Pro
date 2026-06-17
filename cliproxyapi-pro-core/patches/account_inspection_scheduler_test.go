@@ -383,3 +383,101 @@ func TestBuildAntigravityGroupsRejectsLegacyModelsShape(t *testing.T) {
 		t.Fatalf("buildAntigravityGroups() error = nil, want legacy models shape rejected")
 	}
 }
+
+func TestBuildCodexWindowsClassifiesTeamMonthlyWindows(t *testing.T) {
+	body := `{
+		"rate_limit": {
+			"primary_window": {"limit_window_seconds": 18000, "used_percent": 12.5, "reset_after_seconds": 60},
+			"secondary_window": {"limit_window_seconds": 2592000, "used_percent": 42.5, "reset_after_seconds": 120},
+			"allowed": true
+		},
+		"code_review_rate_limit": {
+			"primary_window": {"limit_window_seconds": 18000, "used_percent": 5},
+			"secondary_window": {"limit_window_seconds": 2419200, "used_percent": 88}
+		},
+		"additional_rate_limits": [{
+			"limit_name": "Premium Tokens",
+			"rate_limit": {
+				"primary_window": {"limit_window_seconds": 18000, "used_percent": 11},
+				"secondary_window": {"limit_window_seconds": 2678400, "used_percent": 22}
+			}
+		}]
+	}`
+
+	_, windows, used := buildCodexWindows(body)
+	if used == nil || *used != 88 {
+		t.Fatalf("used percent = %v, want 88", used)
+	}
+	labelsByID := make(map[string]string)
+	for _, window := range windows {
+		id, _ := window["id"].(string)
+		labelKey, _ := window["labelKey"].(string)
+		labelsByID[id] = labelKey
+	}
+	if labelsByID["monthly"] != "codex_quota.team_secondary_window" {
+		t.Fatalf("monthly label = %q, want team secondary", labelsByID["monthly"])
+	}
+	if labelsByID["code-review-monthly"] != "codex_quota.code_review_team_secondary_window" {
+		t.Fatalf("code review monthly label = %q, want code review team secondary", labelsByID["code-review-monthly"])
+	}
+	if labelsByID["premium-tokens-monthly-0"] != "codex_quota.additional_team_secondary_window" {
+		t.Fatalf("additional monthly label = %q, want additional team secondary", labelsByID["premium-tokens-monthly-0"])
+	}
+}
+
+func TestBuildXAIBillingSummaryParsesBillingConfig(t *testing.T) {
+	body := `{
+		"config": {
+			"monthlyLimit": {"val": 10000},
+			"used": {"val": 2500},
+			"onDemandCap": {"val": 5000},
+			"billingPeriodStart": "2026-06-01T00:00:00Z",
+			"billingPeriodEnd": "2026-07-01T00:00:00Z"
+		}
+	}`
+
+	billing, used, err := buildXAIBillingSummary(body)
+	if err != nil {
+		t.Fatalf("buildXAIBillingSummary() error = %v", err)
+	}
+	if used == nil || *used != 25 {
+		t.Fatalf("used percent = %v, want 25", used)
+	}
+	if billing["monthlyLimitCents"] != 10000.0 || billing["usedCents"] != 2500.0 || billing["onDemandCapCents"] != 5000.0 {
+		t.Fatalf("billing cents = %+v, want parsed cent values", billing)
+	}
+	if billing["billingPeriodEnd"] != "2026-07-01T00:00:00Z" {
+		t.Fatalf("billing period end = %#v", billing["billingPeriodEnd"])
+	}
+	if billing["usedPercent"] != 25.0 {
+		t.Fatalf("billing usedPercent = %#v, want 25", billing["usedPercent"])
+	}
+}
+
+func TestBuildXAIBillingSummarySupportsSnakeCaseAndNumericValues(t *testing.T) {
+	body := `{
+		"config": {
+			"monthly_limit": 8000,
+			"used": 6000,
+			"on_demand_cap": 12000,
+			"billing_period_end": "2026-07-01T00:00:00Z"
+		}
+	}`
+
+	billing, used, err := buildXAIBillingSummary(body)
+	if err != nil {
+		t.Fatalf("buildXAIBillingSummary() error = %v", err)
+	}
+	if used == nil || *used != 75 {
+		t.Fatalf("used percent = %v, want 75", used)
+	}
+	if billing["monthlyLimitCents"] != 8000.0 || billing["usedCents"] != 6000.0 || billing["onDemandCapCents"] != 12000.0 {
+		t.Fatalf("billing cents = %+v, want parsed snake_case numeric values", billing)
+	}
+}
+
+func TestXAIAPIBaseURLDefaultsToGrokBillingHost(t *testing.T) {
+	if got := xaiAPIBaseURL(nil); got != "https://cli-chat-proxy.grok.com/v1" {
+		t.Fatalf("xaiAPIBaseURL(nil) = %q, want grok proxy host", got)
+	}
+}

@@ -2216,7 +2216,7 @@ func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account ac
 func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
 	baseURL := xaiAPIBaseURL(account.Auth)
 	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
-		return s.apiCall(ctx, account.Auth, http.MethodGet, strings.TrimRight(baseURL, "/")+"/models", map[string]string{
+		return s.apiCall(ctx, account.Auth, http.MethodGet, strings.TrimRight(baseURL, "/")+"/billing", map[string]string{
 			"Authorization": "Bearer $TOKEN$",
 			"Accept":        "application/json",
 		}, "", settings.Timeout)
@@ -2231,16 +2231,18 @@ func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account acc
 		}
 		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	if account.Disabled {
-		return accountInspectionDecision{Action: accountInspectionActionEnable, ActionReason: "账号可用，建议重新启用"}, status, nil
+	billing, used, err := buildXAIBillingSummary(resp.Body)
+	if err != nil {
+		return accountInspectionDecision{}, status, err
 	}
-	return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: "账号可用，无需处理"}, status, nil
+	s.persistQuotaState(ctx, account, quotaSuccessState(map[string]any{"billing": billing, "rawShapeHash": jsonShapeHash(resp.Body)}))
+	return quotaDecision(account, used, billing != nil, settings.UsedPercentThreshold), status, nil
 }
 
 func xaiAPIBaseURL(auth *coreauth.Auth) string {
 	baseURL := firstNonEmptyAuthValue(auth, "base_url", "baseURL", "api_base_url", "apiBaseURL")
 	if baseURL == "" {
-		return "https://api.x.ai/v1"
+		return "https://cli-chat-proxy.grok.com/v1"
 	}
 	return baseURL
 }
@@ -3213,11 +3215,13 @@ func buildCodexWindows(body string) (map[string]any, []map[string]any, *float64)
 
 	fiveHour, weekly := codexClassifiedWindows(rateLimit, true)
 	addCodexWindow("five-hour", "codex_quota.primary_window", nil, fiveHour, firstAny(rateLimit, "limit_reached", "limitReached"), rateLimit["allowed"])
-	addCodexWindow("weekly", "codex_quota.secondary_window", nil, weekly, firstAny(rateLimit, "limit_reached", "limitReached"), rateLimit["allowed"])
+	secondaryID, secondaryLabel := codexSecondaryWindowMeta(weekly, "weekly", "codex_quota.secondary_window", "monthly", "codex_quota.team_secondary_window")
+	addCodexWindow(secondaryID, secondaryLabel, nil, weekly, firstAny(rateLimit, "limit_reached", "limitReached"), rateLimit["allowed"])
 
 	codeReviewFiveHour, codeReviewWeekly := codexClassifiedWindows(codeReviewLimit, true)
 	addCodexWindow("code-review-five-hour", "codex_quota.code_review_primary_window", nil, codeReviewFiveHour, firstAny(codeReviewLimit, "limit_reached", "limitReached"), codeReviewLimit["allowed"])
-	addCodexWindow("code-review-weekly", "codex_quota.code_review_secondary_window", nil, codeReviewWeekly, firstAny(codeReviewLimit, "limit_reached", "limitReached"), codeReviewLimit["allowed"])
+	codeReviewSecondaryID, codeReviewSecondaryLabel := codexSecondaryWindowMeta(codeReviewWeekly, "code-review-weekly", "codex_quota.code_review_secondary_window", "code-review-monthly", "codex_quota.code_review_team_secondary_window")
+	addCodexWindow(codeReviewSecondaryID, codeReviewSecondaryLabel, nil, codeReviewWeekly, firstAny(codeReviewLimit, "limit_reached", "limitReached"), codeReviewLimit["allowed"])
 
 	for index, raw := range anySlice(firstAny(payload, "additional_rate_limits", "additionalRateLimits")) {
 		limitItem, ok := raw.(map[string]any)
@@ -3237,7 +3241,8 @@ func buildCodexWindows(body string) (map[string]any, []map[string]any, *float64)
 		secondary, _ := firstAny(rateInfo, "secondary_window", "secondaryWindow").(map[string]any)
 		params := map[string]any{"name": limitName}
 		addCodexWindow(fmt.Sprintf("%s-five-hour-%d", idPrefix, index), "codex_quota.additional_primary_window", params, primary, firstAny(rateInfo, "limit_reached", "limitReached"), rateInfo["allowed"])
-		addCodexWindow(fmt.Sprintf("%s-weekly-%d", idPrefix, index), "codex_quota.additional_secondary_window", params, secondary, firstAny(rateInfo, "limit_reached", "limitReached"), rateInfo["allowed"])
+		additionalSecondaryID, additionalSecondaryLabel := codexSecondaryWindowMeta(secondary, "weekly", "codex_quota.additional_secondary_window", "monthly", "codex_quota.additional_team_secondary_window")
+		addCodexWindow(fmt.Sprintf("%s-%s-%d", idPrefix, additionalSecondaryID, index), additionalSecondaryLabel, params, secondary, firstAny(rateInfo, "limit_reached", "limitReached"), rateInfo["allowed"])
 	}
 
 	used := maxUsedPercentFromWindows(windows)
@@ -3259,7 +3264,7 @@ func codexClassifiedWindows(limitInfo map[string]any, allowOrderFallback bool) (
 		}
 		if int(seconds) == 18000 && fiveHour == nil {
 			fiveHour = window
-		} else if int(seconds) == 604800 && weekly == nil {
+		} else if (int(seconds) == 604800 || isCodexMonthlyWindow(window)) && weekly == nil {
 			weekly = window
 		}
 	}
@@ -3272,6 +3277,24 @@ func codexClassifiedWindows(limitInfo map[string]any, allowOrderFallback bool) (
 		}
 	}
 	return fiveHour, weekly
+}
+
+func isCodexMonthlyWindow(window map[string]any) bool {
+	if window == nil {
+		return false
+	}
+	seconds, ok := floatFromAny(firstAny(window, "limit_window_seconds", "limitWindowSeconds"))
+	if !ok {
+		return false
+	}
+	return seconds >= 28*24*60*60 && seconds <= 31*24*60*60
+}
+
+func codexSecondaryWindowMeta(window map[string]any, weeklyID string, weeklyLabelKey string, monthlyID string, monthlyLabelKey string) (string, string) {
+	if isCodexMonthlyWindow(window) {
+		return monthlyID, monthlyLabelKey
+	}
+	return weeklyID, weeklyLabelKey
 }
 
 func codexResetLabel(window map[string]any) string {
@@ -3499,6 +3522,59 @@ func buildKimiRows(body string) ([]map[string]any, *float64, error) {
 		}
 	}
 	return rows, maxFloatPtr(usedValues), nil
+}
+
+func buildXAIBillingSummary(body string) (map[string]any, *float64, error) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return nil, nil, err
+	}
+	config := firstMap(payload, "config")
+	if config == nil {
+		return nil, nil, fmt.Errorf("empty xai billing config")
+	}
+	monthlyLimitCents, hasMonthlyLimit := xaiCentValue(firstAny(config, "monthlyLimit", "monthly_limit"))
+	usedCents, hasUsed := xaiCentValue(config["used"])
+	onDemandCapCents, hasOnDemandCap := xaiCentValue(firstAny(config, "onDemandCap", "on_demand_cap"))
+	billingPeriodStart := firstNonEmptyStringValue(stringFromAny(firstAny(config, "billingPeriodStart", "billing_period_start")))
+	billingPeriodEnd := firstNonEmptyStringValue(stringFromAny(firstAny(config, "billingPeriodEnd", "billing_period_end")))
+	if !hasMonthlyLimit && !hasUsed && !hasOnDemandCap && billingPeriodEnd == "" {
+		return nil, nil, fmt.Errorf("empty xai billing config")
+	}
+	var usedPercent *float64
+	if hasMonthlyLimit && monthlyLimitCents > 0 && hasUsed {
+		value := (usedCents / monthlyLimitCents) * 100
+		usedPercent = &value
+	}
+	summary := map[string]any{
+		"monthlyLimitCents": nil,
+		"usedCents":         nil,
+		"onDemandCapCents":  nil,
+		"usedPercent":       floatPtrAny(usedPercent),
+	}
+	if hasMonthlyLimit {
+		summary["monthlyLimitCents"] = monthlyLimitCents
+	}
+	if hasUsed {
+		summary["usedCents"] = usedCents
+	}
+	if hasOnDemandCap {
+		summary["onDemandCapCents"] = onDemandCapCents
+	}
+	if billingPeriodStart != "" {
+		summary["billingPeriodStart"] = billingPeriodStart
+	}
+	if billingPeriodEnd != "" {
+		summary["billingPeriodEnd"] = billingPeriodEnd
+	}
+	return summary, usedPercent, nil
+}
+
+func xaiCentValue(value any) (float64, bool) {
+	if mapped, ok := value.(map[string]any); ok {
+		return floatFromAny(mapped["val"])
+	}
+	return floatFromAny(value)
 }
 
 func kimiLimitLabel(item map[string]any, detail map[string]any, window map[string]any, index int) map[string]any {
