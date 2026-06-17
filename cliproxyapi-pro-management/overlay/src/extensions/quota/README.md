@@ -216,7 +216,6 @@ private migrate(data, fromVersion, toVersion) {
 export const FEATURES = {
   QUOTA_PERSISTENCE: true,        // 启用 IndexedDB 持久化
   QUOTA_CACHE_TIMESTAMP: true,    // 显示缓存时间戳
-  QUOTA_SINGLE_REFRESH: true,     // 显示单卡刷新按钮
 };
 ```
 
@@ -328,7 +327,6 @@ private async cleanupIfNeeded() {
 export const FEATURES = {
   QUOTA_PERSISTENCE: false,
   QUOTA_CACHE_TIMESTAMP: false,
-  QUOTA_SINGLE_REFRESH: false,
 };
 ```
 

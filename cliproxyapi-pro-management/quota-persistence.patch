@@ -116,7 +116,6 @@
  import type { AuthFileItem, ResolvedTheme, ThemeColors } from '@/types';
  import { TYPE_COLORS } from '@/utils/quota';
 +import { FEATURES } from '@/config/features';
-+import { IconRefreshCw } from '@/components/ui/icons';
  import styles from '@/pages/QuotaPage.module.scss';
 
  type QuotaStatus = 'idle' | 'loading' | 'success' | 'error';
@@ -155,7 +154,6 @@
 +    return t('quota_management.days_ago', { count: days });
 +  };
 +
-+  const showRefreshButton = FEATURES.QUOTA_SINGLE_REFRESH && quotaStatus === 'success' && onRefresh;
 +  const showCachedTime = FEATURES.QUOTA_CACHE_TIMESTAMP && quotaStatus === 'success' && cachedAt;
 +
    return (
@@ -165,18 +163,6 @@
            {getTypeLabel(displayType)}
          </span>
          <span className={styles.fileName}>{item.name}</span>
-+        {showRefreshButton && (
-+          <button
-+            type="button"
-+            className={styles.refreshButton}
-+            onClick={onRefresh}
-+            disabled={!canRefresh}
-+            title={t('quota_management.refresh_single')}
-+            aria-label={t('quota_management.refresh_single')}
-+          >
-+            <IconRefreshCw size={14} />
-+          </button>
-+        )}
        </div>
 
        <div className={styles.quotaSection}>
@@ -251,7 +237,6 @@
      "refresh_all_credentials": "Refresh all credentials",
 -    "card_idle_hint": "Use the top \"Refresh all credentials\" button to fetch the latest quota data."
 +    "card_idle_hint": "Use the top \"Refresh all credentials\" button to fetch the latest quota data.",
-+    "refresh_single": "Refresh this quota",
 +    "cached_at": "Updated",
 +    "just_now": "Just now",
 +    "minutes_ago": "{{count}} minute ago",
@@ -271,7 +256,6 @@
      "refresh_all_credentials": "Обновить все учётные данные",
 -    "card_idle_hint": "Используйте кнопку «Обновить все учётные данные» сверху, чтобы загрузить актуальные данные по квотам."
 +    "card_idle_hint": "Используйте кнопку «Обновить все учётные данные» сверху, чтобы загрузить актуальные данные по квотам.",
-+    "refresh_single": "Обновить эту квоту",
 +    "cached_at": "Обновлено",
 +    "just_now": "Только что",
 +    "minutes_ago": "{{count}} минуту назад",
@@ -291,7 +275,6 @@
      "refresh_all_credentials": "刷新全部凭证",
 -    "card_idle_hint": "请使用顶部“刷新全部凭证”按钮获取最新额度。"
 +    "card_idle_hint": "请使用顶部“刷新全部凭证”按钮获取最新额度。",
-+    "refresh_single": "刷新此配额",
 +    "cached_at": "更新于",
 +    "just_now": "刚刚",
 +    "minutes_ago": "{{count}} 分钟前",
@@ -308,7 +291,6 @@
      "refresh_all_credentials": "重新整理全部憑證",
 -    "card_idle_hint": "請使用頂部「重新整理全部憑證」按鈕取得最新配額。"
 +    "card_idle_hint": "請使用頂部「重新整理全部憑證」按鈕取得最新配額。",
-+    "refresh_single": "重新整理此配額",
 +    "cached_at": "更新於",
 +    "just_now": "剛剛",
 +    "minutes_ago": "{{count}} 分鐘前",

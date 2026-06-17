@@ -14,9 +14,4 @@ export const FEATURES = {
    * Requires QUOTA_PERSISTENCE to be enabled.
    */
   QUOTA_CACHE_TIMESTAMP: true,
-
-  /**
-   * Show refresh button on success state quota cards.
-   */
-  QUOTA_SINGLE_REFRESH: true,
 } as const;

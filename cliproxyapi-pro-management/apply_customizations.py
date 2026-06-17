@@ -10,7 +10,6 @@ LOCALES_FILE = CUSTOMIZATION_DIR / 'monitoring-locales.json'
 
 QUOTA_LOCALE_KEYS = {
     'en.json': {
-        'refresh_single': 'Refresh this quota',
         'cached_at': 'Updated',
         'just_now': 'Just now',
         'minutes_ago': '{{count}} minute ago',
@@ -21,7 +20,6 @@ QUOTA_LOCALE_KEYS = {
         'days_ago_plural': '{{count}} days ago',
     },
     'ru.json': {
-        'refresh_single': 'Обновить эту квоту',
         'cached_at': 'Обновлено',
         'just_now': 'Только что',
         'minutes_ago': '{{count}} минуту назад',
@@ -32,7 +30,6 @@ QUOTA_LOCALE_KEYS = {
         'days_ago_plural': '{{count}} дней назад',
     },
     'zh-CN.json': {
-        'refresh_single': '刷新此配额',
         'cached_at': '更新于',
         'just_now': '刚刚',
         'minutes_ago': '{{count}} 分钟前',
@@ -40,7 +37,6 @@ QUOTA_LOCALE_KEYS = {
         'days_ago': '{{count}} 天前',
     },
     'zh-TW.json': {
-        'refresh_single': '重新整理此配額',
         'cached_at': '更新於',
         'just_now': '剛剛',
         'minutes_ago': '{{count}} 分鐘前',
@@ -337,14 +333,9 @@ def patch_quota_card(target: Path) -> None:
     replace_once(
         path,
         "import { TYPE_COLORS } from '@/utils/quota';\n",
-        "import { QuotaCachedTime, QuotaCardHeaderAction } from '@/extensions/quota/QuotaCardExtras';\nimport { TYPE_COLORS } from '@/utils/quota';\n",
+        "import { QuotaCachedTime } from '@/extensions/quota/QuotaCardExtras';\nimport { TYPE_COLORS } from '@/utils/quota';\n",
     )
     replace_once(path, "  errorStatus?: number;\n}", "  errorStatus?: number;\n  cachedAt?: number;\n}")
-    replace_once(
-        path,
-        "        <span className={styles.fileName}>{item.name}</span>\n      </div>",
-        "        <span className={styles.fileName}>{item.name}</span>\n        <QuotaCardHeaderAction quotaStatus={quotaStatus} canRefresh={canRefresh} onRefresh={onRefresh} />\n      </div>",
-    )
     replace_once(
         path,
         "        ) : quota ? (\n          renderQuotaItems(quota, t, { styles, QuotaProgressBar })\n        ) : (",
