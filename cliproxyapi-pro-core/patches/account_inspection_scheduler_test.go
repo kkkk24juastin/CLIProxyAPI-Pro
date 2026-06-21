@@ -1,10 +1,65 @@
 package management
 
 import (
+	"context"
+	"io"
 	"math"
+	"net/http"
 	"strings"
 	"testing"
+
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 )
+
+type geminiCLIInspectionTestExecutor struct {
+	status int
+	body   string
+	err    error
+}
+
+type geminiCLIInspectionTestStorage struct {
+	raw []byte
+}
+
+func (s geminiCLIInspectionTestStorage) SaveTokenToFile(string) error { return nil }
+
+func (s geminiCLIInspectionTestStorage) RawJSON() []byte {
+	return append([]byte(nil), s.raw...)
+}
+
+func (e geminiCLIInspectionTestExecutor) Identifier() string { return "gemini-cli" }
+
+func (e geminiCLIInspectionTestExecutor) Execute(context.Context, *coreauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{}, nil
+}
+
+func (e geminiCLIInspectionTestExecutor) ExecuteStream(context.Context, *coreauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	return nil, nil
+}
+
+func (e geminiCLIInspectionTestExecutor) Refresh(_ context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
+	return auth, nil
+}
+
+func (e geminiCLIInspectionTestExecutor) CountTokens(context.Context, *coreauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{}, nil
+}
+
+func (e geminiCLIInspectionTestExecutor) HttpRequest(context.Context, *coreauth.Auth, *http.Request) (*http.Response, error) {
+	if e.err != nil {
+		return nil, e.err
+	}
+	status := e.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(e.body)),
+		Header:     make(http.Header),
+	}, nil
+}
 
 func testInspectionResult(key string, action accountInspectionAction, disabled bool, statusCode *int, isQuota bool, err string) accountInspectionResult {
 	return accountInspectionResult{
@@ -22,6 +77,94 @@ func testInspectionResult(key string, action accountInspectionAction, disabled b
 
 func testStatusCode(value int) *int {
 	return &value
+}
+
+func TestGeminiCLIPluginProviderIsInspectable(t *testing.T) {
+	auth := &coreauth.Auth{ID: "auth-1", Provider: "gemini-cli", Index: "idx", FileName: "gemini-cli.json"}
+	account := accountFromAuth(auth)
+	if account.Provider != "gemini-cli" {
+		t.Fatalf("account provider = %q, want gemini-cli", account.Provider)
+	}
+	if !shouldInspectAccount(account, accountInspectionProviderAll) {
+		t.Fatal("shouldInspectAccount(gemini-cli, all) = false, want true")
+	}
+	if !shouldInspectAccount(account, "gemini-cli") {
+		t.Fatal("shouldInspectAccount(gemini-cli, gemini-cli) = false, want true")
+	}
+}
+
+func TestInspectGeminiCLIUsesPluginHTTPBridge(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(geminiCLIInspectionTestExecutor{status: http.StatusOK, body: `{"candidates":[{}]}`})
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	account := accountFromAuth(&coreauth.Auth{ID: "auth-1", Provider: "gemini-cli", Index: "idx", FileName: "gemini-cli.json", Attributes: map[string]string{"project_id": "project-a"}})
+
+	decision, status, err := scheduler.inspectGeminiCLI(context.Background(), account, defaultAccountInspectionSettings())
+	if err != nil {
+		t.Fatalf("inspectGeminiCLI() error = %v", err)
+	}
+	if status == nil || *status != http.StatusOK {
+		t.Fatalf("status = %v, want 200", status)
+	}
+	if decision.Action != accountInspectionActionKeep || decision.IsQuota || decision.UsedPercent != nil {
+		t.Fatalf("decision = %+v, want healthy keep without quota", decision)
+	}
+}
+
+func TestInspectGeminiCLIClassifiesPluginQuota(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(geminiCLIInspectionTestExecutor{status: http.StatusTooManyRequests, body: `{"error":{"status":"RESOURCE_EXHAUSTED","message":"quota exhausted"}}`})
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	account := accountFromAuth(&coreauth.Auth{ID: "auth-1", Provider: "gemini-cli", Index: "idx", FileName: "gemini-cli.json", Attributes: map[string]string{"project_id": "project-a"}})
+
+	decision, status, err := scheduler.inspectGeminiCLI(context.Background(), account, defaultAccountInspectionSettings())
+	if err != nil {
+		t.Fatalf("inspectGeminiCLI() error = %v", err)
+	}
+	if status == nil || *status != http.StatusTooManyRequests {
+		t.Fatalf("status = %v, want 429", status)
+	}
+	if decision.Action != accountInspectionActionDisable || !decision.IsQuota {
+		t.Fatalf("decision = %+v, want quota disable", decision)
+	}
+}
+
+func TestInspectGeminiCLIRequiresProjectID(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(geminiCLIInspectionTestExecutor{status: http.StatusOK})
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	account := accountFromAuth(&coreauth.Auth{ID: "auth-1", Provider: "gemini-cli", Index: "idx", FileName: "gemini-cli.json"})
+
+	_, status, err := scheduler.inspectGeminiCLI(context.Background(), account, defaultAccountInspectionSettings())
+	if err == nil || !strings.Contains(err.Error(), "project id") {
+		t.Fatalf("inspectGeminiCLI() error = %v, want project id error", err)
+	}
+	if status != nil {
+		t.Fatalf("status = %v, want nil", status)
+	}
+}
+
+func TestBuildGeminiCLIDeepProbeBodyIncludesPluginRequestFields(t *testing.T) {
+	body := buildGeminiCLIDeepProbeBody("project-a")
+	if !strings.Contains(body, `"project":"project-a"`) {
+		t.Fatalf("body = %s, want project field", body)
+	}
+	if !strings.Contains(body, `"model":"gemini-2.5-flash"`) {
+		t.Fatalf("body = %s, want plugin-supported model", body)
+	}
+	if !strings.Contains(body, `"request"`) {
+		t.Fatalf("body = %s, want wrapped request", body)
+	}
+}
+
+func TestGeminiCLIProjectIDReadsPluginStorage(t *testing.T) {
+	auth := &coreauth.Auth{
+		Provider: "gemini-cli",
+		Storage:  geminiCLIInspectionTestStorage{raw: []byte(`{"type":"gemini-cli","project_ids":["project-a","project-b"]}`)},
+	}
+	if got := geminiCLIProjectID(auth); got != "project-a" {
+		t.Fatalf("geminiCLIProjectID() = %q, want project-a", got)
+	}
 }
 
 func TestPaginateAccountInspectionResultsReturnsRequestedPage(t *testing.T) {

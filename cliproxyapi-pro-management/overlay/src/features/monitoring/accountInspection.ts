@@ -222,6 +222,7 @@ export const ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS = [
   'antigravity',
   'claude',
   'codex',
+  'gemini-cli',
   'kimi',
   'xai',
 ] as const;
