@@ -471,12 +471,34 @@ const healthLabelKey: Record<ResultHealthStatus, string> = {
   recoverable: 'monitoring.account_inspection_health_recoverable',
 };
 
-const formatHealthErrorCode = (item: AccountInspectionResultItem): string | null => {
+const compactHealthErrorCode = (code: string) => {
+  switch (code) {
+    case 'inspection_http_error':
+      return 'http_error';
+    case 'inspection_probe_error':
+      return 'probe_error';
+    case 'antigravity_deep_probe_error':
+      return 'deep_probe';
+    default:
+      return code;
+  }
+};
+
+const formatHealthErrorCodes = (item: AccountInspectionResultItem): Array<{ label: string; title: string }> => {
+  const codes: Array<{ label: string; title: string }> = [];
+  const errorCode = item.errorCode?.trim();
+  if (errorCode) {
+    codes.push({ label: compactHealthErrorCode(errorCode), title: errorCode });
+  }
   if (item.statusCode !== null && item.statusCode >= 400) {
-    return `HTTP ${item.statusCode}`;
+    codes.push({ label: `HTTP ${item.statusCode}`, title: `HTTP ${item.statusCode}` });
+    return codes;
   }
   const match = item.error.match(/\bHTTP\s+(\d{3})\b/i) ?? item.error.match(/\bstatus(?:\s+code)?\s*[:=]?\s*(\d{3})\b/i);
-  return match ? `HTTP ${match[1]}` : null;
+  if (match) {
+    codes.push({ label: `HTTP ${match[1]}`, title: `HTTP ${match[1]}` });
+  }
+  return codes;
 };
 
 const deepProbeLabelKey: Record<Exclude<NonNullable<AccountInspectionResultItem['deepProbeStatus']>, ''>, string> = {
@@ -2914,14 +2936,20 @@ export function AccountInspectionPage() {
                   {filteredResultRows.length > 0 ? (
                     visibleResultRows.map(({ item, healthStatus, manualActions }) => {
                       const tokenRefreshDetail = formatTokenRefreshDetail(item, i18n.language, t);
-                      const healthErrorCode = formatHealthErrorCode(item);
+                      const healthErrorCodes = formatHealthErrorCodes(item);
                       return (
                         <tr key={item.key}>
                           <td><div className={styles.primaryCell}><span>{item.fileName}</span><small>{item.provider}</small></div></td>
                           <td>
                             <div className={styles.healthCell}>
                               <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{t(healthLabelKey[healthStatus])}</span>
-                              {healthErrorCode ? <span className={styles.healthCode}>{healthErrorCode}</span> : null}
+                              {healthErrorCodes.length > 0 ? (
+                                <span className={styles.healthCodeList}>
+                                  {healthErrorCodes.map((code) => (
+                                    <span key={code.title} className={styles.healthCode} title={code.title}>{code.label}</span>
+                                  ))}
+                                </span>
+                              ) : null}
                             </div>
                           </td>
                           <td><span className={item.disabled ? styles.stateTextMuted : styles.stateTextGood}>{formatCurrentStateLabel(item, t)}</span></td>

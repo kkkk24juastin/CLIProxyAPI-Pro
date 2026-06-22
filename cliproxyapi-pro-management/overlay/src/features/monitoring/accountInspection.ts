@@ -62,6 +62,7 @@ export interface AccountInspectionResultItem extends AccountInspectionAccount {
   usedPercent: number | null;
   isQuota: boolean;
   error: string;
+  errorCode?: string;
   deepProbeTriggered?: boolean;
   deepProbeStatus?: AccountInspectionDeepProbeStatus;
   deepProbeError?: string;
@@ -222,7 +223,6 @@ export const ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS = [
   'antigravity',
   'claude',
   'codex',
-  'gemini-cli',
   'kimi',
   'xai',
 ] as const;
@@ -615,6 +615,7 @@ export const accountInspectionBackendResultToItem = (
   usedPercent: item.usedPercent ?? null,
   isQuota: item.isQuota,
   error: item.executeError || item.error || '',
+  errorCode: item.errorCode || '',
   deepProbeTriggered: item.deepProbeTriggered ?? false,
   deepProbeStatus: item.deepProbeStatus ?? '',
   deepProbeError: item.deepProbeError ?? '',

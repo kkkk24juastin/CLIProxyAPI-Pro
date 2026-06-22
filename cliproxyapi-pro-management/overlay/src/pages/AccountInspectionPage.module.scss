@@ -2370,7 +2370,7 @@
 .healthCode {
   display: inline-flex;
   align-items: center;
-  max-width: 100%;
+  max-width: 86px;
   min-height: 18px;
   padding: 0 6px;
   border-radius: 5px;
@@ -2381,6 +2381,15 @@
   font-size: 11px;
   line-height: 1;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.healthCodeList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 100%;
 }
 
 .healthHealthy {

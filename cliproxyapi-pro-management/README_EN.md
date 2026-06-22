@@ -74,7 +74,6 @@ The page controls and displays backend-run inspections. The browser does not exe
 - Antigravity
 - Claude
 - Codex
-- Gemini CLI (plugin)
 - Kimi
 
 Features include:

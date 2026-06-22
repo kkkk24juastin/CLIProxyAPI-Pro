@@ -59,7 +59,6 @@ var accountInspectionSupportedProviders = map[string]struct{}{
 	"antigravity": {},
 	"claude":      {},
 	"codex":       {},
-	"gemini-cli":  {},
 	"kimi":        {},
 	"xai":         {},
 }
@@ -112,6 +111,7 @@ type accountInspectionResult struct {
 	UsedPercent           *float64                `json:"usedPercent"`
 	IsQuota               bool                    `json:"isQuota"`
 	Error                 string                  `json:"error"`
+	ErrorCode             string                  `json:"errorCode"`
 	DeepProbeTriggered    bool                    `json:"deepProbeTriggered"`
 	DeepProbeStatus       string                  `json:"deepProbeStatus"`
 	DeepProbeError        string                  `json:"deepProbeError"`
@@ -1630,8 +1630,6 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		decision, statusCode, err = s.inspectClaude(ctx, account, settings)
 	case "codex":
 		decision, statusCode, err = s.inspectCodex(ctx, account, settings)
-	case "gemini-cli":
-		decision, statusCode, err = s.inspectGeminiCLI(ctx, account, settings)
 	case "kimi":
 		decision, statusCode, err = s.inspectKimi(ctx, account, settings)
 	case "xai":
@@ -1644,6 +1642,7 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 	if err != nil {
 		result.StatusCode = statusCode
 		result.Error = err.Error()
+		result.ErrorCode = accountInspectionErrorCode(statusCode, "inspection_probe_error")
 		result.ActionReason = "探测异常，保留账号"
 		if statusCode != nil && isAccountErrorStatus(*statusCode) {
 			s.syncInspectionAuthStatus(ctx, account, *statusCode)
@@ -1659,6 +1658,7 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 	result.UsedPercent = decision.UsedPercent
 	result.IsQuota = decision.IsQuota
 	result.Error = decision.Error
+	result.ErrorCode = accountInspectionDecisionErrorCode(decision, statusCode)
 	if decision.DeepProbeStatus != "" {
 		result.DeepProbeTriggered = true
 		result.DeepProbeStatus = string(decision.DeepProbeStatus)
@@ -1786,41 +1786,6 @@ func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth
 	resp, err := client.Do(req)
 	if err != nil {
 		return accountInspectionHTTPResult{}, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
-	return accountInspectionHTTPResult{StatusCode: resp.StatusCode, Body: string(raw)}, nil
-}
-
-func (s *accountInspectionScheduler) pluginHTTPCall(ctx context.Context, auth *coreauth.Auth, method string, url string, headers map[string]string, data string, timeoutMS int) (accountInspectionHTTPResult, error) {
-	if s == nil || s.h == nil || s.h.authManager == nil {
-		return accountInspectionHTTPResult{}, fmt.Errorf("core auth manager unavailable")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if timeoutMS <= 0 {
-		timeoutMS = accountInspectionDefaultTimeoutMS
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
-	defer cancel()
-	var body io.Reader
-	if data != "" {
-		body = bytes.NewBufferString(data)
-	}
-	req, err := http.NewRequestWithContext(reqCtx, method, url, body)
-	if err != nil {
-		return accountInspectionHTTPResult{}, err
-	}
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-	resp, err := s.h.authManager.HttpRequest(reqCtx, auth, req)
-	if err != nil {
-		return accountInspectionHTTPResult{}, err
-	}
-	if resp == nil {
-		return accountInspectionHTTPResult{}, fmt.Errorf("plugin http response is nil")
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
@@ -2152,139 +2117,6 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 	return codexDecision(account, resp.StatusCode, used, isQuota, settings.UsedPercentThreshold), status, nil
 }
 
-func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
-	projectID := geminiCLIProjectID(account.Auth)
-	if projectID == "" {
-		return accountInspectionDecision{}, nil, fmt.Errorf("missing Gemini CLI project id")
-	}
-	body := buildGeminiCLIDeepProbeBody(projectID)
-	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
-		return s.pluginHTTPCall(ctx, account.Auth, http.MethodPost, "https://cloudcode-pa.googleapis.com/v1internal:generateContent", map[string]string{
-			"Content-Type": "application/json",
-		}, body, settings.Timeout)
-	})
-	status := intPtr(resp.StatusCode)
-	if err != nil {
-		if errStatus := statusCodeFromInspectionError(err); errStatus > 0 {
-			status = intPtr(errStatus)
-			if isAccountErrorStatus(errStatus) {
-				return authErrorDecision(account, errStatus), status, nil
-			}
-		}
-		return accountInspectionDecision{}, status, err
-	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return healthyDecision(account), status, nil
-	}
-	if isAccountErrorStatus(resp.StatusCode) {
-		return authErrorDecision(account, resp.StatusCode), status, nil
-	}
-	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusPaymentRequired || isGeminiCLIQuotaFailure(resp.Body) {
-		decision := accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "Gemini CLI 插件探测返回额度不可用，建议禁用账号", IsQuota: true, Error: summarizeInspectionHTTPBody(resp.Body)}
-		if account.Disabled {
-			decision.Action = accountInspectionActionKeep
-			decision.ActionReason = "Gemini CLI 插件探测返回额度不可用，但账号已禁用"
-		}
-		return decision, status, nil
-	}
-	message := summarizeInspectionHTTPBody(resp.Body)
-	if message == "" {
-		message = fmt.Sprintf("HTTP %d", resp.StatusCode)
-	}
-	return accountInspectionDecision{}, status, fmt.Errorf("%s", message)
-}
-
-func buildGeminiCLIDeepProbeBody(projectID string) string {
-	payload := map[string]any{
-		"model": "gemini-2.5-flash",
-		"request": map[string]any{
-			"contents": []map[string]any{{
-				"role":  "user",
-				"parts": []map[string]string{{"text": "ping"}},
-			}},
-			"generationConfig": map[string]any{"maxOutputTokens": 1},
-		},
-	}
-	if strings.TrimSpace(projectID) != "" {
-		payload["project"] = strings.TrimSpace(projectID)
-	}
-	raw, _ := json.Marshal(payload)
-	return string(raw)
-}
-
-func geminiCLIProjectID(auth *coreauth.Auth) string {
-	if value := firstNonEmptyAuthValue(auth, "project_id", "projectID"); value != "" {
-		return value
-	}
-	if auth == nil {
-		return ""
-	}
-	if rawProvider, okRaw := auth.Storage.(interface{ RawJSON() []byte }); okRaw && rawProvider != nil {
-		if value := projectIDFromAuthJSON(rawProvider.RawJSON()); value != "" {
-			return value
-		}
-	}
-	if len(auth.Metadata) > 0 {
-		raw, err := json.Marshal(auth.Metadata)
-		if err == nil {
-			return projectIDFromAuthJSON(raw)
-		}
-	}
-	return ""
-}
-
-func projectIDFromAuthJSON(raw []byte) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(firstNonEmptyStringValue(
-		stringFromAny(firstAny(payload, "project_id", "projectID")),
-		firstStringFromAnySlice(payload["project_ids"]),
-		firstStringFromAnySlice(payload["projectIDs"]),
-	))
-}
-
-func firstStringFromAnySlice(value any) string {
-	for _, item := range anySlice(value) {
-		if text := strings.TrimSpace(stringFromAny(item)); text != "" {
-			return text
-		}
-	}
-	return ""
-}
-
-func isGeminiCLIQuotaFailure(body string) bool {
-	lower := strings.ToLower(body)
-	if strings.Contains(lower, "quota_exhausted") || strings.Contains(lower, "quota exhausted") || strings.Contains(lower, "rate limit") || strings.Contains(lower, "rate_limit") || strings.Contains(lower, "resource_exhausted") {
-		return true
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return false
-	}
-	errorPayload := nestedMap(payload, "error")
-	return strings.EqualFold(stringFromAny(errorPayload["status"]), "RESOURCE_EXHAUSTED")
-}
-
-type statusCodeInspectionError interface {
-	StatusCode() int
-}
-
-func statusCodeFromInspectionError(err error) int {
-	if err == nil {
-		return 0
-	}
-	var statusErr statusCodeInspectionError
-	if errors.As(err, &statusErr) {
-		return statusErr.StatusCode()
-	}
-	return 0
-}
-
 func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
 	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
 		return s.apiCall(ctx, account.Auth, http.MethodGet, "https://api.kimi.com/coding/v1/usages", map[string]string{"Authorization": "Bearer $TOKEN$"}, "", settings.Timeout)
@@ -2463,6 +2295,27 @@ func authErrorDecision(account accountInspectionAccount, status int) accountInsp
 		return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: fmt.Sprintf("接口返回 %d，但账号已禁用", status)}
 	}
 	return accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: fmt.Sprintf("接口返回 %d，建议禁用账号", status)}
+}
+
+func accountInspectionErrorCode(status *int, fallback string) string {
+	if status != nil && isAccountErrorStatus(*status) {
+		return "inspection_http_error"
+	}
+	return fallback
+}
+
+func accountInspectionDecisionErrorCode(decision accountInspectionDecision, status *int) string {
+	if status != nil && isAccountErrorStatus(*status) {
+		return "inspection_http_error"
+	}
+	switch decision.DeepProbeStatus {
+	case accountInspectionDeepProbeAuthError, accountInspectionDeepProbeTransientError:
+		return "antigravity_deep_probe_error"
+	}
+	if decision.Error != "" {
+		return "inspection_probe_error"
+	}
+	return ""
 }
 
 func healthyDecision(account accountInspectionAccount) accountInspectionDecision {
