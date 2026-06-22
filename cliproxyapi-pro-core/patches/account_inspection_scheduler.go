@@ -2385,21 +2385,183 @@ func syncAuthInspectionLastError(auth *coreauth.Auth, lastError *coreauth.Error)
 	}
 }
 
+func setAuthInspectionDisabledState(auth *coreauth.Auth, disabled bool) {
+	if auth == nil {
+		return
+	}
+	auth.Disabled = disabled
+	if auth.Metadata == nil {
+		auth.Metadata = make(map[string]any)
+	}
+	auth.Metadata["disabled"] = disabled
+	if disabled {
+		auth.Status = coreauth.StatusDisabled
+		auth.StatusMessage = "disabled by scheduled account inspection"
+	} else {
+		auth.Status = coreauth.StatusActive
+		auth.StatusMessage = ""
+		auth.Unavailable = false
+		syncAuthInspectionLastError(auth, nil)
+	}
+	auth.UpdatedAt = time.Now()
+}
+
+func pluginVirtualSourcePath(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	sourcePath := strings.TrimSpace(authAttribute(auth, coreauth.AttributeVirtualSource))
+	if sourcePath == "" {
+		sourcePath = strings.TrimSpace(authAttribute(auth, "path"))
+	}
+	return sourcePath
+}
+
+func sameAuthSourcePath(left string, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if strings.EqualFold(filepath.Clean(left), filepath.Clean(right)) {
+		return true
+	}
+	leftAbs, leftErr := filepath.Abs(left)
+	rightAbs, rightErr := filepath.Abs(right)
+	return leftErr == nil && rightErr == nil && strings.EqualFold(filepath.Clean(leftAbs), filepath.Clean(rightAbs))
+}
+
+func isPluginVirtualRuntimeOnlyAuth(auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(authAttribute(auth, "runtime_only")), "true")
+}
+
+func cloneAnyMapForInspection(in map[string]any) map[string]any {
+	if in == nil {
+		return make(map[string]any)
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func (s *accountInspectionScheduler) preferredAuthForPluginVirtualWrite(auth *coreauth.Auth) *coreauth.Auth {
+	if auth == nil || !coreauth.IsPluginVirtualAuth(auth) || s == nil || s.h == nil || s.h.authManager == nil {
+		return auth
+	}
+	sourcePath := pluginVirtualSourcePath(auth)
+	if sourcePath == "" {
+		return auth
+	}
+	var firstVirtual *coreauth.Auth
+	for _, candidate := range s.h.authManager.List() {
+		if candidate == nil || !sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
+			continue
+		}
+		if !coreauth.IsPluginVirtualAuth(candidate) {
+			return candidate
+		}
+		if firstVirtual == nil {
+			firstVirtual = candidate
+		}
+		if !isPluginVirtualRuntimeOnlyAuth(candidate) {
+			return candidate
+		}
+	}
+	if firstVirtual != nil {
+		return firstVirtual
+	}
+	return auth
+}
+
+func savePluginVirtualAuthToSourceFile(auth *coreauth.Auth) error {
+	if auth == nil {
+		return fmt.Errorf("auth not found")
+	}
+	sourcePath := pluginVirtualSourcePath(auth)
+	if sourcePath == "" {
+		return fmt.Errorf("plugin virtual auth source path unavailable")
+	}
+	if auth.Metadata == nil {
+		auth.Metadata = make(map[string]any)
+	}
+	auth.Metadata["disabled"] = auth.Disabled
+	type metadataSetter interface {
+		SetMetadata(map[string]any)
+	}
+	if setter, ok := auth.Storage.(metadataSetter); ok {
+		setter.SetMetadata(auth.Metadata)
+	}
+	if auth.Storage != nil {
+		return auth.Storage.SaveTokenToFile(sourcePath)
+	}
+	raw, err := json.Marshal(auth.Metadata)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(sourcePath, append(raw, '\n'), 0o600)
+}
+
+func (s *accountInspectionScheduler) updatePluginVirtualRuntimeAuths(ctx context.Context, sourceAuth *coreauth.Auth, mutate func(*coreauth.Auth)) {
+	if s == nil || s.h == nil || s.h.authManager == nil || sourceAuth == nil || mutate == nil {
+		return
+	}
+	sourcePath := pluginVirtualSourcePath(sourceAuth)
+	if sourcePath == "" {
+		mutate(sourceAuth)
+		_, _ = s.h.authManager.Update(ctx, sourceAuth)
+		return
+	}
+	for _, candidate := range s.h.authManager.List() {
+		if candidate == nil || !sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
+			continue
+		}
+		mutate(candidate)
+		_, _ = s.h.authManager.Update(ctx, candidate)
+	}
+}
+
+func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
+	if s == nil || s.h == nil || s.h.authManager == nil {
+		return fmt.Errorf("core auth manager unavailable")
+	}
+	auth := s.h.authByIndex(authIndex)
+	if auth == nil {
+		return fmt.Errorf("auth not found")
+	}
+	if mutate == nil {
+		return nil
+	}
+	if coreauth.IsPluginVirtualAuth(auth) {
+		sourceAuth := s.preferredAuthForPluginVirtualWrite(auth)
+		mutate(sourceAuth)
+		if err := savePluginVirtualAuthToSourceFile(sourceAuth); err != nil {
+			return err
+		}
+		s.updatePluginVirtualRuntimeAuths(ctx, sourceAuth, mutate)
+		return nil
+	}
+	mutate(auth)
+	_, err := s.h.authManager.Update(ctx, auth)
+	return err
+}
+
 func (s *accountInspectionScheduler) syncInspectionAuthError(ctx context.Context, account accountInspectionAccount, code string, message string, status int) {
 	if s == nil || s.h == nil || s.h.authManager == nil || account.AuthIndex == "" {
 		return
 	}
-	auth := s.h.authByIndex(account.AuthIndex)
-	if auth == nil {
-		return
-	}
-	now := time.Now()
-	auth.Status = coreauth.StatusError
-	auth.StatusMessage = message
-	auth.Unavailable = true
-	syncAuthInspectionLastError(auth, &coreauth.Error{Code: code, Message: message, HTTPStatus: status})
-	auth.UpdatedAt = now
-	if _, err := s.h.authManager.Update(ctx, auth); err != nil {
+	err := s.updateInspectionAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
+		auth.Status = coreauth.StatusError
+		auth.StatusMessage = message
+		auth.Unavailable = true
+		syncAuthInspectionLastError(auth, &coreauth.Error{Code: code, Message: message, HTTPStatus: status})
+		auth.UpdatedAt = time.Now()
+	})
+	if err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 认证状态回写失败：%s", account.identity(), err.Error()))
 	}
 }
@@ -2415,16 +2577,18 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 	if auth.LastError.Code != "inspection_http_error" && auth.LastError.Code != "inspection_probe_error" && auth.LastError.Code != "antigravity_deep_probe_error" && auth.LastError.Code != "token_refresh_error" {
 		return
 	}
-	if auth.Disabled {
-		auth.Status = coreauth.StatusDisabled
-	} else {
-		auth.Status = coreauth.StatusActive
-	}
-	auth.StatusMessage = ""
-	auth.Unavailable = false
-	syncAuthInspectionLastError(auth, nil)
-	auth.UpdatedAt = time.Now()
-	if _, err := s.h.authManager.Update(ctx, auth); err != nil {
+	err := s.updateInspectionAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
+		if auth.Disabled {
+			auth.Status = coreauth.StatusDisabled
+		} else {
+			auth.Status = coreauth.StatusActive
+		}
+		auth.StatusMessage = ""
+		auth.Unavailable = false
+		syncAuthInspectionLastError(auth, nil)
+		auth.UpdatedAt = time.Now()
+	})
+	if err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 认证状态清理失败：%s", account.identity(), err.Error()))
 	}
 }
@@ -2807,23 +2971,9 @@ func (s *accountInspectionScheduler) executeAction(ctx context.Context, result a
 	}
 	switch action {
 	case accountInspectionActionDisable, accountInspectionActionEnable:
-		auth := s.h.authByIndex(result.AuthIndex)
-		if auth == nil {
-			return fmt.Errorf("auth not found")
-		}
-		auth.Disabled = action == accountInspectionActionDisable
-		if auth.Disabled {
-			auth.Status = coreauth.StatusDisabled
-			auth.StatusMessage = "disabled by scheduled account inspection"
-		} else {
-			auth.Status = coreauth.StatusActive
-			auth.StatusMessage = ""
-			auth.Unavailable = false
-			syncAuthInspectionLastError(auth, nil)
-		}
-		auth.UpdatedAt = time.Now()
-		_, err := s.h.authManager.Update(ctx, auth)
-		return err
+		return s.updateInspectionAuth(ctx, result.AuthIndex, func(auth *coreauth.Auth) {
+			setAuthInspectionDisabledState(auth, action == accountInspectionActionDisable)
+		})
 	case accountInspectionActionDelete:
 		_, _, err := s.h.deleteAuthFileByName(ctx, result.FileName)
 		return err
@@ -2974,6 +3124,9 @@ func (s *accountInspectionScheduler) persistQuotaState(ctx context.Context, acco
 	if err := persistQuotaState(ctx, account.Provider, account.FileName, state); err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 配额缓存写入失败：%s", account.identity(), err.Error()))
 	}
+	if err := s.persistQuotaStateToAuth(ctx, account, state); err != nil {
+		s.appendLog("warning", fmt.Sprintf("%s 配额状态写入认证文件失败：%s", account.identity(), err.Error()))
+	}
 }
 
 func persistQuotaState(ctx context.Context, provider string, fileName string, state map[string]any) error {
@@ -2983,6 +3136,48 @@ func persistQuotaState(ctx context.Context, provider string, fileName string, st
 	}
 	now := time.Now().UnixMilli()
 	return embeddedusage.SetQuotaCache(ctx, embeddedusage.QuotaCacheEntry{ID: provider + ":" + fileName, Provider: provider, FileName: fileName, Data: raw, CachedAt: now, AccessedAt: now, Version: 1})
+}
+
+func (s *accountInspectionScheduler) persistQuotaStateToAuth(ctx context.Context, account accountInspectionAccount, state map[string]any) error {
+	if account.AuthIndex == "" || state == nil {
+		return nil
+	}
+	stateCopy := cloneAnyMapForInspection(state)
+	return s.updateInspectionAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
+		if auth.Metadata == nil {
+			auth.Metadata = make(map[string]any)
+		}
+		auth.Metadata["quota_cache"] = stateCopy
+		if account.Provider == "gemini-cli" {
+			persistGeminiCLIQuotaMetadata(auth.Metadata, account.Auth, stateCopy)
+		}
+		auth.UpdatedAt = time.Now()
+	})
+}
+
+func persistGeminiCLIQuotaMetadata(metadata map[string]any, accountAuth *coreauth.Auth, state map[string]any) {
+	if metadata == nil || state == nil {
+		return
+	}
+	projectID := geminiCLIProjectID(accountAuth)
+	if projectID == "" {
+		projectID = strings.TrimSpace(stringFromAny(metadata["project_id"]))
+	}
+	geminiQuota, _ := metadata["gemini_cli_quota"].(map[string]any)
+	if geminiQuota == nil {
+		geminiQuota = make(map[string]any)
+	}
+	geminiQuota["latest"] = state
+	if projectID != "" {
+		projects, _ := geminiQuota["projects"].(map[string]any)
+		if projects == nil {
+			projects = make(map[string]any)
+		}
+		projects[projectID] = state
+		geminiQuota["projects"] = projects
+		geminiQuota["latest_project_id"] = projectID
+	}
+	metadata["gemini_cli_quota"] = geminiQuota
 }
 
 func buildAntigravityGroups(body string) ([]map[string]any, error) {

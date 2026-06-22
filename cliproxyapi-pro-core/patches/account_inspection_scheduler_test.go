@@ -1,6 +1,7 @@
 package management
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"math"
@@ -12,6 +13,22 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
+
+type accountInspectionTestStorage struct {
+	meta map[string]any
+}
+
+func (s *accountInspectionTestStorage) SetMetadata(meta map[string]any) {
+	s.meta = meta
+}
+
+func (s *accountInspectionTestStorage) SaveTokenToFile(path string) error {
+	raw, err := json.Marshal(s.meta)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(raw, '\n'), 0o600)
+}
 
 func testInspectionResult(key string, action accountInspectionAction, disabled bool, statusCode *int, isQuota bool, err string) accountInspectionResult {
 	return accountInspectionResult{
@@ -284,6 +301,132 @@ func TestAutoActionConfirmationDelaysExecution(t *testing.T) {
 	scheduler.clearAutoActionConfirmation(result)
 	if len(scheduler.autoActionConfirmations) != 0 {
 		t.Fatalf("autoActionConfirmations = %+v, want empty after clear", scheduler.autoActionConfirmations)
+	}
+}
+
+func TestExecuteActionDisablesGeminiCLIPluginVirtualSourceFile(t *testing.T) {
+	authDir := t.TempDir()
+	authPath := filepath.Join(authDir, "gemini-cli.json")
+	if err := os.WriteFile(authPath, []byte(`{"type":"gemini-cli","email":"user@example.com","project_id":"project-a","project_ids":["project-a","project-b"]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile auth error = %v", err)
+	}
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	primary := &coreauth.Auth{
+		Provider:   "gemini-cli",
+		ID:         "gemini-cli-primary",
+		FileName:   "gemini-cli.json",
+		Metadata:   map[string]any{"type": "gemini-cli", "email": "user@example.com", "project_id": "project-a"},
+		Attributes: map[string]string{"path": authPath, "project_id": "project-a"},
+		Storage:    &accountInspectionTestStorage{},
+	}
+	coreauth.MarkPluginVirtualAuth(primary, authPath, 0)
+	secondary := &coreauth.Auth{
+		Provider:   "gemini-cli",
+		ID:         "gemini-cli-project-b",
+		FileName:   "user-project-b.json",
+		Metadata:   map[string]any{"type": "gemini-cli", "email": "user@example.com", "project_id": "project-b", "virtual": true},
+		Attributes: map[string]string{"path": authPath, "project_id": "project-b", "runtime_only": "true"},
+		Storage:    &accountInspectionTestStorage{},
+	}
+	coreauth.MarkPluginVirtualAuth(secondary, authPath, 1)
+	registeredSecondary, err := manager.Register(context.Background(), secondary)
+	if err != nil {
+		t.Fatalf("Register secondary error = %v", err)
+	}
+	if _, err = manager.Register(context.Background(), primary); err != nil {
+		t.Fatalf("Register primary error = %v", err)
+	}
+
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	err = scheduler.executeAction(context.Background(), accountInspectionResult{AuthIndex: registeredSecondary.Index}, accountInspectionActionDisable)
+	if err != nil {
+		t.Fatalf("executeAction(disable) error = %v", err)
+	}
+
+	raw, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatalf("ReadFile auth error = %v", err)
+	}
+	var saved map[string]any
+	if err = json.Unmarshal(raw, &saved); err != nil {
+		t.Fatalf("saved auth invalid JSON: %v", err)
+	}
+	if saved["disabled"] != true {
+		t.Fatalf("saved disabled = %#v, want true in source auth file", saved["disabled"])
+	}
+	if saved["project_id"] != "project-a" {
+		t.Fatalf("saved project_id = %#v, want primary project preserved", saved["project_id"])
+	}
+}
+
+func TestPersistQuotaStateWritesGeminiCLIProjectMetadataToSourceFile(t *testing.T) {
+	authDir := t.TempDir()
+	authPath := filepath.Join(authDir, "gemini-cli.json")
+	if err := os.WriteFile(authPath, []byte(`{"type":"gemini-cli","email":"user@example.com","project_id":"project-a","project_ids":["project-a","project-b"]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile auth error = %v", err)
+	}
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	primary := &coreauth.Auth{
+		Provider:   "gemini-cli",
+		ID:         "gemini-cli-primary",
+		FileName:   "gemini-cli.json",
+		Metadata:   map[string]any{"type": "gemini-cli", "email": "user@example.com", "project_id": "project-a"},
+		Attributes: map[string]string{"path": authPath, "project_id": "project-a"},
+		Storage:    &accountInspectionTestStorage{},
+	}
+	coreauth.MarkPluginVirtualAuth(primary, authPath, 0)
+	secondary := &coreauth.Auth{
+		Provider:   "gemini-cli",
+		ID:         "gemini-cli-project-b",
+		FileName:   "user-project-b.json",
+		Metadata:   map[string]any{"type": "gemini-cli", "email": "user@example.com", "project_id": "project-b", "virtual": true},
+		Attributes: map[string]string{"path": authPath, "project_id": "project-b", "runtime_only": "true"},
+		Storage:    &accountInspectionTestStorage{},
+	}
+	coreauth.MarkPluginVirtualAuth(secondary, authPath, 1)
+	registeredSecondary, err := manager.Register(context.Background(), secondary)
+	if err != nil {
+		t.Fatalf("Register secondary error = %v", err)
+	}
+	if _, err = manager.Register(context.Background(), primary); err != nil {
+		t.Fatalf("Register primary error = %v", err)
+	}
+
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	state := quotaSuccessState(map[string]any{"buckets": []any{map[string]any{"id": "standard", "usedPercent": 12.5}}})
+	err = scheduler.persistQuotaStateToAuth(context.Background(), accountInspectionAccount{
+		Auth:      secondary,
+		Provider:  "gemini-cli",
+		FileName:  "user-project-b.json",
+		AuthIndex: registeredSecondary.Index,
+	}, state)
+	if err != nil {
+		t.Fatalf("persistQuotaStateToAuth() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatalf("ReadFile auth error = %v", err)
+	}
+	var saved map[string]any
+	if err = json.Unmarshal(raw, &saved); err != nil {
+		t.Fatalf("saved auth invalid JSON: %v", err)
+	}
+	geminiQuota, ok := saved["gemini_cli_quota"].(map[string]any)
+	if !ok {
+		t.Fatalf("gemini_cli_quota = %#v, want object", saved["gemini_cli_quota"])
+	}
+	projects, ok := geminiQuota["projects"].(map[string]any)
+	if !ok {
+		t.Fatalf("gemini_cli_quota.projects = %#v, want object", geminiQuota["projects"])
+	}
+	if projects["project-b"] == nil {
+		t.Fatalf("project-b quota missing in %#v", projects)
+	}
+	if geminiQuota["latest_project_id"] != "project-b" {
+		t.Fatalf("latest_project_id = %#v, want project-b", geminiQuota["latest_project_id"])
 	}
 }
 

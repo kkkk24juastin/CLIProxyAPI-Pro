@@ -655,6 +655,44 @@ replace_once(
 )
 
 replace_once(
+    ROOT / 'internal/pluginhost/auth_provider.go',
+    '''\tif provider != "" {
+\t\tmetadata["type"] = provider
+\t}
+\tattributes := cloneStringMap(data.Attributes)
+''',
+    '''\tif provider != "" {
+\t\tmetadata["type"] = provider
+\t}
+\tdisabled := data.Disabled || pluginAuthDisabledFromMetadata(metadata)
+\tmetadata["disabled"] = disabled
+\tattributes := cloneStringMap(data.Attributes)
+''',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/auth_provider.go',
+    '''\tstatus := coreauth.StatusActive
+\tif data.Disabled {
+\t\tstatus = coreauth.StatusDisabled
+\t}
+''',
+    '''\tstatus := coreauth.StatusActive
+\tif disabled {
+\t\tstatus = coreauth.StatusDisabled
+\t}
+''',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/auth_provider.go',
+    '''\t\tDisabled:         data.Disabled,
+''',
+    '''\t\tDisabled:         disabled,
+''',
+)
+
+replace_once(
     ROOT / 'internal/pluginhost/adapters.go',
     '''func storageJSONFromAuth(auth *coreauth.Auth) []byte {
 \tif auth == nil {
@@ -719,6 +757,30 @@ func normalizePluginStorageJSON(provider string, raw []byte) []byte {
 \t\treturn raw
 \t}
 \treturn out
+}
+
+func pluginAuthDisabledFromMetadata(metadata map[string]any) bool {
+\tif metadata == nil {
+\t\treturn false
+\t}
+\tswitch value := metadata["disabled"].(type) {
+\tcase bool:
+\t\treturn value
+\tcase string:
+\t\tvalue = strings.ToLower(strings.TrimSpace(value))
+\t\treturn value == "true" || value == "1" || value == "yes" || value == "on"
+\tcase float64:
+\t\treturn value != 0
+\tcase int:
+\t\treturn value != 0
+\tcase int64:
+\t\treturn value != 0
+\tcase json.Number:
+\t\tparsed, err := value.Int64()
+\t\treturn err == nil && parsed != 0
+\tdefault:
+\t\treturn false
+\t}
 }
 
 func normalizeGeminiCLIStorageMap(data map[string]any) {
@@ -789,7 +851,7 @@ import (
 \t"encoding/json"
 \t"testing"
 
-\t"{import_path('sdk/cliproxy/auth')}"
+\tcoreauth "{import_path('sdk/cliproxy/auth')}"
 \t"{import_path('sdk/pluginapi')}"
 )
 
@@ -838,7 +900,7 @@ func TestParseAuthNormalizesGeminiCLIStringToken(t *testing.T) {{
 }}
 
 func TestStorageJSONFromAuthNormalizesGeminiCLIRawStringToken(t *testing.T) {{
-\tauth := &auth.Auth{{
+\tauth := &coreauth.Auth{{
 \t\tProvider: "gemini-cli",
 \t\tStorage: &pluginTokenStorage{{
 \t\t\tprovider: "gemini-cli",
@@ -855,6 +917,43 @@ func TestStorageJSONFromAuthNormalizesGeminiCLIRawStringToken(t *testing.T) {{
 \t}}
 \tif token["access_token"] != "plain-access-token" || data["access_token"] != "plain-access-token" {{
 \t\tt.Fatalf("normalized storage = %#v", data)
+\t}}
+}}
+
+func TestParseAuthRestoresDisabledFromPluginMetadata(t *testing.T) {{
+\thost := newHostWithRecords(capabilityRecord{{
+\t\tid: "geminicli",
+\t\tplugin: pluginapi.Plugin{{
+\t\t\tCapabilities: pluginapi.Capabilities{{
+\t\t\t\tAuthProvider: fakeAuthProvider{{
+\t\t\t\t\tidentifier: "gemini-cli",
+\t\t\t\t\tparseAuth: func(ctx context.Context, req pluginapi.AuthParseRequest) (pluginapi.AuthParseResponse, error) {{
+\t\t\t\t\t\treturn pluginapi.AuthParseResponse{{
+\t\t\t\t\t\t\tHandled: true,
+\t\t\t\t\t\t\tAuth: pluginapi.AuthData{{
+\t\t\t\t\t\t\t\tProvider: "gemini-cli",
+\t\t\t\t\t\t\t\tID: "disabled.json",
+\t\t\t\t\t\t\t\tMetadata: map[string]any{{"disabled": true}},
+\t\t\t\t\t\t\t\tStorageJSON: []byte(`{{"type":"gemini-cli","disabled":true}}`),
+\t\t\t\t\t\t\t}},
+\t\t\t\t\t\t}}, nil
+\t\t\t\t\t}},
+\t\t\t\t}},
+\t\t\t}},
+\t\t}},
+\t}})
+\tauth, handled, errParse := host.ParseAuth(context.Background(), pluginapi.AuthParseRequest{{
+\t\tProvider: "gemini-cli",
+\t\tRawJSON: []byte(`{{"type":"gemini-cli","disabled":true}}`),
+\t}})
+\tif errParse != nil {{
+\t\tt.Fatalf("ParseAuth() error = %v", errParse)
+\t}}
+\tif !handled || auth == nil {{
+\t\tt.Fatalf("ParseAuth() handled=%t auth=%#v, want auth", handled, auth)
+\t}}
+\tif !auth.Disabled || auth.Status != coreauth.StatusDisabled || auth.Metadata["disabled"] != true {{
+\t\tt.Fatalf("auth disabled/status/metadata = %v/%v/%#v, want disabled", auth.Disabled, auth.Status, auth.Metadata["disabled"])
 \t}}
 }}
 ''')
