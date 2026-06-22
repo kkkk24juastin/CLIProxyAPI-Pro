@@ -3564,6 +3564,7 @@ export function MonitoringCenterPage() {
                 <th>{t('monitoring.request_status')}</th>
                 <th>{t('monitoring.column_success_rate')}</th>
                 <th>{t('monitoring.total_calls')}</th>
+                <th>{t('monitoring.column_ttft')}</th>
                 <th>{t('monitoring.column_latency')}</th>
                 <th>{t('monitoring.column_time')}</th>
                 <th>{t('monitoring.this_call_usage')}</th>
@@ -3631,6 +3632,19 @@ export function MonitoringCenterPage() {
                   <td>
                     <span
                       className={
+                        row.ttftMs !== null && row.ttftMs >= 15000
+                          ? styles.badText
+                          : row.ttftMs !== null && row.ttftMs >= 8000
+                            ? styles.warnText
+                            : undefined
+                      }
+                    >
+                      {formatDurationMs(row.ttftMs, { locale: i18n.language })}
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className={
                         row.latencyMs !== null && row.latencyMs >= 30000
                           ? styles.badText
                           : row.latencyMs !== null && row.latencyMs >= 15000
@@ -3645,7 +3659,7 @@ export function MonitoringCenterPage() {
                   <td>
                     <div className={styles.primaryCell}>
                       <span>{formatCompactNumber(row.totalTokens)}</span>
-                      <small>{`I ${formatCompactNumber(row.inputTokens)} · O ${formatCompactNumber(row.outputTokens)} · C ${formatCompactNumber(row.cachedTokens)}`}</small>
+                      <small>{`I ${formatCompactNumber(row.inputTokens)} · O ${formatCompactNumber(row.outputTokens)} · R ${formatCompactNumber(row.reasoningTokens)} · C ${formatCompactNumber(row.cachedTokens)}`}</small>
                     </div>
                   </td>
                   <td>{hasPrices ? formatUsd(row.totalCost) : '--'}</td>
@@ -3653,7 +3667,7 @@ export function MonitoringCenterPage() {
               ))}
               {realtimeLogPageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={11}>
+                  <td colSpan={12}>
                     <div className={styles.emptyTable}>
                       {monitoringLoading ? t('common.loading') : deferredSearch.trim() ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
                     </div>
