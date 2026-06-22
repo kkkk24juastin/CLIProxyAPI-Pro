@@ -644,6 +644,221 @@ func TestEnsureConfiguredPluginsInstalledSkipsAmbiguousRegistryMatch(t *testing.
 }}
 ''')
 
+replace_once(
+    ROOT / 'internal/pluginhost/auth_provider.go',
+    '''\treq.RawJSON = bytes.Clone(req.RawJSON)
+\tresp, errParse := provider.ParseAuth(ctx, req)
+''',
+    '''\treq.RawJSON = normalizePluginStorageJSON(req.Provider, bytes.Clone(req.RawJSON))
+\tresp, errParse := provider.ParseAuth(ctx, req)
+''',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters.go',
+    '''func storageJSONFromAuth(auth *coreauth.Auth) []byte {
+\tif auth == nil {
+\t\treturn nil
+\t}
+\tif rawProvider, okRaw := auth.Storage.(interface{ RawJSON() []byte }); okRaw {
+\t\treturn bytes.Clone(rawProvider.RawJSON())
+\t}
+\tif len(auth.Metadata) == 0 {
+\t\treturn nil
+\t}
+\tdata, errMarshal := json.Marshal(auth.Metadata)
+\tif errMarshal != nil {
+\t\treturn nil
+\t}
+\treturn data
+}
+''',
+    '''func storageJSONFromAuth(auth *coreauth.Auth) []byte {
+\tif auth == nil {
+\t\treturn nil
+\t}
+\tif rawProvider, okRaw := auth.Storage.(interface{ RawJSON() []byte }); okRaw {
+\t\treturn normalizePluginStorageJSON(auth.Provider, bytes.Clone(rawProvider.RawJSON()))
+\t}
+\tif len(auth.Metadata) == 0 {
+\t\treturn nil
+\t}
+\tdata, errMarshal := json.Marshal(auth.Metadata)
+\tif errMarshal != nil {
+\t\treturn nil
+\t}
+\treturn normalizePluginStorageJSON(auth.Provider, data)
+}
+''',
+)
+
+write_text(ROOT / 'internal/pluginhost/gemini_cli_storage_compat.go', '''package pluginhost
+
+import (
+\t"bytes"
+\t"encoding/json"
+\t"strings"
+)
+
+func normalizePluginStorageJSON(provider string, raw []byte) []byte {
+\ttrimmed := bytes.TrimSpace(raw)
+\tif len(trimmed) == 0 {
+\t\treturn nil
+\t}
+\tprovider = normalizeProviderID(provider)
+\tif provider != "gemini-cli" && provider != "gemini" {
+\t\treturn raw
+\t}
+\tvar data map[string]any
+\tif err := json.Unmarshal(trimmed, &data); err != nil || data == nil {
+\t\treturn raw
+\t}
+\tnormalizeGeminiCLIStorageMap(data)
+\tout, err := json.Marshal(data)
+\tif err != nil {
+\t\treturn raw
+\t}
+\treturn out
+}
+
+func normalizeGeminiCLIStorageMap(data map[string]any) {
+\tif data == nil {
+\t\treturn
+\t}
+\tif rawType := strings.TrimSpace(stringValue(data["type"])); rawType != "" {
+\t\tproviderType := normalizeProviderID(rawType)
+\t\tif providerType != "gemini-cli" && providerType != "gemini" {
+\t\t\treturn
+\t\t}
+\t}
+\trawToken, ok := data["token"]
+\tif !ok {
+\t\treturn
+\t}
+\tswitch token := rawToken.(type) {
+\tcase map[string]any:
+\t\treturn
+\tcase string:
+\t\ttoken = strings.TrimSpace(token)
+\t\tif token == "" {
+\t\t\tdelete(data, "token")
+\t\t\treturn
+\t\t}
+\t\tvar parsed map[string]any
+\t\tif err := json.Unmarshal([]byte(token), &parsed); err == nil && parsed != nil {
+\t\t\tdata["token"] = parsed
+\t\t\tcopyGeminiCLITokenFields(data, parsed)
+\t\t\treturn
+\t\t}
+\t\tdata["token"] = map[string]any{"access_token": token}
+\t\tif strings.TrimSpace(stringValue(data["access_token"])) == "" {
+\t\t\tdata["access_token"] = token
+\t\t}
+\tdefault:
+\t\tdelete(data, "token")
+\t}
+}
+
+func copyGeminiCLITokenFields(data map[string]any, token map[string]any) {
+\tfor _, key := range []string{"access_token", "refresh_token", "token_type", "expiry", "expires_in", "scope"} {
+\t\tif _, exists := data[key]; exists {
+\t\t\tcontinue
+\t\t}
+\t\tif value, ok := token[key]; ok {
+\t\t\tdata[key] = value
+\t\t}
+\t}
+}
+
+func stringValue(value any) string {
+\tswitch typed := value.(type) {
+\tcase string:
+\t\treturn typed
+\tcase interface{ String() string }:
+\t\treturn typed.String()
+\tdefault:
+\t\treturn ""
+\t}
+}
+''')
+
+write_text(ROOT / 'internal/pluginhost/gemini_cli_storage_compat_test.go', f'''package pluginhost
+
+import (
+\t"context"
+\t"encoding/json"
+\t"testing"
+
+\t"{import_path('sdk/cliproxy/auth')}"
+\t"{import_path('sdk/pluginapi')}"
+)
+
+func TestParseAuthNormalizesGeminiCLIStringToken(t *testing.T) {{
+\tvar seen map[string]any
+\thost := newHostWithRecords(capabilityRecord{{
+\t\tid: "geminicli",
+\t\tplugin: pluginapi.Plugin{{
+\t\t\tCapabilities: pluginapi.Capabilities{{
+\t\t\t\tAuthProvider: fakeAuthProvider{{
+\t\t\t\t\tidentifier: "gemini-cli",
+\t\t\t\t\tparseAuth: func(ctx context.Context, req pluginapi.AuthParseRequest) (pluginapi.AuthParseResponse, error) {{
+\t\t\t\t\t\tif err := json.Unmarshal(req.RawJSON, &seen); err != nil {{
+\t\t\t\t\t\t\tt.Fatalf("normalized RawJSON is invalid: %v", err)
+\t\t\t\t\t\t}}
+\t\t\t\t\t\treturn pluginapi.AuthParseResponse{{
+\t\t\t\t\t\t\tHandled: true,
+\t\t\t\t\t\t\tAuth: pluginapi.AuthData{{
+\t\t\t\t\t\t\t\tProvider: "gemini-cli",
+\t\t\t\t\t\t\t\tID: "gemini.json",
+\t\t\t\t\t\t\t\tStorageJSON: req.RawJSON,
+\t\t\t\t\t\t\t}},
+\t\t\t\t\t\t}}, nil
+\t\t\t\t\t}},
+\t\t\t\t}},
+\t\t\t}},
+\t\t}},
+\t}})
+\t_, handled, errParse := host.ParseAuth(context.Background(), pluginapi.AuthParseRequest{{
+\t\tProvider: "gemini-cli",
+\t\tRawJSON: []byte(`{{"type":"gemini-cli","token":"{{\\"access_token\\":\\"access-token\\",\\"refresh_token\\":\\"refresh-token\\"}}","project_id":"project-id"}}`),
+\t}})
+\tif errParse != nil {{
+\t\tt.Fatalf("ParseAuth() error = %v", errParse)
+\t}}
+\tif !handled {{
+\t\tt.Fatal("ParseAuth() handled = false")
+\t}}
+\ttoken, ok := seen["token"].(map[string]any)
+\tif !ok {{
+\t\tt.Fatalf("token = %#v, want object", seen["token"])
+\t}}
+\tif token["access_token"] != "access-token" || seen["access_token"] != "access-token" || seen["refresh_token"] != "refresh-token" {{
+\t\tt.Fatalf("normalized storage = %#v", seen)
+\t}}
+}}
+
+func TestStorageJSONFromAuthNormalizesGeminiCLIRawStringToken(t *testing.T) {{
+\tauth := &auth.Auth{{
+\t\tProvider: "gemini-cli",
+\t\tStorage: &pluginTokenStorage{{
+\t\t\tprovider: "gemini-cli",
+\t\t\trawJSON: []byte(`{{"type":"gemini-cli","token":"plain-access-token","project_id":"project-id"}}`),
+\t\t}},
+\t}}
+\tvar data map[string]any
+\tif err := json.Unmarshal(storageJSONFromAuth(auth), &data); err != nil {{
+\t\tt.Fatalf("storageJSONFromAuth() invalid JSON: %v", err)
+\t}}
+\ttoken, ok := data["token"].(map[string]any)
+\tif !ok {{
+\t\tt.Fatalf("token = %#v, want object", data["token"])
+\t}}
+\tif token["access_token"] != "plain-access-token" || data["access_token"] != "plain-access-token" {{
+\t\tt.Fatalf("normalized storage = %#v", data)
+\t}}
+}}
+''')
+
 server = ROOT / 'internal/api/server.go'
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
@@ -1217,6 +1432,8 @@ subprocess.run([
     'gofmt',
     '-w',
     'cmd/server/main.go',
+    'internal/pluginhost/gemini_cli_storage_compat.go',
+    'internal/pluginhost/gemini_cli_storage_compat_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
 ], cwd=ROOT, check=True)
