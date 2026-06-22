@@ -205,6 +205,445 @@ insert_before(
     'func isGitHubReleaseURL(releaseURL string) bool',
 )
 
+server_main = ROOT / 'cmd/server/main.go'
+add_go_import(server_main, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/pluginstore') + '"\n')
+replace_once(
+    server_main,
+    '''\tconfigaccess.Register(&cfg.SDKConfig)
+\tpluginHost.ApplyConfig(context.Background(), cfg)
+''',
+    '''\tconfigaccess.Register(&cfg.SDKConfig)
+\tpluginstore.EnsureConfiguredPluginsInstalled(context.Background(), cfg)
+\tpluginHost.ApplyConfig(context.Background(), cfg)
+''',
+)
+
+write_text(ROOT / 'internal/pluginstore/autoinstall.go', f'''package pluginstore
+
+import (
+\t"context"
+\t"net/http"
+\t"runtime"
+\t"sort"
+\t"strings"
+
+\t"{import_path('internal/config')}"
+\t"{import_path('internal/pluginhost')}"
+\t"{import_path('sdk/proxyutil')}"
+\tlog "github.com/sirupsen/logrus"
+)
+
+// AutoInstallWarning describes a non-fatal plugin auto-install issue.
+type AutoInstallWarning struct {{
+\tPluginID string
+\tSourceID string
+\tSourceURL string
+\tMessage string
+}}
+
+// AutoInstallReport summarizes startup plugin auto-install work.
+type AutoInstallReport struct {{
+\tInstalled []InstallResult
+\tWarnings []AutoInstallWarning
+}}
+
+type autoInstallOptions struct {{
+\tHTTPClient HTTPDoer
+\tGOOS string
+\tGOARCH string
+\tInstall func(context.Context, Client, Plugin, InstallOptions) (InstallResult, error)
+}}
+
+type autoInstallSourcePlugin struct {{
+\tsource Source
+\tplugin Plugin
+}}
+
+// EnsureConfiguredPluginsInstalled downloads missing enabled plugins before the plugin host scans local binaries.
+func EnsureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config) AutoInstallReport {{
+\treport := ensureConfiguredPluginsInstalled(ctx, cfg, autoInstallOptions{{}})
+\tfor _, warning := range report.Warnings {{
+\t\tfields := log.Fields{{}}
+\t\tif warning.PluginID != "" {{
+\t\t\tfields["plugin_id"] = warning.PluginID
+\t\t}}
+\t\tif warning.SourceID != "" {{
+\t\t\tfields["source_id"] = warning.SourceID
+\t\t}}
+\t\tif warning.SourceURL != "" {{
+\t\t\tfields["source_url"] = warning.SourceURL
+\t\t}}
+\t\tlog.WithFields(fields).Warnf("pluginstore: auto install skipped: %s", warning.Message)
+\t}}
+\tfor _, installed := range report.Installed {{
+\t\tlog.WithFields(log.Fields{{
+\t\t\t"plugin_id": installed.ID,
+\t\t\t"version": installed.Version,
+\t\t\t"path": installed.Path,
+\t\t}}).Info("pluginstore: plugin auto installed")
+\t}}
+\treturn report
+}}
+
+func ensureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config, options autoInstallOptions) AutoInstallReport {{
+\tvar report AutoInstallReport
+\tif ctx == nil {{
+\t\tctx = context.Background()
+\t}}
+\tif cfg == nil {{
+\t\treturn report
+\t}}
+\tcfg.NormalizePluginsConfig()
+\tif !cfg.Plugins.Enabled {{
+\t\treturn report
+\t}}
+
+\tenabledIDs := enabledConfiguredPluginIDs(cfg)
+\tif len(enabledIDs) == 0 {{
+\t\treturn report
+\t}}
+
+\tinstalledIDs, errDiscover := installedPluginIDs(cfg.Plugins.Dir)
+\tif errDiscover != nil {{
+\t\treport.Warnings = append(report.Warnings, AutoInstallWarning{{Message: "discover installed plugins: " + errDiscover.Error()}})
+\t\treturn report
+\t}}
+
+\tmissingIDs := make([]string, 0, len(enabledIDs))
+\tfor _, id := range enabledIDs {{
+\t\tif _, installed := installedIDs[id]; installed {{
+\t\t\tcontinue
+\t\t}}
+\t\tmissingIDs = append(missingIDs, id)
+\t}}
+\tif len(missingIDs) == 0 {{
+\t\treturn report
+\t}}
+\twanted := make(map[string]struct{{}}, len(missingIDs))
+\tfor _, id := range missingIDs {{
+\t\twanted[id] = struct{{}}{{}}
+\t}}
+
+\tsources, errSources := NormalizeSources(cfg.Plugins.StoreSources)
+\tif errSources != nil {{
+\t\treport.Warnings = append(report.Warnings, AutoInstallWarning{{Message: "normalize plugin store sources: " + errSources.Error()}})
+\t\treturn report
+\t}}
+
+\thttpClient := options.HTTPClient
+\tif httpClient == nil {{
+\t\thttpClient = autoInstallHTTPClient(cfg.ProxyURL)
+\t}}
+
+\tmatches := make(map[string][]autoInstallSourcePlugin, len(missingIDs))
+\tfor _, source := range sources {{
+\t\tclient := Client{{HTTPClient: httpClient, RegistryURL: source.URL}}
+\t\tregistry, errRegistry := client.FetchRegistry(ctx)
+\t\tif errRegistry != nil {{
+\t\t\treport.Warnings = append(report.Warnings, AutoInstallWarning{{
+\t\t\t\tSourceID: source.ID,
+\t\t\t\tSourceURL: source.URL,
+\t\t\t\tMessage: "fetch plugin registry: " + errRegistry.Error(),
+\t\t\t}})
+\t\t\tcontinue
+\t\t}}
+\t\tfor _, plugin := range registry.Plugins {{
+\t\t\tif _, ok := wanted[plugin.ID]; !ok {{
+\t\t\t\tcontinue
+\t\t\t}}
+\t\t\tmatches[plugin.ID] = append(matches[plugin.ID], autoInstallSourcePlugin{{source: source, plugin: plugin}})
+\t\t}}
+\t}}
+
+\tinstaller := options.Install
+\tif installer == nil {{
+\t\tinstaller = func(ctx context.Context, client Client, plugin Plugin, installOptions InstallOptions) (InstallResult, error) {{
+\t\t\treturn client.Install(ctx, plugin, installOptions)
+\t\t}}
+\t}}
+\tgoos := strings.TrimSpace(options.GOOS)
+\tif goos == "" {{
+\t\tgoos = runtime.GOOS
+\t}}
+\tgoarch := strings.TrimSpace(options.GOARCH)
+\tif goarch == "" {{
+\t\tgoarch = runtime.GOARCH
+\t}}
+
+\tfor _, id := range missingIDs {{
+\t\tcandidates := matches[id]
+\t\tswitch len(candidates) {{
+\t\tcase 0:
+\t\t\treport.Warnings = append(report.Warnings, AutoInstallWarning{{PluginID: id, Message: "plugin not found in configured registries"}})
+\t\t\tcontinue
+\t\tcase 1:
+\t\t\tcandidate := candidates[0]
+\t\t\tresult, errInstall := installer(ctx, Client{{HTTPClient: httpClient, RegistryURL: candidate.source.URL}}, candidate.plugin, InstallOptions{{
+\t\t\t\tPluginsDir: cfg.Plugins.Dir,
+\t\t\t\tGOOS: goos,
+\t\t\t\tGOARCH: goarch,
+\t\t\t}})
+\t\t\tif errInstall != nil {{
+\t\t\t\treport.Warnings = append(report.Warnings, AutoInstallWarning{{
+\t\t\t\t\tPluginID: id,
+\t\t\t\t\tSourceID: candidate.source.ID,
+\t\t\t\t\tSourceURL: candidate.source.URL,
+\t\t\t\t\tMessage: "install plugin: " + errInstall.Error(),
+\t\t\t\t}})
+\t\t\t\tcontinue
+\t\t\t}}
+\t\t\treport.Installed = append(report.Installed, result)
+\t\tdefault:
+\t\t\treport.Warnings = append(report.Warnings, AutoInstallWarning{{PluginID: id, Message: "plugin id appears in multiple registries; install source is ambiguous"}})
+\t\t}}
+\t}}
+
+\treturn report
+}}
+
+func enabledConfiguredPluginIDs(cfg *config.Config) []string {{
+\tids := make([]string, 0, len(cfg.Plugins.Configs))
+\tfor id, item := range cfg.Plugins.Configs {{
+\t\tid = strings.TrimSpace(id)
+\t\tif id == "" || item.Enabled == nil || !*item.Enabled {{
+\t\t\tcontinue
+\t\t}}
+\t\tif !pluginhost.ValidatePluginID(id) {{
+\t\t\tcontinue
+\t\t}}
+\t\tids = append(ids, id)
+\t}}
+\tsort.Strings(ids)
+\treturn ids
+}}
+
+func installedPluginIDs(pluginsDir string) (map[string]struct{{}}, error) {{
+\tfiles, err := pluginhost.DiscoverPluginFiles(pluginsDir)
+\tif err != nil {{
+\t\treturn nil, err
+\t}}
+\tout := make(map[string]struct{{}}, len(files))
+\tfor _, file := range files {{
+\t\tout[file.ID] = struct{{}}{{}}
+\t}}
+\treturn out, nil
+}}
+
+func autoInstallHTTPClient(proxyURL string) HTTPDoer {{
+\tclient := &http.Client{{}}
+\tproxyURL = strings.TrimSpace(proxyURL)
+\tif proxyURL == "" {{
+\t\treturn client
+\t}}
+\ttransport, _, errBuild := proxyutil.BuildHTTPTransport(proxyURL)
+\tif errBuild != nil {{
+\t\tlog.WithError(errBuild).Warn("pluginstore: invalid proxy URL for auto install")
+\t\treturn client
+\t}}
+\tif transport != nil {{
+\t\tclient.Transport = transport
+\t}}
+\treturn client
+}}
+''')
+
+write_text(ROOT / 'internal/pluginstore/autoinstall_test.go', f'''package pluginstore
+
+import (
+\t"context"
+\t"io"
+\t"net/http"
+\t"os"
+\t"path/filepath"
+\t"runtime"
+\t"strings"
+\t"testing"
+
+\t"{import_path('internal/config')}"
+\t"{import_path('internal/pluginhost')}"
+)
+
+type autoInstallFakeDoer map[string]string
+
+func (d autoInstallFakeDoer) Do(req *http.Request) (*http.Response, error) {{
+\tbody, ok := d[req.URL.String()]
+\tif !ok {{
+\t\treturn &http.Response{{
+\t\t\tStatusCode: http.StatusNotFound,
+\t\t\tBody: io.NopCloser(strings.NewReader("missing")),
+\t\t\tHeader: make(http.Header),
+\t\t}}, nil
+\t}}
+\treturn &http.Response{{
+\t\tStatusCode: http.StatusOK,
+\t\tBody: io.NopCloser(strings.NewReader(body)),
+\t\tHeader: make(http.Header),
+\t}}, nil
+}}
+
+func enabledBoolPtr(value bool) *bool {{
+\treturn &value
+}}
+
+func TestEnsureConfiguredPluginsInstalledSkipsDisabledGlobal(t *testing.T) {{
+\tcfg := &config.Config{{
+\t\tPlugins: config.PluginsConfig{{
+\t\t\tEnabled: false,
+\t\t\tDir: t.TempDir(),
+\t\t\tConfigs: map[string]config.PluginInstanceConfig{{
+\t\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
+\t\t\t}},
+\t\t}},
+\t}}
+\tcalled := false
+\treport := ensureConfiguredPluginsInstalled(context.Background(), cfg, autoInstallOptions{{
+\t\tInstall: func(context.Context, Client, Plugin, InstallOptions) (InstallResult, error) {{
+\t\t\tcalled = true
+\t\t\treturn InstallResult{{}}, nil
+\t\t}},
+\t}})
+\tif called {{
+\t\tt.Fatal("installer called while plugins are globally disabled")
+\t}}
+\tif len(report.Installed) != 0 || len(report.Warnings) != 0 {{
+\t\tt.Fatalf("report = %#v, want empty", report)
+\t}}
+}}
+
+func TestEnsureConfiguredPluginsInstalledSkipsDisabledPlugin(t *testing.T) {{
+\tcfg := &config.Config{{
+\t\tPlugins: config.PluginsConfig{{
+\t\t\tEnabled: true,
+\t\t\tDir: t.TempDir(),
+\t\t\tConfigs: map[string]config.PluginInstanceConfig{{
+\t\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(false)}},
+\t\t\t}},
+\t\t}},
+\t}}
+\tcalled := false
+\treport := ensureConfiguredPluginsInstalled(context.Background(), cfg, autoInstallOptions{{
+\t\tInstall: func(context.Context, Client, Plugin, InstallOptions) (InstallResult, error) {{
+\t\t\tcalled = true
+\t\t\treturn InstallResult{{}}, nil
+\t\t}},
+\t}})
+\tif called {{
+\t\tt.Fatal("installer called for disabled plugin")
+\t}}
+\tif len(report.Installed) != 0 || len(report.Warnings) != 0 {{
+\t\tt.Fatalf("report = %#v, want empty", report)
+\t}}
+}}
+
+func TestEnsureConfiguredPluginsInstalledSkipsInstalledPlugin(t *testing.T) {{
+\troot := t.TempDir()
+\ttargetDir := filepath.Join(root, runtime.GOOS, runtime.GOARCH)
+\tif err := os.MkdirAll(targetDir, 0o755); err != nil {{
+\t\tt.Fatalf("MkdirAll() error = %v", err)
+\t}}
+\tif err := os.WriteFile(filepath.Join(targetDir, "sample-provider"+pluginhost.PluginExtension(runtime.GOOS)), []byte("plugin"), 0o755); err != nil {{
+\t\tt.Fatalf("WriteFile() error = %v", err)
+\t}}
+\tcfg := &config.Config{{
+\t\tPlugins: config.PluginsConfig{{
+\t\t\tEnabled: true,
+\t\t\tDir: root,
+\t\t\tConfigs: map[string]config.PluginInstanceConfig{{
+\t\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
+\t\t\t}},
+\t\t}},
+\t}}
+\tcalled := false
+\treport := ensureConfiguredPluginsInstalled(context.Background(), cfg, autoInstallOptions{{
+\t\tInstall: func(context.Context, Client, Plugin, InstallOptions) (InstallResult, error) {{
+\t\t\tcalled = true
+\t\t\treturn InstallResult{{}}, nil
+\t\t}},
+\t}})
+\tif called {{
+\t\tt.Fatal("installer called for already installed plugin")
+\t}}
+\tif len(report.Installed) != 0 || len(report.Warnings) != 0 {{
+\t\tt.Fatalf("report = %#v, want empty", report)
+\t}}
+}}
+
+func TestEnsureConfiguredPluginsInstalledInstallsUniqueRegistryMatch(t *testing.T) {{
+\troot := t.TempDir()
+\tcfg := &config.Config{{
+\t\tPlugins: config.PluginsConfig{{
+\t\t\tEnabled: true,
+\t\t\tDir: root,
+\t\t\tConfigs: map[string]config.PluginInstanceConfig{{
+\t\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
+\t\t\t}},
+\t\t}},
+\t}}
+\tfakeHTTP := autoInstallFakeDoer{{
+\t\tDefaultRegistryURL: `{{"schema_version":1,"plugins":[{{"id":"sample-provider","name":"Sample","description":"Sample plugin","author":"Tester","repository":"https://github.com/example/sample-provider"}}]}}`,
+\t}}
+\tvar gotPlugin Plugin
+\tvar gotOptions InstallOptions
+\treport := ensureConfiguredPluginsInstalled(context.Background(), cfg, autoInstallOptions{{
+\t\tHTTPClient: fakeHTTP,
+\t\tGOOS: "linux",
+\t\tGOARCH: "amd64",
+\t\tInstall: func(_ context.Context, _ Client, plugin Plugin, options InstallOptions) (InstallResult, error) {{
+\t\t\tgotPlugin = plugin
+\t\t\tgotOptions = options
+\t\t\treturn InstallResult{{ID: plugin.ID, Version: "1.2.3", Path: filepath.Join(options.PluginsDir, options.GOOS, options.GOARCH, plugin.ID+".so")}}, nil
+\t\t}},
+\t}})
+\tif len(report.Warnings) != 0 {{
+\t\tt.Fatalf("warnings = %#v, want none", report.Warnings)
+\t}}
+\tif len(report.Installed) != 1 {{
+\t\tt.Fatalf("installed len = %d, want 1; report=%#v", len(report.Installed), report)
+\t}}
+\tif gotPlugin.ID != "sample-provider" {{
+\t\tt.Fatalf("installed plugin = %#v", gotPlugin)
+\t}}
+\tif gotOptions.PluginsDir != root || gotOptions.GOOS != "linux" || gotOptions.GOARCH != "amd64" {{
+\t\tt.Fatalf("install options = %#v", gotOptions)
+\t}}
+}}
+
+func TestEnsureConfiguredPluginsInstalledSkipsAmbiguousRegistryMatch(t *testing.T) {{
+\tsourceURL := "https://plugins.example/registry.json"
+\tcfg := &config.Config{{
+\t\tPlugins: config.PluginsConfig{{
+\t\t\tEnabled: true,
+\t\t\tDir: t.TempDir(),
+\t\t\tStoreSources: []string{{sourceURL}},
+\t\t\tConfigs: map[string]config.PluginInstanceConfig{{
+\t\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
+\t\t\t}},
+\t\t}},
+\t}}
+\tregistry := `{{"schema_version":1,"plugins":[{{"id":"sample-provider","name":"Sample","description":"Sample plugin","author":"Tester","repository":"https://github.com/example/sample-provider"}}]}}`
+\tcalled := false
+\treport := ensureConfiguredPluginsInstalled(context.Background(), cfg, autoInstallOptions{{
+\t\tHTTPClient: autoInstallFakeDoer{{
+\t\t\tDefaultRegistryURL: registry,
+\t\t\tsourceURL: registry,
+\t\t}},
+\t\tInstall: func(context.Context, Client, Plugin, InstallOptions) (InstallResult, error) {{
+\t\t\tcalled = true
+\t\t\treturn InstallResult{{}}, nil
+\t\t}},
+\t}})
+\tif called {{
+\t\tt.Fatal("installer called for ambiguous registry match")
+\t}}
+\tif len(report.Installed) != 0 {{
+\t\tt.Fatalf("installed = %#v, want none", report.Installed)
+\t}}
+\tif len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0].Message, "multiple registries") {{
+\t\tt.Fatalf("warnings = %#v, want ambiguity warning", report.Warnings)
+\t}}
+}}
+''')
+
 server = ROOT / 'internal/api/server.go'
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
@@ -774,4 +1213,11 @@ func (m *Manager) refreshForInspection(ctx context.Context, id string, force boo
 ''')
 
 flush_writes()
+subprocess.run([
+    'gofmt',
+    '-w',
+    'cmd/server/main.go',
+    'internal/pluginstore/autoinstall.go',
+    'internal/pluginstore/autoinstall_test.go',
+], cwd=ROOT, check=True)
 subprocess.run(['go', 'mod', 'tidy'], cwd=ROOT, check=True)

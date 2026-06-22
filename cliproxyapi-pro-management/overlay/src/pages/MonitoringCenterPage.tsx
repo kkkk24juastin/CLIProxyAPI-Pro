@@ -3555,6 +3555,20 @@ export function MonitoringCenterPage() {
 
         <div className={`${styles.tableWrapper} ${styles.tableScrollWrapper} ${styles.realtimeTableWrapper}`}>
           <table className={`${styles.table} ${styles.realtimeTable}`}>
+            <colgroup>
+              <col className={styles.realtimeTypeCol} />
+              <col className={styles.realtimeModelCol} />
+              <col className={styles.realtimeApiKeyCol} />
+              <col className={styles.realtimeRecentCol} />
+              <col className={styles.realtimeStatusCol} />
+              <col className={styles.realtimeRateCol} />
+              <col className={styles.realtimeCountCol} />
+              <col className={styles.realtimeTtftCol} />
+              <col className={styles.realtimeLatencyCol} />
+              <col className={styles.realtimeTimeCol} />
+              <col className={styles.realtimeUsageCol} />
+              <col className={styles.realtimeCostCol} />
+            </colgroup>
             <thead>
               <tr>
                 <th>{t('monitoring.column_type')}</th>
