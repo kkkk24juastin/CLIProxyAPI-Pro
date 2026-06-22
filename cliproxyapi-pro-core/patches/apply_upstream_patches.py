@@ -207,6 +207,7 @@ insert_before(
 
 server = ROOT / 'internal/api/server.go'
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
+api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
 management_scheduler = ROOT / 'internal/api/handlers/management/account_inspection_scheduler.go'
 management_scheduler_test = ROOT / 'internal/api/handlers/management/account_inspection_scheduler_test.go'
 scheduler_source = Path('/tmp/account_inspection_scheduler.go')
@@ -216,6 +217,65 @@ write_text(management_scheduler, re.sub(r'github\.com/router-for-me/CLIProxyAPI/
 scheduler_test_source = Path(__file__).resolve().parent / 'account_inspection_scheduler_test.go'
 if scheduler_test_source.is_file():
     write_text(management_scheduler_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(scheduler_test_source)))
+
+replace_once(
+    api_tools,
+    '''	Data            string            `json:"data"`
+}
+''',
+    '''	Data            string            `json:"data"`
+	UseExecutorSnake *bool             `json:"use_executor"`
+	UseExecutorCamel *bool             `json:"useExecutor"`
+	UseExecutorPascal *bool            `json:"UseExecutor"`
+}
+''',
+)
+insert_before(
+    api_tools,
+    'func firstNonEmptyString(values ...*string) string {\n',
+    '''func firstNonNilBool(values ...*bool) bool {
+\tfor _, v := range values {
+\t\tif v != nil {
+\t\t\treturn *v
+\t\t}
+\t}
+\treturn false
+}
+
+''',
+    'func firstNonNilBool(values ...*bool) bool',
+)
+replace_once(
+    api_tools,
+    '''\thttpClient := &http.Client{
+\t\tTimeout: defaultAPICallTimeout,
+\t}
+\thttpClient.Transport = h.apiCallTransport(auth)
+
+\tresp, errDo := httpClient.Do(req)
+''',
+    '''\tuseExecutor := firstNonNilBool(body.UseExecutorSnake, body.UseExecutorCamel, body.UseExecutorPascal)
+\tvar resp *http.Response
+\tvar errDo error
+\tif useExecutor {
+\t\tif auth == nil {
+\t\t\tc.JSON(http.StatusBadRequest, gin.H{"error": "auth not found"})
+\t\t\treturn
+\t\t}
+\t\tif h == nil || h.authManager == nil {
+\t\t\tc.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
+\t\t\treturn
+\t\t}
+\t\tresp, errDo = h.authManager.HttpRequest(c.Request.Context(), auth, req)
+\t} else {
+\t\thttpClient := &http.Client{
+\t\t\tTimeout: defaultAPICallTimeout,
+\t\t}
+\t\thttpClient.Transport = h.apiCallTransport(auth)
+\t\tresp, errDo = httpClient.Do(req)
+\t}
+''',
+)
 replace_once(
     auth_files,
     '''		"unavailable":    auth.Unavailable,

@@ -180,3 +180,42 @@ export function resolveCodexSubscriptionActiveUntil(file: AuthFileItem): string 
 
   return null;
 }
+
+export function extractGeminiCliProjectId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const direct = normalizeStringValue(value);
+  if (direct && /^[a-z][a-z0-9-]{4,}[a-z0-9]$/i.test(direct)) {
+    return direct;
+  }
+  const matches = Array.from(value.matchAll(/\(([^()]+)\)/g));
+  if (matches.length === 0) return null;
+  const candidate = matches[matches.length - 1]?.[1]?.trim();
+  return candidate ? candidate : null;
+}
+
+export function resolveGeminiCliProjectId(file: AuthFileItem): string | null {
+  const metadata = toRecord(file.metadata);
+  const attributes = toRecord(file.attributes);
+
+  const candidates = [
+    file.project_id,
+    file.projectId,
+    file.gemini_virtual_project,
+    metadata?.project_id,
+    metadata?.projectId,
+    metadata?.gemini_virtual_project,
+    attributes?.project_id,
+    attributes?.projectId,
+    attributes?.gemini_virtual_project,
+    file.account,
+    metadata?.account,
+    attributes?.account,
+  ];
+
+  for (const candidate of candidates) {
+    const projectId = extractGeminiCliProjectId(candidate);
+    if (projectId) return projectId;
+  }
+
+  return null;
+}

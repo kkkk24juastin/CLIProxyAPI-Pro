@@ -45,6 +45,81 @@ QUOTA_LOCALE_KEYS = {
     },
 }
 
+GEMINI_CLI_LOCALE_KEYS = {
+    'en.json': {
+        'auth_filter': 'GeminiCLI',
+        'quota': {
+            'title': 'Gemini CLI Quota',
+            'empty_title': 'No Gemini CLI Auth Files',
+            'empty_desc': 'Upload a Gemini CLI credential to view remaining quota.',
+            'idle': 'Click here to refresh quota',
+            'loading': 'Loading quota...',
+            'load_failed': 'Failed to load quota: {{message}}',
+            'missing_auth_index': 'Auth file missing auth_index',
+            'missing_project_id': 'Gemini CLI credential missing project ID',
+            'empty_buckets': 'No quota data available',
+            'remaining_amount': 'Remaining {{count}}',
+            'tier_label': 'Tier',
+            'credit_label': 'Google One AI Credits',
+            'credit_amount': '{{count}} credits',
+        },
+    },
+    'ru.json': {
+        'auth_filter': 'GeminiCLI',
+        'quota': {
+            'title': 'Квота Gemini CLI',
+            'empty_title': 'Файлы авторизации Gemini CLI отсутствуют',
+            'empty_desc': 'Загрузите учётные данные Gemini CLI, чтобы увидеть оставшуюся квоту.',
+            'idle': 'Не загружено. Нажмите "Обновить квоту".',
+            'loading': 'Загрузка квоты...',
+            'load_failed': 'Не удалось загрузить квоту: {{message}}',
+            'missing_auth_index': 'В файле авторизации отсутствует auth_index',
+            'missing_project_id': 'В учётных данных Gemini CLI отсутствует идентификатор проекта',
+            'empty_buckets': 'Данные по квоте отсутствуют',
+            'remaining_amount': 'Осталось {{count}}',
+            'tier_label': 'Уровень',
+            'credit_label': 'Google One AI кредиты',
+            'credit_amount': '{{count}} кредитов',
+        },
+    },
+    'zh-CN.json': {
+        'auth_filter': 'GeminiCLI',
+        'quota': {
+            'title': 'Gemini CLI 额度',
+            'empty_title': '暂无 Gemini CLI 认证',
+            'empty_desc': '上传 Gemini CLI 认证文件后即可查看额度。',
+            'idle': '点击此处刷新额度',
+            'loading': '正在加载额度...',
+            'load_failed': '额度获取失败：{{message}}',
+            'missing_auth_index': '认证文件缺少 auth_index',
+            'missing_project_id': 'Gemini CLI 凭证缺少 Project ID',
+            'empty_buckets': '暂无额度数据',
+            'remaining_amount': '剩余 {{count}}',
+            'tier_label': '层级',
+            'credit_label': 'Google One AI 积分',
+            'credit_amount': '{{count}} 积分',
+        },
+    },
+    'zh-TW.json': {
+        'auth_filter': 'GeminiCLI',
+        'quota': {
+            'title': 'Gemini CLI 配額',
+            'empty_title': '暫無 Gemini CLI 驗證',
+            'empty_desc': '上傳 Gemini CLI 驗證檔案後即可查看配額。',
+            'idle': '點擊此處重新整理配額',
+            'loading': '正在載入配額...',
+            'load_failed': '配額取得失敗：{{message}}',
+            'missing_auth_index': '驗證檔案缺少 auth_index',
+            'missing_project_id': 'Gemini CLI 憑證缺少 Project ID',
+            'empty_buckets': '暫無配額資料',
+            'remaining_amount': '剩餘 {{count}}',
+            'tier_label': '層級',
+            'credit_label': 'Google One AI 點數',
+            'credit_amount': '{{count}} 點數',
+        },
+    },
+}
+
 
 _writes = {}
 
@@ -218,6 +293,18 @@ def patch_icons(target: Path) -> None:
 
 def patch_quota_types(target: Path) -> None:
     path = target / 'src/types/quota.ts'
+    insert_once(
+        path,
+        "// API payload types\n",
+        "// API payload types\nexport interface GeminiCliQuotaBucket {\n  modelId?: string;\n  model_id?: string;\n  tokenType?: string;\n  token_type?: string;\n  remainingFraction?: number | string;\n  remaining_fraction?: number | string;\n  remainingAmount?: number | string;\n  remaining_amount?: number | string;\n  resetTime?: string;\n  reset_time?: string;\n}\n\nexport interface GeminiCliQuotaPayload {\n  buckets?: GeminiCliQuotaBucket[];\n}\n\nexport interface GeminiCliCredits {\n  creditType?: string;\n  credit_type?: string;\n  creditAmount?: string | number;\n  credit_amount?: string | number;\n}\n\nexport interface GeminiCliUserTier {\n  id?: string;\n  name?: string;\n  description?: string;\n  availableCredits?: GeminiCliCredits[];\n  available_credits?: GeminiCliCredits[];\n}\n\nexport interface GeminiCliCodeAssistPayload {\n  currentTier?: GeminiCliUserTier | null;\n  current_tier?: GeminiCliUserTier | null;\n  paidTier?: GeminiCliUserTier | null;\n  paid_tier?: GeminiCliUserTier | null;\n}\n\nexport interface GeminiCliParsedBucket {\n  modelId: string;\n  tokenType: string | null;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n}\n\n",
+        "export interface GeminiCliQuotaBucket",
+    )
+    insert_once(
+        path,
+        "export interface CodexQuotaWindow",
+        "export interface GeminiCliQuotaBucketState {\n  id: string;\n  label: string;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n  tokenType: string | null;\n  modelIds?: string[];\n}\n\nexport interface GeminiCliQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  buckets: GeminiCliQuotaBucketState[];\n  tierLabel?: string | null;\n  tierId?: string | null;\n  creditBalance?: number | null;\n  error?: string;\n  errorStatus?: number;\n  cachedAt?: number;\n}\n\nexport interface CodexQuotaWindow",
+        "export interface GeminiCliQuotaState",
+    )
     for old, new in [
         (
             "  errorStatus?: number;\n}\n\n// Quota state types",
@@ -245,6 +332,26 @@ def patch_quota_types(target: Path) -> None:
 
 def patch_quota_configs(target: Path) -> None:
     path = target / 'src/components/quota/quotaConfigs.ts'
+    replace_once(
+        path,
+        "  CodexUsagePayload,\n  KimiQuotaRow,",
+        "  CodexUsagePayload,\n  GeminiCliQuotaState,\n  KimiQuotaRow,",
+    )
+    replace_once(
+        path,
+        "type QuotaType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai';",
+        "type QuotaType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';",
+    )
+    replace_once(
+        path,
+        "  codexQuota: Record<string, CodexQuotaState>;\n  kimiQuota: Record<string, KimiQuotaState>;",
+        "  codexQuota: Record<string, CodexQuotaState>;\n  geminiCliQuota: Record<string, GeminiCliQuotaState>;\n  kimiQuota: Record<string, KimiQuotaState>;",
+    )
+    replace_once(
+        path,
+        "  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;",
+        "  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setGeminiCliQuota: (updater: QuotaUpdater<Record<string, GeminiCliQuotaState>>) => void;\n  setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;",
+    )
     for store_setter, old, new in [
         (
             'setClaudeQuota',
@@ -288,6 +395,18 @@ def patch_quota_configs(target: Path) -> None:
 
 def patch_quota_page(target: Path) -> None:
     path = target / 'src/pages/QuotaPage.tsx'
+    insert_once(
+        path,
+        "import { useAuthStore } from '@/stores';\n",
+        "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\nimport { useAuthStore } from '@/stores';\n",
+        "GEMINI_CLI_CONFIG",
+    )
+    insert_once(
+        path,
+        "      <QuotaSection\n        config={KIMI_CONFIG}\n",
+        "      <QuotaSection\n        config={GEMINI_CLI_CONFIG}\n        files={files}\n        loading={loading}\n        disabled={disableControls}\n      />\n      <QuotaSection\n        config={KIMI_CONFIG}\n",
+        "config={GEMINI_CLI_CONFIG}",
+    )
     replace_all(
         path,
         "import { FEATURES } from '@/config/features';\nimport { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n",
@@ -330,6 +449,50 @@ def patch_quota_card(target: Path) -> None:
     )
 
 
+def patch_quota_store(target: Path) -> None:
+    path = target / 'src/stores/useQuotaStore.ts'
+    replace_once(
+        path,
+        "  CodexQuotaState,\n  KimiQuotaState,",
+        "  CodexQuotaState,\n  GeminiCliQuotaState,\n  KimiQuotaState,",
+    )
+    replace_once(
+        path,
+        "  codexQuota: Record<string, CodexQuotaState>;\n  kimiQuota: Record<string, KimiQuotaState>;",
+        "  codexQuota: Record<string, CodexQuotaState>;\n  geminiCliQuota: Record<string, GeminiCliQuotaState>;\n  kimiQuota: Record<string, KimiQuotaState>;",
+    )
+    replace_once(
+        path,
+        "  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;",
+        "  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setGeminiCliQuota: (updater: QuotaUpdater<Record<string, GeminiCliQuotaState>>) => void;\n  setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;",
+    )
+    replace_once(
+        path,
+        "  codexQuota: {},\n  kimiQuota: {},",
+        "  codexQuota: {},\n  geminiCliQuota: {},\n  kimiQuota: {},",
+    )
+    replace_once(
+        path,
+        "  setCodexQuota: (updater) =>\n    set((state) => ({\n      codexQuota: resolveUpdater(updater, state.codexQuota),\n    })),\n  setKimiQuota: (updater) =>",
+        "  setCodexQuota: (updater) =>\n    set((state) => ({\n      codexQuota: resolveUpdater(updater, state.codexQuota),\n    })),\n  setGeminiCliQuota: (updater) =>\n    set((state) => ({\n      geminiCliQuota: resolveUpdater(updater, state.geminiCliQuota),\n    })),\n  setKimiQuota: (updater) =>",
+    )
+    replace_once(
+        path,
+        "      codexQuota: {},\n      kimiQuota: {},",
+        "      codexQuota: {},\n      geminiCliQuota: {},\n      kimiQuota: {},",
+    )
+
+
+def patch_quota_constants(target: Path) -> None:
+    path = target / 'src/utils/quota/constants.ts'
+    insert_once(
+        path,
+        "  aistudio: {\n",
+        "  'gemini-cli': {\n    light: { bg: '#e0e8ff', text: '#1e4fa3' },\n    dark: { bg: '#1c3f73', text: '#a8c7ff' },\n  },\n  aistudio: {\n",
+        "'gemini-cli':",
+    )
+
+
 def patch_antigravity_quota_builders(target: Path) -> None:
     path = target / 'src/utils/quota/builders.ts'
     insert_once(
@@ -351,7 +514,28 @@ def patch_antigravity_quota_builders(target: Path) -> None:
 
 
 def patch_quota_styles(target: Path) -> None:
-    return
+    path = target / 'src/pages/QuotaPage.module.scss'
+    replace_once(
+        path,
+        ".codexGrid,\n.kimiGrid,",
+        ".codexGrid,\n.geminiCliGrid,\n.kimiGrid,",
+    )
+    replace_once(
+        path,
+        ".codexControls,\n.kimiControls,",
+        ".codexControls,\n.geminiCliControls,\n.kimiControls,",
+    )
+    replace_once(
+        path,
+        ".codexControl,\n.kimiControl,",
+        ".codexControl,\n.geminiCliControl,\n.kimiControl,",
+    )
+    insert_once(
+        path,
+        ".kimiCard {\n",
+        ".geminiCliCard {\n  background-image: linear-gradient(180deg, rgba(224, 232, 255, 0.2), rgba(224, 232, 255, 0));\n}\n\n.kimiCard {\n",
+        ".geminiCliCard",
+    )
 
 
 def patch_supporting_api_and_types(target: Path) -> None:
@@ -509,6 +693,9 @@ def patch_locales(target: Path) -> None:
         data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
         data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
+        gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(locale_path.name, GEMINI_CLI_LOCALE_KEYS['en.json'])
+        data.setdefault('auth_files', {})['filter_gemini-cli'] = gemini_cli_locale['auth_filter']
+        data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
         locale_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
 
@@ -526,10 +713,13 @@ def main() -> None:
     patch_layout(target)
     patch_icons(target)
     patch_quota_types(target)
+    patch_quota_store(target)
+    patch_quota_constants(target)
     patch_quota_configs(target)
     patch_antigravity_quota_builders(target)
     patch_quota_page(target)
     patch_quota_card(target)
+    patch_quota_styles(target)
     patch_supporting_api_and_types(target)
     patch_locales(target)
     flush_writes()

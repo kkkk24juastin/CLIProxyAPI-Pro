@@ -11,6 +11,8 @@ export interface ApiCallRequest {
   url: string;
   header?: Record<string, string>;
   data?: string;
+  useExecutor?: boolean;
+  use_executor?: boolean;
 }
 
 export interface ApiCallResult<T = unknown> {
