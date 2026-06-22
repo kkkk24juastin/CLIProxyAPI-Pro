@@ -255,6 +255,52 @@ func TestUsageExportImportPreservesAntigravitySubscriptionQuotaCache(t *testing.
 	}
 }
 
+func TestUsageExportImportPreservesUpstreamDiagnostics(t *testing.T) {
+	sourceStore := openTestStore(t)
+	sourceRouter := testUsageRouter(sourceStore)
+	event := testUsageEvent(0, true, 42)
+	event.Provider = "antigravity"
+	event.ExecutorType = "AntigravityExecutor"
+	event.Model = "gemini-claude-opus-4-5-thinking"
+	event.Alias = "claude-opus-4-5"
+	event.ErrorCode = "rate_limit"
+	event.ErrorMessage = "too many requests"
+	event.UpstreamRequestID = "upstream-req-1"
+	event.RetryAfter = "30"
+	insertTestUsageEvents(t, sourceStore, event)
+
+	exportRecorder := httptest.NewRecorder()
+	exportRequest := httptest.NewRequest(http.MethodGet, "/usage/export", nil)
+	sourceRouter.ServeHTTP(exportRecorder, exportRequest)
+	if exportRecorder.Code != http.StatusOK {
+		t.Fatalf("export status = %d, want 200; body=%s", exportRecorder.Code, exportRecorder.Body.String())
+	}
+
+	targetStore := openTestStore(t)
+	targetRouter := testUsageRouter(targetStore)
+	importRecorder := httptest.NewRecorder()
+	importRequest := httptest.NewRequest(http.MethodPost, "/usage/import", bytes.NewReader(exportRecorder.Body.Bytes()))
+	targetRouter.ServeHTTP(importRecorder, importRequest)
+	if importRecorder.Code != http.StatusOK {
+		t.Fatalf("import status = %d, want 200; body=%s", importRecorder.Code, importRecorder.Body.String())
+	}
+
+	recent, err := targetStore.RecentEvents(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("RecentEvents() error = %v", err)
+	}
+	if len(recent) != 1 {
+		t.Fatalf("RecentEvents() len = %d, want 1", len(recent))
+	}
+	got := recent[0]
+	if got.Provider != "antigravity" || got.ExecutorType != "AntigravityExecutor" || got.Alias != "claude-opus-4-5" {
+		t.Fatalf("provider metadata = provider:%q executor:%q alias:%q", got.Provider, got.ExecutorType, got.Alias)
+	}
+	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-req-1" || got.RetryAfter != "30" {
+		t.Fatalf("diagnostics = code:%q message:%q rid:%q retry:%q", got.ErrorCode, got.ErrorMessage, got.UpstreamRequestID, got.RetryAfter)
+	}
+}
+
 func TestHandleStatusIncludesDeadLetterSamples(t *testing.T) {
 	store := openTestStore(t)
 	if err := store.AddDeadLetter(context.Background(), "bad payload", errTestParse); err != nil {
