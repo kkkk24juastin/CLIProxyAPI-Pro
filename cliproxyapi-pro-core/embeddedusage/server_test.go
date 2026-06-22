@@ -1,6 +1,7 @@
 package embeddedusage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -174,6 +175,83 @@ func TestHandleUsageAggregatesReturnsBuckets(t *testing.T) {
 	item := payload.Items[0]
 	if item.Provider != "test" || item.Model != "model" || item.TotalRequests != 2 || item.FailureCount != 1 || item.TotalTokens != 30 {
 		t.Fatalf("aggregate item = %+v, want totals by provider/model", item)
+	}
+}
+
+func TestUsageExportImportPreservesAntigravitySubscriptionQuotaCache(t *testing.T) {
+	sourceStore := openTestStore(t)
+	sourceRouter := testUsageRouter(sourceStore)
+	quotaState := map[string]any{
+		"status":        "success",
+		"schemaVersion": float64(2),
+		"parserVersion": float64(3),
+		"plan":          "ultra",
+		"planType":      "ultra",
+		"subscription": map[string]any{
+			"plan":     "ultra",
+			"tierId":   "g1-ultra-tier",
+			"tierName": "Ultra",
+			"availableCredits": []any{
+				map[string]any{"creditType": "AI", "creditAmount": float64(20)},
+			},
+		},
+		"groups": []any{
+			map[string]any{
+				"id": "claude-gpt",
+				"buckets": []any{
+					map[string]any{"id": "weekly", "remainingFraction": float64(0.5)},
+				},
+			},
+		},
+	}
+	rawQuotaState, err := json.Marshal(quotaState)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if err := sourceStore.SetQuotaCache(context.Background(), QuotaCacheEntry{
+		Provider:   "antigravity",
+		FileName:   "antigravity-user.json",
+		Data:       rawQuotaState,
+		CachedAt:   1,
+		AccessedAt: 1,
+		Version:    1,
+	}); err != nil {
+		t.Fatalf("SetQuotaCache() error = %v", err)
+	}
+
+	exportRecorder := httptest.NewRecorder()
+	exportRequest := httptest.NewRequest(http.MethodGet, "/usage/export", nil)
+	sourceRouter.ServeHTTP(exportRecorder, exportRequest)
+	if exportRecorder.Code != http.StatusOK {
+		t.Fatalf("export status = %d, want 200; body=%s", exportRecorder.Code, exportRecorder.Body.String())
+	}
+
+	targetStore := openTestStore(t)
+	targetRouter := testUsageRouter(targetStore)
+	importRecorder := httptest.NewRecorder()
+	importRequest := httptest.NewRequest(http.MethodPost, "/usage/import", bytes.NewReader(exportRecorder.Body.Bytes()))
+	targetRouter.ServeHTTP(importRecorder, importRequest)
+	if importRecorder.Code != http.StatusOK {
+		t.Fatalf("import status = %d, want 200; body=%s", importRecorder.Code, importRecorder.Body.String())
+	}
+
+	entries, err := targetStore.GetQuotaCache(context.Background(), "antigravity", "antigravity-user.json")
+	if err != nil {
+		t.Fatalf("GetQuotaCache() error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("quota cache entries len = %d, want 1", len(entries))
+	}
+	var restored map[string]any
+	if err := json.Unmarshal(entries[0].Data, &restored); err != nil {
+		t.Fatalf("json.Unmarshal(restored) error = %v", err)
+	}
+	subscription, ok := restored["subscription"].(map[string]any)
+	if !ok {
+		t.Fatalf("subscription = %#v, want object", restored["subscription"])
+	}
+	if restored["planType"] != "ultra" || subscription["plan"] != "ultra" || subscription["tierId"] != "g1-ultra-tier" {
+		t.Fatalf("restored quota = %#v, want antigravity ultra subscription preserved", restored)
 	}
 }
 

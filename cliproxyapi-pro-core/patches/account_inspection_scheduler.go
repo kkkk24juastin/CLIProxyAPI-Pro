@@ -186,6 +186,8 @@ const (
 	accountInspectionAntigravityQuotaModeClaudeGpt accountInspectionAntigravityQuotaMode = "claude-gpt"
 )
 
+const antigravityCodeAssistURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+
 const (
 	accountInspectionStateIdle      accountInspectionRunState = "idle"
 	accountInspectionStateRunning   accountInspectionRunState = "running"
@@ -1836,7 +1838,15 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 		if err != nil {
 			continue
 		}
-		s.persistQuotaState(ctx, account, quotaSuccessState(map[string]any{"groups": groups, "rawShapeHash": jsonShapeHash(resp.Body)}))
+		quotaState := map[string]any{"groups": groups, "rawShapeHash": jsonShapeHash(resp.Body)}
+		if subscription := s.fetchAntigravitySubscription(ctx, account, settings); subscription != nil {
+			quotaState["subscription"] = subscription
+			if plan := stringFromAny(subscription["plan"]); plan != "" {
+				quotaState["plan"] = plan
+				quotaState["planType"] = plan
+			}
+		}
+		s.persistQuotaState(ctx, account, quotaSuccessState(quotaState))
 		used := antigravityUsedPercent(groups, settings.AntigravityQuotaMode)
 		decision := quotaDecision(account, used, used != nil, settings.UsedPercentThreshold)
 		if settings.AntigravityDeepProbeEnabled && antigravityShouldDeepProbe(decision) {
@@ -1864,6 +1874,24 @@ func antigravityGenerateURLs() []string {
 		"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:generateContent",
 		"https://cloudcode-pa.googleapis.com/v1internal:generateContent",
 	}
+}
+
+func (s *accountInspectionScheduler) fetchAntigravitySubscription(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) map[string]any {
+	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
+		return s.apiCall(ctx, account.Auth, http.MethodPost, antigravityCodeAssistURL, map[string]string{
+			"Authorization": "Bearer $TOKEN$",
+			"Content-Type":  "application/json",
+			"User-Agent":    s.antigravityUserAgent(),
+		}, `{"metadata":{"ideType":"ANTIGRAVITY"}}`, settings.Timeout)
+	})
+	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil
+	}
+	payload, err := parseAntigravityQuotaPayload(resp.Body)
+	if err != nil {
+		return nil
+	}
+	return buildAntigravitySubscription(payload)
 }
 
 func antigravityShouldDeepProbe(decision accountInspectionDecision) bool {
@@ -2112,7 +2140,7 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 		isQuota = true
 	}
 	if payload != nil && len(windows) > 0 {
-		s.persistQuotaState(ctx, account, quotaSuccessState(map[string]any{"windows": windows, "planType": codexPlanType(account.Auth, payload), "rawShapeHash": jsonShapeHash(resp.Body)}))
+		s.persistQuotaState(ctx, account, quotaSuccessState(codexQuotaStateValues(account.Auth, payload, windows, resp.Body)))
 	}
 	return codexDecision(account, resp.StatusCode, used, isQuota, settings.UsedPercentThreshold), status, nil
 }
@@ -2844,6 +2872,117 @@ func buildAntigravityGroups(body string) ([]map[string]any, error) {
 		return groups, nil
 	}
 	return nil, fmt.Errorf("empty antigravity quota groups")
+}
+
+var antigravityPlanByTierID = map[string]string{
+	"free-tier":          "free",
+	"g1-pro-tier":        "pro",
+	"g1-ultra-tier":      "ultra",
+	"g1-ultra-lite-tier": "ultra-lite",
+}
+
+func buildAntigravitySubscription(payload map[string]any) map[string]any {
+	if payload == nil {
+		return nil
+	}
+	rawCurrentTier := firstAny(payload, "currentTier", "current_tier")
+	rawPaidTier := firstAny(payload, "paidTier", "paid_tier")
+	currentTier := normalizeAntigravityTier(rawCurrentTier)
+	paidTier := normalizeAntigravityTier(rawPaidTier)
+	effectiveTier := currentTier
+	source := "current"
+	if stringFromAny(paidTier["id"]) != "" {
+		effectiveTier = paidTier
+		source = "paid"
+	}
+	tierID := stringFromAny(effectiveTier["id"])
+	tierName := stringFromAny(effectiveTier["name"])
+	if tierID == "" && tierName == "" {
+		return nil
+	}
+	plan := antigravityPlanByTierID[tierID]
+	if plan == "" {
+		plan = "unknown"
+	}
+	subscription := map[string]any{
+		"plan":     plan,
+		"tierId":   emptyStringAsNil(tierID),
+		"tierName": emptyStringAsNil(tierName),
+		"source":   source,
+	}
+	if currentTier != nil {
+		subscription["currentTier"] = currentTier
+	}
+	if paidTier != nil {
+		subscription["paidTier"] = paidTier
+		if paidTierPayload, ok := rawPaidTier.(map[string]any); ok {
+			credits := normalizeAntigravityCredits(firstAny(paidTierPayload, "availableCredits", "available_credits"))
+			if len(credits) > 0 {
+				subscription["availableCredits"] = credits
+			}
+		}
+	}
+	if _, ok := subscription["availableCredits"]; !ok {
+		if currentTierPayload, ok := rawCurrentTier.(map[string]any); ok {
+			credits := normalizeAntigravityCredits(firstAny(currentTierPayload, "availableCredits", "available_credits"))
+			if len(credits) > 0 {
+				subscription["availableCredits"] = credits
+			}
+		}
+	}
+	return subscription
+}
+
+func normalizeAntigravityTier(value any) map[string]any {
+	tier, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	id := stringFromAny(tier["id"])
+	name := stringFromAny(tier["name"])
+	if id == "" && name == "" {
+		return nil
+	}
+	return map[string]any{
+		"id":   emptyStringAsNil(id),
+		"name": emptyStringAsNil(name),
+	}
+}
+
+func normalizeAntigravityCredits(value any) []map[string]any {
+	items := anySlice(value)
+	if len(items) == 0 {
+		return nil
+	}
+	credits := make([]map[string]any, 0, len(items))
+	for _, raw := range items {
+		credit, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		creditType := stringFromAny(firstAny(credit, "creditType", "credit_type"))
+		creditAmount := normalizeAntigravityCreditValue(firstAny(credit, "creditAmount", "credit_amount"))
+		minimum := normalizeAntigravityCreditValue(firstAny(credit, "minimumCreditAmountForUsage", "minimum_credit_amount_for_usage"))
+		if creditType == "" && creditAmount == nil {
+			continue
+		}
+		credits = append(credits, map[string]any{
+			"creditType":                  emptyStringAsNil(creditType),
+			"creditAmount":                creditAmount,
+			"minimumCreditAmountForUsage": minimum,
+		})
+	}
+	return credits
+}
+
+func normalizeAntigravityCreditValue(value any) any {
+	if number, ok := floatFromAny(value); ok {
+		return number
+	}
+	if text := stringFromAny(value); text != "" {
+		return text
+	}
+	return nil
 }
 
 func parseAntigravityQuotaPayload(body string) (map[string]any, error) {
@@ -3666,47 +3805,129 @@ func codexPlanType(auth *coreauth.Auth, payload map[string]any) any {
 	return nil
 }
 
+func codexQuotaStateValues(auth *coreauth.Auth, payload map[string]any, windows []map[string]any, rawBody string) map[string]any {
+	values := map[string]any{
+		"windows":      windows,
+		"planType":     codexPlanType(auth, payload),
+		"rawShapeHash": jsonShapeHash(rawBody),
+	}
+	values["subscriptionActiveUntil"] = codexSubscriptionActiveUntil(auth)
+	values["rateLimitResetCreditsAvailableCount"] = codexRateLimitResetCreditsAvailableCount(payload)
+	return values
+}
+
+func codexSubscriptionActiveUntil(auth *coreauth.Auth) any {
+	if auth == nil {
+		return nil
+	}
+	for _, source := range []map[string]any{auth.Metadata, stringMapToAnyMap(auth.Attributes)} {
+		if value := codexSubscriptionActiveUntilFromMap(source); value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func codexSubscriptionActiveUntilFromMap(source map[string]any) any {
+	if source == nil {
+		return nil
+	}
+	for _, key := range []string{"chatgpt_subscription_active_until", "chatgptSubscriptionActiveUntil", "subscription_active_until", "subscriptionActiveUntil"} {
+		if value := dateLikeValue(source[key]); value != nil {
+			return value
+		}
+	}
+	for _, rawSubscription := range []any{source["subscription"], source["Subscription"]} {
+		if subscription, ok := rawSubscription.(map[string]any); ok {
+			for _, key := range []string{"active_until", "activeUntil"} {
+				if value := dateLikeValue(subscription[key]); value != nil {
+					return value
+				}
+			}
+		}
+	}
+	if value := idTokenClaimAny(source["id_token"], "chatgpt_subscription_active_until", "chatgptSubscriptionActiveUntil", "subscription_active_until", "subscriptionActiveUntil"); value != nil {
+		return value
+	}
+	return nil
+}
+
+func codexRateLimitResetCreditsAvailableCount(payload map[string]any) any {
+	if payload == nil {
+		return nil
+	}
+	resetCredits, _ := firstAny(payload, "rate_limit_reset_credits", "rateLimitResetCredits").(map[string]any)
+	if resetCredits == nil {
+		return nil
+	}
+	if value, ok := floatFromAny(firstAny(resetCredits, "available_count", "availableCount")); ok {
+		return value
+	}
+	return nil
+}
+
+func dateLikeValue(value any) any {
+	if number, ok := floatFromAny(value); ok {
+		if number == 0 {
+			return nil
+		}
+		return value
+	}
+	if text := stringFromAny(value); text != "" && text != "0" {
+		return text
+	}
+	return nil
+}
+
 func idTokenClaim(raw any, keys ...string) string {
+	value := idTokenClaimAny(raw, keys...)
+	if text := stringFromAny(value); text != "" {
+		return text
+	}
+	return ""
+}
+
+func idTokenClaimAny(raw any, keys ...string) any {
 	switch value := raw.(type) {
 	case map[string]any:
 		for _, key := range keys {
-			if claim := stringFromAny(value[key]); claim != "" {
+			if claim := dateLikeValue(value[key]); claim != nil {
 				return claim
 			}
 		}
-		return ""
+		return nil
 	}
 	token := stringFromAny(raw)
 	if token == "" {
-		return ""
+		return nil
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(token), &parsed); err == nil {
 		for _, key := range keys {
-			if value := stringFromAny(parsed[key]); value != "" {
+			if value := dateLikeValue(parsed[key]); value != nil {
 				return value
 			}
 		}
-		return ""
+		return nil
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) < 2 {
-		return ""
+		return nil
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return ""
+		return nil
 	}
 	var data map[string]any
 	if err := json.Unmarshal(payload, &data); err != nil {
-		return ""
+		return nil
 	}
 	for _, key := range keys {
-		if value := stringFromAny(data[key]); value != "" {
+		if value := dateLikeValue(data[key]); value != nil {
 			return value
 		}
 	}
-	return ""
+	return nil
 }
 
 func accountInspectionAuthEmail(auth *coreauth.Auth) string {

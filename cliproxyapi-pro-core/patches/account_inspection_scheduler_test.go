@@ -4,6 +4,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
 func testInspectionResult(key string, action accountInspectionAction, disabled bool, statusCode *int, isQuota bool, err string) accountInspectionResult {
@@ -351,6 +353,35 @@ func TestBuildAntigravityGroupsSupportsWrappedBody(t *testing.T) {
 	}
 }
 
+func TestBuildAntigravitySubscriptionMapsPaidTierPlan(t *testing.T) {
+	payload := map[string]any{
+		"currentTier": map[string]any{"id": "free-tier", "name": "Free"},
+		"paidTier": map[string]any{
+			"id":   "g1-ultra-tier",
+			"name": "Ultra",
+			"availableCredits": []any{
+				map[string]any{
+					"creditType":                  "AI",
+					"creditAmount":                float64(20),
+					"minimumCreditAmountForUsage": "1",
+				},
+			},
+		},
+	}
+
+	subscription := buildAntigravitySubscription(payload)
+	if subscription == nil {
+		t.Fatal("buildAntigravitySubscription() = nil, want subscription")
+	}
+	if subscription["plan"] != "ultra" || subscription["tierId"] != "g1-ultra-tier" || subscription["source"] != "paid" {
+		t.Fatalf("subscription = %#v, want ultra paid tier", subscription)
+	}
+	credits, ok := subscription["availableCredits"].([]map[string]any)
+	if !ok || len(credits) != 1 || credits[0]["creditType"] != "AI" {
+		t.Fatalf("availableCredits = %#v, want AI credit entry", subscription["availableCredits"])
+	}
+}
+
 func TestAntigravityUsedPercentFallsBackWhenClaudeGroupNameChanges(t *testing.T) {
 	groups := []map[string]any{{
 		"id":    "quota-group-1",
@@ -422,6 +453,39 @@ func TestBuildCodexWindowsClassifiesTeamMonthlyWindows(t *testing.T) {
 	}
 	if labelsByID["premium-tokens-monthly-0"] != "codex_quota.additional_team_secondary_window" {
 		t.Fatalf("additional monthly label = %q, want additional team secondary", labelsByID["premium-tokens-monthly-0"])
+	}
+}
+
+func TestCodexQuotaStateValuesIncludesSubscriptionAndResetCredits(t *testing.T) {
+	auth := &coreauth.Auth{
+		Metadata: map[string]any{
+			"id_token": map[string]any{
+				"chatgpt_subscription_active_until": float64(1790000000),
+			},
+		},
+		Attributes: map[string]string{
+			"plan_type": "plus",
+		},
+	}
+	payload := map[string]any{
+		"rate_limit_reset_credits": map[string]any{
+			"available_count": float64(2),
+		},
+	}
+	windows := []map[string]any{{"id": "five-hour"}}
+
+	values := codexQuotaStateValues(auth, payload, windows, `{"rate_limit":{}}`)
+	if values["planType"] != "plus" {
+		t.Fatalf("planType = %#v, want plus", values["planType"])
+	}
+	if values["subscriptionActiveUntil"] != float64(1790000000) {
+		t.Fatalf("subscriptionActiveUntil = %#v, want id token timestamp", values["subscriptionActiveUntil"])
+	}
+	if values["rateLimitResetCreditsAvailableCount"] != float64(2) {
+		t.Fatalf("rateLimitResetCreditsAvailableCount = %#v, want 2", values["rateLimitResetCreditsAvailableCount"])
+	}
+	if values["rawShapeHash"] == "" {
+		t.Fatalf("rawShapeHash = %q, want populated", values["rawShapeHash"])
 	}
 }
 
