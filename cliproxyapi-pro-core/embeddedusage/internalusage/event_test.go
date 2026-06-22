@@ -10,7 +10,10 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 		"timestamp":"2026-06-13T00:00:00Z",
 		"request_id":"req-1",
 		"endpoint":"POST /v1/chat/completions",
+		"provider":"antigravity",
+		"executor_type":"AntigravityExecutor",
 		"model":"gpt-test",
+		"alias":"client-gpt",
 		"api_key":"sk-secret",
 		"tokens":{"input_tokens":10,"output_tokens":20,"cache_read_tokens":7,"cache_creation_tokens":3},
 		"latency_ms":1234,
@@ -19,7 +22,7 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 		"service_tier":"priority",
 		"failed":true,
 		"fail":{"status_code":429,"body":"{\"error\":{\"message\":\"too many requests\"}}"},
-		"response_headers":{"set_cookie":"secret-cookie"}
+		"response_headers":{"set_cookie":"secret-cookie","X-Upstream-Request-Id":["upstream-req-1"],"Retry-After":["30"]}
 	}`))
 	if err != nil {
 		t.Fatalf("NormalizeRaw() error = %v", err)
@@ -32,6 +35,12 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 	}
 	if event.ReasoningEffort != "high" || event.ServiceTier != "priority" {
 		t.Fatalf("tier fields = %q/%q, want high/priority", event.ReasoningEffort, event.ServiceTier)
+	}
+	if event.Provider != "antigravity" || event.ExecutorType != "AntigravityExecutor" || event.Alias != "client-gpt" {
+		t.Fatalf("provider fields = %q/%q/%q, want antigravity/AntigravityExecutor/client-gpt", event.Provider, event.ExecutorType, event.Alias)
+	}
+	if event.UpstreamRequestID != "upstream-req-1" || event.RetryAfter != "30" {
+		t.Fatalf("upstream diagnostics = %q/%q, want upstream-req-1/30", event.UpstreamRequestID, event.RetryAfter)
 	}
 	if event.CacheTokens != 10 || event.TotalTokens != 40 {
 		t.Fatalf("cache/total tokens = %d/%d, want 10/40", event.CacheTokens, event.TotalTokens)
@@ -61,5 +70,29 @@ func TestNormalizeRawIgnoresLegacyAliases(t *testing.T) {
 	}
 	if event.LatencyMS != nil || event.StatusCode != nil || event.TotalTokens != 0 {
 		t.Fatalf("legacy diagnostics were accepted: latency=%v status=%v total=%d", event.LatencyMS, event.StatusCode, event.TotalTokens)
+	}
+}
+
+func TestBuildPayloadIncludesUpstreamUsageMetadata(t *testing.T) {
+	payload := BuildPayload([]Event{{
+		Timestamp:         "2026-06-13T00:00:00Z",
+		Provider:          "antigravity",
+		ExecutorType:      "AntigravityExecutor",
+		Model:             "gemini-claude-opus-4-5-thinking",
+		Alias:             "claude-opus-4-5",
+		Endpoint:          "POST /v1/chat/completions",
+		AuthType:          "oauth",
+		UpstreamRequestID: "upstream-req-1",
+		RetryAfter:        "30",
+		Failed:            false,
+	}})
+
+	details := payload.APIs["POST /v1/chat/completions"].Models["gemini-claude-opus-4-5-thinking"].Details
+	if len(details) != 1 {
+		t.Fatalf("details len = %d, want 1", len(details))
+	}
+	detail := details[0]
+	if detail.Provider != "antigravity" || detail.ExecutorType != "AntigravityExecutor" || detail.Alias != "claude-opus-4-5" || detail.AuthType != "oauth" || detail.UpstreamRequestID != "upstream-req-1" || detail.RetryAfter != "30" {
+		t.Fatalf("detail metadata = provider:%q executor:%q alias:%q auth:%q upstream:%q retry:%q", detail.Provider, detail.ExecutorType, detail.Alias, detail.AuthType, detail.UpstreamRequestID, detail.RetryAfter)
 	}
 }

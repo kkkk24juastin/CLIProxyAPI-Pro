@@ -1,10 +1,15 @@
 package management
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
@@ -216,6 +221,47 @@ func TestHealthCountsCacheTracksResultUpdates(t *testing.T) {
 	}
 }
 
+func TestMergeTokenRefreshResultUpdatesErrorCodeAndHealthCounts(t *testing.T) {
+	scheduler := &accountInspectionScheduler{}
+	healthy := testInspectionResult("account", accountInspectionActionKeep, false, nil, false, "")
+	healthy.Provider = "codex"
+	scheduler.status.Results = []accountInspectionResult{healthy}
+	scheduler.status.Summary = summarizeAccountInspection(1, 1, nil, scheduler.status.Results)
+	scheduler.healthCounts = accountInspectionResultHealthCounts(scheduler.status.Results)
+
+	failed := healthy
+	failed.TokenRefreshTriggered = true
+	failed.TokenRefreshStatus = "failed"
+	failed.TokenRefreshError = "refresh failed"
+	failed.Error = "refresh failed"
+	failed.ErrorCode = "token_refresh_error"
+	failed.ActionReason = "刷新令牌失败，保留账号"
+	scheduler.mergeTokenRefreshResultLocked(failed)
+
+	got := scheduler.status.Results[0]
+	if got.ErrorCode != "token_refresh_error" || got.Error != "refresh failed" || got.TokenRefreshStatus != "failed" {
+		t.Fatalf("merged failed refresh = %+v, want token_refresh_error", got)
+	}
+	if scheduler.healthCounts.InspectionError != 1 || scheduler.healthCounts.Healthy != 0 || scheduler.status.Summary.ErrorCount != 1 {
+		t.Fatalf("after failed refresh health=%+v summary=%+v, want inspection error and summary error", scheduler.healthCounts, scheduler.status.Summary)
+	}
+
+	success := got
+	success.TokenRefreshStatus = "success"
+	success.TokenRefreshError = ""
+	success.Error = ""
+	success.ErrorCode = ""
+	scheduler.mergeTokenRefreshResultLocked(success)
+
+	got = scheduler.status.Results[0]
+	if got.ErrorCode != "" || got.Error != "" || got.TokenRefreshStatus != "success" {
+		t.Fatalf("merged successful refresh = %+v, want cleared token refresh error", got)
+	}
+	if scheduler.healthCounts.Healthy != 1 || scheduler.healthCounts.InspectionError != 0 || scheduler.status.Summary.ErrorCount != 0 {
+		t.Fatalf("after successful refresh health=%+v summary=%+v, want healthy and no summary error", scheduler.healthCounts, scheduler.status.Summary)
+	}
+}
+
 func TestAutoActionConfirmationDelaysExecution(t *testing.T) {
 	scheduler := &accountInspectionScheduler{}
 	result := testInspectionResult("quota", accountInspectionActionDisable, false, nil, true, "")
@@ -257,6 +303,70 @@ func TestAntigravityQuotaURLsUseSummaryEndpoint(t *testing.T) {
 			t.Fatalf("antigravity quota url = %q, want retrieveUserQuotaSummary", url)
 		}
 	}
+}
+
+func TestListAuthFilesFromDiskIncludesInspectionAndCodexPlanMetadata(t *testing.T) {
+	authDir := t.TempDir()
+	fileName := "codex-user.json"
+	idToken := testCodexIDToken(t, map[string]any{
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id":                       "acct-1",
+			"chatgpt_plan_type":                        "pro",
+			"chatgpt_subscription_active_until":        float64(1790000000),
+			"chatgpt_subscription_active_start":        float64(1780000000),
+			"chatgpt_subscription_last_checked":        "2026-06-22T00:00:00Z",
+			"rate_limit_reset_credits_available_count": float64(3),
+		},
+	})
+	content := map[string]any{
+		"type":     "codex",
+		"email":    "user@example.com",
+		"id_token": idToken,
+		"last_error": map[string]any{
+			"code":        "token_refresh_error",
+			"message":     "refresh failed",
+			"http_status": float64(401),
+		},
+	}
+	raw, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("Marshal auth content error = %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(authDir, fileName), raw, 0o600); err != nil {
+		t.Fatalf("WriteFile auth content error = %v", err)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, nil)
+	entry := firstAuthFileEntry(t, h)
+
+	lastError, ok := entry["last_error"].(map[string]any)
+	if !ok {
+		t.Fatalf("last_error = %#v, want object", entry["last_error"])
+	}
+	if lastError["code"] != "token_refresh_error" || lastError["message"] != "refresh failed" {
+		t.Fatalf("last_error = %#v, want token_refresh_error/refresh failed", lastError)
+	}
+	idTokenEntry, ok := entry["id_token"].(map[string]any)
+	if !ok {
+		t.Fatalf("id_token = %#v, want object", entry["id_token"])
+	}
+	if idTokenEntry["plan_type"] != "pro" || idTokenEntry["chatgpt_account_id"] != "acct-1" || idTokenEntry["chatgpt_subscription_active_until"] != float64(1790000000) {
+		t.Fatalf("id_token entry = %#v, want codex plan/subscription claims", idTokenEntry)
+	}
+}
+
+func testCodexIDToken(t *testing.T, claims map[string]any) string {
+	t.Helper()
+	header := map[string]any{"alg": "none", "typ": "JWT"}
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		t.Fatalf("Marshal JWT header error = %v", err)
+	}
+	claimsJSON, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("Marshal JWT claims error = %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(headerJSON) + "." + base64.RawURLEncoding.EncodeToString(claimsJSON) + "."
 }
 
 func TestBuildAntigravityGroupsSupportsSummaryBuckets(t *testing.T) {

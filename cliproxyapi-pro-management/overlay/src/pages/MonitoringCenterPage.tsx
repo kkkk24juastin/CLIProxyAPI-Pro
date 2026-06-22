@@ -337,6 +337,7 @@ type RealtimeLogRow = MonitoringEventRow & {
   requestCount: number;
   successRate: number;
   streamKey: string;
+  diagnosticText: string;
   recentPattern: boolean[];
   recentSuccessCount: number;
   recentFailureCount: number;
@@ -990,8 +991,21 @@ const parsePriceValue = (value: string) => {
 const formatPriceUnit = (value: number) => `$${value.toFixed(4)}/1M`;
 
 const buildRealtimeMetaText = (row: MonitoringEventRow) => {
-  const text = `${row.endpointMethod} ${row.endpointPath}`.trim();
+  const parts = [`${row.endpointMethod} ${row.endpointPath}`.trim()];
+  if (row.executorType) parts.push(row.executorType);
+  const text = parts.filter(Boolean).join(' · ');
   return maskSensitiveText(text || '-');
+};
+
+const buildRealtimeDiagnosticText = (row: MonitoringEventRow) => {
+  const parts: string[] = [];
+  if (row.statusCode !== null && row.statusCode >= 400) {
+    parts.push(`HTTP ${row.statusCode}`);
+  }
+  if (row.errorCode) parts.push(row.errorCode);
+  if (row.upstreamRequestId) parts.push(`RID ${row.upstreamRequestId}`);
+  if (row.retryAfter) parts.push(`Retry ${row.retryAfter}`);
+  return maskSensitiveText(parts.join(' · '));
 };
 
 const QUOTA_RENDER_HELPERS: QuotaRenderHelpers = {
@@ -1115,7 +1129,7 @@ const buildRealtimeLogRows = (rows: MonitoringEventRow[]): RealtimeLogRow[] => {
 
   for (let index = candidateRows.length - 1; index >= 0; index -= 1) {
     const row = candidateRows[index];
-    const streamKey = [row.account, row.provider, row.model, row.channel].join('::');
+    const streamKey = [row.account, row.provider, row.model, row.modelAlias, row.channel].join('::');
     const previous = metricsByStream.get(streamKey) ?? { total: 0, success: 0, pattern: [] };
     const nextPattern = [...previous.pattern, !row.failed].slice(-10);
     const next = {
@@ -1133,6 +1147,7 @@ const buildRealtimeLogRows = (rows: MonitoringEventRow[]): RealtimeLogRow[] => {
       enriched[outputIndex] = {
         ...row,
         streamKey,
+        diagnosticText: buildRealtimeDiagnosticText(row),
         requestCount: next.total,
         successRate: next.total > 0 ? next.success / next.total : 1,
         recentPattern: nextPattern,
@@ -3567,7 +3582,12 @@ export function MonitoringCenterPage() {
                   <td>
                     <div className={styles.primaryCell}>
                       <span className={styles.monoCell}>{row.model}</span>
-                      <small className={styles.monoCell}>{buildRealtimeMetaText(row)}</small>
+                      <small className={styles.monoCell}>
+                        {row.modelAlias && row.modelAlias !== row.model ? row.modelAlias : buildRealtimeMetaText(row)}
+                      </small>
+                      {row.modelAlias && row.modelAlias !== row.model ? (
+                        <small className={styles.monoCell}>{buildRealtimeMetaText(row)}</small>
+                      ) : null}
                     </div>
                   </td>
                   <td>
@@ -3587,9 +3607,14 @@ export function MonitoringCenterPage() {
                     </div>
                   </td>
                   <td>
-                    <StatusBadge tone={row.failed ? 'bad' : 'good'}>
-                      {row.failed ? t('monitoring.result_failed') : t('monitoring.result_success')}
-                    </StatusBadge>
+                    <div className={styles.primaryCell}>
+                      <StatusBadge tone={row.failed ? 'bad' : 'good'}>
+                        {row.failed ? t('monitoring.result_failed') : t('monitoring.result_success')}
+                      </StatusBadge>
+                      {row.diagnosticText ? (
+                        <small className={styles.monoCell}>{row.diagnosticText}</small>
+                      ) : null}
+                    </div>
                   </td>
                   <td
                     className={

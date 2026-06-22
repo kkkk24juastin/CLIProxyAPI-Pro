@@ -29,12 +29,16 @@ export interface UsageDetail {
   auth_index: string | number | null;
   api_key_hash?: string;
   provider?: string;
+  executor_type?: string;
+  alias?: string;
   auth_type?: string;
   latency_ms?: number;
   ttft_ms?: number;
   status_code?: number;
   error_code?: string;
   error_message?: string;
+  upstream_request_id?: string;
+  retry_after?: string;
   reasoning_effort?: string;
   service_tier?: string;
   tokens: UsageTokens;
@@ -253,6 +257,12 @@ const buildUsageDetail = (
   const statusCode = extractNonNegativeNumberField(detailRaw, ['status_code']);
 
   const provider = typeof detailRaw.provider === 'string' ? detailRaw.provider.trim() : undefined;
+  const executorType = typeof detailRaw.executor_type === 'string'
+    ? detailRaw.executor_type.trim()
+    : typeof detailRaw.executorType === 'string'
+      ? detailRaw.executorType.trim()
+      : undefined;
+  const alias = typeof detailRaw.alias === 'string' ? detailRaw.alias.trim() : undefined;
   const authType = typeof detailRaw.auth_type === 'string'
     ? detailRaw.auth_type.trim()
     : typeof detailRaw.authType === 'string'
@@ -272,6 +282,8 @@ const buildUsageDetail = (
         ? detailRaw.apiKeyHash
         : undefined,
     provider: provider || undefined,
+    executor_type: executorType || undefined,
+    alias: alias || undefined,
     auth_type: authType || undefined,
     latency_ms: latencyMs ?? undefined,
     ttft_ms: ttftMs ?? undefined,
@@ -285,6 +297,16 @@ const buildUsageDetail = (
       ? detailRaw.error_message
       : typeof detailRaw.errorMessage === 'string'
         ? detailRaw.errorMessage
+        : undefined,
+    upstream_request_id: typeof detailRaw.upstream_request_id === 'string'
+      ? detailRaw.upstream_request_id
+      : typeof detailRaw.upstreamRequestId === 'string'
+        ? detailRaw.upstreamRequestId
+        : undefined,
+    retry_after: typeof detailRaw.retry_after === 'string'
+      ? detailRaw.retry_after
+      : typeof detailRaw.retryAfter === 'string'
+        ? detailRaw.retryAfter
         : undefined,
     reasoning_effort: typeof detailRaw.reasoning_effort === 'string'
       ? detailRaw.reasoning_effort

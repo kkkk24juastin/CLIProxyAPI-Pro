@@ -1095,6 +1095,7 @@ func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item a
 			result.TokenRefreshStatus = "failed"
 			result.TokenRefreshError = "missing auth id"
 			result.Error = result.TokenRefreshError
+			result.ErrorCode = "missing_auth_id"
 			result.ActionReason = "刷新令牌失败，保留账号"
 			return result, errors.New(result.TokenRefreshError)
 		}
@@ -1110,6 +1111,7 @@ func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item a
 			result.TokenRefreshStatus = "failed"
 			result.TokenRefreshError = refreshErr.Error()
 			result.Error = refreshErr.Error()
+			result.ErrorCode = "token_refresh_error"
 			result.ActionReason = "刷新令牌失败，保留账号"
 			s.appendLog("warning", fmt.Sprintf("%s 主动刷新令牌失败：%s", account.identity(), refreshErr.Error()))
 			return result, refreshErr
@@ -1171,6 +1173,18 @@ func (s *accountInspectionScheduler) mergeTokenRefreshResultLocked(result accoun
 		current.TokenRefreshStatus = result.TokenRefreshStatus
 		current.TokenRefreshError = result.TokenRefreshError
 		current.NextRefreshAt = result.NextRefreshAt
+		if result.TokenRefreshStatus == "failed" {
+			current.Error = result.Error
+			current.ErrorCode = result.ErrorCode
+			current.ActionReason = result.ActionReason
+			return current, true
+		}
+		if result.TokenRefreshStatus == "success" && current.ErrorCode == "token_refresh_error" {
+			current.Error = ""
+			current.ErrorCode = ""
+			current.ActionReason = result.ActionReason
+			return current, true
+		}
 		return current, false
 	})
 }
@@ -1595,6 +1609,7 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 	if account.AuthIndex == "" {
 		result.ActionReason = "缺少 auth_index，保留账号"
 		result.Error = "missing auth_index"
+		result.ErrorCode = "missing_auth_index"
 		return result
 	}
 	if refreshed, refreshTriggered, refreshErr := s.refreshAccountIfDue(ctx, account, refreshLimiter); refreshErr != nil {
@@ -1608,8 +1623,9 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		result.TokenRefreshStatus = "failed"
 		result.TokenRefreshError = refreshErr.Error()
 		result.Error = refreshErr.Error()
+		result.ErrorCode = "token_refresh_error"
 		result.ActionReason = "刷新令牌失败，保留账号"
-		s.syncInspectionAuthError(ctx, account, "inspection_probe_error", refreshErr.Error(), 0)
+		s.syncInspectionAuthError(ctx, account, "token_refresh_error", refreshErr.Error(), 0)
 		s.appendLog("warning", fmt.Sprintf("%s 刷新令牌失败，保留账号：%s", account.identity(), refreshErr.Error()))
 		return result
 	} else if refreshTriggered {
@@ -2290,7 +2306,7 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 	if auth == nil || auth.Status != coreauth.StatusError || auth.LastError == nil {
 		return
 	}
-	if auth.LastError.Code != "inspection_http_error" && auth.LastError.Code != "inspection_probe_error" && auth.LastError.Code != "antigravity_deep_probe_error" {
+	if auth.LastError.Code != "inspection_http_error" && auth.LastError.Code != "inspection_probe_error" && auth.LastError.Code != "antigravity_deep_probe_error" && auth.LastError.Code != "token_refresh_error" {
 		return
 	}
 	if auth.Disabled {

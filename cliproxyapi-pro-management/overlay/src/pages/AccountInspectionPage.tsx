@@ -479,6 +479,12 @@ const compactHealthErrorCode = (code: string) => {
       return 'probe_error';
     case 'antigravity_deep_probe_error':
       return 'deep_probe';
+    case 'token_refresh_error':
+      return 'refresh';
+    case 'missing_auth_index':
+      return 'no_index';
+    case 'missing_auth_id':
+      return 'no_auth_id';
     default:
       return code;
   }

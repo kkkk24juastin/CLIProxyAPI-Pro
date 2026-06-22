@@ -301,6 +301,7 @@ export type MonitoringEventRow = {
   dayKey: string;
   hourLabel: string;
   model: string;
+  modelAlias: string;
   endpoint: string;
   endpointMethod: string;
   endpointPath: string;
@@ -314,6 +315,7 @@ export type MonitoringEventRow = {
   clientApiKey: MonitoringApiKeyIdentity;
   authLabel: string;
   provider: string;
+  executorType: string;
   planType: string;
   channel: string;
   channelHost: string;
@@ -326,6 +328,8 @@ export type MonitoringEventRow = {
   statusCode: number | null;
   errorCode: string;
   errorMessage: string;
+  upstreamRequestId: string;
+  retryAfter: string;
   reasoningEffort: string;
   serviceTier: string;
   inputTokens: number;
@@ -1195,14 +1199,18 @@ const buildEventRows = (
     const hourLabel = buildHourLabel(timestampMs);
     const sourceKey = sourceMeta.identityKey || `source:${sourceLabel}`;
     const taskKey = `${detail.timestamp}|${sourceKey}|${authIndex}`;
+    const model = readStringValue(detail.__modelName) || '-';
+    const modelAlias = readStringValue(detail.alias);
+    const executorType = readStringValue(detail.executor_type);
 
     rows.push({
-      id: `${detail.timestamp}-${detail.__modelName || '-'}-${sourceKey}-${authIndex}-${index}`,
+      id: `${detail.timestamp}-${model}-${sourceKey}-${authIndex}-${index}`,
       timestamp: detail.timestamp,
       timestampMs,
       dayKey,
       hourLabel,
-      model: readStringValue(detail.__modelName) || '-',
+      model,
+      modelAlias,
       endpoint,
       endpointMethod,
       endpointPath,
@@ -1216,6 +1224,7 @@ const buildEventRows = (
       clientApiKey: clientApiKeyIdentity,
       authLabel: isDeletedCredential ? deletedCredentialLabel : authMeta?.label || sourceMasked,
       provider: resolvedProvider,
+      executorType,
       planType: authMeta?.planType || '-',
       channel: channelLabel,
       channelHost: channelMeta?.host || '-',
@@ -1228,6 +1237,8 @@ const buildEventRows = (
       statusCode: typeof detail.status_code === 'number' ? detail.status_code : null,
       errorCode: detail.error_code || '',
       errorMessage: detail.error_message || '',
+      upstreamRequestId: detail.upstream_request_id || '',
+      retryAfter: detail.retry_after || '',
       reasoningEffort: detail.reasoning_effort || '',
       serviceTier: detail.service_tier || '',
       inputTokens,
@@ -1238,7 +1249,8 @@ const buildEventRows = (
       totalCost,
       taskKey,
       searchText: buildSearchText(
-        detail.__modelName,
+        model,
+        modelAlias,
         isDeletedCredential ? deletedCredentialLabel : sourceLabel,
         isDeletedCredential ? '' : authMeta?.account,
         authMeta?.label,
@@ -1248,6 +1260,9 @@ const buildEventRows = (
         endpointPath,
         endpointMethod,
         resolvedProvider,
+        executorType,
+        detail.upstream_request_id,
+        detail.retry_after,
         authMeta?.planType,
         clientApiKeyIdentity.masked
       ),

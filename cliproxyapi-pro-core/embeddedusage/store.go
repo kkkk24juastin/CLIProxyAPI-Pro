@@ -181,7 +181,9 @@ func (s *Store) init() error {
 			timestamp_ms integer not null,
 			timestamp text not null,
 			provider text,
+			executor_type text,
 			model text not null,
+			alias text,
 			endpoint text,
 			method text,
 			path text,
@@ -201,6 +203,8 @@ func (s *Store) init() error {
 			status_code integer,
 			error_code text,
 			error_message text,
+			upstream_request_id text,
+			retry_after text,
 			reasoning_effort text,
 			service_tier text,
 			failed integer not null default 0,
@@ -262,8 +266,12 @@ func (s *Store) init() error {
 		`alter table usage_events add column status_code integer`,
 		`alter table usage_events add column error_code text`,
 		`alter table usage_events add column error_message text`,
+		`alter table usage_events add column upstream_request_id text`,
+		`alter table usage_events add column retry_after text`,
 		`alter table usage_events add column reasoning_effort text`,
 		`alter table usage_events add column service_tier text`,
+		`alter table usage_events add column executor_type text`,
+		`alter table usage_events add column alias text`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil && !isDuplicateColumnError(err) {
 			return err
@@ -283,12 +291,12 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx, `insert or ignore into usage_events (
-		request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
+		request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
 		failed, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return InsertResult{}, err
 	}
@@ -304,10 +312,10 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 		}
 		res, err := stmt.ExecContext(ctx,
 			nullString(event.RequestID), event.EventHash, event.TimestampMS, event.Timestamp,
-			nullString(event.Provider), event.Model, nullString(event.Endpoint), nullString(event.Method), nullString(event.Path),
+			nullString(event.Provider), nullString(event.ExecutorType), event.Model, nullString(event.Alias), nullString(event.Endpoint), nullString(event.Method), nullString(event.Path),
 			nullString(event.AuthType), nullString(event.AuthIndex), nullString(event.Source), nullString(event.SourceHash), nullString(event.APIKeyHash),
 			event.InputTokens, event.OutputTokens, event.ReasoningTokens, event.CachedTokens, event.CacheTokens, event.TotalTokens,
-			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.ReasoningEffort), nullString(event.ServiceTier),
+			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.UpstreamRequestID), nullString(event.RetryAfter), nullString(event.ReasoningEffort), nullString(event.ServiceTier),
 			failed, nullString(event.RawJSON), event.CreatedAtMS,
 		)
 		if err != nil {
@@ -463,21 +471,23 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 	events := make([]internalusage.Event, 0)
 	for rows.Next() {
 		var event internalusage.Event
-		var requestID, provider, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, rawJSON sql.NullString
+		var requestID, provider, executorType, alias, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, rawJSON sql.NullString
 		var latency, ttft sql.NullInt64
 		var statusCode sql.NullInt64
-		var errorCode, errorMessage, reasoningEffort, serviceTier sql.NullString
+		var errorCode, errorMessage, upstreamRequestID, retryAfter, reasoningEffort, serviceTier sql.NullString
 		var failed int
 		if err := rows.Scan(
-			&event.ID, &requestID, &event.EventHash, &event.TimestampMS, &event.Timestamp, &provider, &event.Model,
-			&endpoint, &method, &path, &authType, &authIndex, &source, &sourceHash, &apiKeyHash,
+			&event.ID, &requestID, &event.EventHash, &event.TimestampMS, &event.Timestamp, &provider, &executorType, &event.Model,
+			&alias, &endpoint, &method, &path, &authType, &authIndex, &source, &sourceHash, &apiKeyHash,
 			&event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheTokens, &event.TotalTokens,
-			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &reasoningEffort, &serviceTier, &failed, &rawJSON, &event.CreatedAtMS,
+			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &reasoningEffort, &serviceTier, &failed, &rawJSON, &event.CreatedAtMS,
 		); err != nil {
 			return nil, err
 		}
 		event.RequestID = requestID.String
 		event.Provider = provider.String
+		event.ExecutorType = executorType.String
+		event.Alias = alias.String
 		event.Endpoint = endpoint.String
 		event.Method = method.String
 		event.Path = path.String
@@ -502,6 +512,8 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		}
 		event.ErrorCode = errorCode.String
 		event.ErrorMessage = errorMessage.String
+		event.UpstreamRequestID = upstreamRequestID.String
+		event.RetryAfter = retryAfter.String
 		event.ReasoningEffort = reasoningEffort.String
 		event.ServiceTier = serviceTier.String
 		events = append(events, event)
@@ -514,10 +526,10 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]internalusage.Ev
 		limit = 50000
 	}
 	rows, err := s.db.QueryContext(ctx, `select
-		id, request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
+		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
 		failed, raw_json, created_at_ms
 		from usage_events indexed by idx_usage_events_recent
 		order by timestamp_ms desc, id desc
@@ -534,10 +546,10 @@ func (s *Store) EventsAfter(ctx context.Context, afterID int64, limit int) ([]in
 		limit = usageEventsSentinelLimit
 	}
 	rows, err := s.db.QueryContext(ctx, `select
-		id, request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
+		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
 		failed, raw_json, created_at_ms
 		from usage_events
 		where id > ?

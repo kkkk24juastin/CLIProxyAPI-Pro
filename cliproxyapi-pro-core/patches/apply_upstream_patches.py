@@ -295,6 +295,91 @@ func metadataInt(value any) int {
 ''',
     'func authFileLastError',
 )
+replace_once(
+    auth_files,
+    '''				typeValue := gjson.GetBytes(data, "type").String()
+				emailValue := gjson.GetBytes(data, "email").String()
+				fileData["type"] = typeValue
+				fileData["email"] = emailValue
+''',
+    '''				typeValue := gjson.GetBytes(data, "type").String()
+				emailValue := gjson.GetBytes(data, "email").String()
+				fileData["type"] = typeValue
+				fileData["email"] = emailValue
+				if lastErrorRaw := gjson.GetBytes(data, "last_error"); lastErrorRaw.IsObject() {
+					var lastError map[string]any
+					if errUnmarshal := json.Unmarshal([]byte(lastErrorRaw.Raw), &lastError); errUnmarshal == nil && len(lastError) > 0 {
+						fileData["last_error"] = lastError
+					}
+				}
+				if strings.EqualFold(strings.TrimSpace(typeValue), "codex") {
+					if claims := extractCodexIDTokenClaimsFromRaw(gjson.GetBytes(data, "id_token").String()); claims != nil {
+						fileData["id_token"] = claims
+					}
+				}
+''',
+)
+insert_before(
+    auth_files,
+    'func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {\n',
+    '''func extractCodexIDTokenClaimsFromRaw(idTokenRaw string) gin.H {
+	idToken := strings.TrimSpace(idTokenRaw)
+	if idToken == "" {
+		return nil
+	}
+	claims, err := codex.ParseJWTToken(idToken)
+	if err != nil || claims == nil {
+		return nil
+	}
+	return codexIDTokenClaimsEntry(claims)
+}
+
+''',
+    'func extractCodexIDTokenClaimsFromRaw',
+)
+replace_go_function(
+    auth_files,
+    'func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H',
+    '''func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
+	if auth == nil || auth.Metadata == nil {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
+		return nil
+	}
+	idTokenRaw, ok := auth.Metadata["id_token"].(string)
+	if !ok {
+		return nil
+	}
+	return extractCodexIDTokenClaimsFromRaw(idTokenRaw)
+}
+
+func codexIDTokenClaimsEntry(claims *codex.JWTClaims) gin.H {
+	if claims == nil {
+		return nil
+	}
+	result := gin.H{}
+	if v := strings.TrimSpace(claims.CodexAuthInfo.ChatgptAccountID); v != "" {
+		result["chatgpt_account_id"] = v
+	}
+	if v := strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType); v != "" {
+		result["plan_type"] = v
+	}
+	if v := claims.CodexAuthInfo.ChatgptSubscriptionActiveStart; v != nil {
+		result["chatgpt_subscription_active_start"] = v
+	}
+	if v := claims.CodexAuthInfo.ChatgptSubscriptionActiveUntil; v != nil {
+		result["chatgpt_subscription_active_until"] = v
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+''',
+    'func codexIDTokenClaimsEntry',
+)
 
 patch_dir = Path(__file__).resolve().parent
 embeddedusage_source = patch_dir.parent / 'embeddedusage'

@@ -22,25 +22,29 @@ func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Eve
 		status = 429
 	}
 	return internalusage.Event{
-		RequestID:       "request-" + string(rune('a'+index)),
-		EventHash:       "event-hash-" + string(rune('a'+index)),
-		TimestampMS:     timestamp.UnixMilli(),
-		Timestamp:       timestamp.Format(time.RFC3339Nano),
-		Provider:        "test",
-		Model:           "model",
-		Endpoint:        "POST /v1/test",
-		Method:          "POST",
-		Path:            "/v1/test",
-		TotalTokens:     totalTokens,
-		InputTokens:     totalTokens / 2,
-		OutputTokens:    totalTokens - totalTokens/2,
-		LatencyMS:       &latency,
-		TTFTMS:          &ttft,
-		StatusCode:      &status,
-		ReasoningEffort: "medium",
-		ServiceTier:     "default",
-		Failed:          failed,
-		CreatedAtMS:     timestamp.UnixMilli(),
+		RequestID:         "request-" + string(rune('a'+index)),
+		EventHash:         "event-hash-" + string(rune('a'+index)),
+		TimestampMS:       timestamp.UnixMilli(),
+		Timestamp:         timestamp.Format(time.RFC3339Nano),
+		Provider:          "test",
+		ExecutorType:      "TestExecutor",
+		Model:             "model",
+		Alias:             "client-model",
+		Endpoint:          "POST /v1/test",
+		Method:            "POST",
+		Path:              "/v1/test",
+		TotalTokens:       totalTokens,
+		InputTokens:       totalTokens / 2,
+		OutputTokens:      totalTokens - totalTokens/2,
+		LatencyMS:         &latency,
+		TTFTMS:            &ttft,
+		StatusCode:        &status,
+		UpstreamRequestID: "upstream-request",
+		RetryAfter:        "30",
+		ReasoningEffort:   "medium",
+		ServiceTier:       "default",
+		Failed:            failed,
+		CreatedAtMS:       timestamp.UnixMilli(),
 	}
 }
 
@@ -299,10 +303,10 @@ func TestRecentEventsUsesRecentIndex(t *testing.T) {
 	)
 
 	rows, err := store.db.QueryContext(ctx, `explain query plan select
-		id, request_id, event_hash, timestamp_ms, timestamp, provider, model, endpoint, method, path,
+		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
 		failed, raw_json, created_at_ms
 		from usage_events indexed by idx_usage_events_recent
 		order by timestamp_ms desc, id desc
@@ -353,7 +357,7 @@ func TestUsageDiagnosticsRoundTripAndAggregates(t *testing.T) {
 	if got.TTFTMS == nil || *got.TTFTMS != 20 || got.StatusCode == nil || *got.StatusCode != 429 {
 		t.Fatalf("diagnostics = ttft:%v status:%v, want 20/429", got.TTFTMS, got.StatusCode)
 	}
-	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.ReasoningEffort != "medium" || got.ServiceTier != "default" {
+	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || got.ReasoningEffort != "medium" || got.ServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
 		t.Fatalf("diagnostic strings = %+v", got)
 	}
 
