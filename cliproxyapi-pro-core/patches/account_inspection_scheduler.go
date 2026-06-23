@@ -2219,6 +2219,7 @@ func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, accou
 	}
 	quotaState := map[string]any{
 		"buckets":      buckets,
+		"projectId":    projectID,
 		"rawShapeHash": jsonShapeHash(resp.Body),
 	}
 	if subscription := s.fetchGeminiCLISubscription(ctx, account, projectID, settings); subscription != nil {

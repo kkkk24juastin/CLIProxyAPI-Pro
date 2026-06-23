@@ -512,6 +512,50 @@ func TestListAuthFilesFromDiskIncludesInspectionAndCodexPlanMetadata(t *testing.
 	}
 }
 
+func TestListAuthFilesFromDiskIncludesGeminiCLIQuotaMetadata(t *testing.T) {
+	authDir := t.TempDir()
+	fileName := "gemini-cli.json"
+	content := map[string]any{
+		"type":        "gemini-cli",
+		"email":       "user@example.com",
+		"project_id":  "project-a",
+		"project_ids": []string{"project-a", "project-b"},
+		"gemini_cli_quota": map[string]any{
+			"latest_project_id": "project-b",
+			"projects": map[string]any{
+				"project-b": map[string]any{
+					"status": "success",
+					"buckets": []any{
+						map[string]any{"id": "gemini-pro-series", "remainingFraction": 0.75},
+					},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("Marshal auth content error = %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(authDir, fileName), raw, 0o600); err != nil {
+		t.Fatalf("WriteFile auth content error = %v", err)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, nil)
+	entry := firstAuthFileEntry(t, h)
+
+	projectIDs, ok := entry["project_ids"].([]any)
+	if !ok || len(projectIDs) != 2 || projectIDs[0] != "project-a" || projectIDs[1] != "project-b" {
+		t.Fatalf("project_ids = %#v, want project-a/project-b", entry["project_ids"])
+	}
+	geminiQuota, ok := entry["gemini_cli_quota"].(map[string]any)
+	if !ok {
+		t.Fatalf("gemini_cli_quota = %#v, want object", entry["gemini_cli_quota"])
+	}
+	if geminiQuota["latest_project_id"] != "project-b" {
+		t.Fatalf("latest_project_id = %#v, want project-b", geminiQuota["latest_project_id"])
+	}
+}
+
 func testCodexIDToken(t *testing.T, claims map[string]any) string {
 	t.Helper()
 	header := map[string]any{"alg": "none", "typ": "JWT"}

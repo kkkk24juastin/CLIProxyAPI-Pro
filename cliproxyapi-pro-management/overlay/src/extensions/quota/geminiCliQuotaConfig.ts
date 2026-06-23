@@ -38,6 +38,7 @@ const QUOTA_PROGRESS_MEDIUM_THRESHOLD = 30;
 
 type GeminiCliQuotaData = {
   buckets: GeminiCliQuotaBucketState[];
+  projectId: string;
   tierLabel: string | null;
   tierId: string | null;
   creditBalance: number | null;
@@ -48,6 +49,82 @@ type GeminiCliQuotaGroupDefinition = {
   label: string;
   preferredModelId?: string;
   modelIds: string[];
+};
+
+const toRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
+
+const toRecordMap = (value: unknown): Record<string, unknown> | null => toRecord(value);
+
+const normalizeGeminiCliProjectIds = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeStringValue(item))
+      .filter((item): item is string => Boolean(item));
+  }
+  const normalized = normalizeStringValue(value);
+  return normalized ? [normalized] : [];
+};
+
+const resolveGeminiCliQuotaMetadata = (file: AuthFileItem): Record<string, unknown> | null => {
+  const metadata = toRecord(file.metadata);
+  const attributes = toRecord(file.attributes);
+  return (
+    toRecord(file.gemini_cli_quota) ??
+    toRecord(file.geminiCliQuota) ??
+    toRecord(metadata?.gemini_cli_quota) ??
+    toRecord(metadata?.geminiCliQuota) ??
+    toRecord(attributes?.gemini_cli_quota) ??
+    toRecord(attributes?.geminiCliQuota)
+  );
+};
+
+const resolveGeminiCliProjectIds = (file: AuthFileItem): string[] => {
+  const metadata = toRecord(file.metadata);
+  const attributes = toRecord(file.attributes);
+  const quotaMetadata = resolveGeminiCliQuotaMetadata(file);
+  const latestProjectId = normalizeStringValue(
+    quotaMetadata?.latest_project_id ?? quotaMetadata?.latestProjectId
+  );
+  const primaryProjectId = resolveGeminiCliProjectId(file);
+  const candidates = [
+    latestProjectId,
+    primaryProjectId,
+    ...normalizeGeminiCliProjectIds(file.project_ids ?? file.projectIds),
+    ...normalizeGeminiCliProjectIds(metadata?.project_ids ?? metadata?.projectIds),
+    ...normalizeGeminiCliProjectIds(attributes?.project_ids ?? attributes?.projectIds),
+  ];
+  return Array.from(new Set(candidates.filter((item): item is string => Boolean(item))));
+};
+
+const resolveGeminiCliEmbeddedQuotaState = (
+  file: AuthFileItem,
+  projectIds: string[]
+): GeminiCliQuotaState | null => {
+  const quotaMetadata = resolveGeminiCliQuotaMetadata(file);
+  const projects = toRecordMap(quotaMetadata?.projects);
+  for (const projectId of projectIds) {
+    const state = toRecord(projects?.[projectId]);
+    if (state && state.status === 'success' && Array.isArray(state.buckets)) {
+      return state as unknown as GeminiCliQuotaState;
+    }
+  }
+  const latest = toRecord(quotaMetadata?.latest);
+  if (latest && latest.status === 'success' && Array.isArray(latest.buckets)) {
+    return latest as unknown as GeminiCliQuotaState;
+  }
+  return null;
+};
+
+const resolveGeminiCliCachedProjectId = (quota: GeminiCliQuotaState): string | null =>
+  normalizeStringValue(quota.projectId ?? quota.project_id);
+
+const cacheKeyContainsProjectId = (cacheKey: string, projectId: string): boolean => {
+  const normalizedKey = cacheKey.toLowerCase();
+  const normalizedProjectId = projectId.toLowerCase();
+  return normalizedKey === normalizedProjectId || normalizedKey.includes(normalizedProjectId);
 };
 
 const GEMINI_CLI_QUOTA_GROUPS: GeminiCliQuotaGroupDefinition[] = [
@@ -331,6 +408,7 @@ const fetchGeminiCliQuota = async (
 
   return {
     buckets,
+    projectId,
     ...supplementary,
   };
 };
@@ -478,9 +556,36 @@ export const GEMINI_CLI_CONFIG = {
   fetchQuota: fetchGeminiCliQuota,
   storeSelector: (state) => state.geminiCliQuota,
   storeSetter: 'setGeminiCliQuota',
+  resolveInitialQuotaState: (file: AuthFileItem) => {
+    const projectIds = resolveGeminiCliProjectIds(file);
+    const embedded = resolveGeminiCliEmbeddedQuotaState(file, projectIds);
+    if (!embedded) return null;
+    return {
+      ...embedded,
+      projectId: resolveGeminiCliCachedProjectId(embedded) ?? projectIds[0] ?? '',
+    };
+  },
+  resolveQuotaKey: (file: AuthFileItem, quotaMap: Record<string, GeminiCliQuotaState>) => {
+    if (quotaMap[file.name]) return file.name;
+    const projectIds = resolveGeminiCliProjectIds(file);
+    if (resolveGeminiCliEmbeddedQuotaState(file, projectIds)) {
+      return file.name;
+    }
+    const matchedByProjectId = Object.entries(quotaMap).find(([, quota]) => {
+      const quotaProjectId = resolveGeminiCliCachedProjectId(quota);
+      return Boolean(quotaProjectId && projectIds.includes(quotaProjectId));
+    });
+    if (matchedByProjectId) return matchedByProjectId[0];
+    const matchedByKey = Object.entries(quotaMap).find(([cacheKey, quota]) => {
+      if (quota?.status !== 'success') return false;
+      return projectIds.some((projectId) => cacheKeyContainsProjectId(cacheKey, projectId));
+    });
+    return matchedByKey?.[0] ?? file.name;
+  },
   buildLoadingState: () => ({
     status: 'loading',
     buckets: [],
+    projectId: '',
     tierLabel: null,
     tierId: null,
     creditBalance: null,
@@ -488,6 +593,7 @@ export const GEMINI_CLI_CONFIG = {
   buildSuccessState: (data: GeminiCliQuotaData) => ({
     status: 'success',
     buckets: data.buckets,
+    projectId: data.projectId,
     tierLabel: data.tierLabel,
     tierId: data.tierId,
     creditBalance: data.creditBalance,
@@ -496,6 +602,7 @@ export const GEMINI_CLI_CONFIG = {
   buildErrorState: (message: string, status?: number) => ({
     status: 'error',
     buckets: [],
+    projectId: '',
     tierLabel: null,
     tierId: null,
     creditBalance: null,
