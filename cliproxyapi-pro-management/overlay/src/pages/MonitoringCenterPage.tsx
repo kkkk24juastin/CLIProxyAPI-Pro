@@ -3674,10 +3674,10 @@ export function MonitoringCenterPage() {
                     <div className={`${styles.primaryCell} ${styles.realtimeUsageCell}`}>
                       <span>{formatCompactNumber(row.totalTokens)}</span>
                       <small className={styles.realtimeUsageBreakdown}>
-                        <span>{`I ${formatCompactNumber(row.inputTokens)}`}</span>
-                        <span>{`O ${formatCompactNumber(row.outputTokens)}`}</span>
-                        <span>{`R ${formatCompactNumber(row.reasoningTokens)}`}</span>
-                        <span>{`C ${formatCompactNumber(row.cachedTokens)}`}</span>
+                        <span><b>I</b><span>{formatCompactNumber(row.inputTokens)}</span></span>
+                        <span><b>O</b><span>{formatCompactNumber(row.outputTokens)}</span></span>
+                        <span><b>R</b><span>{formatCompactNumber(row.reasoningTokens)}</span></span>
+                        <span><b>C</b><span>{formatCompactNumber(row.cachedTokens)}</span></span>
                       </small>
                     </div>
                   </td>

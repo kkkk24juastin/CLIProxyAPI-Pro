@@ -3240,13 +3240,27 @@
 }
 
 .realtimeUsageBreakdown span {
+  display: inline-flex;
+  align-items: baseline;
   flex: 0 0 auto;
+  gap: 3px;
   overflow: visible;
   text-overflow: clip;
   font-size: inherit;
   font-weight: inherit;
   line-height: inherit;
   white-space: nowrap;
+}
+
+.realtimeUsageBreakdown > span:not(:last-child)::after {
+  content: '·';
+  margin-left: 5px;
+  color: color-mix(in srgb, var(--monitor-muted) 70%, transparent);
+}
+
+.realtimeUsageBreakdown b {
+  color: var(--monitor-ink);
+  font-weight: 700;
 }
 
 .primaryCell small,
