@@ -797,8 +797,14 @@ func TestBuildXAIBillingSummarySupportsSnakeCaseAndNumericValues(t *testing.T) {
 	}
 }
 
-func TestXAIAPIBaseURLDefaultsToGrokBillingHost(t *testing.T) {
-	if got := xaiAPIBaseURL(nil); got != "https://cli-chat-proxy.grok.com/v1" {
-		t.Fatalf("xaiAPIBaseURL(nil) = %q, want grok proxy host", got)
+func TestXAIInspectionUsesExecutorHTTPRequest(t *testing.T) {
+	if !accountInspectionShouldUseExecutorHTTPRequest(&coreauth.Auth{Provider: "xai"}) {
+		t.Fatal("accountInspectionShouldUseExecutorHTTPRequest(xai) = false, want true")
+	}
+}
+
+func TestXAIBillingURLMatchesUpstreamQuotaConfig(t *testing.T) {
+	if got := xaiBillingURL(); got != "https://cli-chat-proxy.grok.com/v1/billing" {
+		t.Fatalf("xaiBillingURL() = %q, want upstream billing endpoint", got)
 	}
 }

@@ -1835,7 +1835,7 @@ func accountInspectionShouldUseExecutorHTTPRequest(auth *coreauth.Auth) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(auth.Provider)) {
-	case "gemini-cli":
+	case "gemini-cli", "xai":
 		return true
 	default:
 		return false
@@ -2291,11 +2291,9 @@ func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account ac
 }
 
 func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
-	baseURL := xaiAPIBaseURL(account.Auth)
 	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
-		return s.apiCall(ctx, account.Auth, http.MethodGet, strings.TrimRight(baseURL, "/")+"/billing", map[string]string{
+		return s.apiCall(ctx, account.Auth, http.MethodGet, xaiBillingURL(), map[string]string{
 			"Authorization": "Bearer $TOKEN$",
-			"Accept":        "application/json",
 		}, "", settings.Timeout)
 	})
 	status := intPtr(resp.StatusCode)
@@ -2316,12 +2314,8 @@ func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account acc
 	return quotaDecision(account, used, billing != nil, settings.UsedPercentThreshold), status, nil
 }
 
-func xaiAPIBaseURL(auth *coreauth.Auth) string {
-	baseURL := firstNonEmptyAuthValue(auth, "base_url", "baseURL", "api_base_url", "apiBaseURL")
-	if baseURL == "" {
-		return "https://cli-chat-proxy.grok.com/v1"
-	}
-	return baseURL
+func xaiBillingURL() string {
+	return "https://cli-chat-proxy.grok.com/v1/billing"
 }
 
 func (s *accountInspectionScheduler) antigravityUserAgent() string {
