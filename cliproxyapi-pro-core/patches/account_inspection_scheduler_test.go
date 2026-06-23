@@ -444,6 +444,24 @@ func TestPersistQuotaStateWritesGeminiCLIProjectMetadataToSourceFile(t *testing.
 	}
 }
 
+func TestPluginVirtualSourceFileNameUsesPhysicalAuthFile(t *testing.T) {
+	authPath := filepath.Join(t.TempDir(), "gemini-cli.json")
+	auth := &coreauth.Auth{
+		Provider: "gemini-cli",
+		FileName: "user-project-b.json",
+		Attributes: map[string]string{
+			"path":         authPath,
+			"project_id":   "project-b",
+			"runtime_only": "true",
+		},
+	}
+	coreauth.MarkPluginVirtualAuth(auth, authPath, 1)
+
+	if got := pluginVirtualSourceFileName(auth); got != "gemini-cli.json" {
+		t.Fatalf("pluginVirtualSourceFileName() = %q, want gemini-cli.json", got)
+	}
+}
+
 func TestQuotaSuccessStateIncludesParserMetadata(t *testing.T) {
 	state := quotaSuccessState(map[string]any{"rawShapeHash": jsonShapeHash(`{"a":1,"items":[{"b":true}]}`)})
 	if state["schemaVersion"] != 2 || state["parserVersion"] != accountInspectionQuotaParserVersion || state["status"] != "success" {

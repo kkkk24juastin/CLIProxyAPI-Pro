@@ -184,6 +184,13 @@ export function resolveCodexSubscriptionActiveUntil(file: AuthFileItem): string 
 export function extractGeminiCliProjectId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const direct = normalizeStringValue(value);
+  const firstProject = direct
+    ?.split(',')
+    .map((item) => item.trim())
+    .find(Boolean);
+  if (firstProject && firstProject !== direct) {
+    return extractGeminiCliProjectId(firstProject);
+  }
   if (direct && /^[a-z][a-z0-9-]{4,}[a-z0-9]$/i.test(direct)) {
     return direct;
   }

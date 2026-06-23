@@ -3214,9 +3214,25 @@ func (s *accountInspectionScheduler) persistQuotaState(ctx context.Context, acco
 	if err := persistQuotaState(ctx, account.Provider, account.FileName, state); err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 配额缓存写入失败：%s", account.identity(), err.Error()))
 	}
+	if sourceFileName := pluginVirtualSourceFileName(account.Auth); sourceFileName != "" && sourceFileName != account.FileName {
+		if err := persistQuotaState(ctx, account.Provider, sourceFileName, state); err != nil {
+			s.appendLog("warning", fmt.Sprintf("%s 源认证文件配额缓存写入失败：%s", account.identity(), err.Error()))
+		}
+	}
 	if err := s.persistQuotaStateToAuth(ctx, account, state); err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 配额状态写入认证文件失败：%s", account.identity(), err.Error()))
 	}
+}
+
+func pluginVirtualSourceFileName(auth *coreauth.Auth) string {
+	if auth == nil || !coreauth.IsPluginVirtualAuth(auth) {
+		return ""
+	}
+	sourcePath := pluginVirtualSourcePath(auth)
+	if sourcePath == "" {
+		return ""
+	}
+	return filepath.Base(sourcePath)
 }
 
 func persistQuotaState(ctx context.Context, provider string, fileName string, state map[string]any) error {

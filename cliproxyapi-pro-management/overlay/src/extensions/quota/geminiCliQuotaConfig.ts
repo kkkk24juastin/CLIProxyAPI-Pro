@@ -61,11 +61,15 @@ const toRecordMap = (value: unknown): Record<string, unknown> | null => toRecord
 const normalizeGeminiCliProjectIds = (value: unknown): string[] => {
   if (Array.isArray(value)) {
     return value
-      .map((item) => normalizeStringValue(item))
+      .flatMap((item) => normalizeGeminiCliProjectIds(item))
       .filter((item): item is string => Boolean(item));
   }
   const normalized = normalizeStringValue(value);
-  return normalized ? [normalized] : [];
+  if (!normalized) return [];
+  return normalized
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
 };
 
 const resolveGeminiCliQuotaMetadata = (file: AuthFileItem): Record<string, unknown> | null => {
@@ -92,8 +96,11 @@ const resolveGeminiCliProjectIds = (file: AuthFileItem): string[] => {
   const candidates = [
     latestProjectId,
     primaryProjectId,
+    ...normalizeGeminiCliProjectIds(file.project_id ?? file.projectId),
     ...normalizeGeminiCliProjectIds(file.project_ids ?? file.projectIds),
+    ...normalizeGeminiCliProjectIds(metadata?.project_id ?? metadata?.projectId),
     ...normalizeGeminiCliProjectIds(metadata?.project_ids ?? metadata?.projectIds),
+    ...normalizeGeminiCliProjectIds(attributes?.project_id ?? attributes?.projectId),
     ...normalizeGeminiCliProjectIds(attributes?.project_ids ?? attributes?.projectIds),
   ];
   return Array.from(new Set(candidates.filter((item): item is string => Boolean(item))));
