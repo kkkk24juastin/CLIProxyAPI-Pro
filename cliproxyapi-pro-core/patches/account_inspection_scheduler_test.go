@@ -341,6 +341,56 @@ func TestSyncInspectionAuthErrorPersistsLastErrorMetadata(t *testing.T) {
 	}
 }
 
+func TestClearInspectionAuthErrorClearsMetadataOnlyError(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	registered, err := manager.Register(context.Background(), &coreauth.Auth{
+		Provider:      "antigravity",
+		ID:            "antigravity-user",
+		FileName:      "antigravity-user.json",
+		Status:        coreauth.StatusActive,
+		StatusMessage: "",
+		Unavailable:   false,
+		Metadata: map[string]any{
+			"email": "user@example.com",
+			"last_error": map[string]any{
+				"code":        "inspection_probe_error",
+				"http_status": 0,
+				"message":     "antigravity quota unavailable",
+				"retryable":   false,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register auth error = %v", err)
+	}
+
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	scheduler.clearInspectionAuthError(context.Background(), accountFromAuth(registered))
+
+	var got *coreauth.Auth
+	for _, auth := range manager.List() {
+		if auth.ID == registered.ID {
+			got = auth
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("updated auth not found")
+	}
+	if got.LastError != nil {
+		t.Fatalf("LastError = %#v, want nil", got.LastError)
+	}
+	if _, ok := got.Metadata["last_error"]; ok {
+		t.Fatalf("metadata last_error = %#v, want removed", got.Metadata["last_error"])
+	}
+	if got.Status != coreauth.StatusActive || got.StatusMessage != "" || got.Unavailable {
+		t.Fatalf("status = %q message=%q unavailable=%v, want active/empty/false", got.Status, got.StatusMessage, got.Unavailable)
+	}
+	if got.Metadata["email"] != "user@example.com" {
+		t.Fatalf("metadata email = %#v, want preserved", got.Metadata["email"])
+	}
+}
+
 func TestAutoActionConfirmationDelaysExecution(t *testing.T) {
 	scheduler := &accountInspectionScheduler{}
 	result := testInspectionResult("quota", accountInspectionActionDisable, false, nil, true, "")
