@@ -1297,6 +1297,314 @@ func codexIDTokenClaimsEntry(claims *codex.JWTClaims) gin.H {
 ''',
     'func codexIDTokenClaimsEntry',
 )
+replace_once(
+    server,
+    '''		mgmt.PATCH("/auth-files/fields", s.mgmt.PatchAuthFileFields)
+''',
+    '''		mgmt.PATCH("/auth-files/fields", s.mgmt.PatchAuthFileFields)
+		mgmt.POST("/auth-files/clear-errors", s.mgmt.ClearAuthFileErrors)
+''',
+)
+insert_before(
+    auth_files,
+    '// PatchAuthFileFields updates arbitrary metadata fields of an auth file.\n',
+    '''type authFileClearErrorsRequestItem struct {
+	Name           string `json:"name"`
+	AuthIndexSnake string `json:"auth_index"`
+	AuthIndexCamel string `json:"authIndex"`
+}
+
+type authFileClearErrorsRequest struct {
+	Names []string                         `json:"names"`
+	Items []authFileClearErrorsRequestItem `json:"items"`
+}
+
+type authFileClearErrorsFailure struct {
+	Name      string `json:"name,omitempty"`
+	AuthIndex string `json:"auth_index,omitempty"`
+	Error     string `json:"error"`
+}
+
+func normalizeAuthFileClearErrorsItems(req authFileClearErrorsRequest) []authFileClearErrorsRequestItem {
+	items := make([]authFileClearErrorsRequestItem, 0, len(req.Items)+len(req.Names))
+	items = append(items, req.Items...)
+	for _, name := range req.Names {
+		items = append(items, authFileClearErrorsRequestItem{Name: name})
+	}
+
+	seen := make(map[string]struct{}, len(items))
+	out := make([]authFileClearErrorsRequestItem, 0, len(items))
+	for _, item := range items {
+		item.Name = strings.TrimSpace(item.Name)
+		item.AuthIndexSnake = strings.TrimSpace(item.AuthIndexSnake)
+		item.AuthIndexCamel = strings.TrimSpace(item.AuthIndexCamel)
+		authIndex := firstNonEmptyClearErrorString(item.AuthIndexSnake, item.AuthIndexCamel)
+		key := item.Name + "::" + authIndex
+		if key == "::" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func firstNonEmptyClearErrorString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func (h *Handler) authFileClearErrorsTarget(item authFileClearErrorsRequestItem) (*coreauth.Auth, string, string, error) {
+	if h == nil || h.authManager == nil {
+		return nil, "", "", fmt.Errorf("core auth manager unavailable")
+	}
+	authIndex := firstNonEmptyClearErrorString(item.AuthIndexSnake, item.AuthIndexCamel)
+	if authIndex != "" {
+		auth := h.authByIndex(authIndex)
+		if auth == nil {
+			return nil, item.Name, authIndex, errAuthFileNotFound
+		}
+		name := strings.TrimSpace(auth.FileName)
+		if name == "" {
+			name = strings.TrimSpace(auth.ID)
+		}
+		return auth, name, authIndex, nil
+	}
+
+	name := strings.TrimSpace(item.Name)
+	if name == "" {
+		return nil, "", "", fmt.Errorf("name is required")
+	}
+	if auth, ok := h.authManager.GetByID(name); ok {
+		auth.EnsureIndex()
+		return auth, name, strings.TrimSpace(auth.Index), nil
+	}
+	for _, auth := range h.authManager.List() {
+		if auth == nil || auth.FileName != name {
+			continue
+		}
+		auth.EnsureIndex()
+		return auth, name, strings.TrimSpace(auth.Index), nil
+	}
+	return nil, name, "", errAuthFileNotFound
+}
+
+func clearAuthFileErrorState(auth *coreauth.Auth) {
+	if auth == nil {
+		return
+	}
+	auth.LastError = nil
+	auth.StatusMessage = ""
+	auth.Unavailable = false
+	auth.NextRetryAfter = time.Time{}
+	if auth.Disabled {
+		auth.Status = coreauth.StatusDisabled
+	} else {
+		auth.Status = coreauth.StatusActive
+	}
+	if auth.Metadata != nil {
+		delete(auth.Metadata, "last_error")
+	}
+	auth.UpdatedAt = time.Now()
+}
+
+func (h *Handler) clearAuthFileError(ctx context.Context, item authFileClearErrorsRequestItem) (string, string, error) {
+	auth, name, authIndex, err := h.authFileClearErrorsTarget(item)
+	if err != nil {
+		return name, authIndex, err
+	}
+	if auth == nil {
+		return name, authIndex, errAuthFileNotFound
+	}
+	if authIndex == "" {
+		auth.EnsureIndex()
+		authIndex = strings.TrimSpace(auth.Index)
+	}
+	if scheduler := schedulerForHandler(h); scheduler != nil && authIndex != "" {
+		return name, authIndex, scheduler.updateInspectionAuth(ctx, authIndex, clearAuthFileErrorState)
+	}
+	if coreauth.IsPluginVirtualAuth(auth) {
+		return name, authIndex, errPluginVirtualAuth
+	}
+	clearAuthFileErrorState(auth)
+	_, err = h.authManager.Update(ctx, auth)
+	return name, authIndex, err
+}
+
+func authFileClearErrorsStatus(failed int) string {
+	if failed == 0 {
+		return "ok"
+	}
+	return "partial"
+}
+
+// ClearAuthFileErrors clears status and last_error details for selected auth files.
+func (h *Handler) ClearAuthFileErrors(c *gin.Context) {
+	if h.authManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
+		return
+	}
+
+	var req authFileClearErrorsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	items := normalizeAuthFileClearErrorsItems(req)
+	if len(items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no auth files selected"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	clearedFiles := make([]string, 0, len(items))
+	failed := make([]authFileClearErrorsFailure, 0)
+	for _, item := range items {
+		name, authIndex, err := h.clearAuthFileError(ctx, item)
+		if err != nil {
+			failed = append(failed, authFileClearErrorsFailure{
+				Name:      name,
+				AuthIndex: authIndex,
+				Error:     err.Error(),
+			})
+			continue
+		}
+		if name == "" {
+			name = item.Name
+		}
+		clearedFiles = append(clearedFiles, name)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  authFileClearErrorsStatus(len(failed)),
+		"cleared": len(clearedFiles),
+		"files":   clearedFiles,
+		"failed":  failed,
+	})
+}
+
+''',
+    'func ClearAuthFileErrors',
+)
+
+write_text(ROOT / 'internal/api/handlers/management/auth_files_clear_errors_test.go', f'''package management
+
+import (
+\t"context"
+\t"encoding/json"
+\t"net/http"
+\t"net/http/httptest"
+\t"strings"
+\t"testing"
+\t"time"
+
+\t"github.com/gin-gonic/gin"
+\t"{import_path('internal/config')}"
+\tcoreauth "{import_path('sdk/cliproxy/auth')}"
+)
+
+func TestClearAuthFileErrorsClearsSelectedAuthState(t *testing.T) {{
+\tt.Setenv("MANAGEMENT_PASSWORD", "")
+
+\tmanager := coreauth.NewManager(nil, nil, nil)
+\tnextRetry := time.Now().Add(time.Hour)
+\tactiveAuth := &coreauth.Auth{{
+\t\tID:             "clear-auth-id",
+\t\tFileName:       "clear-auth.json",
+\t\tProvider:       "claude",
+\t\tStatus:         coreauth.StatusError,
+\t\tStatusMessage:  "rate limited",
+\t\tUnavailable:    true,
+\t\tNextRetryAfter: nextRetry,
+\t\tLastError:      &coreauth.Error{{Code: "rate_limit", Message: "rate limited", Retryable: true, HTTPStatus: http.StatusTooManyRequests}},
+\t\tMetadata: map[string]any{{
+\t\t\t"last_error": map[string]any{{"message": "rate limited"}},
+\t\t\t"keep":       "value",
+\t\t}},
+\t}}
+\tactiveIndex := activeAuth.EnsureIndex()
+\tif _, errRegister := manager.Register(context.Background(), activeAuth); errRegister != nil {{
+\t\tt.Fatalf("failed to register active auth: %v", errRegister)
+\t}}
+
+\tdisabledAuth := &coreauth.Auth{{
+\t\tID:             "disabled-auth.json",
+\t\tFileName:       "disabled-auth.json",
+\t\tProvider:       "codex",
+\t\tStatus:         coreauth.StatusError,
+\t\tStatusMessage:  "unauthorized",
+\t\tDisabled:       true,
+\t\tUnavailable:    true,
+\t\tNextRetryAfter: nextRetry,
+\t\tLastError:      &coreauth.Error{{Code: "unauthorized", Message: "unauthorized", HTTPStatus: http.StatusUnauthorized}},
+\t\tMetadata:       map[string]any{{"last_error": map[string]any{{"message": "unauthorized"}}}},
+\t}}
+\tif _, errRegister := manager.Register(context.Background(), disabledAuth); errRegister != nil {{
+\t\tt.Fatalf("failed to register disabled auth: %v", errRegister)
+\t}}
+
+\th := NewHandlerWithoutConfigFilePath(&config.Config{{AuthDir: t.TempDir()}}, manager)
+\tbody := `{{"items":[{{"name":"clear-auth.json","auth_index":"` + activeIndex + `"}},{{"name":"disabled-auth.json"}}]}}`
+\trec := httptest.NewRecorder()
+\tctx, _ := gin.CreateTestContext(rec)
+\treq := httptest.NewRequest(http.MethodPost, "/v0/management/auth-files/clear-errors", strings.NewReader(body))
+\treq.Header.Set("Content-Type", "application/json")
+\tctx.Request = req
+\th.ClearAuthFileErrors(ctx)
+
+\tif rec.Code != http.StatusOK {{
+\t\tt.Fatalf("expected status %d, got %d with body %s", http.StatusOK, rec.Code, rec.Body.String())
+\t}}
+
+\tvar payload struct {{
+\t\tStatus  string           `json:"status"`
+\t\tCleared int              `json:"cleared"`
+\t\tFiles   []string         `json:"files"`
+\t\tFailed  []map[string]any `json:"failed"`
+\t}}
+\tif errUnmarshal := json.Unmarshal(rec.Body.Bytes(), &payload); errUnmarshal != nil {{
+\t\tt.Fatalf("failed to decode response: %v", errUnmarshal)
+\t}}
+\tif payload.Status != "ok" || payload.Cleared != 2 || len(payload.Failed) != 0 {{
+\t\tt.Fatalf("response = %+v, want two successful clears", payload)
+\t}}
+\tif len(payload.Files) != 2 {{
+\t\tt.Fatalf("files = %#v, want two cleared file names", payload.Files)
+\t}}
+
+\tupdatedActive, ok := manager.GetByID("clear-auth-id")
+\tif !ok || updatedActive == nil {{
+\t\tt.Fatalf("expected active auth to exist after clear")
+\t}}
+\tif updatedActive.Status != coreauth.StatusActive || updatedActive.StatusMessage != "" || updatedActive.Unavailable || !updatedActive.NextRetryAfter.IsZero() || updatedActive.LastError != nil {{
+\t\tt.Fatalf("active auth state = status %q message %q unavailable %v next %v last_error %+v", updatedActive.Status, updatedActive.StatusMessage, updatedActive.Unavailable, updatedActive.NextRetryAfter, updatedActive.LastError)
+\t}}
+\tif _, ok := updatedActive.Metadata["last_error"]; ok {{
+\t\tt.Fatalf("expected metadata.last_error to be cleared")
+\t}}
+\tif got := updatedActive.Metadata["keep"]; got != "value" {{
+\t\tt.Fatalf("metadata.keep = %#v, want value", got)
+\t}}
+
+\tupdatedDisabled, ok := manager.GetByID("disabled-auth.json")
+\tif !ok || updatedDisabled == nil {{
+\t\tt.Fatalf("expected disabled auth to exist after clear")
+\t}}
+\tif updatedDisabled.Status != coreauth.StatusDisabled || !updatedDisabled.Disabled || updatedDisabled.StatusMessage != "" || updatedDisabled.Unavailable || !updatedDisabled.NextRetryAfter.IsZero() || updatedDisabled.LastError != nil {{
+\t\tt.Fatalf("disabled auth state = status %q disabled %v message %q unavailable %v next %v last_error %+v", updatedDisabled.Status, updatedDisabled.Disabled, updatedDisabled.StatusMessage, updatedDisabled.Unavailable, updatedDisabled.NextRetryAfter, updatedDisabled.LastError)
+\t}}
+\tif _, ok := updatedDisabled.Metadata["last_error"]; ok {{
+\t\tt.Fatalf("expected disabled metadata.last_error to be cleared")
+\t}}
+}}
+''')
 
 patch_dir = Path(__file__).resolve().parent
 embeddedusage_source = patch_dir.parent / 'embeddedusage'
@@ -1906,6 +2214,12 @@ subprocess.run([
     'gofmt',
     '-w',
     'cmd/server/main.go',
+    'internal/api/handlers/management/account_inspection_scheduler.go',
+    'internal/api/handlers/management/account_inspection_scheduler_test.go',
+    'internal/api/handlers/management/api_tools.go',
+    'internal/api/handlers/management/auth_files.go',
+    'internal/api/handlers/management/auth_files_clear_errors_test.go',
+    'internal/api/server.go',
     'internal/logging/requestid.go',
     'internal/logging/requestmeta.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',

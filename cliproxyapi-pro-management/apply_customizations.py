@@ -127,6 +127,45 @@ AUTH_FILES_SEARCH_PLACEHOLDER_KEYS = {
     'zh-TW.json': '輸入名稱、類型、供應方、備註或套餐關鍵字，支援 * 萬用字元',
 }
 
+AUTH_FILES_BATCH_ACTION_LOCALE_KEYS = {
+    'en.json': {
+        'batch_test_selected': 'Test selected',
+        'batch_test_success': 'Tested {{count}} credential(s): all available',
+        'batch_test_partial': 'Test complete: available {{success}}, unavailable {{failed}}, skipped {{skipped}}',
+        'batch_test_skipped_all': 'No selected credential has auth_index for testing',
+        'batch_clear_errors': 'Clear errors',
+        'batch_clear_errors_success': 'Cleared error info for {{count}} credential(s)',
+        'batch_clear_errors_partial': 'Cleared errors: success {{success}}, failed {{failed}}',
+    },
+    'ru.json': {
+        'batch_test_selected': 'Проверить выбранные',
+        'batch_test_success': 'Проверено {{count}} учётных данных: все доступны',
+        'batch_test_partial': 'Проверка завершена: доступно {{success}}, недоступно {{failed}}, пропущено {{skipped}}',
+        'batch_test_skipped_all': 'У выбранных учётных данных нет auth_index для проверки',
+        'batch_clear_errors': 'Очистить ошибки',
+        'batch_clear_errors_success': 'Сведения об ошибках очищены для {{count}} учётных данных',
+        'batch_clear_errors_partial': 'Ошибки очищены: успешно {{success}}, не удалось {{failed}}',
+    },
+    'zh-CN.json': {
+        'batch_test_selected': '测试选中',
+        'batch_test_success': '已测试 {{count}} 个凭证，均可用',
+        'batch_test_partial': '测试完成：可用 {{success}} 个，不可用 {{failed}} 个，跳过 {{skipped}} 个',
+        'batch_test_skipped_all': '选中的凭证都缺少 auth_index，无法测试',
+        'batch_clear_errors': '清除错误',
+        'batch_clear_errors_success': '已清除 {{count}} 个凭证的错误信息',
+        'batch_clear_errors_partial': '错误信息清除完成：成功 {{success}} 个，失败 {{failed}} 个',
+    },
+    'zh-TW.json': {
+        'batch_test_selected': '測試已選',
+        'batch_test_success': '已測試 {{count}} 個憑證，皆可用',
+        'batch_test_partial': '測試完成：可用 {{success}} 個，不可用 {{failed}} 個，略過 {{skipped}} 個',
+        'batch_test_skipped_all': '已選憑證都缺少 auth_index，無法測試',
+        'batch_clear_errors': '清除錯誤',
+        'batch_clear_errors_success': '已清除 {{count}} 個憑證的錯誤資訊',
+        'batch_clear_errors_partial': '錯誤資訊清除完成：成功 {{success}} 個，失敗 {{failed}} 個',
+    },
+}
+
 
 _writes = {}
 
@@ -773,6 +812,86 @@ def patch_auth_files_page_search(target: Path) -> None:
     )
 
 
+def patch_auth_files_batch_actions(target: Path) -> None:
+    hook_path = target / 'src/features/authFiles/hooks/useAuthFilesData.ts'
+    replace_once(
+        hook_path,
+        "import { authFilesApi } from '@/services/api';\n",
+        "import {\n  accountInspectionApi,\n  authFilesApi,\n  type AccountInspectionInspectOneItem,\n  type AuthFileClearErrorItem,\n} from '@/services/api';\n",
+    )
+    replace_once(
+        hook_path,
+        "import { downloadBlob } from '@/utils/download';\n",
+        "import { downloadBlob } from '@/utils/download';\nimport { normalizeAuthIndex } from '@/utils/authIndex';\n",
+    )
+    replace_once(
+        hook_path,
+        "  batchStatusUpdating: boolean;\n  fileInputRef: RefObject<HTMLInputElement | null>;\n",
+        "  batchStatusUpdating: boolean;\n  batchInspecting: boolean;\n  batchClearingErrors: boolean;\n  fileInputRef: RefObject<HTMLInputElement | null>;\n",
+    )
+    replace_once(
+        hook_path,
+        "  batchDownload: (names: string[]) => Promise<void>;\n  batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;\n  batchDelete: (names: string[]) => void;\n",
+        "  batchDownload: (names: string[]) => Promise<void>;\n  batchInspect: (names: string[]) => Promise<void>;\n  batchClearErrors: (names: string[]) => Promise<void>;\n  batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;\n  batchDelete: (names: string[]) => void;\n",
+    )
+    insert_once(
+        hook_path,
+        "export function useAuthFilesData(): UseAuthFilesDataResult {\n",
+        "const readAuthFileStringValue = (file: AuthFileItem, keys: string[]): string => {\n  for (const key of keys) {\n    const value = file[key];\n    if (typeof value === 'string') {\n      const trimmed = value.trim();\n      if (trimmed) return trimmed;\n    } else if (typeof value === 'number' && Number.isFinite(value)) {\n      return String(value);\n    }\n  }\n  return '';\n};\n\nconst selectedAuthFileItems = (files: AuthFileItem[], names: string[]): AuthFileItem[] => {\n  const selected = new Set(names.map((name) => String(name ?? '').trim()).filter(Boolean));\n  if (selected.size === 0) return [];\n  const seen = new Set<string>();\n  return files.filter((file) => {\n    const name = String(file.name ?? '').trim();\n    if (!name || seen.has(name) || !selected.has(name) || isRuntimeOnlyAuthFile(file)) return false;\n    seen.add(name);\n    return true;\n  });\n};\n\nconst buildInspectionItem = (file: AuthFileItem): AccountInspectionInspectOneItem | null => {\n  const fileName = String(file.name ?? '').trim();\n  const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);\n  if (!fileName || !authIndex) return null;\n\n  const provider = normalizeProviderKey(String(file.provider ?? file.type ?? '')) || 'unknown';\n  const email = readAuthFileStringValue(file, ['email']);\n  const accountName = readAuthFileStringValue(file, ['account', 'label', 'displayName', 'display_name']);\n  const item: AccountInspectionInspectOneItem = {\n    key: `${fileName}::${authIndex}`,\n    provider,\n    fileName,\n    authIndex,\n    disabled: file.disabled === true,\n    displayName: email || accountName || fileName,\n  };\n  if (email) item.email = email;\n  if (accountName) item.name = accountName;\n  return item;\n};\n\nconst buildClearErrorItem = (file: AuthFileItem): AuthFileClearErrorItem => {\n  const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);\n  return authIndex ? { name: file.name, auth_index: authIndex } : { name: file.name };\n};\n\nconst inspectionResultAvailable = (result: Awaited<ReturnType<typeof accountInspectionApi.inspectOne>>): boolean => {\n  if (result.error) return false;\n  const item = result.result;\n  if (!item || item.error || item.action === 'delete' || item.action === 'disable') return false;\n  return true;\n};\n\nexport function useAuthFilesData(): UseAuthFilesDataResult {\n",
+        "const buildInspectionItem =",
+    )
+    replace_once(
+        hook_path,
+        "  const [statusUpdating, setStatusUpdating] = useState<Record<string, boolean>>({});\n  const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);\n  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());\n",
+        "  const [statusUpdating, setStatusUpdating] = useState<Record<string, boolean>>({});\n  const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);\n  const [batchInspecting, setBatchInspecting] = useState(false);\n  const [batchClearingErrors, setBatchClearingErrors] = useState(false);\n  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());\n",
+    )
+    replace_once(
+        hook_path,
+        "  const batchStatusPendingRef = useRef(false);\n  const selectionCount = selectedFiles.size;\n",
+        "  const batchStatusPendingRef = useRef(false);\n  const batchInspectPendingRef = useRef(false);\n  const batchClearErrorsPendingRef = useRef(false);\n  const selectionCount = selectedFiles.size;\n",
+    )
+    insert_once(
+        hook_path,
+        "  const batchDelete = useCallback(\n",
+        "  const batchInspect = useCallback(\n    async (names: string[]) => {\n      if (batchInspectPendingRef.current) return;\n\n      const targetFiles = selectedAuthFileItems(files, names);\n      const items = targetFiles.map(buildInspectionItem).filter(Boolean) as AccountInspectionInspectOneItem[];\n      const skippedCount = targetFiles.length - items.length;\n      if (items.length === 0) {\n        if (skippedCount > 0) {\n          showNotification(t('auth_files.batch_test_skipped_all'), 'warning');\n        }\n        return;\n      }\n\n      batchInspectPendingRef.current = true;\n      setBatchInspecting(true);\n      let successCount = 0;\n      let failCount = 0;\n\n      try {\n        for (const item of items) {\n          try {\n            const result = await accountInspectionApi.inspectOne(item, { includeDetails: false });\n            if (inspectionResultAvailable(result)) {\n              successCount++;\n            } else {\n              failCount++;\n            }\n          } catch {\n            failCount++;\n          }\n        }\n\n        await loadFiles();\n        if (failCount === 0 && skippedCount === 0) {\n          showNotification(t('auth_files.batch_test_success', { count: successCount }), 'success');\n        } else {\n          showNotification(\n            t('auth_files.batch_test_partial', {\n              success: successCount,\n              failed: failCount,\n              skipped: skippedCount,\n            }),\n            failCount > 0 ? 'warning' : 'info'\n          );\n        }\n        deselectAll();\n      } finally {\n        batchInspectPendingRef.current = false;\n        setBatchInspecting(false);\n      }\n    },\n    [deselectAll, files, loadFiles, showNotification, t]\n  );\n\n  const batchClearErrors = useCallback(\n    async (names: string[]) => {\n      if (batchClearErrorsPendingRef.current) return;\n\n      const targetFiles = selectedAuthFileItems(files, names);\n      const items = targetFiles.map(buildClearErrorItem);\n      if (items.length === 0) return;\n\n      batchClearErrorsPendingRef.current = true;\n      setBatchClearingErrors(true);\n      try {\n        const result = await authFilesApi.clearErrors(items);\n        await loadFiles();\n        if (result.failed.length === 0) {\n          showNotification(t('auth_files.batch_clear_errors_success', { count: result.cleared }), 'success');\n        } else {\n          showNotification(\n            t('auth_files.batch_clear_errors_partial', {\n              success: result.cleared,\n              failed: result.failed.length,\n            }),\n            'warning'\n          );\n        }\n        deselectAll();\n      } catch (err: unknown) {\n        const errorMessage = err instanceof Error ? err.message : '';\n        showNotification(`${t('notification.update_failed')}: ${errorMessage}`, 'error');\n      } finally {\n        batchClearErrorsPendingRef.current = false;\n        setBatchClearingErrors(false);\n      }\n    },\n    [deselectAll, files, loadFiles, showNotification, t]\n  );\n\n  const batchDelete = useCallback(\n",
+        "const batchInspect = useCallback",
+    )
+    replace_once(
+        hook_path,
+        "    batchStatusUpdating,\n    fileInputRef,\n",
+        "    batchStatusUpdating,\n    batchInspecting,\n    batchClearingErrors,\n    fileInputRef,\n",
+    )
+    replace_once(
+        hook_path,
+        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n",
+        "    batchDownload,\n    batchInspect,\n    batchClearErrors,\n    batchSetStatus,\n    batchDelete,\n",
+    )
+
+    page_path = target / 'src/pages/AuthFilesPage.tsx'
+    replace_once(
+        page_path,
+        "    batchStatusUpdating,\n    fileInputRef,\n",
+        "    batchStatusUpdating,\n    batchInspecting,\n    batchClearingErrors,\n    fileInputRef,\n",
+    )
+    replace_once(
+        page_path,
+        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n",
+        "    batchDownload,\n    batchInspect,\n    batchClearErrors,\n    batchSetStatus,\n    batchDelete,\n",
+    )
+    insert_once(
+        page_path,
+        "  const batchStatusButtonsDisabled =\n    disableControls ||\n    selectedNames.length === 0 ||\n    batchStatusUpdating ||\n    selectedHasStatusUpdating;\n",
+        "  const batchStatusButtonsDisabled =\n    disableControls ||\n    selectedNames.length === 0 ||\n    batchStatusUpdating ||\n    batchInspecting ||\n    batchClearingErrors ||\n    selectedHasStatusUpdating;\n  const batchInspectionButtonsDisabled =\n    disableControls ||\n    selectedNames.length === 0 ||\n    batchStatusUpdating ||\n    batchInspecting ||\n    batchClearingErrors ||\n    selectedHasStatusUpdating;\n",
+        "batchInspectionButtonsDisabled",
+    )
+    insert_once(
+        page_path,
+        "                  <Button\n                    size=\"sm\"\n                    onClick={() => batchSetStatus(selectedNames, true)}\n",
+        "                  <Button\n                    variant=\"secondary\"\n                    size=\"sm\"\n                    onClick={() => void batchInspect(selectedNames)}\n                    disabled={batchInspectionButtonsDisabled}\n                    loading={batchInspecting}\n                  >\n                    {t('auth_files.batch_test_selected')}\n                  </Button>\n                  <Button\n                    variant=\"secondary\"\n                    size=\"sm\"\n                    onClick={() => void batchClearErrors(selectedNames)}\n                    disabled={batchInspectionButtonsDisabled}\n                    loading={batchClearingErrors}\n                  >\n                    {t('auth_files.batch_clear_errors')}\n                  </Button>\n                  <Button\n                    size=\"sm\"\n                    onClick={() => batchSetStatus(selectedNames, true)}\n",
+        "batch_test_selected",
+    )
+
+
 def patch_supporting_api_and_types(target: Path) -> None:
     config_path = target / 'src/types/config.ts'
     replace_once(
@@ -818,6 +937,33 @@ def patch_supporting_api_and_types(target: Path) -> None:
     )
     insert_once(
         auth_files_path,
+        "type AuthFileBatchDeleteResult = {\n  status: string;\n  deleted: number;\n  files: string[];\n  failed: AuthFileBatchFailure[];\n};\n",
+        "type AuthFileBatchDeleteResult = {\n  status: string;\n  deleted: number;\n  files: string[];\n  failed: AuthFileBatchFailure[];\n};\nexport type AuthFileClearErrorItem = {\n  name: string;\n  auth_index?: string | null;\n  authIndex?: string | null;\n};\ntype AuthFileBatchClearErrorsResponse = {\n  status?: string;\n  cleared?: number;\n  files?: unknown;\n  failed?: unknown;\n};\ntype AuthFileBatchClearErrorsResult = {\n  status: string;\n  cleared: number;\n  files: string[];\n  failed: AuthFileBatchFailure[];\n};\n",
+        "AuthFileBatchClearErrorsResponse",
+    )
+    replace_once(
+        auth_files_path,
+        "type AuthFileBatchFailure = { name: string; error: string };\n",
+        "type AuthFileBatchFailure = { name: string; error: string; auth_index?: string };\n",
+    )
+    replace_once(
+        auth_files_path,
+        "    const name = String(entry.name ?? '').trim();\n    const error =\n",
+        "    const name = String(entry.name ?? '').trim();\n    const authIndex = String(entry.auth_index ?? entry.authIndex ?? '').trim();\n    const error =\n",
+    )
+    replace_once(
+        auth_files_path,
+        "    result.push({ name, error: error || 'Unknown error' });\n",
+        "    result.push({ name, error: error || 'Unknown error', auth_index: authIndex || undefined });\n",
+    )
+    insert_once(
+        auth_files_path,
+        "const readTextField = (entry: AuthFileEntry, key: string): string => {\n",
+        "const normalizeBatchClearErrorsResponse = (\n  payload: AuthFileBatchClearErrorsResponse | undefined,\n  requestedNames: string[]\n): AuthFileBatchClearErrorsResult => {\n  const failed = normalizeBatchFailures(payload?.failed);\n  const filesFromPayload = normalizeBatchFileNames(payload?.files);\n  return {\n    status: payload?.status ?? (failed.length > 0 ? 'partial' : 'ok'),\n    cleared: payload?.cleared ?? Math.max(0, requestedNames.length - failed.length),\n    files: filesFromPayload.length ? filesFromPayload : failed.length === 0 ? [...requestedNames] : filesFromPayload,\n    failed,\n  };\n};\n\nconst readTextField = (entry: AuthFileEntry, key: string): string => {\n",
+        "normalizeBatchClearErrorsResponse",
+    )
+    insert_once(
+        auth_files_path,
         "export const authFilesApi = {\n",
         "const AUTH_FILES_LIST_CACHE_TTL_MS = 2000;\nlet authFilesListCache: { expiresAt: number; response: AuthFilesResponse } | null = null;\nlet authFilesListRequest: Promise<AuthFilesResponse> | null = null;\nlet authFilesListVersion = 0;\n\nconst cloneAuthFilesResponse = (response: AuthFilesResponse): AuthFilesResponse => ({\n  ...response,\n  files: Array.isArray(response.files) ? [...response.files] : [],\n});\n\nconst invalidateAuthFilesListCache = () => {\n  authFilesListVersion += 1;\n  authFilesListCache = null;\n  authFilesListRequest = null;\n};\n\nconst fetchAuthFilesList = async (): Promise<AuthFilesResponse> => {\n  const now = Date.now();\n  if (authFilesListCache && authFilesListCache.expiresAt > now) {\n    return cloneAuthFilesResponse(authFilesListCache.response);\n  }\n  if (!authFilesListRequest) {\n    const requestVersion = authFilesListVersion;\n    authFilesListRequest = apiClient.get<AuthFilesResponse>('/auth-files')\n      .then(dedupeAuthFilesResponse)\n      .then((response) => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListCache = {\n            expiresAt: Date.now() + AUTH_FILES_LIST_CACHE_TTL_MS,\n            response: cloneAuthFilesResponse(response),\n          };\n        }\n        return response;\n      })\n      .finally(() => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListRequest = null;\n        }\n      });\n  }\n  return cloneAuthFilesResponse(await authFilesListRequest);\n};\n\nexport const authFilesApi = {\n",
         "AUTH_FILES_LIST_CACHE_TTL_MS",
@@ -846,6 +992,12 @@ def patch_supporting_api_and_types(target: Path) -> None:
         auth_files_path,
         "  deleteAll: () => apiClient.delete('/auth-files', { params: { all: true } }),\n",
         "  deleteAll: async () => {\n    const response = await apiClient.delete('/auth-files', { params: { all: true } });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n",
+    )
+    insert_once(
+        auth_files_path,
+        "  deleteAll: async () => {\n    const response = await apiClient.delete('/auth-files', { params: { all: true } });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n",
+        "  deleteAll: async () => {\n    const response = await apiClient.delete('/auth-files', { params: { all: true } });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n  clearErrors: async (items: AuthFileClearErrorItem[]): Promise<AuthFileBatchClearErrorsResult> => {\n    const requestedItems = items\n      .map((item) => ({\n        name: String(item.name ?? '').trim(),\n        auth_index: String(item.auth_index ?? item.authIndex ?? '').trim() || undefined,\n      }))\n      .filter((item) => item.name || item.auth_index);\n    const requestedNames = normalizeRequestedAuthFileNames(requestedItems.map((item) => item.name));\n    if (requestedItems.length === 0) {\n      return { status: 'ok', cleared: 0, files: [], failed: [] };\n    }\n\n    const payload = await apiClient.post<AuthFileBatchClearErrorsResponse>(\n      '/auth-files/clear-errors',\n      { items: requestedItems }\n    );\n    const fallbackNames = requestedNames.length\n      ? requestedNames\n      : requestedItems.map((item) => item.auth_index || '');\n    invalidateAuthFilesListCache();\n    return normalizeBatchClearErrorsResponse(payload, fallbackNames);\n  },\n",
+        "clearErrors: async",
     )
 
     api_index_path = target / 'src/services/api/index.ts'
@@ -934,6 +1086,12 @@ def patch_locales(target: Path) -> None:
             locale_path.name,
             AUTH_FILES_SEARCH_PLACEHOLDER_KEYS['en.json'],
         )
+        data.setdefault('auth_files', {}).update(
+            AUTH_FILES_BATCH_ACTION_LOCALE_KEYS.get(
+                locale_path.name,
+                AUTH_FILES_BATCH_ACTION_LOCALE_KEYS['en.json'],
+            )
+        )
         data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
         locale_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
@@ -960,6 +1118,7 @@ def main() -> None:
     patch_quota_card(target)
     patch_quota_styles(target)
     patch_auth_files_page_search(target)
+    patch_auth_files_batch_actions(target)
     patch_supporting_api_and_types(target)
     patch_locales(target)
     flush_writes()
