@@ -127,6 +127,117 @@ AUTH_FILES_SEARCH_PLACEHOLDER_KEYS = {
     'zh-TW.json': '輸入名稱、類型、供應方、備註或套餐關鍵字，支援 * 萬用字元',
 }
 
+AUTH_FILES_BATCH_LOCALE_KEYS = {
+    'en.json': {
+        'batch_test': 'Test Selected',
+        'batch_clear_errors': 'Clear Errors',
+        'batch_test_title': 'Batch Test Results',
+        'batch_clear_errors_title': 'Clear Errors Results',
+        'batch_test_running': 'Testing...',
+        'batch_clear_errors_running': 'Clearing errors...',
+        'batch_no_auth_index': 'Missing auth_index',
+        'batch_unsupported_provider': 'Unsupported provider: {{provider}}',
+        'batch_clear_errors_failed': 'Failed to clear errors',
+        'batch_result_success': 'Success {{count}}',
+        'batch_result_failed': 'Failed {{count}}',
+        'batch_result_skipped': 'Skipped {{count}}',
+        'batch_result_total': 'Total {{count}}',
+        'batch_result_col_name': 'Name',
+        'batch_result_col_provider': 'Provider',
+        'batch_result_col_result': 'Result',
+        'batch_result_col_error': 'Error',
+        'batch_result_badge_success': 'Success',
+        'batch_result_badge_failed': 'Failed',
+        'batch_result_badge_skipped': 'Skipped',
+    },
+    'ru.json': {
+        'batch_test': 'Проверить выбранные',
+        'batch_clear_errors': 'Очистить ошибки',
+        'batch_test_title': 'Результаты проверки',
+        'batch_clear_errors_title': 'Результаты очистки ошибок',
+        'batch_test_running': 'Проверка...',
+        'batch_clear_errors_running': 'Очистка ошибок...',
+        'batch_no_auth_index': 'Отсутствует auth_index',
+        'batch_unsupported_provider': 'Неподдерживаемый провайдер: {{provider}}',
+        'batch_clear_errors_failed': 'Не удалось очистить ошибки',
+        'batch_result_success': 'Успешно {{count}}',
+        'batch_result_failed': 'Ошибка {{count}}',
+        'batch_result_skipped': 'Пропущено {{count}}',
+        'batch_result_total': 'Всего {{count}}',
+        'batch_result_col_name': 'Имя',
+        'batch_result_col_provider': 'Провайдер',
+        'batch_result_col_result': 'Результат',
+        'batch_result_col_error': 'Ошибка',
+        'batch_result_badge_success': 'Успешно',
+        'batch_result_badge_failed': 'Ошибка',
+        'batch_result_badge_skipped': 'Пропущено',
+    },
+    'zh-CN.json': {
+        'batch_test': '测试选中',
+        'batch_clear_errors': '清除错误',
+        'batch_test_title': '批量测试结果',
+        'batch_clear_errors_title': '清除错误结果',
+        'batch_test_running': '正在测试...',
+        'batch_clear_errors_running': '正在清除错误...',
+        'batch_no_auth_index': '缺少 auth_index',
+        'batch_unsupported_provider': '不支持的提供方：{{provider}}',
+        'batch_clear_errors_failed': '清除错误失败',
+        'batch_result_success': '成功 {{count}} 项',
+        'batch_result_failed': '失败 {{count}} 项',
+        'batch_result_skipped': '跳过 {{count}} 项',
+        'batch_result_total': '共 {{count}} 项',
+        'batch_result_col_name': '名称',
+        'batch_result_col_provider': '提供方',
+        'batch_result_col_result': '结果',
+        'batch_result_col_error': '错误',
+        'batch_result_badge_success': '成功',
+        'batch_result_badge_failed': '失败',
+        'batch_result_badge_skipped': '跳过',
+    },
+    'zh-TW.json': {
+        'batch_test': '測試選中',
+        'batch_clear_errors': '清除錯誤',
+        'batch_test_title': '批量測試結果',
+        'batch_clear_errors_title': '清除錯誤結果',
+        'batch_test_running': '正在測試...',
+        'batch_clear_errors_running': '正在清除錯誤...',
+        'batch_no_auth_index': '缺少 auth_index',
+        'batch_unsupported_provider': '不支援的供應方：{{provider}}',
+        'batch_clear_errors_failed': '清除錯誤失敗',
+        'batch_result_success': '成功 {{count}} 項',
+        'batch_result_failed': '失敗 {{count}} 項',
+        'batch_result_skipped': '跳過 {{count}} 項',
+        'batch_result_total': '共 {{count}} 項',
+        'batch_result_col_name': '名稱',
+        'batch_result_col_provider': '供應方',
+        'batch_result_col_result': '結果',
+        'batch_result_col_error': '錯誤',
+        'batch_result_badge_success': '成功',
+        'batch_result_badge_failed': '失敗',
+        'batch_result_badge_skipped': '跳過',
+    },
+}
+
+
+QUOTA_PAGE_SEARCH_LOCALE_KEYS = {
+    'en.json': {
+        'search_placeholder': 'Search by file name...',
+        'plan_filter_all': 'All Plans',
+    },
+    'ru.json': {
+        'search_placeholder': 'Поиск по имени файла...',
+        'plan_filter_all': 'Все тарифы',
+    },
+    'zh-CN.json': {
+        'search_placeholder': '按文件名搜索...',
+        'plan_filter_all': '全部套餐',
+    },
+    'zh-TW.json': {
+        'search_placeholder': '按檔案名稱搜尋...',
+        'plan_filter_all': '全部套餐',
+    },
+}
+
 
 _writes = {}
 
@@ -419,11 +530,22 @@ def patch_quota_page(target: Path) -> None:
         "import { FEATURES } from '@/config/features';\nimport { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n",
         "",
     )
-    replace_once(
-        path,
-        "import { useAuthStore } from '@/stores';\n",
-        "import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\nimport { useAuthStore } from '@/stores';\n",
-    )
+    if 'quotaPersistenceMiddleware' not in read(path):
+        store_import_with_quota = "import { useAuthStore, useQuotaStore } from '@/stores';\n"
+        if store_import_with_quota in read(path):
+            replace_once(
+                path,
+                store_import_with_quota,
+                "import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n"
+                f"{store_import_with_quota}",
+            )
+        else:
+            replace_once(
+                path,
+                "import { useAuthStore } from '@/stores';\n",
+                "import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n"
+                "import { useAuthStore } from '@/stores';\n",
+            )
     replace_once(
         path,
         "  useEffect(() => {\n    loadFiles();\n  }, [loadFiles]);\n",
@@ -438,6 +560,114 @@ def patch_quota_page(target: Path) -> None:
         path,
         "\n  // Initialize persistence middleware\n  useEffect(() => {\n    if (FEATURES.QUOTA_PERSISTENCE) {\n      quotaPersistenceMiddleware.start();\n      return () => quotaPersistenceMiddleware.stop();\n    }\n  }, []);\n",
         "",
+    )
+    replace_once(
+        path,
+        "import { useCallback, useEffect, useState } from 'react';\n",
+        "import { useCallback, useEffect, useMemo, useState } from 'react';\n",
+    )
+    replace_once(
+        path,
+        "import { useAuthStore } from '@/stores';\n",
+        "import { useAuthStore, useQuotaStore } from '@/stores';\n",
+    )
+    replace_once(
+        path,
+        "import type { AuthFileItem } from '@/types';\n",
+        "import type { AuthFileItem } from '@/types';\nimport { resolveAuthProvider } from '@/utils/quota';\n",
+    )
+    insert_once(
+        path,
+        "  const [files, setFiles] = useState<AuthFileItem[]>([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState('');\n",
+        "  const [files, setFiles] = useState<AuthFileItem[]>([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState('');\n  const [searchText, setSearchText] = useState('');\n  const [planFilter, setPlanFilter] = useState('all');\n",
+        "searchText",
+    )
+    insert_once(
+        path,
+        "  const disableControls = connectionStatus !== 'connected';\n",
+        "  const disableControls = connectionStatus !== 'connected';\n\n"
+        "  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);\n"
+        "  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n"
+        "  const codexQuota = useQuotaStore((state) => state.codexQuota);\n\n"
+        "  const resolveFilePlan = useCallback(\n"
+        "    (file: AuthFileItem): string => {\n"
+        "      const provider = resolveAuthProvider(file);\n"
+        "      const name = file.name;\n"
+        "      if (provider === 'antigravity') {\n"
+        "        return antigravityQuota[name]?.subscription?.plan ?? '';\n"
+        "      }\n"
+        "      if (provider === 'claude') {\n"
+        "        return claudeQuota[name]?.planType ?? '';\n"
+        "      }\n"
+        "      if (provider === 'codex') {\n"
+        "        return codexQuota[name]?.planType ?? '';\n"
+        "      }\n"
+        "      return '';\n"
+        "    },\n"
+        "    [antigravityQuota, claudeQuota, codexQuota]\n"
+        "  );\n\n"
+        "  const normalizedSearch = searchText.trim().toLowerCase();\n"
+        "  const planOptions = useMemo(() => {\n"
+        "    const plans = new Set<string>();\n"
+        "    for (const file of files) {\n"
+        "      const plan = resolveFilePlan(file);\n"
+        "      if (plan) plans.add(plan);\n"
+        "    }\n"
+        "    return Array.from(plans).sort();\n"
+        "  }, [files, resolveFilePlan]);\n\n"
+        "  const filteredFiles = useMemo(() => {\n"
+        "    return files.filter((file) => {\n"
+        "      if (normalizedSearch && !file.name.toLowerCase().includes(normalizedSearch)) {\n"
+        "        return false;\n"
+        "      }\n"
+        "      if (planFilter !== 'all') {\n"
+        "        const filePlan = resolveFilePlan(file);\n"
+        "        if (filePlan !== planFilter) return false;\n"
+        "      }\n"
+        "      return true;\n"
+        "    });\n"
+        "  }, [files, normalizedSearch, planFilter, resolveFilePlan]);\n",
+        "const filteredFiles",
+    )
+    replace_once(
+        path,
+        "      <div className={styles.pageHeader}>\n        <h1 className={styles.pageTitle}>{t('quota_management.title')}</h1>\n        <p className={styles.description}>{t('quota_management.description')}</p>\n      </div>\n",
+        "      <div className={styles.pageHeader}>\n        <h1 className={styles.pageTitle}>{t('quota_management.title')}</h1>\n        <p className={styles.description}>{t('quota_management.description')}</p>\n        <div className={styles.quotaFilterBar}>\n          <input\n            className={styles.quotaSearchInput}\n            type=\"text\"\n            placeholder={t('quota_management.search_placeholder')}\n            value={searchText}\n            onChange={(e) => setSearchText(e.target.value)}\n          />\n          <select\n            className={styles.quotaPlanSelect}\n            value={planFilter}\n            onChange={(e) => setPlanFilter(e.target.value)}\n          >\n            <option value=\"all\">{t('quota_management.plan_filter_all')}</option>\n            {planOptions.map((plan) => (\n              <option key={plan} value={plan}>{plan}</option>\n            ))}\n          </select>\n        </div>\n      </div>\n",
+    )
+    replace_all(
+        path,
+        "        files={files}\n        loading={loading}\n        disabled={disableControls}\n",
+        "        files={filteredFiles}\n        cacheFiles={files}\n        loading={loading}\n        disabled={disableControls}\n",
+    )
+    replace_all(
+        path,
+        "        files={filteredFiles}\n        loading={loading}\n        disabled={disableControls}\n",
+        "        files={filteredFiles}\n        cacheFiles={files}\n        loading={loading}\n        disabled={disableControls}\n",
+    )
+
+
+def patch_quota_section(target: Path) -> None:
+    path = target / 'src/components/quota/QuotaSection.tsx'
+    replace_once(
+        path,
+        "  files: AuthFileItem[];\n  loading: boolean;\n",
+        "  files: AuthFileItem[];\n  cacheFiles?: AuthFileItem[];\n  loading: boolean;\n",
+    )
+    replace_once(
+        path,
+        "  files,\n  loading,\n  disabled\n}: QuotaSectionProps<TState, TData>) {",
+        "  files,\n  cacheFiles,\n  loading,\n  disabled\n}: QuotaSectionProps<TState, TData>) {",
+    )
+    insert_once(
+        path,
+        "  const filteredFiles = useMemo(() => files.filter((file) => config.filterFn(file)), [\n    files,\n    config\n  ]);\n",
+        "  const filteredFiles = useMemo(() => files.filter((file) => config.filterFn(file)), [\n    files,\n    config\n  ]);\n  const cacheSourceFiles = cacheFiles ?? files;\n  const cacheFilesForProvider = useMemo(\n    () => cacheSourceFiles.filter((file) => config.filterFn(file)),\n    [cacheSourceFiles, config]\n  );\n",
+        "cacheFilesForProvider",
+    )
+    replace_once(
+        path,
+        "  useEffect(() => {\n    if (loading) return;\n    if (filteredFiles.length === 0) {\n      setQuota({});\n      return;\n    }\n    setQuota((prev) => {\n      const nextState: Record<string, TState> = {};\n      filteredFiles.forEach((file) => {\n        const cached = prev[file.name];\n        if (cached) {\n          nextState[file.name] = cached;\n        }\n      });\n      return nextState;\n    });\n  }, [filteredFiles, loading, setQuota]);\n",
+        "  useEffect(() => {\n    if (loading) return;\n    if (cacheFilesForProvider.length === 0) {\n      setQuota({});\n      return;\n    }\n    setQuota((prev) => {\n      const nextState: Record<string, TState> = {};\n      cacheFilesForProvider.forEach((file) => {\n        const cached = prev[file.name];\n        if (cached) {\n          nextState[file.name] = cached;\n        }\n      });\n      return nextState;\n    });\n  }, [cacheFilesForProvider, loading, setQuota]);\n",
     )
 
 
@@ -542,6 +772,12 @@ def patch_quota_styles(target: Path) -> None:
         ".kimiCard {\n",
         ".geminiCliCard {\n  background-image: linear-gradient(180deg, rgba(224, 232, 255, 0.2), rgba(224, 232, 255, 0));\n}\n\n.kimiCard {\n",
         ".geminiCliCard",
+    )
+    insert_once(
+        path,
+        ".pageHeader {\n",
+        ".quotaFilterBar {\n  display: flex;\n  gap: $spacing-sm;\n  margin-top: $spacing-md;\n  flex-wrap: wrap;\n}\n\n.quotaSearchInput {\n  flex: 1;\n  min-width: 200px;\n  padding: $spacing-sm $spacing-md;\n  border: 1px solid var(--border-color);\n  border-radius: $radius-md;\n  background-color: var(--bg-secondary);\n  color: var(--text-primary);\n  font-size: 13px;\n  outline: none;\n  transition: border-color 0.15s ease;\n\n  &:focus {\n    border-color: var(--primary-color);\n  }\n\n  &::placeholder {\n    color: var(--text-secondary);\n  }\n}\n\n.quotaPlanSelect {\n  min-width: 140px;\n  padding: $spacing-sm $spacing-md;\n  border: 1px solid var(--border-color);\n  border-radius: $radius-md;\n  background-color: var(--bg-secondary);\n  color: var(--text-primary);\n  font-size: 13px;\n  cursor: pointer;\n  outline: none;\n  transition: border-color 0.15s ease;\n\n  &:focus {\n    border-color: var(--primary-color);\n  }\n}\n\n.pageHeader {\n",
+        ".quotaFilterBar",
     )
 
 
@@ -845,7 +1081,7 @@ def patch_supporting_api_and_types(target: Path) -> None:
     replace_once(
         auth_files_path,
         "  deleteAll: () => apiClient.delete('/auth-files', { params: { all: true } }),\n",
-        "  deleteAll: async () => {\n    const response = await apiClient.delete('/auth-files', { params: { all: true } });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n",
+        "  deleteAll: async () => {\n    const response = await apiClient.delete('/auth-files', { params: { all: true } });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n  resetQuota: (authIndex: string) =>\n    apiClient.post<{ status: string; auth_index: string; models?: string[] }>('/reset-quota', {\n      auth_index: authIndex,\n    }),\n",
     )
 
     api_index_path = target / 'src/services/api/index.ts'
@@ -908,6 +1144,66 @@ def patch_supporting_api_and_types(target: Path) -> None:
             raise RuntimeError(f'Pattern not found in {select_path}: Select trigger className')
 
 
+def patch_auth_files_batch_actions(target: Path) -> None:
+    hook_path = target / 'src/features/authFiles/hooks/useAuthFilesData.ts'
+    replace_once(
+        hook_path,
+        "  batchDownload: (names: string[]) => Promise<void>;\n  batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;\n  batchDelete: (names: string[]) => void;\n};\n",
+        "  batchDownload: (names: string[]) => Promise<void>;\n  batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;\n  batchDelete: (names: string[]) => void;\n  batchTest: (files: AuthFileItem[]) => Promise<import('@/features/authFiles/hooks/useAuthFilesBatchActions').BatchActionSummary>;\n  batchClearErrors: (files: AuthFileItem[]) => Promise<import('@/features/authFiles/hooks/useAuthFilesBatchActions').BatchActionSummary>;\n  batchTestRunning: boolean;\n  batchClearErrorsRunning: boolean;\n  batchResultType: 'test' | 'clear' | null;\n  batchResult: import('@/features/authFiles/hooks/useAuthFilesBatchActions').BatchActionSummary | null;\n  clearBatchResult: () => void;\n};\n",
+    )
+    replace_once(
+        hook_path,
+        "import { MAX_AUTH_FILE_SIZE } from '@/utils/constants';\n",
+        "import { useAuthFilesBatchActions } from '@/features/authFiles/hooks/useAuthFilesBatchActions';\nimport { MAX_AUTH_FILE_SIZE } from '@/utils/constants';\n",
+    )
+    replace_once(
+        hook_path,
+        "  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());\n",
+        "  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());\n  const batchActions = useAuthFilesBatchActions();\n",
+    )
+    replace_once(
+        hook_path,
+        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n  };\n}\n",
+        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n    batchTest: batchActions.batchTest,\n    batchClearErrors: batchActions.batchClearErrors,\n    batchTestRunning: batchActions.batchTestRunning,\n    batchClearErrorsRunning: batchActions.batchClearErrorsRunning,\n    batchResultType: batchActions.batchResultType,\n    batchResult: batchActions.batchResult,\n    clearBatchResult: batchActions.clearBatchResult,\n  };\n}\n",
+    )
+
+    page_path = target / 'src/pages/AuthFilesPage.tsx'
+    insert_once(
+        page_path,
+        "import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';\n",
+        "import { BatchActionResultDialog } from '@/features/authFiles/components/BatchActionResultDialog';\nimport { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';\n",
+        "BatchActionResultDialog",
+    )
+    replace_once(
+        page_path,
+        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n  } = useAuthFilesData();\n",
+        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n    batchTest,\n    batchClearErrors,\n    batchTestRunning,\n    batchClearErrorsRunning,\n    batchResultType,\n    batchResult,\n    clearBatchResult,\n  } = useAuthFilesData();\n",
+    )
+    replace_once(
+        page_path,
+        "                <div className={styles.batchActionRight}>\n                  <Button\n                    variant=\"secondary\"\n                    size=\"sm\"\n                    onClick={() => void batchDownload(selectedNames)}\n                    disabled={disableControls || selectedNames.length === 0}\n                  >\n                    {t('auth_files.batch_download')}\n                  </Button>\n",
+        "                <div className={styles.batchActionRight}>\n                  <Button\n                    variant=\"secondary\"\n                    size=\"sm\"\n                    onClick={() => void batchTest(selectedFileItems)}\n                    disabled={disableControls || selectedNames.length === 0 || batchTestRunning}\n                  >\n                    {batchTestRunning ? t('auth_files.batch_test_running') : t('auth_files.batch_test')}\n                  </Button>\n                  <Button\n                    variant=\"secondary\"\n                    size=\"sm\"\n                    onClick={() => void batchClearErrors(selectedFileItems).then(() => loadFiles())}\n                    disabled={disableControls || selectedNames.length === 0 || batchClearErrorsRunning}\n                  >\n                    {batchClearErrorsRunning ? t('auth_files.batch_clear_errors_running') : t('auth_files.batch_clear_errors')}\n                  </Button>\n                  <Button\n                    variant=\"secondary\"\n                    size=\"sm\"\n                    onClick={() => void batchDownload(selectedNames)}\n                    disabled={disableControls || selectedNames.length === 0}\n                  >\n                    {t('auth_files.batch_download')}\n                  </Button>\n",
+    )
+    replace_once(
+        page_path,
+        "  const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);\n",
+        "  const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);\n  const selectedFileItems = useMemo(\n    () => files.filter((file) => selectedFiles.has(file.name)),\n    [files, selectedFiles]\n  );\n",
+    )
+    replace_once(
+        page_path,
+        "        : null}\n    </div>\n  );\n}\n",
+        "        : null}\n        <BatchActionResultDialog\n          open={batchResult !== null}\n          title={batchResultType === 'clear'\n            ? t('auth_files.batch_clear_errors_title')\n            : t('auth_files.batch_test_title')}\n          summary={batchResult}\n          onClose={clearBatchResult}\n        />\n    </div>\n  );\n}\n",
+    )
+
+    scss_path = target / 'src/pages/AuthFilesPage.module.scss'
+    insert_once(
+        scss_path,
+        ".pageInfo {\n  font-size: 13px;\n  color: var(--text-secondary);\n",
+        ".batchResultSummary {\n  display: flex;\n  flex-wrap: wrap;\n  gap: $spacing-md;\n  margin-bottom: $spacing-md;\n  font-size: 13px;\n}\n\n.batchResultSuccess {\n  color: #16a34a;\n  font-weight: 600;\n}\n\n.batchResultFailed {\n  color: #dc2626;\n  font-weight: 600;\n}\n\n.batchResultSkipped {\n  color: var(--text-secondary);\n  font-weight: 600;\n}\n\n.batchResultTotal {\n  color: var(--text-primary);\n  font-weight: 600;\n}\n\n.batchResultTableWrapper {\n  max-height: 400px;\n  overflow-y: auto;\n  border: 1px solid var(--border-color);\n  border-radius: $radius-md;\n}\n\n.batchResultTable {\n  width: 100%;\n  border-collapse: collapse;\n  font-size: 13px;\n\n  thead {\n    position: sticky;\n    top: 0;\n    background-color: var(--bg-secondary);\n    z-index: 1;\n\n    th {\n      padding: $spacing-sm $spacing-md;\n      text-align: left;\n      font-weight: 600;\n      color: var(--text-secondary);\n      border-bottom: 1px solid var(--border-color);\n    }\n  }\n\n  tbody td {\n    padding: $spacing-sm $spacing-md;\n    border-bottom: 1px solid var(--border-color);\n    vertical-align: top;\n  }\n}\n\n.batchResultCellName {\n  font-weight: 500;\n  word-break: break-all;\n}\n\n.batchResultCellError {\n  color: var(--text-secondary);\n  word-break: break-word;\n  max-width: 280px;\n}\n\n.batchResultBadgeSuccess {\n  display: inline-block;\n  padding: 2px 8px;\n  border-radius: $radius-full;\n  background-color: rgba(22, 163, 74, 0.12);\n  color: #16a34a;\n  font-size: 12px;\n  font-weight: 600;\n}\n\n.batchResultBadgeFailed {\n  display: inline-block;\n  padding: 2px 8px;\n  border-radius: $radius-full;\n  background-color: rgba(220, 38, 38, 0.12);\n  color: #dc2626;\n  font-size: 12px;\n  font-weight: 600;\n}\n\n.batchResultBadgeSkipped {\n  display: inline-block;\n  padding: 2px 8px;\n  border-radius: $radius-full;\n  background-color: var(--bg-secondary);\n  color: var(--text-secondary);\n  font-size: 12px;\n  font-weight: 600;\n}\n\n.batchResultActions {\n  display: flex;\n  justify-content: flex-end;\n  gap: $spacing-sm;\n  margin-top: $spacing-md;\n}\n\n.batchResultCloseButton {\n  padding: $spacing-sm $spacing-lg;\n  border-radius: $radius-md;\n  background-color: var(--bg-secondary);\n  color: var(--text-primary);\n  border: 1px solid var(--border-color);\n  cursor: pointer;\n  font-size: 13px;\n  font-weight: 500;\n  transition: background-color 0.15s ease;\n\n  &:hover {\n    background-color: var(--bg-tertiary);\n  }\n}\n\n.pageInfo {\n  font-size: 13px;\n  color: var(--text-secondary);\n",
+        ".batchResultSummary {",
+    )
+
+
 def patch_locales(target: Path) -> None:
     monitoring = json.loads(LOCALES_FILE.read_text())
     locales_dir = target / 'src/i18n/locales'
@@ -935,6 +1231,10 @@ def patch_locales(target: Path) -> None:
             AUTH_FILES_SEARCH_PLACEHOLDER_KEYS['en.json'],
         )
         data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
+        batch_locale = AUTH_FILES_BATCH_LOCALE_KEYS.get(locale_path.name, AUTH_FILES_BATCH_LOCALE_KEYS['en.json'])
+        data.setdefault('auth_files', {}).update(batch_locale)
+        quota_search_locale = QUOTA_PAGE_SEARCH_LOCALE_KEYS.get(locale_path.name, QUOTA_PAGE_SEARCH_LOCALE_KEYS['en.json'])
+        data.setdefault('quota_management', {}).update(quota_search_locale)
         locale_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
 
@@ -957,9 +1257,11 @@ def main() -> None:
     patch_quota_configs(target)
     patch_antigravity_quota_builders(target)
     patch_quota_page(target)
+    patch_quota_section(target)
     patch_quota_card(target)
     patch_quota_styles(target)
     patch_auth_files_page_search(target)
+    patch_auth_files_batch_actions(target)
     patch_supporting_api_and_types(target)
     patch_locales(target)
     flush_writes()

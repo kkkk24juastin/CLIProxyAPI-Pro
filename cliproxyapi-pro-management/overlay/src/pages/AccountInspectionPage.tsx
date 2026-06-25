@@ -658,6 +658,14 @@ const maxAntigravityGroupUsedPercent = (groups: unknown[]): number | null => {
   return Math.max(...values);
 };
 
+const minAntigravityGroupUsedPercent = (groups: unknown[]): number | null => {
+  const values = groups
+    .map(antigravityGroupUsedPercent)
+    .filter((value): value is number => value !== null);
+  if (values.length === 0) return null;
+  return Math.min(...values);
+};
+
 const isAntigravityClaudeGptGroup = (group: unknown): boolean => {
   if (!isRecordValue(group)) return false;
   const normalize = (value: unknown) =>
@@ -678,9 +686,11 @@ const isAntigravityQuotaLow = (
 ) => {
   if (!isRecordValue(quota) || quota.status !== 'success') return false;
   const groups = Array.isArray(quota.groups) ? quota.groups : [];
-  const used = quotaMode === 'max-used'
-    ? maxAntigravityGroupUsedPercent(groups)
-    : (maxAntigravityGroupUsedPercent(groups.filter(isAntigravityClaudeGptGroup)) ?? maxAntigravityGroupUsedPercent(groups));
+  const used = (() => {
+    if (quotaMode === 'max-used') return maxAntigravityGroupUsedPercent(groups);
+    if (quotaMode === 'any-group') return minAntigravityGroupUsedPercent(groups);
+    return maxAntigravityGroupUsedPercent(groups.filter(isAntigravityClaudeGptGroup)) ?? maxAntigravityGroupUsedPercent(groups);
+  })();
   return used !== null && used >= usedPercentThreshold;
 };
 
@@ -970,6 +980,7 @@ const AUTO_ERROR_ACTION_OPTIONS: Array<{ value: AccountInspectionAutoErrorAction
 const ANTIGRAVITY_QUOTA_MODE_OPTIONS: Array<{ value: AccountInspectionAntigravityQuotaMode; labelKey: string }> = [
   { value: 'claude-gpt', labelKey: 'monitoring.account_inspection_settings_antigravity_quota_mode_claude_gpt' },
   { value: 'max-used', labelKey: 'monitoring.account_inspection_settings_antigravity_quota_mode_max_used' },
+  { value: 'any-group', labelKey: 'monitoring.account_inspection_settings_antigravity_quota_mode_any_group' },
 ];
 
 const {

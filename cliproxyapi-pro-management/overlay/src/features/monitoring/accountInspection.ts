@@ -8,7 +8,7 @@ export type AccountInspectionExecutionAction = Exclude<AccountInspectionAction, 
 export type AccountInspectionProgressStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'completed' | 'failed';
 export type AccountInspectionDeepProbeStatus = 'success' | 'quota' | 'auth_error' | 'transient_error' | 'skipped' | '';
 export type AccountInspectionAutoErrorAction = 'none' | 'disable' | 'delete';
-export type AccountInspectionAntigravityQuotaMode = 'max-used' | 'claude-gpt';
+export type AccountInspectionAntigravityQuotaMode = 'max-used' | 'claude-gpt' | 'any-group';
 
 export interface AccountInspectionSettings {
   baseUrl: string;
@@ -299,7 +299,8 @@ export const normalizeAutoErrorAction = (value: unknown): AccountInspectionAutoE
 
 export const normalizeAntigravityQuotaMode = (value: unknown): AccountInspectionAntigravityQuotaMode => {
   const normalized = readStringValue(value).toLowerCase();
-  return normalized === 'max-used' ? 'max-used' : 'claude-gpt';
+  if (normalized === 'max-used' || normalized === 'any-group') return normalized;
+  return 'claude-gpt';
 };
 
 export const formatAccountInspectionIdentity = (

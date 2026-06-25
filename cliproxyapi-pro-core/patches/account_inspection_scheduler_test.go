@@ -634,6 +634,47 @@ func TestBuildAntigravityGroupsCanonicalizesLatestGroups(t *testing.T) {
 	}
 }
 
+func TestAntigravityAnyGroupModeKeepsAccountWhenAnyGroupHasQuota(t *testing.T) {
+	groups := []map[string]any{
+		{
+			"id":    "gemini",
+			"label": "Gemini Models",
+			"buckets": []map[string]any{
+				{"id": "gemini-weekly", "remainingFraction": 0.5},
+				{"id": "gemini-5h", "remainingFraction": 0.25},
+			},
+		},
+		{
+			"id":    "claude-gpt",
+			"label": "Claude and GPT models",
+			"buckets": []map[string]any{
+				{"id": "3p-weekly", "remainingFraction": 0},
+				{"id": "3p-5h", "remainingFraction": 0},
+			},
+		},
+	}
+
+	maxUsed := antigravityUsedPercent(groups, accountInspectionAntigravityQuotaModeMaxUsed)
+	if maxUsed == nil || *maxUsed != 100 {
+		t.Fatalf("max-used percent = %v, want 100", maxUsed)
+	}
+	anyGroupUsed := antigravityUsedPercent(groups, accountInspectionAntigravityQuotaModeAnyGroup)
+	if anyGroupUsed == nil || *anyGroupUsed != 75 {
+		t.Fatalf("any-group percent = %v, want 75", anyGroupUsed)
+	}
+
+	active := accountInspectionAccount{Disabled: false}
+	activeDecision := quotaDecision(active, anyGroupUsed, anyGroupUsed != nil, 100)
+	if activeDecision.Action != accountInspectionActionKeep {
+		t.Fatalf("active any-group decision = %q, want keep", activeDecision.Action)
+	}
+	disabled := accountInspectionAccount{Disabled: true}
+	disabledDecision := quotaDecision(disabled, anyGroupUsed, anyGroupUsed != nil, 100)
+	if disabledDecision.Action != accountInspectionActionEnable {
+		t.Fatalf("disabled any-group decision = %q, want enable", disabledDecision.Action)
+	}
+}
+
 func TestBuildGeminiCLIQuotaBucketsGroupsLatestModels(t *testing.T) {
 	body := `{
 		"buckets": [

@@ -1,4 +1,4 @@
-name: Publish CLIProxyAPI Pro Release
+name: Publish CLIProxyAPI Pro Docker and Management
 
 on:
   workflow_dispatch:
@@ -25,7 +25,7 @@ jobs:
       management_version: ${{ steps.compare.outputs.management_version }}
 
     steps:
-      - name: Compare latest core release
+      - name: Compare latest upstream releases
         id: compare
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -69,14 +69,18 @@ jobs:
           fi
 
           target_exists="false"
+          has_management_asset="false"
           if gh release view "${release_tag}" --repo "${CURRENT_REPO}" >/dev/null 2>&1; then
             target_exists="true"
+            has_management_asset="$(gh release view "${release_tag}" --repo "${CURRENT_REPO}" --json assets --jq 'any(.assets[]; .name == "management.html")')"
           fi
 
           should_release="false"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             should_release="true"
           elif [ "${target_exists}" = "false" ]; then
+            should_release="true"
+          elif [ "${has_management_asset}" != "true" ]; then
             should_release="true"
           elif version_gt "${core_version}" "${current_version}"; then
             should_release="true"
@@ -90,6 +94,8 @@ jobs:
           echo "management_version=${management_version}"
           echo "release_tag=${release_tag}"
           echo "release_version=${release_version}"
+          echo "target_exists=${target_exists}"
+          echo "has_management_asset=${has_management_asset}"
           echo "should_release=${should_release}"
 
           echo "core_tag=${core_tag}" >> "${GITHUB_OUTPUT}"
@@ -101,9 +107,7 @@ jobs:
           echo "should_release=${should_release}" >> "${GITHUB_OUTPUT}"
 
   build-docker-image:
-    needs:
-      - check-version
-      - build-core-binaries
+    needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 
@@ -114,51 +118,7 @@ jobs:
       - name: Checkout customizations
         uses: actions/checkout@v5
         with:
-          path: customizations-repo
           fetch-depth: 1
-
-      - name: Download Linux amd64 core asset
-        uses: actions/download-artifact@v4
-        with:
-          name: core-release-assets-linux-amd64
-          path: docker-assets/linux-amd64
-
-      - name: Download Linux arm64 core asset
-        uses: actions/download-artifact@v4
-        with:
-          name: core-release-assets-linux-arm64
-          path: docker-assets/linux-arm64
-
-      - name: Prepare Docker runtime context
-        env:
-          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-
-          context_dir="docker-runtime-context"
-          rm -rf "${context_dir}"
-          mkdir -p "${context_dir}/binaries/linux/amd64" "${context_dir}/binaries/linux/arm64"
-
-          amd64_archive="docker-assets/linux-amd64/CLIProxyAPI_${RELEASE_TAG#v}_linux_amd64.tar.gz"
-          arm64_archive="docker-assets/linux-arm64/CLIProxyAPI_${RELEASE_TAG#v}_linux_aarch64.tar.gz"
-          test -f "${amd64_archive}"
-          test -f "${arm64_archive}"
-
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "${tmp_dir}"' EXIT
-
-          mkdir -p "${tmp_dir}/amd64" "${tmp_dir}/arm64"
-          tar -xzf "${amd64_archive}" -C "${tmp_dir}/amd64"
-          tar -xzf "${arm64_archive}" -C "${tmp_dir}/arm64"
-
-          cp "${tmp_dir}/amd64/cli-proxy-api" "${context_dir}/binaries/linux/amd64/CLIProxyAPI"
-          cp "${tmp_dir}/arm64/cli-proxy-api" "${context_dir}/binaries/linux/arm64/CLIProxyAPI"
-          cp "${tmp_dir}/amd64/config.example.yaml" "${context_dir}/config.example.yaml"
-          cp customizations-repo/cliproxyapi-pro-core/entrypoint.sh "${context_dir}/entrypoint.sh"
-          cp customizations-repo/cliproxyapi-pro-core/Dockerfile.runtime "${context_dir}/Dockerfile.runtime"
-
-          chmod +x "${context_dir}/binaries/linux/amd64/CLIProxyAPI" "${context_dir}/binaries/linux/arm64/CLIProxyAPI"
-          ls -lh "${context_dir}/binaries/linux/amd64/CLIProxyAPI" "${context_dir}/binaries/linux/arm64/CLIProxyAPI"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -175,394 +135,16 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: ./docker-runtime-context
-          file: ./docker-runtime-context/Dockerfile.runtime
+          context: ./cliproxyapi-pro-core
+          file: ./cliproxyapi-pro-core/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            CLIPROXY_VERSION=${{ needs.check-version.outputs.core_tag }}
+            CLIPROXY_BUILD_VERSION=${{ needs.check-version.outputs.release_tag }}
           tags: |
             ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro:latest
             ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro:${{ needs.check-version.outputs.release_tag }}
-
-  build-core-binaries:
-    needs: check-version
-    if: needs.check-version.outputs.should_release == 'true'
-    runs-on: ${{ matrix.runner }}
-
-    defaults:
-      run:
-        shell: bash
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: darwin-amd64
-            kind: hosted-plugin
-            runner: macos-15-intel
-            goos: darwin
-            goarch: amd64
-            asset_arch: amd64
-            archive_format: tar.gz
-            asset_suffix: ""
-          - target: darwin-arm64
-            kind: hosted-plugin
-            runner: macos-15
-            goos: darwin
-            goarch: arm64
-            asset_arch: aarch64
-            archive_format: tar.gz
-            asset_suffix: ""
-          - target: windows-amd64
-            kind: hosted-plugin
-            runner: windows-latest
-            goos: windows
-            goarch: amd64
-            asset_arch: amd64
-            archive_format: zip
-            asset_suffix: ""
-          - target: windows-arm64
-            kind: hosted-plugin
-            runner: windows-11-arm
-            goos: windows
-            goarch: arm64
-            asset_arch: aarch64
-            archive_format: zip
-            asset_suffix: ""
-          - target: linux-amd64
-            kind: linux-glibc-plugin
-            runner: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            asset_arch: amd64
-            archive_format: tar.gz
-            asset_suffix: ""
-            manylinux_image: quay.io/pypa/manylinux2014_x86_64
-          - target: linux-arm64
-            kind: linux-glibc-plugin
-            runner: ubuntu-24.04-arm
-            goos: linux
-            goarch: arm64
-            asset_arch: aarch64
-            archive_format: tar.gz
-            asset_suffix: ""
-            manylinux_image: quay.io/pypa/manylinux2014_aarch64
-          - target: linux-amd64-no-plugin
-            kind: no-plugin
-            runner: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            asset_arch: amd64
-            archive_format: tar.gz
-            asset_suffix: _no-plugin
-          - target: linux-arm64-no-plugin
-            kind: no-plugin
-            runner: ubuntu-latest
-            goos: linux
-            goarch: arm64
-            asset_arch: aarch64
-            archive_format: tar.gz
-            asset_suffix: _no-plugin
-          - target: freebsd-amd64
-            kind: freebsd-plugin
-            runner: ubuntu-latest
-            goos: freebsd
-            goarch: amd64
-            asset_arch: amd64
-            archive_format: tar.gz
-            asset_suffix: ""
-          - target: freebsd-amd64-no-plugin
-            kind: no-plugin
-            runner: ubuntu-latest
-            goos: freebsd
-            goarch: amd64
-            asset_arch: amd64
-            archive_format: tar.gz
-            asset_suffix: _no-plugin
-          - target: freebsd-arm64-no-plugin
-            kind: no-plugin
-            runner: ubuntu-latest
-            goos: freebsd
-            goarch: arm64
-            asset_arch: aarch64
-            archive_format: tar.gz
-            asset_suffix: _no-plugin
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout customizations
-        uses: actions/checkout@v5
-        with:
-          path: customizations-repo
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Checkout core upstream release
-        uses: actions/checkout@v5
-        with:
-          repository: router-for-me/CLIProxyAPI
-          ref: ${{ needs.check-version.outputs.core_tag }}
-          path: upstream-core
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: upstream-core/go.mod
-          cache: true
-          cache-dependency-path: upstream-core/go.sum
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.x'
-
-      - name: Prepare Pro core source
-        id: prepare-core
-        env:
-          SRC_ROOT: ${{ github.workspace }}/upstream-core
-          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
-          CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
-        run: |
-          set -euo pipefail
-          git -C upstream-core fetch --depth 1 https://github.com/router-for-me/models.git main
-          git -C upstream-core show FETCH_HEAD:models.json > upstream-core/internal/registry/models/models.json
-          python customizations-repo/cliproxyapi-pro-core/patches/apply_upstream_patches.py
-          cp customizations-repo/README.md upstream-core/README.md
-          cp customizations-repo/README_EN.md upstream-core/README_EN.md
-          cd upstream-core
-          go mod tidy
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .
-          git diff --cached --quiet || git commit -m "Apply CLIProxyAPI Pro release customizations"
-          git tag -f "${RELEASE_TAG}"
-          echo "GO_VERSION=$(go env GOVERSION | sed 's/^go//')" >> "${GITHUB_ENV}"
-          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "BUILD_DATE=${build_date}" >> "${GITHUB_ENV}"
-          echo "build_date=${build_date}" >> "${GITHUB_OUTPUT}"
-
-      - name: Build hosted plugin-capable archive
-        if: matrix.kind == 'hosted-plugin'
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
-          CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          ASSET_ARCH: ${{ matrix.asset_arch }}
-          ARCHIVE_FORMAT: ${{ matrix.archive_format }}
-          BUILD_DATE: ${{ steps.prepare-core.outputs.build_date }}
-        run: |
-          set -euo pipefail
-          cd upstream-core
-
-          binary_name="cli-proxy-api"
-          if [ "${GOOS}" = "windows" ]; then
-            binary_name="cli-proxy-api.exe"
-          fi
-
-          archive_dir="dist/${GOOS}-${GOARCH}/archive"
-          archive_name="CLIProxyAPI_${RELEASE_TAG#v}_${GOOS}_${ASSET_ARCH}.${ARCHIVE_FORMAT}"
-          rm -rf "dist/${GOOS}-${GOARCH}"
-          mkdir -p "${archive_dir}"
-
-          CGO_ENABLED=1 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -buildvcs=false \
-            -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
-            -o "${archive_dir}/${binary_name}" ./cmd/server/
-
-          cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
-          if [ "${ARCHIVE_FORMAT}" = "zip" ]; then
-            powershell -NoProfile -Command "Compress-Archive -Path '${archive_dir}/*' -DestinationPath 'dist/${archive_name}' -Force"
-          else
-            tar -C "${archive_dir}" -czf "dist/${archive_name}" "${binary_name}" LICENSE README.md README_EN.md config.example.yaml
-          fi
-
-      - name: Build Linux glibc plugin-capable archive
-        if: matrix.kind == 'linux-glibc-plugin'
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
-          CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
-          GOARCH: ${{ matrix.goarch }}
-          ASSET_ARCH: ${{ matrix.asset_arch }}
-          MANYLINUX_IMAGE: ${{ matrix.manylinux_image }}
-        run: |
-          set -euo pipefail
-          cd upstream-core
-
-          archive_dir="dist/linux-${GOARCH}/archive"
-          archive_name="CLIProxyAPI_${RELEASE_TAG#v}_linux_${ASSET_ARCH}.tar.gz"
-          rm -rf "dist/linux-${GOARCH}"
-          mkdir -p "${archive_dir}"
-
-          docker run --rm \
-            -v "${PWD}:/src" \
-            -w /src \
-            -e GO_VERSION \
-            -e GOARCH \
-            -e RELEASE_TAG \
-            -e CORE_TAG \
-            -e BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            "${MANYLINUX_IMAGE}" \
-            bash -euo pipefail -c '
-              go_archive="go${GO_VERSION}.linux-${GOARCH}.tar.gz"
-              curl -fsSL "https://go.dev/dl/${go_archive}" -o "/tmp/${go_archive}"
-              rm -rf /usr/local/go
-              tar -C /usr/local -xzf "/tmp/${go_archive}"
-              export PATH="/usr/local/go/bin:${PATH}"
-
-              CGO_ENABLED=1 GOOS=linux GOARCH="${GOARCH}" go build -buildvcs=false \
-                -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
-                -o "'"${archive_dir}"'/cli-proxy-api" ./cmd/server/
-
-              glibc_versions="$(readelf --version-info "'"${archive_dir}"'/cli-proxy-api" | sed -n "s/.*Name: GLIBC_\([0-9.]*\).*/\1/p" | sort -Vu)"
-              if [ -n "${glibc_versions}" ]; then
-                printf "GLIBC versions:\n%s\n" "${glibc_versions}"
-                max_glibc="$(printf "%s\n" "${glibc_versions}" | sort -V | tail -n 1)"
-                if [ "$(printf "2.17\n%s\n" "${max_glibc}" | sort -V | tail -n 1)" != "2.17" ]; then
-                  printf "linux %s binary requires GLIBC_%s, expected GLIBC_2.17 or older\n" "${GOARCH}" "${max_glibc}" >&2
-                  exit 1
-                fi
-              fi
-            '
-
-          cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
-          tar -C "${archive_dir}" -czf "dist/${archive_name}" cli-proxy-api LICENSE README.md README_EN.md config.example.yaml
-
-      - name: Install FreeBSD plugin build dependencies
-        if: matrix.kind == 'freebsd-plugin'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y clang lld wget
-
-      - name: Prepare workspace git metadata for FreeBSD plugin build
-        if: matrix.kind == 'freebsd-plugin'
-        run: |
-          set -euo pipefail
-          git init .
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit --allow-empty -m "Prepare workspace metadata for cgo action"
-
-      - name: Build FreeBSD plugin-capable binary
-        if: matrix.kind == 'freebsd-plugin'
-        uses: go-cross/cgo-actions@v1
-        with:
-          dir: upstream-core
-          packages: ./cmd/server/
-          targets: ${{ matrix.goos }}-${{ matrix.goarch }}
-          out-dir: upstream-core/dist/${{ matrix.target }}/bin
-          output: cli-proxy-api
-          flags: -ldflags=-s -w
-          x-flags: |
-            main.Version=${{ needs.check-version.outputs.release_tag }}
-            main.Commit=release-${{ needs.check-version.outputs.core_tag }}
-            main.BuildDate=${{ steps.prepare-core.outputs.build_date }}
-
-      - name: Package FreeBSD plugin-capable archive
-        if: matrix.kind == 'freebsd-plugin'
-        env:
-          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
-          GOOS: ${{ matrix.goos }}
-          ASSET_ARCH: ${{ matrix.asset_arch }}
-        run: |
-          set -euo pipefail
-          cd upstream-core
-
-          archive_dir="dist/${{ matrix.target }}/archive"
-          archive_name="CLIProxyAPI_${RELEASE_TAG#v}_${GOOS}_${ASSET_ARCH}.tar.gz"
-          mkdir -p "${archive_dir}"
-          cp "dist/${{ matrix.target }}/bin/cli-proxy-api" "${archive_dir}/cli-proxy-api"
-          cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
-          tar -C "${archive_dir}" -czf "dist/${archive_name}" cli-proxy-api LICENSE README.md README_EN.md config.example.yaml
-
-      - name: Build no-plugin archive
-        if: matrix.kind == 'no-plugin'
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
-          CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          ASSET_ARCH: ${{ matrix.asset_arch }}
-          ASSET_SUFFIX: ${{ matrix.asset_suffix }}
-          BUILD_DATE: ${{ steps.prepare-core.outputs.build_date }}
-        run: |
-          set -euo pipefail
-          cd upstream-core
-
-          archive_dir="dist/${GOOS}-${GOARCH}${ASSET_SUFFIX}/archive"
-          archive_name="CLIProxyAPI_${RELEASE_TAG#v}_${GOOS}_${ASSET_ARCH}${ASSET_SUFFIX}.tar.gz"
-          rm -rf "dist/${GOOS}-${GOARCH}${ASSET_SUFFIX}"
-          mkdir -p "${archive_dir}"
-
-          CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -buildvcs=false \
-            -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
-            -o "${archive_dir}/cli-proxy-api" ./cmd/server/
-
-          if [ "${GOOS}" = "linux" ] && readelf -l "${archive_dir}/cli-proxy-api" | grep -q 'Requesting program interpreter'; then
-            readelf -l "${archive_dir}/cli-proxy-api" >&2
-            echo "no-plugin linux binary must not require a dynamic interpreter" >&2
-            exit 1
-          fi
-
-          cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
-          tar -C "${archive_dir}" -czf "dist/${archive_name}" cli-proxy-api LICENSE README.md README_EN.md config.example.yaml
-
-      - name: Upload core binary assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: core-release-assets-${{ matrix.target }}
-          path: |
-            upstream-core/dist/*.tar.gz
-            upstream-core/dist/*.zip
-          if-no-files-found: error
-          retention-days: 7
-
-  assemble-core-assets:
-    needs:
-      - check-version
-      - build-core-binaries
-    if: needs.check-version.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Download core binary assets
-        uses: actions/download-artifact@v4
-        with:
-          pattern: core-release-assets-*
-          path: core-assets
-          merge-multiple: true
-
-      - name: Generate checksums
-        working-directory: core-assets
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
-          if [ "${#archives[@]}" -eq 0 ]; then
-            echo "No core binary assets found" >&2
-            exit 1
-          fi
-          sha256sum "${archives[@]}" | sort -k2 > checksums.txt
-
-      - name: Upload assembled core assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: core-release-assets
-          path: |
-            core-assets/*.tar.gz
-            core-assets/*.zip
-            core-assets/checksums.txt
-          if-no-files-found: error
-          retention-days: 7
 
   build-management-html:
     needs: check-version
@@ -621,19 +203,18 @@ jobs:
           mv index.html management.html
           ls -lh management.html
 
-      - name: Upload management asset
+      - name: Upload management artifact
         uses: actions/upload-artifact@v4
         with:
-          name: management-release-asset
+          name: management-html
           path: upstream-management/dist/management.html
           if-no-files-found: error
           retention-days: 7
 
-  publish-release:
+  publish-management-asset:
     needs:
       - check-version
       - build-docker-image
-      - assemble-core-assets
       - build-management-html
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
@@ -642,128 +223,49 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout customizations
-        uses: actions/checkout@v5
-        with:
-          path: customizations-repo
-          fetch-depth: 1
-
-      - name: Checkout core upstream release
-        uses: actions/checkout@v5
-        with:
-          repository: router-for-me/CLIProxyAPI
-          ref: ${{ needs.check-version.outputs.core_tag }}
-          path: upstream-core
-          fetch-depth: 1
-
-      - name: Checkout management upstream release
-        uses: actions/checkout@v5
-        with:
-          repository: router-for-me/Cli-Proxy-API-Management-Center
-          ref: ${{ needs.check-version.outputs.management_tag }}
-          path: upstream-management
-          fetch-depth: 1
-
-      - name: Download core binary assets
+      - name: Download management artifact
         uses: actions/download-artifact@v4
         with:
-          name: core-release-assets
-          path: release-assets/core
+          name: management-html
+          path: release-assets
 
-      - name: Download management asset
-        uses: actions/download-artifact@v4
-        with:
-          name: management-release-asset
-          path: release-assets/management
-
-      - name: Generate release notes
+      - name: Create release notes
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CORE_UPSTREAM_REPO: router-for-me/CLIProxyAPI
-          MANAGEMENT_UPSTREAM_REPO: router-for-me/Cli-Proxy-API-Management-Center
           RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
           RELEASE_VERSION: ${{ needs.check-version.outputs.release_version }}
           CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
-          CORE_VERSION: ${{ needs.check-version.outputs.core_version }}
           MANAGEMENT_TAG: ${{ needs.check-version.outputs.management_tag }}
           MANAGEMENT_VERSION: ${{ needs.check-version.outputs.management_version }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          CUSTOMIZATION_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          core_notes="$(gh release view "${CORE_TAG}" --repo "${CORE_UPSTREAM_REPO}" --json body --jq '.body // ""')"
-          management_notes="$(gh release view "${MANAGEMENT_TAG}" --repo "${MANAGEMENT_UPSTREAM_REPO}" --json body --jq '.body // ""')"
-          core_sha="$(git -C upstream-core rev-parse HEAD)"
-          management_sha="$(git -C upstream-management rev-parse HEAD)"
-          customization_sha="$(git -C customizations-repo rev-parse HEAD)"
 
-          format_upstream_notes() {
-            local repo="$1"
-            local notes="$2"
-            printf '%s\n' "${notes}" | REPO="${repo}" python3 -c '
-          import os
-          import re
-          import sys
+          cat > release-notes.md <<EOF
+          CLIProxyAPI Pro release built from upstream releases. This workflow publishes only the Docker image and the management frontend file.
 
-          repo = os.environ["REPO"]
-          commit_pattern = re.compile(r"^(\s*(?:[-*]\s+)?)?([0-9a-fA-F]{7,40})(\s+)")
-          pr_pattern = re.compile(r"(?<![\w/\]])#([0-9]+)\b")
+          ## Version mapping
 
-          def format_commit(match):
-              prefix = match.group(1) or ""
-              full_hash = match.group(2)
-              return f"{prefix}[{full_hash[:7]}](https://github.com/{repo}/commit/{full_hash}){match.group(3)}"
+          - Release tag: ${RELEASE_TAG}
+          - Release version: ${RELEASE_VERSION}
+          - Core upstream release: ${CORE_TAG}
+          - Docker image: ${DOCKER_USERNAME}/cliproxyapi-pro:${RELEASE_TAG}
+          - Docker latest image: ${DOCKER_USERNAME}/cliproxyapi-pro:latest
+          - Management upstream release: ${MANAGEMENT_TAG}
+          - Management build version: v${MANAGEMENT_VERSION}-pro
+          - Customization commit: ${CUSTOMIZATION_SHA}
 
-          for line in sys.stdin.read().splitlines():
-              line = commit_pattern.sub(format_commit, line, count=1)
-              line = pr_pattern.sub(
-                  lambda match: f"[#{match.group(1)}](https://github.com/{repo}/pull/{match.group(1)})",
-                  line,
-              )
-              print(line)
-          '
-          }
+          ## Assets
 
-          : > release-notes.md
-          {
-            echo "CLIProxyAPI Pro release built from the latest core and management upstream releases."
-            echo
-            echo "## Version mapping"
-            echo
-            echo "- Release tag: ${RELEASE_TAG}"
-            echo "- Core upstream release: ${CORE_TAG}"
-            echo "- Core build version: ${RELEASE_TAG}"
-            echo "- Management upstream release: ${MANAGEMENT_TAG}"
-            echo "- Management build version: v${MANAGEMENT_VERSION}-pro"
-            echo "- Core upstream commit: ${core_sha}"
-            echo "- Management upstream commit: ${management_sha}"
-            echo "- Customization commit: ${customization_sha}"
-            echo
-            echo "## Assets"
-            echo
-            echo "- Pro core default desktop/Linux binaries are built with CGO enabled and support dynamic library plugins when the target platform supports them."
-            echo "- Pro core \`_no-plugin\` binaries are CGO-free portable builds for static or constrained environments."
-            echo "- Pro Docker images follow upstream with CGO-enabled Debian builds and dynamic library plugin support."
-            echo "- Pro management panel is published as management.html for automatic panel updates."
-            echo
-            echo "<!-- cli-proxyapi-pro-core-start -->"
-            echo "## Core upstream release notes"
-            echo
-            if [ -n "${core_notes}" ]; then
-              format_upstream_notes "${CORE_UPSTREAM_REPO}" "${core_notes}"
-            else
-              echo "No core upstream release notes were provided."
-            fi
-            echo "<!-- cli-proxyapi-pro-core-end -->"
-            echo
-            echo "<!-- cli-proxyapi-pro-management-start -->"
-            echo "## Management upstream release notes"
-            echo
-            if [ -n "${management_notes}" ]; then
-              format_upstream_notes "${MANAGEMENT_UPSTREAM_REPO}" "${management_notes}"
-            else
-              echo "No management upstream release notes were provided."
-            fi
-            echo "<!-- cli-proxyapi-pro-management-end -->"
-          } >> release-notes.md
+          - Docker image: ${DOCKER_USERNAME}/cliproxyapi-pro:${RELEASE_TAG}
+          - Frontend file: management.html
+
+          <!-- cli-proxyapi-pro-management-start -->
+          ## Management upstream release notes
+
+          Management frontend was rebuilt from ${MANAGEMENT_TAG}.
+          <!-- cli-proxyapi-pro-management-end -->
+          EOF
 
       - name: Create or update Release
         env:
@@ -771,6 +273,7 @@ jobs:
           RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
         run: |
           set -euo pipefail
+
           if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release edit "${RELEASE_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
@@ -783,13 +286,14 @@ jobs:
               --notes-file release-notes.md
           fi
 
-          core_assets="$(
+          old_binary_assets="$(
             gh release view "${RELEASE_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
               --json assets \
               --jq '.assets[].name' |
               grep -E '^(CLIProxyAPI_.*\.(tar\.gz|zip)|checksums\.txt)$' || true
           )"
+
           while IFS= read -r asset; do
             if [ -z "${asset}" ]; then
               continue
@@ -797,253 +301,9 @@ jobs:
             gh release delete-asset "${RELEASE_TAG}" "${asset}" \
               --repo "${GITHUB_REPOSITORY}" \
               --yes || true
-          done <<< "${core_assets}"
+          done <<< "${old_binary_assets}"
 
           gh release upload "${RELEASE_TAG}" \
-            release-assets/core/*.tar.gz \
-            release-assets/core/*.zip \
-            release-assets/core/checksums.txt \
-            release-assets/management/management.html \
+            release-assets/management.html \
             --repo "${GITHUB_REPOSITORY}" \
             --clobber
-
-  backup-usage-statistics:
-    needs:
-      - check-version
-      - publish-release
-    if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Backup usage statistics to WebDAV
-        continue-on-error: true
-        env:
-          USAGE_BACKUP_TARGETS: ${{ secrets.CLIPROXY_USAGE_BACKUP_TARGETS }}
-        run: |
-          set -euo pipefail
-
-          TIMESTAMP=$(date -u +"%Y%m%d_%H%M%S")
-
-          if [ -z "$USAGE_BACKUP_TARGETS" ]; then
-            echo "⚠️ CLIPROXY_USAGE_BACKUP_TARGETS is not configured. Skipping usage backup."
-            exit 0
-          fi
-
-          backup_target() {
-            local name="$1"
-            local api_url="$2"
-            local management_password="$3"
-            local webdav_url="$4"
-            local webdav_username="$5"
-            local webdav_password="$6"
-            local filename="usage-export-${TIMESTAMP}.jsonl"
-
-            if [ -z "$api_url" ] || [ -z "$management_password" ] || [ -z "$webdav_url" ] || [ -z "$webdav_username" ] || [ -z "$webdav_password" ]; then
-              echo "⚠️ Usage backup target '$name' is missing required configuration. Skipping."
-              return 0
-            fi
-
-            echo "Exporting usage statistics for $name..."
-            if ! curl -sf -H "Authorization: Bearer $management_password" \
-              "$api_url/v0/management/usage/export" \
-              -o "$filename"; then
-              echo "⚠️ Failed to export usage statistics for $name. Skipping."
-              rm -f "$filename"
-              return 0
-            fi
-
-            echo "Uploading $filename to WebDAV for $name..."
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -T "$filename" \
-              -u "$webdav_username:$webdav_password" \
-              "$webdav_url/$filename" || echo "000")
-
-            if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-              echo "✅ Usage backup uploaded successfully for $name."
-            else
-              echo "⚠️ Failed to upload usage backup for $name. HTTP Status: $HTTP_STATUS. Skipping cleanup."
-              rm -f "$filename"
-              return 0
-            fi
-
-            echo "Cleaning up old backups for $name (keeping last 7)..."
-            OLD_FILES=$(curl -s -X PROPFIND \
-              -u "$webdav_username:$webdav_password" \
-              "$webdav_url/" \
-              -H "Depth: 1" | grep -oP 'usage-export-[0-9_]+\.(jsonl|json)' | sort -r | tail -n +8 || true)
-
-            for OLD_FILE in $OLD_FILES; do
-              echo "Deleting $OLD_FILE for $name..."
-              curl -s -X DELETE \
-                -u "$webdav_username:$webdav_password" \
-                "$webdav_url/$OLD_FILE" >/dev/null || true
-            done
-
-            rm -f "$filename"
-            echo "✅ Cleanup completed for $name."
-          }
-
-          if ! echo "$USAGE_BACKUP_TARGETS" | jq -e 'type == "array"' >/dev/null; then
-            echo "⚠️ CLIPROXY_USAGE_BACKUP_TARGETS must be a JSON array. Skipping usage backup."
-            exit 0
-          fi
-
-          echo "$USAGE_BACKUP_TARGETS" | jq -c '.[]' | while IFS= read -r target; do
-            backup_target \
-              "$(echo "$target" | jq -r 'if type == "object" then (.name // "default") else "default" end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.api_url // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.management_password // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_url // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_username // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_password // empty) else empty end')"
-          done
-
-          echo "✅ Usage backup completed."
-
-  trigger-render-deployment:
-    needs:
-      - check-version
-      - publish-release
-      - backup-usage-statistics
-    if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Trigger Render Deployment
-        continue-on-error: true
-        env:
-          RENDER_DEPLOY_HOOKS: ${{ secrets.CLIPROXY_RENDER_DEPLOY_HOOKS }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "$RENDER_DEPLOY_HOOKS" ]; then
-            echo "⚠️ CLIPROXY_RENDER_DEPLOY_HOOKS is not configured. Skipping Render deployment."
-            exit 0
-          fi
-
-          trigger_render_deploy() {
-            local name="$1"
-            local hook_url="$2"
-
-            if [ -z "$hook_url" ]; then
-              echo "⚠️ Render deployment target '$name' is missing hook URL. Skipping."
-              return 0
-            fi
-
-            echo "Triggering Render deployment for $name..."
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$hook_url" || echo "000")
-
-            if [ "$HTTP_STATUS" -eq 200 ]; then
-              echo "✅ Render deployment triggered successfully for $name."
-            else
-              echo "⚠️ Failed to trigger Render deployment for $name. HTTP Status: $HTTP_STATUS. Continuing."
-              return 0
-            fi
-          }
-
-          if ! echo "$RENDER_DEPLOY_HOOKS" | jq -e 'type == "array"' >/dev/null; then
-            echo "⚠️ CLIPROXY_RENDER_DEPLOY_HOOKS must be a JSON array. Skipping Render deployment."
-            exit 0
-          fi
-
-          echo "$RENDER_DEPLOY_HOOKS" | jq -c '.[]' | while IFS= read -r target; do
-            trigger_render_deploy \
-              "$(echo "$target" | jq -r 'if type == "object" then (.name // "default") else "default" end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.hook_url // .url // empty) else empty end')"
-          done
-
-  send-telegram-notification:
-    needs:
-      - check-version
-      - publish-release
-      - trigger-render-deployment
-    if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Send Telegram notification
-        env:
-          GITHUB_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
-          MANAGEMENT_VERSION: ${{ needs.check-version.outputs.management_version }}
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: |
-          cat << 'EOF' > telegram_notify.py
-          import os
-          import html
-          import json
-          import urllib.request
-
-          repo = os.environ.get('GITHUB_REPO', '')
-          tag = os.environ.get('RELEASE_TAG', 'Unknown')
-          core_version = tag
-          management_version = f"v{os.environ.get('MANAGEMENT_VERSION', 'Unknown')}-pro"
-          chat_id = os.environ.get('CHAT_ID')
-          bot_token = os.environ.get('BOT_TOKEN')
-          docker_username = os.environ.get('DOCKER_USERNAME', 'unknown')
-          docker_url = f'https://hub.docker.com/r/{docker_username}/cliproxyapi-pro/tags'
-          release_url = f'https://github.com/{repo}/releases/tag/{tag}'
-
-          full_text = (
-              '🚀 <b>New CLIProxyAPI Pro Release Published!</b>\n\n'
-              f'📦 <b>Release:</b> <code>{html.escape(tag)}</code>\n'
-              f'🧩 <b>Core:</b> <code>{html.escape(core_version)}</code>\n'
-              f'🖥️ <b>Management:</b> <code>{html.escape(management_version)}</code>\n'
-              f'🐳 <a href="{html.escape(docker_url)}">DockerHub</a>\n'
-              f'📝 <a href="{html.escape(release_url)}">Release notes</a>'
-          )
-
-          payload = {
-              'chat_id': chat_id,
-              'text': full_text,
-              'parse_mode': 'HTML',
-              'disable_web_page_preview': True,
-          }
-
-          req = urllib.request.Request(
-              f'https://api.telegram.org/bot{bot_token}/sendMessage',
-              data=json.dumps(payload).encode('utf-8'),
-              headers={'Content-Type': 'application/json'},
-          )
-
-          try:
-              if bot_token and chat_id:
-                  with urllib.request.urlopen(req):
-                      print('✅ Notification sent.')
-              else:
-                  print('⚠️ Telegram details missing.')
-          except Exception as e:
-              print(f'❌ Error: {e}')
-          EOF
-
-          python3 telegram_notify.py
-
-  cleanup-runs:
-    runs-on: ubuntu-latest
-    needs:
-      - publish-release
-      - backup-usage-statistics
-      - trigger-render-deployment
-      - send-telegram-notification
-    if: always() && needs.publish-release.result == 'success'
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Delete old workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          retain_days: 7
-          keep_minimum_runs: 6

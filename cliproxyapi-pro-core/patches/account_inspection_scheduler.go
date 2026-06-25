@@ -185,6 +185,7 @@ const (
 const (
 	accountInspectionAntigravityQuotaModeMaxUsed   accountInspectionAntigravityQuotaMode = "max-used"
 	accountInspectionAntigravityQuotaModeClaudeGpt accountInspectionAntigravityQuotaMode = "claude-gpt"
+	accountInspectionAntigravityQuotaModeAnyGroup  accountInspectionAntigravityQuotaMode = "any-group"
 )
 
 const antigravityCodeAssistURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
@@ -475,7 +476,7 @@ func normalizeAccountInspectionSchedule(input accountInspectionSchedule) account
 		settings.AntigravityDeepProbeModel = defaults.AntigravityDeepProbeModel
 	}
 	settings.AntigravityQuotaMode = accountInspectionAntigravityQuotaMode(strings.ToLower(strings.TrimSpace(string(settings.AntigravityQuotaMode))))
-	if settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeMaxUsed && settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeClaudeGpt {
+	if settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeMaxUsed && settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeClaudeGpt && settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeAnyGroup {
 		settings.AntigravityQuotaMode = defaults.AntigravityQuotaMode
 	}
 	settings.AutoExecuteAccountInvalidAction = normalizeAccountInspectionAutoAction(settings.AutoExecuteAccountInvalidAction)
@@ -3534,6 +3535,9 @@ func antigravityUsedPercent(groups []map[string]any, mode accountInspectionAntig
 	if mode == accountInspectionAntigravityQuotaModeMaxUsed {
 		return antigravityMaxUsedPercent(groups)
 	}
+	if mode == accountInspectionAntigravityQuotaModeAnyGroup {
+		return antigravityMinUsedPercent(groups)
+	}
 	if used := antigravityClaudeGptUsedPercent(groups); used != nil {
 		return used
 	}
@@ -3548,6 +3552,25 @@ func antigravityMaxUsedPercent(groups []map[string]any) *float64 {
 		}
 	}
 	return maxFloatPtr(values)
+}
+
+func antigravityMinUsedPercent(groups []map[string]any) *float64 {
+	values := make([]float64, 0, len(groups))
+	for _, group := range groups {
+		if used := antigravityGroupUsedPercent(group); used != nil {
+			values = append(values, *used)
+		}
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	minValue := values[0]
+	for _, value := range values[1:] {
+		if value < minValue {
+			minValue = value
+		}
+	}
+	return &minValue
 }
 
 func antigravityGroupUsedPercent(group map[string]any) *float64 {
