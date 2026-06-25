@@ -290,6 +290,13 @@ const estimateRealtimeLogColumnWidth = (
   return clampRealtimeLogColumnWidth(key, maxTextLength * characterWidth + padding);
 };
 
+const estimateRealtimeLogHeaderWidth = (key: RealtimeLogColumnKey, label: string) => {
+  const textWidth = Array.from(label).reduce((total, char) => (
+    total + (char.charCodeAt(0) > 255 ? 13 : 7)
+  ), 0);
+  return clampRealtimeLogColumnWidth(key, textWidth + 42);
+};
+
 const formatStatusWindowLabel = (startTime: number, endTime: number, locale: string) => {
   const start = new Date(startTime);
   const end = new Date(endTime);
@@ -1170,7 +1177,6 @@ const formatPriceUnit = (value: number) => `$${value.toFixed(4)}/1M`;
 
 const buildRealtimeMetaText = (row: MonitoringEventRow) => {
   const parts = [`${row.endpointMethod} ${row.endpointPath}`.trim()];
-  if (row.executorType) parts.push(row.executorType);
   const text = parts.filter(Boolean).join(' · ');
   return maskSensitiveText(text || '-');
 };
@@ -1181,7 +1187,6 @@ const buildRealtimeDiagnosticText = (row: MonitoringEventRow) => {
     parts.push(`HTTP ${row.statusCode}`);
   }
   if (row.errorCode) parts.push(row.errorCode);
-  if (row.upstreamRequestId) parts.push(`RID ${row.upstreamRequestId}`);
   if (row.retryAfter) parts.push(`Retry ${row.retryAfter}`);
   return maskSensitiveText(parts.join(' · '));
 };
@@ -3446,14 +3451,18 @@ export function MonitoringCenterPage() {
   const visibleRealtimeLogColumns = useMemo(
     () => realtimeLogColumns
       .filter((column) => column.visible)
-      .map((column) => ({
-        ...realtimeLogColumnDefinitions[column.key],
-        width: column.width ?? estimateRealtimeLogColumnWidth(
+      .map((column) => {
+        const definition = realtimeLogColumnDefinitions[column.key];
+        const contentWidth = column.width ?? estimateRealtimeLogColumnWidth(
           column.key,
-          realtimeLogColumnDefinitions[column.key].label,
+          definition.label,
           realtimeLogPageRows
-        ),
-      }))
+        );
+        return {
+          ...definition,
+          width: Math.max(contentWidth, estimateRealtimeLogHeaderWidth(column.key, definition.label)),
+        };
+      })
       .filter(Boolean),
     [realtimeLogColumnDefinitions, realtimeLogColumns, realtimeLogPageRows]
   );
