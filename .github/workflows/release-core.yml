@@ -109,7 +109,18 @@ jobs:
   build-docker-image:
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
 
     permissions:
       contents: read
@@ -119,9 +130,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -133,18 +141,86 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ./cliproxyapi-pro-core
           file: ./cliproxyapi-pro-core/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro,push-by-digest=true,name-canonical=true,push=true
           build-args: |
             CLIPROXY_VERSION=${{ needs.check-version.outputs.core_tag }}
             CLIPROXY_BUILD_VERSION=${{ needs.check-version.outputs.release_tag }}
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro:latest
-            ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro:${{ needs.check-version.outputs.release_tag }}
+
+      - name: Export Docker digest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          if [ -z "${digest}" ]; then
+            echo "Docker build did not produce a digest." >&2
+            exit 1
+          fi
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload Docker digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-docker-manifest:
+    needs:
+      - check-version
+      - build-docker-image
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download Docker digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: docker-digest-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Create and push Docker manifest
+        env:
+          DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro
+          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          refs=()
+          for digest_file in /tmp/digests/*; do
+            refs+=("${DOCKER_IMAGE}@sha256:$(basename "${digest_file}")")
+          done
+
+          if [ "${#refs[@]}" -eq 0 ]; then
+            echo "No Docker digests found." >&2
+            exit 1
+          fi
+
+          docker buildx imagetools create \
+            -t "${DOCKER_IMAGE}:latest" \
+            -t "${DOCKER_IMAGE}:${RELEASE_TAG}" \
+            "${refs[@]}"
+
+          docker buildx imagetools inspect "${DOCKER_IMAGE}:${RELEASE_TAG}"
 
   build-management-html:
     needs: check-version
@@ -214,7 +290,7 @@ jobs:
   publish-management-asset:
     needs:
       - check-version
-      - build-docker-image
+      - merge-docker-manifest
       - build-management-html
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
