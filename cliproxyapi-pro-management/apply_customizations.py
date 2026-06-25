@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -295,6 +296,50 @@ def replace_once_in_quota_config(path: Path, store_setter: str, old: str, new: s
     write(path, f'{text[:success_start]}{updated}{text[error_start:]}')
 
 
+def ensure_cached_at_in_quota_success_state(path: Path, store_setter: str) -> None:
+    text = read(path)
+    marker = f"  storeSetter: '{store_setter}',"
+    marker_start = text.find(marker)
+    if marker_start == -1:
+        raise RuntimeError(f'Pattern not found in {path}: {marker!r}')
+
+    success_start = text.find('  buildSuccessState:', marker_start)
+    error_start = text.find('  buildErrorState:', success_start)
+    if success_start == -1 or error_start == -1:
+        raise RuntimeError(f'Pattern not found in {path}: buildSuccessState block for {store_setter}')
+
+    block = text[success_start:error_start]
+    if 'cachedAt:' in block:
+        return
+
+    inline_match = re.search(
+        r"(buildSuccessState:\s*\([^)]*\)\s*=>\s*\(\{)([^{}\n]*?)(\s*\}\),)",
+        block,
+    )
+    if inline_match:
+        content = inline_match.group(2).rstrip()
+        separator = '' if not content or content.endswith(',') else ','
+        replacement = (
+            f'{inline_match.group(1)}{content}{separator} cachedAt: Date.now()'
+            f'{inline_match.group(3)}'
+        )
+        updated = block[: inline_match.start()] + replacement + block[inline_match.end() :]
+        write(path, f'{text[:success_start]}{updated}{text[error_start:]}')
+        return
+
+    closing_match = re.search(r'\n([ \t]*)\}\),\s*$', block)
+    if not closing_match:
+        raise RuntimeError(f'Pattern not found in {path}: buildSuccessState closing for {store_setter}')
+
+    indent = closing_match.group(1)
+    updated = (
+        block[: closing_match.start()]
+        + f'\n{indent}  cachedAt: Date.now(),'
+        + block[closing_match.start() :]
+    )
+    write(path, f'{text[:success_start]}{updated}{text[error_start:]}')
+
+
 def insert_once(path: Path, marker: str, insertion: str, present: str) -> None:
     text = read(path)
     if present in text:
@@ -470,34 +515,14 @@ def patch_quota_configs(target: Path) -> None:
         "  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;",
         "  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setGeminiCliQuota: (updater: QuotaUpdater<Record<string, GeminiCliQuotaState>>) => void;\n  setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;",
     )
-    for store_setter, old, new in [
-        (
-            'setClaudeQuota',
-            "    extraUsage: data.extraUsage,\n    planType: data.planType,\n  }),",
-            "    extraUsage: data.extraUsage,\n    planType: data.planType,\n    cachedAt: Date.now(),\n  }),",
-        ),
-        (
-            'setAntigravityQuota',
-            "    serverTimeOffsetMs: data.serverTimeOffsetMs,\n  }),",
-            "    serverTimeOffsetMs: data.serverTimeOffsetMs,\n    cachedAt: Date.now(),\n  }),",
-        ),
-        (
-            'setCodexQuota',
-            "    windows: data.windows,\n    planType: data.planType,\n    subscriptionActiveUntil: data.subscriptionActiveUntil,\n    rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,\n  }),",
-            "    windows: data.windows,\n    planType: data.planType,\n    subscriptionActiveUntil: data.subscriptionActiveUntil,\n    rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,\n    cachedAt: Date.now(),\n  }),",
-        ),
-        (
-            'setKimiQuota',
-            "  buildSuccessState: (rows) => ({ status: 'success', rows }),",
-            "  buildSuccessState: (rows) => ({ status: 'success', rows, cachedAt: Date.now() }),",
-        ),
-        (
-            'setXaiQuota',
-            "  buildSuccessState: (billing) => ({ status: 'success', billing }),",
-            "  buildSuccessState: (billing) => ({ status: 'success', billing, cachedAt: Date.now() }),",
-        ),
+    for store_setter in [
+        'setClaudeQuota',
+        'setAntigravityQuota',
+        'setCodexQuota',
+        'setKimiQuota',
+        'setXaiQuota',
     ]:
-        replace_once_in_quota_config(path, store_setter, old, new)
+        ensure_cached_at_in_quota_success_state(path, store_setter)
     for old, new in [
         (
             "  const groups = quota.groups ?? [];\n",
