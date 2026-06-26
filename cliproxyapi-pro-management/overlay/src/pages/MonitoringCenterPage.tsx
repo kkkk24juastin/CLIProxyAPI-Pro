@@ -34,13 +34,14 @@ import { apiClient } from '@/services/api/client';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { maskSensitiveText } from '@/utils/format';
-import { getStatusFromError, isAntigravityFile, isClaudeFile, isCodexFile, isKimiFile } from '@/utils/quota';
+import { getStatusFromError, isAntigravityFile, isClaudeFile, isCodexFile, isKimiFile, isXaiFile } from '@/utils/quota';
 import { formatCompactNumber, formatDurationMs, formatUsd, normalizeAuthIndex, type ModelPrice } from '@/utils/usage';
 import {
   ANTIGRAVITY_CONFIG,
   CLAUDE_CONFIG,
   CODEX_CONFIG,
   KIMI_CONFIG,
+  XAI_CONFIG,
   type QuotaConfig,
   type QuotaStore,
 } from '@/components/quota/quotaConfigs';
@@ -1208,6 +1209,7 @@ const getAccountQuotaConfig = (file: AuthFileItem): AnyQuotaConfig | undefined =
   if (isClaudeFile(file)) return CLAUDE_CONFIG;
   if (isCodexFile(file)) return CODEX_CONFIG;
   if (isKimiFile(file)) return KIMI_CONFIG;
+  if (isXaiFile(file)) return XAI_CONFIG;
   return undefined;
 };
 
