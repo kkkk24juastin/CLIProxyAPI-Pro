@@ -13,6 +13,7 @@ import type {
   GeminiCliUserTier,
 } from '@/types';
 import { apiCallApi, getApiCallErrorMessage } from '@/services/api';
+import { useQuotaStore } from '@/stores';
 import {
   createStatusError,
   formatQuotaResetTime,
@@ -32,11 +33,29 @@ import styles from '@/pages/QuotaPage.module.scss';
 const GEMINI_CLI_QUOTA_URL = 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota';
 const GEMINI_CLI_CODE_ASSIST_URL =
   'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist';
+const GEMINI_CLI_REQUEST_HEADERS = {
+  Authorization: 'Bearer $TOKEN$',
+  'Content-Type': 'application/json',
+};
 const GEMINI_CLI_G1_CREDIT_TYPE = 'GOOGLE_ONE_AI';
+const GEMINI_CLI_TIER_LABEL_KEYS: Record<string, string> = {
+  'free-tier': 'tier_free',
+  'legacy-tier': 'tier_legacy',
+  'standard-tier': 'tier_standard',
+  'g1-pro-tier': 'tier_pro',
+  'g1-ultra-tier': 'tier_ultra',
+};
 const QUOTA_PROGRESS_HIGH_THRESHOLD = 70;
 const QUOTA_PROGRESS_MEDIUM_THRESHOLD = 30;
+const geminiCliSupplementaryRequestIds = new Map<string, number>();
+const geminiCliSupplementaryCache = new Map<
+  string,
+  { requestId: number; tierLabel: string | null; tierId: string | null; creditBalance: number | null }
+>();
 
 type GeminiCliQuotaData = {
+  fileName: string;
+  supplementaryRequestId: number;
   buckets: GeminiCliQuotaBucketState[];
   projectId: string;
   tierLabel: string | null;
@@ -241,13 +260,14 @@ const resolveGeminiCliRemainingFraction = (bucket: GeminiCliQuotaBucket): number
 
 const fetchGeminiCliCodeAssist = async (
   authIndex: string,
-  projectId: string
+  projectId: string,
+  t: TFunction
 ): Promise<Pick<GeminiCliQuotaData, 'tierLabel' | 'tierId' | 'creditBalance'>> => {
   const result = await apiCallApi.request({
     authIndex,
     method: 'POST',
     url: GEMINI_CLI_CODE_ASSIST_URL,
-    header: { 'Content-Type': 'application/json' },
+    header: { ...GEMINI_CLI_REQUEST_HEADERS },
     data: JSON.stringify({
       cloudaicompanionProject: projectId,
       metadata: {
@@ -257,7 +277,6 @@ const fetchGeminiCliCodeAssist = async (
         duetProject: projectId,
       },
     }),
-    useExecutor: true,
   });
 
   if (result.statusCode < 200 || result.statusCode >= 300) {
@@ -266,10 +285,73 @@ const fetchGeminiCliCodeAssist = async (
 
   const payload = parseGeminiCliCodeAssistPayload(result.body ?? result.bodyText);
   return {
-    tierLabel: resolveGeminiCliTierLabel(payload),
+    tierLabel: resolveGeminiCliTierLabel(payload, t),
     tierId: resolveGeminiCliTierId(payload),
     creditBalance: resolveGeminiCliCreditBalance(payload),
   };
+};
+
+const readGeminiCliSupplementarySnapshot = (
+  fileName: string,
+  requestId: number
+): Pick<GeminiCliQuotaData, 'tierLabel' | 'tierId' | 'creditBalance'> => {
+  const cached = geminiCliSupplementaryCache.get(fileName);
+  if (!cached || cached.requestId !== requestId) {
+    return { tierLabel: null, tierId: null, creditBalance: null };
+  }
+
+  return {
+    tierLabel: cached.tierLabel,
+    tierId: cached.tierId,
+    creditBalance: cached.creditBalance,
+  };
+};
+
+const scheduleGeminiCliSupplementaryRefresh = (
+  fileName: string,
+  authIndex: string,
+  projectId: string,
+  t: TFunction
+): number => {
+  const requestId = (geminiCliSupplementaryRequestIds.get(fileName) ?? 0) + 1;
+  geminiCliSupplementaryRequestIds.set(fileName, requestId);
+  geminiCliSupplementaryCache.delete(fileName);
+
+  void (async () => {
+    const supplementary = await fetchGeminiCliCodeAssist(authIndex, projectId, t).catch(() => ({
+      tierLabel: null,
+      tierId: null,
+      creditBalance: null,
+    }));
+
+    if (geminiCliSupplementaryRequestIds.get(fileName) !== requestId) return;
+
+    geminiCliSupplementaryCache.set(fileName, { requestId, ...supplementary });
+
+    useQuotaStore.getState().setGeminiCliQuota((prev) => {
+      const current = prev[fileName];
+      if (!current || current.status !== 'success') return prev;
+      if (
+        current.tierLabel === supplementary.tierLabel &&
+        current.tierId === supplementary.tierId &&
+        current.creditBalance === supplementary.creditBalance
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [fileName]: {
+          ...current,
+          tierLabel: supplementary.tierLabel,
+          tierId: supplementary.tierId,
+          creditBalance: supplementary.creditBalance,
+        },
+      };
+    });
+  })();
+
+  return requestId;
 };
 
 const fetchGeminiCliQuota = async (
@@ -324,13 +406,17 @@ const fetchGeminiCliQuota = async (
     throw new Error(t('gemini_cli_quota.empty_buckets'));
   }
 
-  const supplementary = await fetchGeminiCliCodeAssist(authIndex, projectId).catch(() => ({
-    tierLabel: null,
-    tierId: null,
-    creditBalance: null,
-  }));
+  const supplementaryRequestId = scheduleGeminiCliSupplementaryRefresh(
+    file.name,
+    authIndex,
+    projectId,
+    t
+  );
+  const supplementary = readGeminiCliSupplementarySnapshot(file.name, supplementaryRequestId);
 
   return {
+    fileName: file.name,
+    supplementaryRequestId,
     buckets,
     projectId,
     ...supplementary,
@@ -349,16 +435,16 @@ const resolveGeminiCliTier = (
 const resolveGeminiCliTierId = (payload: GeminiCliCodeAssistPayload | null): string | null =>
   normalizeStringValue(resolveGeminiCliTier(payload)?.id);
 
-const resolveGeminiCliTierLabel = (payload: GeminiCliCodeAssistPayload | null): string | null => {
+const resolveGeminiCliTierLabel = (
+  payload: GeminiCliCodeAssistPayload | null,
+  t: TFunction
+): string | null => {
   const tier = resolveGeminiCliTier(payload);
   const tierId = normalizeStringValue(tier?.id);
   const tierName = normalizeStringValue(tier?.name);
   if (tierName) return tierName;
-  if (tierId === 'free-tier') return 'Free';
-  if (tierId === 'legacy-tier') return 'Legacy';
-  if (tierId === 'standard-tier') return 'Standard';
-  if (tierId === 'g1-pro-tier') return 'Google One AI Pro';
-  if (tierId === 'g1-ultra-tier') return 'Google One AI Ultra';
+  const labelKey = tierId ? GEMINI_CLI_TIER_LABEL_KEYS[tierId.toLowerCase()] : undefined;
+  if (labelKey) return t(`gemini_cli_quota.${labelKey}`);
   return tierId;
 };
 
@@ -488,15 +574,22 @@ export const GEMINI_CLI_CONFIG = {
     tierId: null,
     creditBalance: null,
   }),
-  buildSuccessState: (data: GeminiCliQuotaData) => ({
-    status: 'success',
-    buckets: data.buckets,
-    projectId: data.projectId,
-    tierLabel: data.tierLabel,
-    tierId: data.tierId,
-    creditBalance: data.creditBalance,
-    cachedAt: Date.now(),
-  }),
+  buildSuccessState: (data: GeminiCliQuotaData) => {
+    const supplementary = readGeminiCliSupplementarySnapshot(
+      data.fileName,
+      data.supplementaryRequestId
+    );
+
+    return {
+      status: 'success',
+      buckets: data.buckets,
+      projectId: data.projectId,
+      tierLabel: supplementary.tierLabel ?? data.tierLabel,
+      tierId: supplementary.tierId ?? data.tierId,
+      creditBalance: supplementary.creditBalance ?? data.creditBalance,
+      cachedAt: Date.now(),
+    };
+  },
   buildErrorState: (message: string, status?: number) => ({
     status: 'error',
     buckets: [],
