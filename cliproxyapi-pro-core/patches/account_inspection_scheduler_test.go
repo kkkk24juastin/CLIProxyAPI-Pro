@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -994,5 +996,30 @@ func TestAntigravityProjectIDFromCodeAssistReturnsEmptyWhenAbsent(t *testing.T) 
 	payload := map[string]any{"currentTier": map[string]any{"id": "free-tier"}}
 	if got := antigravityProjectIDFromCodeAssist(payload); got != "" {
 		t.Fatalf("antigravityProjectIDFromCodeAssist() = %q, want empty when no project field", got)
+	}
+}
+
+func TestMissingIdentifierErrorWrapsSentinel(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"antigravity", fmt.Errorf("missing Antigravity project id: %w", errInspectionMissingIdentifier)},
+		{"codex", fmt.Errorf("missing ChatGPT account id: %w", errInspectionMissingIdentifier)},
+		{"gemini-cli", fmt.Errorf("missing Gemini CLI project id: %w", errInspectionMissingIdentifier)},
+	}
+	for _, tc := range cases {
+		if !errors.Is(tc.err, errInspectionMissingIdentifier) {
+			t.Fatalf("%s: errors.Is(err, errInspectionMissingIdentifier) = false, want true", tc.name)
+		}
+	}
+	if errors.Is(fmt.Errorf("HTTP 500"), errInspectionMissingIdentifier) {
+		t.Fatal("unrelated error matched errInspectionMissingIdentifier")
+	}
+}
+
+func TestMissingIdentifierErrorCodeIsClearable(t *testing.T) {
+	if !isInspectionAuthErrorCode("inspection_missing_identifier") {
+		t.Fatal("isInspectionAuthErrorCode(inspection_missing_identifier) = false, want true so recovery can clear it")
 	}
 }

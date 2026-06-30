@@ -66,6 +66,11 @@ var accountInspectionSupportedProviders = map[string]struct{}{
 
 var accountInspectionSchedulers sync.Map
 
+// errInspectionMissingIdentifier 标记「凭证缺少巡检/调用所必需的标识」（如 antigravity/gemini 的 project id、
+// codex 的 account id）这类永久性、账号级故障。它与瞬时的网络/探测抖动不同，应被判为异常账号，
+// 因此用独立错误码 inspection_missing_identifier 回写，供前端筛选识别。
+var errInspectionMissingIdentifier = errors.New("missing required account identifier")
+
 type accountInspectionSettings struct {
 	TargetType                      string                                `json:"targetType"`
 	Workers                         int                                   `json:"workers"`
@@ -1669,12 +1674,17 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		return result
 	}
 	if err != nil {
+		missingIdentifier := errors.Is(err, errInspectionMissingIdentifier)
 		result.StatusCode = statusCode
 		result.Error = err.Error()
 		result.ErrorCode = accountInspectionErrorCode(statusCode, "inspection_probe_error")
 		result.ActionReason = "探测异常，保留账号"
 		if statusCode != nil && isAccountErrorStatus(*statusCode) {
 			s.syncInspectionAuthStatus(ctx, account, *statusCode)
+		} else if missingIdentifier {
+			result.ErrorCode = "inspection_missing_identifier"
+			result.ActionReason = "缺少调用所需标识，保留账号"
+			s.syncInspectionAuthError(ctx, account, "inspection_missing_identifier", err.Error(), 0)
 		} else {
 			s.syncInspectionAuthError(ctx, account, "inspection_probe_error", err.Error(), 0)
 		}
@@ -1867,7 +1877,7 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 	if projectID == "" {
 		discovered := s.discoverAntigravityProjectID(ctx, account, settings)
 		if discovered == "" {
-			return accountInspectionDecision{}, nil, fmt.Errorf("missing Antigravity project id")
+			return accountInspectionDecision{}, nil, fmt.Errorf("missing Antigravity project id: %w", errInspectionMissingIdentifier)
 		}
 		s.appendLog("info", fmt.Sprintf("%s 缺少 project id，自动获取成功：%s", account.identity(), discovered))
 		projectID = discovered
@@ -2220,7 +2230,7 @@ func (s *accountInspectionScheduler) inspectClaude(ctx context.Context, account 
 func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
 	accountID := codexAccountID(account.Auth)
 	if accountID == "" {
-		return accountInspectionDecision{}, nil, fmt.Errorf("missing ChatGPT account id")
+		return accountInspectionDecision{}, nil, fmt.Errorf("missing ChatGPT account id: %w", errInspectionMissingIdentifier)
 	}
 	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
 		return s.apiCall(ctx, account.Auth, http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", map[string]string{
@@ -2248,7 +2258,7 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
 	projectID := geminiCLIProjectID(account.Auth)
 	if projectID == "" {
-		return accountInspectionDecision{}, nil, fmt.Errorf("missing Gemini CLI project id")
+		return accountInspectionDecision{}, nil, fmt.Errorf("missing Gemini CLI project id: %w", errInspectionMissingIdentifier)
 	}
 	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
 		return s.apiCall(ctx, account.Auth, http.MethodPost, geminiCLIQuotaURL, map[string]string{
@@ -2715,7 +2725,7 @@ func authInspectionLastErrorCode(auth *coreauth.Auth) string {
 
 func isInspectionAuthErrorCode(code string) bool {
 	switch strings.TrimSpace(code) {
-	case "inspection_http_error", "inspection_probe_error", "antigravity_deep_probe_error", "token_refresh_error":
+	case "inspection_http_error", "inspection_probe_error", "inspection_missing_identifier", "antigravity_deep_probe_error", "token_refresh_error":
 		return true
 	default:
 		return false

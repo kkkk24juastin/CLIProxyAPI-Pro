@@ -179,12 +179,14 @@ export function isAuthFileAccountInvalid(file: AuthFileItem): boolean {
 }
 
 /**
- * 判断账号是否「异常」。异常 = HTTP 认证失效（400/401/403/404）或 token 刷新失败。
+ * 判断账号是否「异常」。异常 = HTTP 认证失效（400/401/403/404）、token 刷新失败，
+ * 或缺少调用所必需的标识（如 project id / account id，属永久性账号级故障）。
  * 刻意排除 probe/transient/网络错误以及 429 限流、402 额度耗尽，确保判为异常的都是真异常。
  */
 export function isAbnormalAuthFile(file: AuthFileItem): boolean {
   if (isAuthFileAccountInvalid(file)) return true;
-  return readAuthFileLastErrorCode(file) === 'token_refresh_error';
+  const code = readAuthFileLastErrorCode(file);
+  return code === 'token_refresh_error' || code === 'inspection_missing_identifier';
 }
 
 // 额度获取时被视为「暂时性、账号本身正常」的状态码：429 限流、402/403 额度耗尽。
