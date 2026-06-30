@@ -683,7 +683,7 @@ def patch_quota_page(target: Path) -> None:
     replace_once(
         path,
         "import type { AuthFileItem } from '@/types';\n",
-        "import type { AuthFileItem } from '@/types';\nimport { isAbnormalAuthFile, resolveAuthProvider } from '@/utils/quota';\n",
+        "import type { AuthFileItem } from '@/types';\nimport { isAbnormalAuthFile, isQuotaStateAbnormal, resolveAuthProvider } from '@/utils/quota';\n",
     )
     insert_once(
         path,
@@ -697,7 +697,10 @@ def patch_quota_page(target: Path) -> None:
         "  const disableControls = connectionStatus !== 'connected';\n\n"
         "  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);\n"
         "  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n"
-        "  const codexQuota = useQuotaStore((state) => state.codexQuota);\n\n"
+        "  const codexQuota = useQuotaStore((state) => state.codexQuota);\n"
+        "  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n"
+        "  const kimiQuota = useQuotaStore((state) => state.kimiQuota);\n"
+        "  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n\n"
         "  const resolveFilePlan = useCallback(\n"
         "    (file: AuthFileItem): string => {\n"
         "      const provider = resolveAuthProvider(file);\n"
@@ -714,6 +717,20 @@ def patch_quota_page(target: Path) -> None:
         "      return '';\n"
         "    },\n"
         "    [antigravityQuota, claudeQuota, codexQuota]\n"
+        "  );\n\n"
+        "  const resolveFileQuota = useCallback(\n"
+        "    (file: AuthFileItem): unknown => {\n"
+        "      const provider = resolveAuthProvider(file);\n"
+        "      const name = file.name;\n"
+        "      if (provider === 'antigravity') return antigravityQuota[name];\n"
+        "      if (provider === 'claude') return claudeQuota[name];\n"
+        "      if (provider === 'codex') return codexQuota[name];\n"
+        "      if (provider === 'gemini-cli') return geminiCliQuota[name];\n"
+        "      if (provider === 'kimi') return kimiQuota[name];\n"
+        "      if (provider === 'xai') return xaiQuota[name];\n"
+        "      return undefined;\n"
+        "    },\n"
+        "    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n"
         "  );\n\n"
         "  const normalizedSearch = searchText.trim().toLowerCase();\n"
         "  const planOptions = useMemo(() => {\n"
@@ -734,13 +751,13 @@ def patch_quota_page(target: Path) -> None:
         "        if (filePlan !== planFilter) return false;\n"
         "      }\n"
         "      if (statusFilter !== 'all') {\n"
-        "        const abnormal = isAbnormalAuthFile(file);\n"
+        "        const abnormal = isAbnormalAuthFile(file) || isQuotaStateAbnormal(resolveFileQuota(file));\n"
         "        if (statusFilter === 'abnormal' && !abnormal) return false;\n"
         "        if (statusFilter === 'normal' && abnormal) return false;\n"
         "      }\n"
         "      return true;\n"
         "    });\n"
-        "  }, [files, normalizedSearch, planFilter, statusFilter, resolveFilePlan]);\n",
+        "  }, [files, normalizedSearch, planFilter, statusFilter, resolveFilePlan, resolveFileQuota]);\n",
         "const filteredFiles",
     )
     replace_once(

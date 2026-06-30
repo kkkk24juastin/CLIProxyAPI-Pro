@@ -186,3 +186,22 @@ export function isAbnormalAuthFile(file: AuthFileItem): boolean {
   if (isAuthFileAccountInvalid(file)) return true;
   return readAuthFileLastErrorCode(file) === 'token_refresh_error';
 }
+
+// 额度获取时被视为「暂时性、账号本身正常」的状态码：429 限流、402/403 额度耗尽。
+const QUOTA_BENIGN_ERROR_STATUSES = new Set([402, 403, 429]);
+
+/**
+ * 判断配额 store 中某账号的状态是否「异常」。
+ *
+ * 与 isAbnormalAuthFile 互补：后者只读 AuthFileItem.last_error，看不到「拉取额度时」
+ * 实时发生的错误（如 auth token refresh failed）——这类错误存在配额 store 的错误态里。
+ * 这里把「额度拉取失败」纳入异常判定，但排除 429 限流 / 402 额度耗尽这类账号本身有效的情况。
+ */
+export function isQuotaStateAbnormal(quota: unknown): boolean {
+  if (!isRecordValue(quota)) return false;
+  if (quota.status !== 'error') return false;
+  const status = normalizeNumberValue(quota.errorStatus);
+  if (status !== null && QUOTA_BENIGN_ERROR_STATUSES.has(status)) return false;
+  return true;
+}
+
