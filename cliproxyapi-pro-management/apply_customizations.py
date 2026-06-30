@@ -700,13 +700,13 @@ def patch_quota_section(target: Path) -> None:
     )
     replace_once(
         path,
-        "  files,\n  loading,\n  disabled\n}: QuotaSectionProps<TState, TData>) {",
-        "  files,\n  cacheFiles,\n  loading,\n  disabled\n}: QuotaSectionProps<TState, TData>) {",
+        "  files,\n  loading,\n  disabled,\n}: QuotaSectionProps<TState, TData>) {",
+        "  files,\n  cacheFiles,\n  loading,\n  disabled,\n}: QuotaSectionProps<TState, TData>) {",
     )
     insert_once(
         path,
-        "  const filteredFiles = useMemo(() => files.filter((file) => config.filterFn(file)), [\n    files,\n    config\n  ]);\n",
-        "  const filteredFiles = useMemo(() => files.filter((file) => config.filterFn(file)), [\n    files,\n    config\n  ]);\n  const cacheSourceFiles = cacheFiles ?? files;\n  const cacheFilesForProvider = useMemo(\n    () => cacheSourceFiles.filter((file) => config.filterFn(file)),\n    [cacheSourceFiles, config]\n  );\n",
+        "  const filteredFiles = useMemo(\n    () => files.filter((file) => config.filterFn(file)),\n    [files, config]\n  );\n",
+        "  const filteredFiles = useMemo(\n    () => files.filter((file) => config.filterFn(file)),\n    [files, config]\n  );\n  const cacheSourceFiles = cacheFiles ?? files;\n  const cacheFilesForProvider = useMemo(\n    () => cacheSourceFiles.filter((file) => config.filterFn(file)),\n    [cacheSourceFiles, config]\n  );\n",
         "cacheFilesForProvider",
     )
     replace_once(
