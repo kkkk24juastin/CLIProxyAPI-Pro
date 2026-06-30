@@ -244,18 +244,30 @@ QUOTA_PAGE_SEARCH_LOCALE_KEYS = {
     'en.json': {
         'search_placeholder': 'Search by file name...',
         'plan_filter_all': 'All Plans',
+        'status_filter_all': 'All Status',
+        'status_filter_abnormal': 'Abnormal accounts',
+        'status_filter_normal': 'Normal accounts',
     },
     'ru.json': {
         'search_placeholder': 'Поиск по имени файла...',
         'plan_filter_all': 'Все тарифы',
+        'status_filter_all': 'Все статусы',
+        'status_filter_abnormal': 'Проблемные аккаунты',
+        'status_filter_normal': 'Нормальные аккаунты',
     },
     'zh-CN.json': {
         'search_placeholder': '按文件名搜索...',
         'plan_filter_all': '全部套餐',
+        'status_filter_all': '全部状态',
+        'status_filter_abnormal': '异常账号',
+        'status_filter_normal': '正常账号',
     },
     'zh-TW.json': {
         'search_placeholder': '按檔案名稱搜尋...',
         'plan_filter_all': '全部套餐',
+        'status_filter_all': '全部狀態',
+        'status_filter_abnormal': '異常帳號',
+        'status_filter_normal': '正常帳號',
     },
 }
 
@@ -619,12 +631,12 @@ def patch_quota_page(target: Path) -> None:
     replace_once(
         path,
         "import type { AuthFileItem } from '@/types';\n",
-        "import type { AuthFileItem } from '@/types';\nimport { resolveAuthProvider } from '@/utils/quota';\n",
+        "import type { AuthFileItem } from '@/types';\nimport { isAbnormalAuthFile, resolveAuthProvider } from '@/utils/quota';\n",
     )
     insert_once(
         path,
         "  const [files, setFiles] = useState<AuthFileItem[]>([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState('');\n",
-        "  const [files, setFiles] = useState<AuthFileItem[]>([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState('');\n  const [searchText, setSearchText] = useState('');\n  const [planFilter, setPlanFilter] = useState('all');\n",
+        "  const [files, setFiles] = useState<AuthFileItem[]>([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState('');\n  const [searchText, setSearchText] = useState('');\n  const [planFilter, setPlanFilter] = useState('all');\n  const [statusFilter, setStatusFilter] = useState('all');\n",
         "searchText",
     )
     insert_once(
@@ -669,15 +681,20 @@ def patch_quota_page(target: Path) -> None:
         "        const filePlan = resolveFilePlan(file);\n"
         "        if (filePlan !== planFilter) return false;\n"
         "      }\n"
+        "      if (statusFilter !== 'all') {\n"
+        "        const abnormal = isAbnormalAuthFile(file);\n"
+        "        if (statusFilter === 'abnormal' && !abnormal) return false;\n"
+        "        if (statusFilter === 'normal' && abnormal) return false;\n"
+        "      }\n"
         "      return true;\n"
         "    });\n"
-        "  }, [files, normalizedSearch, planFilter, resolveFilePlan]);\n",
+        "  }, [files, normalizedSearch, planFilter, statusFilter, resolveFilePlan]);\n",
         "const filteredFiles",
     )
     replace_once(
         path,
         "      <div className={styles.pageHeader}>\n        <h1 className={styles.pageTitle}>{t('quota_management.title')}</h1>\n        <p className={styles.description}>{t('quota_management.description')}</p>\n      </div>\n",
-        "      <div className={styles.pageHeader}>\n        <h1 className={styles.pageTitle}>{t('quota_management.title')}</h1>\n        <p className={styles.description}>{t('quota_management.description')}</p>\n        <div className={styles.quotaFilterBar}>\n          <input\n            className={styles.quotaSearchInput}\n            type=\"text\"\n            placeholder={t('quota_management.search_placeholder')}\n            value={searchText}\n            onChange={(e) => setSearchText(e.target.value)}\n          />\n          <select\n            className={styles.quotaPlanSelect}\n            value={planFilter}\n            onChange={(e) => setPlanFilter(e.target.value)}\n          >\n            <option value=\"all\">{t('quota_management.plan_filter_all')}</option>\n            {planOptions.map((plan) => (\n              <option key={plan} value={plan}>{plan}</option>\n            ))}\n          </select>\n        </div>\n      </div>\n",
+        "      <div className={styles.pageHeader}>\n        <h1 className={styles.pageTitle}>{t('quota_management.title')}</h1>\n        <p className={styles.description}>{t('quota_management.description')}</p>\n        <div className={styles.quotaFilterBar}>\n          <input\n            className={styles.quotaSearchInput}\n            type=\"text\"\n            placeholder={t('quota_management.search_placeholder')}\n            value={searchText}\n            onChange={(e) => setSearchText(e.target.value)}\n          />\n          <select\n            className={styles.quotaPlanSelect}\n            value={planFilter}\n            onChange={(e) => setPlanFilter(e.target.value)}\n          >\n            <option value=\"all\">{t('quota_management.plan_filter_all')}</option>\n            {planOptions.map((plan) => (\n              <option key={plan} value={plan}>{plan}</option>\n            ))}\n          </select>\n          <select\n            className={styles.quotaPlanSelect}\n            value={statusFilter}\n            onChange={(e) => setStatusFilter(e.target.value)}\n          >\n            <option value=\"all\">{t('quota_management.status_filter_all')}</option>\n            <option value=\"abnormal\">{t('quota_management.status_filter_abnormal')}</option>\n            <option value=\"normal\">{t('quota_management.status_filter_normal')}</option>\n          </select>\n        </div>\n      </div>\n",
     )
     replace_all(
         path,

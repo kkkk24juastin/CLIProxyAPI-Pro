@@ -154,3 +154,35 @@ function isQuotaLowWindow(window: unknown, usedPercentThreshold: number): boolea
   const used = normalizeNumberValue(window.used);
   return limit !== null && limit > 0 && used !== null && used >= limit;
 }
+
+const ACCOUNT_INVALID_ERROR_STATUSES = new Set([400, 401, 403, 404]);
+
+function readAuthFileLastError(file: AuthFileItem): Record<string, unknown> | null {
+  const raw = file['last_error'] ?? file.lastError;
+  return isRecordValue(raw) ? raw : null;
+}
+
+function readAuthFileLastErrorCode(file: AuthFileItem): string {
+  return readStringValue(readAuthFileLastError(file)?.code);
+}
+
+function readAuthFileLastErrorStatus(file: AuthFileItem): number | null {
+  const error = readAuthFileLastError(file);
+  return error ? normalizeNumberValue(error.http_status ?? error.httpStatus ?? error.status) : null;
+}
+
+export function isAuthFileAccountInvalid(file: AuthFileItem): boolean {
+  return (
+    readAuthFileLastErrorCode(file) === 'inspection_http_error' &&
+    ACCOUNT_INVALID_ERROR_STATUSES.has(readAuthFileLastErrorStatus(file) ?? 0)
+  );
+}
+
+/**
+ * 判断账号是否「异常」。异常 = HTTP 认证失效（400/401/403/404）或 token 刷新失败。
+ * 刻意排除 probe/transient/网络错误以及 429 限流、402 额度耗尽，确保判为异常的都是真异常。
+ */
+export function isAbnormalAuthFile(file: AuthFileItem): boolean {
+  if (isAuthFileAccountInvalid(file)) return true;
+  return readAuthFileLastErrorCode(file) === 'token_refresh_error';
+}
