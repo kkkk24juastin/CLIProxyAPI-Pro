@@ -961,3 +961,38 @@ func TestXAIBillingURLMatchesUpstreamQuotaConfig(t *testing.T) {
 		t.Fatalf("xaiBillingURL() = %q, want upstream billing endpoint", got)
 	}
 }
+
+func TestAntigravityProjectIDReturnsEmptyWhenMissing(t *testing.T) {
+	auth := &coreauth.Auth{Provider: "antigravity", Metadata: map[string]any{"email": "user@example.com"}}
+	if got := antigravityProjectID(auth); got != "" {
+		t.Fatalf("antigravityProjectID() = %q, want empty when credential has no project id", got)
+	}
+}
+
+func TestAntigravityProjectIDReadsMetadata(t *testing.T) {
+	auth := &coreauth.Auth{Provider: "antigravity", Metadata: map[string]any{"project_id": "my-project"}}
+	if got := antigravityProjectID(auth); got != "my-project" {
+		t.Fatalf("antigravityProjectID() = %q, want my-project", got)
+	}
+}
+
+func TestAntigravityProjectIDFromCodeAssistParsesStringField(t *testing.T) {
+	payload := map[string]any{"cloudaicompanionProject": "server-managed-project"}
+	if got := antigravityProjectIDFromCodeAssist(payload); got != "server-managed-project" {
+		t.Fatalf("antigravityProjectIDFromCodeAssist() = %q, want server-managed-project", got)
+	}
+}
+
+func TestAntigravityProjectIDFromCodeAssistParsesObjectField(t *testing.T) {
+	payload := map[string]any{"cloudaicompanionProject": map[string]any{"id": "onboarded-project", "name": "projects/onboarded-project"}}
+	if got := antigravityProjectIDFromCodeAssist(payload); got != "onboarded-project" {
+		t.Fatalf("antigravityProjectIDFromCodeAssist() = %q, want onboarded-project", got)
+	}
+}
+
+func TestAntigravityProjectIDFromCodeAssistReturnsEmptyWhenAbsent(t *testing.T) {
+	payload := map[string]any{"currentTier": map[string]any{"id": "free-tier"}}
+	if got := antigravityProjectIDFromCodeAssist(payload); got != "" {
+		t.Fatalf("antigravityProjectIDFromCodeAssist() = %q, want empty when no project field", got)
+	}
+}

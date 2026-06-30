@@ -1864,6 +1864,14 @@ func (s *accountInspectionScheduler) withRetry(ctx context.Context, retries int,
 
 func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
 	projectID := antigravityProjectID(account.Auth)
+	if projectID == "" {
+		discovered := s.discoverAntigravityProjectID(ctx, account, settings)
+		if discovered == "" {
+			return accountInspectionDecision{}, nil, fmt.Errorf("missing Antigravity project id")
+		}
+		s.appendLog("info", fmt.Sprintf("%s 缺少 project id，自动获取成功：%s", account.identity(), discovered))
+		projectID = discovered
+	}
 	body := `{"project":"` + escapeJSONString(projectID) + `"}`
 	urls := antigravityQuotaURLs()
 	var priorityStatus *int
@@ -1901,7 +1909,7 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 		used := antigravityUsedPercent(groups, settings.AntigravityQuotaMode)
 		decision := quotaDecision(account, used, used != nil, settings.UsedPercentThreshold)
 		if settings.AntigravityDeepProbeEnabled && antigravityShouldDeepProbe(decision) {
-			return s.applyAntigravityDeepProbe(ctx, account, settings, groups, decision, status)
+			return s.applyAntigravityDeepProbe(ctx, account, settings, projectID, groups, decision, status)
 		}
 		return decision, status, nil
 	}
@@ -1945,6 +1953,48 @@ func (s *accountInspectionScheduler) fetchAntigravitySubscription(ctx context.Co
 	return buildAntigravitySubscription(payload)
 }
 
+// discoverAntigravityProjectID 在凭证缺少 project id 时，调用 loadCodeAssist 让服务端返回托管的
+// cloudaicompanionProject（与上游真实请求路径一致的 project 发现方式）。返回空表示无法获取，
+// 调用方据此将账号判为异常，而不是用回退 project 掩盖"实际无法调用"的问题。
+func (s *accountInspectionScheduler) discoverAntigravityProjectID(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) string {
+	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
+		return s.apiCall(ctx, account.Auth, http.MethodPost, antigravityCodeAssistURL, map[string]string{
+			"Authorization": "Bearer $TOKEN$",
+			"Content-Type":  "application/json",
+			"User-Agent":    s.antigravityUserAgent(),
+		}, `{"metadata":{"ideType":"ANTIGRAVITY"}}`, settings.Timeout)
+	})
+	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ""
+	}
+	payload, err := parseAntigravityQuotaPayload(resp.Body)
+	if err != nil {
+		return ""
+	}
+	return antigravityProjectIDFromCodeAssist(payload)
+}
+
+// antigravityProjectIDFromCodeAssist 解析 loadCodeAssist 响应里的 cloudaicompanionProject 字段。
+// 该字段既可能是字符串（LoadCodeAssistResponse），也可能是带 id 的对象（OnboardUserResponse）。
+func antigravityProjectIDFromCodeAssist(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	for _, key := range []string{"cloudaicompanionProject", "cloudaicompanion_project"} {
+		switch value := payload[key].(type) {
+		case string:
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		case map[string]any:
+			if id := strings.TrimSpace(stringFromAny(value["id"])); id != "" {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
 func antigravityShouldDeepProbe(decision accountInspectionDecision) bool {
 	if decision.UsedPercent == nil || decision.IsQuota {
 		return false
@@ -1952,9 +2002,8 @@ func antigravityShouldDeepProbe(decision accountInspectionDecision) bool {
 	return decision.Action == accountInspectionActionKeep || decision.Action == accountInspectionActionEnable
 }
 
-func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, groups []map[string]any, decision accountInspectionDecision, quotaStatus *int) (accountInspectionDecision, *int, error) {
+func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, projectID string, groups []map[string]any, decision accountInspectionDecision, quotaStatus *int) (accountInspectionDecision, *int, error) {
 	model := selectAntigravityDeepProbeModel(groups, settings.AntigravityDeepProbeModel)
-	projectID := antigravityProjectID(account.Auth)
 	if model == "" || projectID == "" {
 		decision.DeepProbeStatus = accountInspectionDeepProbeSkipped
 		if model == "" {
@@ -4419,7 +4468,7 @@ func antigravityProjectID(auth *coreauth.Auth) string {
 			return value
 		}
 	}
-	return "bamboo-precept-lgxtn"
+	return ""
 }
 
 func codexAccountID(auth *coreauth.Auth) string {
