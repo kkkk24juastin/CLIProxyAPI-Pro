@@ -272,6 +272,58 @@ QUOTA_PAGE_SEARCH_LOCALE_KEYS = {
 }
 
 
+QUOTA_DELETE_LOCALE_KEYS = {
+    'en.json': {
+        'select_all': 'Select All',
+        'select_credential': 'Select {{name}}',
+        'delete_one': 'Delete',
+        'delete_one_title': 'Delete Credential',
+        'delete_one_confirm': 'Delete credential "{{name}}"? This action cannot be undone.',
+        'delete_selected': 'Delete Selected ({{count}})',
+        'delete_selected_title': 'Delete Selected Credentials',
+        'delete_selected_confirm': 'Delete {{count}} selected credential(s)? This action cannot be undone.',
+        'delete_success': 'Credentials deleted',
+        'delete_partial': 'Succeeded {{success}}, failed {{failed}}',
+    },
+    'ru.json': {
+        'select_all': 'Выбрать все',
+        'select_credential': 'Выбрать {{name}}',
+        'delete_one': 'Удалить',
+        'delete_one_title': 'Удалить учётные данные',
+        'delete_one_confirm': 'Удалить учётные данные «{{name}}»? Это действие нельзя отменить.',
+        'delete_selected': 'Удалить выбранные ({{count}})',
+        'delete_selected_title': 'Удалить выбранные учётные данные',
+        'delete_selected_confirm': 'Удалить {{count}} выбранных учётных данных? Это действие нельзя отменить.',
+        'delete_success': 'Учётные данные удалены',
+        'delete_partial': 'Успешно {{success}}, не удалось {{failed}}',
+    },
+    'zh-CN.json': {
+        'select_all': '全选',
+        'select_credential': '选择 {{name}}',
+        'delete_one': '删除',
+        'delete_one_title': '删除凭证',
+        'delete_one_confirm': '确定删除凭证 "{{name}}"？此操作不可撤销。',
+        'delete_selected': '删除已选（{{count}}）',
+        'delete_selected_title': '删除所选凭证',
+        'delete_selected_confirm': '确定删除选中的 {{count}} 个凭证？此操作不可撤销。',
+        'delete_success': '凭证已删除',
+        'delete_partial': '成功 {{success}}，失败 {{failed}}',
+    },
+    'zh-TW.json': {
+        'select_all': '全選',
+        'select_credential': '選擇 {{name}}',
+        'delete_one': '刪除',
+        'delete_one_title': '刪除憑證',
+        'delete_one_confirm': '確定刪除憑證 "{{name}}"？此操作無法復原。',
+        'delete_selected': '刪除已選（{{count}}）',
+        'delete_selected_title': '刪除所選憑證',
+        'delete_selected_confirm': '確定刪除選取的 {{count}} 個憑證？此操作無法復原。',
+        'delete_success': '憑證已刪除',
+        'delete_partial': '成功 {{success}}，失敗 {{failed}}',
+    },
+}
+
+
 _writes = {}
 
 
@@ -706,6 +758,33 @@ def patch_quota_page(target: Path) -> None:
         "        files={filteredFiles}\n        loading={loading}\n        disabled={disableControls}\n",
         "        files={filteredFiles}\n        cacheFiles={files}\n        loading={loading}\n        disabled={disableControls}\n",
     )
+    insert_once(
+        path,
+        "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\n",
+        "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\n"
+        "import { useQuotaSelection } from '@/extensions/quota/useQuotaSelection';\n",
+        "useQuotaSelection",
+    )
+    insert_once(
+        path,
+        "  useHeaderRefresh(loadFiles);\n",
+        "  useHeaderRefresh(loadFiles);\n  const quotaSelection = useQuotaSelection(loadFiles);\n",
+        "useQuotaSelection(loadFiles)",
+    )
+    replace_all(
+        path,
+        "        files={filteredFiles}\n        cacheFiles={files}\n        loading={loading}\n        disabled={disableControls}\n      />\n",
+        "        files={filteredFiles}\n        cacheFiles={files}\n        loading={loading}\n        disabled={disableControls}\n"
+        "        selectable\n"
+        "        selectedNames={quotaSelection.selectedNames}\n"
+        "        onToggleSelect={quotaSelection.toggleSelect}\n"
+        "        onDeleteFile={quotaSelection.deleteOne}\n"
+        "        onToggleSelectAll={quotaSelection.toggleSelectAll}\n"
+        "        areAllSelected={quotaSelection.areAllSelected}\n"
+        "        selectedCountIn={quotaSelection.selectedCountIn}\n"
+        "        onDeleteSelected={quotaSelection.deleteSelected}\n"
+        "      />\n",
+    )
 
 
 def patch_quota_section(target: Path) -> None:
@@ -718,7 +797,16 @@ def patch_quota_section(target: Path) -> None:
     replace_once(
         path,
         "  files,\n  loading,\n  disabled,\n}: QuotaSectionProps<TState, TData>) {",
-        "  files,\n  cacheFiles,\n  loading,\n  disabled,\n}: QuotaSectionProps<TState, TData>) {",
+        "  files,\n  cacheFiles,\n  loading,\n  disabled,\n"
+        "  selectable,\n"
+        "  selectedNames,\n"
+        "  onToggleSelect,\n"
+        "  onDeleteFile,\n"
+        "  onToggleSelectAll,\n"
+        "  areAllSelected,\n"
+        "  selectedCountIn,\n"
+        "  onDeleteSelected,\n"
+        "}: QuotaSectionProps<TState, TData>) {",
     )
     insert_once(
         path,
@@ -730,6 +818,56 @@ def patch_quota_section(target: Path) -> None:
         path,
         "  useEffect(() => {\n    if (loading) return;\n    if (filteredFiles.length === 0) {\n      setQuota({});\n      return;\n    }\n    setQuota((prev) => {\n      const nextState: Record<string, TState> = {};\n      filteredFiles.forEach((file) => {\n        const cached = prev[file.name];\n        if (cached) {\n          nextState[file.name] = cached;\n        }\n      });\n      return nextState;\n    });\n  }, [filteredFiles, loading, setQuota]);\n",
         "  useEffect(() => {\n    if (loading) return;\n    if (cacheFilesForProvider.length === 0) {\n      setQuota({});\n      return;\n    }\n    setQuota((prev) => {\n      const nextState: Record<string, TState> = {};\n      cacheFilesForProvider.forEach((file) => {\n        const cached = prev[file.name];\n        if (cached) {\n          nextState[file.name] = cached;\n        }\n      });\n      return nextState;\n    });\n  }, [cacheFilesForProvider, loading, setQuota]);\n",
+    )
+    replace_once(
+        path,
+        "  files: AuthFileItem[];\n  cacheFiles?: AuthFileItem[];\n  loading: boolean;\n",
+        "  files: AuthFileItem[];\n  cacheFiles?: AuthFileItem[];\n  loading: boolean;\n"
+        "  selectable?: boolean;\n"
+        "  selectedNames?: Set<string>;\n"
+        "  onToggleSelect?: (name: string) => void;\n"
+        "  onDeleteFile?: (name: string) => void;\n"
+        "  onToggleSelectAll?: (names: string[]) => void;\n"
+        "  areAllSelected?: (names: string[]) => boolean;\n"
+        "  selectedCountIn?: (names: string[]) => number;\n"
+        "  onDeleteSelected?: (names: string[]) => void;\n",
+    )
+    replace_once(
+        path,
+        "        <>\n          <div ref={gridRef} className={config.gridClassName}>\n",
+        "        <>\n"
+        "          {selectable && (\n"
+        "            <div className={styles.quotaSelectionBar}>\n"
+        "              <label className={styles.quotaSelectAllLabel}>\n"
+        "                <input\n"
+        "                  type=\"checkbox\"\n"
+        "                  checked={areAllSelected?.(filteredFiles.map((file) => file.name)) ?? false}\n"
+        "                  onChange={() => onToggleSelectAll?.(filteredFiles.map((file) => file.name))}\n"
+        "                  disabled={disabled || filteredFiles.length === 0}\n"
+        "                />\n"
+        "                <span>{t('quota_management.select_all')}</span>\n"
+        "              </label>\n"
+        "              <Button\n"
+        "                type=\"button\"\n"
+        "                variant=\"danger\"\n"
+        "                size=\"sm\"\n"
+        "                onClick={() => onDeleteSelected?.(filteredFiles.map((file) => file.name))}\n"
+        "                disabled={disabled || (selectedCountIn?.(filteredFiles.map((file) => file.name)) ?? 0) === 0}\n"
+        "              >\n"
+        "                {t('quota_management.delete_selected', { count: selectedCountIn?.(filteredFiles.map((file) => file.name)) ?? 0 })}\n"
+        "              </Button>\n"
+        "            </div>\n"
+        "          )}\n"
+        "          <div ref={gridRef} className={config.gridClassName}>\n",
+    )
+    replace_once(
+        path,
+        "                  renderQuotaItems={config.renderQuotaItems}\n",
+        "                  renderQuotaItems={config.renderQuotaItems}\n"
+        "                  selectable={selectable}\n"
+        "                  selected={selectedNames?.has(item.name) ?? false}\n"
+        "                  onToggleSelect={onToggleSelect}\n"
+        "                  onDeleteFile={onDeleteFile}\n",
     )
 
 
@@ -745,6 +883,58 @@ def patch_quota_card(target: Path) -> None:
         path,
         "        ) : quota ? (\n          renderQuotaItems(quota, t, { styles, QuotaProgressBar })\n        ) : (",
         "        ) : quota ? (\n          <>\n            {renderQuotaItems(quota, t, { styles, QuotaProgressBar })}\n            <QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />\n          </>\n        ) : (",
+    )
+    replace_once(
+        path,
+        "  renderQuotaItems: (quota: TState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;\n}",
+        "  renderQuotaItems: (quota: TState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;\n"
+        "  selectable?: boolean;\n"
+        "  selected?: boolean;\n"
+        "  onToggleSelect?: (name: string) => void;\n"
+        "  onDeleteFile?: (name: string) => void;\n}",
+    )
+    replace_once(
+        path,
+        "  renderQuotaItems,\n}: QuotaCardProps<TState>) {",
+        "  renderQuotaItems,\n"
+        "  selectable = false,\n"
+        "  selected = false,\n"
+        "  onToggleSelect,\n"
+        "  onDeleteFile,\n}: QuotaCardProps<TState>) {",
+    )
+    replace_once(
+        path,
+        "      <div className={styles.cardHeader}>\n        <span\n          className={styles.typeBadge}\n",
+        "      <div className={styles.cardHeader}>\n"
+        "        {selectable && (\n"
+        "          <input\n"
+        "            type=\"checkbox\"\n"
+        "            className={styles.quotaCardCheckbox}\n"
+        "            checked={selected}\n"
+        "            onChange={() => onToggleSelect?.(item.name)}\n"
+        "            aria-label={t('quota_management.select_credential', { name: item.name })}\n"
+        "          />\n"
+        "        )}\n"
+        "        <span\n          className={styles.typeBadge}\n",
+    )
+    replace_once(
+        path,
+        "      {(resetQuotaAction || (onRefresh && quotaStatus !== 'idle')) && (\n        <div className={styles.quotaCardActions}>\n",
+        "      {(selectable || resetQuotaAction || (onRefresh && quotaStatus !== 'idle')) && (\n"
+        "        <div className={styles.quotaCardActions}>\n"
+        "          {selectable && (\n"
+        "            <Button\n"
+        "              type=\"button\"\n"
+        "              variant=\"danger\"\n"
+        "              size=\"sm\"\n"
+        "              className={styles.quotaDeleteButton}\n"
+        "              onClick={() => onDeleteFile?.(item.name)}\n"
+        "              title={t('quota_management.delete_one')}\n"
+        "              aria-label={t('quota_management.delete_one')}\n"
+        "            >\n"
+        "              {t('quota_management.delete_one')}\n"
+        "            </Button>\n"
+        "          )}\n",
     )
 
 
@@ -840,6 +1030,12 @@ def patch_quota_styles(target: Path) -> None:
         ".pageHeader {\n",
         ".quotaFilterBar {\n  display: flex;\n  gap: $spacing-sm;\n  margin-top: $spacing-md;\n  flex-wrap: wrap;\n}\n\n.quotaSearchInput {\n  flex: 1;\n  min-width: 200px;\n  padding: $spacing-sm $spacing-md;\n  border: 1px solid var(--border-color);\n  border-radius: $radius-md;\n  background-color: var(--bg-secondary);\n  color: var(--text-primary);\n  font-size: 13px;\n  outline: none;\n  transition: border-color 0.15s ease;\n\n  &:focus {\n    border-color: var(--primary-color);\n  }\n\n  &::placeholder {\n    color: var(--text-secondary);\n  }\n}\n\n.quotaPlanSelect {\n  min-width: 140px;\n  padding: $spacing-sm $spacing-md;\n  border: 1px solid var(--border-color);\n  border-radius: $radius-md;\n  background-color: var(--bg-secondary);\n  color: var(--text-primary);\n  font-size: 13px;\n  cursor: pointer;\n  outline: none;\n  transition: border-color 0.15s ease;\n\n  &:focus {\n    border-color: var(--primary-color);\n  }\n}\n\n.pageHeader {\n",
         ".quotaFilterBar",
+    )
+    insert_once(
+        path,
+        ".quotaFilterBar {\n",
+        ".quotaSelectionBar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: $spacing-sm;\n  margin-bottom: $spacing-md;\n  padding: $spacing-sm $spacing-md;\n  background-color: var(--bg-secondary);\n  border-radius: $radius-md;\n}\n\n.quotaSelectAllLabel {\n  display: flex;\n  align-items: center;\n  gap: $spacing-xs;\n  font-size: 13px;\n  color: var(--text-primary);\n  cursor: pointer;\n}\n\n.quotaCardCheckbox {\n  margin-right: $spacing-xs;\n  cursor: pointer;\n  flex-shrink: 0;\n}\n\n.quotaDeleteButton {\n  margin-right: auto;\n}\n\n.quotaFilterBar {\n",
+        ".quotaSelectionBar",
     )
 
 
@@ -1309,6 +1505,8 @@ def patch_locales(target: Path) -> None:
         data.setdefault('auth_files', {}).update(batch_locale)
         quota_search_locale = QUOTA_PAGE_SEARCH_LOCALE_KEYS.get(locale_path.name, QUOTA_PAGE_SEARCH_LOCALE_KEYS['en.json'])
         data.setdefault('quota_management', {}).update(quota_search_locale)
+        quota_delete_locale = QUOTA_DELETE_LOCALE_KEYS.get(locale_path.name, QUOTA_DELETE_LOCALE_KEYS['en.json'])
+        data.setdefault('quota_management', {}).update(quota_delete_locale)
         locale_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
 
