@@ -241,6 +241,7 @@ type accountInspectionSnapshotOptions struct {
 	ResultPage     int
 	ResultPageSize int
 	ResultFilter   string
+	ResultProvider string
 	LogPage        int
 	LogPageSize    int
 	LogLevel       string
@@ -549,6 +550,7 @@ func accountInspectionRequestSnapshotOptions(c *gin.Context) accountInspectionSn
 		ResultPage:     parseAccountInspectionQueryInt(c, "result_page", 1),
 		ResultPageSize: resultPageSize,
 		ResultFilter:   strings.ToLower(strings.TrimSpace(c.Query("result_filter"))),
+		ResultProvider: strings.ToLower(strings.TrimSpace(c.Query("result_provider"))),
 		LogPage:        parseAccountInspectionQueryInt(c, "log_page", 1),
 		LogPageSize:    logPageSize,
 		LogLevel:       strings.ToLower(strings.TrimSpace(c.Query("log_level"))),
@@ -662,6 +664,11 @@ func accountInspectionResultMatchesFilter(result accountInspectionResult, filter
 	}
 }
 
+func accountInspectionResultMatchesProvider(result accountInspectionResult, provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	return provider == "" || provider == accountInspectionProviderAll || strings.EqualFold(result.Provider, provider)
+}
+
 func minInt(left int, right int) int {
 	if left < right {
 		return left
@@ -734,12 +741,12 @@ func paginateAccountInspectionLogs(logs []accountInspectionLogEntry, page int, p
 	return append([]accountInspectionLogEntry(nil), filtered[start:end]...), info
 }
 
-func paginateAccountInspectionResults(results []accountInspectionResult, page int, pageSize int, filter string) ([]accountInspectionResult, accountInspectionPageInfo) {
+func paginateAccountInspectionResults(results []accountInspectionResult, page int, pageSize int, filter string, provider string) ([]accountInspectionResult, accountInspectionPageInfo) {
 	page = normalizeAccountInspectionPage(page)
 	pageSize = normalizeAccountInspectionPageSize(pageSize, 100, accountInspectionMaxResultPageSize)
 	filtered := make([]accountInspectionResult, 0, len(results))
 	for _, result := range results {
-		if accountInspectionResultMatchesFilter(result, filter) {
+		if accountInspectionResultMatchesFilter(result, filter) && accountInspectionResultMatchesProvider(result, provider) {
 			filtered = append(filtered, result)
 		}
 	}
@@ -758,7 +765,7 @@ func (s *accountInspectionScheduler) streamStatusLocked(options accountInspectio
 	if options.IncludeDetails {
 		healthCounts := s.healthCountsLocked()
 		logs, logsPage := paginateAccountInspectionLogs(s.status.Logs, options.LogPage, options.LogPageSize, options.LogLevel)
-		results, resultsPage := paginateAccountInspectionResults(s.status.Results, options.ResultPage, options.ResultPageSize, options.ResultFilter)
+		results, resultsPage := paginateAccountInspectionResults(s.status.Results, options.ResultPage, options.ResultPageSize, options.ResultFilter, options.ResultProvider)
 		status.HealthCounts = &healthCounts
 		status.Logs = logs
 		status.Results = results
