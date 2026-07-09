@@ -885,6 +885,12 @@ func TestBuildXAIBillingSummaryParsesBillingConfig(t *testing.T) {
 	if billing["usedPercent"] != 25.0 {
 		t.Fatalf("billing usedPercent = %#v, want 25", billing["usedPercent"])
 	}
+	if billing["includedUsedCents"] != 2500.0 {
+		t.Fatalf("includedUsedCents = %#v, want 2500", billing["includedUsedCents"])
+	}
+	if billing["onDemandUsedCents"] != 0.0 {
+		t.Fatalf("onDemandUsedCents = %#v, want 0", billing["onDemandUsedCents"])
+	}
 }
 
 func TestBuildXAIBillingSummarySupportsSnakeCaseAndNumericValues(t *testing.T) {
@@ -909,6 +915,100 @@ func TestBuildXAIBillingSummarySupportsSnakeCaseAndNumericValues(t *testing.T) {
 	}
 }
 
+func TestBuildXAIBillingSummarySupportsWeeklyCreditsShape(t *testing.T) {
+	body := `{
+		"config": {
+			"currentPeriod": {
+				"type": "weekly",
+				"start": "2026-07-06T00:00:00Z",
+				"end": "2026-07-13T00:00:00Z"
+			},
+			"creditUsagePercent": 64.5,
+			"productUsage": [
+				{"product": "Grok", "usagePercent": 50},
+				{"product": "Think", "usage_percent": "82.25"}
+			]
+		}
+	}`
+
+	billing, used, err := buildXAIBillingSummary(body)
+	if err != nil {
+		t.Fatalf("buildXAIBillingSummary() error = %v", err)
+	}
+	if used == nil || *used != 64.5 {
+		t.Fatalf("used percent = %v, want 64.5", used)
+	}
+	if billing["periodType"] != "weekly" || billing["usagePercent"] != 64.5 {
+		t.Fatalf("weekly billing = %+v, want weekly usage percent", billing)
+	}
+	if billing["periodEnd"] != "2026-07-13T00:00:00Z" {
+		t.Fatalf("periodEnd = %#v, want weekly period end", billing["periodEnd"])
+	}
+	usage, ok := billing["productUsage"].([]map[string]any)
+	if !ok || len(usage) != 2 {
+		t.Fatalf("productUsage = %#v, want 2 normalized items", billing["productUsage"])
+	}
+	if usage[1]["usagePercent"] != 82.25 {
+		t.Fatalf("second usagePercent = %#v, want 82.25", usage[1]["usagePercent"])
+	}
+}
+
+func TestMergeXAIBillingSummariesCombinesWeeklyAndMonthly(t *testing.T) {
+	weekly, _, err := buildXAIBillingSummary(`{
+		"config": {
+			"current_period": {"type": "weekly", "end": "2026-07-13T00:00:00Z"},
+			"credit_usage_percent": 10,
+			"product_usage": [{"product": "Grok", "usage_percent": 10}]
+		}
+	}`)
+	if err != nil {
+		t.Fatalf("weekly build error = %v", err)
+	}
+	monthly, _, err := buildXAIBillingSummary(`{
+		"config": {
+			"monthly_limit": 150000,
+			"used": 160000,
+			"on_demand_cap": 20000,
+			"billing_period_end": "2026-08-01T00:00:00Z"
+		}
+	}`)
+	if err != nil {
+		t.Fatalf("monthly build error = %v", err)
+	}
+
+	merged := mergeXAIBillingSummaries(weekly, monthly)
+	if merged["periodType"] != "weekly" || merged["usagePercent"] != 10.0 {
+		t.Fatalf("merged weekly fields = %+v", merged)
+	}
+	if merged["monthlyLimitCents"] != 150000.0 || merged["includedUsedCents"] != 150000.0 || merged["onDemandUsedCents"] != 10000.0 {
+		t.Fatalf("merged monthly fields = %+v", merged)
+	}
+	if merged["usedPercent"] != 100.0 || merged["onDemandUsedPercent"] != 50.0 {
+		t.Fatalf("merged percentages = %+v", merged)
+	}
+	usage, ok := merged["productUsage"].([]map[string]any)
+	if !ok || len(usage) != 1 || usage[0]["product"] != "Grok" {
+		t.Fatalf("merged productUsage = %#v, want weekly product usage", merged["productUsage"])
+	}
+}
+
+func TestXAIRequestHeadersIncludeGrokClientAndUserID(t *testing.T) {
+	auth := &coreauth.Auth{
+		Provider: "xai",
+		Metadata: map[string]any{"sub": "user-123"},
+	}
+	headers := xaiRequestHeaders(auth)
+	if headers["x-xai-token-auth"] != "xai-grok-cli" {
+		t.Fatalf("x-xai-token-auth = %q", headers["x-xai-token-auth"])
+	}
+	if headers["x-grok-client-version"] != "0.2.91" {
+		t.Fatalf("x-grok-client-version = %q", headers["x-grok-client-version"])
+	}
+	if headers["x-userid"] != "user-123" {
+		t.Fatalf("x-userid = %q, want user-123", headers["x-userid"])
+	}
+}
+
 func TestXAIInspectionUsesExecutorHTTPRequest(t *testing.T) {
 	if !accountInspectionShouldUseExecutorHTTPRequest(&coreauth.Auth{Provider: "xai"}) {
 		t.Fatal("accountInspectionShouldUseExecutorHTTPRequest(xai) = false, want true")
@@ -918,5 +1018,8 @@ func TestXAIInspectionUsesExecutorHTTPRequest(t *testing.T) {
 func TestXAIBillingURLMatchesUpstreamQuotaConfig(t *testing.T) {
 	if got := xaiBillingURL(); got != "https://cli-chat-proxy.grok.com/v1/billing" {
 		t.Fatalf("xaiBillingURL() = %q, want upstream billing endpoint", got)
+	}
+	if got := xaiBillingWeeklyURL(); got != "https://cli-chat-proxy.grok.com/v1/billing?format=credits" {
+		t.Fatalf("xaiBillingWeeklyURL() = %q, want upstream weekly billing endpoint", got)
 	}
 }

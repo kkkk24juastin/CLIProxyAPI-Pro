@@ -624,6 +624,20 @@ def patch_quota_styles(target: Path) -> None:
     )
 
 
+def patch_account_inspection_page(target: Path) -> None:
+    path = target / 'src/pages/AccountInspectionPage.tsx'
+    replace_once_if_present(
+        path,
+        "  const used = normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent);\n"
+        "  return used !== null && used >= usedPercentThreshold;\n",
+        "  const used =\n"
+        "    normalizeNumberValue(quota.billing.usagePercent ?? quota.billing.usage_percent)\n"
+        "    ?? normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent)\n"
+        "    ?? maxAntigravityGroupUsedPercent(Array.isArray(quota.billing.productUsage) ? quota.billing.productUsage : []);\n"
+        "  return used !== null && used >= usedPercentThreshold;\n",
+    )
+
+
 def patch_auth_files_page_search(target: Path) -> None:
     path = target / 'src/pages/AuthFilesPage.tsx'
     replace_once(
@@ -1050,6 +1064,7 @@ def main() -> None:
     patch_quota_page(target)
     patch_quota_card(target)
     patch_quota_styles(target)
+    patch_account_inspection_page(target)
     patch_auth_files_page_search(target)
     patch_supporting_api_and_types(target)
     patch_locales(target)
