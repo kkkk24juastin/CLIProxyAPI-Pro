@@ -697,7 +697,10 @@ const isAntigravityQuotaLow = (
 const isXaiQuotaLow = (quota: unknown, usedPercentThreshold: number) => {
   if (!isRecordValue(quota) || quota.status !== 'success') return false;
   if (!isRecordValue(quota.billing)) return false;
-  const used = normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent);
+  const used =
+    normalizeNumberValue(quota.billing.usagePercent ?? quota.billing.usage_percent)
+    ?? normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent)
+    ?? maxAntigravityGroupUsedPercent(Array.isArray(quota.billing.productUsage) ? quota.billing.productUsage : []);
   return used !== null && used >= usedPercentThreshold;
 };
 
