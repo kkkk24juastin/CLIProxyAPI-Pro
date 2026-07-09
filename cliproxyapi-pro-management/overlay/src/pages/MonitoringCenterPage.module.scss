@@ -3118,6 +3118,10 @@
   table-layout: fixed;
 }
 
+.realtimeErrorCol {
+  width: 260px;
+}
+
 .table thead th {
   position: sticky;
   top: 0;
@@ -3319,6 +3323,149 @@
   white-space: normal;
 }
 
+.realtimeErrorCell {
+  white-space: normal;
+}
+
+.realtimeErrorSummaryCell {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+}
+
+.realtimeErrorToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
+  border-radius: 6px;
+  background: var(--monitor-surface);
+  color: var(--monitor-muted);
+  cursor: pointer;
+}
+
+.realtimeErrorToggle:hover {
+  border-color: color-mix(in srgb, var(--monitor-accent) 45%, var(--monitor-line));
+  color: var(--monitor-ink);
+}
+
+.realtimeErrorSummaryText {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.realtimeErrorSummaryText strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.realtimeErrorSummaryText small {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.realtimeErrorDetailsRow td {
+  padding: 0;
+  white-space: normal;
+  background: color-mix(in srgb, var(--monitor-red) 4%, var(--monitor-surface));
+}
+
+.realtimeErrorDetailsPanel {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--monitor-red) 22%, var(--monitor-line));
+}
+
+.realtimeErrorDetailsHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.realtimeErrorDetailsHeader > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.realtimeErrorDetailsHeader strong {
+  color: var(--monitor-ink);
+}
+
+.realtimeErrorDetailsHeader span {
+  color: var(--monitor-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.realtimeErrorMessage {
+  max-height: 150px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 78%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--monitor-surface-muted) 74%, var(--monitor-surface));
+  color: var(--monitor-ink);
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.realtimeErrorDetailsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.realtimeErrorDetailItem {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 80%, transparent);
+  border-radius: 8px;
+  background: var(--monitor-surface);
+}
+
+.realtimeErrorDetailItem span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.realtimeErrorDetailItem strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--monitor-ink);
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 .realtimeUsageCell {
   gap: 2px;
 }
@@ -3358,6 +3505,10 @@
 
 .monoCell {
   font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.mutedText {
+  color: var(--monitor-muted);
 }
 
 .statusCell {

@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
@@ -97,6 +97,7 @@ const REALTIME_LOG_COLUMN_KEYS = [
   'apiKey',
   'recent',
   'status',
+  'errorDetails',
   'successRate',
   'calls',
   'ttft',
@@ -126,6 +127,7 @@ const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, number> =
   apiKey: 145,
   recent: 86,
   status: 112,
+  errorDetails: 260,
   successRate: 86,
   calls: 76,
   ttft: 92,
@@ -140,6 +142,7 @@ const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   apiKey: 104,
   recent: 76,
   status: 86,
+  errorDetails: 160,
   successRate: 76,
   calls: 68,
   ttft: 76,
@@ -253,6 +256,8 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
       return ['||||||||||'];
     case 'status':
       return [row.failed ? 'Failed' : 'Success', row.diagnosticText ?? ''];
+    case 'errorDetails':
+      return [row.errorCategoryKey, row.errorSummary, row.errorMessage, row.upstreamRequestId, row.retryAfter];
     case 'successRate':
       return [formatPercent(row.successRate)];
     case 'calls':
@@ -524,6 +529,8 @@ type RealtimeLogRow = MonitoringEventRow & {
   successRate: number;
   streamKey: string;
   diagnosticText: string;
+  errorCategoryKey: string;
+  errorSummary: string;
   recentPattern: boolean[];
   recentSuccessCount: number;
   recentFailureCount: number;
@@ -1192,6 +1199,72 @@ const buildRealtimeDiagnosticText = (row: MonitoringEventRow) => {
   return maskSensitiveText(parts.join(' · '));
 };
 
+const compactRealtimeErrorMessage = (message: string, maxLength = 220) => {
+  const masked = maskSensitiveText(message.replace(/\s+/g, ' ').trim());
+  return masked.length > maxLength ? `${masked.slice(0, maxLength - 1)}...` : masked;
+};
+
+const resolveRealtimeErrorCategoryKey = (row: MonitoringEventRow) => {
+  const code = row.errorCode.toLowerCase();
+  const message = row.errorMessage.toLowerCase();
+  const status = row.statusCode;
+  const combined = `${code} ${message}`;
+
+  if (status === 401 || status === 403 || /\b(auth|unauthorized|forbidden|invalid[_ -]?key|permission)\b/.test(combined)) {
+    return 'monitoring.error_category_auth';
+  }
+  if (status === 429 || /\b(rate[_ -]?limit|too many requests|quota|insufficient_quota)\b/.test(combined)) {
+    return 'monitoring.error_category_rate_limit';
+  }
+  if (status === 400 || /\b(bad[_ -]?request|invalid[_ -]?request|validation)\b/.test(combined)) {
+    return 'monitoring.error_category_bad_request';
+  }
+  if (status === 404 || /\b(model.*not.*found|not[_ -]?found|404)\b/.test(combined)) {
+    return 'monitoring.error_category_not_found';
+  }
+  if (/\b(timeout|deadline|context canceled|connection reset|econnreset|network)\b/.test(combined)) {
+    return 'monitoring.error_category_network';
+  }
+  if (status !== null && status >= 500) {
+    return 'monitoring.error_category_upstream';
+  }
+  return row.failed ? 'monitoring.error_category_unknown' : 'monitoring.error_category_none';
+};
+
+const buildRealtimeErrorSummary = (row: MonitoringEventRow) => {
+  if (!row.failed) return '';
+  const parts: string[] = [];
+  if (row.errorMessage) parts.push(compactRealtimeErrorMessage(row.errorMessage));
+  if (!row.errorMessage && row.errorCode) parts.push(maskSensitiveText(row.errorCode));
+  if (row.upstreamRequestId) parts.push(`RID ${maskSensitiveText(row.upstreamRequestId)}`);
+  if (row.retryAfter) parts.push(`Retry ${maskSensitiveText(row.retryAfter)}`);
+  return parts.join(' · ');
+};
+
+const buildRealtimeDiagnosticClipboardText = (
+  row: RealtimeLogRow,
+  t: ReturnType<typeof useTranslation>['t'],
+  locale: string
+) => {
+  const fields: Array<[string, string | number | null | undefined]> = [
+    [t('monitoring.request_status'), row.failed ? t('monitoring.result_failed') : t('monitoring.result_success')],
+    [t('monitoring.error_category'), t(row.errorCategoryKey)],
+    [t('monitoring.http_status'), row.statusCode ?? '-'],
+    [t('monitoring.error_code'), row.errorCode || '-'],
+    [t('monitoring.error_message'), row.errorMessage ? compactRealtimeErrorMessage(row.errorMessage, 800) : '-'],
+    [t('monitoring.upstream_request_id'), row.upstreamRequestId || '-'],
+    [t('monitoring.retry_after'), row.retryAfter || '-'],
+    [t('monitoring.filter_provider'), row.provider || '-'],
+    [t('monitoring.column_model'), row.model || '-'],
+    [t('monitoring.auth_index'), row.authIndexMasked || row.authIndex || '-'],
+    [t('monitoring.column_endpoints'), `${row.endpointMethod} ${row.endpointPath}`.trim() || '-'],
+    [t('monitoring.column_ttft'), formatDurationMs(row.ttftMs, { locale })],
+    [t('monitoring.column_latency'), formatDurationMs(row.latencyMs, { locale })],
+    [t('monitoring.column_time'), new Date(row.timestampMs).toLocaleString(locale)],
+  ];
+  return fields.map(([label, value]) => `${label}: ${maskSensitiveText(String(value ?? '-'))}`).join('\n');
+};
+
 const QUOTA_RENDER_HELPERS: QuotaRenderHelpers = {
   styles: quotaStyles,
   QuotaProgressBar,
@@ -1339,6 +1412,8 @@ const buildRealtimeLogRows = (rows: MonitoringEventRow[]): RealtimeLogRow[] => {
         ...row,
         streamKey,
         diagnosticText: buildRealtimeDiagnosticText(row),
+        errorCategoryKey: resolveRealtimeErrorCategoryKey(row),
+        errorSummary: buildRealtimeErrorSummary(row),
         requestCount: next.total,
         successRate: next.total > 0 ? next.success / next.total : 1,
         recentPattern: nextPattern,
@@ -2822,6 +2897,62 @@ function StatusBadge({ tone, children }: { tone: MonitoringStatusTone; children:
   return <span className={`${styles.statusBadge} ${styles[`tone${tone}`]}`}>{children}</span>;
 }
 
+function RealtimeErrorDetailsRow({
+  row,
+  colSpan,
+  locale,
+  t,
+  onCopy,
+}: {
+  row: RealtimeLogRow;
+  colSpan: number;
+  locale: string;
+  t: ReturnType<typeof useTranslation>['t'];
+  onCopy: (row: RealtimeLogRow) => void;
+}) {
+  const endpoint = `${row.endpointMethod} ${row.endpointPath}`.trim() || '-';
+  const detailItems = [
+    { label: t('monitoring.error_category'), value: t(row.errorCategoryKey) },
+    { label: t('monitoring.http_status'), value: row.statusCode !== null ? String(row.statusCode) : '-' },
+    { label: t('monitoring.error_code'), value: row.errorCode || '-' },
+    { label: t('monitoring.upstream_request_id'), value: row.upstreamRequestId || '-' },
+    { label: t('monitoring.retry_after'), value: row.retryAfter || '-' },
+    { label: t('monitoring.column_endpoints'), value: endpoint },
+    { label: t('monitoring.auth_index'), value: row.authIndexMasked || row.authIndex || '-' },
+    { label: t('monitoring.column_ttft'), value: formatDurationMs(row.ttftMs, { locale }) },
+    { label: t('monitoring.column_latency'), value: formatDurationMs(row.latencyMs, { locale }) },
+  ];
+
+  return (
+    <tr className={styles.realtimeErrorDetailsRow}>
+      <td colSpan={colSpan}>
+        <div className={styles.realtimeErrorDetailsPanel}>
+          <div className={styles.realtimeErrorDetailsHeader}>
+            <div>
+              <strong>{t('monitoring.error_details')}</strong>
+              <span>{row.errorSummary || row.diagnosticText || t('monitoring.error_category_unknown')}</span>
+            </div>
+            <button type="button" className={styles.inlineActionButton} onClick={() => onCopy(row)}>
+              {t('monitoring.copy_diagnostic')}
+            </button>
+          </div>
+          {row.errorMessage ? (
+            <pre className={styles.realtimeErrorMessage}>{compactRealtimeErrorMessage(row.errorMessage, 1200)}</pre>
+          ) : null}
+          <div className={styles.realtimeErrorDetailsGrid}>
+            {detailItems.map((item) => (
+              <div key={item.label} className={styles.realtimeErrorDetailItem}>
+                <span>{item.label}</span>
+                <strong>{maskSensitiveText(item.value)}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function RecentPattern({
   pattern,
   variant = 'default',
@@ -2871,6 +3002,7 @@ export function MonitoringCenterPage() {
   const [selectedApiKey, setSelectedApiKey] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
   const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
+  const [expandedRealtimeLogRows, setExpandedRealtimeLogRows] = useState<Record<string, boolean>>({});
   const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
   const [isMonitoringSettingsOpen, setIsMonitoringSettingsOpen] = useState(false);
   const [isMonitoringSettingsLoading, setIsMonitoringSettingsLoading] = useState(false);
@@ -3039,6 +3171,17 @@ export function MonitoringCenterPage() {
     },
     [refreshAll, showNotification, t]
   );
+
+  const handleCopyRealtimeDiagnostic = useCallback((row: RealtimeLogRow) => {
+    const text = buildRealtimeDiagnosticClipboardText(row, t, i18n.language);
+    if (!navigator.clipboard?.writeText) {
+      showNotification(t('monitoring.copy_diagnostic_failed'), 'error');
+      return;
+    }
+    void navigator.clipboard.writeText(text)
+      .then(() => showNotification(t('monitoring.copy_diagnostic_success'), 'success'))
+      .catch(() => showNotification(t('monitoring.copy_diagnostic_failed'), 'error'));
+  }, [i18n.language, showNotification, t]);
 
   useHeaderRefresh(refreshAll);
 
@@ -3360,6 +3503,35 @@ export function MonitoringCenterPage() {
         </div>
       ),
     },
+    errorDetails: {
+      key: 'errorDetails',
+      label: t('monitoring.error_details'),
+      colClassName: styles.realtimeErrorCol,
+      cellClassName: () => styles.realtimeErrorCell,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.errorDetails,
+      render: (row) => row.failed ? (
+        <div className={styles.realtimeErrorSummaryCell}>
+          <button
+            type="button"
+            className={styles.realtimeErrorToggle}
+            onClick={() => setExpandedRealtimeLogRows((current) => ({
+              ...current,
+              [row.id]: !current[row.id],
+            }))}
+            aria-expanded={Boolean(expandedRealtimeLogRows[row.id])}
+            aria-label={t('monitoring.error_details_toggle')}
+          >
+            {expandedRealtimeLogRows[row.id] ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+          </button>
+          <div className={styles.realtimeErrorSummaryText}>
+            <strong>{t(row.errorCategoryKey)}</strong>
+            <small title={row.errorMessage || row.errorSummary || undefined}>
+              {row.errorSummary || row.diagnosticText || t('monitoring.error_category_unknown')}
+            </small>
+          </div>
+        </div>
+      ) : <span className={styles.mutedText}>-</span>,
+    },
     successRate: {
       key: 'successRate',
       label: t('monitoring.column_success_rate'),
@@ -3455,7 +3627,7 @@ export function MonitoringCenterPage() {
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.cost,
       render: (row) => (hasPrices ? formatUsd(row.totalCost) : '--'),
     },
-  }), [hasPrices, i18n.language, t]);
+  }), [expandedRealtimeLogRows, hasPrices, i18n.language, t]);
   const visibleRealtimeLogColumns = useMemo(
     () => realtimeLogColumns
       .filter((column) => column.visible)
@@ -4118,13 +4290,24 @@ export function MonitoringCenterPage() {
             </thead>
             <tbody>
               {realtimeLogPageRows.map((row) => (
-                <tr key={row.id} className={row.failed ? styles.logRowFailed : undefined}>
-                  {visibleRealtimeLogColumns.map((column) => (
-                    <td key={column.key} className={column.cellClassName?.(row)}>
-                      {column.render(row)}
-                    </td>
-                  ))}
-                </tr>
+                <Fragment key={row.id}>
+                  <tr className={row.failed ? styles.logRowFailed : undefined}>
+                    {visibleRealtimeLogColumns.map((column) => (
+                      <td key={column.key} className={column.cellClassName?.(row)}>
+                        {column.render(row)}
+                      </td>
+                    ))}
+                  </tr>
+                  {row.failed && expandedRealtimeLogRows[row.id] ? (
+                    <RealtimeErrorDetailsRow
+                      row={row}
+                      colSpan={realtimeLogVisibleColumnCount}
+                      locale={i18n.language}
+                      t={t}
+                      onCopy={handleCopyRealtimeDiagnostic}
+                    />
+                  ) : null}
+                </Fragment>
               ))}
               {realtimeLogPageRows.length === 0 ? (
                 <tr>
