@@ -252,7 +252,7 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
     case 'recent':
       return ['||||||||||'];
     case 'status':
-      return [row.failed ? 'Failed' : 'Success', row.diagnosticText ?? ''];
+      return [buildRealtimeStatusLabel(row, row.failed ? 'Failed' : 'Success')];
     case 'successRate':
       return [formatPercent(row.successRate)];
     case 'calls':
@@ -1194,6 +1194,20 @@ const buildRealtimeDiagnosticText = (row: MonitoringEventRow) => {
   return maskSensitiveText(parts.join(' · '));
 };
 
+const buildRealtimeStatusCodeText = (row: Pick<MonitoringEventRow, 'statusCode' | 'errorCode'>) => {
+  if (row.statusCode !== null && row.statusCode >= 400) return String(row.statusCode);
+  return row.errorCode ? maskSensitiveText(row.errorCode) : '';
+};
+
+const buildRealtimeStatusLabel = (
+  row: Pick<MonitoringEventRow, 'failed' | 'statusCode' | 'errorCode'>,
+  label: string
+) => {
+  if (!row.failed) return label;
+  const codeText = buildRealtimeStatusCodeText(row);
+  return codeText ? `${label} · ${codeText}` : label;
+};
+
 const compactRealtimeErrorMessage = (message: string, maxLength = 220) => {
   const masked = maskSensitiveText(message.replace(/\s+/g, ' ').trim());
   return masked.length > maxLength ? `${masked.slice(0, maxLength - 1)}...` : masked;
@@ -1226,28 +1240,152 @@ const resolveRealtimeErrorCategoryKey = (row: MonitoringEventRow) => {
   return row.failed ? 'monitoring.error_category_unknown' : 'monitoring.error_category_none';
 };
 
+const REALTIME_ERROR_TEXT_FALLBACKS = {
+  en: {
+    error_details: 'Error Details',
+    error_details_click_hint: 'Click to view error details',
+    error_details_modal_desc: 'Only fields directly related to the failed request are shown here.',
+    error_category: 'Error Category',
+    error_category_none: 'No Error',
+    error_category_auth: 'Auth / Permission',
+    error_category_rate_limit: 'Rate Limit / Quota',
+    error_category_bad_request: 'Bad Request',
+    error_category_not_found: 'Not Found',
+    error_category_network: 'Network / Timeout',
+    error_category_upstream: 'Upstream Error',
+    error_category_unknown: 'Unknown Error',
+    http_status: 'HTTP Status',
+    error_code: 'Error Code',
+    error_message: 'Error Message',
+    upstream_request_id: 'Upstream Request ID',
+    retry_after: 'Retry After',
+    copy_diagnostic: 'Copy Diagnostic',
+    copy_diagnostic_success: 'Diagnostic copied',
+    copy_diagnostic_failed: 'Unable to copy diagnostic',
+    request_status: 'Request Status',
+    filter_provider: 'Provider',
+    column_model: 'Model',
+  },
+  ru: {
+    error_details: 'Детали ошибки',
+    error_details_click_hint: 'Нажмите, чтобы посмотреть детали ошибки',
+    error_details_modal_desc: 'Здесь показаны только поля, напрямую связанные с ошибкой запроса.',
+    error_category: 'Категория ошибки',
+    error_category_none: 'Нет ошибки',
+    error_category_auth: 'Авторизация / права',
+    error_category_rate_limit: 'Лимит / квота',
+    error_category_bad_request: 'Некорректный запрос',
+    error_category_not_found: 'Не найдено',
+    error_category_network: 'Сеть / тайм-аут',
+    error_category_upstream: 'Ошибка upstream',
+    error_category_unknown: 'Неизвестная ошибка',
+    http_status: 'HTTP статус',
+    error_code: 'Код ошибки',
+    error_message: 'Сообщение ошибки',
+    upstream_request_id: 'Upstream request ID',
+    retry_after: 'Повторить после',
+    copy_diagnostic: 'Скопировать диагностику',
+    copy_diagnostic_success: 'Диагностика скопирована',
+    copy_diagnostic_failed: 'Не удалось скопировать диагностику',
+    request_status: 'Статус запроса',
+    filter_provider: 'Провайдер',
+    column_model: 'Модель',
+  },
+  zhCN: {
+    error_details: '错误详情',
+    error_details_click_hint: '点击查看错误详情',
+    error_details_modal_desc: '这里只显示和本次请求失败直接相关的字段。',
+    error_category: '错误类别',
+    error_category_none: '无错误',
+    error_category_auth: '鉴权 / 权限',
+    error_category_rate_limit: '限流 / 配额',
+    error_category_bad_request: '请求参数错误',
+    error_category_not_found: '资源不存在',
+    error_category_network: '网络 / 超时',
+    error_category_upstream: '上游错误',
+    error_category_unknown: '未知错误',
+    http_status: 'HTTP 状态',
+    error_code: '错误码',
+    error_message: '错误信息',
+    upstream_request_id: '上游请求 ID',
+    retry_after: '重试等待',
+    copy_diagnostic: '复制诊断',
+    copy_diagnostic_success: '诊断信息已复制',
+    copy_diagnostic_failed: '无法复制诊断信息',
+    request_status: '请求状态',
+    filter_provider: '提供商',
+    column_model: '模型',
+  },
+  zhTW: {
+    error_details: '錯誤詳情',
+    error_details_click_hint: '點擊查看錯誤詳情',
+    error_details_modal_desc: '這裡只顯示與本次請求失敗直接相關的欄位。',
+    error_category: '錯誤類別',
+    error_category_none: '無錯誤',
+    error_category_auth: '驗證 / 權限',
+    error_category_rate_limit: '限流 / 配額',
+    error_category_bad_request: '請求參數錯誤',
+    error_category_not_found: '資源不存在',
+    error_category_network: '網路 / 逾時',
+    error_category_upstream: '上游錯誤',
+    error_category_unknown: '未知錯誤',
+    http_status: 'HTTP 狀態',
+    error_code: '錯誤碼',
+    error_message: '錯誤訊息',
+    upstream_request_id: '上游請求 ID',
+    retry_after: '重試等待',
+    copy_diagnostic: '複製診斷',
+    copy_diagnostic_success: '診斷資訊已複製',
+    copy_diagnostic_failed: '無法複製診斷資訊',
+    request_status: '請求狀態',
+    filter_provider: '提供商',
+    column_model: '模型',
+  },
+} as const;
+
+type RealtimeErrorTextKey = keyof typeof REALTIME_ERROR_TEXT_FALLBACKS.en;
+
+const resolveRealtimeErrorFallbackLocale = (language?: string) => {
+  const normalized = language?.toLowerCase() ?? '';
+  if (normalized.startsWith('zh-tw') || normalized.startsWith('zh-hk') || normalized.startsWith('zh-mo')) return 'zhTW';
+  if (normalized.startsWith('zh')) return 'zhCN';
+  if (normalized.startsWith('ru')) return 'ru';
+  return 'en';
+};
+
+const translateRealtimeErrorText = (
+  key: RealtimeErrorTextKey,
+  t: ReturnType<typeof useTranslation>['t'],
+  language?: string
+) => {
+  const fallbackLocale = resolveRealtimeErrorFallbackLocale(language);
+  const fallback = REALTIME_ERROR_TEXT_FALLBACKS[fallbackLocale][key] ?? REALTIME_ERROR_TEXT_FALLBACKS.en[key];
+  return t(`monitoring.${key}`, { defaultValue: fallback });
+};
+
 const translateRealtimeErrorCategory = (
   key: string,
-  t: ReturnType<typeof useTranslation>['t']
+  t: ReturnType<typeof useTranslation>['t'],
+  language?: string
 ) => {
   switch (key) {
     case 'monitoring.error_category_auth':
-      return t('monitoring.error_category_auth');
+      return translateRealtimeErrorText('error_category_auth', t, language);
     case 'monitoring.error_category_rate_limit':
-      return t('monitoring.error_category_rate_limit');
+      return translateRealtimeErrorText('error_category_rate_limit', t, language);
     case 'monitoring.error_category_bad_request':
-      return t('monitoring.error_category_bad_request');
+      return translateRealtimeErrorText('error_category_bad_request', t, language);
     case 'monitoring.error_category_not_found':
-      return t('monitoring.error_category_not_found');
+      return translateRealtimeErrorText('error_category_not_found', t, language);
     case 'monitoring.error_category_network':
-      return t('monitoring.error_category_network');
+      return translateRealtimeErrorText('error_category_network', t, language);
     case 'monitoring.error_category_upstream':
-      return t('monitoring.error_category_upstream');
+      return translateRealtimeErrorText('error_category_upstream', t, language);
     case 'monitoring.error_category_none':
-      return t('monitoring.error_category_none');
+      return translateRealtimeErrorText('error_category_none', t, language);
     case 'monitoring.error_category_unknown':
     default:
-      return t('monitoring.error_category_unknown');
+      return translateRealtimeErrorText('error_category_unknown', t, language);
   }
 };
 
@@ -1263,18 +1401,19 @@ const buildRealtimeErrorSummary = (row: MonitoringEventRow) => {
 
 const buildRealtimeDiagnosticClipboardText = (
   row: RealtimeLogRow,
-  t: ReturnType<typeof useTranslation>['t']
+  t: ReturnType<typeof useTranslation>['t'],
+  language?: string
 ) => {
   const fields: Array<[string, string | number | null | undefined]> = [
-    [t('monitoring.request_status'), row.failed ? t('monitoring.result_failed') : t('monitoring.result_success')],
-    [t('monitoring.error_category'), translateRealtimeErrorCategory(row.errorCategoryKey, t)],
-    [t('monitoring.http_status'), row.statusCode ?? '-'],
-    [t('monitoring.error_code'), row.errorCode || '-'],
-    [t('monitoring.error_message'), row.errorMessage ? compactRealtimeErrorMessage(row.errorMessage, 800) : '-'],
-    [t('monitoring.upstream_request_id'), row.upstreamRequestId || '-'],
-    [t('monitoring.retry_after'), row.retryAfter || '-'],
-    [t('monitoring.filter_provider'), row.provider || '-'],
-    [t('monitoring.column_model'), row.model || '-'],
+    [translateRealtimeErrorText('request_status', t, language), row.failed ? t('monitoring.result_failed') : t('monitoring.result_success')],
+    [translateRealtimeErrorText('error_category', t, language), translateRealtimeErrorCategory(row.errorCategoryKey, t, language)],
+    [translateRealtimeErrorText('http_status', t, language), row.statusCode ?? '-'],
+    [translateRealtimeErrorText('error_code', t, language), row.errorCode || '-'],
+    [translateRealtimeErrorText('error_message', t, language), row.errorMessage ? compactRealtimeErrorMessage(row.errorMessage, 800) : '-'],
+    [translateRealtimeErrorText('upstream_request_id', t, language), row.upstreamRequestId || '-'],
+    [translateRealtimeErrorText('retry_after', t, language), row.retryAfter || '-'],
+    [translateRealtimeErrorText('filter_provider', t, language), row.provider || '-'],
+    [translateRealtimeErrorText('column_model', t, language), row.model || '-'],
   ];
   return fields.map(([label, value]) => `${label}: ${maskSensitiveText(String(value ?? '-'))}`).join('\n');
 };
@@ -2914,37 +3053,49 @@ function StatusBadge({ tone, children }: { tone: MonitoringStatusTone; children:
 function RealtimeErrorDetailsPanel({
   row,
   t,
+  language,
 }: {
   row: RealtimeLogRow;
   t: ReturnType<typeof useTranslation>['t'];
+  language?: string;
 }) {
+  const categoryText = translateRealtimeErrorCategory(row.errorCategoryKey, t, language);
+  const statusText = buildRealtimeStatusLabel(row, t('monitoring.result_failed'));
+  const summaryText = row.errorMessage
+    ? compactRealtimeErrorMessage(row.errorMessage, 220)
+    : row.errorSummary || row.diagnosticText || categoryText;
   const detailItems = [
-    { label: t('monitoring.error_category'), value: translateRealtimeErrorCategory(row.errorCategoryKey, t) },
-    { label: t('monitoring.http_status'), value: row.statusCode !== null ? String(row.statusCode) : '-' },
-    { label: t('monitoring.error_code'), value: row.errorCode || '-' },
-    { label: t('monitoring.upstream_request_id'), value: row.upstreamRequestId || '-' },
-    { label: t('monitoring.retry_after'), value: row.retryAfter || '-' },
-  ];
+    { label: translateRealtimeErrorText('http_status', t, language), value: row.statusCode !== null ? String(row.statusCode) : '-' },
+    { label: translateRealtimeErrorText('error_code', t, language), value: row.errorCode || '-' },
+    { label: translateRealtimeErrorText('upstream_request_id', t, language), value: row.upstreamRequestId || '-' },
+    { label: translateRealtimeErrorText('retry_after', t, language), value: row.retryAfter || '-' },
+  ].filter((item) => item.value !== '-');
 
   return (
     <div className={styles.realtimeErrorDetailsPanel}>
-      <div className={styles.realtimeErrorDetailsHeader}>
-        <div>
-          <strong>{row.errorSummary || row.diagnosticText || t('monitoring.error_category_unknown')}</strong>
-          <span>{t('monitoring.error_details_modal_desc')}</span>
+      <div className={styles.realtimeErrorOverview}>
+        <div className={styles.realtimeErrorOverviewTop}>
+          <StatusBadge tone="bad">{statusText}</StatusBadge>
+          <span>{categoryText}</span>
         </div>
+        <strong>{summaryText}</strong>
       </div>
       {row.errorMessage ? (
-        <pre className={styles.realtimeErrorMessage}>{compactRealtimeErrorMessage(row.errorMessage, 1200)}</pre>
+        <div className={styles.realtimeErrorMessageBlock}>
+          <span>{translateRealtimeErrorText('error_message', t, language)}</span>
+          <pre className={styles.realtimeErrorMessage}>{compactRealtimeErrorMessage(row.errorMessage, 1200)}</pre>
+        </div>
       ) : null}
-      <div className={styles.realtimeErrorDetailsGrid}>
-        {detailItems.map((item) => (
-          <div key={item.label} className={styles.realtimeErrorDetailItem}>
-            <span>{item.label}</span>
-            <strong>{maskSensitiveText(item.value)}</strong>
-          </div>
-        ))}
-      </div>
+      {detailItems.length > 0 ? (
+        <div className={styles.realtimeErrorDetailsGrid}>
+          {detailItems.map((item) => (
+            <div key={item.label} className={styles.realtimeErrorDetailItem}>
+              <span>{item.label}</span>
+              <strong>{maskSensitiveText(item.value)}</strong>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3169,15 +3320,15 @@ export function MonitoringCenterPage() {
   );
 
   const handleCopyRealtimeDiagnostic = useCallback((row: RealtimeLogRow) => {
-    const text = buildRealtimeDiagnosticClipboardText(row, t);
+    const text = buildRealtimeDiagnosticClipboardText(row, t, i18n.language);
     if (!navigator.clipboard?.writeText) {
-      showNotification(t('monitoring.copy_diagnostic_failed'), 'error');
+      showNotification(translateRealtimeErrorText('copy_diagnostic_failed', t, i18n.language), 'error');
       return;
     }
     void navigator.clipboard.writeText(text)
-      .then(() => showNotification(t('monitoring.copy_diagnostic_success'), 'success'))
-      .catch(() => showNotification(t('monitoring.copy_diagnostic_failed'), 'error'));
-  }, [showNotification, t]);
+      .then(() => showNotification(translateRealtimeErrorText('copy_diagnostic_success', t, i18n.language), 'success'))
+      .catch(() => showNotification(translateRealtimeErrorText('copy_diagnostic_failed', t, i18n.language), 'error'));
+  }, [i18n.language, showNotification, t]);
 
   useHeaderRefresh(refreshAll);
 
@@ -3495,17 +3646,14 @@ export function MonitoringCenterPage() {
               type="button"
               className={styles.realtimeStatusErrorButton}
               onClick={() => setSelectedRealtimeErrorRow(row)}
-              title={t('monitoring.error_details_click_hint')}
-              aria-label={t('monitoring.error_details_click_hint')}
+              title={translateRealtimeErrorText('error_details_click_hint', t, i18n.language)}
+              aria-label={translateRealtimeErrorText('error_details_click_hint', t, i18n.language)}
             >
-              <StatusBadge tone="bad">{t('monitoring.result_failed')}</StatusBadge>
+              <StatusBadge tone="bad">{buildRealtimeStatusLabel(row, t('monitoring.result_failed'))}</StatusBadge>
             </button>
           ) : (
             <StatusBadge tone="good">{t('monitoring.result_success')}</StatusBadge>
           )}
-          {row.diagnosticText ? (
-            <small className={styles.monoCell}>{row.diagnosticText}</small>
-          ) : null}
         </div>
       ),
     },
@@ -4325,13 +4473,13 @@ export function MonitoringCenterPage() {
       <Modal
         open={Boolean(selectedRealtimeErrorRow)}
         onClose={() => setSelectedRealtimeErrorRow(null)}
-        title={t('monitoring.error_details')}
+        title={translateRealtimeErrorText('error_details', t, i18n.language)}
         width={720}
         className={styles.monitorModal}
         footer={selectedRealtimeErrorRow ? (
           <div className={styles.monitorModalActions}>
             <Button variant="secondary" size="sm" onClick={() => handleCopyRealtimeDiagnostic(selectedRealtimeErrorRow)}>
-              {t('monitoring.copy_diagnostic')}
+              {translateRealtimeErrorText('copy_diagnostic', t, i18n.language)}
             </Button>
             <Button variant="primary" size="sm" onClick={() => setSelectedRealtimeErrorRow(null)}>
               {t('common.close')}
@@ -4340,7 +4488,7 @@ export function MonitoringCenterPage() {
         ) : null}
       >
         {selectedRealtimeErrorRow ? (
-          <RealtimeErrorDetailsPanel row={selectedRealtimeErrorRow} t={t} />
+          <RealtimeErrorDetailsPanel row={selectedRealtimeErrorRow} t={t} language={i18n.language} />
         ) : null}
       </Modal>
 

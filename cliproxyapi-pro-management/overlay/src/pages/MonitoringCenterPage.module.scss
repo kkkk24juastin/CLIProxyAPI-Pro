@@ -3323,8 +3323,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  min-width: 0;
   padding: 0;
   border: 0;
+  border-radius: 999px;
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -3332,7 +3335,7 @@
 
 .realtimeStatusErrorButton:hover {
   transform: none;
-  filter: brightness(0.98);
+  filter: brightness(0.97);
 }
 
 .realtimeStatusErrorButton:focus-visible {
@@ -3341,10 +3344,14 @@
   border-radius: 999px;
 }
 
+.realtimeStatusErrorButton .statusBadge {
+  width: 100%;
+}
+
 .realtimeErrorDetailsPanel {
   display: grid;
-  gap: 12px;
-  padding: 2px 0 0;
+  gap: 14px;
+  padding: 2px 0 4px;
 }
 
 .monitorModalActions {
@@ -3354,39 +3361,63 @@
   gap: 8px;
 }
 
-.realtimeErrorDetailsHeader {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: start;
-  justify-content: space-between;
+.realtimeErrorOverview {
+  display: grid;
   gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--monitor-red) 24%, var(--monitor-line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--monitor-red) 7%, var(--monitor-surface));
 }
 
-.realtimeErrorDetailsHeader > div {
-  display: grid;
-  gap: 4px;
+.realtimeErrorOverviewTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
-.realtimeErrorDetailsHeader strong {
-  color: var(--monitor-ink);
+.realtimeErrorOverviewTop .statusBadge {
+  width: auto;
 }
 
-.realtimeErrorDetailsHeader span {
-  color: var(--monitor-muted);
+.realtimeErrorOverviewTop span {
+  color: var(--monitor-red);
   font-size: 12px;
-  line-height: 1.4;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.realtimeErrorOverview strong {
+  color: var(--monitor-ink);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
+.realtimeErrorMessageBlock {
+  display: grid;
+  gap: 6px;
+}
+
+.realtimeErrorMessageBlock > span {
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 .realtimeErrorMessage {
-  max-height: 150px;
+  max-height: 180px;
   overflow: auto;
   margin: 0;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--monitor-line) 78%, transparent);
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 86%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--monitor-surface-muted) 74%, var(--monitor-surface));
+  background: color-mix(in srgb, var(--monitor-surface-muted) 58%, var(--monitor-surface));
   color: var(--monitor-ink);
   font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 12px;
@@ -3396,28 +3427,38 @@
 
 .realtimeErrorDetailsGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .realtimeErrorDetailItem {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
   min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--monitor-line) 80%, transparent);
-  border-radius: 8px;
+  padding: 9px 12px;
   background: var(--monitor-surface);
 }
 
+.realtimeErrorDetailItem + .realtimeErrorDetailItem {
+  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+}
+
 .realtimeErrorDetailItem span {
+  flex: 0 0 auto;
   color: var(--monitor-muted);
-  font-size: 11px;
-  line-height: 1.25;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .realtimeErrorDetailItem strong {
   min-width: 0;
+  max-width: 72%;
+  text-align: right;
   overflow-wrap: anywhere;
   color: var(--monitor-ink);
   font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
@@ -3487,6 +3528,7 @@
   min-height: 24px;
   padding: 0 8px;
   font-size: 12px;
+  width: 100%;
 }
 
 .realtimeTable .statusBadge::before {
