@@ -3118,10 +3118,6 @@
   table-layout: fixed;
 }
 
-.realtimeErrorCol {
-  width: 260px;
-}
-
 .table thead th {
   position: sticky;
   top: 0;
@@ -3323,75 +3319,39 @@
   white-space: normal;
 }
 
-.realtimeErrorCell {
-  white-space: normal;
-}
-
-.realtimeErrorSummaryCell {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-  min-width: 0;
-}
-
-.realtimeErrorToggle {
+.realtimeStatusErrorButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
-  border-radius: 6px;
-  background: var(--monitor-surface);
-  color: var(--monitor-muted);
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
 }
 
-.realtimeErrorToggle:hover {
-  border-color: color-mix(in srgb, var(--monitor-accent) 45%, var(--monitor-line));
-  color: var(--monitor-ink);
+.realtimeStatusErrorButton:hover {
+  transform: none;
+  filter: brightness(0.98);
 }
 
-.realtimeErrorSummaryText {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.realtimeErrorSummaryText strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--monitor-ink);
-  font-size: 12px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.realtimeErrorSummaryText small {
-  display: -webkit-box;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--monitor-muted);
-  font-size: 11px;
-  line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.realtimeErrorDetailsRow td {
-  padding: 0;
-  white-space: normal;
-  background: color-mix(in srgb, var(--monitor-red) 4%, var(--monitor-surface));
+.realtimeStatusErrorButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--monitor-red) 42%, var(--monitor-line));
+  outline-offset: 2px;
+  border-radius: 999px;
 }
 
 .realtimeErrorDetailsPanel {
   display: grid;
   gap: 12px;
-  padding: 14px 16px;
-  border-top: 1px solid color-mix(in srgb, var(--monitor-red) 22%, var(--monitor-line));
+  padding: 2px 0 0;
+}
+
+.monitorModalActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .realtimeErrorDetailsHeader {
