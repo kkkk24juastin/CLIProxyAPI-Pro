@@ -1,16 +1,67 @@
 package embeddedusage
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
 )
+
+func TestUsageStreamPushesInsertedEventsWithoutPollingDelay(t *testing.T) {
+	store := openTestStore(t)
+	server := httptest.NewServer(testUsageRouter(store))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/usage/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("stream request error = %v", err)
+	}
+	defer response.Body.Close()
+
+	payloads := make(chan internalusage.Payload, 1)
+	go func() {
+		scanner := bufio.NewScanner(response.Body)
+		isUsageEvent := false
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "event: usage" {
+				isUsageEvent = true
+				continue
+			}
+			if isUsageEvent && strings.HasPrefix(line, "data: ") {
+				var payload internalusage.Payload
+				if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &payload) == nil {
+					payloads <- payload
+				}
+				return
+			}
+		}
+	}()
+
+	insertTestUsageEvents(t, store, testUsageEvent(0, false, 10))
+	select {
+	case payload := <-payloads:
+		if payload.LatestID != 1 || payload.TotalRequests != 1 {
+			t.Fatalf("stream payload = %+v, want inserted event", payload)
+		}
+	case <-ctx.Done():
+		t.Fatal("stream did not push inserted event before polling interval")
+	}
+}
 
 func testUsageRouter(store *Store) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -164,7 +215,9 @@ func TestHandleUsageAggregatesReturnsBuckets(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
 	}
 	var payload struct {
-		Items []UsageAggregateBucket `json:"items"`
+		Items        []UsageAggregateBucket `json:"items"`
+		LatestID     int64                  `json:"latest_id"`
+		SnapshotAtMS int64                  `json:"snapshot_at_ms"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
@@ -172,10 +225,34 @@ func TestHandleUsageAggregatesReturnsBuckets(t *testing.T) {
 	if len(payload.Items) != 1 {
 		t.Fatalf("aggregate items len = %d, want 1", len(payload.Items))
 	}
+	if payload.LatestID != 2 || payload.SnapshotAtMS <= 0 {
+		t.Fatalf("aggregate metadata = latest:%d snapshot:%d, want latest=2 and timestamp", payload.LatestID, payload.SnapshotAtMS)
+	}
 	item := payload.Items[0]
 	if item.Provider != "test" || item.Model != "model" || item.TotalRequests != 2 || item.FailureCount != 1 || item.TotalTokens != 30 {
 		t.Fatalf("aggregate item = %+v, want totals by provider/model", item)
 	}
+}
+
+func TestUsagePayloadDetailsIncludeEventID(t *testing.T) {
+	store := openTestStore(t)
+	insertTestUsageEvents(t, store, testUsageEvent(0, false, 10))
+	router := testUsageRouter(store)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/usage/events?after_id=0&limit=1", nil)
+	router.ServeHTTP(recorder, request)
+	payload := decodeUsagePayload(t, recorder)
+
+	for _, api := range payload.APIs {
+		for _, model := range api.Models {
+			if len(model.Details) != 1 || model.Details[0].ID != 1 {
+				t.Fatalf("details = %+v, want event id 1", model.Details)
+			}
+			return
+		}
+	}
+	t.Fatal("usage payload did not contain details")
 }
 
 func TestUsageExportImportPreservesAntigravitySubscriptionQuotaCache(t *testing.T) {

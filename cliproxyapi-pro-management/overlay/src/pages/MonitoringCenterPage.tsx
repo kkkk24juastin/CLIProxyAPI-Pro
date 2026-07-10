@@ -29,13 +29,14 @@ import {
   type MonitoringTimeRange,
 } from '@/features/monitoring/hooks/useMonitoringData';
 import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
+import { useUsageAggregates, type UsageAggregateBucket } from '@/features/monitoring/hooks/useUsageAggregates';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { apiClient } from '@/services/api/client';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { maskSensitiveText } from '@/utils/format';
 import { getStatusFromError, isAntigravityFile, isClaudeFile, isCodexFile, isKimiFile, isXaiFile } from '@/utils/quota';
-import { formatCompactNumber, formatDurationMs, formatUsd, normalizeAuthIndex, type ModelPrice } from '@/utils/usage';
+import { calculateCost, formatCompactNumber, formatDurationMs, formatUsd, normalizeAuthIndex, type ModelPrice } from '@/utils/usage';
 import {
   ANTIGRAVITY_CONFIG,
   CLAUDE_CONFIG,
@@ -90,6 +91,7 @@ const ACCOUNT_STATS_ANALYTICS_ROW_LIMIT = 6000;
 const REQUEST_LOG_INTERACTION_ROW_LIMIT = 6000;
 const REALTIME_LOG_PAGE_SIZE = 100;
 const REALTIME_LOG_ENRICH_LIMIT = REQUEST_LOG_INTERACTION_ROW_LIMIT;
+const ACCOUNT_QUOTA_REQUEST_CONCURRENCY = 4;
 const REALTIME_LOG_COLUMNS_STORAGE_KEY = 'cli-proxy-realtime-log-columns-v2';
 const REALTIME_LOG_COLUMN_KEYS = [
   'type',
@@ -1155,6 +1157,142 @@ const buildUsageTrendAnalytics = (
   };
 };
 
+const calculateAggregateCost = (
+  item: Pick<UsageAggregateBucket, 'model' | 'inputTokens' | 'outputTokens' | 'cacheTokens'>,
+  modelPrices: Record<string, ModelPrice>
+) => calculateCost({
+  __modelName: item.model || '',
+  tokens: {
+    input_tokens: item.inputTokens,
+    output_tokens: item.outputTokens,
+    cached_tokens: item.cacheTokens,
+    cache_tokens: item.cacheTokens,
+  },
+}, modelPrices);
+
+const createAggregateRankingRow = (
+  item: UsageAggregateBucket,
+  group: 'apiKey' | 'model',
+  modelPrices: Record<string, ModelPrice>,
+  apiKeyLabels: Map<string, string>
+): MonitoringAccountRow => {
+  const model = item.model || '-';
+  const apiKeyHash = item.apiKeyHash || '-';
+  const apiKeyMasked = apiKeyLabels.get(apiKeyHash) || maskSensitiveText(apiKeyHash);
+  const totalCost = calculateAggregateCost(item, modelPrices);
+  return {
+    id: group === 'model' ? `model:${model}` : `clientApiKey:${apiKeyHash}`,
+    group,
+    model: group === 'model' ? model : '-',
+    apiKeyHash: group === 'apiKey' ? apiKeyHash : '-',
+    apiKeyMasked: group === 'apiKey' ? apiKeyMasked : '-',
+    account: group === 'model' ? model : apiKeyMasked,
+    accountMasked: group === 'model' ? model : apiKeyMasked,
+    authLabels: [],
+    authIndices: [],
+    channels: [],
+    providers: item.provider ? [item.provider] : [],
+    totalCalls: item.totalRequests,
+    successCalls: item.successCount,
+    failureCalls: item.failureCount,
+    successRate: item.totalRequests > 0 ? item.successCount / item.totalRequests : 1,
+    inputTokens: item.inputTokens,
+    outputTokens: item.outputTokens,
+    cachedTokens: item.cacheTokens,
+    totalTokens: item.totalTokens,
+    totalCost,
+    averageLatencyMs: item.avgLatencyMs ?? null,
+    lastSeenAt: item.bucketStartMs,
+    recentPattern: [],
+    models: [],
+  };
+};
+
+const buildServerUsageTrendAnalytics = (
+  aggregates: ReturnType<typeof useUsageAggregates>['data'],
+  range: MonitoringTimeRange,
+  modelPrices: Record<string, ModelPrice>,
+  apiKeyOptions: Array<{ value: string; label: string }>
+): UsageTrendAnalytics | null => {
+  if (!aggregates) return null;
+  const nowMs = Date.now();
+  const prefilled = buildFilledTrendBuckets(range, nowMs);
+  const trendGrouped = new Map<string, TrendPoint>(prefilled.map((point) => [point.key, point]));
+  const tokenGrouped = new Map<string, TokenDistributionPoint>();
+  const apiKeyLabels = new Map(apiKeyOptions.map((option) => [option.value, option.label]));
+  const modelRows = aggregates.models.map((item) => createAggregateRankingRow(item, 'model', modelPrices, apiKeyLabels));
+  const apiKeyRowMap = new Map<string, MonitoringAccountRow>();
+  aggregates.apiKeys.filter((item) => item.apiKeyHash).forEach((item) => {
+    const row = createAggregateRankingRow(item, 'apiKey', modelPrices, apiKeyLabels);
+    const current = apiKeyRowMap.get(row.apiKeyHash);
+    if (!current) {
+      apiKeyRowMap.set(row.apiKeyHash, row);
+      return;
+    }
+    current.totalCalls += row.totalCalls;
+    current.successCalls += row.successCalls;
+    current.failureCalls += row.failureCalls;
+    current.inputTokens += row.inputTokens;
+    current.outputTokens += row.outputTokens;
+    current.cachedTokens += row.cachedTokens;
+    current.totalTokens += row.totalTokens;
+    current.totalCost += row.totalCost;
+    current.lastSeenAt = Math.max(current.lastSeenAt, row.lastSeenAt);
+    current.successRate = current.totalCalls > 0 ? current.successCalls / current.totalCalls : 1;
+  });
+  const apiKeyRows = Array.from(apiKeyRowMap.values());
+
+  aggregates.trend.forEach((item) => {
+    const timestampMs = Number(item.bucketStartMs) || Date.parse(item.bucketStart);
+    const dayKey = buildLocalDayKey(timestampMs);
+    const useHourly = range === 'today';
+    const key = useHourly ? `${dayKey} ${buildHourLabel(timestampMs)}` : dayKey;
+    const label = useHourly ? buildHourLabel(timestampMs) : buildDayLabel(dayKey);
+    const cost = calculateAggregateCost(item, modelPrices);
+    const trendPoint = trendGrouped.get(key) ?? getEmptyTrendPoint(key, label);
+    trendPoint.requests += item.totalRequests;
+    trendPoint.failures += item.failureCount;
+    trendPoint.tokens += item.totalTokens;
+    trendPoint.cost += cost;
+    trendGrouped.set(key, trendPoint);
+
+    const tokenPoint = tokenGrouped.get(key) ?? {
+      key,
+      label,
+      requests: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      cachedTokens: 0,
+      totalCost: 0,
+    };
+    tokenPoint.requests += item.totalRequests;
+    tokenPoint.totalTokens += item.totalTokens;
+    tokenPoint.inputTokens += item.inputTokens;
+    tokenPoint.outputTokens += item.outputTokens;
+    tokenPoint.reasoningTokens += item.reasoningTokens;
+    tokenPoint.cachedTokens += item.cacheTokens;
+    tokenPoint.totalCost += cost;
+    tokenGrouped.set(key, tokenPoint);
+  });
+
+  const scopedTotals = modelRows.reduce<Record<RankingMetric, number>>((totals, row) => ({
+    requests: totals.requests + row.totalCalls,
+    tokens: totals.tokens + row.totalTokens,
+    cost: totals.cost + row.totalCost,
+  }), { requests: 0, tokens: 0, cost: 0 });
+
+  return {
+    apiKeyOptions,
+    trendPoints: Array.from(trendGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)).slice(-24),
+    tokenDistributionPoints: Array.from(tokenGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)).slice(-24),
+    modelRows,
+    apiKeyRows,
+    scopedTotals,
+  };
+};
+
 const roundCurrency = (value: number) => Math.round(value * 100) / 100;
 
 const formatDeltaPercent = (current: number, previous: number) => {
@@ -1478,6 +1616,28 @@ const requestAccountQuota = async (
   }
 };
 
+const settleWithConcurrency = async <T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>
+): Promise<Array<PromiseSettledResult<R>>> => {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      try {
+        results[index] = { status: 'fulfilled', value: await worker(items[index]) };
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason };
+      }
+    }
+  }));
+  return results;
+};
+
 const buildAccountQuotaTargetsByAccount = (
   rows: MonitoringEventRow[],
   authFilesByAuthIndex: Map<string, AuthFileItem>
@@ -1535,14 +1695,19 @@ const buildAccountQuotaEntriesByAccount = (
   ])
 );
 
-const buildRealtimeLogRows = (rows: MonitoringEventRow[]): RealtimeLogRow[] => {
+const buildRealtimeLogPageRows = (
+  rows: MonitoringEventRow[],
+  page: number,
+  pageSize: number
+): { total: number; rows: RealtimeLogRow[] } => {
   const candidateRows = rows.length > REALTIME_LOG_ENRICH_LIMIT
     ? rows.slice(0, REALTIME_LOG_ENRICH_LIMIT)
     : rows;
   const metricsByStream = new Map<string, { total: number; success: number; pattern: boolean[] }>();
-  const renderLimit = candidateRows.length;
-  const enriched = new Array<RealtimeLogRow>(renderLimit);
-  let outputIndex = renderLimit - 1;
+  const normalizedPage = Math.max(1, page);
+  const pageStart = (normalizedPage - 1) * pageSize;
+  const pageEnd = Math.min(pageStart + pageSize, candidateRows.length);
+  const enriched = new Array<RealtimeLogRow>(Math.max(pageEnd - pageStart, 0));
 
   for (let index = candidateRows.length - 1; index >= 0; index -= 1) {
     const row = candidateRows[index];
@@ -1556,12 +1721,12 @@ const buildRealtimeLogRows = (rows: MonitoringEventRow[]): RealtimeLogRow[] => {
     };
     metricsByStream.set(streamKey, next);
 
-    if (index < renderLimit) {
+    if (index >= pageStart && index < pageEnd) {
       let recentSuccessCount = 0;
       nextPattern.forEach((item) => {
         if (item) recentSuccessCount += 1;
       });
-      enriched[outputIndex] = {
+      enriched[index - pageStart] = {
         ...row,
         streamKey,
         diagnosticText: buildRealtimeDiagnosticText(row),
@@ -1573,11 +1738,10 @@ const buildRealtimeLogRows = (rows: MonitoringEventRow[]): RealtimeLogRow[] => {
         recentSuccessCount,
         recentFailureCount: nextPattern.length - recentSuccessCount,
       };
-      outputIndex -= 1;
     }
   }
 
-  return enriched;
+  return { total: candidateRows.length, rows: enriched };
 };
 
 const getClientPaginationRange = (page: number, pageSize: number, total: number, visibleCount: number) => {
@@ -3177,7 +3341,13 @@ export function MonitoringCenterPage() {
 
   const {
     usage,
+    loading: usageLoading,
+    refreshing: usageRefreshing,
     error: usageError,
+    lastRefreshedAt,
+    lastEventAt,
+    latestId,
+    syncStatus,
     modelPrices,
     setModelPrices,
     refreshUsage,
@@ -3202,9 +3372,22 @@ export function MonitoringCenterPage() {
     deletedCredentialLabel: t('monitoring.deleted_credential'),
   });
 
+  const {
+    data: usageAggregates,
+    refreshing: aggregatesRefreshing,
+    error: aggregatesError,
+    refresh: refreshAggregates,
+  } = useUsageAggregates({
+    latestId,
+    timeRange,
+    apiKeyHash: usageTrendApiKey,
+    enabled: connectionStatus === 'connected',
+  });
+
   const refreshAll = useCallback(async () => {
     await Promise.all([refreshUsage(), refreshMeta(false)]);
-  }, [refreshUsage, refreshMeta]);
+    await refreshAggregates();
+  }, [refreshAggregates, refreshMeta, refreshUsage]);
 
   const loadMonitoringSettings = useCallback(async () => {
     if (connectionStatus !== 'connected') {
@@ -3333,6 +3516,18 @@ export function MonitoringCenterPage() {
   useHeaderRefresh(refreshAll);
 
   const combinedError = [usageError, monitoringError].filter(Boolean).join('；');
+  const isMonitoringRefreshing = usageRefreshing || aggregatesRefreshing;
+  const syncStatusText = syncStatus === 'live'
+    ? t('monitoring.sync_live', { defaultValue: 'Live' })
+    : syncStatus === 'paused'
+      ? t('monitoring.sync_paused', { defaultValue: 'Paused in background' })
+      : syncStatus === 'reconnecting'
+        ? t('monitoring.sync_reconnecting', { defaultValue: 'Reconnecting' })
+        : syncStatus === 'error'
+          ? t('monitoring.sync_error', { defaultValue: 'Sync error' })
+          : t('monitoring.syncing', { defaultValue: 'Syncing' });
+  const syncStatusTone = syncStatus === 'live' ? 'good' : syncStatus === 'error' ? 'bad' : 'warn';
+  const syncTimestamp = lastEventAt ?? lastRefreshedAt;
   const hasPrices = Object.keys(modelPrices).length > 0;
   const usageDetailsCount = Number(deferredUsage?.details_count ?? allRows.length);
   const usageTotalRequests = Number(deferredUsage?.total_requests ?? usageDetailsCount);
@@ -3512,10 +3707,20 @@ export function MonitoringCenterPage() {
     yesterdayCost,
   } = usageRowGroups;
 
-  const usageTrendAnalytics = useMemo(
+  const clientUsageTrendAnalytics = useMemo(
     () => buildUsageTrendAnalytics(trendStatsRows, timeRange, usageTrendApiKey, t('monitoring.filter_all_api_keys')),
     [trendStatsRows, timeRange, usageTrendApiKey, t]
   );
+  const serverUsageTrendAnalytics = useMemo(
+    () => buildServerUsageTrendAnalytics(
+      usageAggregates,
+      timeRange,
+      modelPrices,
+      clientUsageTrendAnalytics.apiKeyOptions
+    ),
+    [clientUsageTrendAnalytics.apiKeyOptions, modelPrices, timeRange, usageAggregates]
+  );
+  const usageTrendAnalytics = aggregatesError ? clientUsageTrendAnalytics : serverUsageTrendAnalytics ?? clientUsageTrendAnalytics;
   const usageTrendApiKeyOptions = usageTrendAnalytics.apiKeyOptions;
   const usageTrendPoints = usageTrendAnalytics.trendPoints;
   const tokenDistributionPoints = usageTrendAnalytics.tokenDistributionPoints;
@@ -3564,17 +3769,17 @@ export function MonitoringCenterPage() {
     [accountStatsMetric, accountStatsFilteredRows]
   );
   const timeRangeLabel = useMemo(() => buildUsageTrendRangeLabel(timeRange, t), [timeRange, t]);
-  const realtimeLogRows = useMemo(() => buildRealtimeLogRows(scopedRows), [scopedRows]);
-  const realtimeLogTotalPages = realtimeLogRows.length > 0 ? Math.ceil(realtimeLogRows.length / REALTIME_LOG_PAGE_SIZE) : 0;
+  const realtimeLogTotalCount = Math.min(scopedRows.length, REALTIME_LOG_ENRICH_LIMIT);
+  const realtimeLogTotalPages = realtimeLogTotalCount > 0 ? Math.ceil(realtimeLogTotalCount / REALTIME_LOG_PAGE_SIZE) : 0;
   const normalizedRealtimeLogPage = Math.min(Math.max(1, realtimeLogPage), Math.max(1, realtimeLogTotalPages));
-  const realtimeLogPageRows = useMemo(() => {
-    const start = (normalizedRealtimeLogPage - 1) * REALTIME_LOG_PAGE_SIZE;
-    return realtimeLogRows.slice(start, start + REALTIME_LOG_PAGE_SIZE);
-  }, [normalizedRealtimeLogPage, realtimeLogRows]);
+  const realtimeLogPageRows = useMemo(
+    () => buildRealtimeLogPageRows(scopedRows, normalizedRealtimeLogPage, REALTIME_LOG_PAGE_SIZE).rows,
+    [normalizedRealtimeLogPage, scopedRows]
+  );
   const realtimeLogPagination = getClientPaginationRange(
     normalizedRealtimeLogPage,
     REALTIME_LOG_PAGE_SIZE,
-    realtimeLogRows.length,
+    realtimeLogTotalCount,
     realtimeLogPageRows.length
   );
   const realtimeLogColumnDefinitions = useMemo<Record<RealtimeLogColumnKey, RealtimeLogColumnDefinition>>(() => ({
@@ -3999,7 +4204,11 @@ export function MonitoringCenterPage() {
         }));
       });
 
-      const settled = await Promise.allSettled(targets.map((target) => requestAccountQuota(target, t)));
+      const settled = await settleWithConcurrency(
+        targets,
+        ACCOUNT_QUOTA_REQUEST_CONCURRENCY,
+        (target) => requestAccountQuota(target, t)
+      );
       if (accountQuotaRequestIdsRef.current[account] !== requestId) return;
 
       settled.forEach((result, index) => {
@@ -4142,6 +4351,32 @@ export function MonitoringCenterPage() {
             </div>
           </div>
           <p className={styles.subtitle}>{t('monitoring.console_subtitle')}</p>
+          <div className={styles.monitoringSyncRow}>
+            <span className={`${styles.syncPill} ${styles[`tone${syncStatusTone}`]}`}>
+              {syncStatusText}
+            </span>
+            {syncTimestamp ? (
+              <span className={styles.syncTimestamp}>
+                {t('monitoring.sync_last_event', {
+                  value: syncTimestamp.toLocaleString(i18n.language),
+                  defaultValue: `Last event: ${syncTimestamp.toLocaleString(i18n.language)}`,
+                })}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              className={styles.refreshButton}
+              onClick={() => void refreshAll()}
+              disabled={isMonitoringRefreshing || usageLoading || connectionStatus !== 'connected'}
+            >
+              <IconRefreshCw size={14} className={isMonitoringRefreshing ? styles.refreshIconSpinning : styles.refreshIcon} />
+              <span className={styles.refreshButtonLabel}>
+                {isMonitoringRefreshing
+                  ? t('monitoring.syncing', { defaultValue: 'Syncing' })
+                  : t('monitoring.refresh', { defaultValue: 'Refresh' })}
+              </span>
+            </button>
+          </div>
           {usageDetailsLimited ? (
             <div className={styles.inlineMetrics}>
               <span>
@@ -4362,7 +4597,7 @@ export function MonitoringCenterPage() {
         {combinedError ? <div className={styles.errorBox}>{combinedError}</div> : null}
 
         <div className={styles.inlineMetrics}>
-          <span>{`${t('monitoring.log_rows')}: ${realtimeLogRows.length}`}</span>
+          <span>{`${t('monitoring.log_rows')}: ${realtimeLogTotalCount}`}</span>
           <span>{`${t('monitoring.recent_failures')}: ${scopedFailureCount}`}</span>
           {requestLogRowsLimited ? (
             <span>

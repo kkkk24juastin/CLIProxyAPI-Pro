@@ -221,6 +221,37 @@
   padding: 0 10px;
 }
 
+.monitoringSyncRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.syncTimestamp {
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.syncPill.tonegood {
+  border-color: color-mix(in srgb, var(--monitor-green) 30%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-green) 9%, var(--monitor-surface));
+  color: var(--monitor-green);
+}
+
+.syncPill.tonewarn {
+  border-color: color-mix(in srgb, var(--monitor-amber) 30%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-amber) 9%, var(--monitor-surface));
+  color: var(--monitor-amber);
+}
+
+.syncPill.tonebad {
+  border-color: color-mix(in srgb, var(--monitor-red) 30%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-red) 8%, var(--monitor-surface));
+  color: var(--monitor-red);
+}
+
 .quickLinkButton {
   gap: 5px;
   min-height: 32px;

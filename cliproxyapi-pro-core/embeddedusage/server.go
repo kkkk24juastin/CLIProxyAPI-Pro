@@ -125,6 +125,18 @@ func parseQueryInt(c *gin.Context, key string, fallback int) int {
 	return parsed
 }
 
+func parseQueryIntSigned(c *gin.Context, key string, fallback int) int {
+	value := strings.TrimSpace(c.Query(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
 func usageEventPageLimit(requestedLimit int) int {
 	if requestedLimit <= 0 || requestedLimit > usageEventsPageLimit {
 		return usageEventsPageLimit
@@ -201,19 +213,30 @@ func (s *Server) handleUsageEvents(c *gin.Context) {
 }
 
 func (s *Server) handleUsageAggregates(c *gin.Context) {
+	latestID, _, err := s.store.LatestCursor(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	options := UsageAggregateOptions{
-		FromMS:   parseQueryInt64(c, "from_ms", 0),
-		ToMS:     parseQueryInt64(c, "to_ms", 0),
-		Interval: strings.TrimSpace(c.Query("interval")),
-		GroupBy:  parseCSVQuery(c.Query("group_by")),
-		Limit:    parseQueryInt(c, "limit", 1000),
+		FromMS:                parseQueryInt64(c, "from_ms", 0),
+		ToMS:                  parseQueryInt64(c, "to_ms", 0),
+		Interval:              strings.TrimSpace(c.Query("interval")),
+		GroupBy:               parseCSVQuery(c.Query("group_by")),
+		Limit:                 parseQueryInt(c, "limit", 1000),
+		APIKeyHash:            strings.TrimSpace(c.Query("api_key_hash")),
+		TimezoneOffsetMinutes: parseQueryIntSigned(c, "timezone_offset_minutes", 0),
 	}
 	buckets, err := s.store.UsageAggregates(c.Request.Context(), options)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": buckets})
+	c.JSON(http.StatusOK, gin.H{
+		"items":          buckets,
+		"latest_id":      latestID,
+		"snapshot_at_ms": time.Now().UnixMilli(),
+	})
 }
 
 func (s *Server) handleUsageStream(c *gin.Context) {
@@ -235,8 +258,8 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	keepaliveTicker := time.NewTicker(15 * time.Second)
+	defer keepaliveTicker.Stop()
 
 	writeEvent := func(name string, payload usageStreamEvent) bool {
 		data, err := json.Marshal(payload)
@@ -263,26 +286,30 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 	}
 
 	for {
-		select {
-		case <-c.Request.Context().Done():
+		eventSignal := s.store.EventSignal()
+		events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
+		if err != nil {
 			return
-		case <-ticker.C:
-			events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
-			if err != nil {
-				return
-			}
-			if len(events) == 0 {
-				if _, err := fmt.Fprint(c.Writer, ": keepalive\n\n"); err != nil {
-					return
-				}
-				flusher.Flush()
-				continue
-			}
+		}
+		if len(events) > 0 {
 			payload := usagePayloadWithDetailLimit(events, limit, detailsLimited)
 			lastID = payload.LatestID
 			if !writeEvent("usage", payload) {
 				return
 			}
+			continue
+		}
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-keepaliveTicker.C:
+			if _, err := fmt.Fprint(c.Writer, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+			continue
+		case <-eventSignal:
+			continue
 		}
 	}
 }

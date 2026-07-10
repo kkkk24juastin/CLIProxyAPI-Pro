@@ -46,11 +46,13 @@ type UsageAggregateBucket struct {
 }
 
 type UsageAggregateOptions struct {
-	FromMS   int64
-	ToMS     int64
-	Interval string
-	GroupBy  []string
-	Limit    int
+	FromMS                int64
+	ToMS                  int64
+	Interval              string
+	GroupBy               []string
+	Limit                 int
+	APIKeyHash            string
+	TimezoneOffsetMinutes int
 }
 
 type DeadLetterSample struct {
@@ -135,6 +137,8 @@ type Store struct {
 	quotaCacheMu sync.Mutex
 	summaryMu    sync.RWMutex
 	summaryCache *cachedUsageSummary
+	eventMu      sync.Mutex
+	eventSignal  chan struct{}
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -145,7 +149,7 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store := &Store{db: db}
+	store := &Store{db: db, eventSignal: make(chan struct{})}
 	db.SetMaxOpenConns(1)
 	if err := store.init(); err != nil {
 		_ = db.Close()
@@ -167,6 +171,19 @@ func (s *Store) invalidateUsageSummaryCache() {
 	s.summaryMu.Lock()
 	s.summaryCache = nil
 	s.summaryMu.Unlock()
+}
+
+func (s *Store) EventSignal() <-chan struct{} {
+	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
+	return s.eventSignal
+}
+
+func (s *Store) notifyEventsChanged() {
+	s.eventMu.Lock()
+	close(s.eventSignal)
+	s.eventSignal = make(chan struct{})
+	s.eventMu.Unlock()
 }
 
 func (s *Store) init() error {
@@ -216,6 +233,7 @@ func (s *Store) init() error {
 		`create index if not exists idx_usage_events_request_id on usage_events(request_id)`,
 		`create index if not exists idx_usage_events_model on usage_events(model)`,
 		`create index if not exists idx_usage_events_auth_index on usage_events(auth_index)`,
+		`create index if not exists idx_usage_events_api_key_timestamp on usage_events(api_key_hash, timestamp_ms)`,
 		`create table if not exists usage_summary (
 			id integer primary key check (id = 1),
 			latest_event_id integer not null default 0,
@@ -353,6 +371,7 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 	}
 	if result.Inserted > 0 {
 		s.invalidateUsageSummaryCache()
+		s.notifyEventsChanged()
 	}
 	return result, nil
 }
@@ -748,15 +767,23 @@ func isDeadLetterSecretKey(key string) bool {
 
 func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptions) ([]UsageAggregateBucket, error) {
 	intervalMs := aggregateIntervalMS(options.Interval)
-	if intervalMs <= 0 {
+	if intervalMs < 0 {
 		intervalMs = int64(time.Hour / time.Millisecond)
 	}
-	if options.Limit <= 0 || options.Limit > 2000 {
+	if options.Limit <= 0 || options.Limit > 10000 {
 		options.Limit = 1000
 	}
-	selects := []string{`(timestamp_ms / ?) * ? as bucket_start_ms`}
+	selects := []string{}
 	groups := []string{`bucket_start_ms`}
-	args := []any{intervalMs, intervalMs}
+	args := []any{}
+	if intervalMs == 0 {
+		selects = append(selects, `? as bucket_start_ms`)
+		args = append(args, options.FromMS)
+	} else {
+		offsetMs := int64(options.TimezoneOffsetMinutes) * int64(time.Minute/time.Millisecond)
+		selects = append(selects, `((timestamp_ms + ?) / ?) * ? - ? as bucket_start_ms`)
+		args = append(args, offsetMs, intervalMs, intervalMs, offsetMs)
+	}
 	for _, group := range normalizeAggregateGroups(options.GroupBy) {
 		selects = append(selects, group)
 		groups = append(groups, group)
@@ -782,6 +809,10 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 	if options.ToMS > 0 {
 		wheres = append(wheres, `timestamp_ms <= ?`)
 		args = append(args, options.ToMS)
+	}
+	if strings.TrimSpace(options.APIKeyHash) != "" {
+		wheres = append(wheres, `api_key_hash = ?`)
+		args = append(args, strings.TrimSpace(options.APIKeyHash))
 	}
 	if len(wheres) > 0 {
 		query += ` where ` + strings.Join(wheres, ` and `)
@@ -839,12 +870,14 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 
 func aggregateIntervalMS(interval string) int64 {
 	switch strings.ToLower(strings.TrimSpace(interval)) {
+	case "all", "total":
+		return 0
 	case "minute", "1m":
 		return int64(time.Minute / time.Millisecond)
 	case "day", "1d":
 		return int64(24 * time.Hour / time.Millisecond)
 	default:
-		return int64(time.Hour / time.Millisecond)
+		return -1
 	}
 }
 

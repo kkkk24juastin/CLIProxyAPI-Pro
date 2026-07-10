@@ -26,12 +26,18 @@ export interface UsagePayload {
 export interface UseUsageDataReturn {
   usage: UsagePayload | null;
   loading: boolean;
+  refreshing: boolean;
   error: string;
   lastRefreshedAt: Date | null;
+  lastEventAt: Date | null;
+  latestId: number;
+  syncStatus: UsageSyncStatus;
   modelPrices: Record<string, ModelPrice>;
   setModelPrices: (prices: Record<string, ModelPrice>) => void;
   refreshUsage: () => Promise<void>;
 }
+
+export type UsageSyncStatus = 'loading' | 'syncing' | 'live' | 'reconnecting' | 'paused' | 'error';
 
 const toNumber = (value: unknown) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 
@@ -70,6 +76,84 @@ const readDetailTimestampMs = (detail: unknown) => {
   if (Number.isFinite(explicitTimestampMs) && explicitTimestampMs > 0) return explicitTimestampMs;
   const timestamp = typeof detail.timestamp === 'string' ? Date.parse(detail.timestamp) : NaN;
   return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const readDetailId = (detail: unknown) => {
+  if (!isRecordValue(detail)) return 0;
+  return toNumber(detail.id ?? detail.event_id ?? detail.eventId);
+};
+
+const readDetailTotalTokens = (detail: unknown) => {
+  if (!isRecordValue(detail) || !isRecordValue(detail.tokens)) return 0;
+  return toNumber(detail.tokens.total_tokens);
+};
+
+const readDetailFailed = (detail: unknown) => isRecordValue(detail) && Boolean(detail.failed);
+
+const findLatestEventTimestampMs = (payload: UsagePayload | null) => {
+  let latestTimestampMs = 0;
+  Object.values(payload?.apis ?? {}).forEach((apiEntry) => {
+    Object.values(asUsageApiEntry(apiEntry).models ?? {}).forEach((modelEntry) => {
+      (Array.isArray(modelEntry.details) ? modelEntry.details : []).forEach((detail) => {
+        latestTimestampMs = Math.max(latestTimestampMs, readDetailTimestampMs(detail));
+      });
+    });
+  });
+  return latestTimestampMs;
+};
+
+const filterUsagePayloadAfterId = (payload: UsagePayload | null, afterId: number): UsagePayload | null => {
+  if (!payload?.apis || afterId <= 0) return payload;
+  if (toNumber(payload.latest_id) <= afterId) return null;
+
+  let hasEventIds = false;
+  let latestId = afterId;
+  let totalRequests = 0;
+  let successCount = 0;
+  let failureCount = 0;
+  let totalTokens = 0;
+  const apis: Record<string, unknown> = {};
+
+  Object.entries(payload.apis).forEach(([endpoint, apiEntry]) => {
+    const existingApi = asUsageApiEntry(apiEntry);
+    const models: Record<string, UsageModelEntry> = {};
+    Object.entries(existingApi.models ?? {}).forEach(([model, modelEntry]) => {
+      const details = (Array.isArray(modelEntry.details) ? modelEntry.details : []).filter((detail) => {
+        const detailId = readDetailId(detail);
+        if (detailId <= 0) return false;
+        hasEventIds = true;
+        if (detailId <= afterId) return false;
+        latestId = Math.max(latestId, detailId);
+        totalRequests += 1;
+        if (readDetailFailed(detail)) {
+          failureCount += 1;
+        } else {
+          successCount += 1;
+        }
+        totalTokens += readDetailTotalTokens(detail);
+        return true;
+      });
+      if (details.length > 0) {
+        models[model] = { ...modelEntry, details };
+      }
+    });
+    if (Object.keys(models).length > 0) {
+      apis[endpoint] = { ...existingApi, models };
+    }
+  });
+
+  if (!hasEventIds) return payload;
+  if (totalRequests === 0) return null;
+  return {
+    ...payload,
+    total_requests: totalRequests,
+    success_count: successCount,
+    failure_count: failureCount,
+    total_tokens: totalTokens,
+    latest_id: latestId,
+    details_count: totalRequests,
+    apis,
+  };
 };
 
 const isUsageDetailRefAhead = (left: UsageDetailRef, right: UsageDetailRef) =>
@@ -256,6 +340,10 @@ type UsageStateWriter = {
   setLoading: (loading: boolean) => void;
   setError: (error: string) => void;
   setLastRefreshedAt: (date: Date | null) => void;
+  setLastEventAt: (date: Date | null) => void;
+  setLatestId: (latestId: number) => void;
+  setSnapshotReady: (ready: boolean) => void;
+  setSyncStatus: (status: UsageSyncStatus) => void;
 };
 
 const USAGE_INITIAL_LIMIT = 12000;
@@ -269,27 +357,46 @@ const loadUsageSnapshot = async ({
   setLoading,
   setError,
   setLastRefreshedAt,
+  setLastEventAt,
+  setLatestId,
+  setSnapshotReady,
+  setSyncStatus,
+  syncGenerationRef,
 }: UsageStateWriter & {
   requestIdRef: MutableRef<number>;
   latestIdRef: MutableRef<number>;
-}) => {
+  syncGenerationRef: MutableRef<number>;
+}): Promise<boolean> => {
+  const syncGeneration = syncGenerationRef.current + 1;
+  syncGenerationRef.current = syncGeneration;
   const requestId = requestIdRef.current + 1;
   requestIdRef.current = requestId;
+  setSnapshotReady(false);
   setLoading(true);
+  setSyncStatus('loading');
   setError('');
 
   try {
     const payload = await apiClient.get<UsagePayload>('/usage', { params: { limit: USAGE_INITIAL_LIMIT } });
-    if (requestIdRef.current !== requestId) return;
-    latestIdRef.current = toNumber(payload?.latest_id);
+    if (requestIdRef.current !== requestId || syncGenerationRef.current !== syncGeneration) return false;
+    const nextLatestId = toNumber(payload?.latest_id);
+    latestIdRef.current = nextLatestId;
+    setLatestId(nextLatestId);
     setUsage(trimUsagePayloadDetails(payload ?? null));
     setLastRefreshedAt(new Date());
+    const latestEventTimestampMs = findLatestEventTimestampMs(payload ?? null);
+    setLastEventAt(latestEventTimestampMs > 0 ? new Date(latestEventTimestampMs) : null);
+    setSyncStatus('reconnecting');
+    return true;
   } catch (err) {
-    if (requestIdRef.current !== requestId) return;
+    if (requestIdRef.current !== requestId || syncGenerationRef.current !== syncGeneration) return false;
     setError(err instanceof Error ? err.message : String(err));
+    setSyncStatus('error');
+    return false;
   } finally {
-    if (requestIdRef.current === requestId) {
+    if (requestIdRef.current === requestId && syncGenerationRef.current === syncGeneration) {
       setLoading(false);
+      setSnapshotReady(true);
     }
   }
 };
@@ -300,29 +407,33 @@ const loadUsageIncrementalSnapshot = async ({
   incrementalPendingRef,
   loadUsage,
   applyUsagePayload,
+  setSyncStatus,
 }: {
   latestIdRef: MutableRef<number>;
   incrementalLoadingRef: MutableRef<boolean>;
   incrementalPendingRef: MutableRef<boolean>;
-  loadUsage: () => Promise<void>;
+  loadUsage: () => Promise<boolean>;
   applyUsagePayload: (payload: UsagePayload | null) => void;
-}) => {
+  setSyncStatus?: (status: UsageSyncStatus) => void;
+}): Promise<boolean> => {
   if (incrementalLoadingRef.current) {
     incrementalPendingRef.current = true;
-    return;
+    return true;
   }
 
   incrementalLoadingRef.current = true;
+  let success = true;
   try {
     do {
       incrementalPendingRef.current = false;
       const afterId = latestIdRef.current;
       if (afterId <= 0) {
-        await loadUsage();
+        success = await loadUsage();
         continue;
       }
 
       try {
+        setSyncStatus?.('syncing');
         const payload = await apiClient.get<UsagePayload>('/usage/events', {
           params: { after_id: afterId, limit: USAGE_INCREMENTAL_LIMIT },
         });
@@ -331,12 +442,13 @@ const loadUsageIncrementalSnapshot = async ({
           incrementalPendingRef.current = true;
         }
       } catch {
-        await loadUsage();
+        success = await loadUsage();
       }
     } while (incrementalPendingRef.current);
   } finally {
     incrementalLoadingRef.current = false;
   }
+  return success;
 };
 
 const connectUsageStream = async ({
@@ -346,13 +458,15 @@ const connectUsageStream = async ({
   latestIdRef,
   applyUsagePayload,
   loadUsageIncremental,
+  onOpen,
 }: {
   apiBase: string;
   managementKey: string;
   signal: AbortSignal;
   latestIdRef: MutableRef<number>;
   applyUsagePayload: (payload: UsagePayload | null) => void;
-  loadUsageIncremental: () => Promise<void>;
+  loadUsageIncremental: () => Promise<boolean>;
+  onOpen: () => void;
 }) => {
   const decoder = new TextDecoder();
   let buffer = '';
@@ -366,6 +480,7 @@ const connectUsageStream = async ({
   if (!response.ok || !response.body) {
     throw new Error(`Usage stream failed: ${response.status}`);
   }
+  onOpen();
 
   const reader = response.body.getReader();
   while (!signal.aborted) {
@@ -393,8 +508,14 @@ const connectUsageStream = async ({
 export function useUsageData(): UseUsageDataReturn {
   const [usage, setUsage] = useState<UsagePayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+  const [lastEventAt, setLastEventAt] = useState<Date | null>(null);
+  const [latestId, setLatestId] = useState(0);
+  const [syncStatus, setSyncStatus] = useState<UsageSyncStatus>('loading');
+  const [snapshotReady, setSnapshotReady] = useState(false);
+  const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden');
   const [modelPrices, setModelPricesState] = useState<Record<string, ModelPrice>>({});
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
@@ -403,6 +524,9 @@ export function useUsageData(): UseUsageDataReturn {
   const latestIdRef = useRef(0);
   const incrementalLoadingRef = useRef(false);
   const incrementalPendingRef = useRef(false);
+  const incrementalPromiseRef = useRef<Promise<boolean> | null>(null);
+  const refreshingRef = useRef(false);
+  const syncGenerationRef = useRef(0);
   const pendingUsagePayloadRef = useRef<UsagePayload | null>(null);
   const pendingUsageFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -424,6 +548,10 @@ export function useUsageData(): UseUsageDataReturn {
     if (!payload) return;
     setUsage((current) => mergeUsagePayload(current, payload));
     setLastRefreshedAt(new Date());
+    const latestEventTimestampMs = findLatestEventTimestampMs(payload);
+    if (latestEventTimestampMs > 0) {
+      setLastEventAt(new Date(latestEventTimestampMs));
+    }
   }, []);
 
   const loadUsage = useCallback(() => {
@@ -435,27 +563,78 @@ export function useUsageData(): UseUsageDataReturn {
       setLoading,
       setError,
       setLastRefreshedAt,
+      setLastEventAt,
+      setLatestId,
+      setSnapshotReady,
+      setSyncStatus,
+      syncGenerationRef,
     });
   }, [clearPendingUsagePayload]);
 
   const applyUsagePayload = useCallback((payload: UsagePayload | null) => {
-    const nextLatestId = toNumber(payload?.latest_id);
-    if (nextLatestId <= latestIdRef.current) return;
+    const filteredPayload = filterUsagePayloadAfterId(payload, latestIdRef.current);
+    const nextLatestId = toNumber(filteredPayload?.latest_id);
+    if (!filteredPayload || nextLatestId <= latestIdRef.current) return;
     latestIdRef.current = nextLatestId;
+    setLatestId(nextLatestId);
+    setError('');
     pendingUsagePayloadRef.current = pendingUsagePayloadRef.current
-      ? mergeUsagePayload(pendingUsagePayloadRef.current, payload)
-      : trimUsagePayloadDetails(payload);
+      ? mergeUsagePayload(pendingUsagePayloadRef.current, filteredPayload)
+      : trimUsagePayloadDetails(filteredPayload);
     if (pendingUsageFlushTimerRef.current) return;
     pendingUsageFlushTimerRef.current = setTimeout(flushPendingUsagePayload, USAGE_INCREMENTAL_FLUSH_DELAY_MS);
   }, [flushPendingUsagePayload]);
 
-  const loadUsageIncremental = useCallback(() => loadUsageIncrementalSnapshot({
-    latestIdRef,
-    incrementalLoadingRef,
-    incrementalPendingRef,
-    loadUsage,
-    applyUsagePayload,
-  }), [applyUsagePayload, loadUsage]);
+  const loadUsageIncremental = useCallback(() => {
+    if (incrementalPromiseRef.current) {
+      incrementalPendingRef.current = true;
+      return incrementalPromiseRef.current;
+    }
+    setSyncStatus('syncing');
+    const promise = loadUsageIncrementalSnapshot({
+      latestIdRef,
+      incrementalLoadingRef,
+      incrementalPendingRef,
+      loadUsage,
+      applyUsagePayload,
+      setSyncStatus,
+    }).then((success) => {
+      if (success) {
+        setSyncStatus(pageVisible ? 'live' : 'paused');
+      }
+      return success;
+    }).finally(() => {
+      if (incrementalPromiseRef.current === promise) {
+        incrementalPromiseRef.current = null;
+      }
+    });
+    incrementalPromiseRef.current = promise;
+    return promise;
+  }, [applyUsagePayload, loadUsage, pageVisible]);
+
+  const refreshUsage = useCallback(async () => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setRefreshing(true);
+    try {
+      const [success] = await Promise.all([
+        loadUsage(),
+        loadModelPricesFromSqlite()
+          .then(setModelPricesState)
+          .catch((err) => console.error('Failed to refresh model prices from sqlite:', err)),
+      ]);
+      if (success) {
+        setLastRefreshedAt(new Date());
+        setError('');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSyncStatus('error');
+    } finally {
+      refreshingRef.current = false;
+      setRefreshing(false);
+    }
+  }, [loadUsage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -489,33 +668,65 @@ export function useUsageData(): UseUsageDataReturn {
   useEffect(() => clearPendingUsagePayload, [clearPendingUsagePayload]);
 
   useEffect(() => {
-    if (connectionStatus !== 'connected' || !apiBase || !managementKey) return;
+    const handleVisibilityChange = () => setPageVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    if (!snapshotReady || !pageVisible || connectionStatus !== 'connected' || !apiBase || !managementKey) {
+      if (!pageVisible) setSyncStatus('paused');
+      return;
+    }
 
     const controller = new AbortController();
+    const syncGeneration = syncGenerationRef.current;
     let reconnectDelay = 1000;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
     const connect = async () => {
+      setSyncStatus(reconnectDelay > 1000 ? 'reconnecting' : 'syncing');
       try {
         await connectUsageStream({
           apiBase,
           managementKey,
           signal: controller.signal,
           latestIdRef,
-          applyUsagePayload,
-          loadUsageIncremental,
+          applyUsagePayload: (payload) => {
+            if (syncGenerationRef.current === syncGeneration) {
+              applyUsagePayload(payload);
+            }
+          },
+          loadUsageIncremental: async () => {
+            if (syncGenerationRef.current === syncGeneration) {
+              return loadUsageIncremental();
+            }
+            return false;
+          },
+          onOpen: () => {
+            if (syncGenerationRef.current === syncGeneration) {
+              setSyncStatus('live');
+            }
+          },
         });
         reconnectDelay = 1000;
       } catch (err) {
         if (!controller.signal.aborted) {
           console.warn('Usage SSE stream disconnected:', err);
+          setSyncStatus('reconnecting');
         }
       }
 
       if (!controller.signal.aborted) {
         timeoutId = setTimeout(() => {
-          void loadUsageIncremental();
-          void connect();
+          void (async () => {
+            if (syncGenerationRef.current === syncGeneration) {
+              await loadUsageIncremental();
+            }
+            if (!controller.signal.aborted && syncGenerationRef.current === syncGeneration) {
+              await connect();
+            }
+          })();
         }, reconnectDelay);
         reconnectDelay = nextUsageReconnectDelay(reconnectDelay);
       }
@@ -526,7 +737,7 @@ export function useUsageData(): UseUsageDataReturn {
       controller.abort();
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [apiBase, applyUsagePayload, connectionStatus, loadUsageIncremental, managementKey]);
+  }, [apiBase, applyUsagePayload, connectionStatus, loadUsageIncremental, managementKey, pageVisible, snapshotReady]);
 
   const setModelPrices = useCallback((prices: Record<string, ModelPrice>) => {
     setModelPricesState(prices);
@@ -538,10 +749,14 @@ export function useUsageData(): UseUsageDataReturn {
   return {
     usage,
     loading,
+    refreshing,
     error,
     lastRefreshedAt,
+    lastEventAt,
+    latestId,
+    syncStatus,
     modelPrices,
     setModelPrices,
-    refreshUsage: loadUsageIncremental,
+    refreshUsage,
   };
 }
