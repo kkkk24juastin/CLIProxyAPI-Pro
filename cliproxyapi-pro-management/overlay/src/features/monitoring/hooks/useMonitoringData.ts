@@ -448,6 +448,8 @@ export type MonitoringMetadata = {
 
 export interface UseMonitoringDataParams {
   usage: unknown;
+  logUsage?: unknown;
+  serverFilteredLogs?: boolean;
   config: Config | null | undefined;
   modelPrices: Record<string, ModelPrice>;
   timeRange: MonitoringTimeRange;
@@ -1407,6 +1409,8 @@ const loadMonitoringMetaPayload = async (
 
 export function useMonitoringData({
   usage,
+  logUsage,
+  serverFilteredLogs = false,
   config,
   modelPrices,
   timeRange,
@@ -1522,9 +1526,26 @@ export function useMonitoringData({
     );
   }, [authFileMap, authMetaMap, channelByAuthIndex, configuredApiKeys, deletedCredentialLabel, modelPrices, sourceInfoMap, usage]);
 
+  const logRows = useMemo(() => {
+    if (logUsage === undefined) return allRows;
+    const details = collectUsageDetailsWithEndpoint(logUsage);
+    return buildEventRows(
+      details,
+      authMetaMap,
+      authFileMap,
+      sourceInfoMap,
+      channelByAuthIndex,
+      configuredApiKeys,
+      modelPrices,
+      deletedCredentialLabel
+    );
+  }, [allRows, authFileMap, authMetaMap, channelByAuthIndex, configuredApiKeys, deletedCredentialLabel, logUsage, modelPrices, sourceInfoMap]);
+
   const filteredRowState = useMemo(
-    () => buildRangeFilteredRows(allRows, timeRange, searchQuery, filteredRowLimit),
-    [allRows, filteredRowLimit, searchQuery, timeRange]
+    () => serverFilteredLogs
+      ? { rows: logRows, total: logRows.length }
+      : buildRangeFilteredRows(logRows, timeRange, searchQuery, filteredRowLimit),
+    [filteredRowLimit, logRows, searchQuery, serverFilteredLogs, timeRange]
   );
   const filteredRows = filteredRowState.rows;
   const filteredRowCount = filteredRowState.total;

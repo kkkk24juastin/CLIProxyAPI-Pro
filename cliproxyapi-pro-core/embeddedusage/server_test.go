@@ -84,6 +84,18 @@ func decodeUsagePayload(t *testing.T, recorder *httptest.ResponseRecorder) inter
 	return payload
 }
 
+func usageDetailIDs(payload internalusage.Payload) []int64 {
+	ids := make([]int64, 0, payload.DetailsCount)
+	for _, api := range payload.APIs {
+		for _, model := range api.Models {
+			for _, detail := range model.Details {
+				ids = append(ids, detail.ID)
+			}
+		}
+	}
+	return ids
+}
+
 func TestHandleUsageReturnsFullSummaryWithLimitedDetails(t *testing.T) {
 	store := openTestStore(t)
 	insertTestUsageEvents(t, store,
@@ -152,6 +164,123 @@ func TestHandleUsageEventsDoesNotMarkExactFinalPageLimited(t *testing.T) {
 	}
 	if payload.LatestID != 2 {
 		t.Fatalf("latest_id = %d, want 2", payload.LatestID)
+	}
+}
+
+func TestHandleUsageHistoryEventsUsesStableCursorSnapshot(t *testing.T) {
+	store := openTestStore(t)
+	insertTestUsageEvents(t, store,
+		testUsageEvent(0, false, 10),
+		testUsageEvent(1, true, 20),
+		testUsageEvent(2, false, 30),
+		testUsageEvent(3, false, 40),
+		testUsageEvent(4, true, 50),
+	)
+	router := testUsageRouter(store)
+
+	firstRecorder := httptest.NewRecorder()
+	firstRequest := httptest.NewRequest(http.MethodGet, "/usage/events?direction=before&limit=2", nil)
+	router.ServeHTTP(firstRecorder, firstRequest)
+	firstPayload := decodeUsagePayload(t, firstRecorder)
+	if got := usageDetailIDs(firstPayload); len(got) != 2 || got[0] != 5 || got[1] != 4 {
+		t.Fatalf("first page ids = %v, want [5 4]", got)
+	}
+	if firstPayload.MatchedTotal != 5 || firstPayload.SnapshotMaxID != 5 || firstPayload.PageCursor == "" || !firstPayload.HasMore || firstPayload.NextCursor == "" {
+		t.Fatalf("first page metadata = %+v, want matched=5 snapshot=5 more cursor", firstPayload)
+	}
+
+	insertTestUsageEvents(t, store, testUsageEvent(5, false, 60))
+	secondRecorder := httptest.NewRecorder()
+	secondRequest := httptest.NewRequest(http.MethodGet, "/usage/events?cursor="+firstPayload.NextCursor+"&limit=2", nil)
+	router.ServeHTTP(secondRecorder, secondRequest)
+	secondPayload := decodeUsagePayload(t, secondRecorder)
+	if got := usageDetailIDs(secondPayload); len(got) != 2 || got[0] != 3 || got[1] != 2 {
+		t.Fatalf("second page ids = %v, want [3 2]", got)
+	}
+	if secondPayload.MatchedTotal != 5 || secondPayload.SnapshotMaxID != 5 || !secondPayload.HasMore || secondPayload.NextCursor == "" {
+		t.Fatalf("second page metadata = %+v, want original snapshot metadata", secondPayload)
+	}
+
+	returnRecorder := httptest.NewRecorder()
+	returnRequest := httptest.NewRequest(http.MethodGet, "/usage/events?cursor="+firstPayload.PageCursor+"&limit=2", nil)
+	router.ServeHTTP(returnRecorder, returnRequest)
+	returnPayload := decodeUsagePayload(t, returnRecorder)
+	if got := usageDetailIDs(returnPayload); len(got) != 2 || got[0] != 5 || got[1] != 4 {
+		t.Fatalf("returned first page ids = %v, want stable [5 4]", got)
+	}
+	if returnPayload.MatchedTotal != 5 || returnPayload.SnapshotMaxID != 5 {
+		t.Fatalf("returned first page metadata = %+v, want original snapshot", returnPayload)
+	}
+
+	thirdRecorder := httptest.NewRecorder()
+	thirdRequest := httptest.NewRequest(http.MethodGet, "/usage/events?cursor="+secondPayload.NextCursor+"&limit=2", nil)
+	router.ServeHTTP(thirdRecorder, thirdRequest)
+	thirdPayload := decodeUsagePayload(t, thirdRecorder)
+	if got := usageDetailIDs(thirdPayload); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("third page ids = %v, want [1]", got)
+	}
+	if thirdPayload.MatchedTotal != 5 || thirdPayload.SnapshotMaxID != 5 || thirdPayload.HasMore || thirdPayload.NextCursor != "" {
+		t.Fatalf("third page metadata = %+v, want final original snapshot page", thirdPayload)
+	}
+}
+
+func TestHandleUsageHistoryEventsSupportsStructuredFilters(t *testing.T) {
+	store := openTestStore(t)
+	first := testUsageEvent(0, false, 10)
+	first.Provider = "alpha"
+	first.Model = "model-a"
+	first.APIKeyHash = "key-a"
+	first.RequestID = "needle-request"
+	second := testUsageEvent(1, true, 20)
+	second.Provider = "alpha"
+	second.Model = "model-a"
+	second.APIKeyHash = "key-a"
+	second.ErrorMessage = "needle failure"
+	third := testUsageEvent(2, true, 30)
+	third.Provider = "beta"
+	third.Model = "model-b"
+	third.APIKeyHash = "key-b"
+	insertTestUsageEvents(t, store, first, second, third)
+	router := testUsageRouter(store)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/usage/events?direction=before&limit=10&provider=alpha&model=model-a&api_key_hash=key-a&status=failed&search=needle", nil)
+	router.ServeHTTP(recorder, request)
+	payload := decodeUsagePayload(t, recorder)
+	if got := usageDetailIDs(payload); len(got) != 1 || got[0] != 2 {
+		t.Fatalf("filtered ids = %v, want [2]", got)
+	}
+	if payload.MatchedTotal != 1 || payload.HasMore {
+		t.Fatalf("filtered metadata = %+v, want matched=1 final page", payload)
+	}
+}
+
+func TestHandleUsageHistoryEventsSupportsAuthIndexFilter(t *testing.T) {
+	store := openTestStore(t)
+	first := testUsageEvent(0, false, 10)
+	first.AuthIndex = "auth-a"
+	second := testUsageEvent(1, false, 20)
+	second.AuthIndex = "auth-b"
+	insertTestUsageEvents(t, store, first, second)
+	router := testUsageRouter(store)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/usage/events?direction=before&limit=10&auth_index=auth-a,auth-c", nil)
+	router.ServeHTTP(recorder, request)
+	payload := decodeUsagePayload(t, recorder)
+	if got := usageDetailIDs(payload); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("auth filtered ids = %v, want [1]", got)
+	}
+}
+
+func TestHandleUsageHistoryEventsRejectsInvalidCursor(t *testing.T) {
+	store := openTestStore(t)
+	router := testUsageRouter(store)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/usage/events?cursor=not-a-cursor", nil)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

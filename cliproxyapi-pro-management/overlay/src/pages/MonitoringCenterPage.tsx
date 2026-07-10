@@ -28,7 +28,7 @@ import {
   type MonitoringStatusTone,
   type MonitoringTimeRange,
 } from '@/features/monitoring/hooks/useMonitoringData';
-import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
+import { useUsageData, type UsageEventPageFilters, type UsagePayload } from '@/features/monitoring/hooks/useUsageData';
 import { useUsageAggregates, type UsageAggregateBucket } from '@/features/monitoring/hooks/useUsageAggregates';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { apiClient } from '@/services/api/client';
@@ -88,9 +88,8 @@ const ACCOUNT_SORT_OPTIONS: Array<{ value: AccountSortMetric; labelKey: string }
 const ACCOUNT_STATUS_BLOCK_COUNT = 20;
 const ACCOUNT_STATUS_BLOCK_DURATION_MS = 10 * 60 * 1000;
 const ACCOUNT_STATS_ANALYTICS_ROW_LIMIT = 6000;
-const REQUEST_LOG_INTERACTION_ROW_LIMIT = 6000;
 const REALTIME_LOG_PAGE_SIZE = 100;
-const REALTIME_LOG_ENRICH_LIMIT = REQUEST_LOG_INTERACTION_ROW_LIMIT;
+const REALTIME_LOG_ENRICH_LIMIT = REALTIME_LOG_PAGE_SIZE;
 const ACCOUNT_QUOTA_REQUEST_CONCURRENCY = 4;
 const REALTIME_LOG_COLUMNS_STORAGE_KEY = 'cli-proxy-realtime-log-columns-v2';
 const REALTIME_LOG_COLUMN_KEYS = [
@@ -870,6 +869,8 @@ type AccountQuotaState = {
   lastRefreshedAt?: number;
 };
 
+type AccountQuotaSourceRow = Pick<MonitoringEventRow, 'authIndex' | 'account' | 'authLabel'>;
+
 type AccountSummaryMetric = {
   key: string;
   label: string;
@@ -1212,7 +1213,8 @@ const buildServerUsageTrendAnalytics = (
   aggregates: ReturnType<typeof useUsageAggregates>['data'],
   range: MonitoringTimeRange,
   modelPrices: Record<string, ModelPrice>,
-  apiKeyOptions: Array<{ value: string; label: string }>
+  apiKeyOptions: Array<{ value: string; label: string }>,
+  apiKeyFilter: string
 ): UsageTrendAnalytics | null => {
   if (!aggregates) return null;
   const nowMs = Date.now();
@@ -1220,7 +1222,33 @@ const buildServerUsageTrendAnalytics = (
   const trendGrouped = new Map<string, TrendPoint>(prefilled.map((point) => [point.key, point]));
   const tokenGrouped = new Map<string, TokenDistributionPoint>();
   const apiKeyLabels = new Map(apiKeyOptions.map((option) => [option.value, option.label]));
-  const modelRows = aggregates.models.map((item) => createAggregateRankingRow(item, 'model', modelPrices, apiKeyLabels));
+  const modelRowMap = new Map<string, MonitoringAccountRow>();
+  aggregates.models
+    .filter((item) => apiKeyFilter === 'all' || item.apiKeyHash === apiKeyFilter)
+    .forEach((item) => {
+      const row = createAggregateRankingRow(item, 'model', modelPrices, apiKeyLabels);
+      const current = modelRowMap.get(row.model);
+      if (!current) {
+        modelRowMap.set(row.model, row);
+        return;
+      }
+      const previousCalls = current.totalCalls;
+      current.totalCalls += row.totalCalls;
+      current.successCalls += row.successCalls;
+      current.failureCalls += row.failureCalls;
+      current.inputTokens += row.inputTokens;
+      current.outputTokens += row.outputTokens;
+      current.cachedTokens += row.cachedTokens;
+      current.totalTokens += row.totalTokens;
+      current.totalCost += row.totalCost;
+      current.lastSeenAt = Math.max(current.lastSeenAt, row.lastSeenAt);
+      if (row.averageLatencyMs !== null) {
+        const weightedCurrent = (current.averageLatencyMs ?? 0) * previousCalls;
+        current.averageLatencyMs = (weightedCurrent + row.averageLatencyMs * row.totalCalls) / Math.max(current.totalCalls, 1);
+      }
+      current.successRate = current.totalCalls > 0 ? current.successCalls / current.totalCalls : 1;
+    });
+  const modelRows = Array.from(modelRowMap.values());
   const apiKeyRowMap = new Map<string, MonitoringAccountRow>();
   aggregates.apiKeys.filter((item) => item.apiKeyHash).forEach((item) => {
     const row = createAggregateRankingRow(item, 'apiKey', modelPrices, apiKeyLabels);
@@ -1291,6 +1319,177 @@ const buildServerUsageTrendAnalytics = (
     apiKeyRows,
     scopedTotals,
   };
+};
+
+const buildAggregateSummary = (
+  buckets: UsageAggregateBucket[],
+  modelPrices: Record<string, ModelPrice>
+): MonitoringSummary => {
+  let totalCalls = 0;
+  let successCalls = 0;
+  let failureCalls = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let reasoningTokens = 0;
+  let cachedTokens = 0;
+  let totalTokens = 0;
+  let totalCost = 0;
+  let weightedLatency = 0;
+  let latencyCalls = 0;
+  buckets.forEach((bucket) => {
+    totalCalls += bucket.totalRequests;
+    successCalls += bucket.successCount;
+    failureCalls += bucket.failureCount;
+    inputTokens += bucket.inputTokens;
+    outputTokens += bucket.outputTokens;
+    reasoningTokens += bucket.reasoningTokens;
+    cachedTokens += bucket.cacheTokens;
+    totalTokens += bucket.totalTokens;
+    totalCost += calculateAggregateCost(bucket, modelPrices);
+    if (typeof bucket.avgLatencyMs === 'number' && bucket.totalRequests > 0) {
+      weightedLatency += bucket.avgLatencyMs * bucket.totalRequests;
+      latencyCalls += bucket.totalRequests;
+    }
+  });
+  return {
+    totalCalls,
+    successCalls,
+    failureCalls,
+    successRate: totalCalls > 0 ? successCalls / totalCalls : 1,
+    inputTokens,
+    outputTokens,
+    reasoningTokens,
+    cachedTokens,
+    totalTokens,
+    totalCost,
+    averageLatencyMs: latencyCalls > 0 ? weightedLatency / latencyCalls : null,
+    rpm30m: 0,
+    tpm30m: 0,
+    avgDailyRequests: 0,
+    avgDailyTokens: 0,
+    approxTasks: 0,
+    approxTaskFailures: 0,
+    approxTaskSuccessRate: 1,
+    zeroTokenCalls: 0,
+    zeroTokenModels: [],
+  };
+};
+
+const buildServerAccountRows = (
+  buckets: UsageAggregateBucket[],
+  realtimeRows: MonitoringEventRow[],
+  authFilesByAuthIndex: Map<string, AuthFileItem>,
+  modelPrices: Record<string, ModelPrice>,
+  deletedCredentialLabel: string
+): MonitoringAccountRow[] => {
+  const metadataByAuthIndex = new Map<string, MonitoringEventRow>();
+  const realtimeRowsByAuthIndex = new Map<string, MonitoringEventRow[]>();
+  realtimeRows.forEach((row) => {
+    if (row.authIndex !== '-' && !metadataByAuthIndex.has(row.authIndex)) {
+      metadataByAuthIndex.set(row.authIndex, row);
+    }
+    if (row.authIndex !== '-') {
+      const items = realtimeRowsByAuthIndex.get(row.authIndex) ?? [];
+      items.push(row);
+      realtimeRowsByAuthIndex.set(row.authIndex, items);
+    }
+  });
+  const grouped = new Map<string, MonitoringAccountRow>();
+  buckets.forEach((bucket) => {
+    const authIndex = normalizeAuthIndex(bucket.authIndex) ?? '-';
+    const metadata = metadataByAuthIndex.get(authIndex);
+    const authFile = authFilesByAuthIndex.get(authIndex);
+    const authFileLabel = authFile
+      ? [authFile.email, authFile.account, authFile.label, authFile.name]
+          .map((value) => typeof value === 'string' ? value.trim() : '')
+          .find(Boolean) || ''
+      : '';
+    const fallbackAccount = authIndex === '-' ? deletedCredentialLabel : maskSensitiveText(authIndex);
+    const account = metadata?.account || metadata?.authLabel || authFileLabel || fallbackAccount;
+    const accountMasked = metadata?.accountMasked || metadata?.authIndexMasked || maskSensitiveText(account);
+    const provider = bucket.provider || metadata?.provider || '-';
+    const channel = metadata?.channel || provider;
+    const id = `account:${account}::${channel}`;
+    const current = grouped.get(id) ?? {
+      id,
+      group: 'account',
+      model: '-',
+      apiKeyHash: '-',
+      apiKeyMasked: '-',
+      account,
+      accountMasked,
+      authLabels: [],
+      authIndices: [],
+      channels: [],
+      providers: [],
+      totalCalls: 0,
+      successCalls: 0,
+      failureCalls: 0,
+      successRate: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      totalTokens: 0,
+      totalCost: 0,
+      averageLatencyMs: null,
+      lastSeenAt: 0,
+      recentPattern: [],
+      rows: [],
+      models: [],
+    } satisfies MonitoringAccountRow;
+    current.totalCalls += bucket.totalRequests;
+    current.successCalls += bucket.successCount;
+    current.failureCalls += bucket.failureCount;
+    current.inputTokens += bucket.inputTokens;
+    current.outputTokens += bucket.outputTokens;
+    current.cachedTokens += bucket.cacheTokens;
+    current.totalTokens += bucket.totalTokens;
+    current.totalCost += calculateAggregateCost(bucket, modelPrices);
+    current.lastSeenAt = Math.max(current.lastSeenAt, Number(bucket.lastSeenAtMs) || bucket.bucketStartMs || 0);
+    current.successRate = current.totalCalls > 0 ? current.successCalls / current.totalCalls : 1;
+    current.authLabels = Array.from(new Set([...current.authLabels, metadata?.authLabel || account]));
+    current.authIndices = Array.from(new Set([...current.authIndices, metadata?.authIndexMasked || maskSensitiveText(authIndex)]));
+    current.channels = Array.from(new Set([...current.channels, channel]));
+    current.providers = Array.from(new Set([...current.providers, provider]));
+    current.rows = Array.from(new Map([
+      ...(current.rows ?? []).map((row) => [row.id, row] as const),
+      ...(realtimeRowsByAuthIndex.get(authIndex) ?? []).map((row) => [row.id, row] as const),
+    ]).values());
+    current.recentPattern = (current.rows ?? []).slice(0, 10).reverse().map((row) => !row.failed);
+    const existingModel = current.models.find((item) => item.model === (bucket.model || '-'));
+    const modelCost = calculateAggregateCost(bucket, modelPrices);
+    if (existingModel) {
+      existingModel.totalCalls += bucket.totalRequests;
+      existingModel.successCalls += bucket.successCount;
+      existingModel.failureCalls += bucket.failureCount;
+      existingModel.inputTokens += bucket.inputTokens;
+      existingModel.outputTokens += bucket.outputTokens;
+      existingModel.cachedTokens += bucket.cacheTokens;
+      existingModel.totalTokens += bucket.totalTokens;
+      existingModel.totalCost += modelCost;
+      existingModel.lastSeenAt = Math.max(existingModel.lastSeenAt, Number(bucket.lastSeenAtMs) || 0);
+      existingModel.successRate = existingModel.totalCalls > 0 ? existingModel.successCalls / existingModel.totalCalls : 1;
+    } else {
+      current.models.push({
+        model: bucket.model || '-',
+        totalCalls: bucket.totalRequests,
+        successCalls: bucket.successCount,
+        failureCalls: bucket.failureCount,
+        successRate: bucket.totalRequests > 0 ? bucket.successCount / bucket.totalRequests : 1,
+        inputTokens: bucket.inputTokens,
+        outputTokens: bucket.outputTokens,
+        cachedTokens: bucket.cacheTokens,
+        totalTokens: bucket.totalTokens,
+        totalCost: modelCost,
+        lastSeenAt: Number(bucket.lastSeenAtMs) || 0,
+      });
+    }
+    grouped.set(id, current);
+  });
+  return Array.from(grouped.values()).map((row) => ({
+    ...row,
+    models: [...row.models].sort((left, right) => right.totalCost - left.totalCost || right.totalCalls - left.totalCalls),
+  }));
 };
 
 const roundCurrency = (value: number) => Math.round(value * 100) / 100;
@@ -1639,7 +1838,7 @@ const settleWithConcurrency = async <T, R>(
 };
 
 const buildAccountQuotaTargetsByAccount = (
-  rows: MonitoringEventRow[],
+  rows: AccountQuotaSourceRow[],
   authFilesByAuthIndex: Map<string, AuthFileItem>
 ) => {
   const grouped = new Map<string, Map<string, AccountQuotaTarget>>();
@@ -3331,13 +3530,26 @@ export function MonitoringCenterPage() {
   const [accountStatsMetric, setAccountStatsMetric] = useState<AccountSortMetric>('recent');
   const [isAccountStatsHidden, setIsAccountStatsHidden] = useState(false);
   const [realtimeLogPage, setRealtimeLogPage] = useState(1);
+  const [realtimeLogUsage, setRealtimeLogUsage] = useState<UsagePayload | null>(null);
+  const [realtimeLogMatchedTotal, setRealtimeLogMatchedTotal] = useState(0);
+  const [realtimeLogNextCursor, setRealtimeLogNextCursor] = useState('');
+  const [realtimeLogPageCursors, setRealtimeLogPageCursors] = useState<string[]>(['']);
+  const [realtimeLogSnapshotMaxId, setRealtimeLogSnapshotMaxId] = useState(0);
+  const [realtimeLogLoading, setRealtimeLogLoading] = useState(false);
+  const [realtimeLogError, setRealtimeLogError] = useState('');
   const [realtimeLogColumns, setRealtimeLogColumns] = useState<RealtimeLogColumnPreference[]>(loadRealtimeLogColumns);
   const [draggedRealtimeLogColumnKey, setDraggedRealtimeLogColumnKey] = useState<RealtimeLogColumnKey | null>(null);
   const [isRealtimeColumnsMenuOpen, setIsRealtimeColumnsMenuOpen] = useState(false);
   const accountQuotaStatesRef = useRef<Record<string, AccountQuotaState>>({});
   const accountQuotaRequestIdsRef = useRef<Record<string, number>>({});
   const realtimeColumnsMenuRef = useRef<HTMLDivElement | null>(null);
-  const deferredSearch = useDeferredValue(searchInput);
+  const deferredSearchInput = useDeferredValue(searchInput);
+  const [deferredSearch, setDeferredSearch] = useState(searchInput);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDeferredSearch(deferredSearchInput), 300);
+    return () => clearTimeout(timer);
+  }, [deferredSearchInput]);
 
   const {
     usage,
@@ -3351,6 +3563,7 @@ export function MonitoringCenterPage() {
     modelPrices,
     setModelPrices,
     refreshUsage,
+    loadEventPage,
   } = useUsageData();
   const deferredUsage = useDeferredValue(usage);
 
@@ -3360,15 +3573,15 @@ export function MonitoringCenterPage() {
     authFiles,
     allRows,
     filteredRows,
-    filteredRowCount,
     refreshMeta,
   } = useMonitoringData({
     usage: deferredUsage,
+    logUsage: realtimeLogUsage,
+    serverFilteredLogs: true,
     config,
     modelPrices,
     timeRange,
-    searchQuery: deferredSearch,
-    filteredRowLimit: REQUEST_LOG_INTERACTION_ROW_LIMIT,
+    searchQuery: '',
     deletedCredentialLabel: t('monitoring.deleted_credential'),
   });
 
@@ -3384,10 +3597,106 @@ export function MonitoringCenterPage() {
     enabled: connectionStatus === 'connected',
   });
 
+  const searchMatchedAuthIndexFilter = useMemo(() => {
+    const query = deferredSearch.trim().toLowerCase();
+    if (!query) return '';
+    const matches = new Set<string>();
+    allRows.forEach((row) => {
+      if (row.authIndex === '-') return;
+      const authText = [row.account, row.accountMasked, row.authLabel, row.source, row.sourceMasked]
+        .filter(Boolean)
+        .join('\n')
+        .toLowerCase();
+      if (authText.includes(query)) {
+        matches.add(row.authIndex);
+      }
+    });
+    return Array.from(matches).sort().join(',');
+  }, [allRows, deferredSearch]);
+
+  const realtimeLogRequestIdRef = useRef(0);
+  const realtimeLogAbortControllerRef = useRef<AbortController | null>(null);
+  const realtimeLogPageRef = useRef(1);
+  const realtimeLogAutoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const buildRealtimeLogFilters = useCallback((): UsageEventPageFilters => {
+    const nowMs = Date.now();
+    const fromMs = getRangeStartMs(timeRange, nowMs);
+    return {
+      fromMs: Number.isFinite(fromMs) && fromMs > 0 ? fromMs : undefined,
+      toMs: nowMs,
+      provider: selectedProvider === 'all' ? undefined : selectedProvider,
+      model: selectedModel === 'all' ? undefined : selectedModel,
+      authIndex: searchMatchedAuthIndexFilter || undefined,
+      apiKeyHash: selectedApiKey === 'all' ? undefined : selectedApiKey,
+      status: selectedStatus,
+      search: searchMatchedAuthIndexFilter ? undefined : deferredSearch,
+      limit: REALTIME_LOG_PAGE_SIZE,
+    };
+  }, [deferredSearch, searchMatchedAuthIndexFilter, selectedApiKey, selectedModel, selectedProvider, selectedStatus, timeRange]);
+
+  const fetchRealtimeLogPage = useCallback(async (page: number, cursor = '') => {
+    if (connectionStatus !== 'connected') return false;
+    const requestId = realtimeLogRequestIdRef.current + 1;
+    realtimeLogRequestIdRef.current = requestId;
+    realtimeLogAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    realtimeLogAbortControllerRef.current = controller;
+    setRealtimeLogLoading(true);
+    setRealtimeLogError('');
+    try {
+      const result = await loadEventPage({ ...buildRealtimeLogFilters(), cursor, signal: controller.signal });
+      if (realtimeLogRequestIdRef.current !== requestId) return false;
+      setRealtimeLogUsage(result.usage);
+      setRealtimeLogMatchedTotal(result.matchedTotal);
+      setRealtimeLogNextCursor(result.nextCursor);
+      setRealtimeLogSnapshotMaxId(result.snapshotMaxId);
+      setRealtimeLogPageCursors((current) => {
+        const next = current.slice(0, Math.max(page, 1));
+        next[page - 1] = result.pageCursor;
+        return next;
+      });
+      setRealtimeLogPage(page);
+      return true;
+    } catch (error) {
+      if (realtimeLogRequestIdRef.current !== requestId) return false;
+      if (controller.signal.aborted) return false;
+      setRealtimeLogError(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      if (realtimeLogRequestIdRef.current === requestId) {
+        setRealtimeLogLoading(false);
+      }
+      if (realtimeLogAbortControllerRef.current === controller) {
+        realtimeLogAbortControllerRef.current = null;
+      }
+    }
+  }, [buildRealtimeLogFilters, connectionStatus, loadEventPage]);
+
+  const refreshRealtimeLogs = useCallback(async () => {
+    setRealtimeLogPageCursors(['']);
+    return fetchRealtimeLogPage(1, '');
+  }, [fetchRealtimeLogPage]);
+
+  const showPreviousRealtimeLogPage = useCallback(async () => {
+    if (realtimeLogLoading || realtimeLogPage <= 1) return;
+    const previousPage = realtimeLogPage - 1;
+    const cursor = realtimeLogPageCursors[previousPage - 1] ?? '';
+    await fetchRealtimeLogPage(previousPage, cursor);
+  }, [fetchRealtimeLogPage, realtimeLogLoading, realtimeLogPage, realtimeLogPageCursors]);
+
+  const showNextRealtimeLogPage = useCallback(async () => {
+    if (realtimeLogLoading || !realtimeLogNextCursor) return;
+    const nextPage = realtimeLogPage + 1;
+    const cursor = realtimeLogNextCursor;
+    const success = await fetchRealtimeLogPage(nextPage, cursor);
+    if (!success) return;
+  }, [fetchRealtimeLogPage, realtimeLogLoading, realtimeLogNextCursor, realtimeLogPage]);
+
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshUsage(), refreshMeta(false)]);
+    await Promise.all([refreshUsage(), refreshMeta(false), refreshRealtimeLogs()]);
     await refreshAggregates();
-  }, [refreshAggregates, refreshMeta, refreshUsage]);
+  }, [refreshAggregates, refreshMeta, refreshRealtimeLogs, refreshUsage]);
 
   const loadMonitoringSettings = useCallback(async () => {
     if (connectionStatus !== 'connected') {
@@ -3515,8 +3824,8 @@ export function MonitoringCenterPage() {
 
   useHeaderRefresh(refreshAll);
 
-  const combinedError = [usageError, monitoringError].filter(Boolean).join('；');
-  const isMonitoringRefreshing = usageRefreshing || aggregatesRefreshing;
+  const combinedError = [usageError, monitoringError, realtimeLogError].filter(Boolean).join('；');
+  const isMonitoringRefreshing = usageRefreshing || aggregatesRefreshing || realtimeLogLoading;
   const syncStatusText = syncStatus === 'live'
     ? t('monitoring.sync_live', { defaultValue: 'Live' })
     : syncStatus === 'paused'
@@ -3532,6 +3841,36 @@ export function MonitoringCenterPage() {
   const usageDetailsCount = Number(deferredUsage?.details_count ?? allRows.length);
   const usageTotalRequests = Number(deferredUsage?.total_requests ?? usageDetailsCount);
   const usageDetailsLimited = Boolean(deferredUsage?.details_limited) && usageTotalRequests > usageDetailsCount;
+  const pendingRealtimeEventCount = realtimeLogSnapshotMaxId > 0 ? Math.max(latestId - realtimeLogSnapshotMaxId, 0) : 0;
+
+  useEffect(() => {
+    realtimeLogPageRef.current = realtimeLogPage;
+  }, [realtimeLogPage]);
+
+  useEffect(() => {
+    if (
+      connectionStatus !== 'connected'
+      || realtimeLogPage !== 1
+      || pendingRealtimeEventCount <= 0
+      || realtimeLogAutoRefreshTimerRef.current
+    ) {
+      return;
+    }
+    realtimeLogAutoRefreshTimerRef.current = setTimeout(() => {
+      realtimeLogAutoRefreshTimerRef.current = null;
+      if (realtimeLogPageRef.current === 1) {
+        void refreshRealtimeLogs();
+      }
+    }, 1000);
+  }, [connectionStatus, pendingRealtimeEventCount, realtimeLogPage, refreshRealtimeLogs]);
+
+  useEffect(() => () => {
+    realtimeLogAbortControllerRef.current?.abort();
+    if (realtimeLogAutoRefreshTimerRef.current) {
+      clearTimeout(realtimeLogAutoRefreshTimerRef.current);
+      realtimeLogAutoRefreshTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     accountQuotaStatesRef.current = accountQuotaStates;
@@ -3546,18 +3885,28 @@ export function MonitoringCenterPage() {
   );
 
   const requestLogRows = filteredRows;
-  const requestLogRowsLimited = filteredRowCount > requestLogRows.length;
 
   const requestLogDerived = useMemo(() => {
     const providers = new Set<string>();
     const models = new Set<string>();
     const apiKeys = new Map<string, string>();
 
-    requestLogRows.forEach((row) => {
+    allRows.forEach((row) => {
       if (row.provider) providers.add(row.provider);
       if (row.model) models.add(row.model);
       if (row.clientApiKey.hash && row.clientApiKey.hash !== '-' && !apiKeys.has(row.clientApiKey.hash)) {
         apiKeys.set(row.clientApiKey.hash, row.clientApiKey.masked);
+      }
+    });
+    usageAggregates?.providers.forEach((bucket) => {
+      if (bucket.provider) providers.add(bucket.provider);
+    });
+    usageAggregates?.models.forEach((bucket) => {
+      if (bucket.model) models.add(bucket.model);
+    });
+    usageAggregates?.apiKeys.forEach((bucket) => {
+      if (bucket.apiKeyHash && !apiKeys.has(bucket.apiKeyHash)) {
+        apiKeys.set(bucket.apiKeyHash, maskSensitiveText(bucket.apiKeyHash));
       }
     });
 
@@ -3589,7 +3938,7 @@ export function MonitoringCenterPage() {
           .map((value) => ({ value, label: value })),
       ],
     };
-  }, [modelPrices, requestLogRows, t]);
+  }, [allRows, modelPrices, t, usageAggregates]);
   const {
     providerOptions,
     modelOptions,
@@ -3628,32 +3977,10 @@ export function MonitoringCenterPage() {
     return map;
   }, [authFiles]);
 
-  const scopedRowsState = useMemo(() => {
-    const rows: MonitoringEventRow[] = [];
-    let failureCount = 0;
-
-    requestLogRows.forEach((row) => {
-      if (selectedProvider !== 'all' && row.provider !== selectedProvider) {
-        return;
-      }
-      if (selectedModel !== 'all' && row.model !== selectedModel) {
-        return;
-      }
-      if (selectedApiKey !== 'all' && row.clientApiKey.hash !== selectedApiKey) {
-        return;
-      }
-      if (selectedStatus === 'success' && row.failed) {
-        return;
-      }
-      if (selectedStatus === 'failed' && !row.failed) {
-        return;
-      }
-
-      rows.push(row);
-      if (row.failed) failureCount += 1;
-    });
-    return { rows, failureCount };
-  }, [requestLogRows, selectedApiKey, selectedModel, selectedProvider, selectedStatus]);
+  const scopedRowsState = useMemo(() => ({
+    rows: requestLogRows,
+    failureCount: requestLogRows.filter((row) => row.failed).length,
+  }), [requestLogRows]);
   const scopedRows = scopedRowsState.rows;
   const scopedFailureCount = scopedRowsState.failureCount;
 
@@ -3702,8 +4029,6 @@ export function MonitoringCenterPage() {
     trendStatsRows,
     topSummary,
     todaySummary,
-    trendSummary,
-    todayCost,
     yesterdayCost,
   } = usageRowGroups;
 
@@ -3716,9 +4041,10 @@ export function MonitoringCenterPage() {
       usageAggregates,
       timeRange,
       modelPrices,
-      clientUsageTrendAnalytics.apiKeyOptions
+      clientUsageTrendAnalytics.apiKeyOptions,
+      usageTrendApiKey
     ),
-    [clientUsageTrendAnalytics.apiKeyOptions, modelPrices, timeRange, usageAggregates]
+    [clientUsageTrendAnalytics.apiKeyOptions, modelPrices, timeRange, usageAggregates, usageTrendApiKey]
   );
   const usageTrendAnalytics = aggregatesError ? clientUsageTrendAnalytics : serverUsageTrendAnalytics ?? clientUsageTrendAnalytics;
   const usageTrendApiKeyOptions = usageTrendAnalytics.apiKeyOptions;
@@ -3750,31 +4076,71 @@ export function MonitoringCenterPage() {
       .slice(0, 8),
     [apiKeyRankingMetric, usageTrendAnalytics.apiKeyRows]
   );
-  const apiKeyRankingMetricTotal = trendSummary[
-    apiKeyRankingMetric === 'requests' ? 'totalCalls' : apiKeyRankingMetric === 'tokens' ? 'totalTokens' : 'totalCost'
-  ];
+  const apiKeyRankingMetricTotal = useMemo(
+    () => usageTrendAnalytics.apiKeyRows.reduce(
+      (total, row) => total + getRankingMetricValue(row, apiKeyRankingMetric),
+      0
+    ),
+    [apiKeyRankingMetric, usageTrendAnalytics.apiKeyRows]
+  );
   const accountStatsFilteredRows = useMemo(
     () => trendStatsRows.length > ACCOUNT_STATS_ANALYTICS_ROW_LIMIT
       ? trendStatsRows.slice(0, ACCOUNT_STATS_ANALYTICS_ROW_LIMIT)
       : trendStatsRows,
     [trendStatsRows]
   );
+  const clientAccountStatsRows = useMemo(
+    () => buildAccountRowsByAccount(accountStatsFilteredRows, true),
+    [accountStatsFilteredRows]
+  );
+  const serverAccountStatsRows = useMemo(
+    () => usageAggregates
+      ? buildServerAccountRows(usageAggregates.accounts, allRows, authFilesByAuthIndex, modelPrices, t('monitoring.deleted_credential'))
+      : null,
+    [allRows, authFilesByAuthIndex, modelPrices, t, usageAggregates]
+  );
   const accountStatsRows = useMemo(
-    () => [...buildAccountRowsByAccount(accountStatsFilteredRows, true)]
+    () => [...(aggregatesError ? clientAccountStatsRows : serverAccountStatsRows ?? clientAccountStatsRows)]
       .sort((left, right) => (
         getAccountSortValue(right, accountStatsMetric) - getAccountSortValue(left, accountStatsMetric)
         || right.lastSeenAt - left.lastSeenAt
         || right.totalCalls - left.totalCalls
       )),
-    [accountStatsMetric, accountStatsFilteredRows]
+    [accountStatsMetric, aggregatesError, clientAccountStatsRows, serverAccountStatsRows]
   );
+  const serverTopSummary = useMemo(
+    () => usageAggregates ? buildAggregateSummary(usageAggregates.allSummary, modelPrices) : null,
+    [modelPrices, usageAggregates]
+  );
+  const recentDailySummaries = useMemo(() => {
+    if (!usageAggregates) return null;
+    const grouped = new Map<string, UsageAggregateBucket[]>();
+    usageAggregates.recentDailySummary.forEach((bucket) => {
+      const dayKey = buildLocalDayKey(bucket.bucketStartMs);
+      const items = grouped.get(dayKey) ?? [];
+      items.push(bucket);
+      grouped.set(dayKey, items);
+    });
+    const now = new Date();
+    const todayKey = buildLocalDayKey(now.getTime());
+    now.setDate(now.getDate() - 1);
+    const yesterdayKey = buildLocalDayKey(now.getTime());
+    return {
+      today: buildAggregateSummary(grouped.get(todayKey) ?? [], modelPrices),
+      yesterday: buildAggregateSummary(grouped.get(yesterdayKey) ?? [], modelPrices),
+    };
+  }, [modelPrices, usageAggregates]);
+  const effectiveTopSummary = aggregatesError ? topSummary : serverTopSummary ?? topSummary;
+  const effectiveTodaySummary = aggregatesError ? todaySummary : recentDailySummaries?.today ?? todaySummary;
+  const effectiveTodayCost = effectiveTodaySummary.totalCost;
+  const effectiveYesterdayCost = aggregatesError ? yesterdayCost : recentDailySummaries?.yesterday.totalCost ?? yesterdayCost;
   const timeRangeLabel = useMemo(() => buildUsageTrendRangeLabel(timeRange, t), [timeRange, t]);
-  const realtimeLogTotalCount = Math.min(scopedRows.length, REALTIME_LOG_ENRICH_LIMIT);
+  const realtimeLogTotalCount = realtimeLogMatchedTotal;
   const realtimeLogTotalPages = realtimeLogTotalCount > 0 ? Math.ceil(realtimeLogTotalCount / REALTIME_LOG_PAGE_SIZE) : 0;
   const normalizedRealtimeLogPage = Math.min(Math.max(1, realtimeLogPage), Math.max(1, realtimeLogTotalPages));
   const realtimeLogPageRows = useMemo(
-    () => buildRealtimeLogPageRows(scopedRows, normalizedRealtimeLogPage, REALTIME_LOG_PAGE_SIZE).rows,
-    [normalizedRealtimeLogPage, scopedRows]
+    () => buildRealtimeLogPageRows(scopedRows, 1, REALTIME_LOG_PAGE_SIZE).rows,
+    [scopedRows]
   );
   const realtimeLogPagination = getClientPaginationRange(
     normalizedRealtimeLogPage,
@@ -3984,12 +4350,32 @@ export function MonitoringCenterPage() {
   const realtimeLogVisiblePreferenceCount = realtimeLogColumns.filter((column) => column.visible).length;
 
   useEffect(() => {
-    setRealtimeLogPage(1);
-  }, [deferredSearch, selectedApiKey, selectedModel, selectedProvider, selectedStatus, timeRange]);
+    if (connectionStatus !== 'connected') return;
+    void refreshRealtimeLogs();
+  }, [connectionStatus, refreshRealtimeLogs]);
 
   const accountQuotaTargetsByAccount = useMemo(
-    () => buildAccountQuotaTargetsByAccount(accountStatsFilteredRows, authFilesByAuthIndex),
-    [authFilesByAuthIndex, accountStatsFilteredRows]
+    () => {
+      if (!usageAggregates || aggregatesError) {
+        return buildAccountQuotaTargetsByAccount(accountStatsFilteredRows, authFilesByAuthIndex);
+      }
+      const sources = Array.from(new Set(usageAggregates.accounts.map((bucket) => bucket.authIndex).filter(Boolean)))
+        .map((authIndex) => {
+          const file = authFilesByAuthIndex.get(authIndex as string);
+          const account = file
+            ? [file.email, file.account, file.label, file.name]
+                .map((value) => typeof value === 'string' ? value.trim() : '')
+                .find(Boolean) || authIndex as string
+            : authIndex as string;
+          return {
+            authIndex: authIndex as string,
+            account,
+            authLabel: file?.name || account,
+          } satisfies AccountQuotaSourceRow;
+        });
+      return buildAccountQuotaTargetsByAccount(sources, authFilesByAuthIndex);
+    },
+    [accountStatsFilteredRows, aggregatesError, authFilesByAuthIndex, usageAggregates]
   );
   const accountQuotaEntriesByAccount = useMemo(
     () => buildAccountQuotaEntriesByAccount(accountQuotaTargetsByAccount, quotaStore, t),
@@ -3997,7 +4383,6 @@ export function MonitoringCenterPage() {
   );
   const quotaTargetsByAccountForLoading = accountQuotaTargetsByAccount;
 
-  const activeScopeRows = scopedRows;
   const savedPriceEntries = useMemo(
     () => Object.entries(modelPrices).sort((left, right) => left[0].localeCompare(right[0])),
     [modelPrices]
@@ -4013,44 +4398,44 @@ export function MonitoringCenterPage() {
       key: 'traffic',
       title: t('monitoring.traffic_title'),
       label: t('monitoring.today_requests'),
-      value: formatCompactNumber(todaySummary.totalCalls),
+      value: formatCompactNumber(effectiveTodaySummary.totalCalls),
       accent: 'blue',
       footer: [
-        { label: t('monitoring.total_requests_label'), value: formatCompactNumber(topSummary.totalCalls) },
-        { label: t('monitoring.total_success_rate'), value: formatPercent(topSummary.successRate) },
+        { label: t('monitoring.total_requests_label'), value: formatCompactNumber(effectiveTopSummary.totalCalls) },
+        { label: t('monitoring.total_success_rate'), value: formatPercent(effectiveTopSummary.successRate) },
       ],
     },
     {
       key: 'tokens',
       title: 'Token',
       label: t('monitoring.today_tokens'),
-      value: formatCompactNumber(todaySummary.totalTokens),
+      value: formatCompactNumber(effectiveTodaySummary.totalTokens),
       accent: 'purple',
       footer: [
-        { label: t('monitoring.total_tokens_label'), value: formatCompactNumber(topSummary.totalTokens) },
-        { label: t('monitoring.input_output_reasoning'), value: `${formatCompactNumber(topSummary.inputTokens)} / ${formatCompactNumber(topSummary.outputTokens)} / ${formatCompactNumber(topSummary.reasoningTokens)}` },
+        { label: t('monitoring.total_tokens_label'), value: formatCompactNumber(effectiveTopSummary.totalTokens) },
+        { label: t('monitoring.input_output_reasoning'), value: `${formatCompactNumber(effectiveTopSummary.inputTokens)} / ${formatCompactNumber(effectiveTopSummary.outputTokens)} / ${formatCompactNumber(effectiveTopSummary.reasoningTokens)}` },
       ],
     },
     {
       key: 'cache',
       title: t('monitoring.cache_title'),
       label: t('monitoring.today_cache_hit_rate'),
-      value: formatPercent(todaySummary.inputTokens > 0 ? todaySummary.cachedTokens / todaySummary.inputTokens : 0),
+      value: formatPercent(effectiveTodaySummary.inputTokens > 0 ? effectiveTodaySummary.cachedTokens / effectiveTodaySummary.inputTokens : 0),
       accent: 'green',
       footer: [
-        { label: t('monitoring.today_cached_tokens'), value: formatCompactNumber(todaySummary.cachedTokens) },
-        { label: t('monitoring.total_cache_hits'), value: `${formatCompactNumber(topSummary.cachedTokens)} / ${formatPercent(topSummary.inputTokens > 0 ? topSummary.cachedTokens / topSummary.inputTokens : 0)}` },
+        { label: t('monitoring.today_cached_tokens'), value: formatCompactNumber(effectiveTodaySummary.cachedTokens) },
+        { label: t('monitoring.total_cache_hits'), value: `${formatCompactNumber(effectiveTopSummary.cachedTokens)} / ${formatPercent(effectiveTopSummary.inputTokens > 0 ? effectiveTopSummary.cachedTokens / effectiveTopSummary.inputTokens : 0)}` },
       ],
     },
     {
       key: 'billing',
       title: t('monitoring.billing_title'),
       label: t('monitoring.today_cost'),
-      value: hasPrices ? formatUsd(todayCost) : '--',
+      value: hasPrices ? formatUsd(effectiveTodayCost) : '--',
       accent: 'amber',
       footer: [
-        { label: t('monitoring.vs_yesterday'), value: hasPrices ? formatDeltaPercent(todayCost, yesterdayCost) : '--' },
-        { label: t('monitoring.total_cost_label'), value: hasPrices ? formatUsd(topSummary.totalCost) : '--' },
+        { label: t('monitoring.vs_yesterday'), value: hasPrices ? formatDeltaPercent(effectiveTodayCost, effectiveYesterdayCost) : '--' },
+        { label: t('monitoring.total_cost_label'), value: hasPrices ? formatUsd(effectiveTopSummary.totalCost) : '--' },
       ],
     },
   ];
@@ -4380,10 +4765,10 @@ export function MonitoringCenterPage() {
           {usageDetailsLimited ? (
             <div className={styles.inlineMetrics}>
               <span>
-                {t('monitoring.request_events_page_source_hint', {
+                {t('monitoring.request_events_coverage_hint', {
                   shown: usageDetailsCount,
                   total: usageTotalRequests,
-                  defaultValue: `Loaded ${usageDetailsCount} recent events out of ${usageTotalRequests}.`,
+                  defaultValue: `Statistics cover all ${usageTotalRequests} requests; the live detail cache keeps the latest ${usageDetailsCount}.`,
                 })}
               </span>
             </div>
@@ -4399,7 +4784,7 @@ export function MonitoringCenterPage() {
         <section className={styles.usageTrendSection}>
           <UsageTrendHeader
             range={timeRange}
-            totalCalls={trendSummary.totalCalls}
+            totalCalls={usageTrendAnalytics.scopedTotals.requests}
             apiKeyFilter={usageTrendApiKey}
             apiKeyOptions={usageTrendApiKeyOptions}
             onRangeChange={setTimeRange}
@@ -4497,7 +4882,7 @@ export function MonitoringCenterPage() {
             <h2>{t('monitoring.analysis_tab_logs')}</h2>
             <p>
               {selectedFiltersCount > 0
-                ? t('monitoring.active_filters_hint', { count: selectedFiltersCount, rows: activeScopeRows.length })
+                ? t('monitoring.active_filters_hint', { count: selectedFiltersCount, rows: realtimeLogMatchedTotal })
                 : t('monitoring.realtime_table_desc')}
             </p>
           </div>
@@ -4599,14 +4984,23 @@ export function MonitoringCenterPage() {
         <div className={styles.inlineMetrics}>
           <span>{`${t('monitoring.log_rows')}: ${realtimeLogTotalCount}`}</span>
           <span>{`${t('monitoring.recent_failures')}: ${scopedFailureCount}`}</span>
-          {requestLogRowsLimited ? (
+          {realtimeLogMatchedTotal > 0 ? (
             <span>
               {t('monitoring.request_events_page_source_hint', {
-                shown: requestLogRows.length,
-                total: filteredRowCount,
-                defaultValue: `Loaded ${requestLogRows.length} recent events out of ${filteredRowCount}.`,
+                from: realtimeLogPagination.from,
+                to: realtimeLogPagination.to,
+                total: realtimeLogMatchedTotal,
+                defaultValue: `Showing ${realtimeLogPagination.from}-${realtimeLogPagination.to} of ${realtimeLogMatchedTotal} matching events from a stable snapshot.`,
               })}
             </span>
+          ) : null}
+          {pendingRealtimeEventCount > 0 ? (
+            <button type="button" className={styles.inlineActionButton} onClick={() => void refreshRealtimeLogs()}>
+              {t('monitoring.request_events_new_available', {
+                count: pendingRealtimeEventCount,
+                defaultValue: `${pendingRealtimeEventCount} new events available`,
+              })}
+            </button>
           ) : null}
         </div>
 
@@ -4675,8 +5069,8 @@ export function MonitoringCenterPage() {
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => setRealtimeLogPage((page) => Math.max(1, page - 1))}
-              disabled={!realtimeLogPagination.hasPrevious}
+              onClick={() => void showPreviousRealtimeLogPage()}
+              disabled={realtimeLogLoading || !realtimeLogPagination.hasPrevious}
               aria-label={t('monitoring.previous_page')}
             >
               {t('monitoring.previous_page')}
@@ -4694,8 +5088,8 @@ export function MonitoringCenterPage() {
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => setRealtimeLogPage((page) => page + 1)}
-              disabled={!realtimeLogPagination.hasNext}
+              onClick={() => void showNextRealtimeLogPage()}
+              disabled={realtimeLogLoading || !realtimeLogNextCursor || !realtimeLogPagination.hasNext}
               aria-label={t('monitoring.next_page')}
             >
               {t('monitoring.next_page')}

@@ -19,6 +19,11 @@ export interface UsagePayload {
   details_count?: number;
   details_limit?: number;
   details_limited?: boolean;
+  matched_total?: number;
+  snapshot_max_id?: number;
+  page_cursor?: string;
+  next_cursor?: string;
+  has_more?: boolean;
   apis?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -35,7 +40,33 @@ export interface UseUsageDataReturn {
   modelPrices: Record<string, ModelPrice>;
   setModelPrices: (prices: Record<string, ModelPrice>) => void;
   refreshUsage: () => Promise<void>;
+  loadEventPage: (filters: UsageEventPageFilters) => Promise<UsageEventPage>;
 }
+
+export type UsageEventStatusFilter = 'all' | 'success' | 'failed';
+
+export type UsageEventPageFilters = {
+  cursor?: string;
+  signal?: AbortSignal;
+  fromMs?: number;
+  toMs?: number;
+  provider?: string;
+  model?: string;
+  authIndex?: string;
+  apiKeyHash?: string;
+  status?: UsageEventStatusFilter;
+  search?: string;
+  limit?: number;
+};
+
+export type UsageEventPage = {
+  usage: UsagePayload;
+  matchedTotal: number;
+  pageCursor: string;
+  nextCursor: string;
+  hasMore: boolean;
+  snapshotMaxId: number;
+};
 
 export type UsageSyncStatus = 'loading' | 'syncing' | 'live' | 'reconnecting' | 'paused' | 'error';
 
@@ -54,8 +85,8 @@ type UsageDetailRef = {
 const asUsageApiEntry = (value: unknown): UsageApiEntry =>
   isRecordValue(value) ? (value as UsageApiEntry) : {};
 
-const USAGE_DETAIL_RETENTION_LIMIT = 15000;
-const USAGE_DETAIL_RETENTION_TRIM_BUFFER = 1000;
+const USAGE_DETAIL_RETENTION_LIMIT = 5000;
+const USAGE_DETAIL_RETENTION_TRIM_BUFFER = 500;
 
 const usageDetailKey = (endpoint: string, model: string) => `${endpoint}\n${model}`;
 
@@ -346,9 +377,39 @@ type UsageStateWriter = {
   setSyncStatus: (status: UsageSyncStatus) => void;
 };
 
-const USAGE_INITIAL_LIMIT = 12000;
+const USAGE_INITIAL_LIMIT = 1000;
 const USAGE_INCREMENTAL_LIMIT = 3000;
 const USAGE_INCREMENTAL_FLUSH_DELAY_MS = 150;
+const USAGE_EVENT_PAGE_LIMIT = 100;
+
+const loadUsageEventPage = async (filters: UsageEventPageFilters): Promise<UsageEventPage> => {
+  const cursor = filters.cursor?.trim() ?? '';
+  const payload = await apiClient.get<UsagePayload>('/usage/events', {
+    signal: filters.signal,
+    params: cursor
+      ? { cursor, limit: filters.limit ?? USAGE_EVENT_PAGE_LIMIT }
+      : {
+          direction: 'before',
+          limit: filters.limit ?? USAGE_EVENT_PAGE_LIMIT,
+          from_ms: filters.fromMs && Number.isFinite(filters.fromMs) ? filters.fromMs : undefined,
+          to_ms: filters.toMs && Number.isFinite(filters.toMs) ? filters.toMs : undefined,
+          provider: filters.provider?.trim() || undefined,
+          model: filters.model?.trim() || undefined,
+          auth_index: filters.authIndex?.trim() || undefined,
+          api_key_hash: filters.apiKeyHash?.trim() || undefined,
+          status: filters.status && filters.status !== 'all' ? filters.status : undefined,
+          search: filters.search?.trim() || undefined,
+        },
+  });
+  return {
+    usage: payload ?? { apis: {} },
+    matchedTotal: toNumber(payload?.matched_total),
+    pageCursor: typeof payload?.page_cursor === 'string' ? payload.page_cursor : cursor,
+    nextCursor: typeof payload?.next_cursor === 'string' ? payload.next_cursor : '',
+    hasMore: Boolean(payload?.has_more),
+    snapshotMaxId: toNumber(payload?.snapshot_max_id),
+  };
+};
 
 const loadUsageSnapshot = async ({
   requestIdRef,
@@ -746,6 +807,8 @@ export function useUsageData(): UseUsageDataReturn {
     });
   }, []);
 
+  const loadEventPage = useCallback((filters: UsageEventPageFilters) => loadUsageEventPage(filters), []);
+
   return {
     usage,
     loading,
@@ -758,5 +821,6 @@ export function useUsageData(): UseUsageDataReturn {
     modelPrices,
     setModelPrices,
     refreshUsage,
+    loadEventPage,
   };
 }

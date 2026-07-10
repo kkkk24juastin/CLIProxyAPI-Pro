@@ -421,6 +421,32 @@ func TestUsageAggregatesSupportsAllIntervalAndAPIKeyFilter(t *testing.T) {
 	}
 }
 
+func TestUsageAggregatesSupportsAuthIndexGroupingAndLastSeen(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	first := testUsageEvent(0, false, 10)
+	first.AuthIndex = "auth-a"
+	second := testUsageEvent(1, true, 20)
+	second.AuthIndex = "auth-a"
+	insertTestUsageEvents(t, store, first, second)
+
+	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{
+		Interval: "all",
+		GroupBy:  []string{"auth_index", "provider", "model"},
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("UsageAggregates() error = %v", err)
+	}
+	if len(buckets) != 1 {
+		t.Fatalf("UsageAggregates() len = %d, want 1", len(buckets))
+	}
+	bucket := buckets[0]
+	if bucket.AuthIndex != "auth-a" || bucket.TotalRequests != 2 || bucket.LastSeenAtMS != second.TimestampMS {
+		t.Fatalf("aggregate bucket = %+v, want auth-a total=2 last_seen=%d", bucket, second.TimestampMS)
+	}
+}
+
 func TestRecentDeadLettersLimitsPayload(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()

@@ -26,13 +26,38 @@ type UsageSummary struct {
 	TotalTokens   int64
 }
 
+type UsageEventQueryOptions struct {
+	SnapshotMaxID   int64
+	BeforeTimestamp int64
+	BeforeID        int64
+	FromMS          int64
+	ToMS            int64
+	Provider        string
+	Model           string
+	AuthIndex       string
+	APIKeyHash      string
+	Failed          *bool
+	Search          string
+	Limit           int
+	MatchedTotal    int64
+	SkipCount       bool
+}
+
+type UsageEventQueryPage struct {
+	Events       []internalusage.Event
+	MatchedTotal int64
+	HasMore      bool
+}
+
 type UsageAggregateBucket struct {
 	BucketStartMS   int64  `json:"bucketStartMs"`
 	BucketStart     string `json:"bucketStart"`
 	Provider        string `json:"provider,omitempty"`
 	Model           string `json:"model,omitempty"`
 	Endpoint        string `json:"endpoint,omitempty"`
+	AuthIndex       string `json:"authIndex,omitempty"`
 	APIKeyHash      string `json:"apiKeyHash,omitempty"`
+	LastSeenAtMS    int64  `json:"lastSeenAtMs"`
 	TotalRequests   int64  `json:"totalRequests"`
 	SuccessCount    int64  `json:"successCount"`
 	FailureCount    int64  `json:"failureCount"`
@@ -232,8 +257,12 @@ func (s *Store) init() error {
 		`create index if not exists idx_usage_events_recent on usage_events(timestamp_ms desc, id desc)`,
 		`create index if not exists idx_usage_events_request_id on usage_events(request_id)`,
 		`create index if not exists idx_usage_events_model on usage_events(model)`,
+		`create index if not exists idx_usage_events_provider_recent on usage_events(provider, timestamp_ms desc, id desc)`,
+		`create index if not exists idx_usage_events_model_recent on usage_events(model, timestamp_ms desc, id desc)`,
+		`create index if not exists idx_usage_events_failed_recent on usage_events(failed, timestamp_ms desc, id desc)`,
 		`create index if not exists idx_usage_events_auth_index on usage_events(auth_index)`,
 		`create index if not exists idx_usage_events_api_key_timestamp on usage_events(api_key_hash, timestamp_ms)`,
+		`create index if not exists idx_usage_events_api_key_recent on usage_events(api_key_hash, timestamp_ms desc, id desc)`,
 		`create table if not exists usage_summary (
 			id integer primary key check (id = 1),
 			latest_event_id integer not null default 0,
@@ -581,6 +610,139 @@ func (s *Store) EventsAfter(ctx context.Context, afterID int64, limit int) ([]in
 	return s.scanEvents(rows)
 }
 
+func appendUsageEventQueryFilters(options UsageEventQueryOptions, includeCursor bool) ([]string, []any) {
+	wheres := make([]string, 0, 10)
+	args := make([]any, 0, 12)
+	if options.SnapshotMaxID > 0 {
+		wheres = append(wheres, `id <= ?`)
+		args = append(args, options.SnapshotMaxID)
+	}
+	if includeCursor && options.BeforeTimestamp > 0 && options.BeforeID > 0 {
+		wheres = append(wheres, `(timestamp_ms < ? or (timestamp_ms = ? and id < ?))`)
+		args = append(args, options.BeforeTimestamp, options.BeforeTimestamp, options.BeforeID)
+	}
+	if options.FromMS > 0 {
+		wheres = append(wheres, `timestamp_ms >= ?`)
+		args = append(args, options.FromMS)
+	}
+	if options.ToMS > 0 {
+		wheres = append(wheres, `timestamp_ms <= ?`)
+		args = append(args, options.ToMS)
+	}
+	if value := strings.TrimSpace(options.Provider); value != "" {
+		wheres = append(wheres, `provider = ?`)
+		args = append(args, value)
+	}
+	if value := strings.TrimSpace(options.Model); value != "" {
+		wheres = append(wheres, `model = ?`)
+		args = append(args, value)
+	}
+	if values := splitUsageEventFilterValues(options.AuthIndex, 100); len(values) > 0 {
+		wheres = append(wheres, `auth_index in (`+strings.TrimRight(strings.Repeat("?,", len(values)), ",")+`)`)
+		for _, value := range values {
+			args = append(args, value)
+		}
+	}
+	if value := strings.TrimSpace(options.APIKeyHash); value != "" {
+		wheres = append(wheres, `api_key_hash = ?`)
+		args = append(args, value)
+	}
+	if options.Failed != nil {
+		failed := 0
+		if *options.Failed {
+			failed = 1
+		}
+		wheres = append(wheres, `failed = ?`)
+		args = append(args, failed)
+	}
+	if value := strings.ToLower(strings.TrimSpace(options.Search)); value != "" {
+		searchRunes := []rune(value)
+		if len(searchRunes) > 200 {
+			value = string(searchRunes[:200])
+		}
+		wheres = append(wheres, `instr(lower(
+			coalesce(request_id, '') || char(10) || coalesce(provider, '') || char(10) ||
+			coalesce(executor_type, '') || char(10) || coalesce(model, '') || char(10) ||
+			coalesce(alias, '') || char(10) || coalesce(endpoint, '') || char(10) ||
+			coalesce(method, '') || char(10) || coalesce(path, '') || char(10) ||
+			coalesce(auth_type, '') || char(10) || coalesce(auth_index, '') || char(10) ||
+			coalesce(source, '') || char(10) || coalesce(source_hash, '') || char(10) ||
+			coalesce(api_key_hash, '') || char(10) || coalesce(error_code, '') || char(10) ||
+			coalesce(error_message, '') || char(10) || coalesce(upstream_request_id, '')
+		), ?) > 0`)
+		args = append(args, value)
+	}
+	return wheres, args
+}
+
+func splitUsageEventFilterValues(value string, limit int) []string {
+	out := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, item := range strings.Split(value, ",") {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func usageEventQueryWhere(wheres []string) string {
+	if len(wheres) == 0 {
+		return ""
+	}
+	return ` where ` + strings.Join(wheres, ` and `)
+}
+
+func (s *Store) QueryEvents(ctx context.Context, options UsageEventQueryOptions) (UsageEventQueryPage, error) {
+	limit := options.Limit
+	if limit <= 0 || limit > usageEventsPageLimit {
+		limit = usageEventsPageLimit
+	}
+
+	matchedTotal := options.MatchedTotal
+	if !options.SkipCount {
+		countWheres, countArgs := appendUsageEventQueryFilters(options, false)
+		if err := s.db.QueryRowContext(ctx, `select count(*) from usage_events`+usageEventQueryWhere(countWheres), countArgs...).Scan(&matchedTotal); err != nil {
+			return UsageEventQueryPage{}, err
+		}
+	}
+
+	queryWheres, queryArgs := appendUsageEventQueryFilters(options, true)
+	query := `select
+		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
+		auth_type, auth_index, source, source_hash, api_key_hash,
+		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
+		failed, raw_json, created_at_ms
+		from usage_events` + usageEventQueryWhere(queryWheres) + `
+		order by timestamp_ms desc, id desc
+		limit ?`
+	queryArgs = append(queryArgs, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
+	if err != nil {
+		return UsageEventQueryPage{}, err
+	}
+	defer rows.Close()
+	events, err := s.scanEvents(rows)
+	if err != nil {
+		return UsageEventQueryPage{}, err
+	}
+	hasMore := len(events) > limit
+	if hasMore {
+		events = events[:limit]
+	}
+	return UsageEventQueryPage{Events: events, MatchedTotal: matchedTotal, HasMore: hasMore}, nil
+}
+
 func (s *Store) LatestCursor(ctx context.Context) (int64, int64, error) {
 	var id sql.NullInt64
 	var timestamp sql.NullInt64
@@ -799,6 +961,7 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 		`coalesce(sum(max(cached_tokens, cache_tokens)), 0) as cache_tokens`,
 		`cast(avg(latency_ms) as integer) as avg_latency_ms`,
 		`cast(avg(ttft_ms) as integer) as avg_ttft_ms`,
+		`coalesce(max(timestamp_ms), 0) as last_seen_at_ms`,
 	)
 	query := `select ` + strings.Join(selects, ", ") + ` from usage_events`
 	wheres := []string{}
@@ -832,12 +995,12 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 		groupValues := make([]sql.NullString, len(groupColumns))
 		for index, group := range groupColumns {
 			switch group {
-			case "provider", "model", "endpoint", "api_key_hash":
+			case "provider", "model", "endpoint", "auth_index", "api_key_hash":
 				dest = append(dest, &groupValues[index])
 			}
 		}
 		var avgLatency, avgTTFT sql.NullInt64
-		dest = append(dest, &bucket.TotalRequests, &bucket.SuccessCount, &bucket.FailureCount, &bucket.TotalTokens, &bucket.InputTokens, &bucket.OutputTokens, &bucket.ReasoningTokens, &bucket.CacheTokens, &avgLatency, &avgTTFT)
+		dest = append(dest, &bucket.TotalRequests, &bucket.SuccessCount, &bucket.FailureCount, &bucket.TotalTokens, &bucket.InputTokens, &bucket.OutputTokens, &bucket.ReasoningTokens, &bucket.CacheTokens, &avgLatency, &avgTTFT, &bucket.LastSeenAtMS)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
@@ -850,6 +1013,8 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 				bucket.Model = value
 			case "endpoint":
 				bucket.Endpoint = value
+			case "auth_index":
+				bucket.AuthIndex = value
 			case "api_key_hash":
 				bucket.APIKeyHash = value
 			}
@@ -886,6 +1051,8 @@ func normalizeAggregateGroups(groups []string) []string {
 		"provider":     "provider",
 		"model":        "model",
 		"endpoint":     "endpoint",
+		"auth_index":   "auth_index",
+		"authIndex":    "auth_index",
 		"api_key_hash": "api_key_hash",
 		"apiKeyHash":   "api_key_hash",
 	}

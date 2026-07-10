@@ -8,7 +8,9 @@ export type UsageAggregateBucket = {
   provider?: string;
   model?: string;
   endpoint?: string;
+  authIndex?: string;
   apiKeyHash?: string;
+  lastSeenAtMs?: number;
   totalRequests: number;
   successCount: number;
   failureCount: number;
@@ -31,6 +33,10 @@ export type UsageAggregates = {
   trend: UsageAggregateBucket[];
   models: UsageAggregateBucket[];
   apiKeys: UsageAggregateBucket[];
+  providers: UsageAggregateBucket[];
+  accounts: UsageAggregateBucket[];
+  allSummary: UsageAggregateBucket[];
+  recentDailySummary: UsageAggregateBucket[];
   latestId: number;
   snapshotAtMs: number;
 };
@@ -50,7 +56,7 @@ type UseUsageAggregatesReturn = {
   refresh: () => Promise<void>;
 };
 
-const getAggregateRefreshIntervalMs = (timeRange: MonitoringTimeRange) => timeRange === 'all' ? 10000 : 3000;
+const AGGREGATE_REFRESH_DEBOUNCE_MS = 1000;
 
 const normalizeItems = (payload: UsageAggregateResponse | null | undefined) =>
   Array.isArray(payload?.items) ? payload.items : [];
@@ -93,6 +99,10 @@ export function useUsageAggregates({
     const allTrendStart = new Date(nowMs);
     allTrendStart.setHours(0, 0, 0, 0);
     allTrendStart.setDate(allTrendStart.getDate() - 23);
+    const todayStart = new Date(nowMs);
+    todayStart.setHours(0, 0, 0, 0);
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
     const trendFromMs = timeRange === 'all' ? allTrendStart.getTime() : rangeStartMs;
     const interval = timeRange === 'today' ? 'hour' : 'day';
     const timezoneOffsetMinutes = -new Date().getTimezoneOffset();
@@ -116,31 +126,55 @@ export function useUsageAggregates({
     };
 
     try {
-      const [trendPayload, modelPayload, apiKeyPayload] = await Promise.all([
+      const [trendPayload, accountPayload, allSummaryPayload, recentDailySummaryPayload] = await Promise.all([
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
           params: trendParams,
         }),
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
-          params: { ...rankingParams, group_by: 'model', ...(apiKeyHash !== 'all' ? { api_key_hash: apiKeyHash } : {}) },
+          params: { ...rankingParams, group_by: 'auth_index,provider,api_key_hash,model' },
         }),
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
-          params: { ...rankingParams, group_by: 'api_key_hash,model' },
+          params: {
+            from_ms: 0,
+            to_ms: nowMs,
+            interval: 'all',
+            group_by: 'model',
+            limit: 10000,
+            timezone_offset_minutes: timezoneOffsetMinutes,
+          },
+        }),
+        apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
+          params: {
+            from_ms: yesterdayStart.getTime(),
+            to_ms: nowMs,
+            interval: 'day',
+            group_by: 'model',
+            limit: 10000,
+            timezone_offset_minutes: timezoneOffsetMinutes,
+          },
         }),
       ]);
       if (requestIdRef.current !== requestId || queryGenerationRef.current !== queryGeneration) return;
       const snapshotAtMs = Math.max(
         Number(trendPayload?.snapshot_at_ms) || 0,
-        Number(modelPayload?.snapshot_at_ms) || 0,
-        Number(apiKeyPayload?.snapshot_at_ms) || 0
+        Number(accountPayload?.snapshot_at_ms) || 0,
+        Number(allSummaryPayload?.snapshot_at_ms) || 0,
+        Number(recentDailySummaryPayload?.snapshot_at_ms) || 0
       );
+      const accountItems = normalizeItems(accountPayload);
       setData({
         trend: normalizeItems(trendPayload),
-        models: normalizeItems(modelPayload),
-        apiKeys: normalizeItems(apiKeyPayload),
+        models: accountItems,
+        apiKeys: accountItems,
+        providers: accountItems,
+        accounts: accountItems,
+        allSummary: normalizeItems(allSummaryPayload),
+        recentDailySummary: normalizeItems(recentDailySummaryPayload),
         latestId: Math.min(
           Number(trendPayload?.latest_id) || 0,
-          Number(modelPayload?.latest_id) || 0,
-          Number(apiKeyPayload?.latest_id) || 0
+          Number(accountPayload?.latest_id) || 0,
+          Number(allSummaryPayload?.latest_id) || 0,
+          Number(recentDailySummaryPayload?.latest_id) || 0
         ),
         snapshotAtMs,
       });
@@ -189,12 +223,10 @@ export function useUsageAggregates({
       return;
     }
     if (refreshTimerRef.current) return;
-    const refreshIntervalMs = getAggregateRefreshIntervalMs(timeRange);
-    const elapsed = Date.now() - lastFetchedAtRef.current;
     refreshTimerRef.current = window.setTimeout(() => {
       refreshTimerRef.current = null;
       void loadRef.current();
-    }, Math.max(0, refreshIntervalMs - elapsed));
+    }, lastFetchedAtRef.current > 0 ? AGGREGATE_REFRESH_DEBOUNCE_MS : 0);
   }, [enabled, latestId, refreshNonce, timeRange]);
 
   useEffect(() => () => {
