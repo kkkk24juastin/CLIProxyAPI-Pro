@@ -39,6 +39,8 @@ export type UsageAggregates = {
   recentDailySummary: UsageAggregateBucket[];
   latestId: number;
   snapshotAtMs: number;
+  scopeTimeRange: MonitoringTimeRange;
+  scopeApiKeyHash: string;
 };
 
 type UseUsageAggregatesParams = {
@@ -78,6 +80,7 @@ export function useUsageAggregates({
   const refreshInFlightRef = useRef(false);
   const refreshPendingRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasDataRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!enabled) return;
@@ -177,7 +180,10 @@ export function useUsageAggregates({
           Number(recentDailySummaryPayload?.latest_id) || 0
         ),
         snapshotAtMs,
+        scopeTimeRange: timeRange,
+        scopeApiKeyHash: apiKeyHash,
       });
+      hasDataRef.current = true;
       lastFetchedAtRef.current = Date.now();
       setLoading(false);
     } catch (err) {
@@ -203,9 +209,8 @@ export function useUsageAggregates({
     queryGenerationRef.current += 1;
     lastFetchedAtRef.current = 0;
     refreshPendingRef.current = refreshInFlightRef.current;
-    setData(null);
     setError('');
-    setLoading(enabled);
+    setLoading(enabled && !hasDataRef.current);
     if (refreshTimerRef.current) {
       window.clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = null;

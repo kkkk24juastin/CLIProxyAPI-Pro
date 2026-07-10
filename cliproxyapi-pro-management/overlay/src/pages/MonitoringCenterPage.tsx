@@ -1222,6 +1222,19 @@ const buildServerUsageTrendAnalytics = (
   const trendGrouped = new Map<string, TrendPoint>(prefilled.map((point) => [point.key, point]));
   const tokenGrouped = new Map<string, TokenDistributionPoint>();
   const apiKeyLabels = new Map(apiKeyOptions.map((option) => [option.value, option.label]));
+  aggregates.apiKeys.forEach((item) => {
+    const apiKeyHash = item.apiKeyHash?.trim();
+    if (apiKeyHash && !apiKeyLabels.has(apiKeyHash)) {
+      apiKeyLabels.set(apiKeyHash, maskSensitiveText(apiKeyHash));
+    }
+  });
+  const resolvedApiKeyOptions = [
+    apiKeyOptions.find((option) => option.value === 'all') ?? { value: 'all', label: 'All' },
+    ...Array.from(apiKeyLabels.entries())
+      .filter(([value]) => value !== 'all')
+      .sort((left, right) => left[1].localeCompare(right[1]))
+      .map(([value, label]) => ({ value, label })),
+  ];
   const modelRowMap = new Map<string, MonitoringAccountRow>();
   aggregates.models
     .filter((item) => apiKeyFilter === 'all' || item.apiKeyHash === apiKeyFilter)
@@ -1312,7 +1325,7 @@ const buildServerUsageTrendAnalytics = (
   }), { requests: 0, tokens: 0, cost: 0 });
 
   return {
-    apiKeyOptions,
+    apiKeyOptions: resolvedApiKeyOptions,
     trendPoints: Array.from(trendGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)).slice(-24),
     tokenDistributionPoints: Array.from(tokenGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)).slice(-24),
     modelRows,
@@ -4039,14 +4052,30 @@ export function MonitoringCenterPage() {
   const serverUsageTrendAnalytics = useMemo(
     () => buildServerUsageTrendAnalytics(
       usageAggregates,
-      timeRange,
+      usageAggregates?.scopeTimeRange ?? timeRange,
       modelPrices,
       clientUsageTrendAnalytics.apiKeyOptions,
-      usageTrendApiKey
+      usageAggregates?.scopeApiKeyHash ?? usageTrendApiKey
     ),
     [clientUsageTrendAnalytics.apiKeyOptions, modelPrices, timeRange, usageAggregates, usageTrendApiKey]
   );
-  const usageTrendAnalytics = aggregatesError ? clientUsageTrendAnalytics : serverUsageTrendAnalytics ?? clientUsageTrendAnalytics;
+  const aggregateTrendScopeMatches = Boolean(
+    usageAggregates
+      && usageAggregates.scopeTimeRange === timeRange
+      && usageAggregates.scopeApiKeyHash === usageTrendApiKey
+  );
+  const usageTrendAnalytics = useMemo(() => {
+    if (!serverUsageTrendAnalytics || (aggregatesError && !aggregateTrendScopeMatches)) {
+      return clientUsageTrendAnalytics;
+    }
+    if (serverUsageTrendAnalytics.apiKeyRows.length > 0 || clientUsageTrendAnalytics.apiKeyRows.length === 0) {
+      return serverUsageTrendAnalytics;
+    }
+    return {
+      ...serverUsageTrendAnalytics,
+      apiKeyRows: clientUsageTrendAnalytics.apiKeyRows,
+    };
+  }, [aggregateTrendScopeMatches, aggregatesError, clientUsageTrendAnalytics, serverUsageTrendAnalytics]);
   const usageTrendApiKeyOptions = usageTrendAnalytics.apiKeyOptions;
   const usageTrendPoints = usageTrendAnalytics.trendPoints;
   const tokenDistributionPoints = usageTrendAnalytics.tokenDistributionPoints;
@@ -4100,13 +4129,17 @@ export function MonitoringCenterPage() {
     [allRows, authFilesByAuthIndex, modelPrices, t, usageAggregates]
   );
   const accountStatsRows = useMemo(
-    () => [...(aggregatesError ? clientAccountStatsRows : serverAccountStatsRows ?? clientAccountStatsRows)]
+    () => [...(
+      aggregatesError && usageAggregates?.scopeTimeRange !== timeRange
+        ? clientAccountStatsRows
+        : serverAccountStatsRows ?? clientAccountStatsRows
+    )]
       .sort((left, right) => (
         getAccountSortValue(right, accountStatsMetric) - getAccountSortValue(left, accountStatsMetric)
         || right.lastSeenAt - left.lastSeenAt
         || right.totalCalls - left.totalCalls
       )),
-    [accountStatsMetric, aggregatesError, clientAccountStatsRows, serverAccountStatsRows]
+    [accountStatsMetric, aggregatesError, clientAccountStatsRows, serverAccountStatsRows, timeRange, usageAggregates?.scopeTimeRange]
   );
   const serverTopSummary = useMemo(
     () => usageAggregates ? buildAggregateSummary(usageAggregates.allSummary, modelPrices) : null,
@@ -4130,10 +4163,10 @@ export function MonitoringCenterPage() {
       yesterday: buildAggregateSummary(grouped.get(yesterdayKey) ?? [], modelPrices),
     };
   }, [modelPrices, usageAggregates]);
-  const effectiveTopSummary = aggregatesError ? topSummary : serverTopSummary ?? topSummary;
-  const effectiveTodaySummary = aggregatesError ? todaySummary : recentDailySummaries?.today ?? todaySummary;
+  const effectiveTopSummary = serverTopSummary ?? topSummary;
+  const effectiveTodaySummary = recentDailySummaries?.today ?? todaySummary;
   const effectiveTodayCost = effectiveTodaySummary.totalCost;
-  const effectiveYesterdayCost = aggregatesError ? yesterdayCost : recentDailySummaries?.yesterday.totalCost ?? yesterdayCost;
+  const effectiveYesterdayCost = recentDailySummaries?.yesterday.totalCost ?? yesterdayCost;
   const timeRangeLabel = useMemo(() => buildUsageTrendRangeLabel(timeRange, t), [timeRange, t]);
   const realtimeLogTotalCount = realtimeLogMatchedTotal;
   const realtimeLogTotalPages = realtimeLogTotalCount > 0 ? Math.ceil(realtimeLogTotalCount / REALTIME_LOG_PAGE_SIZE) : 0;
@@ -4736,43 +4769,45 @@ export function MonitoringCenterPage() {
             </div>
           </div>
           <p className={styles.subtitle}>{t('monitoring.console_subtitle')}</p>
-          <div className={styles.monitoringSyncRow}>
-            <span className={`${styles.syncPill} ${styles[`tone${syncStatusTone}`]}`}>
-              {syncStatusText}
-            </span>
-            {syncTimestamp ? (
-              <span className={styles.syncTimestamp}>
-                {t('monitoring.sync_last_event', {
-                  value: syncTimestamp.toLocaleString(i18n.language),
-                  defaultValue: `Last event: ${syncTimestamp.toLocaleString(i18n.language)}`,
-                })}
+          <div className={styles.mastheadMetaRow}>
+            <div className={styles.monitoringSyncRow}>
+              <span className={`${styles.syncPill} ${styles[`tone${syncStatusTone}`]}`}>
+                {syncStatusText}
               </span>
-            ) : null}
-            <button
-              type="button"
-              className={styles.refreshButton}
-              onClick={() => void refreshAll()}
-              disabled={isMonitoringRefreshing || usageLoading || connectionStatus !== 'connected'}
-            >
-              <IconRefreshCw size={14} className={isMonitoringRefreshing ? styles.refreshIconSpinning : styles.refreshIcon} />
-              <span className={styles.refreshButtonLabel}>
-                {isMonitoringRefreshing
-                  ? t('monitoring.syncing', { defaultValue: 'Syncing' })
-                  : t('monitoring.refresh', { defaultValue: 'Refresh' })}
-              </span>
-            </button>
-          </div>
-          {usageDetailsLimited ? (
-            <div className={styles.inlineMetrics}>
-              <span>
-                {t('monitoring.request_events_coverage_hint', {
-                  shown: usageDetailsCount,
-                  total: usageTotalRequests,
-                  defaultValue: `Statistics cover all ${usageTotalRequests} requests; the live detail cache keeps the latest ${usageDetailsCount}.`,
-                })}
-              </span>
+              {syncTimestamp ? (
+                <span className={styles.syncTimestamp}>
+                  {t('monitoring.sync_last_event', {
+                    value: syncTimestamp.toLocaleString(i18n.language),
+                    defaultValue: `Last event: ${syncTimestamp.toLocaleString(i18n.language)}`,
+                  })}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                className={styles.refreshButton}
+                onClick={() => void refreshAll()}
+                disabled={isMonitoringRefreshing || usageLoading || connectionStatus !== 'connected'}
+              >
+                <IconRefreshCw size={14} className={isMonitoringRefreshing ? styles.refreshIconSpinning : styles.refreshIcon} />
+                <span className={styles.refreshButtonLabel}>
+                  {isMonitoringRefreshing
+                    ? t('monitoring.syncing', { defaultValue: 'Syncing' })
+                    : t('monitoring.refresh', { defaultValue: 'Refresh' })}
+                </span>
+              </button>
             </div>
-          ) : null}
+            {usageDetailsLimited ? (
+              <div className={`${styles.inlineMetrics} ${styles.coverageMetrics}`}>
+                <span>
+                  {t('monitoring.request_events_coverage_hint', {
+                    shown: usageDetailsCount,
+                    total: usageTotalRequests,
+                    defaultValue: `Statistics cover all ${usageTotalRequests} requests; the live detail cache keeps the latest ${usageDetailsCount}.`,
+                  })}
+                </span>
+              </div>
+            ) : null}
+          </div>
 
           <div className={styles.usageStatsHero}>
             <TopUsageStats cards={usageMetricCards} />
@@ -4781,7 +4816,7 @@ export function MonitoringCenterPage() {
       </section>
 
       {!isUsageTrendHidden ? (
-        <section className={styles.usageTrendSection}>
+        <section className={`${styles.usageTrendSection} ${aggregatesRefreshing ? styles.analyticsRefreshing : ''}`} aria-busy={aggregatesRefreshing}>
           <UsageTrendHeader
             range={timeRange}
             totalCalls={usageTrendAnalytics.scopedTotals.requests}
