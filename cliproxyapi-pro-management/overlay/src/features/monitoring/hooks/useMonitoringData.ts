@@ -456,6 +456,7 @@ export interface UseMonitoringDataParams {
   searchQuery: string;
   filteredRowLimit?: number;
   deletedCredentialLabel?: string;
+  unattributedApiKeyLabel?: string;
 }
 
 export interface UseMonitoringDataReturn {
@@ -1117,7 +1118,8 @@ const buildEventRows = (
   channelByAuthIndex: Map<string, MonitoringChannelMeta>,
   configuredApiKeys: ReturnType<typeof buildConfiguredApiKeyMap>,
   modelPrices: Record<string, ModelPrice>,
-  deletedCredentialLabel: string
+  deletedCredentialLabel: string,
+  unattributedApiKeyLabel: string
 ) => {
   const rows: MonitoringEventRow[] = [];
   let isDescending = true;
@@ -1183,7 +1185,6 @@ const buildEventRows = (
     const totalCost = calculateCost(detail, modelPrices);
     const apiKeyHash = readStringValue(detail.api_key_hash) || '-';
     const configuredApiKey = apiKeyHash === '-' ? null : configuredApiKeys.byHash.get(apiKeyHash);
-    const singleConfiguredApiKey = configuredApiKeys.keys.length === 1 ? configuredApiKeys.keys[0] : null;
     const clientApiKeyIdentity: MonitoringApiKeyIdentity = configuredApiKey
       ?? (apiKeyHash !== '-'
         ? {
@@ -1191,12 +1192,11 @@ const buildEventRows = (
             hash: apiKeyHash,
             masked: maskHash(apiKeyHash),
           }
-        : singleConfiguredApiKey ?? {
+        : {
             id: 'clientApiKey:unknown',
             hash: '-',
-            masked: 'Unknown API Key',
+            masked: unattributedApiKeyLabel,
           });
-    const statsIncluded = detail.failed === true || inputTokens > 0 || outputTokens > 0;
     const dayKey = buildLocalDayKey(timestampMs);
     const hourLabel = buildHourLabel(timestampMs);
     const sourceKey = sourceMeta.identityKey || `source:${sourceLabel}`;
@@ -1233,7 +1233,7 @@ const buildEventRows = (
       channelDisabled: channelMeta?.disabled || false,
       credentialDeleted: isDeletedCredential,
       failed: detail.failed === true,
-      statsIncluded,
+      statsIncluded: true,
       latencyMs: typeof detail.latency_ms === 'number' ? detail.latency_ms : null,
       ttftMs: typeof detail.ttft_ms === 'number' ? detail.ttft_ms : null,
       statusCode: typeof detail.status_code === 'number' ? detail.status_code : null,
@@ -1417,6 +1417,7 @@ export function useMonitoringData({
   searchQuery,
   filteredRowLimit = 0,
   deletedCredentialLabel = DELETED_CREDENTIAL_FALLBACK_LABEL,
+  unattributedApiKeyLabel = 'Unattributed API Key',
 }: UseMonitoringDataParams): UseMonitoringDataReturn {
   const [authFiles, setAuthFiles] = useState<AuthFileItem[]>([]);
   const [channels, setChannels] = useState<MonitoringChannelMeta[]>([]);
@@ -1522,9 +1523,10 @@ export function useMonitoringData({
       channelByAuthIndex,
       configuredApiKeys,
       modelPrices,
-      deletedCredentialLabel
+      deletedCredentialLabel,
+      unattributedApiKeyLabel
     );
-  }, [authFileMap, authMetaMap, channelByAuthIndex, configuredApiKeys, deletedCredentialLabel, modelPrices, sourceInfoMap, usage]);
+  }, [authFileMap, authMetaMap, channelByAuthIndex, configuredApiKeys, deletedCredentialLabel, modelPrices, sourceInfoMap, unattributedApiKeyLabel, usage]);
 
   const logRows = useMemo(() => {
     if (logUsage === undefined) return allRows;
@@ -1537,9 +1539,10 @@ export function useMonitoringData({
       channelByAuthIndex,
       configuredApiKeys,
       modelPrices,
-      deletedCredentialLabel
+      deletedCredentialLabel,
+      unattributedApiKeyLabel
     );
-  }, [allRows, authFileMap, authMetaMap, channelByAuthIndex, configuredApiKeys, deletedCredentialLabel, logUsage, modelPrices, sourceInfoMap]);
+  }, [allRows, authFileMap, authMetaMap, channelByAuthIndex, configuredApiKeys, deletedCredentialLabel, logUsage, modelPrices, sourceInfoMap, unattributedApiKeyLabel]);
 
   const filteredRowState = useMemo(
     () => serverFilteredLogs

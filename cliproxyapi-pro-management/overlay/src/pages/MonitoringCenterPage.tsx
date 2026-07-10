@@ -1214,7 +1214,8 @@ const buildServerUsageTrendAnalytics = (
   range: MonitoringTimeRange,
   modelPrices: Record<string, ModelPrice>,
   apiKeyOptions: Array<{ value: string; label: string }>,
-  apiKeyFilter: string
+  apiKeyFilter: string,
+  unattributedApiKeyLabel: string
 ): UsageTrendAnalytics | null => {
   if (!aggregates) return null;
   const nowMs = Date.now();
@@ -1222,6 +1223,7 @@ const buildServerUsageTrendAnalytics = (
   const trendGrouped = new Map<string, TrendPoint>(prefilled.map((point) => [point.key, point]));
   const tokenGrouped = new Map<string, TokenDistributionPoint>();
   const apiKeyLabels = new Map(apiKeyOptions.map((option) => [option.value, option.label]));
+  apiKeyLabels.set('-', unattributedApiKeyLabel);
   aggregates.apiKeys.forEach((item) => {
     const apiKeyHash = item.apiKeyHash?.trim();
     if (apiKeyHash && !apiKeyLabels.has(apiKeyHash)) {
@@ -1231,7 +1233,7 @@ const buildServerUsageTrendAnalytics = (
   const resolvedApiKeyOptions = [
     apiKeyOptions.find((option) => option.value === 'all') ?? { value: 'all', label: 'All' },
     ...Array.from(apiKeyLabels.entries())
-      .filter(([value]) => value !== 'all')
+      .filter(([value]) => value !== 'all' && value !== '-')
       .sort((left, right) => left[1].localeCompare(right[1]))
       .map(([value, label]) => ({ value, label })),
   ];
@@ -1263,7 +1265,7 @@ const buildServerUsageTrendAnalytics = (
     });
   const modelRows = Array.from(modelRowMap.values());
   const apiKeyRowMap = new Map<string, MonitoringAccountRow>();
-  aggregates.apiKeys.filter((item) => item.apiKeyHash).forEach((item) => {
+  aggregates.apiKeys.forEach((item) => {
     const row = createAggregateRankingRow(item, 'apiKey', modelPrices, apiKeyLabels);
     const current = apiKeyRowMap.get(row.apiKeyHash);
     if (!current) {
@@ -3591,6 +3593,7 @@ export function MonitoringCenterPage() {
     timeRange,
     searchQuery: '',
     deletedCredentialLabel: t('monitoring.deleted_credential'),
+    unattributedApiKeyLabel: t('monitoring.api_key_unattributed'),
   });
 
   const {
@@ -4034,9 +4037,10 @@ export function MonitoringCenterPage() {
       usageAggregates?.scopeTimeRange ?? timeRange,
       modelPrices,
       clientUsageTrendAnalytics.apiKeyOptions,
-      usageAggregates?.scopeApiKeyHash ?? usageTrendApiKey
+      usageAggregates?.scopeApiKeyHash ?? usageTrendApiKey,
+      t('monitoring.api_key_unattributed')
     ),
-    [clientUsageTrendAnalytics.apiKeyOptions, modelPrices, timeRange, usageAggregates, usageTrendApiKey]
+    [clientUsageTrendAnalytics.apiKeyOptions, modelPrices, t, timeRange, usageAggregates, usageTrendApiKey]
   );
   const aggregateTrendScopeMatches = Boolean(
     usageAggregates

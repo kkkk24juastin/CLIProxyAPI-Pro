@@ -181,6 +181,16 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	source := maskSource(sourceRaw)
 	apiKey := readString(record, "api_key")
 	authIndex := readString(record, "auth_index")
+	sourceHash := hashString(sourceRaw)
+	apiKeyHash := hashString(apiKey)
+	if exported {
+		if value := readString(record, "source_hash"); value != "" {
+			sourceHash = value
+		}
+		if value := readString(record, "api_key_hash"); value != "" {
+			apiKeyHash = value
+		}
+	}
 
 	event := Event{
 		RequestID:         readString(record, "request_id"),
@@ -196,8 +206,8 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		AuthType:          readString(record, "auth_type"),
 		AuthIndex:         authIndex,
 		Source:            source,
-		SourceHash:        hashString(sourceRaw),
-		APIKeyHash:        hashString(apiKey),
+		SourceHash:        sourceHash,
+		APIKeyHash:        apiKeyHash,
 		InputTokens:       inputTokens,
 		OutputTokens:      outputTokens,
 		ReasoningTokens:   reasoningTokens,
@@ -220,7 +230,10 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	if event.Model == "" {
 		event.Model = "-"
 	}
-	event.EventHash = buildEventHash(event)
+	event.EventHash = readString(record, "event_hash")
+	if event.EventHash == "" {
+		event.EventHash = buildEventHash(event)
+	}
 	return event, nil
 }
 

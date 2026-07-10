@@ -129,12 +129,15 @@ export function useUsageAggregates({
     };
 
     try {
-      const [trendPayload, accountPayload, allSummaryPayload, recentDailySummaryPayload] = await Promise.all([
+      const [trendPayload, accountPayload, apiKeyPayload, allSummaryPayload, recentDailySummaryPayload] = await Promise.all([
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
           params: trendParams,
         }),
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
-          params: { ...rankingParams, group_by: 'auth_index,provider,api_key_hash,model' },
+          params: { ...rankingParams, group_by: 'auth_index,provider,model' },
+        }),
+        apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
+          params: { ...rankingParams, group_by: 'api_key_hash,model' },
         }),
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
           params: {
@@ -161,14 +164,16 @@ export function useUsageAggregates({
       const snapshotAtMs = Math.max(
         Number(trendPayload?.snapshot_at_ms) || 0,
         Number(accountPayload?.snapshot_at_ms) || 0,
+        Number(apiKeyPayload?.snapshot_at_ms) || 0,
         Number(allSummaryPayload?.snapshot_at_ms) || 0,
         Number(recentDailySummaryPayload?.snapshot_at_ms) || 0
       );
       const accountItems = normalizeItems(accountPayload);
+      const apiKeyItems = normalizeItems(apiKeyPayload);
       setData({
         trend: normalizeItems(trendPayload),
-        models: accountItems,
-        apiKeys: accountItems,
+        models: apiKeyItems,
+        apiKeys: apiKeyItems,
         providers: accountItems,
         accounts: accountItems,
         allSummary: normalizeItems(allSummaryPayload),
@@ -176,6 +181,7 @@ export function useUsageAggregates({
         latestId: Math.min(
           Number(trendPayload?.latest_id) || 0,
           Number(accountPayload?.latest_id) || 0,
+          Number(apiKeyPayload?.latest_id) || 0,
           Number(allSummaryPayload?.latest_id) || 0,
           Number(recentDailySummaryPayload?.latest_id) || 0
         ),

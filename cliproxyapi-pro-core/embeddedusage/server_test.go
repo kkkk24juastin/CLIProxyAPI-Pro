@@ -473,6 +473,8 @@ func TestUsageExportImportPreservesUpstreamDiagnostics(t *testing.T) {
 	event.ErrorMessage = "too many requests"
 	event.UpstreamRequestID = "upstream-req-1"
 	event.RetryAfter = "30"
+	event.SourceHash = "source-hash"
+	event.APIKeyHash = "api-key-hash"
 	insertTestUsageEvents(t, sourceStore, event)
 
 	exportRecorder := httptest.NewRecorder()
@@ -504,6 +506,9 @@ func TestUsageExportImportPreservesUpstreamDiagnostics(t *testing.T) {
 	}
 	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-req-1" || got.RetryAfter != "30" {
 		t.Fatalf("diagnostics = code:%q message:%q rid:%q retry:%q", got.ErrorCode, got.ErrorMessage, got.UpstreamRequestID, got.RetryAfter)
+	}
+	if got.SourceHash != "source-hash" || got.APIKeyHash != "api-key-hash" {
+		t.Fatalf("usage hashes = source:%q api-key:%q, want preserved export values", got.SourceHash, got.APIKeyHash)
 	}
 }
 

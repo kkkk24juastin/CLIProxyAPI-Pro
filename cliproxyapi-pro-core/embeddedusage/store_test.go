@@ -421,6 +421,34 @@ func TestUsageAggregatesSupportsAllIntervalAndAPIKeyFilter(t *testing.T) {
 	}
 }
 
+func TestUsageAggregatesIncludesUnattributedAPIKeyBucket(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	attributed := testUsageEvent(0, false, 10)
+	attributed.APIKeyHash = "key-a"
+	unattributed := testUsageEvent(1, false, 20)
+	insertTestUsageEvents(t, store, attributed, unattributed)
+
+	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{
+		Interval: "all",
+		GroupBy:  []string{"api_key_hash"},
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("UsageAggregates() error = %v", err)
+	}
+	if len(buckets) != 2 {
+		t.Fatalf("UsageAggregates() len = %d, want attributed and unattributed buckets", len(buckets))
+	}
+	requestsByHash := make(map[string]int64, len(buckets))
+	for _, bucket := range buckets {
+		requestsByHash[bucket.APIKeyHash] += bucket.TotalRequests
+	}
+	if requestsByHash["key-a"] != 1 || requestsByHash[""] != 1 {
+		t.Fatalf("requests by API key hash = %#v, want one attributed and one unattributed request", requestsByHash)
+	}
+}
+
 func TestUsageAggregatesSupportsAuthIndexGroupingAndLastSeen(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
