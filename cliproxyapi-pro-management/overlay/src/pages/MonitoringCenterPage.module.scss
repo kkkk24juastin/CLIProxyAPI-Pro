@@ -3908,6 +3908,7 @@
 .accountQuotaContent,
 .accountQuotaRow,
 .accountQuotaRowHeader,
+.accountQuotaModel,
 .accountQuotaMeta,
 .accountQuotaPlanValue,
 .accountQuotaPremiumPlanValue,
@@ -3924,31 +3925,51 @@
 
 .accountQuotaRowHeader {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content);
+  align-items: baseline;
+  gap: 8px;
+}
+
+.accountQuotaModel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .accountQuotaMeta {
   display: flex;
   align-items: baseline;
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  gap: 2px 8px;
-  width: 100%;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 8px;
+  width: auto;
   line-height: 1.4;
-  white-space: normal;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.accountQuotaAmount {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accountQuotaMeta > :not(.accountQuotaAmount) {
+  flex: 0 0 auto;
 }
 
 .accountQuotaPlanValue {
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .accountQuotaPremiumPlanValue {
-  overflow-wrap: anywhere;
+  overflow: hidden;
   text-align: center;
-  white-space: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .accountQuotaResetCreditRow {
