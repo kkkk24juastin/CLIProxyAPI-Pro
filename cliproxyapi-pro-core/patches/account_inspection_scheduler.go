@@ -2452,10 +2452,7 @@ func buildXAIDeepProbeBody(model string) string {
 
 func classifyXAIDeepProbeResponse(resp accountInspectionHTTPResult) (accountInspectionDeepProbeStatus, string) {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		if hasXAICompletedResponse(resp.Body) {
-			return accountInspectionDeepProbeSuccess, ""
-		}
-		return accountInspectionDeepProbeTransientError, "xAI 深度检测响应未完成或格式异常"
+		return classifyXAIDeepProbeSuccessBody(resp.Body)
 	}
 	message := summarizeInspectionHTTPBody(resp.Body)
 	if message == "" {
@@ -2470,7 +2467,8 @@ func classifyXAIDeepProbeResponse(resp accountInspectionHTTPResult) (accountInsp
 	return accountInspectionDeepProbeTransientError, message
 }
 
-func hasXAICompletedResponse(body string) bool {
+func classifyXAIDeepProbeSuccessBody(body string) (accountInspectionDeepProbeStatus, string) {
+	lastEvent := ""
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "data:") {
@@ -2480,11 +2478,53 @@ func hasXAICompletedResponse(body string) bool {
 			continue
 		}
 		var payload map[string]any
-		if json.Unmarshal([]byte(line), &payload) == nil && strings.EqualFold(stringFromAny(payload["type"]), "response.completed") {
-			return true
+		if json.Unmarshal([]byte(line), &payload) != nil {
+			continue
+		}
+		eventType := strings.ToLower(strings.TrimSpace(stringFromAny(payload["type"])))
+		response := nestedMap(payload, "response")
+		if eventType == "" {
+			switch strings.ToLower(strings.TrimSpace(stringFromAny(payload["status"]))) {
+			case "completed":
+				eventType = "response.completed"
+			case "incomplete":
+				eventType = "response.incomplete"
+				response = payload
+			case "failed":
+				eventType = "response.failed"
+				response = payload
+			}
+		}
+		if eventType != "" {
+			lastEvent = eventType
+		}
+		switch eventType {
+		case "response.completed":
+			return accountInspectionDeepProbeSuccess, ""
+		case "response.incomplete":
+			reason := strings.ToLower(strings.TrimSpace(stringFromAny(nestedMap(response, "incomplete_details")["reason"])))
+			if reason == "max_output_tokens" {
+				return accountInspectionDeepProbeSuccess, ""
+			}
+			if reason == "" {
+				reason = "unknown reason"
+			}
+			return accountInspectionDeepProbeTransientError, "xAI 深度检测响应未完成：" + reason
+		case "response.failed", "error":
+			message := nestedString(nestedMap(response, "error"), "message", "")
+			if message == "" {
+				message = nestedString(nestedMap(payload, "error"), "message", "")
+			}
+			if message == "" {
+				message = "unknown response failure"
+			}
+			return accountInspectionDeepProbeTransientError, "xAI 深度检测响应失败：" + message
 		}
 	}
-	return false
+	if lastEvent != "" {
+		return accountInspectionDeepProbeTransientError, "xAI 深度检测缺少终态事件，最后事件：" + lastEvent
+	}
+	return accountInspectionDeepProbeTransientError, "xAI 深度检测响应为空或格式异常"
 }
 
 func isXAIQuotaFailure(body string) bool {

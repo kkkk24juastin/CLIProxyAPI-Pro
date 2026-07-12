@@ -1103,6 +1103,11 @@ func TestClassifyXAIDeepProbeResponse(t *testing.T) {
 			want: accountInspectionDeepProbeSuccess,
 		},
 		{
+			name: "output capped after successful execution",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusOK, Body: `data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}` + "\n\n"},
+			want: accountInspectionDeepProbeSuccess,
+		},
+		{
 			name: "free usage exhausted",
 			resp: accountInspectionHTTPResult{StatusCode: http.StatusTooManyRequests, Body: `{"code":"subscription:free-usage-exhausted","error":"You've used all the included free usage for now."}`},
 			want: accountInspectionDeepProbeQuota,
@@ -1113,7 +1118,12 @@ func TestClassifyXAIDeepProbeResponse(t *testing.T) {
 			want: accountInspectionDeepProbeAuthError,
 		},
 		{
-			name: "incomplete success response",
+			name: "content filter incomplete response",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusOK, Body: `data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"content_filter"}}}` + "\n\n"},
+			want: accountInspectionDeepProbeTransientError,
+		},
+		{
+			name: "missing terminal response",
 			resp: accountInspectionHTTPResult{StatusCode: http.StatusOK, Body: "data: {\"type\":\"response.created\"}\n\n"},
 			want: accountInspectionDeepProbeTransientError,
 		},
