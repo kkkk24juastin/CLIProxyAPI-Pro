@@ -1138,6 +1138,26 @@ func TestClassifyXAIDeepProbeResponse(t *testing.T) {
 	}
 }
 
+func TestSummarizeInspectionHTTPBodyExtractsCompleteNestedMessage(t *testing.T) {
+	want := strings.TrimSpace(strings.Repeat("capacity unavailable ", 20))
+	body, err := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"code":    http.StatusServiceUnavailable,
+			"message": want,
+			"status":  "UNAVAILABLE",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal error payload: %v", err)
+	}
+	if got := summarizeInspectionHTTPBody(string(body)); got != want {
+		t.Fatalf("summarizeInspectionHTTPBody() = %q, want complete nested message %q", got, want)
+	}
+	if got := inspectionHTTPErrorDetail("  " + string(body) + "\n"); got != string(body) {
+		t.Fatalf("inspectionHTTPErrorDetail() = %q, want complete body %q", got, string(body))
+	}
+}
+
 func TestXAIDeepProbeErrorCodeCanBeCleared(t *testing.T) {
 	decision := accountInspectionDecision{DeepProbeStatus: accountInspectionDeepProbeTransientError}
 	if got := accountInspectionDecisionErrorCode("xai", decision, nil); got != "xai_deep_probe_error" {

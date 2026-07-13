@@ -2657,7 +2657,7 @@
 }
 
 .errorMessage {
-  max-height: 220px;
+  max-height: min(440px, 48vh);
   overflow: auto;
   margin: 0;
   padding: 12px 14px;

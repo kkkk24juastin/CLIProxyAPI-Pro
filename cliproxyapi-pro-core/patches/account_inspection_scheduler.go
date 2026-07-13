@@ -114,6 +114,7 @@ type accountInspectionResult struct {
 	UsedPercent           *float64                `json:"usedPercent"`
 	IsQuota               bool                    `json:"isQuota"`
 	Error                 string                  `json:"error"`
+	ErrorDetail           string                  `json:"errorDetail,omitempty"`
 	ErrorCode             string                  `json:"errorCode"`
 	DeepProbeTriggered    bool                    `json:"deepProbeTriggered"`
 	DeepProbeStatus       string                  `json:"deepProbeStatus"`
@@ -305,6 +306,7 @@ type accountInspectionDecision struct {
 	UsedPercent     *float64
 	IsQuota         bool
 	Error           string
+	ErrorDetail     string
 	DeepProbeStatus accountInspectionDeepProbeStatus
 	DeepProbeError  string
 }
@@ -1198,12 +1200,14 @@ func (s *accountInspectionScheduler) mergeTokenRefreshResultLocked(result accoun
 		current.NextRefreshAt = result.NextRefreshAt
 		if result.TokenRefreshStatus == "failed" {
 			current.Error = result.Error
+			current.ErrorDetail = result.ErrorDetail
 			current.ErrorCode = result.ErrorCode
 			current.ActionReason = result.ActionReason
 			return current, true
 		}
 		if result.TokenRefreshStatus == "success" && current.ErrorCode == "token_refresh_error" {
 			current.Error = ""
+			current.ErrorDetail = ""
 			current.ErrorCode = ""
 			current.ActionReason = result.ActionReason
 			return current, true
@@ -1701,6 +1705,7 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 	result.UsedPercent = decision.UsedPercent
 	result.IsQuota = decision.IsQuota
 	result.Error = decision.Error
+	result.ErrorDetail = decision.ErrorDetail
 	result.ErrorCode = accountInspectionDecisionErrorCode(account.Provider, decision, statusCode)
 	if decision.DeepProbeStatus != "" {
 		result.DeepProbeTriggered = true
@@ -1984,6 +1989,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 	body := buildAntigravityDeepProbeBody(projectID, model)
 	var lastStatus *int
 	var lastMessage string
+	var lastDetail string
 	for _, url := range antigravityGenerateURLs() {
 		resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
 			return s.apiCall(ctx, account.Auth, http.MethodPost, url, map[string]string{
@@ -1998,6 +2004,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 		}
 		lastStatus = intPtr(resp.StatusCode)
 		probeStatus, probeMessage := classifyAntigravityDeepProbeResponse(resp)
+		probeDetail := inspectionHTTPErrorDetail(resp.Body)
 		switch probeStatus {
 		case accountInspectionDeepProbeSuccess:
 			s.clearInspectionAuthError(ctx, account)
@@ -2011,11 +2018,12 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 			probeDecision.UsedPercent = decision.UsedPercent
 			probeDecision.DeepProbeStatus = accountInspectionDeepProbeAuthError
 			probeDecision.DeepProbeError = probeMessage
+			probeDecision.ErrorDetail = probeDetail
 			s.appendLog("warning", fmt.Sprintf("%s Antigravity 深度检测授权异常：%s", account.identity(), probeMessage))
 			return probeDecision, lastStatus, nil
 		case accountInspectionDeepProbeQuota:
 			s.clearInspectionAuthError(ctx, account)
-			probeDecision := accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "Antigravity 深度检测返回额度不可用，建议禁用账号", UsedPercent: decision.UsedPercent, IsQuota: true, DeepProbeStatus: accountInspectionDeepProbeQuota, DeepProbeError: probeMessage}
+			probeDecision := accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "Antigravity 深度检测返回额度不可用，建议禁用账号", UsedPercent: decision.UsedPercent, IsQuota: true, ErrorDetail: probeDetail, DeepProbeStatus: accountInspectionDeepProbeQuota, DeepProbeError: probeMessage}
 			if account.Disabled {
 				probeDecision.Action = accountInspectionActionKeep
 				probeDecision.ActionReason = "Antigravity 深度检测返回额度不可用，但账号已禁用"
@@ -2024,6 +2032,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 			return probeDecision, lastStatus, nil
 		default:
 			lastMessage = probeMessage
+			lastDetail = probeDetail
 			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < http.StatusInternalServerError {
 				break
 			}
@@ -2036,6 +2045,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 	decision.Action = accountInspectionActionKeep
 	decision.ActionReason = "Antigravity 深度检测临时异常，保留账号"
 	decision.Error = lastMessage
+	decision.ErrorDetail = lastDetail
 	decision.DeepProbeStatus = accountInspectionDeepProbeTransientError
 	decision.DeepProbeError = lastMessage
 	s.appendLog("warning", fmt.Sprintf("%s Antigravity 深度检测临时异常：%s", account.identity(), lastMessage))
@@ -2144,6 +2154,10 @@ func summarizeInspectionHTTPBody(body string) string {
 		return body[:240]
 	}
 	return body
+}
+
+func inspectionHTTPErrorDetail(body string) string {
+	return strings.TrimSpace(body)
 }
 
 func statusValue(status *int) int {
@@ -2390,6 +2404,7 @@ func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, acco
 	}
 
 	status, message := classifyXAIDeepProbeResponse(resp)
+	errorDetail := inspectionHTTPErrorDetail(resp.Body)
 	switch status {
 	case accountInspectionDeepProbeSuccess:
 		s.clearInspectionAuthError(ctx, account)
@@ -2403,11 +2418,12 @@ func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, acco
 		probeDecision.UsedPercent = decision.UsedPercent
 		probeDecision.DeepProbeStatus = accountInspectionDeepProbeAuthError
 		probeDecision.DeepProbeError = message
+		probeDecision.ErrorDetail = errorDetail
 		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测授权异常：%s", account.identity(), message))
 		return probeDecision, probeStatus, nil
 	case accountInspectionDeepProbeQuota:
 		s.clearInspectionAuthError(ctx, account)
-		probeDecision := accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "xAI 深度检测返回额度不可用，建议禁用账号", UsedPercent: decision.UsedPercent, IsQuota: true, DeepProbeStatus: accountInspectionDeepProbeQuota, DeepProbeError: message}
+		probeDecision := accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "xAI 深度检测返回额度不可用，建议禁用账号", UsedPercent: decision.UsedPercent, IsQuota: true, ErrorDetail: errorDetail, DeepProbeStatus: accountInspectionDeepProbeQuota, DeepProbeError: message}
 		if account.Disabled {
 			probeDecision.Action = accountInspectionActionKeep
 			probeDecision.ActionReason = "xAI 深度检测返回额度不可用，但账号已禁用"
@@ -2419,6 +2435,7 @@ func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, acco
 		decision.Action = accountInspectionActionKeep
 		decision.ActionReason = "xAI 深度检测临时异常，保留账号"
 		decision.Error = message
+		decision.ErrorDetail = errorDetail
 		decision.DeepProbeStatus = accountInspectionDeepProbeTransientError
 		decision.DeepProbeError = message
 		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测临时异常：%s", account.identity(), message))
@@ -5163,6 +5180,9 @@ func nestedMap(data map[string]any, key string) map[string]any {
 }
 
 func nestedString(data map[string]any, key string, child string) string {
+	if child == "" {
+		return stringFromAny(data[key])
+	}
 	return stringFromAny(nestedMap(data, key)[child])
 }
 

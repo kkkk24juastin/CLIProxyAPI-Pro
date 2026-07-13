@@ -64,6 +64,7 @@ export interface AccountInspectionResultItem extends AccountInspectionAccount {
   usedPercent: number | null;
   isQuota: boolean;
   error: string;
+  errorDetail?: string;
   errorCode?: string;
   deepProbeTriggered?: boolean;
   deepProbeStatus?: AccountInspectionDeepProbeStatus;
@@ -628,6 +629,7 @@ export const accountInspectionBackendResultToItem = (
   usedPercent: item.usedPercent ?? null,
   isQuota: item.isQuota,
   error: item.executeError || item.error || '',
+  errorDetail: item.errorDetail || '',
   errorCode: item.errorCode || '',
   deepProbeTriggered: item.deepProbeTriggered ?? false,
   deepProbeStatus: item.deepProbeStatus ?? '',

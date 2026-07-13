@@ -475,14 +475,14 @@ const healthLabelKey: Record<ResultHealthStatus, string> = {
 
 const extractHealthHttpStatusCode = (item: AccountInspectionResultItem) => {
   if (item.statusCode !== null && item.statusCode >= 400) return item.statusCode;
-  const match = item.error.match(/\bHTTP\s+(\d{3})\b/i) ?? item.error.match(/\bstatus(?:\s+code)?\s*[:=]?\s*(\d{3})\b/i);
+  const errorText = [item.error, item.deepProbeError, item.tokenRefreshError].filter(Boolean).join(' ');
+  const match = errorText.match(/\bHTTP\s+(\d{3})\b/i) ?? errorText.match(/\bstatus(?:\s+code)?\s*[:=]?\s*(\d{3})\b/i);
   return match ? Number(match[1]) : null;
 };
 
 const buildHealthStatusCodeText = (item: AccountInspectionResultItem) => {
   const httpStatusCode = extractHealthHttpStatusCode(item);
-  if (httpStatusCode !== null) return String(httpStatusCode);
-  return item.errorCode?.trim() || '';
+  return httpStatusCode !== null ? `HTTP ${httpStatusCode}` : '';
 };
 
 const buildHealthStatusLabel = (
@@ -503,6 +503,48 @@ const hasInspectionErrorDetails = (item: AccountInspectionResultItem) => Boolean
   || extractHealthHttpStatusCode(item) !== null
 );
 
+const parseInspectionErrorPayload = (value: string): unknown => {
+  const text = value.trim();
+  if (!text || (!text.startsWith('{') && !text.startsWith('['))) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+const readInspectionErrorMessage = (value: unknown): string => {
+  if (typeof value === 'string') return value.trim();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  const record = value as Record<string, unknown>;
+  const directMessage = readInspectionErrorMessage(record.message);
+  if (directMessage) return directMessage;
+  const nestedError = readInspectionErrorMessage(record.error);
+  if (nestedError) return nestedError;
+  return '';
+};
+
+const buildInspectionErrorPresentation = (item: AccountInspectionResultItem) => {
+  const candidates = [item.error, item.deepProbeError || '', item.tokenRefreshError || '']
+    .map((value) => value.trim())
+    .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+    .sort((left, right) => right.length - left.length);
+  const detailText = item.errorDetail?.trim() || candidates[0] || '';
+  const detailPayload = parseInspectionErrorPayload(detailText);
+  const parsedMessage = readInspectionErrorMessage(detailPayload);
+  const httpStatusCode = extractHealthHttpStatusCode(item);
+  const fallbackSummary = candidates.find((value) => parseInspectionErrorPayload(value) === null) || '';
+  const summary = parsedMessage || fallbackSummary;
+  const normalizedSummary = summary.replace(/\s+/g, ' ').trim();
+  const statusOnlySummary = httpStatusCode !== null && normalizedSummary.toLowerCase() === `http ${httpStatusCode}`.toLowerCase();
+  return {
+    summary: statusOnlySummary ? '' : normalizedSummary,
+    detail: detailPayload === null
+      ? (item.errorDetail?.trim() ? detailText : '')
+      : JSON.stringify(detailPayload, null, 2),
+  };
+};
+
 const resolveResultHealthStatus = (item: AccountInspectionResultItem): ResultHealthStatus => {
   if (item.action === 'delete' || (item.statusCode !== null && ACCOUNT_INVALID_ERROR_STATUSES.has(item.statusCode))) {
     return 'authInvalid';
@@ -513,6 +555,49 @@ const resolveResultHealthStatus = (item: AccountInspectionResultItem): ResultHea
   if (item.disabled) return 'disabled';
   return 'healthy';
 };
+
+function InspectionErrorDetailsPanel({
+  item,
+  t,
+}: {
+  item: AccountInspectionResultItem;
+  t: ReturnType<typeof useTranslation>['t'];
+}) {
+  const healthStatus = resolveResultHealthStatus(item);
+  const httpStatusCode = extractHealthHttpStatusCode(item);
+  const errorPresentation = buildInspectionErrorPresentation(item);
+  const detailItems = [
+    { label: t('monitoring.account_label'), value: item.fileName },
+    { label: t('monitoring.filter_provider'), value: item.provider },
+    { label: t('monitoring.account_inspection_http_status'), value: httpStatusCode !== null ? String(httpStatusCode) : '' },
+    { label: t('monitoring.account_inspection_error_code'), value: item.errorCode?.trim() || '' },
+  ].filter((detail) => detail.value);
+
+  return (
+    <div className={styles.errorDetailsPanel}>
+      <div className={styles.errorOverview}>
+        <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>
+          {buildHealthStatusLabel(item, healthStatus, t)}
+        </span>
+        {errorPresentation.summary ? <strong>{errorPresentation.summary}</strong> : null}
+      </div>
+      <div className={styles.errorDetailsGrid}>
+        {detailItems.map((detail) => (
+          <div key={detail.label} className={styles.errorDetailItem}>
+            <span>{detail.label}</span>
+            <strong>{detail.value}</strong>
+          </div>
+        ))}
+      </div>
+      {errorPresentation.detail ? (
+        <div className={styles.errorMessageBlock}>
+          <span>{t('monitoring.account_inspection_raw_error_response')}</span>
+          <pre className={styles.errorMessage}>{errorPresentation.detail}</pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const ACCOUNT_INVALID_ERROR_STATUSES = new Set([400, 401, 403, 404]);
 const ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET = new Set<string>(ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS);
@@ -3144,35 +3229,7 @@ export function AccountInspectionPage() {
         )}
       >
         {selectedErrorResult ? (
-          <div className={styles.errorDetailsPanel}>
-            <div className={styles.errorOverview}>
-              <span className={`${styles.healthBadge} ${healthToneClass[resolveResultHealthStatus(selectedErrorResult)]}`}>
-                {buildHealthStatusLabel(selectedErrorResult, resolveResultHealthStatus(selectedErrorResult), t)}
-              </span>
-              <strong>{selectedErrorResult.error || selectedErrorResult.tokenRefreshError || selectedErrorResult.deepProbeError || t('monitoring.account_inspection_error_summary')}</strong>
-            </div>
-            <div className={styles.errorDetailsGrid}>
-              {[
-                { label: t('monitoring.account_label'), value: selectedErrorResult.fileName },
-                { label: t('monitoring.filter_provider'), value: selectedErrorResult.provider },
-                { label: t('monitoring.account_inspection_http_status'), value: extractHealthHttpStatusCode(selectedErrorResult)?.toString() || '' },
-                { label: t('monitoring.account_inspection_error_code'), value: selectedErrorResult.errorCode || '' },
-                { label: t('monitoring.account_inspection_deep_probe_error'), value: selectedErrorResult.deepProbeError || '' },
-                { label: t('monitoring.account_inspection_token_refresh_error'), value: selectedErrorResult.tokenRefreshError || '' },
-              ].filter((detail) => detail.value).map((detail) => (
-                <div key={detail.label} className={styles.errorDetailItem}>
-                  <span>{detail.label}</span>
-                  <strong>{detail.value}</strong>
-                </div>
-              ))}
-            </div>
-            {selectedErrorResult.error ? (
-              <div className={styles.errorMessageBlock}>
-                <span>{t('monitoring.account_inspection_error')}</span>
-                <pre className={styles.errorMessage}>{selectedErrorResult.error}</pre>
-              </div>
-            ) : null}
-          </div>
+          <InspectionErrorDetailsPanel item={selectedErrorResult} t={t} />
         ) : null}
       </Modal>
 
