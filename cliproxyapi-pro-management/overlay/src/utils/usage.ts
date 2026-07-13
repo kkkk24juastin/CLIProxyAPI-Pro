@@ -71,6 +71,7 @@ export interface ModelPriceSyncResult {
   matched: number;
   added: number;
   updated: number;
+  overridden: number;
   unchanged: number;
   locked: number;
   unmatched: ObservedModelPriceTarget[];
@@ -78,7 +79,7 @@ export interface ModelPriceSyncResult {
   recalculated: number;
 }
 
-export type ModelPriceSyncChangeAction = 'added' | 'updated' | 'locked' | 'unmatched';
+export type ModelPriceSyncChangeAction = 'added' | 'updated' | 'overridden' | 'locked' | 'unmatched';
 
 export interface ModelPriceSyncChange {
   action: ModelPriceSyncChangeAction;
@@ -598,13 +599,15 @@ export async function deleteModelPriceRule(model: string): Promise<void> {
   await apiClient.delete('/usage/model-price-rules', { params: { model } });
 }
 
-export async function syncModelPricesFromModelsDev(dryRun = false): Promise<ModelPriceSyncResult> {
+export async function syncModelPricesFromModelsDev(dryRun = false, overrideLockedModels: string[] = []): Promise<ModelPriceSyncResult> {
   const payload = await apiClient.post<ModelPriceSyncResult>('/usage/model-prices/sync', {
     dryRun,
     recalculateUnpriced: !dryRun,
+    overrideLockedModels,
   });
   return {
     ...payload,
+    overridden: Number(payload?.overridden) || 0,
     unmatched: Array.isArray(payload?.unmatched) ? payload.unmatched : [],
     changes: Array.isArray(payload?.changes) ? payload.changes : [],
   };

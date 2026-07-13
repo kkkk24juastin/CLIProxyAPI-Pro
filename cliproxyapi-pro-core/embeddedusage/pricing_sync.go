@@ -42,6 +42,7 @@ type ModelPriceSyncResult struct {
 	Matched      int                    `json:"matched"`
 	Added        int                    `json:"added"`
 	Updated      int                    `json:"updated"`
+	Overridden   int                    `json:"overridden"`
 	Unchanged    int                    `json:"unchanged"`
 	Locked       int                    `json:"locked"`
 	Unmatched    []ObservedModel        `json:"unmatched"`
@@ -65,12 +66,14 @@ func modelPriceSyncChangeRank(action string) int {
 		return 0
 	case "updated":
 		return 1
-	case "locked":
+	case "overridden":
 		return 2
-	case "unmatched":
+	case "locked":
 		return 3
-	default:
+	case "unmatched":
 		return 4
+	default:
+		return 5
 	}
 }
 
@@ -363,12 +366,18 @@ func fetchModelsDevCatalog(ctx context.Context, etag string) (map[string]modelsD
 	return catalog, response.Header.Get("ETag"), false, nil
 }
 
-func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpriced bool) (result ModelPriceSyncResult, err error) {
+func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpriced bool, overrideLockedModels ...string) (result ModelPriceSyncResult, err error) {
 	s.priceSyncMu.Lock()
 	defer s.priceSyncMu.Unlock()
 	result.DryRun = dryRun
 	result.Unmatched = make([]ObservedModel, 0)
 	result.Changes = make([]ModelPriceSyncChange, 0)
+	overrideLocked := make(map[string]struct{}, len(overrideLockedModels))
+	for _, model := range overrideLockedModels {
+		if key := priceRuleLookupKey("", model); key != "" {
+			overrideLocked[key] = struct{}{}
+		}
+	}
 	state, stateErr := s.GetModelPriceSyncState(ctx)
 	if stateErr != nil {
 		return result, stateErr
@@ -410,7 +419,7 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 	}
 	observedHash := observedModelsHash(observed)
 	etag := state.ETag
-	if dryRun || observedHash != state.ObservedHash || (state.Unmatched > 0 && len(state.UnmatchedModels) == 0) {
+	if dryRun || len(overrideLocked) > 0 || observedHash != state.ObservedHash || (state.Unmatched > 0 && len(state.UnmatchedModels) == 0) {
 		etag = ""
 	}
 	catalog, nextETag, notModified, err := fetchModelsDevCatalog(ctx, etag)
@@ -447,7 +456,8 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 		rule := modelPriceRuleFromModelsDev(item, providerID, modelID, model, now)
 		key := priceRuleLookupKey(rule.Provider, rule.Model)
 		current, exists := active[key]
-		if exists && current.Locked {
+		_, shouldOverrideLocked := overrideLocked[key]
+		if exists && current.Locked && !shouldOverrideLocked {
 			result.Locked++
 			currentCopy := current
 			ruleCopy := rule
@@ -462,11 +472,17 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 			continue
 		}
 		if exists {
-			result.Updated++
+			action := "updated"
+			if current.Locked && shouldOverrideLocked {
+				result.Overridden++
+				action = "overridden"
+			} else {
+				result.Updated++
+			}
 			currentCopy := current
 			ruleCopy := rule
 			result.Changes = append(result.Changes, ModelPriceSyncChange{
-				Action: "updated", Model: item.Model, Requests: item.Requests, SourceProvider: providerID, SourceModel: modelID,
+				Action: action, Model: item.Model, Requests: item.Requests, SourceProvider: providerID, SourceModel: modelID,
 				Before: &currentCopy, After: &ruleCopy,
 			})
 		} else {
@@ -479,7 +495,7 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 		if dryRun {
 			continue
 		}
-		if _, _, err := s.UpsertModelPriceRule(ctx, rule, false); err != nil {
+		if _, _, err := s.UpsertModelPriceRule(ctx, rule, shouldOverrideLocked); err != nil {
 			return result, err
 		}
 	}

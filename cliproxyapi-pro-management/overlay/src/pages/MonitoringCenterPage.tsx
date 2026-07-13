@@ -3622,6 +3622,7 @@ export function MonitoringCenterPage() {
   const [priceManagementView, setPriceManagementView] = useState<PriceManagementView>('rules');
   const [priceRuleSearch, setPriceRuleSearch] = useState('');
   const [priceSyncChangeFilter, setPriceSyncChangeFilter] = useState<PriceSyncChangeFilter>('all');
+  const [priceSyncLockedOverrides, setPriceSyncLockedOverrides] = useState<string[]>([]);
   const [priceModel, setPriceModel] = useState('');
   const [priceDraft, setPriceDraft] = useState<PriceDraft>(() => createPriceDraft());
   const [priceRules, setPriceRules] = useState<ModelPriceRule[]>([]);
@@ -4542,17 +4543,27 @@ export function MonitoringCenterPage() {
   const unmatchedPriceModels = priceSyncResult?.unmatched ?? priceSyncState.unmatchedModels ?? [];
   const unmatchedPriceModelCount = priceSyncResult ? unmatchedPriceModels.length : (priceSyncState.unmatched ?? unmatchedPriceModels.length);
   const priceSyncChanges = useMemo(() => priceSyncResult?.changes ?? [], [priceSyncResult]);
+  const priceSyncLockedOverrideSet = useMemo(() => new Set(priceSyncLockedOverrides), [priceSyncLockedOverrides]);
   const priceSyncChangeCounts = useMemo(() => {
-    const counts: Record<ModelPriceSyncChangeAction, number> = { added: 0, updated: 0, locked: 0, unmatched: 0 };
+    const counts: Record<ModelPriceSyncChangeAction, number> = { added: 0, updated: 0, overridden: 0, locked: 0, unmatched: 0 };
     priceSyncChanges.forEach((change) => {
-      counts[change.action] += 1;
+      const action = change.action === 'locked' && priceSyncLockedOverrideSet.has(change.model) ? 'overridden' : change.action;
+      counts[action] += 1;
     });
     return counts;
-  }, [priceSyncChanges]);
+  }, [priceSyncChanges, priceSyncLockedOverrideSet]);
   const filteredPriceSyncChanges = useMemo(
-    () => priceSyncChangeFilter === 'all' ? priceSyncChanges : priceSyncChanges.filter((change) => change.action === priceSyncChangeFilter),
-    [priceSyncChangeFilter, priceSyncChanges]
+    () => priceSyncChangeFilter === 'all'
+      ? priceSyncChanges
+      : priceSyncChanges.filter((change) => {
+        const action = change.action === 'locked' && priceSyncLockedOverrideSet.has(change.model) ? 'overridden' : change.action;
+        return action === priceSyncChangeFilter;
+      }),
+    [priceSyncChangeFilter, priceSyncChanges, priceSyncLockedOverrideSet]
   );
+  const lockedPriceSyncChanges = useMemo(() => priceSyncChanges.filter((change) => change.action === 'locked'), [priceSyncChanges]);
+  const allLockedPriceSyncChangesSelected = lockedPriceSyncChanges.length > 0
+    && lockedPriceSyncChanges.every((change) => priceSyncLockedOverrideSet.has(change.model));
 
   const selectedFiltersCount =
     [selectedProvider, selectedModel, selectedApiKey, selectedStatus].filter(
@@ -4825,6 +4836,7 @@ export function MonitoringCenterPage() {
     setIsPriceModalOpen(true);
     setPriceManagementView('rules');
     setPriceRuleSearch('');
+    setPriceSyncLockedOverrides([]);
     setIsPriceLoading(true);
     setIsMonitoringSettingsLoading(true);
     try {
@@ -4943,9 +4955,11 @@ export function MonitoringCenterPage() {
 		setIsPriceSyncing(true);
 		setPriceSyncResult(null);
 		setPriceSyncChangeFilter('all');
+		if (dryRun) setPriceSyncLockedOverrides([]);
 		try {
-			const result = await syncModelPricesFromModelsDev(dryRun);
+			const result = await syncModelPricesFromModelsDev(dryRun, dryRun ? [] : priceSyncLockedOverrides);
 			setPriceSyncResult(result);
+			if (!dryRun) setPriceSyncLockedOverrides([]);
 			if (!dryRun) {
 				const payload = await refreshPriceManagement();
 				if (priceModel) selectPriceTarget(priceModel, payload.rules);
@@ -4954,6 +4968,7 @@ export function MonitoringCenterPage() {
 			showNotification(t(dryRun ? 'usage_stats.model_price_sync_preview_complete' : 'usage_stats.model_price_sync_complete', {
 				added: result.added,
 				updated: result.updated,
+				overridden: result.overridden,
 				locked: result.locked,
 				unmatched: result.unmatched.length,
 			}), 'success');
@@ -4962,7 +4977,7 @@ export function MonitoringCenterPage() {
 		} finally {
 			setIsPriceSyncing(false);
 		}
-	}, [priceModel, refreshAll, refreshPriceManagement, selectPriceTarget, showNotification, t]);
+	}, [priceModel, priceSyncLockedOverrides, refreshAll, refreshPriceManagement, selectPriceTarget, showNotification, t]);
 
   return (
     <div className={styles.page}>
@@ -5674,9 +5689,19 @@ export function MonitoringCenterPage() {
                   <Button variant="secondary" size="sm" onClick={() => void handleSyncPrices(true)} disabled={isPriceSyncing || isPriceLoading}>
                     {t('usage_stats.model_price_sync_preview')}
                   </Button>
-                  <Button variant="primary" size="sm" onClick={() => void handleSyncPrices(false)} disabled={isPriceSyncing || isPriceLoading}>
-                    <IconRefreshCw size={14} />
-                    {isPriceSyncing ? t('common.loading') : t('usage_stats.model_price_sync')}
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className={styles.priceSyncApplyButton}
+                    onClick={() => void handleSyncPrices(false)}
+                    disabled={isPriceSyncing || isPriceLoading}
+                  >
+                    <IconRefreshCw size={14} className={styles.priceSyncApplyIcon} />
+                    {isPriceSyncing
+                      ? t('common.loading')
+                      : priceSyncLockedOverrides.length > 0
+                        ? t('usage_stats.model_price_sync_with_overrides', { count: priceSyncLockedOverrides.length })
+                        : t('usage_stats.model_price_sync')}
                   </Button>
                 </div>
               </header>
@@ -5703,28 +5728,44 @@ export function MonitoringCenterPage() {
                     <div>
                       <h4>{t(priceSyncResult.dryRun ? 'usage_stats.model_price_sync_preview_details' : 'usage_stats.model_price_sync_applied_details')}</h4>
                       <span>{t('usage_stats.model_price_sync_change_summary', {
-                        added: priceSyncResult.added,
-                        updated: priceSyncResult.updated,
-                        locked: priceSyncResult.locked,
+                        added: priceSyncChangeCounts.added,
+                        updated: priceSyncChangeCounts.updated,
+                        overridden: priceSyncChangeCounts.overridden,
+                        locked: priceSyncChangeCounts.locked,
                         unmatched: unmatchedPriceModelCount,
                       })}</span>
                     </div>
-                    <div className={styles.priceSyncChangeFilters}>
-                      {(['all', 'added', 'updated', 'locked', 'unmatched'] as const).map((filter) => {
-                        const count = filter === 'all' ? priceSyncChanges.length : priceSyncChangeCounts[filter];
-                        if (filter !== 'all' && count === 0) return null;
-                        return (
-                          <button
-                            type="button"
-                            key={filter}
-                            className={priceSyncChangeFilter === filter ? styles.priceSyncChangeFilterActive : ''}
-                            onClick={() => setPriceSyncChangeFilter(filter)}
-                          >
-                            {t(`usage_stats.model_price_sync_change_${filter}`)}
-                            <span>{count}</span>
-                          </button>
-                        );
-                      })}
+                    <div className={styles.priceSyncChangesToolbar}>
+                      {lockedPriceSyncChanges.length > 0 ? (
+                        <label className={styles.priceSyncOverrideAll}>
+                          <input
+                            type="checkbox"
+                            checked={allLockedPriceSyncChangesSelected}
+                            onChange={(event) => setPriceSyncLockedOverrides(event.target.checked ? lockedPriceSyncChanges.map((change) => change.model) : [])}
+                          />
+                          <span>{t('usage_stats.model_price_sync_override_all', { count: lockedPriceSyncChanges.length })}</span>
+                        </label>
+                      ) : null}
+                      <div className={styles.priceSyncChangeFilters}>
+                        {(['all', 'added', 'updated', 'overridden', 'locked', 'unmatched'] as const).map((filter) => {
+                          const count = filter === 'all' ? priceSyncChanges.length : priceSyncChangeCounts[filter];
+                          if (filter !== 'all' && count === 0) return null;
+                          const filterLabel = filter === 'overridden' && priceSyncResult.dryRun
+                            ? t('usage_stats.model_price_sync_override_selected')
+                            : t(`usage_stats.model_price_sync_change_${filter}`);
+                          return (
+                            <button
+                              type="button"
+                              key={filter}
+                              className={priceSyncChangeFilter === filter ? styles.priceSyncChangeFilterActive : ''}
+                              onClick={() => setPriceSyncChangeFilter(filter)}
+                            >
+                              <span className={styles.priceSyncChangeFilterLabel}>{filterLabel}</span>
+                              <span className={styles.priceSyncChangeFilterCount}>{count}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
 
@@ -5735,11 +5776,15 @@ export function MonitoringCenterPage() {
                       ));
                       const beforeTierCount = change.before?.tiers?.length ?? 0;
                       const afterTierCount = change.after?.tiers?.length ?? 0;
+                      const overrideSelected = change.action === 'locked' && priceSyncLockedOverrideSet.has(change.model);
+                      const displayedAction = overrideSelected ? 'overridden' : change.action;
                       return (
                         <article className={styles.priceSyncChangeRow} key={`${change.action}/${change.model}`}>
                           <div className={styles.priceSyncChangeIdentity}>
-                            <span className={`${styles.priceSyncChangeBadge} ${styles[`priceSyncChange${change.action}`] ?? ''}`}>
-                              {t(`usage_stats.model_price_sync_change_${change.action}`)}
+                            <span className={`${styles.priceSyncChangeBadge} ${styles[`priceSyncChange${displayedAction}`] ?? ''}`}>
+                              {overrideSelected
+                                ? t('usage_stats.model_price_sync_override_selected')
+                                : t(`usage_stats.model_price_sync_change_${displayedAction}`)}
                             </span>
                             <div>
                               <strong title={change.model}>{change.model}</strong>
@@ -5777,8 +5822,26 @@ export function MonitoringCenterPage() {
                               ) : null}
                               {rateChanges.length === 0 && beforeTierCount === afterTierCount ? (
                                 <small>{t(change.action === 'locked'
-                                  ? 'usage_stats.model_price_sync_change_locked_hint'
+                                  ? overrideSelected
+                                    ? 'usage_stats.model_price_sync_override_selected_hint'
+                                    : 'usage_stats.model_price_sync_change_locked_hint'
                                   : 'usage_stats.model_price_sync_change_metadata_hint')}</small>
+                              ) : null}
+                              {change.action === 'locked' ? (
+                                <label className={styles.priceSyncOverrideOption}>
+                                  <input
+                                    type="checkbox"
+                                    checked={overrideSelected}
+                                    onChange={(event) => setPriceSyncLockedOverrides((previous) => (
+                                      event.target.checked
+                                        ? Array.from(new Set([...previous, change.model]))
+                                        : previous.filter((model) => model !== change.model)
+                                    ))}
+                                  />
+                                  <span>{t(overrideSelected
+                                    ? 'usage_stats.model_price_sync_override_selected'
+                                    : 'usage_stats.model_price_sync_override_option')}</span>
+                                </label>
                               ) : null}
                             </div>
                           ) : (

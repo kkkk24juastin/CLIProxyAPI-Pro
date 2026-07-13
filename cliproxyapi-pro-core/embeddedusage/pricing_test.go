@@ -112,11 +112,37 @@ func TestMatchModelsDevModelUsesProviderAlias(t *testing.T) {
 }
 
 func TestModelPriceSyncChangeRank(t *testing.T) {
-	actions := []string{"added", "updated", "locked", "unmatched", "unknown"}
+	actions := []string{"added", "updated", "overridden", "locked", "unmatched", "unknown"}
 	for index, action := range actions {
 		if got := modelPriceSyncChangeRank(action); got != index {
 			t.Fatalf("modelPriceSyncChangeRank(%q) = %d, want %d", action, got, index)
 		}
+	}
+}
+
+func TestLockedModelPriceRequiresExplicitOverride(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	manual := testGPT56PriceRule()
+	manual.Source = modelPriceSourceManual
+	manual.Locked = true
+	if _, changed, err := store.UpsertModelPriceRule(ctx, manual, true); err != nil || !changed {
+		t.Fatalf("manual UpsertModelPriceRule() = changed:%v err:%v", changed, err)
+	}
+
+	synced := testGPT56PriceRule()
+	synced.Source = modelPriceSourceModelsDev
+	synced.Locked = false
+	synced.Base.Input = 9
+	if _, changed, err := store.UpsertModelPriceRule(ctx, synced, false); err != nil || changed {
+		t.Fatalf("locked UpsertModelPriceRule() = changed:%v err:%v; want false, nil", changed, err)
+	}
+	if _, changed, err := store.UpsertModelPriceRule(ctx, synced, true); err != nil || !changed {
+		t.Fatalf("override UpsertModelPriceRule() = changed:%v err:%v", changed, err)
+	}
+	rules, err := store.ActiveModelPriceRules(ctx)
+	if err != nil || len(rules) != 1 || rules[0].Locked || rules[0].Source != modelPriceSourceModelsDev || rules[0].Base.Input != 9 {
+		t.Fatalf("ActiveModelPriceRules() = %+v err:%v", rules, err)
 	}
 }
 

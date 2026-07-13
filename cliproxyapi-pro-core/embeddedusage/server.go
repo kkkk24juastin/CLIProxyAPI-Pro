@@ -919,8 +919,9 @@ func (s *Server) handleModelPriceRulesDelete(c *gin.Context) {
 
 func (s *Server) handleModelPricesSync(c *gin.Context) {
 	var payload struct {
-		DryRun              bool `json:"dryRun"`
-		RecalculateUnpriced bool `json:"recalculateUnpriced"`
+		DryRun               bool     `json:"dryRun"`
+		RecalculateUnpriced  bool     `json:"recalculateUnpriced"`
+		OverrideLockedModels []string `json:"overrideLockedModels"`
 	}
 	if c.Request.ContentLength != 0 {
 		if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
@@ -928,7 +929,7 @@ func (s *Server) handleModelPricesSync(c *gin.Context) {
 			return
 		}
 	}
-	result, err := s.store.SyncModelsDevPrices(c.Request.Context(), payload.DryRun, payload.RecalculateUnpriced)
+	result, err := s.store.SyncModelsDevPrices(c.Request.Context(), payload.DryRun, payload.RecalculateUnpriced, payload.OverrideLockedModels...)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return

@@ -3351,6 +3351,32 @@
   min-height: 38px;
 }
 
+.priceSyncApplyButton:global(.btn-primary) {
+  gap: 7px;
+  border-color: var(--monitor-accent);
+  background: var(--monitor-accent);
+  color: var(--primary-contrast, #fff);
+}
+
+.priceSyncApplyButton:global(.btn-primary):hover {
+  border-color: var(--monitor-accent-strong);
+  background: var(--monitor-accent-strong);
+}
+
+.priceSyncApplyButton:global(.btn-primary):disabled {
+  border-color: color-mix(in srgb, var(--monitor-accent) 42%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 42%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--primary-contrast, #fff) 76%, transparent);
+}
+
+.priceSyncApplyButton svg,
+.priceSyncApplyIcon {
+  flex: 0 0 auto;
+  color: inherit;
+  fill: none;
+  stroke: currentColor;
+}
+
 .priceSyncMetrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3361,7 +3387,9 @@
 }
 
 .priceSyncMetrics > div {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   gap: 6px;
   min-height: 68px;
   padding: 11px 14px;
@@ -3383,7 +3411,8 @@
   color: var(--monitor-ink);
   font-size: 22px;
   font-weight: 750;
-  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
 }
 
 .priceSyncMetricadded strong {
@@ -3505,6 +3534,50 @@
   font-size: 11px;
 }
 
+.priceSyncChangesToolbar {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.priceSyncOverrideAll,
+.priceSyncOverrideOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--monitor-muted);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.priceSyncOverrideAll {
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface-muted);
+}
+
+.priceSyncOverrideAll:has(input:checked) {
+  border-color: color-mix(in srgb, var(--monitor-accent) 34%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 8%, var(--monitor-surface));
+  color: var(--monitor-accent);
+}
+
+.priceSyncOverrideAll input,
+.priceSyncOverrideOption input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--monitor-accent);
+}
+
 .priceSyncChangeFilters {
   display: inline-flex;
   flex: 0 0 auto;
@@ -3520,7 +3593,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 28px;
+  min-height: 30px;
   padding: 0 8px;
   border: 0;
   border-radius: 6px;
@@ -3528,20 +3601,42 @@
   color: var(--monitor-muted);
   font-size: 10px;
   font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.priceSyncChangeFilters button > span {
-  min-width: 16px;
+.priceSyncChangeFilterLabel {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  line-height: 18px;
+}
+
+.priceSyncChangeFilterCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--monitor-muted) 10%, transparent);
   color: inherit;
   font-size: 9px;
-  text-align: center;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
 }
 
 .priceSyncChangeFilters .priceSyncChangeFilterActive {
   background: var(--monitor-surface);
   color: var(--monitor-ink);
   box-shadow: 0 1px 3px color-mix(in srgb, var(--monitor-ink) 12%, transparent);
+}
+
+.priceSyncChangeFilters .priceSyncChangeFilterActive .priceSyncChangeFilterCount {
+  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
+  color: var(--monitor-accent);
 }
 
 .priceSyncChangeList {
@@ -3621,6 +3716,11 @@
   color: var(--monitor-accent);
 }
 
+.priceSyncChangeoverridden {
+  background: color-mix(in srgb, var(--monitor-accent) 16%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--monitor-accent) 82%, var(--monitor-ink));
+}
+
 .priceSyncChangelocked {
   background: color-mix(in srgb, var(--monitor-muted) 12%, var(--monitor-surface));
   color: var(--monitor-muted);
@@ -3665,6 +3765,21 @@
 .priceSyncRateChanges strong {
   color: var(--monitor-ink);
   font-size: 11px;
+}
+
+.priceSyncOverrideOption {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 7px;
+  background: var(--monitor-surface-muted);
+  color: var(--monitor-ink);
+}
+
+.priceSyncOverrideOption:has(input:checked) {
+  border-color: color-mix(in srgb, var(--monitor-accent) 34%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 8%, var(--monitor-surface));
+  color: var(--monitor-accent);
 }
 
 .priceSyncChangesEmpty {
@@ -5480,7 +5595,14 @@
     flex-direction: column;
   }
 
+  .priceSyncChangesToolbar {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .priceSyncChangeFilters {
+    flex: 1 1 100%;
+    width: 100%;
     max-width: 100%;
     overflow-x: auto;
   }
@@ -5593,6 +5715,15 @@
 
   .priceSyncMetrics > div:nth-child(n + 3) {
     border-top: 1px solid var(--monitor-line);
+  }
+
+  .priceSyncOverrideAll {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .priceSyncChangeFilters button {
+    flex: 0 0 auto;
   }
 
   .priceSyncScheduleControls {
