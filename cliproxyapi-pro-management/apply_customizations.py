@@ -18,6 +18,10 @@ QUOTA_LOCALE_KEYS = {
         'hours_ago_plural': '{{count}} hours ago',
         'days_ago': '{{count}} day ago',
         'days_ago_plural': '{{count}} days ago',
+        'search_label': 'Search quota credentials',
+        'search_placeholder': 'Search config name, type, provider, note, or plan. Use * as a wildcard',
+        'no_search_results': 'No matching quota credentials',
+        'no_search_results_desc': 'No quota credential matches the current search.',
     },
     'ru.json': {
         'cached_at': 'Обновлено',
@@ -28,6 +32,10 @@ QUOTA_LOCALE_KEYS = {
         'hours_ago_plural': '{{count}} часов назад',
         'days_ago': '{{count}} день назад',
         'days_ago_plural': '{{count}} дней назад',
+        'search_label': 'Поиск конфигураций квот',
+        'search_placeholder': 'Поиск по имени, типу, провайдеру, заметке или тарифу; поддерживается *',
+        'no_search_results': 'Подходящие конфигурации квот не найдены',
+        'no_search_results_desc': 'Текущему запросу не соответствует ни одна конфигурация квот.',
     },
     'zh-CN.json': {
         'cached_at': '更新于',
@@ -35,6 +43,10 @@ QUOTA_LOCALE_KEYS = {
         'minutes_ago': '{{count}} 分钟前',
         'hours_ago': '{{count}} 小时前',
         'days_ago': '{{count}} 天前',
+        'search_label': '搜索配额配置文件',
+        'search_placeholder': '搜索配置文件名称、类型、提供商、备注或套餐，支持 * 通配',
+        'no_search_results': '没有匹配的配额配置文件',
+        'no_search_results_desc': '当前搜索条件下没有可显示的配额配置文件。',
     },
     'zh-TW.json': {
         'cached_at': '更新於',
@@ -42,6 +54,10 @@ QUOTA_LOCALE_KEYS = {
         'minutes_ago': '{{count}} 分鐘前',
         'hours_ago': '{{count}} 小時前',
         'days_ago': '{{count}} 天前',
+        'search_label': '搜尋配額設定檔',
+        'search_placeholder': '搜尋設定檔名稱、類型、供應商、備註或套餐，支援 * 萬用字元',
+        'no_search_results': '沒有符合的配額設定檔',
+        'no_search_results_desc': '目前搜尋條件下沒有可顯示的配額設定檔。',
     },
 }
 
@@ -551,6 +567,261 @@ def patch_quota_page(target: Path) -> None:
         path,
         "\n  // Initialize persistence middleware\n  useEffect(() => {\n    if (FEATURES.QUOTA_PERSISTENCE) {\n      quotaPersistenceMiddleware.start();\n      return () => quotaPersistenceMiddleware.stop();\n    }\n  }, []);\n",
         "",
+    )
+
+
+def patch_quota_page_search(target: Path) -> None:
+    page_path = target / 'src/pages/QuotaPage.tsx'
+    replace_once(
+        page_path,
+        "import { useCallback, useEffect, useState } from 'react';\n",
+        "import { useCallback, useEffect, useMemo, useState } from 'react';\n",
+    )
+    insert_once(
+        page_path,
+        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
+        "import { EmptyState } from '@/components/ui/EmptyState';\n"
+        "import { Input } from '@/components/ui/Input';\n"
+        "import { IconSearch } from '@/components/ui/icons';\n"
+        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
+        "quota_management.search_label",
+    )
+    insert_once(
+        page_path,
+        "export function QuotaPage() {\n",
+        "const QUOTA_SEARCH_FIELD_KEYS = [\n"
+        "  'name',\n"
+        "  'type',\n"
+        "  'provider',\n"
+        "  'note',\n"
+        "  'remark',\n"
+        "  'remarks',\n"
+        "  'description',\n"
+        "  'plan',\n"
+        "  'plan_type',\n"
+        "  'planType',\n"
+        "  'package',\n"
+        "  'package_name',\n"
+        "  'packageName',\n"
+        "  'subscription',\n"
+        "  'subscription_plan',\n"
+        "  'subscriptionPlan',\n"
+        "  'tier',\n"
+        "  'tier_id',\n"
+        "  'tierId',\n"
+        "  'tier_label',\n"
+        "  'tierLabel',\n"
+        "  'product',\n"
+        "  'product_name',\n"
+        "  'productName',\n"
+        "  'quota_plan',\n"
+        "  'quotaPlan',\n"
+        "] as const;\n"
+        "\n"
+        "const QUOTA_NESTED_SEARCH_KEY_PATTERN =\n"
+        "  /(note|remark|description|desc|plan|package|subscription|tier|product|quota)/i;\n"
+        "\n"
+        "const escapeQuotaSearchSegment = (value: string): string =>\n"
+        "  value.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n"
+        "\n"
+        "const buildQuotaWildcardSearch = (value: string): RegExp | null => {\n"
+        "  if (!value.includes('*')) return null;\n"
+        "  const pattern = value.split('*').map(escapeQuotaSearchSegment).join('.*');\n"
+        "  return new RegExp(pattern, 'i');\n"
+        "};\n"
+        "\n"
+        "const collectQuotaSearchValues = (value: unknown, depth = 0): string[] => {\n"
+        "  if (value == null) return [];\n"
+        "  if (typeof value === 'string') return value.trim() ? [value] : [];\n"
+        "  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];\n"
+        "  if (depth >= 2) return [];\n"
+        "  if (Array.isArray(value)) {\n"
+        "    return value.flatMap((item) => collectQuotaSearchValues(item, depth + 1));\n"
+        "  }\n"
+        "  if (typeof value !== 'object') return [];\n"
+        "\n"
+        "  return Object.entries(value as Record<string, unknown>).flatMap(([key, nestedValue]) =>\n"
+        "    QUOTA_NESTED_SEARCH_KEY_PATTERN.test(key)\n"
+        "      ? collectQuotaSearchValues(nestedValue, depth + 1)\n"
+        "      : []\n"
+        "  );\n"
+        "};\n"
+        "\n"
+        "const buildQuotaSearchValues = (item: AuthFileItem): string[] =>\n"
+        "  QUOTA_SEARCH_FIELD_KEYS.flatMap((key) => collectQuotaSearchValues(item[key]));\n"
+        "\n"
+        "export function QuotaPage() {\n",
+        "QUOTA_SEARCH_FIELD_KEYS",
+    )
+    replace_once(
+        page_path,
+        "  const [error, setError] = useState('');\n\n  const disableControls",
+        "  const [error, setError] = useState('');\n"
+        "  const [search, setSearch] = useState('');\n"
+        "\n"
+        "  const normalizedSearch = search.trim();\n"
+        "  const wildcardSearch = useMemo(\n"
+        "    () => buildQuotaWildcardSearch(normalizedSearch),\n"
+        "    [normalizedSearch]\n"
+        "  );\n"
+        "  const searchFileNames = useMemo(() => {\n"
+        "    if (!normalizedSearch) return null;\n"
+        "    const normalizedTerm = normalizedSearch.toLowerCase();\n"
+        "    return new Set(\n"
+        "      files\n"
+        "        .filter((item) =>\n"
+        "          buildQuotaSearchValues(item).some((value) =>\n"
+        "            wildcardSearch\n"
+        "              ? wildcardSearch.test(value)\n"
+        "              : value.toLowerCase().includes(normalizedTerm)\n"
+        "          )\n"
+        "        )\n"
+        "        .map((item) => item.name)\n"
+        "    );\n"
+        "  }, [files, normalizedSearch, wildcardSearch]);\n"
+        "  const hasQuotaSearchResults = useMemo(() => {\n"
+        "    if (!searchFileNames) return true;\n"
+        "    const filters = [\n"
+        "      CLAUDE_CONFIG.filterFn,\n"
+        "      ANTIGRAVITY_CONFIG.filterFn,\n"
+        "      CODEX_CONFIG.filterFn,\n"
+        "      GEMINI_CLI_CONFIG.filterFn,\n"
+        "      XAI_CONFIG.filterFn,\n"
+        "      KIMI_CONFIG.filterFn,\n"
+        "    ];\n"
+        "    return files.some(\n"
+        "      (file) => searchFileNames.has(file.name) && filters.some((filterFn) => filterFn(file))\n"
+        "    );\n"
+        "  }, [files, searchFileNames]);\n"
+        "\n"
+        "  const disableControls",
+    )
+    insert_once(
+        page_path,
+        "      {error && <div className={styles.errorBox}>{error}</div>}\n",
+        "      <div className={styles.searchBar}>\n"
+        "        <Input\n"
+        "          className={styles.searchInput}\n"
+        "          type=\"search\"\n"
+        "          value={search}\n"
+        "          onChange={(event) => setSearch(event.target.value)}\n"
+        "          placeholder={t('quota_management.search_placeholder')}\n"
+        "          aria-label={t('quota_management.search_label')}\n"
+        "          rightElement={<IconSearch className={styles.searchIcon} size={18} />}\n"
+        "        />\n"
+        "      </div>\n"
+        "\n"
+        "      {error && <div className={styles.errorBox}>{error}</div>}\n"
+        "\n"
+        "      {normalizedSearch && !hasQuotaSearchResults && (\n"
+        "        <EmptyState\n"
+        "          title={t('quota_management.no_search_results')}\n"
+        "          description={t('quota_management.no_search_results_desc')}\n"
+        "        />\n"
+        "      )}\n",
+        "quota_management.no_search_results",
+    )
+    replace_all(
+        page_path,
+        "        disabled={disableControls}\n      />",
+        "        disabled={disableControls}\n"
+        "        searchFileNames={searchFileNames}\n"
+        "        hideWhenEmpty={Boolean(normalizedSearch)}\n"
+        "      />",
+    )
+
+    section_path = target / 'src/components/quota/QuotaSection.tsx'
+    replace_once(
+        section_path,
+        "  disabled: boolean;\n}",
+        "  disabled: boolean;\n"
+        "  searchFileNames?: ReadonlySet<string> | null;\n"
+        "  hideWhenEmpty?: boolean;\n"
+        "}",
+    )
+    replace_once(
+        section_path,
+        "  loading,\n  disabled,\n}: QuotaSectionProps<TState, TData>)",
+        "  loading,\n"
+        "  disabled,\n"
+        "  searchFileNames = null,\n"
+        "  hideWhenEmpty = false,\n"
+        "}: QuotaSectionProps<TState, TData>)",
+    )
+    replace_once(
+        section_path,
+        "  const filteredFiles = useMemo(\n"
+        "    () => files.filter((file) => config.filterFn(file)),\n"
+        "    [files, config]\n"
+        "  );\n",
+        "  const providerFiles = useMemo(\n"
+        "    () => files.filter((file) => config.filterFn(file)),\n"
+        "    [files, config]\n"
+        "  );\n"
+        "  const filteredFiles = useMemo(\n"
+        "    () =>\n"
+        "      searchFileNames\n"
+        "        ? providerFiles.filter((file) => searchFileNames.has(file.name))\n"
+        "        : providerFiles,\n"
+        "    [providerFiles, searchFileNames]\n"
+        "  );\n",
+    )
+    replace_once(
+        section_path,
+        "    if (filteredFiles.length === 0) {\n"
+        "      setQuota({});\n"
+        "      return;\n"
+        "    }\n"
+        "    setQuota((prev) => {\n"
+        "      const nextState: Record<string, TState> = {};\n"
+        "      filteredFiles.forEach((file) => {\n",
+        "    if (providerFiles.length === 0) {\n"
+        "      setQuota({});\n"
+        "      return;\n"
+        "    }\n"
+        "    setQuota((prev) => {\n"
+        "      const nextState: Record<string, TState> = {};\n"
+        "      providerFiles.forEach((file) => {\n",
+    )
+    replace_once(
+        section_path,
+        "  }, [filteredFiles, loading, setQuota]);\n",
+        "  }, [loading, providerFiles, setQuota]);\n",
+    )
+    insert_once(
+        section_path,
+        "  return (\n    <Card\n",
+        "  if (hideWhenEmpty && filteredFiles.length === 0) return null;\n\n"
+        "  return (\n    <Card\n",
+        "hideWhenEmpty && filteredFiles.length",
+    )
+
+    styles_path = target / 'src/pages/QuotaPage.module.scss'
+    insert_once(
+        styles_path,
+        ".errorBox {\n",
+        ".searchBar {\n"
+        "  width: min(100%, 560px);\n"
+        "\n"
+        "  :global(.form-group) {\n"
+        "    margin: 0;\n"
+        "  }\n"
+        "}\n"
+        "\n"
+        ".searchInput {\n"
+        "  width: 100%;\n"
+        "  min-height: 42px;\n"
+        "  padding-right: 40px;\n"
+        "}\n"
+        "\n"
+        ".searchIcon {\n"
+        "  display: block;\n"
+        "  color: var(--text-tertiary);\n"
+        "  pointer-events: none;\n"
+        "}\n"
+        "\n"
+        ".errorBox {\n",
+        ".searchBar",
     )
 
 
@@ -1181,6 +1452,7 @@ def main() -> None:
     patch_quota_configs(target)
     patch_antigravity_quota_builders(target)
     patch_quota_page(target)
+    patch_quota_page_search(target)
     patch_quota_card(target)
     patch_quota_styles(target)
     patch_account_inspection_page(target)

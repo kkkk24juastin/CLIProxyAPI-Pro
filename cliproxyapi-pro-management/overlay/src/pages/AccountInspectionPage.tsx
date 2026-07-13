@@ -473,49 +473,35 @@ const healthLabelKey: Record<ResultHealthStatus, string> = {
   recoverable: 'monitoring.account_inspection_health_recoverable',
 };
 
-const compactHealthErrorCode = (code: string) => {
-  switch (code) {
-    case 'inspection_http_error':
-      return 'http_error';
-    case 'inspection_probe_error':
-      return 'probe_error';
-    case 'antigravity_deep_probe_error':
-      return 'deep_probe';
-    case 'token_refresh_error':
-      return 'refresh';
-    case 'missing_auth_index':
-      return 'no_index';
-    case 'missing_auth_id':
-      return 'no_auth_id';
-    default:
-      return code;
-  }
-};
-
-const formatHealthErrorCodes = (item: AccountInspectionResultItem): Array<{ label: string; title: string }> => {
-  const codes: Array<{ label: string; title: string }> = [];
-  const errorCode = item.errorCode?.trim();
-  if (errorCode) {
-    codes.push({ label: compactHealthErrorCode(errorCode), title: errorCode });
-  }
-  if (item.statusCode !== null && item.statusCode >= 400) {
-    codes.push({ label: `HTTP ${item.statusCode}`, title: `HTTP ${item.statusCode}` });
-    return codes;
-  }
+const extractHealthHttpStatusCode = (item: AccountInspectionResultItem) => {
+  if (item.statusCode !== null && item.statusCode >= 400) return item.statusCode;
   const match = item.error.match(/\bHTTP\s+(\d{3})\b/i) ?? item.error.match(/\bstatus(?:\s+code)?\s*[:=]?\s*(\d{3})\b/i);
-  if (match) {
-    codes.push({ label: `HTTP ${match[1]}`, title: `HTTP ${match[1]}` });
-  }
-  return codes;
+  return match ? Number(match[1]) : null;
 };
 
-const deepProbeLabelKey: Record<Exclude<NonNullable<AccountInspectionResultItem['deepProbeStatus']>, ''>, string> = {
-  success: 'monitoring.account_inspection_deep_probe_success',
-  quota: 'monitoring.account_inspection_deep_probe_quota',
-  auth_error: 'monitoring.account_inspection_deep_probe_auth_error',
-  transient_error: 'monitoring.account_inspection_deep_probe_transient_error',
-  skipped: 'monitoring.account_inspection_deep_probe_skipped',
+const buildHealthStatusCodeText = (item: AccountInspectionResultItem) => {
+  const httpStatusCode = extractHealthHttpStatusCode(item);
+  if (httpStatusCode !== null) return String(httpStatusCode);
+  return item.errorCode?.trim() || '';
 };
+
+const buildHealthStatusLabel = (
+  item: AccountInspectionResultItem,
+  healthStatus: ResultHealthStatus,
+  t: ReturnType<typeof useTranslation>['t']
+) => {
+  const label = t(healthLabelKey[healthStatus]);
+  const code = buildHealthStatusCodeText(item);
+  return code ? `${label} · ${code}` : label;
+};
+
+const hasInspectionErrorDetails = (item: AccountInspectionResultItem) => Boolean(
+  item.error
+  || item.errorCode?.trim()
+  || item.deepProbeError
+  || item.tokenRefreshError
+  || extractHealthHttpStatusCode(item) !== null
+);
 
 const resolveResultHealthStatus = (item: AccountInspectionResultItem): ResultHealthStatus => {
   if (item.action === 'delete' || (item.statusCode !== null && ACCOUNT_INVALID_ERROR_STATUSES.has(item.statusCode))) {
@@ -1040,17 +1026,6 @@ const formatQuotaRemainingLabel = (value: number | null) => {
   return `${Math.max(0, 100 - value).toFixed(1)}%`;
 };
 
-const shouldShowDeepProbeBadge = (item: AccountInspectionResultItem) =>
-  Boolean(item.deepProbeTriggered && item.deepProbeStatus && item.deepProbeStatus !== 'skipped');
-
-const formatDeepProbeLabel = (
-  item: AccountInspectionResultItem,
-  t: ReturnType<typeof useTranslation>['t']
-) => {
-  if (!item.deepProbeTriggered || !item.deepProbeStatus) return '';
-  return t(deepProbeLabelKey[item.deepProbeStatus] ?? 'monitoring.account_inspection_deep_probe_skipped');
-};
-
 const formatTokenRefreshLabel = (
   item: AccountInspectionResultItem,
   t: ReturnType<typeof useTranslation>['t']
@@ -1110,23 +1085,6 @@ const formatInspectionVerdictPrimary = (
   }
 };
 
-const formatInspectionVerdictSecondary = (
-  item: AccountInspectionResultItem,
-  t: ReturnType<typeof useTranslation>['t']
-) => {
-  const parts = [formatActionLabel(item.action, t)];
-  if (shouldShowDeepProbeBadge(item)) {
-    const label = formatDeepProbeLabel(item, t);
-    if (label) parts.push(label);
-  }
-  if (item.error) {
-    parts.push(item.error);
-  } else if (item.statusCode !== null && item.statusCode >= 400) {
-    parts.push(`HTTP ${item.statusCode}`);
-  }
-  return parts.join(' · ');
-};
-
 const inspectionToastTone = (healthStatus: ResultHealthStatus): 'success' | 'warning' | 'error' => {
   if (healthStatus === 'healthy' || healthStatus === 'recoverable') return 'success';
   if (healthStatus === 'inspectionError' || healthStatus === 'authInvalid') return 'error';
@@ -1139,9 +1097,8 @@ const formatInspectionResultToast = (
 ) => {
   const healthStatus = resolveResultHealthStatus(item);
   const primary = formatInspectionVerdictPrimary(item, healthStatus, t);
-  const secondary = formatInspectionVerdictSecondary(item, t);
   return {
-    message: secondary ? `${item.fileName}: ${primary} · ${secondary}` : `${item.fileName}: ${primary}`,
+    message: `${item.fileName}: ${primary}`,
     tone: inspectionToastTone(healthStatus),
   };
 };
@@ -1593,6 +1550,7 @@ export function AccountInspectionPage() {
     autoExecutionCounts,
   } = backendState;
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [selectedErrorResult, setSelectedErrorResult] = useState<AccountInspectionResultItem | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
   const [resultFilter, setResultFilter] = useState<ResultFilter>('accountInvalid');
@@ -2991,20 +2949,26 @@ export function AccountInspectionPage() {
                   {filteredResultRows.length > 0 ? (
                     visibleResultRows.map(({ item, healthStatus, manualActions }) => {
                       const tokenRefreshDetail = formatTokenRefreshDetail(item, i18n.language, t);
-                      const healthErrorCodes = formatHealthErrorCodes(item);
+                      const healthStatusLabel = buildHealthStatusLabel(item, healthStatus, t);
+                      const showErrorDetails = hasInspectionErrorDetails(item);
                       return (
                         <tr key={item.key}>
                           <td><div className={styles.primaryCell}><span>{item.fileName}</span><small>{item.provider}</small></div></td>
                           <td>
                             <div className={styles.healthCell}>
-                              <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{t(healthLabelKey[healthStatus])}</span>
-                              {healthErrorCodes.length > 0 ? (
-                                <span className={styles.healthCodeList}>
-                                  {healthErrorCodes.map((code) => (
-                                    <span key={code.title} className={styles.healthCode} title={code.title}>{code.label}</span>
-                                  ))}
-                                </span>
-                              ) : null}
+                              {showErrorDetails ? (
+                                <button
+                                  type="button"
+                                  className={styles.healthErrorButton}
+                                  onClick={() => setSelectedErrorResult(item)}
+                                  title={t('monitoring.account_inspection_error_details_click_hint')}
+                                  aria-label={t('monitoring.account_inspection_error_details_click_hint')}
+                                >
+                                  <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{healthStatusLabel}</span>
+                                </button>
+                              ) : (
+                                <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{healthStatusLabel}</span>
+                              )}
                             </div>
                           </td>
                           <td><span className={item.disabled ? styles.stateTextMuted : styles.stateTextGood}>{formatCurrentStateLabel(item, t)}</span></td>
@@ -3021,7 +2985,6 @@ export function AccountInspectionPage() {
                           <td>
                             <div className={styles.verdictCell}>
                               <strong>{formatInspectionVerdictPrimary(item, healthStatus, t)}</strong>
-                              <span>{formatInspectionVerdictSecondary(item, t)}</span>
                             </div>
                           </td>
                           <td className={styles.operationCell}>
@@ -3165,6 +3128,53 @@ export function AccountInspectionPage() {
           )}
         </Card>
       </div>
+
+      <Modal
+        open={Boolean(selectedErrorResult)}
+        onClose={() => setSelectedErrorResult(null)}
+        title={t('monitoring.account_inspection_error')}
+        width={720}
+        className={styles.errorModal}
+        footer={(
+          <div className={styles.errorModalActions}>
+            <Button variant="primary" size="sm" onClick={() => setSelectedErrorResult(null)}>
+              {t('common.close')}
+            </Button>
+          </div>
+        )}
+      >
+        {selectedErrorResult ? (
+          <div className={styles.errorDetailsPanel}>
+            <div className={styles.errorOverview}>
+              <span className={`${styles.healthBadge} ${healthToneClass[resolveResultHealthStatus(selectedErrorResult)]}`}>
+                {buildHealthStatusLabel(selectedErrorResult, resolveResultHealthStatus(selectedErrorResult), t)}
+              </span>
+              <strong>{selectedErrorResult.error || selectedErrorResult.tokenRefreshError || selectedErrorResult.deepProbeError || t('monitoring.account_inspection_error_summary')}</strong>
+            </div>
+            <div className={styles.errorDetailsGrid}>
+              {[
+                { label: t('monitoring.account_label'), value: selectedErrorResult.fileName },
+                { label: t('monitoring.filter_provider'), value: selectedErrorResult.provider },
+                { label: t('monitoring.account_inspection_http_status'), value: extractHealthHttpStatusCode(selectedErrorResult)?.toString() || '' },
+                { label: t('monitoring.account_inspection_error_code'), value: selectedErrorResult.errorCode || '' },
+                { label: t('monitoring.account_inspection_deep_probe_error'), value: selectedErrorResult.deepProbeError || '' },
+                { label: t('monitoring.account_inspection_token_refresh_error'), value: selectedErrorResult.tokenRefreshError || '' },
+              ].filter((detail) => detail.value).map((detail) => (
+                <div key={detail.label} className={styles.errorDetailItem}>
+                  <span>{detail.label}</span>
+                  <strong>{detail.value}</strong>
+                </div>
+              ))}
+            </div>
+            {selectedErrorResult.error ? (
+              <div className={styles.errorMessageBlock}>
+                <span>{t('monitoring.account_inspection_error')}</span>
+                <pre className={styles.errorMessage}>{selectedErrorResult.error}</pre>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Modal>
 
       <Modal
         open={isSettingsModalOpen}
