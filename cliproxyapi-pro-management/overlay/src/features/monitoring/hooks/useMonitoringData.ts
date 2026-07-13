@@ -13,6 +13,7 @@ import {
   extractTotalTokens,
   normalizeAuthIndex,
   type ModelPrice,
+  type UsageCostBreakdown,
   type UsageDetailWithEndpoint,
 } from '@/utils/usage';
 
@@ -332,6 +333,7 @@ export type MonitoringEventRow = {
   retryAfter: string;
   reasoningEffort: string;
   serviceTier: string;
+  costBreakdown: UsageCostBreakdown | null;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -1243,6 +1245,7 @@ const buildEventRows = (
       retryAfter: detail.retry_after || '',
       reasoningEffort: detail.reasoning_effort || '',
       serviceTier: detail.service_tier || '',
+      costBreakdown: detail.cost_breakdown ?? null,
       inputTokens,
       outputTokens,
       reasoningTokens,

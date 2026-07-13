@@ -103,6 +103,28 @@ export interface UsageTokens {
   total_tokens?: number;
 }
 
+export interface UsageCostBreakdown {
+  ruleId: number;
+  ruleVersion: number;
+  provider: string;
+  model: string;
+  source: string;
+  contextTokens: number;
+  contextTierSize: number;
+  serviceTier: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  inputCost: number;
+  outputCost: number;
+  cacheReadCost: number;
+  cacheWriteCost: number;
+  reasoningCost: number;
+  totalCost: number;
+}
+
 export interface UsageDetail {
   timestamp: string;
   source: string;
@@ -123,7 +145,7 @@ export interface UsageDetail {
   service_tier?: string;
   estimated_cost?: number;
   price_rule_id?: number;
-  cost_breakdown?: Record<string, unknown>;
+  cost_breakdown?: UsageCostBreakdown;
   tokens: UsageTokens;
   failed: boolean;
   __modelName?: string;
@@ -304,7 +326,51 @@ const readTokens = (detail: Record<string, unknown>): UsageTokens => {
     cache_read_tokens: cacheReadTokens,
     cache_creation_tokens: cacheCreationTokens,
     cache_tokens: toFiniteNumber(tokensRaw.cache_tokens) || cacheReadTokens + cacheCreationTokens,
+    cache_write_tokens: toFiniteNumber(tokensRaw.cache_write_tokens),
     total_tokens: toFiniteNumber(tokensRaw.total_tokens),
+  };
+};
+
+const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undefined => {
+  let raw = value;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!isRecord(raw)) return undefined;
+
+  const readNumber = (camelKey: string, snakeKey: string) => toFiniteNumber(raw[camelKey] ?? raw[snakeKey]);
+  const readString = (camelKey: string, snakeKey: string) => {
+    const candidate = raw[camelKey] ?? raw[snakeKey];
+    return typeof candidate === 'string' ? candidate : '';
+  };
+  const hasCostFields = ['totalCost', 'total_cost', 'inputCost', 'input_cost', 'outputCost', 'output_cost']
+    .some((key) => raw[key] !== undefined);
+  if (!hasCostFields) return undefined;
+
+  return {
+    ruleId: readNumber('ruleId', 'rule_id'),
+    ruleVersion: readNumber('ruleVersion', 'rule_version'),
+    provider: readString('provider', 'provider'),
+    model: readString('model', 'model'),
+    source: readString('source', 'source'),
+    contextTokens: readNumber('contextTokens', 'context_tokens'),
+    contextTierSize: readNumber('contextTierSize', 'context_tier_size'),
+    serviceTier: readString('serviceTier', 'service_tier'),
+    inputTokens: readNumber('inputTokens', 'input_tokens'),
+    outputTokens: readNumber('outputTokens', 'output_tokens'),
+    cacheReadTokens: readNumber('cacheReadTokens', 'cache_read_tokens'),
+    cacheWriteTokens: readNumber('cacheWriteTokens', 'cache_write_tokens'),
+    reasoningTokens: readNumber('reasoningTokens', 'reasoning_tokens'),
+    inputCost: readNumber('inputCost', 'input_cost'),
+    outputCost: readNumber('outputCost', 'output_cost'),
+    cacheReadCost: readNumber('cacheReadCost', 'cache_read_cost'),
+    cacheWriteCost: readNumber('cacheWriteCost', 'cache_write_cost'),
+    reasoningCost: readNumber('reasoningCost', 'reasoning_cost'),
+    totalCost: readNumber('totalCost', 'total_cost'),
   };
 };
 
@@ -338,6 +404,8 @@ const buildUsageDetail = (
   const latencyMs = extractLatencyMs(detailRaw);
   const ttftMs = extractNonNegativeNumberField(detailRaw, ['ttft_ms']);
   const statusCode = extractNonNegativeNumberField(detailRaw, ['status_code']);
+  const estimatedCost = extractNonNegativeNumberField(detailRaw, ['estimated_cost', 'estimatedCost']);
+  const priceRuleID = extractNonNegativeNumberField(detailRaw, ['price_rule_id', 'priceRuleId']);
 
   const provider = typeof detailRaw.provider === 'string' ? detailRaw.provider.trim() : undefined;
   const executorType = typeof detailRaw.executor_type === 'string'
@@ -401,6 +469,9 @@ const buildUsageDetail = (
       : typeof detailRaw.serviceTier === 'string'
         ? detailRaw.serviceTier
         : undefined,
+    estimated_cost: estimatedCost ?? undefined,
+    price_rule_id: priceRuleID ?? undefined,
+    cost_breakdown: normalizeUsageCostBreakdown(detailRaw.cost_breakdown ?? detailRaw.costBreakdown),
     tokens: readTokens(detailRaw),
     failed: detailRaw.failed === true,
     __modelName: modelName,
@@ -648,6 +719,17 @@ export function formatUsd(value: number): string {
     maximumFractionDigits: 2,
   });
   return `$${parts}`;
+}
+
+export function formatUsdPrecise(value: number): string {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '$0.000000';
+
+  const decimals = num !== 0 && Math.abs(num) < 0.000001 ? 8 : 6;
+  return `$${num.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })}`;
 }
 
 const resolveDurationLocale = (locale?: string): string | undefined =>

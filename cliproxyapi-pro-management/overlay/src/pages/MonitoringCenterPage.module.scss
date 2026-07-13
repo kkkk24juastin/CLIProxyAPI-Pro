@@ -4148,6 +4148,147 @@
   text-align: right;
 }
 
+.realtimeCostCell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.realtimeCostValue {
+  overflow: visible;
+  color: var(--monitor-green);
+  font-weight: 750;
+  line-height: 1.2;
+  text-overflow: clip;
+}
+
+.realtimeCostInfoButton {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--monitor-muted);
+  cursor: help;
+}
+
+.realtimeCostInfoButton:hover,
+.realtimeCostInfoButton:focus-visible {
+  background: color-mix(in srgb, var(--monitor-accent) 10%, transparent);
+  color: var(--monitor-accent-strong);
+  outline: none;
+}
+
+.realtimeCostInfoButton svg {
+  display: block;
+}
+
+.realtimeCostTooltip {
+  position: fixed;
+  z-index: 12000;
+  width: min(336px, calc(100vw - 24px));
+  max-height: min(420px, calc(100vh - 24px));
+  overflow: visible;
+  padding: 18px 20px;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: #060b1a;
+  color: #f8fafc;
+  box-shadow: 0 20px 48px -20px rgba(2, 6, 23, 0.72);
+  pointer-events: none;
+}
+
+.realtimeCostTooltip::before {
+  content: '';
+  position: absolute;
+  top: var(--realtime-cost-arrow-top, 50%);
+  width: 14px;
+  height: 14px;
+  border: solid #334155;
+  background: #060b1a;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.realtimeCostTooltip[data-placement='left']::before {
+  right: -8px;
+  border-width: 1px 1px 0 0;
+}
+
+.realtimeCostTooltip[data-placement='right']::before {
+  left: -8px;
+  border-width: 0 0 1px 1px;
+}
+
+.realtimeCostTooltipTitle {
+  display: block;
+  margin-bottom: 12px;
+  color: #cbd5e1;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.realtimeCostTooltipRows {
+  display: grid;
+  gap: 9px;
+  max-height: min(340px, calc(100vh - 90px));
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.realtimeCostTooltipRows > div:not(.realtimeCostTooltipDivider) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.realtimeCostTooltipRows span {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.realtimeCostTooltipRows strong {
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.realtimeCostTooltipRows .realtimeCostRateInput {
+  color: #38bdf8;
+}
+
+.realtimeCostTooltipRows .realtimeCostRateOutput {
+  color: #c4b5fd;
+}
+
+.realtimeCostTooltipDivider {
+  height: 1px;
+  margin: 2px 0;
+  background: #1e293b;
+}
+
+.realtimeCostTooltipEmpty {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .realtimeDraggableHeader {
   position: relative;
   white-space: nowrap;
