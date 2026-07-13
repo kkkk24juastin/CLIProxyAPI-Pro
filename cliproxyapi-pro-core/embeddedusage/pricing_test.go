@@ -111,6 +111,15 @@ func TestMatchModelsDevModelUsesProviderAlias(t *testing.T) {
 	}
 }
 
+func TestModelPriceSyncChangeRank(t *testing.T) {
+	actions := []string{"added", "updated", "locked", "unmatched", "unknown"}
+	for index, action := range actions {
+		if got := modelPriceSyncChangeRank(action); got != index {
+			t.Fatalf("modelPriceSyncChangeRank(%q) = %d, want %d", action, got, index)
+		}
+	}
+}
+
 func TestMatchModelsDevModelUsesModelFamilyWhenObservedProviderIsWrong(t *testing.T) {
 	catalog := map[string]modelsDevProvider{
 		"openai": {Models: map[string]modelsDevModel{}},

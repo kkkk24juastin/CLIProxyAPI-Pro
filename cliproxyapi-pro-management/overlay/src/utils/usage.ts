@@ -74,7 +74,20 @@ export interface ModelPriceSyncResult {
   unchanged: number;
   locked: number;
   unmatched: ObservedModelPriceTarget[];
+  changes: ModelPriceSyncChange[];
   recalculated: number;
+}
+
+export type ModelPriceSyncChangeAction = 'added' | 'updated' | 'locked' | 'unmatched';
+
+export interface ModelPriceSyncChange {
+  action: ModelPriceSyncChangeAction;
+  model: string;
+  requests: number;
+  sourceProvider?: string;
+  sourceModel?: string;
+  before?: ModelPriceRule;
+  after?: ModelPriceRule;
 }
 
 export interface UsageTokens {
@@ -593,6 +606,7 @@ export async function syncModelPricesFromModelsDev(dryRun = false): Promise<Mode
   return {
     ...payload,
     unmatched: Array.isArray(payload?.unmatched) ? payload.unmatched : [],
+    changes: Array.isArray(payload?.changes) ? payload.changes : [],
   };
 }
 

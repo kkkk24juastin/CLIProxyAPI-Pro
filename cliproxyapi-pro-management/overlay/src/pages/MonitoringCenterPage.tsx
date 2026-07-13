@@ -51,6 +51,7 @@ import {
   syncModelPricesFromModelsDev,
   type ModelPrice,
   type ModelPriceRule,
+  type ModelPriceSyncChangeAction,
   type ModelPriceSyncResult,
   type ModelPriceSyncState,
   type ObservedModelPriceTarget,
@@ -529,6 +530,7 @@ type PriceDraft = {
 };
 
 type PriceManagementView = 'rules' | 'sync';
+type PriceSyncChangeFilter = 'all' | ModelPriceSyncChangeAction;
 
 type PriceRuleTarget = {
   key: string;
@@ -1590,6 +1592,18 @@ const parsePriceValue = (value: string) => {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
+
+const formatModelPriceRate = (value: number | undefined) => {
+  const normalized = Number(value) || 0;
+  return `$${normalized.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+};
+
+const MODEL_PRICE_SYNC_RATE_FIELDS = [
+  ['input', 'usage_stats.model_price_input'],
+  ['output', 'usage_stats.model_price_output'],
+  ['cacheRead', 'usage_stats.model_price_cache_read'],
+  ['cacheWrite', 'usage_stats.model_price_cache_write'],
+] as const;
 
 const buildRealtimeMetaText = (row: MonitoringEventRow) => {
   const parts = [`${row.endpointMethod} ${row.endpointPath}`.trim()];
@@ -3607,6 +3621,7 @@ export function MonitoringCenterPage() {
   const [monitoringSettingsDraft, setMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
   const [priceManagementView, setPriceManagementView] = useState<PriceManagementView>('rules');
   const [priceRuleSearch, setPriceRuleSearch] = useState('');
+  const [priceSyncChangeFilter, setPriceSyncChangeFilter] = useState<PriceSyncChangeFilter>('all');
   const [priceModel, setPriceModel] = useState('');
   const [priceDraft, setPriceDraft] = useState<PriceDraft>(() => createPriceDraft());
   const [priceRules, setPriceRules] = useState<ModelPriceRule[]>([]);
@@ -4526,6 +4541,18 @@ export function MonitoringCenterPage() {
   const priceSyncStatus = isPriceSyncing ? 'syncing' : priceSyncState.status;
   const unmatchedPriceModels = priceSyncResult?.unmatched ?? priceSyncState.unmatchedModels ?? [];
   const unmatchedPriceModelCount = priceSyncResult ? unmatchedPriceModels.length : (priceSyncState.unmatched ?? unmatchedPriceModels.length);
+  const priceSyncChanges = useMemo(() => priceSyncResult?.changes ?? [], [priceSyncResult]);
+  const priceSyncChangeCounts = useMemo(() => {
+    const counts: Record<ModelPriceSyncChangeAction, number> = { added: 0, updated: 0, locked: 0, unmatched: 0 };
+    priceSyncChanges.forEach((change) => {
+      counts[change.action] += 1;
+    });
+    return counts;
+  }, [priceSyncChanges]);
+  const filteredPriceSyncChanges = useMemo(
+    () => priceSyncChangeFilter === 'all' ? priceSyncChanges : priceSyncChanges.filter((change) => change.action === priceSyncChangeFilter),
+    [priceSyncChangeFilter, priceSyncChanges]
+  );
 
   const selectedFiltersCount =
     [selectedProvider, selectedModel, selectedApiKey, selectedStatus].filter(
@@ -4915,6 +4942,7 @@ export function MonitoringCenterPage() {
 	const handleSyncPrices = useCallback(async (dryRun = false) => {
 		setIsPriceSyncing(true);
 		setPriceSyncResult(null);
+		setPriceSyncChangeFilter('all');
 		try {
 			const result = await syncModelPricesFromModelsDev(dryRun);
 			setPriceSyncResult(result);
@@ -4923,7 +4951,12 @@ export function MonitoringCenterPage() {
 				if (priceModel) selectPriceTarget(priceModel, payload.rules);
 				await refreshAll();
 			}
-			showNotification(t(dryRun ? 'usage_stats.model_price_sync_preview_complete' : 'usage_stats.model_price_sync_complete', { count: result.matched }), 'success');
+			showNotification(t(dryRun ? 'usage_stats.model_price_sync_preview_complete' : 'usage_stats.model_price_sync_complete', {
+				added: result.added,
+				updated: result.updated,
+				locked: result.locked,
+				unmatched: result.unmatched.length,
+			}), 'success');
 		} catch (error) {
 			showNotification(error instanceof Error ? error.message : String(error), 'error');
 		} finally {
@@ -5655,7 +5688,7 @@ export function MonitoringCenterPage() {
                   ['updated', priceSyncResult?.updated ?? priceSyncState.updated ?? 0],
                   ['unmatched', unmatchedPriceModelCount],
                 ] as const).map(([key, value]) => (
-                  <div key={key}>
+                  <div key={key} className={`${styles.priceSyncMetric} ${styles[`priceSyncMetric${key}`] ?? ''}`}>
                     <span>{t(`usage_stats.model_price_sync_metric_${key}`)}</span>
                     <strong>{formatCompactNumber(value)}</strong>
                   </div>
@@ -5664,49 +5697,110 @@ export function MonitoringCenterPage() {
 
               {priceSyncState.error ? <div className={styles.priceSyncError}>{priceSyncState.error}</div> : null}
 
-              <section className={styles.priceSyncSchedule}>
-                <div>
-                  <strong>{t('usage_stats.model_price_sync_schedule_title')}</strong>
-                  <span>{t('usage_stats.model_price_sync_schedule_desc')}</span>
-                </div>
-                <label className={styles.priceSyncScheduleToggle}>
-                  <input
-                    type="checkbox"
-                    checked={monitoringSettingsDraft.modelPriceSyncEnabled}
-                    onChange={(event) => setMonitoringSettingsDraft((previous) => ({ ...previous, modelPriceSyncEnabled: event.target.checked }))}
-                  />
-                  <span>{t('usage_stats.model_price_sync_schedule_enabled')}</span>
-                </label>
-                <label className={styles.priceSyncScheduleInterval}>
-                  <span>{t('usage_stats.model_price_sync_schedule_interval')}</span>
-                  <Input
-                    type="number"
-                    min="60"
-                    step="60"
-                    value={monitoringSettingsDraft.modelPriceSyncIntervalMinutes}
-                    onChange={(event) => setMonitoringSettingsDraft((previous) => ({ ...previous, modelPriceSyncIntervalMinutes: event.target.value }))}
-                    placeholder="1440"
-                    disabled={!monitoringSettingsDraft.modelPriceSyncEnabled}
-                  />
-                </label>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void handleSaveMonitoringSettings(false)}
-                  disabled={isMonitoringSettingsLoading || isMonitoringSettingsSaving}
-                >
-                  {isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
-                </Button>
-              </section>
-
-              <section className={styles.priceSyncResultSection}>
-                <div className={styles.priceRuleSectionHeader}>
-                  <div>
-                    <h4>{t('usage_stats.model_price_sync_unmatched')}</h4>
-                    <span>{unmatchedPriceModelCount}</span>
+              {priceSyncResult ? (
+                <section className={styles.priceSyncChangesSection}>
+                  <div className={styles.priceSyncChangesHeader}>
+                    <div>
+                      <h4>{t(priceSyncResult.dryRun ? 'usage_stats.model_price_sync_preview_details' : 'usage_stats.model_price_sync_applied_details')}</h4>
+                      <span>{t('usage_stats.model_price_sync_change_summary', {
+                        added: priceSyncResult.added,
+                        updated: priceSyncResult.updated,
+                        locked: priceSyncResult.locked,
+                        unmatched: unmatchedPriceModelCount,
+                      })}</span>
+                    </div>
+                    <div className={styles.priceSyncChangeFilters}>
+                      {(['all', 'added', 'updated', 'locked', 'unmatched'] as const).map((filter) => {
+                        const count = filter === 'all' ? priceSyncChanges.length : priceSyncChangeCounts[filter];
+                        if (filter !== 'all' && count === 0) return null;
+                        return (
+                          <button
+                            type="button"
+                            key={filter}
+                            className={priceSyncChangeFilter === filter ? styles.priceSyncChangeFilterActive : ''}
+                            onClick={() => setPriceSyncChangeFilter(filter)}
+                          >
+                            {t(`usage_stats.model_price_sync_change_${filter}`)}
+                            <span>{count}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-                <div className={styles.priceUnmatchedList}>
+
+                  <div className={styles.priceSyncChangeList}>
+                    {filteredPriceSyncChanges.map((change) => {
+                      const rateChanges = MODEL_PRICE_SYNC_RATE_FIELDS.filter(([field]) => (
+                        change.after && (!change.before || change.before.base[field] !== change.after.base[field])
+                      ));
+                      const beforeTierCount = change.before?.tiers?.length ?? 0;
+                      const afterTierCount = change.after?.tiers?.length ?? 0;
+                      return (
+                        <article className={styles.priceSyncChangeRow} key={`${change.action}/${change.model}`}>
+                          <div className={styles.priceSyncChangeIdentity}>
+                            <span className={`${styles.priceSyncChangeBadge} ${styles[`priceSyncChange${change.action}`] ?? ''}`}>
+                              {t(`usage_stats.model_price_sync_change_${change.action}`)}
+                            </span>
+                            <div>
+                              <strong title={change.model}>{change.model}</strong>
+                              <small>
+                                {change.sourceProvider
+                                  ? `${change.sourceProvider}/${change.sourceModel || change.model}`
+                                  : t('usage_stats.model_price_sync_change_no_source')}
+                                {' · '}
+                                {t('usage_stats.model_price_requests', { count: change.requests })}
+                              </small>
+                            </div>
+                          </div>
+
+                          {change.action !== 'unmatched' ? (
+                            <div className={styles.priceSyncRateChanges}>
+                              {rateChanges.map(([field, label]) => (
+                                <div key={field}>
+                                  <span>{t(label)}</span>
+                                  <div>
+                                    {change.before ? <del>{formatModelPriceRate(change.before.base[field])}</del> : null}
+                                    {change.before ? <span aria-hidden="true">-&gt;</span> : null}
+                                    <strong>{formatModelPriceRate(change.after?.base[field])}</strong>
+                                  </div>
+                                </div>
+                              ))}
+                              {beforeTierCount !== afterTierCount ? (
+                                <div>
+                                  <span>{t('usage_stats.model_price_context_tier')}</span>
+                                  <div>
+                                    <del>{beforeTierCount}</del>
+                                    <span aria-hidden="true">-&gt;</span>
+                                    <strong>{afterTierCount}</strong>
+                                  </div>
+                                </div>
+                              ) : null}
+                              {rateChanges.length === 0 && beforeTierCount === afterTierCount ? (
+                                <small>{t(change.action === 'locked'
+                                  ? 'usage_stats.model_price_sync_change_locked_hint'
+                                  : 'usage_stats.model_price_sync_change_metadata_hint')}</small>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className={styles.priceSyncChangeHint}>{t('usage_stats.model_price_sync_change_unmatched_hint')}</span>
+                          )}
+                        </article>
+                      );
+                    })}
+                    {filteredPriceSyncChanges.length === 0 ? (
+                      <div className={styles.priceSyncChangesEmpty}>{t('usage_stats.model_price_sync_no_changes')}</div>
+                    ) : null}
+                  </div>
+                </section>
+              ) : unmatchedPriceModelCount > 0 ? (
+                <section className={styles.priceSyncResultSection}>
+                  <div className={styles.priceRuleSectionHeader}>
+                    <div>
+                      <h4>{t('usage_stats.model_price_sync_unmatched')}</h4>
+                      <span>{unmatchedPriceModelCount}</span>
+                    </div>
+                  </div>
+                  <div className={styles.priceUnmatchedList}>
                   {unmatchedPriceModels.map((item) => (
                     <div key={item.model}>
                       <span>
@@ -5716,9 +5810,44 @@ export function MonitoringCenterPage() {
                       <small>{t('usage_stats.model_price_requests', { count: item.requests })}</small>
                     </div>
                   ))}
-                  {unmatchedPriceModels.length === 0 ? (
-                    <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_sync_unmatched_empty')}</div>
-                  ) : null}
+                  </div>
+                </section>
+              ) : null}
+
+              <section className={styles.priceSyncSchedule}>
+                <div>
+                  <strong>{t('usage_stats.model_price_sync_schedule_title')}</strong>
+                  <span>{t('usage_stats.model_price_sync_schedule_desc')}</span>
+                </div>
+                <div className={styles.priceSyncScheduleControls}>
+                  <label className={styles.priceSyncScheduleToggle}>
+                    <input
+                      type="checkbox"
+                      checked={monitoringSettingsDraft.modelPriceSyncEnabled}
+                      onChange={(event) => setMonitoringSettingsDraft((previous) => ({ ...previous, modelPriceSyncEnabled: event.target.checked }))}
+                    />
+                    <span>{t('usage_stats.model_price_sync_schedule_enabled')}</span>
+                  </label>
+                  <label className={styles.priceSyncScheduleInterval}>
+                    <span>{t('usage_stats.model_price_sync_schedule_interval')}</span>
+                    <Input
+                      type="number"
+                      min="60"
+                      step="60"
+                      value={monitoringSettingsDraft.modelPriceSyncIntervalMinutes}
+                      onChange={(event) => setMonitoringSettingsDraft((previous) => ({ ...previous, modelPriceSyncIntervalMinutes: event.target.value }))}
+                      placeholder="1440"
+                      disabled={!monitoringSettingsDraft.modelPriceSyncEnabled}
+                    />
+                  </label>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleSaveMonitoringSettings(false)}
+                    disabled={isMonitoringSettingsLoading || isMonitoringSettingsSaving}
+                  >
+                    {isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
+                  </Button>
                 </div>
               </section>
             </div>

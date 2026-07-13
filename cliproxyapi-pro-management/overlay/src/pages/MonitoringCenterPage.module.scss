@@ -3286,6 +3286,8 @@
 }
 
 .priceSyncView {
+  display: grid;
+  gap: 16px;
   min-height: 0;
   max-height: min(64vh, 560px);
   overflow: auto;
@@ -3297,8 +3299,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--monitor-line);
+  min-height: 52px;
 }
 
 .priceSyncHeader > div:first-child {
@@ -3346,21 +3347,30 @@
   gap: 8px;
 }
 
+.priceSyncActions :global(.btn) {
+  min-height: 38px;
+}
+
 .priceSyncMetrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  padding: 16px 0;
+  overflow: hidden;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface);
 }
 
 .priceSyncMetrics > div {
   display: grid;
-  gap: 8px;
-  min-height: 74px;
-  padding: 12px;
-  border: 1px solid var(--monitor-line);
-  border-radius: 8px;
-  background: var(--monitor-surface-elevated);
+  gap: 6px;
+  min-height: 68px;
+  padding: 11px 14px;
+  border-right: 1px solid var(--monitor-line);
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 46%, var(--monitor-surface));
+}
+
+.priceSyncMetrics > div:last-child {
+  border-right: 0;
 }
 
 .priceSyncMetrics span {
@@ -3376,8 +3386,19 @@
   line-height: 1;
 }
 
+.priceSyncMetricadded strong {
+  color: var(--monitor-green);
+}
+
+.priceSyncMetricupdated strong {
+  color: var(--monitor-accent);
+}
+
+.priceSyncMetricunmatched strong {
+  color: var(--monitor-amber);
+}
+
 .priceSyncError {
-  margin-bottom: 20px;
   padding: 11px 13px;
   border: 1px solid color-mix(in srgb, var(--monitor-red) 24%, var(--monitor-line));
   border-radius: 8px;
@@ -3388,15 +3409,12 @@
 }
 
 .priceSyncSchedule {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto 150px auto;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  margin-bottom: 18px;
-  padding: 12px 14px;
-  border: 1px solid var(--monitor-line);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--monitor-surface-muted) 58%, var(--monitor-surface));
+  padding-top: 14px;
+  border-top: 1px solid var(--monitor-line);
 }
 
 .priceSyncSchedule > div:first-child {
@@ -3418,6 +3436,13 @@
   line-height: 1.35;
 }
 
+.priceSyncScheduleControls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 10px;
+}
+
 .priceSyncScheduleToggle {
   display: inline-flex;
   align-items: center;
@@ -3425,6 +3450,7 @@
   color: var(--monitor-ink);
   font-size: 11px;
   font-weight: 700;
+  min-height: 36px;
   white-space: nowrap;
 }
 
@@ -3437,6 +3463,7 @@
 .priceSyncScheduleInterval {
   display: grid;
   gap: 4px;
+  width: 138px;
 }
 
 .priceSyncScheduleInterval :global(.form-group) {
@@ -3445,6 +3472,209 @@
 
 .priceSyncScheduleInterval input {
   min-height: 34px;
+}
+
+.priceSyncChangesSection {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.priceSyncChangesHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.priceSyncChangesHeader > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.priceSyncChangesHeader h4 {
+  margin: 0;
+  color: var(--monitor-ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.priceSyncChangesHeader > div:first-child > span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+}
+
+.priceSyncChangeFilters {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface-muted);
+}
+
+.priceSyncChangeFilters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--monitor-muted);
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.priceSyncChangeFilters button > span {
+  min-width: 16px;
+  color: inherit;
+  font-size: 9px;
+  text-align: center;
+}
+
+.priceSyncChangeFilters .priceSyncChangeFilterActive {
+  background: var(--monitor-surface);
+  color: var(--monitor-ink);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--monitor-ink) 12%, transparent);
+}
+
+.priceSyncChangeList {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface);
+}
+
+.priceSyncChangeRow {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 16px;
+  min-height: 62px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceSyncChangeRow:last-child {
+  border-bottom: 0;
+}
+
+.priceSyncChangeIdentity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.priceSyncChangeIdentity > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.priceSyncChangeIdentity strong {
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priceSyncChangeIdentity small,
+.priceSyncChangeHint,
+.priceSyncRateChanges > small {
+  overflow: hidden;
+  color: var(--monitor-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priceSyncChangeBadge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.priceSyncChangeadded {
+  background: color-mix(in srgb, var(--monitor-green) 13%, var(--monitor-surface));
+  color: var(--monitor-green);
+}
+
+.priceSyncChangeupdated {
+  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
+  color: var(--monitor-accent);
+}
+
+.priceSyncChangelocked {
+  background: color-mix(in srgb, var(--monitor-muted) 12%, var(--monitor-surface));
+  color: var(--monitor-muted);
+}
+
+.priceSyncChangeunmatched {
+  background: color-mix(in srgb, var(--monitor-amber) 14%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--monitor-amber) 78%, var(--monitor-ink));
+}
+
+.priceSyncRateChanges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 14px;
+  min-width: 0;
+}
+
+.priceSyncRateChanges > div {
+  display: grid;
+  gap: 2px;
+  min-width: 84px;
+}
+
+.priceSyncRateChanges > div > span {
+  color: var(--monitor-muted);
+  font-size: 9px;
+}
+
+.priceSyncRateChanges > div > div {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 10px;
+}
+
+.priceSyncRateChanges del {
+  color: var(--monitor-muted);
+}
+
+.priceSyncRateChanges strong {
+  color: var(--monitor-ink);
+  font-size: 11px;
+}
+
+.priceSyncChangesEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  padding: 14px;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  text-align: center;
 }
 
 .priceSyncResultSection {
@@ -5236,11 +5466,32 @@
   }
 
   .priceSyncSchedule {
-    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+    flex-direction: column;
   }
 
-  .priceSyncScheduleInterval {
-    grid-column: 1;
+  .priceSyncScheduleControls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .priceSyncChangesHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .priceSyncChangeFilters {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .priceSyncChangeRow {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .priceSyncRateChanges {
+    justify-content: flex-start;
   }
 }
 
@@ -5336,16 +5587,30 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .priceSyncSchedule {
-    grid-template-columns: 1fr;
+  .priceSyncMetrics > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .priceSyncMetrics > div:nth-child(n + 3) {
+    border-top: 1px solid var(--monitor-line);
+  }
+
+  .priceSyncScheduleControls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+
+  .priceSyncScheduleToggle {
+    grid-column: 1 / -1;
   }
 
   .priceSyncScheduleInterval {
-    grid-column: auto;
+    width: 100%;
   }
 
   .priceSyncSchedule :global(.btn) {
-    width: 100%;
+    min-height: 34px;
   }
 
   .priceUnmatchedList > div:not(.priceTierEmpty) {

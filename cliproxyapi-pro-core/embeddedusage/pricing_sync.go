@@ -37,15 +37,41 @@ type ModelPriceSyncState struct {
 }
 
 type ModelPriceSyncResult struct {
-	DryRun       bool            `json:"dryRun"`
-	NotModified  bool            `json:"notModified"`
-	Matched      int             `json:"matched"`
-	Added        int             `json:"added"`
-	Updated      int             `json:"updated"`
-	Unchanged    int             `json:"unchanged"`
-	Locked       int             `json:"locked"`
-	Unmatched    []ObservedModel `json:"unmatched"`
-	Recalculated int64           `json:"recalculated"`
+	DryRun       bool                   `json:"dryRun"`
+	NotModified  bool                   `json:"notModified"`
+	Matched      int                    `json:"matched"`
+	Added        int                    `json:"added"`
+	Updated      int                    `json:"updated"`
+	Unchanged    int                    `json:"unchanged"`
+	Locked       int                    `json:"locked"`
+	Unmatched    []ObservedModel        `json:"unmatched"`
+	Changes      []ModelPriceSyncChange `json:"changes"`
+	Recalculated int64                  `json:"recalculated"`
+}
+
+type ModelPriceSyncChange struct {
+	Action         string          `json:"action"`
+	Model          string          `json:"model"`
+	Requests       int64           `json:"requests"`
+	SourceProvider string          `json:"sourceProvider,omitempty"`
+	SourceModel    string          `json:"sourceModel,omitempty"`
+	Before         *ModelPriceRule `json:"before,omitempty"`
+	After          *ModelPriceRule `json:"after,omitempty"`
+}
+
+func modelPriceSyncChangeRank(action string) int {
+	switch action {
+	case "added":
+		return 0
+	case "updated":
+		return 1
+	case "locked":
+		return 2
+	case "unmatched":
+		return 3
+	default:
+		return 4
+	}
 }
 
 type modelsDevCost struct {
@@ -342,6 +368,7 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 	defer s.priceSyncMu.Unlock()
 	result.DryRun = dryRun
 	result.Unmatched = make([]ObservedModel, 0)
+	result.Changes = make([]ModelPriceSyncChange, 0)
 	state, stateErr := s.GetModelPriceSyncState(ctx)
 	if stateErr != nil {
 		return result, stateErr
@@ -413,6 +440,7 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 		providerID, modelID, model, ok := matchModelsDevModel(catalog, item)
 		if !ok {
 			result.Unmatched = append(result.Unmatched, item)
+			result.Changes = append(result.Changes, ModelPriceSyncChange{Action: "unmatched", Model: item.Model, Requests: item.Requests})
 			continue
 		}
 		result.Matched++
@@ -421,6 +449,12 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 		current, exists := active[key]
 		if exists && current.Locked {
 			result.Locked++
+			currentCopy := current
+			ruleCopy := rule
+			result.Changes = append(result.Changes, ModelPriceSyncChange{
+				Action: "locked", Model: item.Model, Requests: item.Requests, SourceProvider: providerID, SourceModel: modelID,
+				Before: &currentCopy, After: &ruleCopy,
+			})
 			continue
 		}
 		if exists && reflect.DeepEqual(priceRuleComparable(current), priceRuleComparable(rule)) {
@@ -429,8 +463,18 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 		}
 		if exists {
 			result.Updated++
+			currentCopy := current
+			ruleCopy := rule
+			result.Changes = append(result.Changes, ModelPriceSyncChange{
+				Action: "updated", Model: item.Model, Requests: item.Requests, SourceProvider: providerID, SourceModel: modelID,
+				Before: &currentCopy, After: &ruleCopy,
+			})
 		} else {
 			result.Added++
+			ruleCopy := rule
+			result.Changes = append(result.Changes, ModelPriceSyncChange{
+				Action: "added", Model: item.Model, Requests: item.Requests, SourceProvider: providerID, SourceModel: modelID, After: &ruleCopy,
+			})
 		}
 		if dryRun {
 			continue
@@ -444,6 +488,12 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 			return result.Unmatched[left].Model < result.Unmatched[right].Model
 		}
 		return result.Unmatched[left].Provider < result.Unmatched[right].Provider
+	})
+	sort.Slice(result.Changes, func(left, right int) bool {
+		if result.Changes[left].Action == result.Changes[right].Action {
+			return result.Changes[left].Model < result.Changes[right].Model
+		}
+		return modelPriceSyncChangeRank(result.Changes[left].Action) < modelPriceSyncChangeRank(result.Changes[right].Action)
 	})
 	if !dryRun {
 		state.ETag = nextETag
