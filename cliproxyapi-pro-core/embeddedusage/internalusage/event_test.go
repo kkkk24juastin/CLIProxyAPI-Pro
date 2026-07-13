@@ -45,6 +45,9 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 	if event.CacheTokens != 10 || event.TotalTokens != 40 {
 		t.Fatalf("cache/total tokens = %d/%d, want 10/40", event.CacheTokens, event.TotalTokens)
 	}
+	if event.CacheReadTokens != 7 || event.CacheWriteTokens != 3 {
+		t.Fatalf("cache read/write tokens = %d/%d, want 7/3", event.CacheReadTokens, event.CacheWriteTokens)
+	}
 	if strings.Contains(event.RawJSON, "secret-cookie") || strings.Contains(event.RawJSON, "sk-secret") {
 		t.Fatalf("RawJSON was not redacted: %s", event.RawJSON)
 	}
@@ -85,6 +88,11 @@ func TestNormalizeRawPreservesExportedHashes(t *testing.T) {
 		"input_tokens":10,
 		"output_tokens":20,
 		"total_tokens":30,
+		"cache_read_tokens":4,
+		"cache_write_tokens":2,
+		"estimated_cost":0.125,
+		"price_rule_id":9,
+		"cost_breakdown_json":"{\"source\":\"models.dev\"}",
 		"failed":false
 	}`))
 	if err != nil {
@@ -98,6 +106,9 @@ func TestNormalizeRawPreservesExportedHashes(t *testing.T) {
 	}
 	if event.APIKeyHash != "api-key-hash-exported" {
 		t.Fatalf("api key hash = %q, want exported hash", event.APIKeyHash)
+	}
+	if event.EstimatedCost == nil || *event.EstimatedCost != 0.125 || event.PriceRuleID != 9 || event.CacheReadTokens != 4 || event.CacheWriteTokens != 2 {
+		t.Fatalf("exported pricing fields were not preserved: %+v", event)
 	}
 }
 

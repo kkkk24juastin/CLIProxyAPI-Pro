@@ -37,10 +37,16 @@
 
 - `GET /usage/model-prices`
 - `PUT /usage/model-prices`
+- `GET|PUT|DELETE /usage/model-price-rules`
+- `POST /usage/model-prices/sync`
+- `GET /usage/model-prices/sync-status`
+- `POST /usage/model-prices/recalculate`
 
 如果后端还没有保存价格，页面可从旧 `localStorage` 价格设置做一次性迁移。之后正常读写都走 SQLite。
 
-模型价格也会作为 `model_prices` 元数据记录参与 usage JSONL 导入导出，因此 WebDAV usage 备份可随 usage events 一起恢复成本设置。
+价格规则以 `(provider, model)` 为键，支持 input、output、cache read、cache write、多个上下文长度阶梯和 service tier 覆盖。页面可手动从 models.dev 同步，也可在监控设置中启用定期同步；同步只保存请求历史中实际出现过的模型，手动规则默认锁定且不会被自动覆盖。
+
+成本在后端按单次请求选择阶梯并固化到 usage event，聚合接口直接累加事件成本。模型价格和完整规则会作为 `model_prices` 元数据记录参与 JSONL 导入导出。
 
 ### SQLite 配额持久化
 

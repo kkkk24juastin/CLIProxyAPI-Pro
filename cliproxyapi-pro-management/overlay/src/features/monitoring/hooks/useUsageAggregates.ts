@@ -19,6 +19,9 @@ export type UsageAggregateBucket = {
   outputTokens: number;
   reasoningTokens: number;
   cacheTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  estimatedCost: number;
   avgLatencyMs?: number;
   avgTtftMs?: number;
 };

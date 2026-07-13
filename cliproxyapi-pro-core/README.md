@@ -51,12 +51,16 @@ internal/embeddedusage
 - `DELETE /v0/management/usage/quota-cache` — 删除配额缓存。
 - `GET /v0/management/usage/model-prices` — 读取模型价格设置。
 - `PUT /v0/management/usage/model-prices` — 写入模型价格设置。
-- `GET /v0/management/usage/settings` — 读取监控日志保留和 WebDAV 备份设置。
-- `PUT /v0/management/usage/settings` — 写入监控日志保留和 WebDAV 备份设置。
+- `GET|PUT|DELETE /v0/management/usage/model-price-rules` — 管理 provider/model 价格规则和上下文阶梯。
+- `POST /v0/management/usage/model-prices/sync` — 从 models.dev 同步请求历史中出现过的模型。
+- `GET /v0/management/usage/model-prices/sync-status` — 读取同步状态。
+- `POST /v0/management/usage/model-prices/recalculate` — 显式重新估算历史成本。
+- `GET /v0/management/usage/settings` — 读取监控日志保留、WebDAV 备份和模型价格同步设置。
+- `PUT /v0/management/usage/settings` — 写入监控日志保留、WebDAV 备份和模型价格同步设置。
 
 `/usage/events` 和 `/usage/stream` 的 detail 会携带稳定事件 `id`，管理端用它进行增量去重和断线追平。SSE 在事件成功写入 SQLite 后由进程内通知立即唤醒，仅保留低频 keepalive，不再为每个连接每秒轮询数据库。
 
-`/usage/aggregates` 支持 `from_ms`、`to_ms`、`interval=minute|hour|day|all`、`group_by=provider,model,endpoint,api_key_hash`、`api_key_hash` 和 `timezone_offset_minutes`。响应同时返回 `latest_id` 与 `snapshot_at_ms`，用于判断聚合快照新鲜度。
+`/usage/aggregates` 支持 `from_ms`、`to_ms`、`interval=minute|hour|day|all`、`group_by=provider,model,endpoint,api_key_hash`、`api_key_hash` 和 `timezone_offset_minutes`。响应同时返回 `latest_id`、`snapshot_at_ms` 和逐事件累加的 `estimatedCost`，避免使用聚合 Token 错选上下文价格阶梯。
 
 ### JSONL usage 备份与恢复
 
@@ -64,9 +68,9 @@ internal/embeddedusage
 
 导出内容包含 usage events，也可能包含元数据记录：
 
-- `model_prices` — 管理页面成本视图使用的模型价格设置。
+- `model_prices` — 基础价格兼容数据和完整 provider/model 价格规则。
 - `quota_cache` — 配额卡片和账号级刷新使用的 SQLite-backed quota snapshots。
-- `monitoring_settings` — 监控日志保留时间、WebDAV 备份配置和 WebDAV 备份保留天数。
+- `monitoring_settings` — 监控日志保留时间、WebDAV 备份配置和 models.dev 定期同步配置。
 - `account_inspection_schedule` — 后端账号巡检调度设置。
 
 `/usage/import` 接受同样的 JSONL 格式。导入时会对每行只读取一次 `record_type`，导入 usage events，恢复模型价格、quota cache entries、监控设置，并在存在账号巡检调度记录时恢复调度设置。

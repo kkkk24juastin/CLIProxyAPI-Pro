@@ -12,6 +12,70 @@ export interface ModelPrice {
   cache: number;
 }
 
+export interface ModelPriceRate {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  reasoning?: number;
+}
+
+export interface ModelPriceTier extends ModelPriceRate {
+  contextSize: number;
+}
+
+export interface ModelPriceRule {
+  id?: number;
+  provider: string;
+  model: string;
+  base: ModelPriceRate;
+  tiers?: ModelPriceTier[];
+  serviceTiers?: Record<string, ModelPriceRate>;
+  source?: string;
+  sourceProvider?: string;
+  sourceModel?: string;
+  locked?: boolean;
+  version?: number;
+  effectiveFromMs?: number;
+  fetchedAtMs?: number;
+  upstreamUpdated?: string;
+  updatedAtMs?: number;
+}
+
+export interface ObservedModelPriceTarget {
+  provider: string;
+  model: string;
+  alias?: string;
+  requests: number;
+  lastSeenAtMs: number;
+}
+
+export interface ModelPriceSyncState {
+  status: string;
+  lastAttemptMs?: number;
+  lastSuccessMs?: number;
+  matched?: number;
+  added?: number;
+  updated?: number;
+  unchanged?: number;
+  locked?: number;
+  unmatched?: number;
+  recalculated?: number;
+  error?: string;
+}
+
+export interface ModelPriceSyncResult {
+  dryRun: boolean;
+  notModified: boolean;
+  matched: number;
+  added: number;
+  updated: number;
+  unchanged: number;
+  locked: number;
+  unmatched: ObservedModelPriceTarget[];
+  recalculated: number;
+}
+
 export interface UsageTokens {
   input_tokens?: number;
   output_tokens?: number;
@@ -20,6 +84,7 @@ export interface UsageTokens {
   cache_read_tokens?: number;
   cache_creation_tokens?: number;
   cache_tokens?: number;
+  cache_write_tokens?: number;
   total_tokens?: number;
 }
 
@@ -41,6 +106,9 @@ export interface UsageDetail {
   retry_after?: string;
   reasoning_effort?: string;
   service_tier?: string;
+  estimated_cost?: number;
+  price_rule_id?: number;
+  cost_breakdown?: Record<string, unknown>;
   tokens: UsageTokens;
   failed: boolean;
   __modelName?: string;
@@ -432,9 +500,11 @@ export function extractTotalTokens(detail: unknown): number {
 }
 
 export function calculateCost(
-  detail: Pick<UsageDetail, 'tokens' | '__modelName'>,
-  modelPrices: Record<string, ModelPrice>
+	 detail: Pick<UsageDetail, 'tokens' | '__modelName' | 'estimated_cost'>,
+	 modelPrices: Record<string, ModelPrice>
 ): number {
+	 const backendCost = Number(detail.estimated_cost);
+	 if (Number.isFinite(backendCost) && backendCost >= 0) return backendCost;
   const modelName = detail.__modelName || '';
   const price = modelPrices[modelName];
   if (!price) return 0;
@@ -492,6 +562,43 @@ export async function loadModelPricesFromSqlite(): Promise<Record<string, ModelP
 
 export async function saveModelPricesToSqlite(prices: Record<string, ModelPrice>): Promise<void> {
   await apiClient.put(MODEL_PRICE_API_PATH, { prices: normalizeModelPrices(prices) });
+}
+
+export async function loadModelPriceRules(): Promise<{
+  rules: ModelPriceRule[];
+  observedModels: ObservedModelPriceTarget[];
+}> {
+  const payload = await apiClient.get<{ rules?: ModelPriceRule[]; observedModels?: ObservedModelPriceTarget[] }>('/usage/model-price-rules');
+  return {
+    rules: Array.isArray(payload?.rules) ? payload.rules : [],
+    observedModels: Array.isArray(payload?.observedModels) ? payload.observedModels : [],
+  };
+}
+
+export async function saveModelPriceRule(rule: ModelPriceRule): Promise<ModelPriceRule> {
+  const payload = await apiClient.put<{ rule: ModelPriceRule }>('/usage/model-price-rules', { rule });
+  return payload.rule;
+}
+
+export async function deleteModelPriceRule(provider: string, model: string): Promise<void> {
+  await apiClient.delete('/usage/model-price-rules', { params: { provider, model } });
+}
+
+export async function syncModelPricesFromModelsDev(dryRun = false): Promise<ModelPriceSyncResult> {
+  return apiClient.post<ModelPriceSyncResult>('/usage/model-prices/sync', {
+    dryRun,
+    recalculateUnpriced: !dryRun,
+  });
+}
+
+export async function loadModelPriceSyncState(): Promise<ModelPriceSyncState> {
+  const payload = await apiClient.get<{ state?: ModelPriceSyncState }>('/usage/model-prices/sync-status');
+  return payload?.state ?? { status: 'idle' };
+}
+
+export async function recalculateModelPriceHistory(all = false): Promise<number> {
+  const payload = await apiClient.post<{ updated?: number }>('/usage/model-prices/recalculate', { all });
+  return Number(payload?.updated) || 0;
 }
 
 export function formatCompactNumber(value: number): string {

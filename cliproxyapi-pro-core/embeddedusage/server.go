@@ -90,6 +90,24 @@ func RegisterGinRoutes(group *gin.RouterGroup) {
 		group.PUT("/model-prices", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
+		group.GET("/model-price-rules", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.PUT("/model-price-rules", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.DELETE("/model-price-rules", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.POST("/model-prices/sync", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.GET("/model-prices/sync-status", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.POST("/model-prices/recalculate", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
 		group.GET("/settings", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
@@ -114,6 +132,12 @@ func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
 	group.DELETE("/quota-cache", s.handleQuotaCacheDelete)
 	group.GET("/model-prices", s.handleModelPricesGet)
 	group.PUT("/model-prices", s.handleModelPricesPut)
+	group.GET("/model-price-rules", s.handleModelPriceRulesGet)
+	group.PUT("/model-price-rules", s.handleModelPriceRulesPut)
+	group.DELETE("/model-price-rules", s.handleModelPriceRulesDelete)
+	group.POST("/model-prices/sync", s.handleModelPricesSync)
+	group.GET("/model-prices/sync-status", s.handleModelPricesSyncStatus)
+	group.POST("/model-prices/recalculate", s.handleModelPricesRecalculate)
 	group.GET("/settings", s.handleMonitoringSettingsGet)
 	group.PUT("/settings", s.handleMonitoringSettingsPut)
 }
@@ -547,6 +571,7 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		return nil
 	}
 	var modelPrices map[string]ModelPrice
+	var modelPriceRules []ModelPriceRule
 	modelPriceRecords := 0
 	var quotaEntries []QuotaCacheEntry
 	quotaCacheRecords := 0
@@ -577,12 +602,13 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			accountInspectionScheduleRecords++
 			continue
 		case modelPricesExportRecordType:
-			prices, err := parseModelPricesImportRecord(raw)
+			prices, rules, err := parseModelPricesImportRecord(raw)
 			if err != nil {
 				failed++
 				continue
 			}
 			modelPrices = prices
+			modelPriceRules = rules
 			modelPriceRecords++
 			continue
 		case monitoringSettingsExportRecordType:
@@ -632,6 +658,18 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return
 		}
 	}
+	for _, rule := range modelPriceRules {
+		if _, _, err := s.store.UpsertModelPriceRule(c.Request.Context(), rule, true); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if modelPrices != nil || len(modelPriceRules) > 0 {
+		if _, err := s.store.RecalculateEventCosts(c.Request.Context(), true); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	if len(quotaEntries) > 0 {
 		for _, entry := range quotaEntries {
 			if err := s.store.SetQuotaCache(c.Request.Context(), entry); err != nil {
@@ -659,6 +697,7 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		"failed":                           failed,
 		"modelPrices":                      len(modelPrices),
 		"modelPriceRecords":                modelPriceRecords,
+		"modelPriceRules":                  len(modelPriceRules),
 		"quotaCache":                       len(quotaEntries),
 		"quotaCacheRecords":                quotaCacheRecords,
 		"accountInspectionSchedule":        accountInspectionSchedule != nil,
@@ -705,15 +744,15 @@ func parseMonitoringSettingsImportRecord(raw []byte) (MonitoringSettings, error)
 	return normalizeMonitoringSettings(record.Settings), nil
 }
 
-func parseModelPricesImportRecord(raw []byte) (map[string]ModelPrice, error) {
+func parseModelPricesImportRecord(raw []byte) (map[string]ModelPrice, []ModelPriceRule, error) {
 	var record modelPricesExportRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if record.Prices == nil {
 		record.Prices = map[string]ModelPrice{}
 	}
-	return record.Prices, nil
+	return record.Prices, record.Rules, nil
 }
 
 func (s *Server) handleStatus(c *gin.Context) {
@@ -830,6 +869,98 @@ func (s *Server) handleModelPricesPut(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) handleModelPriceRulesGet(c *gin.Context) {
+	rules, err := s.store.ActiveModelPriceRules(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	observed, err := s.store.ObservedModels(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rules": rules, "observedModels": observed})
+}
+
+func (s *Server) handleModelPriceRulesPut(c *gin.Context) {
+	var payload struct {
+		Rule ModelPriceRule `json:"rule"`
+	}
+	if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	payload.Rule.Source = modelPriceSourceManual
+	payload.Rule.Locked = true
+	rule, changed, err := s.store.UpsertModelPriceRule(c.Request.Context(), payload.Rule, true)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rule": rule, "changed": changed})
+}
+
+func (s *Server) handleModelPriceRulesDelete(c *gin.Context) {
+	provider := strings.TrimSpace(c.Query("provider"))
+	model := strings.TrimSpace(c.Query("model"))
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+	if err := s.store.DeleteModelPriceRule(c.Request.Context(), provider, model); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) handleModelPricesSync(c *gin.Context) {
+	var payload struct {
+		DryRun              bool `json:"dryRun"`
+		RecalculateUnpriced bool `json:"recalculateUnpriced"`
+	}
+	if c.Request.ContentLength != 0 {
+		if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	result, err := s.store.SyncModelsDevPrices(c.Request.Context(), payload.DryRun, payload.RecalculateUnpriced)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (s *Server) handleModelPricesSyncStatus(c *gin.Context) {
+	state, err := s.store.GetModelPriceSyncState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"state": state})
+}
+
+func (s *Server) handleModelPricesRecalculate(c *gin.Context) {
+	var payload struct {
+		All bool `json:"all"`
+	}
+	if c.Request.ContentLength != 0 {
+		if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	updated, err := s.store.RecalculateEventCosts(c.Request.Context(), !payload.All)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"updated": updated})
 }
 
 func (s *Server) handleMonitoringSettingsGet(c *gin.Context) {

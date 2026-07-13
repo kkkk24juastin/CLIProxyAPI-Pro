@@ -2871,11 +2871,32 @@
   grid-column: span 6;
 }
 
+.priceGrid > .priceField:not(.priceFieldModel):not(.priceFieldPrompt):not(.priceFieldCompletion):not(.priceFieldCache) {
+  grid-column: span 4;
+}
+
 .priceActionsBar {
   margin-top: 2px;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.priceSyncBar > :first-child:not(:last-child) {
+  margin-right: auto;
+}
+
+.priceTierRow {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface-muted);
+}
+
+.priceTierRow > .inlineActionButton {
+  justify-self: end;
 }
 
 .savedPricesList {
@@ -2906,7 +2927,7 @@
 
 .savedPricesTable {
   width: 100%;
-  min-width: 720px;
+  min-width: 860px;
   border-collapse: collapse;
 }
 
@@ -4164,6 +4185,10 @@
   .priceFieldPrompt,
   .priceFieldCompletion,
   .priceFieldCache {
+    grid-column: auto;
+  }
+
+  .priceGrid > .priceField:not(.priceFieldModel):not(.priceFieldPrompt):not(.priceFieldCompletion):not(.priceFieldCache) {
     grid-column: auto;
   }
 }

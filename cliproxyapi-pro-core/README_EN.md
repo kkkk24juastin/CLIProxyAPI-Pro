@@ -51,12 +51,16 @@ The embedded service exposes these management routes:
 - `DELETE /v0/management/usage/quota-cache` — delete quota cache entries.
 - `GET /v0/management/usage/model-prices` — read model price settings.
 - `PUT /v0/management/usage/model-prices` — write model price settings.
-- `GET /v0/management/usage/settings` — read monitoring retention and WebDAV backup settings.
-- `PUT /v0/management/usage/settings` — write monitoring retention and WebDAV backup settings.
+- `GET|PUT|DELETE /v0/management/usage/model-price-rules` — manage provider/model rules and context tiers.
+- `POST /v0/management/usage/model-prices/sync` — synchronize observed models from models.dev.
+- `GET /v0/management/usage/model-prices/sync-status` — read synchronization status.
+- `POST /v0/management/usage/model-prices/recalculate` — explicitly recalculate historical costs.
+- `GET /v0/management/usage/settings` — read retention, WebDAV, and model-price synchronization settings.
+- `PUT /v0/management/usage/settings` — write retention, WebDAV, and model-price synchronization settings.
 
 Details returned by `/usage/events` and `/usage/stream` include a stable event `id`, which the management UI uses for incremental deduplication and cursor catch-up. SSE connections are awakened by an in-process notification after SQLite commits, with only a low-frequency keepalive instead of one database poll per connection per second.
 
-`/usage/aggregates` supports `from_ms`, `to_ms`, `interval=minute|hour|day|all`, `group_by=provider,model,endpoint,api_key_hash`, `api_key_hash`, and `timezone_offset_minutes`. Responses also include `latest_id` and `snapshot_at_ms` for freshness tracking.
+`/usage/aggregates` supports `from_ms`, `to_ms`, `interval=minute|hour|day|all`, `group_by=provider,model,endpoint,api_key_hash`, `api_key_hash`, and `timezone_offset_minutes`. Responses include `latest_id`, `snapshot_at_ms`, and event-level `estimatedCost` sums so context tiers are never selected from aggregated token totals.
 
 ### JSONL usage backup and restore
 
@@ -64,9 +68,9 @@ Details returned by `/usage/events` and `/usage/stream` include a stable event `
 
 The export contains usage events and may also include metadata records:
 
-- `model_prices` — persisted model price settings used by the management UI cost view.
+- `model_prices` — legacy base prices plus complete provider/model pricing rules.
 - `quota_cache` — SQLite-backed quota snapshots used by quota cards and account-scoped refresh.
-- `monitoring_settings` — monitoring retention, WebDAV backup settings, and WebDAV backup retention days.
+- `monitoring_settings` — retention, WebDAV backup, and scheduled models.dev synchronization settings.
 - `account_inspection_schedule` — persisted backend account-inspection schedule.
 
 `/usage/import` accepts the same JSONL format. It reads each line's `record_type` once, imports usage events, restores model prices, restores quota cache entries, restores monitoring settings, and restores the account-inspection schedule when those metadata records are present. Older event-only JSONL files remain compatible.

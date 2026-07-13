@@ -50,24 +50,27 @@ type UsageEventQueryPage struct {
 }
 
 type UsageAggregateBucket struct {
-	BucketStartMS   int64  `json:"bucketStartMs"`
-	BucketStart     string `json:"bucketStart"`
-	Provider        string `json:"provider,omitempty"`
-	Model           string `json:"model,omitempty"`
-	Endpoint        string `json:"endpoint,omitempty"`
-	AuthIndex       string `json:"authIndex,omitempty"`
-	APIKeyHash      string `json:"apiKeyHash,omitempty"`
-	LastSeenAtMS    int64  `json:"lastSeenAtMs"`
-	TotalRequests   int64  `json:"totalRequests"`
-	SuccessCount    int64  `json:"successCount"`
-	FailureCount    int64  `json:"failureCount"`
-	TotalTokens     int64  `json:"totalTokens"`
-	InputTokens     int64  `json:"inputTokens"`
-	OutputTokens    int64  `json:"outputTokens"`
-	ReasoningTokens int64  `json:"reasoningTokens"`
-	CacheTokens     int64  `json:"cacheTokens"`
-	AvgLatencyMS    *int64 `json:"avgLatencyMs,omitempty"`
-	AvgTTFTMS       *int64 `json:"avgTtftMs,omitempty"`
+	BucketStartMS    int64   `json:"bucketStartMs"`
+	BucketStart      string  `json:"bucketStart"`
+	Provider         string  `json:"provider,omitempty"`
+	Model            string  `json:"model,omitempty"`
+	Endpoint         string  `json:"endpoint,omitempty"`
+	AuthIndex        string  `json:"authIndex,omitempty"`
+	APIKeyHash       string  `json:"apiKeyHash,omitempty"`
+	LastSeenAtMS     int64   `json:"lastSeenAtMs"`
+	TotalRequests    int64   `json:"totalRequests"`
+	SuccessCount     int64   `json:"successCount"`
+	FailureCount     int64   `json:"failureCount"`
+	TotalTokens      int64   `json:"totalTokens"`
+	InputTokens      int64   `json:"inputTokens"`
+	OutputTokens     int64   `json:"outputTokens"`
+	ReasoningTokens  int64   `json:"reasoningTokens"`
+	CacheTokens      int64   `json:"cacheTokens"`
+	CacheReadTokens  int64   `json:"cacheReadTokens"`
+	CacheWriteTokens int64   `json:"cacheWriteTokens"`
+	EstimatedCost    float64 `json:"estimatedCost"`
+	AvgLatencyMS     *int64  `json:"avgLatencyMs,omitempty"`
+	AvgTTFTMS        *int64  `json:"avgTtftMs,omitempty"`
 }
 
 type UsageAggregateOptions struct {
@@ -113,8 +116,14 @@ type QuotaCacheStats struct {
 }
 
 type MonitoringSettings struct {
-	RetentionDays int                          `json:"retentionDays"`
-	WebDAV        MonitoringWebDAVBackupConfig `json:"webdav"`
+	RetentionDays  int                          `json:"retentionDays"`
+	WebDAV         MonitoringWebDAVBackupConfig `json:"webdav"`
+	ModelPriceSync ModelPriceSyncConfig         `json:"modelPriceSync"`
+}
+
+type ModelPriceSyncConfig struct {
+	Enabled         bool `json:"enabled"`
+	IntervalMinutes int  `json:"intervalMinutes"`
 }
 
 type MonitoringWebDAVBackupConfig struct {
@@ -136,6 +145,7 @@ type modelPricesExportRecord struct {
 	RecordType string                `json:"record_type"`
 	Version    int                   `json:"version"`
 	Prices     map[string]ModelPrice `json:"prices"`
+	Rules      []ModelPriceRule      `json:"rules,omitempty"`
 	ExportedAt int64                 `json:"exported_at_ms"`
 }
 
@@ -164,6 +174,7 @@ type Store struct {
 	summaryCache *cachedUsageSummary
 	eventMu      sync.Mutex
 	eventSignal  chan struct{}
+	priceSyncMu  sync.Mutex
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -239,6 +250,8 @@ func (s *Store) init() error {
 			reasoning_tokens integer not null default 0,
 			cached_tokens integer not null default 0,
 			cache_tokens integer not null default 0,
+			cache_read_tokens integer not null default 0,
+			cache_write_tokens integer not null default 0,
 			total_tokens integer not null default 0,
 			latency_ms integer,
 			ttft_ms integer,
@@ -249,6 +262,9 @@ func (s *Store) init() error {
 			retry_after text,
 			reasoning_effort text,
 			service_tier text,
+			estimated_cost real,
+			price_rule_id integer,
+			cost_breakdown_json text,
 			failed integer not null default 0,
 			raw_json text,
 			created_at_ms integer not null
@@ -297,6 +313,34 @@ func (s *Store) init() error {
 				updated_at_ms integer not null
 			)`,
 		`create index if not exists idx_model_prices_updated_at on model_prices(updated_at_ms)`,
+		`create table if not exists model_price_rules (
+			provider text not null,
+			model text not null,
+			active_version integer not null,
+			source text not null,
+			source_provider text not null default '',
+			source_model text not null default '',
+			locked integer not null default 0,
+			fetched_at_ms integer not null default 0,
+			upstream_updated text not null default '',
+			updated_at_ms integer not null,
+			primary key(provider, model)
+		)`,
+		`create table if not exists model_price_rule_versions (
+			id integer primary key autoincrement,
+			provider text not null,
+			model text not null,
+			version integer not null,
+			rule_json text not null,
+			effective_from_ms integer not null,
+			created_at_ms integer not null,
+			unique(provider, model, version)
+		)`,
+		`create table if not exists model_price_sync_state (
+			id integer primary key check (id = 1),
+			state_json text not null,
+			updated_at_ms integer not null
+		)`,
 		`create table if not exists monitoring_settings (
 			id integer primary key check (id = 1),
 			settings_json text not null,
@@ -319,10 +363,18 @@ func (s *Store) init() error {
 		`alter table usage_events add column service_tier text`,
 		`alter table usage_events add column executor_type text`,
 		`alter table usage_events add column alias text`,
+		`alter table usage_events add column cache_read_tokens integer not null default 0`,
+		`alter table usage_events add column cache_write_tokens integer not null default 0`,
+		`alter table usage_events add column estimated_cost real`,
+		`alter table usage_events add column price_rule_id integer`,
+		`alter table usage_events add column cost_breakdown_json text`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil && !isDuplicateColumnError(err) {
 			return err
 		}
+	}
+	if err := s.migrateLegacyModelPrices(context.Background()); err != nil {
+		return err
 	}
 	return s.ensureUsageSummary()
 }
@@ -330,6 +382,10 @@ func (s *Store) init() error {
 func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) (InsertResult, error) {
 	if len(events) == 0 {
 		return InsertResult{}, nil
+	}
+	rules, err := s.activeModelPriceRuleMap(ctx)
+	if err != nil {
+		return InsertResult{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -340,10 +396,10 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 	stmt, err := tx.PrepareContext(ctx, `insert or ignore into usage_events (
 		request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
-		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
+		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
-		failed, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return InsertResult{}, err
 	}
@@ -353,6 +409,16 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 	summaryDelta := UsageSummary{}
 	latestInsertedID := int64(0)
 	for _, event := range events {
+		if event.EstimatedCost == nil {
+			if rule, ok := findModelPriceRule(rules, event.Provider, event.Model); ok {
+				cost, breakdown := evaluateEventCost(event, rule)
+				event.EstimatedCost = &cost
+				event.PriceRuleID = rule.ID
+				if raw, marshalErr := json.Marshal(breakdown); marshalErr == nil {
+					event.CostBreakdownJSON = string(raw)
+				}
+			}
+		}
 		failed := 0
 		if event.Failed {
 			failed = 1
@@ -361,9 +427,9 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 			nullString(event.RequestID), event.EventHash, event.TimestampMS, event.Timestamp,
 			nullString(event.Provider), nullString(event.ExecutorType), event.Model, nullString(event.Alias), nullString(event.Endpoint), nullString(event.Method), nullString(event.Path),
 			nullString(event.AuthType), nullString(event.AuthIndex), nullString(event.Source), nullString(event.SourceHash), nullString(event.APIKeyHash),
-			event.InputTokens, event.OutputTokens, event.ReasoningTokens, event.CachedTokens, event.CacheTokens, event.TotalTokens,
+			event.InputTokens, event.OutputTokens, event.ReasoningTokens, event.CachedTokens, event.CacheTokens, event.CacheReadTokens, event.CacheWriteTokens, event.TotalTokens,
 			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.UpstreamRequestID), nullString(event.RetryAfter), nullString(event.ReasoningEffort), nullString(event.ServiceTier),
-			failed, nullString(event.RawJSON), event.CreatedAtMS,
+			nullFloat64(event.EstimatedCost), nullPositiveInt64(event.PriceRuleID), nullString(event.CostBreakdownJSON), failed, nullString(event.RawJSON), event.CreatedAtMS,
 		)
 		if err != nil {
 			return InsertResult{}, err
@@ -522,13 +588,16 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		var requestID, provider, executorType, alias, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, rawJSON sql.NullString
 		var latency, ttft sql.NullInt64
 		var statusCode sql.NullInt64
-		var errorCode, errorMessage, upstreamRequestID, retryAfter, reasoningEffort, serviceTier sql.NullString
+		var errorCode, errorMessage, upstreamRequestID, retryAfter, reasoningEffort, serviceTier, costBreakdown sql.NullString
+		var estimatedCost sql.NullFloat64
+		var priceRuleID sql.NullInt64
 		var failed int
 		if err := rows.Scan(
 			&event.ID, &requestID, &event.EventHash, &event.TimestampMS, &event.Timestamp, &provider, &executorType, &event.Model,
 			&alias, &endpoint, &method, &path, &authType, &authIndex, &source, &sourceHash, &apiKeyHash,
-			&event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheTokens, &event.TotalTokens,
-			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &reasoningEffort, &serviceTier, &failed, &rawJSON, &event.CreatedAtMS,
+			&event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheTokens, &event.CacheReadTokens, &event.CacheWriteTokens, &event.TotalTokens,
+			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &reasoningEffort, &serviceTier,
+			&estimatedCost, &priceRuleID, &costBreakdown, &failed, &rawJSON, &event.CreatedAtMS,
 		); err != nil {
 			return nil, err
 		}
@@ -564,6 +633,12 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		event.RetryAfter = retryAfter.String
 		event.ReasoningEffort = reasoningEffort.String
 		event.ServiceTier = serviceTier.String
+		if estimatedCost.Valid {
+			value := estimatedCost.Float64
+			event.EstimatedCost = &value
+		}
+		event.PriceRuleID = priceRuleID.Int64
+		event.CostBreakdownJSON = costBreakdown.String
 		events = append(events, event)
 	}
 	return events, rows.Err()
@@ -576,9 +651,9 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]internalusage.Ev
 	rows, err := s.db.QueryContext(ctx, `select
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
-		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
+		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
-		failed, raw_json, created_at_ms
+		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events indexed by idx_usage_events_recent
 		order by timestamp_ms desc, id desc
 		limit ?`, limit)
@@ -596,9 +671,9 @@ func (s *Store) EventsAfter(ctx context.Context, afterID int64, limit int) ([]in
 	rows, err := s.db.QueryContext(ctx, `select
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
-		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
+		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
-		failed, raw_json, created_at_ms
+		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events
 		where id > ?
 		order by id asc
@@ -720,9 +795,9 @@ func (s *Store) QueryEvents(ctx context.Context, options UsageEventQueryOptions)
 	query := `select
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
-		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
+		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
-		failed, raw_json, created_at_ms
+		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events` + usageEventQueryWhere(queryWheres) + `
 		order by timestamp_ms desc, id desc
 		limit ?`
@@ -959,6 +1034,9 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 		`coalesce(sum(output_tokens), 0) as output_tokens`,
 		`coalesce(sum(reasoning_tokens), 0) as reasoning_tokens`,
 		`coalesce(sum(max(cached_tokens, cache_tokens)), 0) as cache_tokens`,
+		`coalesce(sum(cache_read_tokens), 0) as cache_read_tokens`,
+		`coalesce(sum(cache_write_tokens), 0) as cache_write_tokens`,
+		`coalesce(sum(estimated_cost), 0) as estimated_cost`,
 		`cast(avg(latency_ms) as integer) as avg_latency_ms`,
 		`cast(avg(ttft_ms) as integer) as avg_ttft_ms`,
 		`coalesce(max(timestamp_ms), 0) as last_seen_at_ms`,
@@ -1000,7 +1078,7 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 			}
 		}
 		var avgLatency, avgTTFT sql.NullInt64
-		dest = append(dest, &bucket.TotalRequests, &bucket.SuccessCount, &bucket.FailureCount, &bucket.TotalTokens, &bucket.InputTokens, &bucket.OutputTokens, &bucket.ReasoningTokens, &bucket.CacheTokens, &avgLatency, &avgTTFT, &bucket.LastSeenAtMS)
+		dest = append(dest, &bucket.TotalRequests, &bucket.SuccessCount, &bucket.FailureCount, &bucket.TotalTokens, &bucket.InputTokens, &bucket.OutputTokens, &bucket.ReasoningTokens, &bucket.CacheTokens, &bucket.CacheReadTokens, &bucket.CacheWriteTokens, &bucket.EstimatedCost, &avgLatency, &avgTTFT, &bucket.LastSeenAtMS)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
@@ -1084,7 +1162,11 @@ func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	prices, err := s.GetModelPrices(ctx)
+	prices, err := s.getModelPrices(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	priceRules, err := s.ActiveModelPriceRules(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1109,11 +1191,12 @@ func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
 	}
 	output = append(output, line...)
 	output = append(output, '\n')
-	if len(prices) > 0 {
+	if len(prices) > 0 || len(priceRules) > 0 {
 		line, err := json.Marshal(modelPricesExportRecord{
 			RecordType: modelPricesExportRecordType,
-			Version:    1,
+			Version:    2,
 			Prices:     prices,
+			Rules:      priceRules,
 			ExportedAt: time.Now().UnixMilli(),
 		})
 		if err != nil {
@@ -1155,6 +1238,7 @@ func defaultMonitoringSettings() MonitoringSettings {
 			Enabled:         false,
 			IntervalMinutes: 1440,
 		},
+		ModelPriceSync: ModelPriceSyncConfig{Enabled: false, IntervalMinutes: 1440},
 	}
 }
 
@@ -1170,6 +1254,9 @@ func normalizeMonitoringSettings(settings MonitoringSettings) MonitoringSettings
 	}
 	settings.WebDAV.URL = strings.TrimSpace(settings.WebDAV.URL)
 	settings.WebDAV.Username = strings.TrimSpace(settings.WebDAV.Username)
+	if settings.ModelPriceSync.IntervalMinutes < 60 {
+		settings.ModelPriceSync.IntervalMinutes = 1440
+	}
 	return settings
 }
 
@@ -1411,7 +1498,20 @@ func (s *Store) QuotaCacheStats(ctx context.Context) (QuotaCacheStats, error) {
 }
 
 func (s *Store) GetModelPrices(ctx context.Context) (map[string]ModelPrice, error) {
-	rows, err := s.db.QueryContext(ctx, `select model, prompt_price, completion_price, cache_price from model_prices order by model asc`)
+	return s.getModelPrices(ctx, true)
+}
+
+func (s *Store) getModelPrices(ctx context.Context, includeProviderRules bool) (map[string]ModelPrice, error) {
+	query := `select case when a.provider = '' then a.model else a.provider || '/' || a.model end,
+		json_extract(v.rule_json, '$.base.input'),
+		json_extract(v.rule_json, '$.base.output'), json_extract(v.rule_json, '$.base.cacheRead')
+		from model_price_rules a join model_price_rule_versions v
+		on v.provider = a.provider and v.model = a.model and v.version = a.active_version`
+	if !includeProviderRules {
+		query += ` where a.provider = ''`
+	}
+	query += ` order by a.provider, a.model`
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -1459,7 +1559,26 @@ func (s *Store) SetModelPrices(ctx context.Context, prices map[string]ModelPrice
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `delete from model_price_rules where provider = ''`); err != nil {
+		return err
+	}
+	for model, price := range prices {
+		if strings.TrimSpace(model) == "" {
+			continue
+		}
+		if _, _, err := s.UpsertModelPriceRule(ctx, ModelPriceRule{
+			Model:  model,
+			Base:   ModelPriceRate{Input: price.Prompt, Output: price.Completion, CacheRead: price.Cache},
+			Source: modelPriceSourceManual,
+			Locked: true,
+		}, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func nullString(value string) any {
@@ -1474,6 +1593,20 @@ func nullInt(value *int) any {
 		return nil
 	}
 	return *value
+}
+
+func nullFloat64(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullPositiveInt64(value int64) any {
+	if value <= 0 {
+		return nil
+	}
+	return value
 }
 
 func nullInt64(value *int64) any {
