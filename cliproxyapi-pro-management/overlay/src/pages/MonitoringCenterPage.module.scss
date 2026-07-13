@@ -4143,9 +4143,21 @@
   white-space: nowrap;
 }
 
-.realtimeMetricHeader,
 .realtimeMetricCell {
   text-align: right;
+}
+
+.table thead th.realtimeMetricHeader {
+  text-align: right;
+}
+
+.table thead th.realtimeCenterHeader,
+.realtimeCenterCell {
+  text-align: center;
+}
+
+.realtimeCenterCell > * {
+  margin-inline: auto;
 }
 
 .realtimeCostCell {
@@ -4153,7 +4165,8 @@
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  max-width: 100%;
+  width: 100%;
+  min-height: 54px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -4351,6 +4364,11 @@
   white-space: normal;
 }
 
+.realtimeCacheReadTableCell {
+  text-align: left;
+  white-space: normal;
+}
+
 .realtimeStatusErrorButton {
   display: inline-flex;
   align-items: center;
@@ -4500,6 +4518,9 @@
 }
 
 .realtimeTokenCell {
+  width: 100%;
+  min-height: 54px;
+  align-content: center;
   gap: 3px;
 }
 
@@ -4532,7 +4553,10 @@
 
 .realtimeCacheReadCell {
   display: grid;
-  justify-items: end;
+  align-content: center;
+  justify-items: start;
+  width: 100%;
+  min-height: 54px;
   gap: 2px;
   font-variant-numeric: tabular-nums;
 }

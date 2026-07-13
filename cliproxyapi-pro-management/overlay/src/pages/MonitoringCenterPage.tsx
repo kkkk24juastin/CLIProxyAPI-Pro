@@ -4456,7 +4456,8 @@ export function MonitoringCenterPage() {
       key: 'recent',
       label: t('monitoring.recent_status'),
       colClassName: styles.realtimeRecentCol,
-      cellClassName: () => styles.realtimeNowrapCell,
+      headerClassName: styles.realtimeCenterHeader,
+      cellClassName: () => `${styles.realtimeCenterCell} ${styles.realtimeNowrapCell}`,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.recent,
       render: (row) => (
         <div className={styles.recentStatusCell}>
@@ -4476,6 +4477,8 @@ export function MonitoringCenterPage() {
       key: 'status',
       label: t('monitoring.request_status'),
       colClassName: styles.realtimeStatusCol,
+      headerClassName: styles.realtimeCenterHeader,
+      cellClassName: () => styles.realtimeCenterCell,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.status,
       render: (row) => (
         <div className={styles.primaryCell}>
@@ -4579,8 +4582,7 @@ export function MonitoringCenterPage() {
       key: 'cacheRead',
       label: t('monitoring.realtime_cache_read_column'),
       colClassName: styles.realtimeCacheReadCol,
-      headerClassName: styles.realtimeMetricHeader,
-      cellClassName: () => styles.realtimeMetricCell,
+      cellClassName: () => styles.realtimeCacheReadTableCell,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.cacheRead,
       render: (row) => {
         const hitRate = getCacheHitRate(row);
