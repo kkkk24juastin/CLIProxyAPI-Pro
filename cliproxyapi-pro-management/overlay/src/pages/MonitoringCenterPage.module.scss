@@ -483,8 +483,7 @@
   white-space: nowrap;
 }
 
-.inlineMetrics,
-.savedPricesActions {
+.inlineMetrics {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -2618,9 +2617,7 @@
   box-shadow: var(--shadow);
 }
 
-.summaryLabel,
-.savedPricesHeader,
-.priceField label {
+.summaryLabel {
   color: var(--monitor-muted);
   font-size: 13px;
   font-weight: 500;
@@ -2826,53 +2823,21 @@
   accent-color: var(--monitor-accent);
 }
 
-.priceEditor {
-  margin-top: 14px;
-  display: grid;
-  gap: 14px;
-}
-
-.priceGrid {
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  align-items: end;
-  gap: 12px;
-}
-
 .priceField {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .priceField :global(.form-group) {
   margin-bottom: 0;
 }
 
-.priceField :global(.input) {
-  min-height: 44px;
-}
-
-.priceField input,
-.priceField button {
-  min-height: 44px;
-}
-
-.priceFieldModel {
-  grid-column: span 5;
-}
-
-.priceFieldPrompt {
-  grid-column: span 7;
-}
-
-.priceFieldCompletion,
-.priceFieldCache {
-  grid-column: span 6;
-}
-
-.priceGrid > .priceField:not(.priceFieldModel):not(.priceFieldPrompt):not(.priceFieldCompletion):not(.priceFieldCache) {
-  grid-column: span 4;
+.priceField input {
+  min-height: 40px;
 }
 
 .priceActionsBar {
@@ -2882,118 +2847,580 @@
   gap: 10px;
 }
 
-.priceSyncBar > :first-child:not(:last-child) {
-  margin-right: auto;
+.monitorModal :global(.modal-body) {
+  max-height: min(76vh, 720px);
+  overflow: hidden;
+  padding: 0;
 }
 
-.priceTierRow {
+.priceManager {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: min(640px, 76vh);
+  background: var(--monitor-surface);
+}
+
+.priceManagerTabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 52px;
+  padding: 8px 20px 0;
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceManagerTab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--monitor-line);
-  border-radius: 8px;
-  background: var(--monitor-surface-muted);
-}
-
-.priceTierRow > .inlineActionButton {
-  justify-self: end;
-}
-
-.savedPricesList {
-  margin-top: 14px;
-  display: grid;
-  gap: 10px;
-}
-
-.savedPricesHeader {
-  color: var(--monitor-ink);
-  font-size: 14px;
+  align-self: stretch;
+  min-width: 112px;
+  padding: 0 14px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--monitor-muted);
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: -0.01em;
-  text-transform: none;
+  cursor: pointer;
 }
 
-.savedPricesTableWrap {
-  overflow-x: auto;
-  border: 1px solid color-mix(in srgb, var(--monitor-line-strong) 30%, var(--monitor-line));
-  border-radius: 16px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--monitor-surface-elevated) 90%, white 10%),
-      var(--monitor-surface)
-    );
+.priceManagerTab::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: -1px;
+  left: 10px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
 }
 
-.savedPricesTable {
+.priceManagerTab > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--monitor-surface-muted);
+  color: var(--monitor-muted);
+  font-size: 11px;
+}
+
+.priceManagerTab:hover {
+  color: var(--monitor-ink);
+}
+
+.priceManagerTabActive {
+  color: var(--monitor-accent);
+}
+
+.priceManagerTabActive::after {
+  background: var(--monitor-accent);
+}
+
+.priceManagerTabActive > span {
+  background: color-mix(in srgb, var(--monitor-accent) 13%, var(--monitor-surface));
+  color: var(--monitor-accent);
+}
+
+.priceRuleWorkspace {
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.priceRuleSidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--monitor-line);
+  background: color-mix(in srgb, var(--monitor-surface-muted) 68%, var(--monitor-surface));
+}
+
+.priceRuleSearch {
+  position: relative;
+  padding: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+}
+
+.priceRuleSearch > svg {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 26px;
+  color: var(--monitor-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.priceRuleSearch :global(.form-group) {
+  margin: 0;
+}
+
+.priceRuleSearch input {
+  min-height: 38px;
+  padding-left: 34px;
+  background: var(--monitor-surface);
+}
+
+.priceRuleList {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+}
+
+.priceRuleListItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  min-width: 860px;
-  border-collapse: collapse;
+  min-height: 66px;
+  padding: 10px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--monitor-ink);
+  text-align: left;
+  cursor: pointer;
 }
 
-.savedPricesTable thead th {
-  padding: 12px 14px 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 90%, transparent);
-  background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface-muted));
+.priceRuleListItem:hover {
+  background: var(--monitor-surface-hover);
+}
+
+.priceRuleListItemActive {
+  border-color: color-mix(in srgb, var(--monitor-accent) 32%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 9%, var(--monitor-surface));
+}
+
+.priceRuleListIdentity,
+.priceRuleListMeta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.priceRuleListIdentity strong,
+.priceUnmatchedList strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priceRuleListIdentity small,
+.priceRuleListMeta small,
+.priceUnmatchedList small {
+  overflow: hidden;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priceRuleListMeta {
+  justify-items: end;
+  text-align: right;
+}
+
+.priceRuleConfigured,
+.priceRuleUnconfigured {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.priceRuleConfigured {
+  background: color-mix(in srgb, var(--monitor-green) 13%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--monitor-green) 82%, var(--monitor-ink));
+}
+
+.priceRuleUnconfigured {
+  background: color-mix(in srgb, var(--monitor-amber) 14%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--monitor-amber) 76%, var(--monitor-ink));
+}
+
+.priceRuleListEmpty,
+.priceRuleEditorEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 140px;
+  padding: 24px;
+  color: var(--monitor-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.priceRuleEditorEmpty {
+  grid-row: 1 / -1;
+}
+
+.priceRuleEditorPane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.priceRuleEditorHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 72px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceRuleEditorHeader > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.priceRuleEditorHeader h3,
+.priceSyncHeader h3 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--monitor-ink);
+  font-size: 16px;
+  font-weight: 750;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priceRuleEditorHeader > div:first-child > span,
+.priceSyncHeader span {
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.priceRuleEditorBadges {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.priceRuleEditorBadges > span:not(.priceRuleConfigured):not(.priceRuleUnconfigured) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 999px;
   color: var(--monitor-muted);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
-  line-height: 1.2;
-  text-align: left;
-  text-transform: uppercase;
-  white-space: nowrap;
 }
 
-.savedPricesTable tbody td {
-  padding: 13px 14px;
-  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 86%, transparent);
-  color: var(--monitor-ink);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.35;
-  white-space: nowrap;
-  background: color-mix(in srgb, var(--monitor-surface) 88%, white 12%);
-  transition: background 0.18s ease;
+.priceRuleEditorScroll {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
-.savedPricesTable tbody tr:first-child td {
-  border-top: 0;
+.priceRuleSection {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border-bottom: 1px solid var(--monitor-line);
 }
 
-.savedPricesTable tbody tr:nth-child(odd) td {
-  background: color-mix(in srgb, var(--monitor-accent) 4%, var(--monitor-surface-elevated));
+.priceRuleSection:last-child {
+  border-bottom: 0;
 }
 
-.savedPricesTable tbody tr:nth-child(even) td {
-  background: color-mix(in srgb, var(--monitor-surface) 92%, var(--monitor-surface-elevated));
-}
-
-.savedPricesTable tbody tr:hover td {
-  background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface-hover));
-}
-
-.savedPricesTable th:last-child,
-.savedPricesTable td:last-child {
-  text-align: left;
-}
-
-.savedPricesModelCell {
-  min-width: 200px;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.savedPricesActionsCell {
-  min-width: 120px;
-}
-
-.savedPricesActions {
-  justify-content: flex-start;
+.priceRuleSectionHeader {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.priceRuleSectionHeader > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.priceRuleSectionHeader h4 {
+  margin: 0;
+  color: var(--monitor-ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.priceRuleSectionHeader span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.priceBaseGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.priceTierList {
+  display: grid;
+  gap: 8px;
+}
+
+.priceTierCompactRow {
+  display: grid;
+  grid-template-columns: 26px minmax(130px, 1.3fr) repeat(4, minmax(90px, 1fr)) 32px;
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--monitor-surface-muted) 64%, var(--monitor-surface));
+}
+
+.priceTierCompactRow label {
+  display: grid;
   gap: 6px;
-  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.priceTierCompactRow label > span {
+  display: flex;
+  align-items: flex-end;
+  min-height: 24px;
+  color: var(--monitor-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.priceTierCompactRow :global(.form-group) {
+  margin: 0;
+}
+
+.priceTierCompactRow input {
+  min-height: 36px;
+  padding-inline: 9px;
+  font-size: 12px;
+}
+
+.priceTierIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: end;
+  width: 24px;
+  height: 36px;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.priceTierRemoveButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: end;
+  width: 32px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--monitor-muted);
+  cursor: pointer;
+}
+
+.priceTierRemoveButton:hover {
+  border-color: color-mix(in srgb, var(--monitor-red) 20%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-red) 8%, var(--monitor-surface));
+  color: var(--monitor-red);
+}
+
+.priceTierEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 82px;
+  padding: 16px;
+  border: 1px dashed var(--monitor-line);
+  border-radius: 8px;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.priceRuleEditorFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--monitor-line);
+  background: var(--monitor-surface);
+}
+
+.priceRuleEditorFooter > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.priceSyncView {
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+}
+
+.priceSyncHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceSyncHeader > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.priceSyncHeader > div:first-child > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.priceSyncStatusDot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--monitor-muted);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--monitor-muted) 12%, transparent);
+}
+
+.priceSyncStatussyncing {
+  background: var(--monitor-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--monitor-accent) 14%, transparent);
+  animation: monitor-pulse 1.4s ease-in-out infinite;
+}
+
+.priceSyncStatussuccess {
+  background: var(--monitor-green);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--monitor-green) 14%, transparent);
+}
+
+.priceSyncStatuserror {
+  background: var(--monitor-red);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--monitor-red) 14%, transparent);
+}
+
+.priceSyncActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.priceSyncMetrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 20px 0;
+}
+
+.priceSyncMetrics > div {
+  display: grid;
+  gap: 8px;
+  min-height: 86px;
+  padding: 14px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface-elevated);
+}
+
+.priceSyncMetrics span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.priceSyncMetrics strong {
+  color: var(--monitor-ink);
+  font-size: 24px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.priceSyncError {
+  margin-bottom: 20px;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--monitor-red) 24%, var(--monitor-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--monitor-red) 7%, var(--monitor-surface));
+  color: var(--monitor-red);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.priceSyncResultSection {
+  display: grid;
+  gap: 12px;
+}
+
+.priceUnmatchedList {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+}
+
+.priceUnmatchedList > div:not(.priceTierEmpty) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 54px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceUnmatchedList > div:last-child {
+  border-bottom: 0;
+}
+
+.priceUnmatchedList > .priceTierEmpty {
+  border: 0;
+  border-radius: 0;
+}
+
+.priceUnmatchedList > div > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
 .tableWrapper {
@@ -4074,6 +4501,17 @@
   }
 }
 
+@keyframes monitor-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
 @container monitoring-page (max-width: 760px) {
   .usageStatsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4151,8 +4589,7 @@
     grid-template-columns: minmax(0, 1fr) minmax(210px, 240px);
   }
 
-  .settingsGrid,
-  .priceGrid {
+  .settingsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -4181,16 +4618,6 @@
     background: var(--monitor-surface-elevated);
   }
 
-  .priceFieldModel,
-  .priceFieldPrompt,
-  .priceFieldCompletion,
-  .priceFieldCache {
-    grid-column: auto;
-  }
-
-  .priceGrid > .priceField:not(.priceFieldModel):not(.priceFieldPrompt):not(.priceFieldCompletion):not(.priceFieldCache) {
-    grid-column: auto;
-  }
 }
 
 @container monitoring-page (max-width: 680px) {
@@ -4637,8 +5064,7 @@
     white-space: nowrap;
   }
 
-  .settingsGrid,
-  .priceGrid {
+  .settingsGrid {
     grid-template-columns: 1fr;
   }
 
@@ -4695,5 +5121,159 @@
 
   .realtimeTable {
     min-width: 1360px;
+  }
+}
+
+@media (max-width: 900px) {
+  .monitorModal :global(.modal-body) {
+    max-height: min(78vh, 760px);
+  }
+
+  .priceManager {
+    min-height: min(680px, 78vh);
+  }
+
+  .priceRuleWorkspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: 154px minmax(0, 1fr);
+  }
+
+  .priceRuleSidebar {
+    grid-template-rows: auto minmax(0, 1fr);
+    border-right: 0;
+    border-bottom: 1px solid var(--monitor-line);
+  }
+
+  .priceRuleSearch {
+    padding: 10px 14px;
+  }
+
+  .priceRuleList {
+    display: flex;
+    gap: 7px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 7px 10px 10px;
+  }
+
+  .priceRuleListItem {
+    flex: 0 0 220px;
+    min-height: 58px;
+    padding: 8px 10px;
+  }
+
+  .priceRuleListEmpty {
+    flex: 1 1 100%;
+    min-height: 58px;
+  }
+
+  .priceSyncHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .priceSyncActions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 680px) {
+  .monitorModal :global(.modal-body) {
+    max-height: min(72vh, calc(100dvh - 150px));
+  }
+
+  .priceManager {
+    min-height: min(620px, calc(100dvh - 150px));
+  }
+
+  .priceManagerTabs {
+    padding-inline: 10px 46px;
+  }
+
+  .priceManagerTab {
+    min-width: 0;
+    flex: 1 1 0;
+    justify-content: center;
+    padding-inline: 8px;
+  }
+
+  .priceRuleWorkspace {
+    grid-template-rows: 150px minmax(0, 1fr);
+  }
+
+  .priceRuleEditorHeader,
+  .priceRuleSection,
+  .priceRuleEditorFooter,
+  .priceSyncView {
+    padding-inline: 14px;
+  }
+
+  .priceRuleEditorHeader {
+    min-height: 66px;
+  }
+
+  .priceRuleEditorBadges > span:not(:first-child) {
+    display: none;
+  }
+
+  .priceBaseGrid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .priceTierCompactRow {
+    position: relative;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 34px 10px 10px;
+  }
+
+  .priceTierCompactRow label:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .priceTierIndex {
+    position: absolute;
+    top: 8px;
+    left: 10px;
+    width: 24px;
+    height: 20px;
+  }
+
+  .priceTierRemoveButton {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    width: 30px;
+    height: 26px;
+  }
+
+  .priceRuleEditorFooter {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .priceRuleEditorFooter > div {
+    width: 100%;
+  }
+
+  .priceRuleEditorFooter > div:last-child :global(.btn) {
+    flex: 1 1 0;
+  }
+
+  .priceSyncView {
+    padding-block: 18px;
+  }
+
+  .priceSyncActions :global(.btn) {
+    flex: 1 1 132px;
+  }
+
+  .priceSyncMetrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .priceUnmatchedList > div:not(.priceTierEmpty) {
+    align-items: flex-start;
   }
 }

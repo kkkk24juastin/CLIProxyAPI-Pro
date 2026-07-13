@@ -11,7 +11,9 @@ import {
   IconChevronUp,
   IconRefreshCw,
   IconSearch,
+  IconSettings,
   IconSlidersHorizontal,
+  IconTrash2,
 } from '@/components/ui/icons';
 import {
   buildAccountRowsByAccount,
@@ -520,11 +522,22 @@ type PriceTierDraft = {
 };
 
 type PriceDraft = {
-	input: string;
-	output: string;
-	cacheRead: string;
-	cacheWrite: string;
-	tiers: PriceTierDraft[];
+  input: string;
+  output: string;
+  cacheRead: string;
+  cacheWrite: string;
+  tiers: PriceTierDraft[];
+};
+
+type PriceManagementView = 'rules' | 'sync';
+
+type PriceRuleTarget = {
+  key: string;
+  provider: string;
+  model: string;
+  requests: number;
+  lastSeenAtMs: number;
+  rule?: ModelPriceRule;
 };
 
 type MonitoringSettings = {
@@ -1579,8 +1592,6 @@ const parsePriceValue = (value: string) => {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
-
-const formatPriceUnit = (value: number) => `$${value.toFixed(4)}/1M`;
 
 const buildRealtimeMetaText = (row: MonitoringEventRow) => {
   const parts = [`${row.endpointMethod} ${row.endpointPath}`.trim()];
@@ -3595,17 +3606,19 @@ export function MonitoringCenterPage() {
   const [isMonitoringSettingsOpen, setIsMonitoringSettingsOpen] = useState(false);
   const [isMonitoringSettingsLoading, setIsMonitoringSettingsLoading] = useState(false);
   const [isMonitoringSettingsSaving, setIsMonitoringSettingsSaving] = useState(false);
-	const [monitoringSettingsDraft, setMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
-	const [priceProvider, setPriceProvider] = useState('');
-	const [priceModel, setPriceModel] = useState('');
-	const [priceDraft, setPriceDraft] = useState<PriceDraft>(() => createPriceDraft());
-	const [priceRules, setPriceRules] = useState<ModelPriceRule[]>([]);
-	const [observedPriceModels, setObservedPriceModels] = useState<ObservedModelPriceTarget[]>([]);
-	const [priceSyncState, setPriceSyncState] = useState<ModelPriceSyncState>({ status: 'idle' });
-	const [priceSyncResult, setPriceSyncResult] = useState<ModelPriceSyncResult | null>(null);
-	const [isPriceLoading, setIsPriceLoading] = useState(false);
-	const [isPriceSaving, setIsPriceSaving] = useState(false);
-	const [isPriceSyncing, setIsPriceSyncing] = useState(false);
+  const [monitoringSettingsDraft, setMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
+  const [priceManagementView, setPriceManagementView] = useState<PriceManagementView>('rules');
+  const [priceRuleSearch, setPriceRuleSearch] = useState('');
+  const [priceProvider, setPriceProvider] = useState('');
+  const [priceModel, setPriceModel] = useState('');
+  const [priceDraft, setPriceDraft] = useState<PriceDraft>(() => createPriceDraft());
+  const [priceRules, setPriceRules] = useState<ModelPriceRule[]>([]);
+  const [observedPriceModels, setObservedPriceModels] = useState<ObservedModelPriceTarget[]>([]);
+  const [priceSyncState, setPriceSyncState] = useState<ModelPriceSyncState>({ status: 'idle' });
+  const [priceSyncResult, setPriceSyncResult] = useState<ModelPriceSyncResult | null>(null);
+  const [isPriceLoading, setIsPriceLoading] = useState(false);
+  const [isPriceSaving, setIsPriceSaving] = useState(false);
+  const [isPriceSyncing, setIsPriceSyncing] = useState(false);
   const [isImportingUsage, setIsImportingUsage] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>({});
@@ -3995,22 +4008,12 @@ export function MonitoringCenterPage() {
           .sort((left, right) => left[1].localeCompare(right[1]))
           .map(([value, label]) => ({ value, label })),
       ],
-		priceModelOptions: [
-			{ value: '', label: t('usage_stats.model_price_select_placeholder') },
-			...Array.from(new Map([
-				...observedPriceModels.map((item) => [`${item.provider}\n${item.model}`, item] as const),
-				...priceRules.map((rule) => [`${rule.provider}\n${rule.model}`, { provider: rule.provider, model: rule.model }] as const),
-			]).entries())
-				.sort((left, right) => left[0].localeCompare(right[0]))
-				.map(([value, item]) => ({ value, label: item.provider ? `${item.provider}/${item.model}` : item.model })),
-		],
-	};
-	}, [allRows, observedPriceModels, priceRules, t, usageAggregates]);
+    };
+  }, [allRows, t, usageAggregates]);
   const {
     providerOptions,
     modelOptions,
     apiKeyOptions,
-    priceModelOptions,
   } = requestLogDerived;
 
   const statusOptions = useMemo(
@@ -4471,10 +4474,51 @@ export function MonitoringCenterPage() {
   );
   const quotaTargetsByAccountForLoading = accountQuotaTargetsByAccount;
 
-	const savedPriceEntries = useMemo(
-		() => [...priceRules].sort((left, right) => `${left.provider}/${left.model}`.localeCompare(`${right.provider}/${right.model}`)),
-		[priceRules]
-	);
+  const priceRuleTargets = useMemo<PriceRuleTarget[]>(() => {
+    const targets = new Map<string, PriceRuleTarget>();
+    observedPriceModels.forEach((item) => {
+      const key = `${item.provider}\n${item.model}`;
+      targets.set(key, {
+        key,
+        provider: item.provider,
+        model: item.model,
+        requests: item.requests,
+        lastSeenAtMs: item.lastSeenAtMs,
+      });
+    });
+    priceRules.forEach((rule) => {
+      const key = `${rule.provider}\n${rule.model}`;
+      const current = targets.get(key);
+      targets.set(key, {
+        key,
+        provider: rule.provider,
+        model: rule.model,
+        requests: current?.requests ?? 0,
+        lastSeenAtMs: current?.lastSeenAtMs ?? 0,
+        rule,
+      });
+    });
+    return Array.from(targets.values()).sort((left, right) => {
+      const configuredDelta = Number(Boolean(left.rule)) - Number(Boolean(right.rule));
+      if (configuredDelta !== 0) return configuredDelta;
+      return right.lastSeenAtMs - left.lastSeenAtMs || left.key.localeCompare(right.key);
+    });
+  }, [observedPriceModels, priceRules]);
+
+  const filteredPriceRuleTargets = useMemo(() => {
+    const query = priceRuleSearch.trim().toLowerCase();
+    if (!query) return priceRuleTargets;
+    return priceRuleTargets.filter((item) => `${item.provider}/${item.model}`.toLowerCase().includes(query));
+  }, [priceRuleSearch, priceRuleTargets]);
+
+  const selectedPriceTarget = useMemo(
+    () => priceRuleTargets.find((item) => item.provider === priceProvider && item.model === priceModel) ?? null,
+    [priceModel, priceProvider, priceRuleTargets]
+  );
+
+  const configuredPriceRuleCount = priceRuleTargets.filter((item) => Boolean(item.rule)).length;
+  const unconfiguredPriceRuleCount = priceRuleTargets.length - configuredPriceRuleCount;
+  const priceSyncStatus = isPriceSyncing ? 'syncing' : priceSyncState.status;
 
   const selectedFiltersCount =
     [selectedProvider, selectedModel, selectedApiKey, selectedStatus].filter(
@@ -4726,41 +4770,57 @@ export function MonitoringCenterPage() {
     }));
   }, [expandedAccounts, loadAccountQuota]);
 
-	const refreshPriceManagement = useCallback(async () => {
-		const [rulesPayload, syncState] = await Promise.all([loadModelPriceRules(), loadModelPriceSyncState()]);
-		setPriceRules(rulesPayload.rules);
-		setObservedPriceModels(rulesPayload.observedModels);
-		setPriceSyncState(syncState);
-	}, []);
+  const refreshPriceManagement = useCallback(async () => {
+    const [rulesPayload, syncState] = await Promise.all([loadModelPriceRules(), loadModelPriceSyncState()]);
+    setPriceRules(rulesPayload.rules);
+    setObservedPriceModels(rulesPayload.observedModels);
+    setPriceSyncState(syncState);
+    return rulesPayload;
+  }, []);
 
-	const openPriceManagement = useCallback(async () => {
-		if (connectionStatus !== 'connected') {
-			showNotification(t('notification.connection_required'), 'warning');
-			return;
-		}
-		setIsPriceModalOpen(true);
-		setIsPriceLoading(true);
-		try {
-			await refreshPriceManagement();
-		} catch (error) {
-			showNotification(error instanceof Error ? error.message : String(error), 'error');
-		} finally {
-			setIsPriceLoading(false);
-		}
-	}, [connectionStatus, refreshPriceManagement, showNotification, t]);
+  const selectPriceTarget = useCallback((provider: string, model: string, rules = priceRules) => {
+    setPriceProvider(provider);
+    setPriceModel(model);
+    setPriceDraft(createPriceDraft(rules.find((rule) => rule.provider === provider && rule.model === model)));
+  }, [priceRules]);
 
-	const handlePriceModelChange = useCallback((value: string) => {
-		const separator = value.indexOf('\n');
-		const provider = separator >= 0 ? value.slice(0, separator) : '';
-		const model = separator >= 0 ? value.slice(separator + 1) : value;
-		setPriceProvider(provider);
-		setPriceModel(model);
-		setPriceDraft(createPriceDraft(priceRules.find((rule) => rule.provider === provider && rule.model === model)));
-	}, [priceRules]);
+  const openPriceManagement = useCallback(async () => {
+    if (connectionStatus !== 'connected') {
+      showNotification(t('notification.connection_required'), 'warning');
+      return;
+    }
+    setIsPriceModalOpen(true);
+    setPriceManagementView('rules');
+    setPriceRuleSearch('');
+    setIsPriceLoading(true);
+    try {
+      const payload = await refreshPriceManagement();
+      const selectedStillExists = payload.observedModels.some((item) => item.provider === priceProvider && item.model === priceModel)
+        || payload.rules.some((rule) => rule.provider === priceProvider && rule.model === priceModel);
+      if (selectedStillExists) {
+        selectPriceTarget(priceProvider, priceModel, payload.rules);
+      } else {
+        const nextTarget = payload.observedModels.find((item) => !payload.rules.some((rule) => rule.provider === item.provider && rule.model === item.model))
+          ?? payload.observedModels[0]
+          ?? payload.rules[0];
+        if (nextTarget) {
+          selectPriceTarget(nextTarget.provider, nextTarget.model, payload.rules);
+        } else {
+          setPriceProvider('');
+          setPriceModel('');
+          setPriceDraft(createPriceDraft());
+        }
+      }
+    } catch (error) {
+      showNotification(error instanceof Error ? error.message : String(error), 'error');
+    } finally {
+      setIsPriceLoading(false);
+    }
+  }, [connectionStatus, priceModel, priceProvider, refreshPriceManagement, selectPriceTarget, showNotification, t]);
 
-	const handlePriceDraftChange = useCallback((field: Exclude<keyof PriceDraft, 'tiers'>, value: string) => {
-		setPriceDraft((previous) => ({ ...previous, [field]: value }));
-	}, []);
+  const handlePriceDraftChange = useCallback((field: Exclude<keyof PriceDraft, 'tiers'>, value: string) => {
+    setPriceDraft((previous) => ({ ...previous, [field]: value }));
+  }, []);
 
 	const handlePriceTierChange = useCallback((index: number, field: keyof PriceTierDraft, value: string) => {
 		setPriceDraft((previous) => ({
@@ -4827,14 +4887,23 @@ export function MonitoringCenterPage() {
 		async (provider: string, model: string) => {
 			try {
 				await deleteModelPriceRule(provider, model);
-				await refreshPriceManagement();
+				const payload = await refreshPriceManagement();
 				await refreshAll();
-				if (priceProvider === provider && priceModel === model) resetPriceEditor();
+				if (priceProvider === provider && priceModel === model) {
+					const remainsObserved = payload.observedModels.some((item) => item.provider === provider && item.model === model);
+					if (remainsObserved) {
+						selectPriceTarget(provider, model, payload.rules);
+					} else {
+						const nextTarget = payload.observedModels[0] ?? payload.rules[0];
+						if (nextTarget) selectPriceTarget(nextTarget.provider, nextTarget.model, payload.rules);
+						else resetPriceEditor();
+					}
+				}
 			} catch (error) {
 				showNotification(error instanceof Error ? error.message : String(error), 'error');
 			}
 		},
-		[priceModel, priceProvider, refreshAll, refreshPriceManagement, resetPriceEditor, showNotification]
+		[priceModel, priceProvider, refreshAll, refreshPriceManagement, resetPriceEditor, selectPriceTarget, showNotification]
 	);
 
 	const handleSyncPrices = useCallback(async (dryRun = false) => {
@@ -4844,7 +4913,8 @@ export function MonitoringCenterPage() {
 			const result = await syncModelPricesFromModelsDev(dryRun);
 			setPriceSyncResult(result);
 			if (!dryRun) {
-				await refreshPriceManagement();
+				const payload = await refreshPriceManagement();
+				if (priceModel) selectPriceTarget(priceProvider, priceModel, payload.rules);
 				await refreshAll();
 			}
 			showNotification(t(dryRun ? 'usage_stats.model_price_sync_preview_complete' : 'usage_stats.model_price_sync_complete', { count: result.matched }), 'success');
@@ -4853,7 +4923,7 @@ export function MonitoringCenterPage() {
 		} finally {
 			setIsPriceSyncing(false);
 		}
-	}, [refreshAll, refreshPriceManagement, showNotification, t]);
+	}, [priceModel, priceProvider, refreshAll, refreshPriceManagement, selectPriceTarget, showNotification, t]);
 
   return (
     <div className={styles.page}>
@@ -5387,181 +5457,261 @@ export function MonitoringCenterPage() {
         open={isPriceModalOpen}
         onClose={() => setIsPriceModalOpen(false)}
         title={t('usage_stats.model_price_settings')}
-        width={860}
+        width={1040}
         className={styles.monitorModal}
       >
-		<div className={`${styles.priceActionsBar} ${styles.priceSyncBar}`}>
-			<div className={styles.savedPricesHeader}>
-				{t('usage_stats.model_price_sync_status', {
-					status: priceSyncState.status,
-					count: priceSyncState.matched ?? 0,
-				})}
-			</div>
-			<Button variant="secondary" size="sm" onClick={() => void handleSyncPrices(true)} disabled={isPriceSyncing || isPriceLoading}>
-				{t('usage_stats.model_price_sync_preview')}
-			</Button>
-			<Button variant="primary" size="sm" onClick={() => void handleSyncPrices(false)} disabled={isPriceSyncing || isPriceLoading}>
-				{isPriceSyncing ? t('common.loading') : t('usage_stats.model_price_sync')}
-			</Button>
-		</div>
-		{priceSyncState.error ? <div className={styles.emptyBlockSmall}>{priceSyncState.error}</div> : null}
-		{priceSyncResult ? (
-			<div className={styles.settingsHint}>
-				{t('usage_stats.model_price_sync_result', {
-					added: priceSyncResult.added,
-					updated: priceSyncResult.updated,
-					unmatched: priceSyncResult.unmatched.length,
-				})}
-			</div>
-		) : null}
-		{priceSyncResult?.unmatched.length ? (
-			<div className={styles.emptyBlockSmall}>
-				{t('usage_stats.model_price_sync_unmatched')}: {priceSyncResult.unmatched.slice(0, 8).map((item) => item.provider ? `${item.provider}/${item.model}` : item.model).join(', ')}
-			</div>
-		) : null}
-        <div className={styles.priceEditor}>
-          <div className={styles.priceGrid}>
-            <div className={`${styles.priceField} ${styles.priceFieldModel}`}>
-              <label>{t('usage_stats.model_name')}</label>
-              <Select
-				value={priceModel ? `${priceProvider}\n${priceModel}` : ''}
-                options={priceModelOptions}
-                onChange={handlePriceModelChange}
-                ariaLabel={t('usage_stats.model_name')}
-              />
-            </div>
-			<div className={`${styles.priceField} ${styles.priceFieldPrompt}`}>
-				<label>{`${t('usage_stats.model_price_input')} ($/1M)`}</label>
-              <Input
-                type="number"
-				value={priceDraft.input}
-				onChange={(event) => handlePriceDraftChange('input', event.target.value)}
-                placeholder="0.0000"
-                step="0.0001"
-              />
-            </div>
-            <div className={`${styles.priceField} ${styles.priceFieldCompletion}`}>
-				<label>{`${t('usage_stats.model_price_output')} ($/1M)`}</label>
-              <Input
-                type="number"
-				value={priceDraft.output}
-				onChange={(event) => handlePriceDraftChange('output', event.target.value)}
-                placeholder="0.0000"
-                step="0.0001"
-              />
-            </div>
-            <div className={`${styles.priceField} ${styles.priceFieldCache}`}>
-				<label>{`${t('usage_stats.model_price_cache_read')} ($/1M)`}</label>
-              <Input
-                type="number"
-				value={priceDraft.cacheRead}
-				onChange={(event) => handlePriceDraftChange('cacheRead', event.target.value)}
-				placeholder="0.0000"
-				step="0.0001"
-			/>
-			</div>
-			<div className={`${styles.priceField} ${styles.priceFieldCache}`}>
-				<label>{`${t('usage_stats.model_price_cache_write')} ($/1M)`}</label>
-				<Input
-					type="number"
-					value={priceDraft.cacheWrite}
-					onChange={(event) => handlePriceDraftChange('cacheWrite', event.target.value)}
-                placeholder="0.0000"
-                step="0.0001"
-              />
-            </div>
+        <div className={styles.priceManager}>
+          <div className={styles.priceManagerTabs} role="tablist" aria-label={t('usage_stats.model_price_settings')}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={priceManagementView === 'rules'}
+              className={`${styles.priceManagerTab} ${priceManagementView === 'rules' ? styles.priceManagerTabActive : ''}`}
+              onClick={() => setPriceManagementView('rules')}
+            >
+              {t('usage_stats.model_price_tab_rules')}
+              <span>{configuredPriceRuleCount}/{priceRuleTargets.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={priceManagementView === 'sync'}
+              className={`${styles.priceManagerTab} ${priceManagementView === 'sync' ? styles.priceManagerTabActive : ''}`}
+              onClick={() => setPriceManagementView('sync')}
+            >
+              {t('usage_stats.model_price_tab_sync')}
+              {unconfiguredPriceRuleCount > 0 ? <span>{unconfiguredPriceRuleCount}</span> : null}
+            </button>
           </div>
 
-		  <div className={`${styles.priceActionsBar} ${styles.priceSyncBar}`}>
-			<div className={styles.savedPricesHeader}>{t('usage_stats.model_price_context_tier')}</div>
-			<Button variant="secondary" size="sm" onClick={addPriceTier}>{t('usage_stats.model_price_tier_add')}</Button>
-		  </div>
-		  {priceDraft.tiers.map((tier, index) => (
-			<div className={styles.priceTierRow} key={`${index}-${tier.contextSize}`}>
-			  <div className={styles.priceGrid}>
-				<div className={styles.priceField}>
-				  <label>{t('usage_stats.model_price_context_threshold')}</label>
-				  <Input type="number" min="1" step="1" value={tier.contextSize} onChange={(event) => handlePriceTierChange(index, 'contextSize', event.target.value)} placeholder="272000" />
-				</div>
-				<div className={styles.priceField}>
-				  <label>{t('usage_stats.model_price_input')}</label>
-				  <Input type="number" min="0" step="0.0001" value={tier.input} onChange={(event) => handlePriceTierChange(index, 'input', event.target.value)} placeholder="0.0000" />
-				</div>
-				<div className={styles.priceField}>
-				  <label>{t('usage_stats.model_price_output')}</label>
-				  <Input type="number" min="0" step="0.0001" value={tier.output} onChange={(event) => handlePriceTierChange(index, 'output', event.target.value)} placeholder="0.0000" />
-				</div>
-				<div className={styles.priceField}>
-				  <label>{t('usage_stats.model_price_cache_read')}</label>
-				  <Input type="number" min="0" step="0.0001" value={tier.cacheRead} onChange={(event) => handlePriceTierChange(index, 'cacheRead', event.target.value)} placeholder="0.0000" />
-				</div>
-				<div className={styles.priceField}>
-				  <label>{t('usage_stats.model_price_cache_write')}</label>
-				  <Input type="number" min="0" step="0.0001" value={tier.cacheWrite} onChange={(event) => handlePriceTierChange(index, 'cacheWrite', event.target.value)} placeholder="0.0000" />
-				</div>
-			  </div>
-			  <button type="button" className={styles.inlineActionButton} onClick={() => removePriceTier(index)}>{t('usage_stats.model_price_tier_remove')}</button>
-			</div>
-		  ))}
+          {priceManagementView === 'rules' ? (
+            <div className={styles.priceRuleWorkspace}>
+              <aside className={styles.priceRuleSidebar}>
+                <div className={styles.priceRuleSearch}>
+                  <IconSearch size={15} />
+                  <Input
+                    value={priceRuleSearch}
+                    onChange={(event) => setPriceRuleSearch(event.target.value)}
+                    placeholder={t('usage_stats.model_price_search_placeholder')}
+                  />
+                </div>
+                <div className={styles.priceRuleList}>
+                  {isPriceLoading ? <div className={styles.priceRuleListEmpty}>{t('common.loading')}</div> : null}
+                  {!isPriceLoading && filteredPriceRuleTargets.map((item) => {
+                    const active = item.provider === priceProvider && item.model === priceModel;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={`${styles.priceRuleListItem} ${active ? styles.priceRuleListItemActive : ''}`}
+                        onClick={() => selectPriceTarget(item.provider, item.model)}
+                      >
+                        <span className={styles.priceRuleListIdentity}>
+                          <strong title={item.model}>{item.model}</strong>
+                          <small title={item.provider || '-'}>{item.provider || '-'}</small>
+                        </span>
+                        <span className={styles.priceRuleListMeta}>
+                          <span className={item.rule ? styles.priceRuleConfigured : styles.priceRuleUnconfigured}>
+                            {t(item.rule ? 'usage_stats.model_price_configured' : 'usage_stats.model_price_unconfigured')}
+                          </span>
+                          <small>{t('usage_stats.model_price_requests', { count: item.requests })}</small>
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {!isPriceLoading && filteredPriceRuleTargets.length === 0 ? (
+                    <div className={styles.priceRuleListEmpty}>{t('usage_stats.model_price_search_empty')}</div>
+                  ) : null}
+                </div>
+              </aside>
 
-          <div className={styles.priceActionsBar}>
-            <Button variant="secondary" size="sm" onClick={resetPriceEditor}>
-              {t('common.cancel')}
-            </Button>
-			<Button variant="primary" size="sm" onClick={() => void handleSavePrice()} disabled={!priceModel || isPriceSaving}>
-				{isPriceSaving ? t('common.loading') : t('common.save')}
-            </Button>
-          </div>
-        </div>
+              <section className={styles.priceRuleEditorPane}>
+                {selectedPriceTarget ? (
+                  <>
+                    <header className={styles.priceRuleEditorHeader}>
+                      <div>
+                        <h3 title={selectedPriceTarget.model}>{selectedPriceTarget.model}</h3>
+                        <span title={selectedPriceTarget.provider || '-'}>{selectedPriceTarget.provider || '-'}</span>
+                      </div>
+                      <div className={styles.priceRuleEditorBadges}>
+                        <span className={selectedPriceTarget.rule ? styles.priceRuleConfigured : styles.priceRuleUnconfigured}>
+                          {t(selectedPriceTarget.rule ? 'usage_stats.model_price_configured' : 'usage_stats.model_price_unconfigured')}
+                        </span>
+                        {selectedPriceTarget.rule?.source ? <span>{selectedPriceTarget.rule.source}</span> : null}
+                      </div>
+                    </header>
 
-        <div className={styles.savedPricesList}>
-          <div className={styles.savedPricesHeader}>{t('usage_stats.saved_prices')}</div>
-          {savedPriceEntries.length > 0 ? (
-            <div className={styles.savedPricesTableWrap}>
-              <table className={styles.savedPricesTable}>
-                <thead>
-                  <tr>
-                    <th>{t('usage_stats.model_name')}</th>
-					<th>{t('usage_stats.model_price_source')}</th>
-					<th>{t('usage_stats.model_price_input')}</th>
-					<th>{t('usage_stats.model_price_output')}</th>
-					<th>{t('usage_stats.model_price_context_tier')}</th>
-                    <th>{t('common.action')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-				  {savedPriceEntries.map((rule) => (
-					<tr key={`${rule.provider}/${rule.model}`}>
-					  <td className={`${styles.monoCell} ${styles.savedPricesModelCell}`}>{rule.provider ? `${rule.provider}/${rule.model}` : rule.model}</td>
-					  <td>{rule.source ?? 'manual'}</td>
-					  <td>{formatPriceUnit(rule.base.input)}</td>
-					  <td>{formatPriceUnit(rule.base.output)}</td>
-					  <td>{rule.tiers?.map((tier) => `>=${formatCompactNumber(tier.contextSize)}`).join(', ') || '-'}</td>
-                      <td className={styles.savedPricesActionsCell}>
-                        <div className={styles.savedPricesActions}>
-                          <button
-                            type="button"
-                            className={styles.inlineActionButton}
-							onClick={() => handlePriceModelChange(`${rule.provider}\n${rule.model}`)}
-                          >
-                            {t('common.edit')}
-                          </button>
-                          <button
-                            type="button"
-                            className={styles.inlineActionButton}
-							onClick={() => void handleDeletePrice(rule.provider, rule.model)}
-                          >
-                            {t('common.delete')}
-                          </button>
+                    <div className={styles.priceRuleEditorScroll}>
+                      <section className={styles.priceRuleSection}>
+                        <div className={styles.priceRuleSectionHeader}>
+                          <h4>{t('usage_stats.model_price_base_rates')}</h4>
+                          <span>USD / 1M</span>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <div className={styles.priceBaseGrid}>
+                          {([
+                            ['input', 'usage_stats.model_price_input'],
+                            ['output', 'usage_stats.model_price_output'],
+                            ['cacheRead', 'usage_stats.model_price_cache_read'],
+                            ['cacheWrite', 'usage_stats.model_price_cache_write'],
+                          ] as const).map(([field, label]) => (
+                            <label className={styles.priceField} key={field}>
+                              <span>{t(label)}</span>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.0001"
+                                value={priceDraft[field]}
+                                onChange={(event) => handlePriceDraftChange(field, event.target.value)}
+                                placeholder="0.0000"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </section>
+
+                      <section className={styles.priceRuleSection}>
+                        <div className={styles.priceRuleSectionHeader}>
+                          <div>
+                            <h4>{t('usage_stats.model_price_context_tier')}</h4>
+                            <span>{t('usage_stats.model_price_tier_count', { count: priceDraft.tiers.length })}</span>
+                          </div>
+                          <Button variant="secondary" size="sm" onClick={addPriceTier}>
+                            {t('usage_stats.model_price_tier_add')}
+                          </Button>
+                        </div>
+                        <div className={styles.priceTierList}>
+                          {priceDraft.tiers.map((tier, index) => (
+                            <div className={styles.priceTierCompactRow} key={index}>
+                              <span className={styles.priceTierIndex}>{index + 1}</span>
+                              <label>
+                                <span>{t('usage_stats.model_price_context_threshold')}</span>
+                                <Input type="number" min="1" step="1" value={tier.contextSize} onChange={(event) => handlePriceTierChange(index, 'contextSize', event.target.value)} placeholder="272000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_input')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.input} onChange={(event) => handlePriceTierChange(index, 'input', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_output')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.output} onChange={(event) => handlePriceTierChange(index, 'output', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_cache_read')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.cacheRead} onChange={(event) => handlePriceTierChange(index, 'cacheRead', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_cache_write')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.cacheWrite} onChange={(event) => handlePriceTierChange(index, 'cacheWrite', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <button
+                                type="button"
+                                className={styles.priceTierRemoveButton}
+                                onClick={() => removePriceTier(index)}
+                                aria-label={t('usage_stats.model_price_tier_remove')}
+                                title={t('usage_stats.model_price_tier_remove')}
+                              >
+                                <IconTrash2 size={15} />
+                              </button>
+                            </div>
+                          ))}
+                          {priceDraft.tiers.length === 0 ? (
+                            <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_tier_empty')}</div>
+                          ) : null}
+                        </div>
+                      </section>
+                    </div>
+
+                    <footer className={styles.priceRuleEditorFooter}>
+                      <div>
+                        {selectedPriceTarget.rule ? (
+                          <Button variant="secondary" size="sm" onClick={() => void handleDeletePrice(selectedPriceTarget.provider, selectedPriceTarget.model)}>
+                            {t('common.delete')}
+                          </Button>
+                        ) : null}
+                      </div>
+                      <div>
+                        <Button variant="secondary" size="sm" onClick={() => setPriceDraft(createPriceDraft(selectedPriceTarget.rule))}>
+                          {t('usage_stats.model_price_reset_changes')}
+                        </Button>
+                        <Button variant="primary" size="sm" onClick={() => void handleSavePrice()} disabled={isPriceSaving}>
+                          {isPriceSaving ? t('common.loading') : t('common.save')}
+                        </Button>
+                      </div>
+                    </footer>
+                  </>
+                ) : (
+                  <div className={styles.priceRuleEditorEmpty}>{t('usage_stats.model_price_select_empty')}</div>
+                )}
+              </section>
             </div>
           ) : (
-            <div className={styles.emptyBlockSmall}>{t('usage_stats.model_price_empty')}</div>
+            <div className={styles.priceSyncView}>
+              <header className={styles.priceSyncHeader}>
+                <div>
+                  <span className={`${styles.priceSyncStatusDot} ${styles[`priceSyncStatus${priceSyncStatus}`] ?? ''}`} />
+                  <div>
+                    <h3>{t(`usage_stats.model_price_sync_state_${priceSyncStatus}`, { defaultValue: priceSyncStatus })}</h3>
+                    <span>
+                      {priceSyncState.lastSuccessMs
+                        ? t('usage_stats.model_price_last_sync', { value: formatShortDateTime(priceSyncState.lastSuccessMs) })
+                        : t('usage_stats.model_price_sync_never')}
+                    </span>
+                  </div>
+                </div>
+                <div className={styles.priceSyncActions}>
+                  <Button variant="secondary" size="sm" onClick={() => { setIsPriceModalOpen(false); void loadMonitoringSettings(); }}>
+                    <IconSettings size={14} />
+                    {t('usage_stats.model_price_sync_settings')}
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => void handleSyncPrices(true)} disabled={isPriceSyncing || isPriceLoading}>
+                    {t('usage_stats.model_price_sync_preview')}
+                  </Button>
+                  <Button variant="primary" size="sm" onClick={() => void handleSyncPrices(false)} disabled={isPriceSyncing || isPriceLoading}>
+                    <IconRefreshCw size={14} />
+                    {isPriceSyncing ? t('common.loading') : t('usage_stats.model_price_sync')}
+                  </Button>
+                </div>
+              </header>
+
+              <div className={styles.priceSyncMetrics}>
+                {([
+                  ['matched', priceSyncResult?.matched ?? priceSyncState.matched ?? 0],
+                  ['added', priceSyncResult?.added ?? priceSyncState.added ?? 0],
+                  ['updated', priceSyncResult?.updated ?? priceSyncState.updated ?? 0],
+                  ['unmatched', priceSyncResult?.unmatched.length ?? priceSyncState.unmatched ?? 0],
+                ] as const).map(([key, value]) => (
+                  <div key={key}>
+                    <span>{t(`usage_stats.model_price_sync_metric_${key}`)}</span>
+                    <strong>{formatCompactNumber(value)}</strong>
+                  </div>
+                ))}
+              </div>
+
+              {priceSyncState.error ? <div className={styles.priceSyncError}>{priceSyncState.error}</div> : null}
+
+              <section className={styles.priceSyncResultSection}>
+                <div className={styles.priceRuleSectionHeader}>
+                  <div>
+                    <h4>{t('usage_stats.model_price_sync_unmatched')}</h4>
+                    <span>{priceSyncResult?.unmatched.length ?? priceSyncState.unmatched ?? 0}</span>
+                  </div>
+                </div>
+                <div className={styles.priceUnmatchedList}>
+                  {priceSyncResult?.unmatched.map((item) => (
+                    <div key={`${item.provider}/${item.model}`}>
+                      <span>
+                        <strong title={item.model}>{item.model}</strong>
+                        <small title={item.provider || '-'}>{item.provider || '-'}</small>
+                      </span>
+                      <small>{t('usage_stats.model_price_requests', { count: item.requests })}</small>
+                    </div>
+                  ))}
+                  {!priceSyncResult?.unmatched.length ? (
+                    <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_sync_unmatched_empty')}</div>
+                  ) : null}
+                </div>
+              </section>
+            </div>
           )}
         </div>
       </Modal>
