@@ -482,7 +482,7 @@ const extractHealthHttpStatusCode = (item: AccountInspectionResultItem) => {
 
 const buildHealthStatusCodeText = (item: AccountInspectionResultItem) => {
   const httpStatusCode = extractHealthHttpStatusCode(item);
-  return httpStatusCode !== null ? `HTTP ${httpStatusCode}` : '';
+  return httpStatusCode !== null ? String(httpStatusCode) : '';
 };
 
 const buildHealthStatusLabel = (
