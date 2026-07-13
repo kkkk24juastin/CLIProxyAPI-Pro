@@ -376,6 +376,9 @@ func (s *Store) init() error {
 	if err := s.migrateLegacyModelPrices(context.Background()); err != nil {
 		return err
 	}
+	if err := s.migrateProviderBoundModelPriceRules(context.Background()); err != nil {
+		return err
+	}
 	return s.ensureUsageSummary()
 }
 

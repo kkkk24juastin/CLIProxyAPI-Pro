@@ -111,6 +111,93 @@ func TestMatchModelsDevModelUsesProviderAlias(t *testing.T) {
 	}
 }
 
+func TestMatchModelsDevModelUsesModelFamilyWhenObservedProviderIsWrong(t *testing.T) {
+	catalog := map[string]modelsDevProvider{
+		"openai": {Models: map[string]modelsDevModel{}},
+		"google": {Models: map[string]modelsDevModel{
+			"gemini-3.1-flash-lite": {ID: "gemini-3.1-flash-lite", Cost: &modelsDevCost{Input: 0.25, Output: 1.5}},
+		}},
+	}
+	provider, model, _, ok := matchModelsDevModel(catalog, ObservedModel{Provider: "codex", Model: "gemini-3.1-flash-lite"})
+	if !ok || provider != "google" || model != "gemini-3.1-flash-lite" {
+		t.Fatalf("match = %v %q/%q, want google/gemini-3.1-flash-lite", ok, provider, model)
+	}
+}
+
+func TestModelPriceRuleAppliesAcrossRequestProviders(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	rule := testGPT56PriceRule()
+	rule.Provider = "openai"
+	if _, changed, err := store.UpsertModelPriceRule(ctx, rule, true); err != nil || !changed {
+		t.Fatalf("UpsertModelPriceRule() = changed:%v err:%v", changed, err)
+	}
+	event := testUsageEvent(0, false, 151000)
+	event.Provider = "codex"
+	event.Model = rule.Model
+	event.InputTokens = 150000
+	event.OutputTokens = 1000
+	insertTestUsageEvents(t, store, event)
+
+	events, err := store.RecentEvents(ctx, 10)
+	if err != nil || len(events) != 1 || events[0].EstimatedCost == nil {
+		t.Fatalf("RecentEvents() = %+v err:%v", events, err)
+	}
+	want := float64(150000)/1_000_000*5 + float64(1000)/1_000_000*30
+	assertCostClose(t, *events[0].EstimatedCost, want)
+}
+
+func TestObservedModelsAggregatesProvidersByModel(t *testing.T) {
+	store := openTestStore(t)
+	first := testUsageEvent(0, false, 1000)
+	first.Provider = "codex"
+	first.Model = "shared-model"
+	second := testUsageEvent(1, false, 1000)
+	second.Provider = "openai"
+	second.Model = "shared-model"
+	insertTestUsageEvents(t, store, first, second)
+
+	models, err := store.ObservedModels(context.Background())
+	if err != nil || len(models) != 1 || models[0].Model != "shared-model" || models[0].Requests != 2 {
+		t.Fatalf("ObservedModels() = %+v err:%v", models, err)
+	}
+}
+
+func TestMigrateProviderBoundModelPriceRules(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	rule := testGPT56PriceRule()
+	rule.Provider = "codex"
+	rule.Source = modelPriceSourceManual
+	rule.Locked = true
+	rule.Version = 1
+	rule.UpdatedAt = 100
+	raw, err := json.Marshal(rule)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `insert into model_price_rule_versions(provider, model, version, rule_json, effective_from_ms, created_at_ms)
+		values(?, ?, 1, ?, ?, ?)`, rule.Provider, rule.Model, string(raw), rule.EffectiveFrom, rule.UpdatedAt); err != nil {
+		t.Fatalf("insert version error = %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `insert into model_price_rules(provider, model, active_version, source, source_provider, source_model, locked, fetched_at_ms, upstream_updated, updated_at_ms)
+		values(?, ?, 1, ?, '', '', 1, 0, '', ?)`, rule.Provider, rule.Model, rule.Source, rule.UpdatedAt); err != nil {
+		t.Fatalf("insert rule error = %v", err)
+	}
+
+	if err := store.migrateProviderBoundModelPriceRules(ctx); err != nil {
+		t.Fatalf("migrateProviderBoundModelPriceRules() error = %v", err)
+	}
+	rules, err := store.ActiveModelPriceRules(ctx)
+	if err != nil || len(rules) != 1 || rules[0].Provider != "" || rules[0].Model != rule.Model || !rules[0].Locked {
+		t.Fatalf("ActiveModelPriceRules() = %+v err:%v", rules, err)
+	}
+	var bound int
+	if err := store.db.QueryRowContext(ctx, `select count(*) from model_price_rules where provider != ''`).Scan(&bound); err != nil || bound != 0 {
+		t.Fatalf("provider-bound rules = %d err:%v", bound, err)
+	}
+}
+
 func TestRecalculateEventCostsOnlyUpdatesUnpricedEvents(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()

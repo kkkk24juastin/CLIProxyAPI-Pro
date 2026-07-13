@@ -2847,8 +2847,8 @@
   gap: 10px;
 }
 
-.monitorModal :global(.modal-body) {
-  max-height: min(76vh, 720px);
+.priceManagerModal :global(.modal-body) {
+  max-height: min(72vh, 640px);
   overflow: hidden;
   padding: 0;
 }
@@ -2856,7 +2856,6 @@
 .priceManager {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: min(640px, 76vh);
   background: var(--monitor-surface);
 }
 
@@ -2928,7 +2927,8 @@
 
 .priceRuleWorkspace {
   display: grid;
-  grid-template-columns: 288px minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr);
+  height: min(64vh, 560px);
   min-height: 0;
   overflow: hidden;
 }
@@ -2981,7 +2981,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 66px;
+  min-height: 58px;
   padding: 10px 11px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -3287,8 +3287,9 @@
 
 .priceSyncView {
   min-height: 0;
+  max-height: min(64vh, 560px);
   overflow: auto;
-  padding: 24px;
+  padding: 20px;
 }
 
 .priceSyncHeader {
@@ -3349,14 +3350,14 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  padding: 20px 0;
+  padding: 16px 0;
 }
 
 .priceSyncMetrics > div {
   display: grid;
   gap: 8px;
-  min-height: 86px;
-  padding: 14px;
+  min-height: 74px;
+  padding: 12px;
   border: 1px solid var(--monitor-line);
   border-radius: 8px;
   background: var(--monitor-surface-elevated);
@@ -3370,7 +3371,7 @@
 
 .priceSyncMetrics strong {
   color: var(--monitor-ink);
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 750;
   line-height: 1;
 }
@@ -3384,6 +3385,66 @@
   color: var(--monitor-red);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.priceSyncSchedule {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto 150px auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--monitor-surface-muted) 58%, var(--monitor-surface));
+}
+
+.priceSyncSchedule > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.priceSyncSchedule > div:first-child strong {
+  color: var(--monitor-ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.priceSyncSchedule > div:first-child span,
+.priceSyncScheduleInterval > span {
+  color: var(--monitor-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.priceSyncScheduleToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--monitor-ink);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.priceSyncScheduleToggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--monitor-accent);
+}
+
+.priceSyncScheduleInterval {
+  display: grid;
+  gap: 4px;
+}
+
+.priceSyncScheduleInterval :global(.form-group) {
+  margin: 0;
+}
+
+.priceSyncScheduleInterval input {
+  min-height: 34px;
 }
 
 .priceSyncResultSection {
@@ -5125,17 +5186,14 @@
 }
 
 @media (max-width: 900px) {
-  .monitorModal :global(.modal-body) {
-    max-height: min(78vh, 760px);
-  }
-
-  .priceManager {
-    min-height: min(680px, 78vh);
+  .priceManagerModal :global(.modal-body) {
+    max-height: min(76vh, 680px);
   }
 
   .priceRuleWorkspace {
     grid-template-columns: 1fr;
     grid-template-rows: 154px minmax(0, 1fr);
+    height: min(70vh, 620px);
   }
 
   .priceRuleSidebar {
@@ -5176,15 +5234,19 @@
     width: 100%;
     flex-wrap: wrap;
   }
+
+  .priceSyncSchedule {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .priceSyncScheduleInterval {
+    grid-column: 1;
+  }
 }
 
 @media (max-width: 680px) {
-  .monitorModal :global(.modal-body) {
+  .priceManagerModal :global(.modal-body) {
     max-height: min(72vh, calc(100dvh - 150px));
-  }
-
-  .priceManager {
-    min-height: min(620px, calc(100dvh - 150px));
   }
 
   .priceManagerTabs {
@@ -5200,6 +5262,7 @@
 
   .priceRuleWorkspace {
     grid-template-rows: 150px minmax(0, 1fr);
+    height: min(66vh, calc(100dvh - 160px));
   }
 
   .priceRuleEditorHeader,
@@ -5271,6 +5334,18 @@
 
   .priceSyncMetrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .priceSyncSchedule {
+    grid-template-columns: 1fr;
+  }
+
+  .priceSyncScheduleInterval {
+    grid-column: auto;
+  }
+
+  .priceSyncSchedule :global(.btn) {
+    width: 100%;
   }
 
   .priceUnmatchedList > div:not(.priceTierEmpty) {

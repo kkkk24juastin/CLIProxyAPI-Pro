@@ -20,19 +20,20 @@ const modelsDevAPIURL = "https://models.dev/api.json"
 const modelsDevResponseLimit = 32 << 20
 
 type ModelPriceSyncState struct {
-	Status       string `json:"status"`
-	ETag         string `json:"etag,omitempty"`
-	ObservedHash string `json:"observedHash,omitempty"`
-	LastAttempt  int64  `json:"lastAttemptMs,omitempty"`
-	LastSuccess  int64  `json:"lastSuccessMs,omitempty"`
-	Matched      int    `json:"matched"`
-	Added        int    `json:"added"`
-	Updated      int    `json:"updated"`
-	Unchanged    int    `json:"unchanged"`
-	Locked       int    `json:"locked"`
-	Unmatched    int    `json:"unmatched"`
-	Recalculated int64  `json:"recalculated"`
-	Error        string `json:"error,omitempty"`
+	Status          string          `json:"status"`
+	ETag            string          `json:"etag,omitempty"`
+	ObservedHash    string          `json:"observedHash,omitempty"`
+	LastAttempt     int64           `json:"lastAttemptMs,omitempty"`
+	LastSuccess     int64           `json:"lastSuccessMs,omitempty"`
+	Matched         int             `json:"matched"`
+	Added           int             `json:"added"`
+	Updated         int             `json:"updated"`
+	Unchanged       int             `json:"unchanged"`
+	Locked          int             `json:"locked"`
+	Unmatched       int             `json:"unmatched"`
+	UnmatchedModels []ObservedModel `json:"unmatchedModels"`
+	Recalculated    int64           `json:"recalculated"`
+	Error           string          `json:"error,omitempty"`
 }
 
 type ModelPriceSyncResult struct {
@@ -99,14 +100,18 @@ var modelPriceProviderAliases = map[string]string{
 	"x-ai":       "xai",
 }
 
+var modelPriceCanonicalProviders = []string{
+	"openai", "anthropic", "google", "google-vertex", "xai", "deepseek", "mistral", "cohere", "meta", "amazon-bedrock",
+}
+
 func modelPriceRateFromModelsDev(cost modelsDevCost) ModelPriceRate {
 	return ModelPriceRate{Input: cost.Input, Output: cost.Output, CacheRead: cost.CacheRead, CacheWrite: cost.CacheWrite, Reasoning: cost.Reasoning}
 }
 
 func modelPriceRuleFromModelsDev(observed ObservedModel, providerID, modelID string, model modelsDevModel, now int64) ModelPriceRule {
 	rule := ModelPriceRule{
-		Provider: normalizePriceProvider(observed.Provider), Model: observed.Model,
-		Base: modelPriceRateFromModelsDev(*model.Cost), Source: modelPriceSourceModelsDev,
+		Model: observed.Model,
+		Base:  modelPriceRateFromModelsDev(*model.Cost), Source: modelPriceSourceModelsDev,
 		SourceProvider: providerID, SourceModel: modelID, EffectiveFrom: now, FetchedAt: now,
 		UpstreamUpdate: model.LastUpdated,
 	}
@@ -138,11 +143,73 @@ func modelPriceRuleFromModelsDev(observed ObservedModel, providerID, modelID str
 
 func providerCandidates(value string) []string {
 	normalized := normalizePriceProvider(value)
-	candidates := []string{normalized}
+	candidates := make([]string, 0, 2)
+	if normalized != "" {
+		candidates = append(candidates, normalized)
+	}
 	if alias := modelPriceProviderAliases[normalized]; alias != "" && alias != normalized {
 		candidates = append(candidates, alias)
 	}
 	return candidates
+}
+
+func inferredProviderCandidates(model string) []string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	switch {
+	case strings.Contains(model, "gemini"):
+		return []string{"google", "google-vertex"}
+	case strings.Contains(model, "claude"):
+		return []string{"anthropic"}
+	case strings.Contains(model, "grok"):
+		return []string{"xai"}
+	case strings.Contains(model, "deepseek"):
+		return []string{"deepseek"}
+	case strings.Contains(model, "mistral") || strings.Contains(model, "codestral"):
+		return []string{"mistral"}
+	case strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "chatgpt-") || strings.HasPrefix(model, "codex-") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3") || strings.HasPrefix(model, "o4"):
+		return []string{"openai"}
+	default:
+		return nil
+	}
+}
+
+func catalogProviderCandidates(catalog map[string]modelsDevProvider, observed ObservedModel) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(catalog))
+	appendProvider := func(value string) {
+		value = normalizePriceProvider(value)
+		if value == "" {
+			return
+		}
+		if _, exists := catalog[value]; !exists {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	for _, providerID := range providerCandidates(observed.Provider) {
+		appendProvider(providerID)
+	}
+	for _, providerID := range inferredProviderCandidates(observed.Model) {
+		appendProvider(providerID)
+	}
+	for _, providerID := range modelPriceCanonicalProviders {
+		appendProvider(providerID)
+	}
+	rest := make([]string, 0, len(catalog))
+	for providerID := range catalog {
+		if _, exists := seen[providerID]; !exists {
+			rest = append(rest, providerID)
+		}
+	}
+	sort.Strings(rest)
+	for _, providerID := range rest {
+		appendProvider(providerID)
+	}
+	return out
 }
 
 func modelCandidates(observed ObservedModel, providerID string) []string {
@@ -171,7 +238,7 @@ func modelCandidates(observed ObservedModel, providerID string) []string {
 }
 
 func matchModelsDevModel(catalog map[string]modelsDevProvider, observed ObservedModel) (string, string, modelsDevModel, bool) {
-	for _, providerID := range providerCandidates(observed.Provider) {
+	for _, providerID := range catalogProviderCandidates(catalog, observed) {
 		provider, ok := catalog[providerID]
 		if !ok {
 			continue
@@ -274,6 +341,7 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 	s.priceSyncMu.Lock()
 	defer s.priceSyncMu.Unlock()
 	result.DryRun = dryRun
+	result.Unmatched = make([]ObservedModel, 0)
 	state, stateErr := s.GetModelPriceSyncState(ctx)
 	if stateErr != nil {
 		return result, stateErr
@@ -302,6 +370,7 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 				state.Unchanged = result.Unchanged
 				state.Locked = result.Locked
 				state.Unmatched = len(result.Unmatched)
+				state.UnmatchedModels = append([]ObservedModel{}, result.Unmatched...)
 				state.Recalculated = result.Recalculated
 			}
 		}
@@ -314,7 +383,7 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 	}
 	observedHash := observedModelsHash(observed)
 	etag := state.ETag
-	if observedHash != state.ObservedHash {
+	if dryRun || observedHash != state.ObservedHash || (state.Unmatched > 0 && len(state.UnmatchedModels) == 0) {
 		etag = ""
 	}
 	catalog, nextETag, notModified, err := fetchModelsDevCatalog(ctx, etag)
@@ -323,6 +392,13 @@ func (s *Store) SyncModelsDevPrices(ctx context.Context, dryRun, recalculateUnpr
 	}
 	result.NotModified = notModified
 	if notModified {
+		result.Matched = state.Matched
+		result.Added = state.Added
+		result.Updated = state.Updated
+		result.Unchanged = state.Unchanged
+		result.Locked = state.Locked
+		result.Unmatched = append([]ObservedModel{}, state.UnmatchedModels...)
+		result.Recalculated = state.Recalculated
 		return result, nil
 	}
 	activeRules, err := s.ActiveModelPriceRules(ctx)

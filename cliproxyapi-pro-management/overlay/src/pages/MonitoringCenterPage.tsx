@@ -11,7 +11,6 @@ import {
   IconChevronUp,
   IconRefreshCw,
   IconSearch,
-  IconSettings,
   IconSlidersHorizontal,
   IconTrash2,
 } from '@/components/ui/icons';
@@ -533,7 +532,6 @@ type PriceManagementView = 'rules' | 'sync';
 
 type PriceRuleTarget = {
   key: string;
-  provider: string;
   model: string;
   requests: number;
   lastSeenAtMs: number;
@@ -3609,7 +3607,6 @@ export function MonitoringCenterPage() {
   const [monitoringSettingsDraft, setMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
   const [priceManagementView, setPriceManagementView] = useState<PriceManagementView>('rules');
   const [priceRuleSearch, setPriceRuleSearch] = useState('');
-  const [priceProvider, setPriceProvider] = useState('');
   const [priceModel, setPriceModel] = useState('');
   const [priceDraft, setPriceDraft] = useState<PriceDraft>(() => createPriceDraft());
   const [priceRules, setPriceRules] = useState<ModelPriceRule[]>([]);
@@ -3791,6 +3788,12 @@ export function MonitoringCenterPage() {
     await refreshAggregates();
   }, [refreshAggregates, refreshMeta, refreshRealtimeLogs, refreshUsage]);
 
+  const fetchMonitoringSettings = useCallback(async () => {
+    const response = await apiClient.get<{ settings: MonitoringSettings }>('/usage/settings');
+    setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
+    return response.settings;
+  }, []);
+
   const loadMonitoringSettings = useCallback(async () => {
     if (connectionStatus !== 'connected') {
       showNotification(t('notification.connection_required'), 'warning');
@@ -3798,17 +3801,16 @@ export function MonitoringCenterPage() {
     }
     setIsMonitoringSettingsLoading(true);
     try {
-      const response = await apiClient.get<{ settings: MonitoringSettings }>('/usage/settings');
-      setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
+      await fetchMonitoringSettings();
       setIsMonitoringSettingsOpen(true);
     } catch (error) {
       showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
     } finally {
       setIsMonitoringSettingsLoading(false);
     }
-  }, [connectionStatus, showNotification, t]);
+  }, [connectionStatus, fetchMonitoringSettings, showNotification, t]);
 
-  const handleSaveMonitoringSettings = useCallback(async () => {
+  const handleSaveMonitoringSettings = useCallback(async (closeModal = true) => {
     const settings = buildMonitoringSettingsFromDraft(monitoringSettingsDraft);
     if (settings.webdav.enabled && !settings.webdav.url) {
       showNotification(t('usage_stats.monitoring_settings_webdav_url_required'), 'warning');
@@ -3818,7 +3820,7 @@ export function MonitoringCenterPage() {
     try {
       const response = await apiClient.put<{ settings: MonitoringSettings }>('/usage/settings', { settings });
       setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
-      setIsMonitoringSettingsOpen(false);
+      if (closeModal) setIsMonitoringSettingsOpen(false);
       showNotification(t('usage_stats.monitoring_settings_saved'), 'success');
       await refreshAll();
     } catch (error) {
@@ -4477,21 +4479,21 @@ export function MonitoringCenterPage() {
   const priceRuleTargets = useMemo<PriceRuleTarget[]>(() => {
     const targets = new Map<string, PriceRuleTarget>();
     observedPriceModels.forEach((item) => {
-      const key = `${item.provider}\n${item.model}`;
-      targets.set(key, {
-        key,
-        provider: item.provider,
-        model: item.model,
-        requests: item.requests,
-        lastSeenAtMs: item.lastSeenAtMs,
-      });
-    });
-    priceRules.forEach((rule) => {
-      const key = `${rule.provider}\n${rule.model}`;
+      const key = item.model;
       const current = targets.get(key);
       targets.set(key, {
         key,
-        provider: rule.provider,
+        model: item.model,
+        requests: (current?.requests ?? 0) + item.requests,
+        lastSeenAtMs: Math.max(current?.lastSeenAtMs ?? 0, item.lastSeenAtMs),
+        rule: current?.rule,
+      });
+    });
+    priceRules.forEach((rule) => {
+      const key = rule.model;
+      const current = targets.get(key);
+      targets.set(key, {
+        key,
         model: rule.model,
         requests: current?.requests ?? 0,
         lastSeenAtMs: current?.lastSeenAtMs ?? 0,
@@ -4508,17 +4510,22 @@ export function MonitoringCenterPage() {
   const filteredPriceRuleTargets = useMemo(() => {
     const query = priceRuleSearch.trim().toLowerCase();
     if (!query) return priceRuleTargets;
-    return priceRuleTargets.filter((item) => `${item.provider}/${item.model}`.toLowerCase().includes(query));
+    return priceRuleTargets.filter((item) => {
+      const source = item.rule ? `${item.rule.sourceProvider ?? ''}/${item.rule.sourceModel ?? ''}` : '';
+      return `${item.model} ${source}`.toLowerCase().includes(query);
+    });
   }, [priceRuleSearch, priceRuleTargets]);
 
   const selectedPriceTarget = useMemo(
-    () => priceRuleTargets.find((item) => item.provider === priceProvider && item.model === priceModel) ?? null,
-    [priceModel, priceProvider, priceRuleTargets]
+    () => priceRuleTargets.find((item) => item.model === priceModel) ?? null,
+    [priceModel, priceRuleTargets]
   );
 
   const configuredPriceRuleCount = priceRuleTargets.filter((item) => Boolean(item.rule)).length;
   const unconfiguredPriceRuleCount = priceRuleTargets.length - configuredPriceRuleCount;
   const priceSyncStatus = isPriceSyncing ? 'syncing' : priceSyncState.status;
+  const unmatchedPriceModels = priceSyncResult?.unmatched ?? priceSyncState.unmatchedModels ?? [];
+  const unmatchedPriceModelCount = priceSyncResult ? unmatchedPriceModels.length : (priceSyncState.unmatched ?? unmatchedPriceModels.length);
 
   const selectedFiltersCount =
     [selectedProvider, selectedModel, selectedApiKey, selectedStatus].filter(
@@ -4778,10 +4785,9 @@ export function MonitoringCenterPage() {
     return rulesPayload;
   }, []);
 
-  const selectPriceTarget = useCallback((provider: string, model: string, rules = priceRules) => {
-    setPriceProvider(provider);
+  const selectPriceTarget = useCallback((model: string, rules = priceRules) => {
     setPriceModel(model);
-    setPriceDraft(createPriceDraft(rules.find((rule) => rule.provider === provider && rule.model === model)));
+    setPriceDraft(createPriceDraft(rules.find((rule) => rule.model === model)));
   }, [priceRules]);
 
   const openPriceManagement = useCallback(async () => {
@@ -4793,20 +4799,20 @@ export function MonitoringCenterPage() {
     setPriceManagementView('rules');
     setPriceRuleSearch('');
     setIsPriceLoading(true);
+    setIsMonitoringSettingsLoading(true);
     try {
-      const payload = await refreshPriceManagement();
-      const selectedStillExists = payload.observedModels.some((item) => item.provider === priceProvider && item.model === priceModel)
-        || payload.rules.some((rule) => rule.provider === priceProvider && rule.model === priceModel);
+      const [payload] = await Promise.all([refreshPriceManagement(), fetchMonitoringSettings()]);
+      const selectedStillExists = payload.observedModels.some((item) => item.model === priceModel)
+        || payload.rules.some((rule) => rule.model === priceModel);
       if (selectedStillExists) {
-        selectPriceTarget(priceProvider, priceModel, payload.rules);
+        selectPriceTarget(priceModel, payload.rules);
       } else {
-        const nextTarget = payload.observedModels.find((item) => !payload.rules.some((rule) => rule.provider === item.provider && rule.model === item.model))
+        const nextTarget = payload.observedModels.find((item) => !payload.rules.some((rule) => rule.model === item.model))
           ?? payload.observedModels[0]
           ?? payload.rules[0];
         if (nextTarget) {
-          selectPriceTarget(nextTarget.provider, nextTarget.model, payload.rules);
+          selectPriceTarget(nextTarget.model, payload.rules);
         } else {
-          setPriceProvider('');
           setPriceModel('');
           setPriceDraft(createPriceDraft());
         }
@@ -4815,8 +4821,9 @@ export function MonitoringCenterPage() {
       showNotification(error instanceof Error ? error.message : String(error), 'error');
     } finally {
       setIsPriceLoading(false);
+      setIsMonitoringSettingsLoading(false);
     }
-  }, [connectionStatus, priceModel, priceProvider, refreshPriceManagement, selectPriceTarget, showNotification, t]);
+  }, [connectionStatus, fetchMonitoringSettings, priceModel, refreshPriceManagement, selectPriceTarget, showNotification, t]);
 
   const handlePriceDraftChange = useCallback((field: Exclude<keyof PriceDraft, 'tiers'>, value: string) => {
     setPriceDraft((previous) => ({ ...previous, [field]: value }));
@@ -4841,7 +4848,6 @@ export function MonitoringCenterPage() {
 	}, []);
 
 	const resetPriceEditor = useCallback(() => {
-		setPriceProvider('');
 		setPriceModel('');
 		setPriceDraft(createPriceDraft());
 	}, []);
@@ -4851,7 +4857,7 @@ export function MonitoringCenterPage() {
 			return;
 		}
 		const rule: ModelPriceRule = {
-			provider: priceProvider,
+			provider: '',
 			model: priceModel,
 			base: {
 				input: parsePriceValue(priceDraft.input),
@@ -4881,21 +4887,21 @@ export function MonitoringCenterPage() {
 		} finally {
 			setIsPriceSaving(false);
 		}
-	}, [priceDraft, priceModel, priceProvider, refreshAll, refreshPriceManagement, showNotification, t]);
+	}, [priceDraft, priceModel, refreshAll, refreshPriceManagement, showNotification, t]);
 
 	const handleDeletePrice = useCallback(
-		async (provider: string, model: string) => {
+		async (model: string) => {
 			try {
-				await deleteModelPriceRule(provider, model);
+				await deleteModelPriceRule(model);
 				const payload = await refreshPriceManagement();
 				await refreshAll();
-				if (priceProvider === provider && priceModel === model) {
-					const remainsObserved = payload.observedModels.some((item) => item.provider === provider && item.model === model);
+				if (priceModel === model) {
+					const remainsObserved = payload.observedModels.some((item) => item.model === model);
 					if (remainsObserved) {
-						selectPriceTarget(provider, model, payload.rules);
+						selectPriceTarget(model, payload.rules);
 					} else {
 						const nextTarget = payload.observedModels[0] ?? payload.rules[0];
-						if (nextTarget) selectPriceTarget(nextTarget.provider, nextTarget.model, payload.rules);
+						if (nextTarget) selectPriceTarget(nextTarget.model, payload.rules);
 						else resetPriceEditor();
 					}
 				}
@@ -4903,7 +4909,7 @@ export function MonitoringCenterPage() {
 				showNotification(error instanceof Error ? error.message : String(error), 'error');
 			}
 		},
-		[priceModel, priceProvider, refreshAll, refreshPriceManagement, resetPriceEditor, selectPriceTarget, showNotification]
+		[priceModel, refreshAll, refreshPriceManagement, resetPriceEditor, selectPriceTarget, showNotification]
 	);
 
 	const handleSyncPrices = useCallback(async (dryRun = false) => {
@@ -4914,7 +4920,7 @@ export function MonitoringCenterPage() {
 			setPriceSyncResult(result);
 			if (!dryRun) {
 				const payload = await refreshPriceManagement();
-				if (priceModel) selectPriceTarget(priceProvider, priceModel, payload.rules);
+				if (priceModel) selectPriceTarget(priceModel, payload.rules);
 				await refreshAll();
 			}
 			showNotification(t(dryRun ? 'usage_stats.model_price_sync_preview_complete' : 'usage_stats.model_price_sync_complete', { count: result.matched }), 'success');
@@ -4923,7 +4929,7 @@ export function MonitoringCenterPage() {
 		} finally {
 			setIsPriceSyncing(false);
 		}
-	}, [priceModel, priceProvider, refreshAll, refreshPriceManagement, selectPriceTarget, showNotification, t]);
+	}, [priceModel, refreshAll, refreshPriceManagement, selectPriceTarget, showNotification, t]);
 
   return (
     <div className={styles.page}>
@@ -5416,32 +5422,6 @@ export function MonitoringCenterPage() {
             <small className={styles.settingsHint}>{t('usage_stats.monitoring_settings_webdav_hint')}</small>
           </div>
 
-		  <div className={styles.settingsSectionCard}>
-			<div className={styles.settingsSectionHeader}>
-			  <strong>{t('usage_stats.model_price_sync_schedule_title')}</strong>
-			  <span>{t('usage_stats.model_price_sync_schedule_desc')}</span>
-			</div>
-			<label className={styles.settingsCheckboxField}>
-			  <input
-				type="checkbox"
-				checked={monitoringSettingsDraft.modelPriceSyncEnabled}
-				onChange={(event) => setMonitoringSettingsDraft((previous) => ({ ...previous, modelPriceSyncEnabled: event.target.checked }))}
-			  />
-			  <span>{t('usage_stats.model_price_sync_schedule_enabled')}</span>
-			</label>
-			<label className={styles.settingsField}>
-			  <span>{t('usage_stats.model_price_sync_schedule_interval')}</span>
-			  <Input
-				type="number"
-				min="60"
-				step="60"
-				value={monitoringSettingsDraft.modelPriceSyncIntervalMinutes}
-				onChange={(event) => setMonitoringSettingsDraft((previous) => ({ ...previous, modelPriceSyncIntervalMinutes: event.target.value }))}
-				placeholder="1440"
-			  />
-			</label>
-		  </div>
-
           <div className={styles.priceActionsBar}>
             <Button variant="secondary" size="sm" onClick={() => setIsMonitoringSettingsOpen(false)}>
               {t('common.cancel')}
@@ -5457,8 +5437,8 @@ export function MonitoringCenterPage() {
         open={isPriceModalOpen}
         onClose={() => setIsPriceModalOpen(false)}
         title={t('usage_stats.model_price_settings')}
-        width={1040}
-        className={styles.monitorModal}
+        width={960}
+        className={`${styles.monitorModal} ${styles.priceManagerModal}`}
       >
         <div className={styles.priceManager}>
           <div className={styles.priceManagerTabs} role="tablist" aria-label={t('usage_stats.model_price_settings')}>
@@ -5498,17 +5478,16 @@ export function MonitoringCenterPage() {
                 <div className={styles.priceRuleList}>
                   {isPriceLoading ? <div className={styles.priceRuleListEmpty}>{t('common.loading')}</div> : null}
                   {!isPriceLoading && filteredPriceRuleTargets.map((item) => {
-                    const active = item.provider === priceProvider && item.model === priceModel;
+                    const active = item.model === priceModel;
                     return (
                       <button
                         key={item.key}
                         type="button"
                         className={`${styles.priceRuleListItem} ${active ? styles.priceRuleListItemActive : ''}`}
-                        onClick={() => selectPriceTarget(item.provider, item.model)}
+                        onClick={() => selectPriceTarget(item.model)}
                       >
                         <span className={styles.priceRuleListIdentity}>
                           <strong title={item.model}>{item.model}</strong>
-                          <small title={item.provider || '-'}>{item.provider || '-'}</small>
                         </span>
                         <span className={styles.priceRuleListMeta}>
                           <span className={item.rule ? styles.priceRuleConfigured : styles.priceRuleUnconfigured}>
@@ -5531,7 +5510,7 @@ export function MonitoringCenterPage() {
                     <header className={styles.priceRuleEditorHeader}>
                       <div>
                         <h3 title={selectedPriceTarget.model}>{selectedPriceTarget.model}</h3>
-                        <span title={selectedPriceTarget.provider || '-'}>{selectedPriceTarget.provider || '-'}</span>
+                        <span>{t('usage_stats.model_price_model_scope')}</span>
                       </div>
                       <div className={styles.priceRuleEditorBadges}>
                         <span className={selectedPriceTarget.rule ? styles.priceRuleConfigured : styles.priceRuleUnconfigured}>
@@ -5624,7 +5603,7 @@ export function MonitoringCenterPage() {
                     <footer className={styles.priceRuleEditorFooter}>
                       <div>
                         {selectedPriceTarget.rule ? (
-                          <Button variant="secondary" size="sm" onClick={() => void handleDeletePrice(selectedPriceTarget.provider, selectedPriceTarget.model)}>
+                          <Button variant="secondary" size="sm" onClick={() => void handleDeletePrice(selectedPriceTarget.model)}>
                             {t('common.delete')}
                           </Button>
                         ) : null}
@@ -5659,10 +5638,6 @@ export function MonitoringCenterPage() {
                   </div>
                 </div>
                 <div className={styles.priceSyncActions}>
-                  <Button variant="secondary" size="sm" onClick={() => { setIsPriceModalOpen(false); void loadMonitoringSettings(); }}>
-                    <IconSettings size={14} />
-                    {t('usage_stats.model_price_sync_settings')}
-                  </Button>
                   <Button variant="secondary" size="sm" onClick={() => void handleSyncPrices(true)} disabled={isPriceSyncing || isPriceLoading}>
                     {t('usage_stats.model_price_sync_preview')}
                   </Button>
@@ -5678,7 +5653,7 @@ export function MonitoringCenterPage() {
                   ['matched', priceSyncResult?.matched ?? priceSyncState.matched ?? 0],
                   ['added', priceSyncResult?.added ?? priceSyncState.added ?? 0],
                   ['updated', priceSyncResult?.updated ?? priceSyncState.updated ?? 0],
-                  ['unmatched', priceSyncResult?.unmatched.length ?? priceSyncState.unmatched ?? 0],
+                  ['unmatched', unmatchedPriceModelCount],
                 ] as const).map(([key, value]) => (
                   <div key={key}>
                     <span>{t(`usage_stats.model_price_sync_metric_${key}`)}</span>
@@ -5689,24 +5664,59 @@ export function MonitoringCenterPage() {
 
               {priceSyncState.error ? <div className={styles.priceSyncError}>{priceSyncState.error}</div> : null}
 
+              <section className={styles.priceSyncSchedule}>
+                <div>
+                  <strong>{t('usage_stats.model_price_sync_schedule_title')}</strong>
+                  <span>{t('usage_stats.model_price_sync_schedule_desc')}</span>
+                </div>
+                <label className={styles.priceSyncScheduleToggle}>
+                  <input
+                    type="checkbox"
+                    checked={monitoringSettingsDraft.modelPriceSyncEnabled}
+                    onChange={(event) => setMonitoringSettingsDraft((previous) => ({ ...previous, modelPriceSyncEnabled: event.target.checked }))}
+                  />
+                  <span>{t('usage_stats.model_price_sync_schedule_enabled')}</span>
+                </label>
+                <label className={styles.priceSyncScheduleInterval}>
+                  <span>{t('usage_stats.model_price_sync_schedule_interval')}</span>
+                  <Input
+                    type="number"
+                    min="60"
+                    step="60"
+                    value={monitoringSettingsDraft.modelPriceSyncIntervalMinutes}
+                    onChange={(event) => setMonitoringSettingsDraft((previous) => ({ ...previous, modelPriceSyncIntervalMinutes: event.target.value }))}
+                    placeholder="1440"
+                    disabled={!monitoringSettingsDraft.modelPriceSyncEnabled}
+                  />
+                </label>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void handleSaveMonitoringSettings(false)}
+                  disabled={isMonitoringSettingsLoading || isMonitoringSettingsSaving}
+                >
+                  {isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
+                </Button>
+              </section>
+
               <section className={styles.priceSyncResultSection}>
                 <div className={styles.priceRuleSectionHeader}>
                   <div>
                     <h4>{t('usage_stats.model_price_sync_unmatched')}</h4>
-                    <span>{priceSyncResult?.unmatched.length ?? priceSyncState.unmatched ?? 0}</span>
+                    <span>{unmatchedPriceModelCount}</span>
                   </div>
                 </div>
                 <div className={styles.priceUnmatchedList}>
-                  {priceSyncResult?.unmatched.map((item) => (
-                    <div key={`${item.provider}/${item.model}`}>
+                  {unmatchedPriceModels.map((item) => (
+                    <div key={item.model}>
                       <span>
                         <strong title={item.model}>{item.model}</strong>
-                        <small title={item.provider || '-'}>{item.provider || '-'}</small>
+                        {item.alias ? <small title={item.alias}>{item.alias}</small> : null}
                       </span>
                       <small>{t('usage_stats.model_price_requests', { count: item.requests })}</small>
                     </div>
                   ))}
-                  {!priceSyncResult?.unmatched.length ? (
+                  {unmatchedPriceModels.length === 0 ? (
                     <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_sync_unmatched_empty')}</div>
                   ) : null}
                 </div>

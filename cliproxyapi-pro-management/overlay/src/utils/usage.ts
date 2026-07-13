@@ -60,6 +60,7 @@ export interface ModelPriceSyncState {
   unchanged?: number;
   locked?: number;
   unmatched?: number;
+  unmatchedModels?: ObservedModelPriceTarget[];
   recalculated?: number;
   error?: string;
 }
@@ -580,20 +581,28 @@ export async function saveModelPriceRule(rule: ModelPriceRule): Promise<ModelPri
   return payload.rule;
 }
 
-export async function deleteModelPriceRule(provider: string, model: string): Promise<void> {
-  await apiClient.delete('/usage/model-price-rules', { params: { provider, model } });
+export async function deleteModelPriceRule(model: string): Promise<void> {
+  await apiClient.delete('/usage/model-price-rules', { params: { model } });
 }
 
 export async function syncModelPricesFromModelsDev(dryRun = false): Promise<ModelPriceSyncResult> {
-  return apiClient.post<ModelPriceSyncResult>('/usage/model-prices/sync', {
+  const payload = await apiClient.post<ModelPriceSyncResult>('/usage/model-prices/sync', {
     dryRun,
     recalculateUnpriced: !dryRun,
   });
+  return {
+    ...payload,
+    unmatched: Array.isArray(payload?.unmatched) ? payload.unmatched : [],
+  };
 }
 
 export async function loadModelPriceSyncState(): Promise<ModelPriceSyncState> {
   const payload = await apiClient.get<{ state?: ModelPriceSyncState }>('/usage/model-prices/sync-status');
-  return payload?.state ?? { status: 'idle' };
+  const state = payload?.state ?? { status: 'idle' };
+  return {
+    ...state,
+    unmatchedModels: Array.isArray(state.unmatchedModels) ? state.unmatchedModels : [],
+  };
 }
 
 export async function recalculateModelPriceHistory(all = false): Promise<number> {

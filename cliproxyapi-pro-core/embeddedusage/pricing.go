@@ -147,8 +147,8 @@ func validateModelPriceRule(rule ModelPriceRule) error {
 	return nil
 }
 
-func priceRuleLookupKey(provider, model string) string {
-	return normalizePriceProvider(provider) + "\n" + strings.TrimSpace(model)
+func priceRuleLookupKey(_ string, model string) string {
+	return strings.TrimSpace(model)
 }
 
 func selectModelPriceRate(rule ModelPriceRule, event internalusage.Event) (ModelPriceRate, int64) {
@@ -193,7 +193,7 @@ func evaluateEventCost(event internalusage.Event, rule ModelPriceRule) (float64,
 	}
 	const unit = 1_000_000.0
 	breakdown := ModelPriceCostBreakdown{
-		RuleID: rule.ID, RuleVersion: rule.Version, Provider: rule.Provider, Model: rule.Model,
+		RuleID: rule.ID, RuleVersion: rule.Version, Provider: normalizePriceProvider(event.Provider), Model: rule.Model,
 		Source: rule.Source, ContextTokens: event.InputTokens, ContextTierSize: contextTierSize,
 		ServiceTier: event.ServiceTier, InputTokens: uncachedInputTokens, OutputTokens: outputTokens,
 		CacheReadTokens: cacheReadTokens, CacheWriteTokens: cacheWriteTokens, ReasoningTokens: reasoningTokens,
@@ -214,7 +214,7 @@ func maxPricingInt64(left, right int64) int64 {
 	return right
 }
 
-func (s *Store) ActiveModelPriceRules(ctx context.Context) ([]ModelPriceRule, error) {
+func (s *Store) activeModelPriceRules(ctx context.Context, preserveProvider bool) ([]ModelPriceRule, error) {
 	rows, err := s.db.QueryContext(ctx, `select v.id, a.provider, a.model, v.rule_json, a.source, a.source_provider, a.source_model,
 		a.locked, a.active_version, v.effective_from_ms, a.fetched_at_ms, a.upstream_updated, a.updated_at_ms
 		from model_price_rules a join model_price_rule_versions v
@@ -228,20 +228,29 @@ func (s *Store) ActiveModelPriceRules(ctx context.Context) ([]ModelPriceRule, er
 	for rows.Next() {
 		var rule ModelPriceRule
 		var id int64
+		var provider string
 		var raw string
 		var locked int
-		if err := rows.Scan(&id, &rule.Provider, &rule.Model, &raw, &rule.Source, &rule.SourceProvider, &rule.SourceModel,
+		if err := rows.Scan(&id, &provider, &rule.Model, &raw, &rule.Source, &rule.SourceProvider, &rule.SourceModel,
 			&locked, &rule.Version, &rule.EffectiveFrom, &rule.FetchedAt, &rule.UpstreamUpdate, &rule.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(raw), &rule); err != nil {
 			return nil, err
 		}
+		rule.Provider = provider
 		rule.ID = id
 		rule.Locked = locked != 0
+		if !preserveProvider {
+			rule.Provider = ""
+		}
 		rules = append(rules, normalizePriceRule(rule))
 	}
 	return rules, rows.Err()
+}
+
+func (s *Store) ActiveModelPriceRules(ctx context.Context) ([]ModelPriceRule, error) {
+	return s.activeModelPriceRules(ctx, false)
 }
 
 func (s *Store) migrateLegacyModelPrices(ctx context.Context) error {
@@ -290,6 +299,51 @@ func (s *Store) migrateLegacyModelPrices(ctx context.Context) error {
 	return nil
 }
 
+func preferModelPriceRule(candidate, current ModelPriceRule) bool {
+	if candidate.Locked != current.Locked {
+		return candidate.Locked
+	}
+	if (candidate.Source == modelPriceSourceManual) != (current.Source == modelPriceSourceManual) {
+		return candidate.Source == modelPriceSourceManual
+	}
+	if (candidate.Provider == "") != (current.Provider == "") {
+		return candidate.Provider == ""
+	}
+	if candidate.UpdatedAt != current.UpdatedAt {
+		return candidate.UpdatedAt > current.UpdatedAt
+	}
+	return candidate.Provider < current.Provider
+}
+
+func (s *Store) migrateProviderBoundModelPriceRules(ctx context.Context) error {
+	rules, err := s.activeModelPriceRules(ctx, true)
+	if err != nil {
+		return err
+	}
+	selected := make(map[string]ModelPriceRule, len(rules))
+	requiresMigration := map[string]bool{}
+	for _, rule := range rules {
+		key := priceRuleLookupKey("", rule.Model)
+		if rule.Provider != "" {
+			requiresMigration[key] = true
+		}
+		if current, exists := selected[key]; !exists || preferModelPriceRule(rule, current) {
+			selected[key] = rule
+		}
+	}
+	for key := range requiresMigration {
+		rule := selected[key]
+		rule.Provider = ""
+		if _, _, err := s.UpsertModelPriceRule(ctx, rule, true); err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, `delete from model_price_rules where model = ? and provider != ''`, rule.Model); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) activeModelPriceRuleMap(ctx context.Context) (map[string]ModelPriceRule, error) {
 	rules, err := s.ActiveModelPriceRules(ctx)
 	if err != nil {
@@ -303,15 +357,13 @@ func (s *Store) activeModelPriceRuleMap(ctx context.Context) (map[string]ModelPr
 }
 
 func findModelPriceRule(rules map[string]ModelPriceRule, provider, model string) (ModelPriceRule, bool) {
-	if rule, ok := rules[priceRuleLookupKey(provider, model)]; ok {
-		return rule, true
-	}
-	rule, ok := rules[priceRuleLookupKey("", model)]
+	rule, ok := rules[priceRuleLookupKey(provider, model)]
 	return rule, ok
 }
 
 func (s *Store) UpsertModelPriceRule(ctx context.Context, rule ModelPriceRule, allowLockedOverride bool) (ModelPriceRule, bool, error) {
 	rule = normalizePriceRule(rule)
+	rule.Provider = ""
 	if err := validateModelPriceRule(rule); err != nil {
 		return ModelPriceRule{}, false, err
 	}
@@ -372,13 +424,13 @@ func (s *Store) UpsertModelPriceRule(ctx context.Context, rule ModelPriceRule, a
 }
 
 func (s *Store) DeleteModelPriceRule(ctx context.Context, provider, model string) error {
-	_, err := s.db.ExecContext(ctx, `delete from model_price_rules where provider = ? and model = ?`, normalizePriceProvider(provider), strings.TrimSpace(model))
+	_, err := s.db.ExecContext(ctx, `delete from model_price_rules where model = ?`, strings.TrimSpace(model))
 	return err
 }
 
 func (s *Store) ObservedModels(ctx context.Context) ([]ObservedModel, error) {
-	rows, err := s.db.QueryContext(ctx, `select coalesce(provider, ''), model, coalesce(max(alias), ''), count(*), max(timestamp_ms)
-		from usage_events where model != '' and model != '-' group by coalesce(provider, ''), model order by max(timestamp_ms) desc`)
+	rows, err := s.db.QueryContext(ctx, `select coalesce(max(provider), ''), model, coalesce(max(alias), ''), count(*), max(timestamp_ms)
+		from usage_events where model != '' and model != '-' group by model order by max(timestamp_ms) desc`)
 	if err != nil {
 		return nil, err
 	}
