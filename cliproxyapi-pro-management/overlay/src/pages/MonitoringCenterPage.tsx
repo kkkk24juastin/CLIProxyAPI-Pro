@@ -126,9 +126,10 @@ const REALTIME_LOG_COLUMN_KEYS = [
   'calls',
   'ttft',
   'latency',
-  'time',
-  'usage',
+  'tokens',
+  'cacheRead',
   'cost',
+  'time',
 ] as const;
 type RealtimeLogColumnKey = typeof REALTIME_LOG_COLUMN_KEYS[number];
 type RealtimeLogColumnPreference = {
@@ -155,9 +156,10 @@ const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, number> =
   calls: 76,
   ttft: 92,
   latency: 96,
-  time: 164,
-  usage: 210,
+  tokens: 196,
+  cacheRead: 126,
   cost: 132,
+  time: 164,
 };
 const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   type: 96,
@@ -169,9 +171,10 @@ const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   calls: 68,
   ttft: 76,
   latency: 76,
-  time: 116,
-  usage: 122,
+  tokens: 164,
+  cacheRead: 108,
   cost: 112,
+  time: 116,
 };
 const REALTIME_LOG_COLUMN_MAX_WIDTH = 420;
 const REALTIME_LOG_COLUMN_KEY_SET = new Set<RealtimeLogColumnKey>(REALTIME_LOG_COLUMN_KEYS);
@@ -202,6 +205,12 @@ const formatStatusRate = (rate: number) => {
   return `${rounded.endsWith('.0') ? rounded.slice(0, -2) : rounded}%`;
 };
 
+const formatTokenCount = (value: number) => Math.max(0, Math.round(Number(value) || 0)).toLocaleString();
+
+const getCacheHitRate = (row: Pick<MonitoringEventRow, 'inputTokens' | 'cachedTokens'>): number | null => (
+  row.inputTokens > 0 ? Math.min(Math.max(row.cachedTokens / row.inputTokens, 0), 1) : null
+);
+
 const isRealtimeLogColumnKey = (value: unknown): value is RealtimeLogColumnKey => (
   typeof value === 'string' && REALTIME_LOG_COLUMN_KEY_SET.has(value as RealtimeLogColumnKey)
 );
@@ -227,6 +236,15 @@ const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPreferenc
     value.forEach((item) => {
       if (!item || typeof item !== 'object') return;
       const key = (item as { key?: unknown }).key;
+      if (key === 'usage') {
+        const visible = (item as { visible?: unknown }).visible !== false;
+        (['tokens', 'cacheRead'] as const).forEach((replacementKey) => {
+          if (seen.has(replacementKey)) return;
+          next.push({ key: replacementKey, visible });
+          seen.add(replacementKey);
+        });
+        return;
+      }
       if (!isRealtimeLogColumnKey(key) || seen.has(key)) return;
       next.push({
         key,
@@ -243,7 +261,9 @@ const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPreferenc
     }
   });
 
-  return next.some((item) => item.visible) ? next : createDefaultRealtimeLogColumns();
+  const timeColumn = next.find((item) => item.key === 'time');
+  const ordered = timeColumn ? [...next.filter((item) => item.key !== 'time'), timeColumn] : next;
+  return ordered.some((item) => item.visible) ? ordered : createDefaultRealtimeLogColumns();
 };
 
 const loadRealtimeLogColumns = () => {
@@ -286,16 +306,21 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
       return [formatDurationMs(row.ttftMs)];
     case 'latency':
       return [formatDurationMs(row.latencyMs)];
-    case 'time':
-      return [new Date(row.timestampMs).toLocaleString()];
-    case 'usage':
+    case 'tokens':
       return [
-        formatCompactNumber(row.totalTokens),
-        `I ${formatCompactNumber(row.inputTokens)} O ${formatCompactNumber(row.outputTokens)}`,
-        `R ${formatCompactNumber(row.reasoningTokens)} C ${formatCompactNumber(row.cachedTokens)}`,
+        formatTokenCount(row.totalTokens),
+        `I ${formatTokenCount(row.inputTokens)} O ${formatTokenCount(row.outputTokens)}`,
+        row.reasoningTokens > 0 ? `R ${formatTokenCount(row.reasoningTokens)}` : '',
+      ];
+    case 'cacheRead':
+      return [
+        formatTokenCount(row.cachedTokens),
+        row.inputTokens > 0 ? formatPercent(Math.min(row.cachedTokens / row.inputTokens, 1)) : '--',
       ];
     case 'cost':
       return [formatUsdPrecise(row.totalCost)];
+    case 'time':
+      return [new Date(row.timestampMs).toLocaleString()];
     default:
       return [];
   }
@@ -311,8 +336,8 @@ const estimateRealtimeLogColumnWidth = (
       .reduce((innerMax, text) => Math.max(innerMax, text.length), 0);
     return Math.max(maxLength, rowMaxLength);
   }, label.length);
-  const characterWidth = key === 'recent' ? 6 : key === 'usage' ? 8 : 7;
-  const padding = key === 'status' ? 36 : key === 'usage' ? 34 : 28;
+  const characterWidth = key === 'recent' ? 6 : key === 'tokens' || key === 'cacheRead' ? 8 : 7;
+  const padding = key === 'status' ? 36 : key === 'tokens' || key === 'cacheRead' ? 34 : 28;
   return clampRealtimeLogColumnWidth(key, maxTextLength * characterWidth + padding);
 };
 
@@ -4530,31 +4555,44 @@ export function MonitoringCenterPage() {
         </span>
       ),
     },
-    time: {
-      key: 'time',
-      label: t('monitoring.column_time'),
-      colClassName: styles.realtimeTimeCol,
-      cellClassName: () => styles.realtimeTimeCell,
-      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.time,
-      render: (row) => new Date(row.timestampMs).toLocaleString(i18n.language),
-    },
-    usage: {
-      key: 'usage',
-      label: t('monitoring.this_call_usage'),
+    tokens: {
+      key: 'tokens',
+      label: t('monitoring.realtime_tokens_column'),
       colClassName: styles.realtimeUsageCol,
-      cellClassName: () => styles.realtimeUsageTableCell,
-      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.usage,
+      cellClassName: () => styles.realtimeTokensTableCell,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.tokens,
       render: (row) => (
-        <div className={`${styles.primaryCell} ${styles.realtimeUsageCell}`}>
-          <span>{formatCompactNumber(row.totalTokens)}</span>
-          <small className={styles.realtimeUsageBreakdown}>
-            <span><b>I</b><span>{formatCompactNumber(row.inputTokens)}</span></span>
-            <span><b>O</b><span>{formatCompactNumber(row.outputTokens)}</span></span>
-            <span><b>R</b><span>{formatCompactNumber(row.reasoningTokens)}</span></span>
-            <span><b>C</b><span>{formatCompactNumber(row.cachedTokens)}</span></span>
+        <div className={`${styles.primaryCell} ${styles.realtimeTokenCell}`}>
+          <span>{t('monitoring.realtime_tokens_total')}: <strong>{formatTokenCount(row.totalTokens)}</strong></span>
+          <small>
+            {t('monitoring.realtime_tokens_input')}: {formatTokenCount(row.inputTokens)}
+            {' | '}
+            {t('monitoring.realtime_tokens_output')}: {formatTokenCount(row.outputTokens)}
           </small>
+          {row.reasoningTokens > 0 ? (
+            <small>{t('monitoring.realtime_tokens_reasoning')}: {formatTokenCount(row.reasoningTokens)}</small>
+          ) : null}
         </div>
       ),
+    },
+    cacheRead: {
+      key: 'cacheRead',
+      label: t('monitoring.realtime_cache_read_column'),
+      colClassName: styles.realtimeCacheReadCol,
+      headerClassName: styles.realtimeMetricHeader,
+      cellClassName: () => styles.realtimeMetricCell,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.cacheRead,
+      render: (row) => {
+        const hitRate = getCacheHitRate(row);
+        return (
+          <div className={styles.realtimeCacheReadCell}>
+            <strong>{formatTokenCount(row.cachedTokens)}</strong>
+            <small className={hitRate !== null && hitRate < 0.8 ? styles.realtimeCacheHitLow : undefined}>
+              {hitRate === null ? '--' : formatPercent(hitRate)} {t('monitoring.realtime_cache_hit')}
+            </small>
+          </div>
+        );
+      },
     },
     cost: {
       key: 'cost',
@@ -4564,6 +4602,14 @@ export function MonitoringCenterPage() {
       cellClassName: () => styles.realtimeMetricCell,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.cost,
       render: (row) => <RealtimeCostCell row={row} hasPrices={hasPrices} t={t} />,
+    },
+    time: {
+      key: 'time',
+      label: t('monitoring.column_time'),
+      colClassName: styles.realtimeTimeCol,
+      cellClassName: () => styles.realtimeTimeCell,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.time,
+      render: (row) => new Date(row.timestampMs).toLocaleString(i18n.language),
     },
   }), [hasPrices, i18n.language, t]);
   const visibleRealtimeLogColumns = useMemo(
@@ -5409,10 +5455,11 @@ export function MonitoringCenterPage() {
                     key={column.key}
                     className={[
                       styles.realtimeDraggableHeader,
+                      column.key === 'time' ? styles.realtimeFixedHeader : '',
                       column.headerClassName,
                       draggedRealtimeLogColumnKey === column.key ? styles.realtimeDraggableHeaderActive : '',
                     ].filter(Boolean).join(' ')}
-                    draggable
+                    draggable={column.key !== 'time'}
                     scope="col"
                     onDragStart={(event) => handleRealtimeLogHeaderDragStart(event, column.key)}
                     onDragOver={handleRealtimeLogHeaderDragOver}

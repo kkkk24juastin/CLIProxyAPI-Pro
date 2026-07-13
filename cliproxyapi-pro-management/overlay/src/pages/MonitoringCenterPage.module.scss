@@ -4299,6 +4299,11 @@
   cursor: grabbing;
 }
 
+.realtimeFixedHeader,
+.realtimeFixedHeader:active {
+  cursor: default;
+}
+
 .realtimeDraggableHeaderActive {
   color: var(--monitor-accent-strong);
   background: color-mix(in srgb, var(--monitor-accent) 14%, var(--monitor-surface-muted));
@@ -4342,7 +4347,7 @@
   white-space: nowrap;
 }
 
-.realtimeUsageTableCell {
+.realtimeTokensTableCell {
   white-space: normal;
 }
 
@@ -4494,35 +4499,61 @@
   line-height: 1.35;
 }
 
-.realtimeUsageCell {
-  gap: 2px;
-}
-
-.realtimeUsageBreakdown {
-  display: grid;
-  grid-template-columns: repeat(2, max-content);
-  gap: 2px 10px;
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
-}
-
-.realtimeUsageBreakdown span {
-  display: inline-flex;
-  align-items: baseline;
-  flex: 0 0 auto;
+.realtimeTokenCell {
   gap: 3px;
+}
+
+.realtimeTokenCell > span,
+.realtimeTokenCell > small {
+  display: block;
   overflow: visible;
   text-overflow: clip;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
   white-space: nowrap;
 }
 
-.realtimeUsageBreakdown b {
-  color: var(--monitor-ink);
+.realtimeTokenCell > span {
+  color: var(--monitor-muted);
+  font-size: 12px;
   font-weight: 700;
+}
+
+.realtimeTokenCell > span strong {
+  color: var(--monitor-ink);
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.realtimeTokenCell > small {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.realtimeCacheReadCell {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.realtimeCacheReadCell strong {
+  color: var(--monitor-ink);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.realtimeCacheReadCell small {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.realtimeCacheReadCell .realtimeCacheHitLow {
+  color: var(--monitor-red);
 }
 
 .primaryCell small,
@@ -5000,21 +5031,19 @@
   line-height: 1.45;
 }
 
-.realtimeUsageCell > span,
-.realtimeUsageCell > small {
+.realtimeTokenCell > span,
+.realtimeTokenCell > small {
   display: block;
   white-space: nowrap;
   overflow-wrap: normal;
   word-break: normal;
 }
 
-.realtimeTable .realtimeUsageCell > .realtimeUsageBreakdown {
-  display: grid;
-  grid-template-columns: repeat(2, max-content);
-  gap: 2px 10px;
+.realtimeTable .realtimeTokenCell > small {
+  display: block;
   overflow: visible;
   text-overflow: clip;
-  white-space: normal;
+  white-space: nowrap;
   -webkit-box-orient: initial;
   -webkit-line-clamp: unset;
 }
