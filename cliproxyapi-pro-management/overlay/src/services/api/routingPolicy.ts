@@ -80,10 +80,33 @@ export interface RoutingPolicyUpdate {
   requestProtection: RoutingRequestProtectionConfig;
 }
 
+type RoutingPolicyRawResponse = Omit<RoutingPolicyResponse, 'active' | 'recentEvents'> & {
+  active?: RoutingProtectedAccount[] | null;
+  recentEvents?: RoutingProtectionEvent[] | null;
+};
+
+const normalizeRoutingPolicyResponse = (
+  response: RoutingPolicyRawResponse
+): RoutingPolicyResponse => ({
+  ...response,
+  active: Array.isArray(response.active) ? response.active : [],
+  recentEvents: Array.isArray(response.recentEvents) ? response.recentEvents : [],
+});
+
 export const routingPolicyApi = {
-  get: () => apiClient.get<RoutingPolicyResponse>('/routing-policy'),
-  update: (payload: RoutingPolicyUpdate) =>
-    apiClient.put<RoutingPolicyResponse>('/routing-policy', payload),
-  release: (authIndex: string) =>
-    apiClient.post<RoutingPolicyResponse>('/routing-policy/release', { authIndex }),
+  async get(): Promise<RoutingPolicyResponse> {
+    return normalizeRoutingPolicyResponse(
+      await apiClient.get<RoutingPolicyRawResponse>('/routing-policy')
+    );
+  },
+  async update(payload: RoutingPolicyUpdate): Promise<RoutingPolicyResponse> {
+    return normalizeRoutingPolicyResponse(
+      await apiClient.put<RoutingPolicyRawResponse>('/routing-policy', payload)
+    );
+  },
+  async release(authIndex: string): Promise<RoutingPolicyResponse> {
+    return normalizeRoutingPolicyResponse(
+      await apiClient.post<RoutingPolicyRawResponse>('/routing-policy/release', { authIndex })
+    );
+  },
 };

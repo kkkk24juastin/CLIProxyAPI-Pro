@@ -311,7 +311,7 @@ export function RoutingPolicyPage() {
             onClick={() => setActiveView(view)}
           >
             {t(`routing_policy.views.${view}`)}
-            {view === 'runtime' && data?.active.length ? (
+            {view === 'runtime' && data?.active?.length ? (
               <span className={styles.tabCount}>{data.active.length}</span>
             ) : null}
           </button>
@@ -636,13 +636,13 @@ export function RoutingPolicyPage() {
             <div className={styles.sectionHeaderWithAction}>
               <div>
                 <h2>{t('routing_policy.runtime.active_title')}</h2>
-                <p>{t('routing_policy.runtime.active_count', { count: data?.active.length ?? 0 })}</p>
+                <p>{t('routing_policy.runtime.active_count', { count: data?.active?.length ?? 0 })}</p>
               </div>
               <Button variant="secondary" size="sm" onClick={() => void refreshRuntime()}>
                 <IconRefreshCw size={15} /> {t('common.refresh')}
               </Button>
             </div>
-            {data?.active.length ? (
+            {data?.active?.length ? (
               <div className={styles.tableScroller}>
                 <table className={styles.table}>
                   <thead>
@@ -694,10 +694,10 @@ export function RoutingPolicyPage() {
             <div className={styles.sectionHeaderWithAction}>
               <div>
                 <h2>{t('routing_policy.runtime.events_title')}</h2>
-                <p>{t('routing_policy.runtime.events_count', { count: data?.recentEvents.length ?? 0 })}</p>
+                <p>{t('routing_policy.runtime.events_count', { count: data?.recentEvents?.length ?? 0 })}</p>
               </div>
             </div>
-            {data?.recentEvents.length ? (
+            {data?.recentEvents?.length ? (
               <div className={styles.tableScroller}>
                 <table className={styles.table}>
                   <thead>

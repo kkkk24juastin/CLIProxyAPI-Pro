@@ -128,3 +128,14 @@ func TestManualDisabledStateClearsRoutingProtectionOwnership(t *testing.T) {
 		t.Fatal("manual status change must clear request protection ownership")
 	}
 }
+
+func TestRoutingPolicyResponseUsesEmptyCollections(t *testing.T) {
+	h := &Handler{}
+	response := h.routingPolicyResponse()
+	if response.Active == nil {
+		t.Fatal("active must serialize as an empty array instead of null")
+	}
+	if response.RecentEvents == nil {
+		t.Fatal("recentEvents must serialize as an empty array instead of null")
+	}
+}

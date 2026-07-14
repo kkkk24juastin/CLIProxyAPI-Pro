@@ -372,11 +372,11 @@ func (c *routingPolicyController) appendEvent(event routingProtectionEvent) {
 
 func (c *routingPolicyController) recentEvents() []routingProtectionEvent {
 	if c == nil {
-		return nil
+		return []routingProtectionEvent{}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]routingProtectionEvent(nil), c.events...)
+	return append([]routingProtectionEvent{}, c.events...)
 }
 
 func routingProtectionStatusMatches(values []int, status int) bool {
@@ -687,7 +687,11 @@ func (h *Handler) ReleaseRoutingProtectedAuth(c *gin.Context) {
 }
 
 func (h *Handler) routingPolicyResponse() routingPolicyResponse {
-	response := routingPolicyResponse{RequestProtection: defaultRoutingRequestProtectionConfig()}
+	response := routingPolicyResponse{
+		RequestProtection: defaultRoutingRequestProtectionConfig(),
+		Active:            []routingProtectionActiveAccount{},
+		RecentEvents:      []routingProtectionEvent{},
+	}
 	h.mu.Lock()
 	if h.cfg != nil {
 		response.Global = routingPolicyGlobalSettings{
@@ -723,7 +727,7 @@ func (h *Handler) routingPolicyResponse() routingPolicyResponse {
 
 func (h *Handler) routingProtectionActiveAccounts() []routingProtectionActiveAccount {
 	if h == nil || h.authManager == nil {
-		return nil
+		return []routingProtectionActiveAccount{}
 	}
 	active := make([]routingProtectionActiveAccount, 0)
 	for _, auth := range h.authManager.List() {
