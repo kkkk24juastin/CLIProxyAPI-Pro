@@ -354,44 +354,40 @@ def patch_layout(target: Path) -> None:
             )
         else:
             raise RuntimeError(f'Pattern not found in {path}: quota navigation item')
-    text = read(path)
-    if "path: '/routing'" not in text:
-        flat_auth_item = "    { path: '/auth-files', label: t('nav.auth_files'), icon: sidebarIcons.authFiles },\n"
-        grouped_auth_item = (
-            "        {\n"
-            "          path: '/auth-files',\n"
-            "          labelKey: 'nav.auth_files',\n"
-            "          metaKey: 'nav_meta.auth_files',\n"
-            "          icon: sidebarIcons.authFiles,\n"
-            "        },\n"
+    flat_routing_item = (
+        "    { path: '/routing', label: t('nav.routing_policy'), icon: sidebarIcons.routing },\n"
+    )
+    flat_monitoring_item = (
+        "    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },\n"
+    )
+    grouped_routing_item = (
+        "        {\n"
+        "          path: '/routing',\n"
+        "          labelKey: 'nav.routing_policy',\n"
+        "          metaKey: 'nav_meta.routing_policy',\n"
+        "          icon: sidebarIcons.routing,\n"
+        "        },\n"
+    )
+    grouped_monitoring_item = (
+        "        {\n"
+        "          path: '/monitoring',\n"
+        "          labelKey: 'nav.monitoring_center',\n"
+        "          metaKey: 'nav_meta.monitoring_center',\n"
+        "          icon: sidebarIcons.monitoring,\n"
+        "        },\n"
+    )
+    text = read(path).replace(flat_routing_item, '').replace(grouped_routing_item, '')
+    if flat_monitoring_item in text:
+        text = text.replace(flat_monitoring_item, flat_routing_item + flat_monitoring_item, 1)
+    elif grouped_monitoring_item in text:
+        text = text.replace(
+            grouped_monitoring_item,
+            grouped_routing_item + grouped_monitoring_item,
+            1,
         )
-        if flat_auth_item in text:
-            write(
-                path,
-                text.replace(
-                    flat_auth_item,
-                    flat_auth_item
-                    + "    { path: '/routing', label: t('nav.routing_policy'), icon: sidebarIcons.routing },\n",
-                    1,
-                ),
-            )
-        elif grouped_auth_item in text:
-            write(
-                path,
-                text.replace(
-                    grouped_auth_item,
-                    grouped_auth_item
-                    + "        {\n"
-                    + "          path: '/routing',\n"
-                    + "          labelKey: 'nav.routing_policy',\n"
-                    + "          metaKey: 'nav_meta.routing_policy',\n"
-                    + "          icon: sidebarIcons.routing,\n"
-                    + "        },\n",
-                    1,
-                ),
-            )
-        else:
-            raise RuntimeError(f'Pattern not found in {path}: auth files navigation item')
+    else:
+        raise RuntimeError(f'Pattern not found in {path}: monitoring navigation item')
+    write(path, text)
     replace_once_if_present(
         path,
         "        {\n"

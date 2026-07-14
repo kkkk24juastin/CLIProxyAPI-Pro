@@ -8,13 +8,14 @@
   flex-direction: column;
   gap: $spacing-lg;
   margin: 0 auto;
-  padding-bottom: $spacing-lg;
+  padding-bottom: calc(
+    var(--routing-policy-action-bar-height, 0px) + 16px + env(safe-area-inset-bottom) + #{$spacing-md}
+  );
 }
 
 .pageHeader {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: $spacing-lg;
 }
 
@@ -71,19 +72,6 @@
   border-color: color-mix(in srgb, $warning-color 45%, var(--border-color));
   background: color-mix(in srgb, $warning-color 10%, var(--bg-primary));
   color: $warning-color;
-}
-
-.headerActions {
-  display: flex;
-  align-items: center;
-  gap: $spacing-sm;
-  flex-shrink: 0;
-
-  button > span {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
 }
 
 .viewTabs {
@@ -485,17 +473,8 @@
     gap: $spacing-md;
   }
 
-  .pageHeader,
   .protectionMaster {
     flex-direction: column;
-  }
-
-  .headerActions {
-    width: 100%;
-
-    button {
-      flex: 1;
-    }
   }
 
   .viewTabs,

@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { createPortal } from 'react-dom';
+import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconCheck, IconRefreshCw, IconShield } from '@/components/ui/icons';
+import { useActionBarHeightVar } from '@/hooks/useActionBarHeightVar';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import {
   ROUTING_POLICY_PROVIDERS,
   routingPolicyApi,
@@ -15,6 +20,7 @@ import {
   type RoutingRequestProtectionConfig,
 } from '@/services/api/routingPolicy';
 import { useAuthStore, useNotificationStore } from '@/stores';
+import configActionStyles from './ConfigPage.module.scss';
 import styles from './RoutingPolicyPage.module.scss';
 
 type RoutingPolicyView = 'global' | 'providers' | 'runtime';
@@ -54,6 +60,9 @@ const toNumber = (value: string): number => {
 
 export function RoutingPolicyPage() {
   const { t, i18n } = useTranslation();
+  const pageTransitionLayer = usePageTransitionLayer();
+  const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.isCurrentLayer : true;
+  const isMobile = useMediaQuery('(max-width: 768px)');
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
@@ -68,9 +77,33 @@ export function RoutingPolicyPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [releasing, setReleasing] = useState<string | null>(null);
+  const [error, setError] = useState('');
   const [dirty, setDirty] = useState(false);
+  const floatingActionsRef = useRef<HTMLDivElement>(null);
 
   const disabled = connectionStatus !== 'connected';
+  const shouldRenderFloatingActions = isCurrentLayer;
+  const unsavedChangesDialog = useMemo(
+    () => ({
+      title: t('common.unsaved_changes_title'),
+      message: t('common.unsaved_changes_message'),
+      confirmText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+    }),
+    [t]
+  );
+
+  useUnsavedChangesGuard({
+    enabled: isCurrentLayer,
+    shouldBlock: dirty,
+    dialog: unsavedChangesDialog,
+  });
+
+  useActionBarHeightVar(
+    floatingActionsRef,
+    '--routing-policy-action-bar-height',
+    shouldRenderFloatingActions
+  );
 
   const applyConfigResponse = useCallback((response: RoutingPolicyResponse) => {
     setData(response);
@@ -89,10 +122,12 @@ export function RoutingPolicyPage() {
 
   const loadPolicy = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       applyConfigResponse(await routingPolicyApi.get());
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : t('routing_policy.load_failed');
+      setError(message);
       showNotification(`${t('routing_policy.load_failed')}: ${message}`, 'error');
     } finally {
       setLoading(false);
@@ -216,9 +251,9 @@ export function RoutingPolicyPage() {
       return;
     }
     showConfirmation({
-      title: t('routing_policy.discard_title'),
-      message: t('routing_policy.discard_message'),
-      confirmText: t('common.confirm'),
+      title: t('common.unsaved_changes_title'),
+      message: t('config_management.reload_confirm_message'),
+      confirmText: t('config_management.reload'),
       cancelText: t('common.cancel'),
       variant: 'danger',
       onConfirm: loadPolicy,
@@ -258,17 +293,88 @@ export function RoutingPolicyPage() {
       : t('routing_policy.mode_observe');
   }, [requestProtection, t]);
 
+  const getStatusText = () => {
+    if (disabled) return t('config_management.status_disconnected');
+    if (loading) return t('config_management.status_loading');
+    if (error) return t('config_management.status_load_failed');
+    if (saving) return t('config_management.status_saving');
+    if (dirty) return t('config_management.status_dirty');
+    return t('config_management.status_loaded');
+  };
+
+  const getFloatingStatusText = () => {
+    if (!isMobile) return getStatusText();
+    if (disabled)
+      return t('config_management.status_disconnected_short', { defaultValue: 'Disconnected' });
+    if (loading) return t('config_management.status_loading_short', { defaultValue: 'Loading' });
+    if (error) return t('config_management.status_load_failed_short', { defaultValue: 'Failed' });
+    if (saving) return t('config_management.status_saving_short', { defaultValue: 'Saving' });
+    if (dirty) return t('config_management.status_dirty_short', { defaultValue: 'Unsaved' });
+    return t('config_management.status_loaded_short', { defaultValue: 'Loaded' });
+  };
+
+  const getStatusClass = () => {
+    if (error) return configActionStyles.error;
+    if (dirty) return configActionStyles.modified;
+    if (!loading && !saving) return configActionStyles.saved;
+    return '';
+  };
+
+  const floatingActions = (
+    <div className={configActionStyles.floatingActionContainer} ref={floatingActionsRef}>
+      <div className={configActionStyles.floatingActionList}>
+        <div
+          className={`${configActionStyles.floatingStatus} ${
+            isMobile ? configActionStyles.floatingStatusCompact : ''
+          } ${getStatusClass()}`}
+        >
+          {getFloatingStatusText()}
+        </div>
+        <button
+          type="button"
+          className={configActionStyles.floatingActionButton}
+          onClick={handleRefresh}
+          disabled={loading || saving}
+          title={t('config_management.reload')}
+          aria-label={t('config_management.reload')}
+        >
+          <IconRefreshCw size={16} />
+        </button>
+        <button
+          type="button"
+          className={configActionStyles.floatingActionButton}
+          onClick={() => void handleSave()}
+          disabled={disabled || loading || saving || !dirty}
+          title={t('config_management.save')}
+          aria-label={t('config_management.save')}
+        >
+          <IconCheck size={16} />
+          {dirty && <span className={configActionStyles.dirtyDot} aria-hidden="true" />}
+        </button>
+      </div>
+    </div>
+  );
+
   if (loading && !globalSettings) {
-    return <div className={styles.loading}>{t('common.loading')}</div>;
+    return (
+      <div className={styles.container}>
+        <div className={styles.loading}>{t('common.loading')}</div>
+        {shouldRenderFloatingActions && typeof document !== 'undefined'
+          ? createPortal(floatingActions, document.body)
+          : null}
+      </div>
+    );
   }
 
   if (!globalSettings || !requestProtection) {
     return (
-      <div className={styles.emptyState}>
-        <p>{t('routing_policy.load_failed')}</p>
-        <Button variant="secondary" onClick={() => void loadPolicy()}>
-          <IconRefreshCw size={16} /> {t('common.refresh')}
-        </Button>
+      <div className={styles.container}>
+        <div className={styles.emptyState}>
+          <p>{t('routing_policy.load_failed')}</p>
+        </div>
+        {shouldRenderFloatingActions && typeof document !== 'undefined'
+          ? createPortal(floatingActions, document.body)
+          : null}
       </div>
     );
   }
@@ -291,14 +397,6 @@ export function RoutingPolicyPage() {
             </span>
           </div>
           <p className={styles.subtitle}>{t('routing_policy.subtitle')}</p>
-        </div>
-        <div className={styles.headerActions}>
-          <Button variant="secondary" onClick={handleRefresh} disabled={disabled || loading}>
-            <IconRefreshCw size={16} /> {t('common.refresh')}
-          </Button>
-          <Button onClick={() => void handleSave()} disabled={disabled || !dirty} loading={saving}>
-            <IconCheck size={16} /> {t('common.save')}
-          </Button>
         </div>
       </header>
 
@@ -736,6 +834,9 @@ export function RoutingPolicyPage() {
           </section>
         </div>
       )}
+      {shouldRenderFloatingActions && typeof document !== 'undefined'
+        ? createPortal(floatingActions, document.body)
+        : null}
     </div>
   );
 }
