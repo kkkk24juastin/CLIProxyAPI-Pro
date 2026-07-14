@@ -4368,20 +4368,20 @@
 .realtimeReasoningBadge {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   min-width: 56px;
   max-width: 100%;
-  min-height: 28px;
-  padding: 3px 10px;
-  border: 1px solid color-mix(in srgb, var(--monitor-accent) 48%, var(--monitor-line));
+  min-height: 26px;
+  padding: 2px 11px;
+  border: 1px solid color-mix(in srgb, #38bdf8 72%, var(--monitor-line));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface));
-  color: var(--monitor-accent-strong);
+  background: color-mix(in srgb, #38bdf8 13%, var(--monitor-surface));
+  color: color-mix(in srgb, #0284c7 72%, var(--monitor-ink));
   font-size: 13px;
   font-weight: 700;
   line-height: 1.2;
   overflow-wrap: anywhere;
-  text-align: left;
+  text-align: center;
   white-space: normal;
 }
 
@@ -4635,7 +4635,8 @@
   min-height: 24px;
   padding: 0 8px;
   font-size: 12px;
-  justify-content: flex-start;
+  justify-content: center;
+  text-align: center;
   width: 100%;
 }
 
