@@ -1268,6 +1268,7 @@ const buildEventRows = (
         executorType,
         detail.upstream_request_id,
         detail.retry_after,
+        detail.reasoning_effort,
         authMeta?.planType,
         clientApiKeyIdentity.masked
       ),

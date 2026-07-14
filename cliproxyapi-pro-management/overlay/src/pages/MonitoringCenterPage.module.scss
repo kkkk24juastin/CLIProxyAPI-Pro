@@ -4145,26 +4145,26 @@
 }
 
 .realtimeMetricCell {
-  text-align: right;
+  text-align: left;
 }
 
 .table thead th.realtimeMetricHeader {
-  text-align: right;
+  text-align: left;
 }
 
 .table thead th.realtimeCenterHeader,
 .realtimeCenterCell {
-  text-align: center;
+  text-align: left;
 }
 
 .realtimeCenterCell > * {
-  margin-inline: auto;
+  margin-inline: 0;
 }
 
 .realtimeCostCell {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
   width: 100%;
   min-height: 54px;
@@ -4361,6 +4361,30 @@
   white-space: nowrap;
 }
 
+.realtimeReasoningCol {
+  min-width: 96px;
+}
+
+.realtimeReasoningBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 56px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--monitor-accent) 48%, var(--monitor-line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface));
+  color: var(--monitor-accent-strong);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: normal;
+}
+
 .realtimeTokensTableCell {
   white-space: normal;
 }
@@ -4373,7 +4397,7 @@
 .realtimeStatusErrorButton {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 100%;
   min-width: 0;
   padding: 0;
@@ -4611,6 +4635,7 @@
   min-height: 24px;
   padding: 0 8px;
   font-size: 12px;
+  justify-content: flex-start;
   width: 100%;
 }
 

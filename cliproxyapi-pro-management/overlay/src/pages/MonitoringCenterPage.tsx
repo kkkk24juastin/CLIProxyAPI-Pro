@@ -119,6 +119,7 @@ const REALTIME_LOG_COLUMNS_STORAGE_KEY = 'cli-proxy-realtime-log-columns-v2';
 const REALTIME_LOG_COLUMN_KEYS = [
   'type',
   'model',
+  'reasoningEffort',
   'apiKey',
   'recent',
   'status',
@@ -149,6 +150,7 @@ type RealtimeLogColumnDefinition = {
 const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   type: 170,
   model: 230,
+  reasoningEffort: 116,
   apiKey: 145,
   recent: 86,
   status: 180,
@@ -164,6 +166,7 @@ const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, number> =
 const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   type: 96,
   model: 132,
+  reasoningEffort: 96,
   apiKey: 104,
   recent: 76,
   status: 120,
@@ -177,6 +180,9 @@ const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   time: 116,
 };
 const REALTIME_LOG_COLUMN_MAX_WIDTH = 420;
+const REALTIME_LOG_COLUMN_MAX_WIDTHS: Partial<Record<RealtimeLogColumnKey, number>> = {
+  type: 240,
+};
 const REALTIME_LOG_COLUMN_KEY_SET = new Set<RealtimeLogColumnKey>(REALTIME_LOG_COLUMN_KEYS);
 const createDefaultRealtimeLogColumns = (): RealtimeLogColumnPreference[] => (
   REALTIME_LOG_COLUMN_KEYS.map((key) => ({ key, visible: true }))
@@ -219,7 +225,8 @@ const clampRealtimeLogColumnWidth = (key: RealtimeLogColumnKey, width: unknown) 
   const numericWidth = typeof width === 'number' && Number.isFinite(width)
     ? width
     : REALTIME_LOG_COLUMN_DEFAULT_WIDTHS[key];
-  return Math.min(REALTIME_LOG_COLUMN_MAX_WIDTH, Math.max(REALTIME_LOG_COLUMN_MIN_WIDTHS[key], Math.round(numericWidth)));
+  const maxWidth = REALTIME_LOG_COLUMN_MAX_WIDTHS[key] ?? REALTIME_LOG_COLUMN_MAX_WIDTH;
+  return Math.min(maxWidth, Math.max(REALTIME_LOG_COLUMN_MIN_WIDTHS[key], Math.round(numericWidth)));
 };
 
 const normalizeRealtimeLogColumnWidth = (key: RealtimeLogColumnKey, width: unknown) => (
@@ -255,11 +262,23 @@ const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPreferenc
     });
   }
 
+  const shouldMigrateReasoningEffort = next.length > 0 && !seen.has('reasoningEffort');
+
   REALTIME_LOG_DEFAULT_COLUMNS.forEach((item) => {
     if (!seen.has(item.key)) {
       next.push({ ...item });
     }
   });
+
+  if (shouldMigrateReasoningEffort) {
+    const reasoningEffortIndex = next.findIndex((item) => item.key === 'reasoningEffort');
+    const modelIndex = next.findIndex((item) => item.key === 'model');
+    if (reasoningEffortIndex >= 0 && modelIndex >= 0) {
+      const [reasoningEffortColumn] = next.splice(reasoningEffortIndex, 1);
+      const migratedModelIndex = next.findIndex((item) => item.key === 'model');
+      next.splice(migratedModelIndex + 1, 0, reasoningEffortColumn);
+    }
+  }
 
   const timeColumn = next.find((item) => item.key === 'time');
   const ordered = timeColumn ? [...next.filter((item) => item.key !== 'time'), timeColumn] : next;
@@ -292,6 +311,8 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
       return [row.provider, row.account || row.authLabel || row.accountMasked || '-'];
     case 'model':
       return [row.model, row.modelAlias && row.modelAlias !== row.model ? row.modelAlias : buildRealtimeMetaText(row)];
+    case 'reasoningEffort':
+      return [row.reasoningEffort.trim() || '-'];
     case 'apiKey':
       return [row.clientApiKey.masked];
     case 'recent':
@@ -4444,6 +4465,24 @@ export function MonitoringCenterPage() {
           ) : null}
         </div>
       ),
+    },
+    reasoningEffort: {
+      key: 'reasoningEffort',
+      label: t('monitoring.column_reasoning_effort'),
+      colClassName: styles.realtimeReasoningCol,
+      headerClassName: styles.realtimeCenterHeader,
+      cellClassName: () => `${styles.realtimeCenterCell} ${styles.realtimeNowrapCell}`,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.reasoningEffort,
+      render: (row) => {
+        const reasoningEffort = row.reasoningEffort.trim();
+        return reasoningEffort ? (
+          <span className={`${styles.realtimeReasoningBadge} ${styles.monoCell}`} title={reasoningEffort}>
+            {reasoningEffort}
+          </span>
+        ) : (
+          <span className={styles.mutedText}>-</span>
+        );
+      },
     },
     apiKey: {
       key: 'apiKey',
