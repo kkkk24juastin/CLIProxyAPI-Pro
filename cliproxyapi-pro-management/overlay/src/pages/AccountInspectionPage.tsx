@@ -1478,6 +1478,7 @@ type InspectionBackendState = {
   progress: AccountInspectionProgressSnapshot;
   result: AccountInspectionRunResult | null;
   autoExecutionCounts: AutoExecutionCounts;
+  restoredSnapshot: boolean;
 };
 
 type InspectionBackendAction =
@@ -1506,6 +1507,7 @@ const createInspectionBackendState = (settings: AccountInspectionConfigurableSet
   progress: createIdleAccountInspectionProgressSnapshot(),
   result: null,
   autoExecutionCounts: emptyAutoExecutionCounts(),
+  restoredSnapshot: false,
 });
 
 const applyBackendViewState = (
@@ -1521,6 +1523,7 @@ const applyBackendViewState = (
   nextState = withChanged(nextState, 'autoExecutionCounts', viewState.autoExecutionCounts, sameAutoExecutionCounts);
   nextState = withChanged(nextState, 'progress', viewState.progress, sameProgressSnapshot);
   nextState = withChanged(nextState, 'runStatus', viewState.runStatus, sameRunStatus);
+  nextState = withChanged(nextState, 'restoredSnapshot', viewState.restoredSnapshot, Object.is);
   if (viewState.logs) {
     nextState = withChanged(nextState, 'logs', viewState.logs, Object.is);
   }
@@ -1566,6 +1569,7 @@ const inspectionBackendReducer = (
         ...state,
         result: null,
         runStatus: 'running',
+        restoredSnapshot: false,
         autoExecutionCounts: emptyAutoExecutionCounts(),
         progress: {
           ...createIdleAccountInspectionProgressSnapshot(),
@@ -1627,6 +1631,7 @@ export function AccountInspectionPage() {
     progress,
     result,
     autoExecutionCounts,
+    restoredSnapshot,
   } = backendState;
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [selectedErrorResult, setSelectedErrorResult] = useState<AccountInspectionResultItem | null>(null);
@@ -2029,6 +2034,10 @@ export function AccountInspectionPage() {
 
   const executeItems = useCallback(
     async (items: AccountInspectionResultItem[]) => {
+      if (restoredSnapshot) {
+        showNotification(t('monitoring.account_inspection_restored_snapshot_action_blocked'), 'warning');
+        return;
+      }
       const currentResult = result;
       if (!currentResult) return;
       const targets = items.filter(isSuggestedAction);
@@ -2080,7 +2089,7 @@ export function AccountInspectionPage() {
         setExecuting(false);
       }
     },
-    [appendLog, applyBackendResponse, currentInspectionDetailOptions, loadAuthFiles, result, showNotification, t]
+    [appendLog, applyBackendResponse, currentInspectionDetailOptions, loadAuthFiles, restoredSnapshot, result, showNotification, t]
   );
 
   const allResults = useMemo(
@@ -2201,6 +2210,10 @@ export function AccountInspectionPage() {
 
   const handleRecheckSingle = useCallback(
     async (item: AccountInspectionResultItem) => {
+      if (restoredSnapshot) {
+        showNotification(t('monitoring.account_inspection_restored_snapshot_action_blocked'), 'warning');
+        return;
+      }
       if (connectionStatus !== 'connected') {
         showNotification(t('notification.connection_required'), 'warning');
         return;
@@ -2225,11 +2238,15 @@ export function AccountInspectionPage() {
         setRecheckingKey(null);
       }
     },
-    [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, showNotification, t]
+    [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, restoredSnapshot, showNotification, t]
   );
 
   const refreshTokenSingle = useCallback(
     async (item: AccountInspectionResultItem) => {
+      if (restoredSnapshot) {
+        showNotification(t('monitoring.account_inspection_restored_snapshot_action_blocked'), 'warning');
+        return;
+      }
       setRefreshingTokenKey(item.key);
       setLogsCollapsed(false);
       appendLog('info', t('monitoring.account_inspection_refresh_token_started', {
@@ -2250,7 +2267,7 @@ export function AccountInspectionPage() {
         setRefreshingTokenKey(null);
       }
     },
-    [appendLog, applyBackendResponse, currentInspectionDetailOptions, i18n.language, loadAuthFiles, showNotification, t]
+    [appendLog, applyBackendResponse, currentInspectionDetailOptions, i18n.language, loadAuthFiles, restoredSnapshot, showNotification, t]
   );
 
   const handleRefreshTokenSingle = useCallback(
@@ -2817,6 +2834,13 @@ export function AccountInspectionPage() {
         </div>
       </Card>
 
+      {restoredSnapshot ? (
+        <div className={styles.restoredSnapshotNotice} role="status">
+          <strong>{t('monitoring.account_inspection_restored_snapshot_title')}</strong>
+          <span>{t('monitoring.account_inspection_restored_snapshot_desc')}</span>
+        </div>
+      ) : null}
+
       <section className={styles.operationSection}>
         <div className={styles.operationModuleHeader}>
           <div>
@@ -2983,7 +3007,7 @@ export function AccountInspectionPage() {
                         size="sm"
                         onClick={handleExecutePlanned}
                         loading={executing || loadingFullInspectionDetails}
-                        disabled={!result || runStatus === 'running' || executing || loadingFullInspectionDetails || pendingActionCount === 0}
+                        disabled={restoredSnapshot || !result || runStatus === 'running' || executing || loadingFullInspectionDetails || pendingActionCount === 0}
                       >
                         {executing || loadingFullInspectionDetails ? t('monitoring.account_inspection_executing') : t('monitoring.account_inspection_execute_now')}
                       </Button>
@@ -3113,16 +3137,16 @@ export function AccountInspectionPage() {
                                 variant="secondary"
                                 onClick={() => void handleRefreshTokenSingle(item)}
                                 loading={refreshingTokenKey === item.key}
-                                disabled={runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}
+                                disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}
                                 title={t('monitoring.account_inspection_refresh_token_tooltip')}
                               >
                                 {t('monitoring.account_inspection_refresh_token_action')}
                               </Button>
-                              <Button size="sm" variant="secondary" onClick={() => void handleRecheckSingle(item)} loading={recheckingKey === item.key} disabled={runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}>
+                              <Button size="sm" variant="secondary" onClick={() => void handleRecheckSingle(item)} loading={recheckingKey === item.key} disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}>
                                 {t('monitoring.account_inspection_recheck_account')}
                               </Button>
                               {manualActions.map((action) => (
-                                <Button key={action} size="sm" variant={action === 'delete' ? 'danger' : 'secondary'} onClick={() => handleExecuteSingle(item, action)} disabled={runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}>
+                                <Button key={action} size="sm" variant={action === 'delete' ? 'danger' : 'secondary'} onClick={() => handleExecuteSingle(item, action)} disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}>
                                   {formatActionLabel(action, t)}
                                 </Button>
                               ))}

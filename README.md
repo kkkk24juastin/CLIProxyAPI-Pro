@@ -48,7 +48,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 构建与 upstream 平台和打包格式一致的 Pro 二进制 release 资产。
 - 内嵌 SQLite usage service。
 - 暴露 `/v0/management/usage` 系列 API，包括状态、增量事件轮询和 SSE 流。
-- 支持 usage JSONL/NDJSON 导入导出，包含 usage events、模型价格、quota cache 和账号巡检调度。
+- 支持 usage JSONL/NDJSON 导入导出，包含 usage events、模型价格、quota cache、账号巡检调度和最近一次巡检结果快照。
 - 支持 WebDAV usage 备份恢复。
 - 支持 SQLite-backed quota cache。
 - 支持模型价格持久化。
@@ -289,11 +289,12 @@ core 镜像默认使用：
 
 - usage SQLite 数据库：`usage.sqlite`
 - 账号巡检调度文件：`account-inspection-schedule.json`
+- 最近一次账号巡检结果快照：`account-inspection-snapshot.json`
 - quota cache
 - model prices
 - monitoring settings
 
-Usage 导入导出会使用 NDJSON 元数据记录保存模型价格、quota cache、监控设置和账号巡检调度，因此 WebDAV 备份恢复可以随 usage events 一起恢复监控相关状态。监控日志保留会在每天服务器本地时间 02:00 自动清理，保存设置时也会立即清理一次；WebDAV 备份可单独设置保留天数，成功备份后会删除过期的 `usage-export-*.jsonl` 文件。
+Usage 导入导出会使用 NDJSON 元数据记录保存模型价格、quota cache、监控设置、账号巡检调度和最近一次已结束的巡检结果快照，因此 WebDAV 备份恢复可以随 usage events 一起恢复监控相关状态。恢复的巡检快照用于迁移和问题追溯，默认只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。巡检日志不进入快照。监控日志保留会在每天服务器本地时间 02:00 自动清理，保存设置时也会立即清理一次；WebDAV 备份可单独设置保留天数，成功备份后会删除过期的 `usage-export-*.jsonl` 文件。
 
 建议在生产环境中为该目录配置持久化 volume。
 

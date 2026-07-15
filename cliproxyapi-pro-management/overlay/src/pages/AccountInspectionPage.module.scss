@@ -23,6 +23,27 @@
   min-width: 0;
 }
 
+.restoredSnapshotNotice {
+  display: grid;
+  gap: 5px;
+  padding: 13px 16px;
+  border: 1px solid color-mix(in srgb, var(--inspect-amber) 32%, var(--inspect-line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--inspect-amber) 8%, var(--inspect-surface));
+  color: var(--inspect-ink);
+}
+
+.restoredSnapshotNotice strong {
+  color: var(--inspect-amber);
+  font-size: 13px;
+}
+
+.restoredSnapshotNotice span {
+  color: var(--inspect-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .heroCard:global(.card),
 .heroCard {
   display: grid;

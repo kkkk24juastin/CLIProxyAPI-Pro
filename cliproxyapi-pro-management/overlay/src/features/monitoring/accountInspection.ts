@@ -184,6 +184,7 @@ export type AccountInspectionBackendStatus = {
   resultsPage?: AccountInspectionPageInfo;
   logsLimited?: boolean;
   resultsLimited?: boolean;
+  restoredSnapshot?: boolean;
   logs: AccountInspectionBackendLog[] | null;
   results: AccountInspectionBackendResultItem[] | null;
 };
@@ -727,6 +728,7 @@ export const buildAccountInspectionBackendViewState = (
       disable: response.status.summary.executedDisableCount ?? 0,
       enable: response.status.summary.executedEnableCount ?? 0,
     },
+    restoredSnapshot: response.status.restoredSnapshot ?? false,
     result: hasSnapshot
       ? buildAccountInspectionBackendRunResult(response, results, startedAt, finishedAt)
       : undefined,

@@ -73,8 +73,9 @@ internal/embeddedusage
 - `quota_cache` — 配额卡片和账号级刷新使用的 SQLite-backed quota snapshots。
 - `monitoring_settings` — 监控日志保留时间、WebDAV 备份配置和 models.dev 定期同步配置。
 - `account_inspection_schedule` — 后端账号巡检调度设置。
+- `account_inspection_snapshot` — 最近一次已结束的账号巡检结果，包含运行设置、汇总、健康统计、完整结果和原始错误详情，不包含巡检日志。
 
-`/usage/import` 接受同样的 JSONL 格式。导入时会对每行只读取一次 `record_type`，导入 usage events，恢复模型价格、quota cache entries、监控设置，并在存在账号巡检调度记录时恢复调度设置。
+`/usage/import` 接受同样的 JSONL 格式。导入时会对每行只读取一次 `record_type`，导入 usage events，恢复模型价格、quota cache entries、监控设置、账号巡检调度和最近一次巡检结果快照。恢复的结果快照为只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。
 
 导入响应示例字段：
 
@@ -90,6 +91,8 @@ internal/embeddedusage
   "quotaCacheRecords": 1,
   "accountInspectionSchedule": true,
   "accountInspectionScheduleRecords": 1,
+  "accountInspectionSnapshot": true,
+  "accountInspectionSnapshotRecords": 1,
   "monitoringSettings": true,
   "monitoringSettingsRecords": 1
 }
@@ -140,6 +143,8 @@ internal/embeddedusage
 ```
 
 如需自定义，可设置 `ACCOUNT_INSPECTION_SCHEDULE_PATH`。
+
+最近一次已结束的巡检结果会单独持久化到 `/CLIProxyAPI/usage/account-inspection-snapshot.json`，文件权限为 `0600`。进程重启或 usage 导入恢复后，该快照会标记为只读；下一次完整巡检结束时覆盖。可通过 `ACCOUNT_INSPECTION_SNAPSHOT_PATH` 自定义路径。
 
 ### 路由策略与请求状态保护
 
@@ -239,6 +244,7 @@ docker build \
 ### 账号巡检
 
 - `ACCOUNT_INSPECTION_SCHEDULE_PATH` — 可选调度 JSON 路径。默认 `USAGE_DATA_DIR/account-inspection-schedule.json`。
+- `ACCOUNT_INSPECTION_SNAPSHOT_PATH` — 可选最近一次巡检结果快照 JSON 路径。默认 `USAGE_DATA_DIR/account-inspection-snapshot.json`。
 
 ### WebDAV usage 恢复
 

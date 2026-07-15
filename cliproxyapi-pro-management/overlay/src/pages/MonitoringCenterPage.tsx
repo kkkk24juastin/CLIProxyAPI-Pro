@@ -894,6 +894,8 @@ type UsageImportResult = {
   quotaCacheRecords?: number;
   accountInspectionSchedule?: boolean;
   accountInspectionScheduleRecords?: number;
+  accountInspectionSnapshot?: boolean;
+  accountInspectionSnapshotRecords?: number;
   monitoringSettings?: boolean;
   monitoringSettingsRecords?: number;
 };
@@ -4136,6 +4138,7 @@ export function MonitoringCenterPage() {
 		  (result.modelPriceRecords ?? 0) > 0 ? t('usage_stats.import_model_prices_restored', { count: Math.max(result.modelPrices ?? 0, result.modelPriceRules ?? 0) }) : '',
           (result.quotaCacheRecords ?? 0) > 0 ? t('usage_stats.import_quota_cache_restored', { count: result.quotaCache ?? 0 }) : '',
           result.accountInspectionSchedule ? t('usage_stats.import_account_inspection_schedule_restored') : '',
+          result.accountInspectionSnapshot ? t('usage_stats.import_account_inspection_snapshot_restored') : '',
           result.monitoringSettings ? t('usage_stats.import_monitoring_settings_restored') : '',
         ].filter(Boolean).join(' · ');
         showNotification(

@@ -16,6 +16,7 @@ import (
 )
 
 const accountInspectionScheduleExportRecordType = "account_inspection_schedule"
+const accountInspectionSnapshotExportRecordType = "account_inspection_snapshot"
 const usageHistoryStartCursorValue = int64(1<<63 - 1)
 
 type usageStreamEvent = internalusage.Payload
@@ -39,6 +40,13 @@ type accountInspectionScheduleExportRecord struct {
 	RecordType string          `json:"record_type"`
 	Version    int             `json:"version"`
 	Schedule   json.RawMessage `json:"schedule"`
+	ExportedAt int64           `json:"exported_at_ms"`
+}
+
+type accountInspectionSnapshotExportRecord struct {
+	RecordType string          `json:"record_type"`
+	Version    int             `json:"version"`
+	Snapshot   json.RawMessage `json:"snapshot"`
 	ExportedAt int64           `json:"exported_at_ms"`
 }
 
@@ -624,6 +632,25 @@ func (s *Server) exportJSONL(ctx context.Context) ([]byte, error) {
 			data = append(data, '\n')
 		}
 	}
+	if accountInspectionSnapshotExporter != nil {
+		snapshot, ok, err := accountInspectionSnapshotExporter()
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			line, err := json.Marshal(accountInspectionSnapshotExportRecord{
+				RecordType: accountInspectionSnapshotExportRecordType,
+				Version:    1,
+				Snapshot:   snapshot,
+				ExportedAt: time.Now().UnixMilli(),
+			})
+			if err != nil {
+				return nil, err
+			}
+			data = append(data, line...)
+			data = append(data, '\n')
+		}
+	}
 	return data, nil
 }
 
@@ -640,7 +667,7 @@ func (s *Server) handleUsageExport(c *gin.Context) {
 
 func (s *Server) handleUsageImport(c *gin.Context) {
 	reader := bufio.NewScanner(c.Request.Body)
-	reader.Buffer(make([]byte, 64*1024), 10*1024*1024)
+	reader.Buffer(make([]byte, 64*1024), 64*1024*1024)
 	events := make([]internalusage.Event, 0, s.cfg.BatchSize)
 	result := InsertResult{}
 	totalEvents := 0
@@ -664,6 +691,8 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 	quotaCacheRecords := 0
 	var accountInspectionSchedule json.RawMessage
 	accountInspectionScheduleRecords := 0
+	var accountInspectionSnapshot json.RawMessage
+	accountInspectionSnapshotRecords := 0
 	var monitoringSettings *MonitoringSettings
 	monitoringSettingsRecords := 0
 	failed := 0
@@ -687,6 +716,15 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			}
 			accountInspectionSchedule = schedule
 			accountInspectionScheduleRecords++
+			continue
+		case accountInspectionSnapshotExportRecordType:
+			snapshot, err := parseAccountInspectionSnapshotImportRecord(raw)
+			if err != nil {
+				failed++
+				continue
+			}
+			accountInspectionSnapshot = snapshot
+			accountInspectionSnapshotRecords++
 			continue
 		case modelPricesExportRecordType:
 			prices, rules, err := parseModelPricesImportRecord(raw)
@@ -777,6 +815,12 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return
 		}
 	}
+	if accountInspectionSnapshot != nil && accountInspectionSnapshotImporter != nil {
+		if err := accountInspectionSnapshotImporter(accountInspectionSnapshot); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"added":                            result.Inserted,
 		"skipped":                          result.Skipped,
@@ -789,6 +833,8 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		"quotaCacheRecords":                quotaCacheRecords,
 		"accountInspectionSchedule":        accountInspectionSchedule != nil,
 		"accountInspectionScheduleRecords": accountInspectionScheduleRecords,
+		"accountInspectionSnapshot":        accountInspectionSnapshot != nil,
+		"accountInspectionSnapshotRecords": accountInspectionSnapshotRecords,
 		"monitoringSettings":               monitoringSettings != nil,
 		"monitoringSettingsRecords":        monitoringSettingsRecords,
 	})
@@ -833,6 +879,17 @@ func parseAccountInspectionScheduleImportRecord(raw []byte) (json.RawMessage, er
 		return nil, nil
 	}
 	return record.Schedule, nil
+}
+
+func parseAccountInspectionSnapshotImportRecord(raw []byte) (json.RawMessage, error) {
+	var record accountInspectionSnapshotExportRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, err
+	}
+	if len(record.Snapshot) == 0 {
+		return nil, nil
+	}
+	return record.Snapshot, nil
 }
 
 func parseQuotaCacheImportRecord(raw []byte) ([]QuotaCacheEntry, error) {

@@ -208,6 +208,10 @@ const (
 	accountInspectionStateFailed    accountInspectionRunState = "failed"
 )
 
+const accountInspectionResultSnapshotVersion = 1
+
+var errAccountInspectionRestoredSnapshotReadOnly = errors.New("restored account inspection snapshot is read-only; run a new inspection first")
+
 type accountInspectionProgress struct {
 	Total     int `json:"total"`
 	Completed int `json:"completed"`
@@ -216,19 +220,32 @@ type accountInspectionProgress struct {
 }
 
 type accountInspectionStatus struct {
-	State          accountInspectionRunState      `json:"state"`
-	LastStartedAt  int64                          `json:"lastStartedAt"`
-	LastFinishedAt int64                          `json:"lastFinishedAt"`
-	LastError      string                         `json:"lastError"`
-	Progress       accountInspectionProgress      `json:"progress"`
-	Summary        accountInspectionSummary       `json:"summary"`
-	HealthCounts   *accountInspectionHealthCounts `json:"healthCounts,omitempty"`
-	LogsPage       *accountInspectionPageInfo     `json:"logsPage,omitempty"`
-	ResultsPage    *accountInspectionPageInfo     `json:"resultsPage,omitempty"`
-	LogsLimited    bool                           `json:"logsLimited,omitempty"`
-	ResultsLimited bool                           `json:"resultsLimited,omitempty"`
-	Logs           []accountInspectionLogEntry    `json:"logs"`
-	Results        []accountInspectionResult      `json:"results"`
+	State            accountInspectionRunState      `json:"state"`
+	LastStartedAt    int64                          `json:"lastStartedAt"`
+	LastFinishedAt   int64                          `json:"lastFinishedAt"`
+	LastError        string                         `json:"lastError"`
+	Progress         accountInspectionProgress      `json:"progress"`
+	Summary          accountInspectionSummary       `json:"summary"`
+	HealthCounts     *accountInspectionHealthCounts `json:"healthCounts,omitempty"`
+	LogsPage         *accountInspectionPageInfo     `json:"logsPage,omitempty"`
+	ResultsPage      *accountInspectionPageInfo     `json:"resultsPage,omitempty"`
+	LogsLimited      bool                           `json:"logsLimited,omitempty"`
+	ResultsLimited   bool                           `json:"resultsLimited,omitempty"`
+	RestoredSnapshot bool                           `json:"restoredSnapshot,omitempty"`
+	Logs             []accountInspectionLogEntry    `json:"logs"`
+	Results          []accountInspectionResult      `json:"results"`
+}
+
+type accountInspectionResultSnapshot struct {
+	Version        int                           `json:"version"`
+	State          accountInspectionRunState     `json:"state"`
+	LastStartedAt  int64                         `json:"lastStartedAt"`
+	LastFinishedAt int64                         `json:"lastFinishedAt"`
+	LastError      string                        `json:"lastError,omitempty"`
+	Settings       accountInspectionSettings     `json:"settings"`
+	Summary        accountInspectionSummary      `json:"summary"`
+	HealthCounts   accountInspectionHealthCounts `json:"healthCounts"`
+	Results        []accountInspectionResult     `json:"results"`
 }
 
 type accountInspectionPageInfo struct {
@@ -271,11 +288,13 @@ type accountInspectionLogStreamMessage struct {
 type accountInspectionScheduler struct {
 	h                       *Handler
 	path                    string
+	snapshotPath            string
 	trigger                 chan struct{}
 	mu                      sync.Mutex
 	pause                   *sync.Cond
 	cancel                  context.CancelFunc
 	schedule                accountInspectionSchedule
+	lastRunSettings         accountInspectionSettings
 	status                  accountInspectionStatus
 	healthCounts            accountInspectionHealthCounts
 	autoActionConfirmations map[string]int
@@ -357,6 +376,7 @@ func (h *Handler) startAccountInspectionScheduler() {
 	scheduler := schedulerForHandler(h)
 	if scheduler != nil {
 		embeddedusage.SetAccountInspectionScheduleHandlers(scheduler.exportSchedule, scheduler.importSchedule)
+		embeddedusage.SetAccountInspectionSnapshotHandlers(scheduler.exportResultSnapshot, scheduler.importResultSnapshot)
 		go scheduler.loop()
 	}
 	startRoutingPolicyController(h)
@@ -375,9 +395,11 @@ func schedulerForHandler(h *Handler) *accountInspectionScheduler {
 }
 
 func newAccountInspectionScheduler(h *Handler) *accountInspectionScheduler {
+	schedulePath := accountInspectionSchedulePath()
 	scheduler := &accountInspectionScheduler{
 		h:                       h,
-		path:                    accountInspectionSchedulePath(),
+		path:                    schedulePath,
+		snapshotPath:            accountInspectionResultSnapshotPath(schedulePath),
 		trigger:                 make(chan struct{}, 1),
 		subscribers:             make(map[chan accountInspectionLogStreamMessage]struct{}),
 		autoActionConfirmations: make(map[string]int),
@@ -388,6 +410,7 @@ func newAccountInspectionScheduler(h *Handler) *accountInspectionScheduler {
 		},
 		status: accountInspectionStatus{State: accountInspectionStateIdle},
 	}
+	scheduler.lastRunSettings = scheduler.schedule.Settings
 	scheduler.pause = sync.NewCond(&scheduler.mu)
 	scheduler.load()
 	return scheduler
@@ -402,6 +425,13 @@ func accountInspectionSchedulePath() string {
 		dataDir = "/CLIProxyAPI/usage"
 	}
 	return filepath.Join(dataDir, "account-inspection-schedule.json")
+}
+
+func accountInspectionResultSnapshotPath(schedulePath string) string {
+	if value := strings.TrimSpace(os.Getenv("ACCOUNT_INSPECTION_SNAPSHOT_PATH")); value != "" {
+		return value
+	}
+	return filepath.Join(filepath.Dir(schedulePath), "account-inspection-snapshot.json")
 }
 
 func defaultAccountInspectionSettings() accountInspectionSettings {
@@ -515,15 +545,17 @@ func normalizeAccountInspectionAutoAction(action accountInspectionAction) accoun
 
 func (s *accountInspectionScheduler) load() {
 	raw, err := os.ReadFile(s.path)
-	if err != nil {
-		return
+	if err == nil {
+		var schedule accountInspectionSchedule
+		if err := json.Unmarshal(raw, &schedule); err != nil {
+			log.WithError(err).Warn("failed to load account inspection schedule")
+		} else {
+			s.schedule = normalizeAccountInspectionSchedule(schedule)
+		}
 	}
-	var schedule accountInspectionSchedule
-	if err := json.Unmarshal(raw, &schedule); err != nil {
-		log.WithError(err).Warn("failed to load account inspection schedule")
-		return
+	if err := s.loadResultSnapshot(); err != nil {
+		log.WithError(err).Warn("failed to load account inspection snapshot")
 	}
-	s.schedule = normalizeAccountInspectionSchedule(schedule)
 }
 
 func (s *accountInspectionScheduler) saveLocked() error {
@@ -535,6 +567,159 @@ func (s *accountInspectionScheduler) saveLocked() error {
 		return err
 	}
 	return os.WriteFile(s.path, append(raw, '\n'), 0o600)
+}
+
+func normalizeAccountInspectionSnapshotState(state accountInspectionRunState) accountInspectionRunState {
+	switch state {
+	case accountInspectionStateStopped, accountInspectionStateCompleted, accountInspectionStatePartial, accountInspectionStateFailed:
+		return state
+	default:
+		return accountInspectionStateCompleted
+	}
+}
+
+func decodeAccountInspectionResultSnapshot(raw []byte) (accountInspectionResultSnapshot, error) {
+	var snapshot accountInspectionResultSnapshot
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return accountInspectionResultSnapshot{}, err
+	}
+	if snapshot.Version != accountInspectionResultSnapshotVersion {
+		return accountInspectionResultSnapshot{}, fmt.Errorf("unsupported account inspection snapshot version %d", snapshot.Version)
+	}
+	if snapshot.LastFinishedAt <= 0 {
+		return accountInspectionResultSnapshot{}, fmt.Errorf("account inspection snapshot is missing completion time")
+	}
+	if snapshot.LastStartedAt <= 0 || snapshot.LastStartedAt > snapshot.LastFinishedAt {
+		snapshot.LastStartedAt = snapshot.LastFinishedAt
+	}
+	snapshot.State = normalizeAccountInspectionSnapshotState(snapshot.State)
+	snapshot.Settings = normalizeAccountInspectionSchedule(accountInspectionSchedule{Settings: snapshot.Settings}).Settings
+	snapshot.Results = sortAccountInspectionResults(snapshot.Results)
+	snapshot.HealthCounts = accountInspectionResultHealthCounts(snapshot.Results)
+	return snapshot, nil
+}
+
+func (s *accountInspectionScheduler) resultSnapshotLocked() (accountInspectionResultSnapshot, bool) {
+	if s == nil || s.status.LastFinishedAt <= 0 {
+		return accountInspectionResultSnapshot{}, false
+	}
+	settings := s.lastRunSettings
+	if strings.TrimSpace(settings.TargetType) == "" {
+		settings = s.schedule.Settings
+	}
+	return accountInspectionResultSnapshot{
+		Version:        accountInspectionResultSnapshotVersion,
+		State:          normalizeAccountInspectionSnapshotState(s.status.State),
+		LastStartedAt:  s.status.LastStartedAt,
+		LastFinishedAt: s.status.LastFinishedAt,
+		LastError:      s.status.LastError,
+		Settings:       settings,
+		Summary:        s.status.Summary,
+		HealthCounts:   s.healthCountsLocked(),
+		Results:        append([]accountInspectionResult(nil), s.status.Results...),
+	}, true
+}
+
+func (s *accountInspectionScheduler) applyResultSnapshotLocked(snapshot accountInspectionResultSnapshot, restored bool) {
+	s.lastRunSettings = snapshot.Settings
+	s.status.State = snapshot.State
+	s.status.LastStartedAt = snapshot.LastStartedAt
+	s.status.LastFinishedAt = snapshot.LastFinishedAt
+	s.status.LastError = snapshot.LastError
+	s.status.Progress = accountInspectionProgress{
+		Total:     len(snapshot.Results),
+		Completed: len(snapshot.Results),
+	}
+	s.status.Summary = snapshot.Summary
+	s.status.Logs = nil
+	s.status.Results = append([]accountInspectionResult(nil), snapshot.Results...)
+	s.status.RestoredSnapshot = restored
+	s.healthCounts = snapshot.HealthCounts
+}
+
+func (s *accountInspectionScheduler) saveResultSnapshotLocked() error {
+	snapshot, ok := s.resultSnapshotLocked()
+	if !ok {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(s.snapshotPath), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(s.snapshotPath, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(s.snapshotPath, 0o600)
+}
+
+func (s *accountInspectionScheduler) loadResultSnapshot() error {
+	if s == nil {
+		return nil
+	}
+	raw, err := os.ReadFile(s.snapshotPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
+	if err != nil {
+		return err
+	}
+	s.applyResultSnapshotLocked(snapshot, true)
+	return nil
+}
+
+func (s *accountInspectionScheduler) exportResultSnapshot() ([]byte, bool, error) {
+	if s == nil {
+		return nil, false, nil
+	}
+	s.mu.Lock()
+	snapshot, ok := s.resultSnapshotLocked()
+	s.mu.Unlock()
+	if !ok {
+		raw, err := os.ReadFile(s.snapshotPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+		snapshot, err = decodeAccountInspectionResultSnapshot(raw)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, false, err
+	}
+	return raw, true, nil
+}
+
+func (s *accountInspectionScheduler) importResultSnapshot(raw []byte) error {
+	if s == nil {
+		return nil
+	}
+	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.isRunningLocked() {
+		s.mu.Unlock()
+		return fmt.Errorf("account inspection is running")
+	}
+	s.applyResultSnapshotLocked(snapshot, true)
+	err = s.saveResultSnapshotLocked()
+	broadcast := s.statusBroadcastLocked()
+	s.mu.Unlock()
+	broadcast.send()
+	return err
 }
 
 func (s *accountInspectionScheduler) snapshotWithOptions(options accountInspectionSnapshotOptions) gin.H {
@@ -954,7 +1139,9 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 		return fmt.Errorf("account inspection already running")
 	}
 	s.cancel = cancel
+	s.lastRunSettings = s.schedule.Settings
 	s.setRunStateLocked(accountInspectionStateRunning)
+	s.status.RestoredSnapshot = false
 	s.status.LastStartedAt = time.Now().UnixMilli()
 	s.status.LastFinishedAt = 0
 	s.status.LastError = ""
@@ -1070,6 +1257,10 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 	ctx, cancel := context.WithTimeout(ctx, accountInspectionMaxRunDuration)
 	defer cancel()
 	s.mu.Lock()
+	if s.status.RestoredSnapshot {
+		s.mu.Unlock()
+		return accountInspectionResult{}, errAccountInspectionRestoredSnapshotReadOnly
+	}
 	if s.isRunningLocked() {
 		s.mu.Unlock()
 		return accountInspectionResult{}, fmt.Errorf("account inspection already running")
@@ -1084,13 +1275,18 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 	}
 
 	s.mu.Lock()
+	var saveErr error
 	if !s.isRunningLocked() {
 		s.mergeSingleInspectionResultLocked(result)
 		s.status.Results = sortAccountInspectionResults(s.status.Results)
+		saveErr = s.saveResultSnapshotLocked()
 	}
 	broadcast := s.statusBroadcastLocked()
 	s.mu.Unlock()
 	broadcast.send()
+	if saveErr != nil {
+		return result, fmt.Errorf("failed to save account inspection snapshot: %w", saveErr)
+	}
 	return result, nil
 }
 
@@ -1098,7 +1294,16 @@ func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item a
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if s == nil || s.h == nil || s.h.authManager == nil {
+	if s == nil {
+		return accountInspectionResult{}, fmt.Errorf("account inspection scheduler unavailable")
+	}
+	s.mu.Lock()
+	restoredSnapshot := s.status.RestoredSnapshot
+	s.mu.Unlock()
+	if restoredSnapshot {
+		return accountInspectionResult{}, errAccountInspectionRestoredSnapshotReadOnly
+	}
+	if s.h == nil || s.h.authManager == nil {
 		return accountInspectionResult{}, fmt.Errorf("core auth manager unavailable")
 	}
 	auths, err := s.auths()
@@ -1269,6 +1474,7 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 	s.status.LastFinishedAt = finishedAt
 	s.status.Summary = summary
 	s.status.Results = results
+	s.status.RestoredSnapshot = false
 	s.healthCounts = accountInspectionResultHealthCounts(results)
 	completed := s.status.Progress.Completed
 	if state == accountInspectionStateCompleted {
@@ -1291,6 +1497,9 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 		if err := s.saveLocked(); err != nil {
 			log.WithError(err).Warn("failed to save next account inspection run time")
 		}
+	}
+	if err := s.saveResultSnapshotLocked(); err != nil {
+		log.WithError(err).Warn("failed to save account inspection snapshot")
 	}
 	s.mu.Unlock()
 	broadcast.send()
@@ -3115,7 +3324,13 @@ func (s *accountInspectionScheduler) applyManualActionResultLocked(result accoun
 	})
 }
 
-func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, items []accountInspectionActionItem) []accountInspectionActionOutcome {
+func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, items []accountInspectionActionItem) ([]accountInspectionActionOutcome, error) {
+	s.mu.Lock()
+	restoredSnapshot := s.status.RestoredSnapshot
+	s.mu.Unlock()
+	if restoredSnapshot {
+		return nil, errAccountInspectionRestoredSnapshotReadOnly
+	}
 	executableItems := dedupeExecutionActionItems(items)
 	outcomes := make([]accountInspectionActionOutcome, len(executableItems))
 	executedResults := make([]accountInspectionResult, len(executableItems))
@@ -3153,10 +3368,14 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 		s.applyManualActionResultLocked(result)
 	}
 	s.status.Results = sortAccountInspectionResults(s.status.Results)
+	saveErr := s.saveResultSnapshotLocked()
 	broadcast := s.statusBroadcastLocked()
 	s.mu.Unlock()
 	broadcast.send()
-	return outcomes
+	if saveErr != nil {
+		return outcomes, fmt.Errorf("failed to save account inspection snapshot: %w", saveErr)
+	}
+	return outcomes, nil
 }
 
 func dedupeExecutionActionItems(items []accountInspectionActionItem) []accountInspectionActionItem {
@@ -5412,7 +5631,11 @@ func (h *Handler) InspectOneAccount(c *gin.Context) {
 	result, err := scheduler.inspectOne(c.Request.Context(), request.Item)
 	snapshot := scheduler.snapshotForRequest(c)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"error": err.Error(), "result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
+		statusCode := http.StatusOK
+		if errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+			statusCode = http.StatusConflict
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error(), "result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
@@ -5431,16 +5654,23 @@ func (h *Handler) RefreshAccountInspectionToken(c *gin.Context) {
 	}
 	result, err := scheduler.refreshTokenNow(c.Request.Context(), request.Item)
 	scheduler.mu.Lock()
+	var saveErr error
 	if result.Key != "" {
 		scheduler.mergeTokenRefreshResultLocked(result)
 		scheduler.status.Results = sortAccountInspectionResults(scheduler.status.Results)
+		saveErr = scheduler.saveResultSnapshotLocked()
 	}
 	broadcast := scheduler.statusBroadcastLocked()
 	scheduler.mu.Unlock()
 	broadcast.send()
+	err = firstNonNilError(err, saveErr)
 	snapshot := scheduler.snapshotForRequest(c)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"error": err.Error(), "result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
+		statusCode := http.StatusOK
+		if errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+			statusCode = http.StatusConflict
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error(), "result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
@@ -5487,8 +5717,22 @@ func (h *Handler) ExecuteAccountInspectionActions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
-	outcomes := scheduler.executeManualActions(c.Request.Context(), request.Items)
+	outcomes, err := scheduler.executeManualActions(c.Request.Context(), request.Items)
 	snapshot := scheduler.snapshotForRequest(c)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+			statusCode = http.StatusConflict
+		}
+		c.JSON(statusCode, gin.H{
+			"error":    err.Error(),
+			"outcomes": outcomes,
+			"summary":  summarizeManualActionOutcomes(outcomes),
+			"schedule": snapshot["schedule"],
+			"status":   snapshot["status"],
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"outcomes": outcomes,
 		"summary":  summarizeManualActionOutcomes(outcomes),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"os"
@@ -233,6 +234,99 @@ func TestHealthCountsLockedRebuildsStaleCache(t *testing.T) {
 	}
 	if scheduler.healthCounts != counts {
 		t.Fatalf("scheduler healthCounts cache = %+v, want %+v", scheduler.healthCounts, counts)
+	}
+}
+
+func TestAccountInspectionResultSnapshotPersistsAndRestoresReadOnly(t *testing.T) {
+	snapshotPath := filepath.Join(t.TempDir(), "account-inspection-snapshot.json")
+	settings := defaultAccountInspectionSettings()
+	settings.TargetType = "xai"
+	result := testInspectionProviderResult("xai-1", "xai", accountInspectionActionKeep, false, testStatusCode(502), false, "upstream error")
+	result.ErrorDetail = `{"error":{"message":"raw upstream response"}}`
+
+	source := &accountInspectionScheduler{
+		snapshotPath:    snapshotPath,
+		lastRunSettings: settings,
+		status: accountInspectionStatus{
+			State:          accountInspectionStateCompleted,
+			LastStartedAt:  1000,
+			LastFinishedAt: 2000,
+			Summary:        accountInspectionSummary{TotalFiles: 1, ProbeSetCount: 1, SampledCount: 1, ErrorCount: 1},
+			Results:        []accountInspectionResult{result},
+		},
+	}
+	if err := os.WriteFile(snapshotPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(existing snapshot) error = %v", err)
+	}
+	if err := source.saveResultSnapshotLocked(); err != nil {
+		t.Fatalf("saveResultSnapshotLocked() error = %v", err)
+	}
+	info, err := os.Stat(snapshotPath)
+	if err != nil {
+		t.Fatalf("os.Stat(snapshot) error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("snapshot mode = %o, want 600", got)
+	}
+
+	restored := &accountInspectionScheduler{snapshotPath: snapshotPath}
+	if err := restored.loadResultSnapshot(); err != nil {
+		t.Fatalf("loadResultSnapshot() error = %v", err)
+	}
+	if !restored.status.RestoredSnapshot {
+		t.Fatal("restored snapshot is not marked read-only")
+	}
+	if restored.lastRunSettings.TargetType != "xai" {
+		t.Fatalf("restored target type = %q, want xai", restored.lastRunSettings.TargetType)
+	}
+	if len(restored.status.Results) != 1 || restored.status.Results[0].ErrorDetail != result.ErrorDetail {
+		t.Fatalf("restored results = %+v, want original error detail", restored.status.Results)
+	}
+	if len(restored.status.Logs) != 0 {
+		t.Fatalf("restored logs = %+v, want none", restored.status.Logs)
+	}
+
+	if _, err := restored.inspectOne(context.Background(), accountInspectionActionItem{}); !errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+		t.Fatalf("inspectOne() error = %v, want read-only error", err)
+	}
+	if _, err := restored.refreshTokenNow(context.Background(), accountInspectionActionItem{}); !errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+		t.Fatalf("refreshTokenNow() error = %v, want read-only error", err)
+	}
+	if _, err := restored.executeManualActions(context.Background(), nil); !errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+		t.Fatalf("executeManualActions() error = %v, want read-only error", err)
+	}
+}
+
+func TestAccountInspectionSnapshotExportKeepsLastFinishedSnapshotDuringRun(t *testing.T) {
+	snapshotPath := filepath.Join(t.TempDir(), "account-inspection-snapshot.json")
+	scheduler := &accountInspectionScheduler{
+		snapshotPath:    snapshotPath,
+		lastRunSettings: defaultAccountInspectionSettings(),
+		status: accountInspectionStatus{
+			State:          accountInspectionStateCompleted,
+			LastStartedAt:  1000,
+			LastFinishedAt: 2000,
+			Results:        []accountInspectionResult{testInspectionResult("finished", accountInspectionActionKeep, false, nil, false, "")},
+		},
+	}
+	if err := scheduler.saveResultSnapshotLocked(); err != nil {
+		t.Fatalf("saveResultSnapshotLocked() error = %v", err)
+	}
+	scheduler.status = accountInspectionStatus{State: accountInspectionStateRunning, LastStartedAt: 3000}
+
+	raw, ok, err := scheduler.exportResultSnapshot()
+	if err != nil {
+		t.Fatalf("exportResultSnapshot() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("exportResultSnapshot() ok = false, want previous finished snapshot")
+	}
+	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
+	if err != nil {
+		t.Fatalf("decodeAccountInspectionResultSnapshot() error = %v", err)
+	}
+	if snapshot.LastFinishedAt != 2000 || len(snapshot.Results) != 1 || snapshot.Results[0].Key != "finished" {
+		t.Fatalf("exported snapshot = %+v, want previous finished run", snapshot)
 	}
 }
 
