@@ -2788,7 +2788,7 @@ export function AccountInspectionPage() {
                     <span className={styles.providerLogoFallback} aria-hidden="true">Σ</span>
                     <strong>{t('monitoring.filter_all_accounts')}</strong>
                   </span>
-                  <span>{authFileStatsReady ? `${authFileStats.total} ${t('monitoring.account_inspection_account_total')}` : t('common.loading')}</span>
+                  <span>{authFileStatsReady ? `${authFileStats.total} ${t('monitoring.account_inspection_account_total')} · ${authFileStats.highAvailable} ${t('monitoring.account_inspection_high_available')}` : t('common.loading')}</span>
                 </div>
                 <span aria-hidden="true">
                   <i
