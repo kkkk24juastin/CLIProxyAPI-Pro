@@ -5793,6 +5793,7 @@ export function MonitoringCenterPage() {
               <Button
                 variant="danger"
                 size="sm"
+                className={styles.resetStatisticsButton}
                 onClick={handleMonitoringStatisticsReset}
                 disabled={isMonitoringStatisticsResetting || isMonitoringSettingsSaving}
               >

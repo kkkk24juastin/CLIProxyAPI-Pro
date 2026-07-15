@@ -2775,7 +2775,7 @@
   min-width: 0;
 }
 
-.settingsDangerAction span {
+.settingsDangerAction > div > span {
   color: var(--monitor-muted);
   font-size: 12px;
 }
@@ -2787,6 +2787,49 @@
 
 .settingsDangerAction :global(button) {
   flex: 0 0 auto;
+}
+
+.resetStatisticsButton:global(.btn-danger) {
+  min-height: 40px;
+  padding-inline: 16px;
+  border-color: var(--monitor-red);
+  background: var(--monitor-red);
+  color: #fff;
+  box-shadow: 0 8px 18px -12px color-mix(in srgb, var(--monitor-red) 78%, transparent);
+}
+
+.resetStatisticsButton:global(.btn-danger) > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: inherit;
+  line-height: 1.2;
+}
+
+.resetStatisticsButton:global(.btn-danger) svg {
+  flex: 0 0 auto;
+  color: inherit;
+  stroke: currentColor;
+}
+
+.resetStatisticsButton:global(.btn-danger):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--monitor-red) 86%, #000);
+  background: color-mix(in srgb, var(--monitor-red) 86%, #000);
+  color: #fff;
+  box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--monitor-red) 88%, transparent);
+  transform: translateY(-1px);
+}
+
+.resetStatisticsButton:global(.btn-danger):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--monitor-red) 28%, transparent);
+  outline-offset: 2px;
+}
+
+.resetStatisticsButton:global(.btn-danger):disabled {
+  color: #fff;
+  opacity: 0.68;
+  transform: none;
 }
 
 .settingsSectionHeader {
