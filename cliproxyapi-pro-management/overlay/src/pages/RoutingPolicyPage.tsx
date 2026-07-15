@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconCheck, IconRefreshCw, IconShield } from '@/components/ui/icons';
@@ -16,6 +17,8 @@ import {
   type RoutingPolicyGlobalSettings,
   type RoutingPolicyProvider,
   type RoutingPolicyResponse,
+  type RoutingProtectedAccount,
+  type RoutingProtectionEvent,
   type RoutingProtectionProviderPolicy,
   type RoutingRequestProtectionConfig,
 } from '@/services/api/routingPolicy';
@@ -24,6 +27,9 @@ import configActionStyles from './ConfigPage.module.scss';
 import styles from './RoutingPolicyPage.module.scss';
 
 type RoutingPolicyView = 'global' | 'providers' | 'runtime';
+type RoutingRuntimeDetail =
+  | { kind: 'active'; item: RoutingProtectedAccount }
+  | { kind: 'event'; item: RoutingProtectionEvent };
 
 const VIEW_KEYS: RoutingPolicyView[] = ['global', 'providers', 'runtime'];
 
@@ -58,6 +64,100 @@ const toNumber = (value: string): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const runtimeStatusToneClass = (statusCode: number): string => {
+  if (statusCode >= 400) return styles.runtimeStatusBad;
+  if (statusCode >= 300) return styles.runtimeStatusWarn;
+  if (statusCode >= 200) return styles.runtimeStatusGood;
+  return styles.runtimeStatusNeutral;
+};
+
+function RoutingRuntimeDetailPanel({
+  detail,
+  t,
+  language,
+}: {
+  detail: RoutingRuntimeDetail;
+  t: ReturnType<typeof useTranslation>['t'];
+  language: string;
+}) {
+  const item = detail.item;
+  const accountName = item.fileName || item.authIndex || item.authId || '-';
+  const action = detail.kind === 'active' ? 'disabled' : detail.item.action;
+  const detailItems = [
+    { label: t('routing_policy.runtime.provider'), value: item.provider || '-' },
+    { label: t('routing_policy.runtime.account'), value: accountName },
+    { label: t('routing_policy.runtime.auth_index'), value: item.authIndex || '-' },
+    { label: t('routing_policy.runtime.auth_id'), value: item.authId || '-' },
+    {
+      label: t('routing_policy.runtime.status_code'),
+      value: item.statusCode ? String(item.statusCode) : '-',
+    },
+    {
+      label:
+        detail.kind === 'active'
+          ? t('routing_policy.runtime.triggered_at')
+          : t('routing_policy.runtime.time'),
+      value: formatTimestamp(item.triggeredAt, language, '-'),
+    },
+    {
+      label: t('routing_policy.runtime.release_at'),
+      value: formatTimestamp(
+        item.releaseAt,
+        language,
+        detail.kind === 'active' ? t('routing_policy.runtime.manual') : '-'
+      ),
+    },
+    {
+      label: t('routing_policy.runtime.action'),
+      value: t(`routing_policy.actions.${action}`, { defaultValue: action }),
+    },
+    ...(detail.kind === 'event'
+      ? [
+          {
+            label: t('routing_policy.runtime.mode'),
+            value: t(`routing_policy.mode_${detail.item.mode}`, {
+              defaultValue: detail.item.mode,
+            }),
+          },
+          {
+            label: t('routing_policy.runtime.confirmation'),
+            value: detail.item.required
+              ? `${detail.item.count}/${detail.item.required}`
+              : '-',
+          },
+        ]
+      : []),
+  ];
+
+  return (
+    <div className={styles.runtimeDetailPanel}>
+      <div className={styles.runtimeDetailOverview}>
+        <div className={styles.runtimeDetailOverviewTop}>
+          <span
+            className={`${styles.runtimeStatusBadge} ${runtimeStatusToneClass(item.statusCode)}`}
+          >
+            {item.statusCode || '-'}
+          </span>
+          <span>{t(`routing_policy.actions.${action}`, { defaultValue: action })}</span>
+        </div>
+        <strong>{accountName}</strong>
+      </div>
+      <div className={styles.runtimeDetailGrid}>
+        {detailItems.map((entry) => (
+          <div key={entry.label} className={styles.runtimeDetailItem}>
+            <span>{entry.label}</span>
+            <strong>{entry.value}</strong>
+          </div>
+        ))}
+      </div>
+      <div className={styles.runtimeReasonBlock}>
+        <span>{t('routing_policy.runtime.reason_details')}</span>
+        <pre className={styles.runtimeReasonMessage}>{item.reason || '-'}</pre>
+      </div>
+    </div>
+  );
+}
+
 export function RoutingPolicyPage() {
   const { t, i18n } = useTranslation();
   const pageTransitionLayer = usePageTransitionLayer();
@@ -80,6 +180,8 @@ export function RoutingPolicyPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [releasing, setReleasing] = useState<string | null>(null);
+  const [selectedRuntimeDetail, setSelectedRuntimeDetail] =
+    useState<RoutingRuntimeDetail | null>(null);
   const [error, setError] = useState('');
   const [dirty, setDirty] = useState(false);
   const floatingActionsRef = useRef<HTMLDivElement>(null);
@@ -757,7 +859,6 @@ export function RoutingPolicyPage() {
                     <col className={styles.runtimeStatusColumn} />
                     <col className={styles.runtimeTimeColumn} />
                     <col className={styles.runtimeReleaseColumn} />
-                    <col />
                     <col className={styles.runtimeActionsColumn} />
                   </colgroup>
                   <thead>
@@ -767,7 +868,6 @@ export function RoutingPolicyPage() {
                       <th>{t('routing_policy.runtime.status_code')}</th>
                       <th>{t('routing_policy.runtime.triggered_at')}</th>
                       <th>{t('routing_policy.runtime.release_at')}</th>
-                      <th>{t('routing_policy.runtime.reason')}</th>
                       <th className={styles.runtimeActionHeader}>{t('routing_policy.runtime.actions')}</th>
                     </tr>
                   </thead>
@@ -781,10 +881,23 @@ export function RoutingPolicyPage() {
                           </strong>
                           <span className={styles.accountIndex}>{account.authIndex}</span>
                         </td>
-                        <td><span className={styles.statusCode}>{account.statusCode}</span></td>
+                        <td>
+                          <button
+                            type="button"
+                            className={styles.runtimeStatusButton}
+                            onClick={() => setSelectedRuntimeDetail({ kind: 'active', item: account })}
+                            title={t('routing_policy.runtime.details_click_hint')}
+                            aria-label={t('routing_policy.runtime.details_click_hint')}
+                          >
+                            <span
+                              className={`${styles.runtimeStatusBadge} ${runtimeStatusToneClass(account.statusCode)}`}
+                            >
+                              {account.statusCode || '-'}
+                            </span>
+                          </button>
+                        </td>
                         <td className={styles.runtimeTimeCell}>{formatTimestamp(account.triggeredAt, i18n.language, '-')}</td>
                         <td className={styles.runtimeTimeCell}>{formatTimestamp(account.releaseAt, i18n.language, t('routing_policy.runtime.manual'))}</td>
-                        <td><span className={styles.reason} title={account.reason}>{account.reason || '-'}</span></td>
                         <td className={styles.runtimeActionCell}>
                           <Button
                             variant="secondary"
@@ -823,7 +936,6 @@ export function RoutingPolicyPage() {
                     <col className={styles.runtimeStatusColumn} />
                     <col className={styles.runtimeEventActionColumn} />
                     <col className={styles.runtimeConfirmationColumn} />
-                    <col />
                   </colgroup>
                   <thead>
                     <tr>
@@ -833,7 +945,6 @@ export function RoutingPolicyPage() {
                       <th>{t('routing_policy.runtime.status_code')}</th>
                       <th>{t('routing_policy.runtime.action')}</th>
                       <th>{t('routing_policy.runtime.confirmation')}</th>
-                      <th>{t('routing_policy.runtime.reason')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -852,14 +963,27 @@ export function RoutingPolicyPage() {
                             <span className={styles.accountIndex}>{event.authIndex}</span>
                           ) : null}
                         </td>
-                        <td>{event.statusCode ? <span className={styles.statusCode}>{event.statusCode}</span> : '-'}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className={styles.runtimeStatusButton}
+                            onClick={() => setSelectedRuntimeDetail({ kind: 'event', item: event })}
+                            title={t('routing_policy.runtime.details_click_hint')}
+                            aria-label={t('routing_policy.runtime.details_click_hint')}
+                          >
+                            <span
+                              className={`${styles.runtimeStatusBadge} ${runtimeStatusToneClass(event.statusCode)}`}
+                            >
+                              {event.statusCode || '-'}
+                            </span>
+                          </button>
+                        </td>
                         <td>
                           <span className={`${styles.actionTag} ${styles[`action_${event.action}`] ?? ''}`}>
                             {t(`routing_policy.actions.${event.action}`, { defaultValue: event.action })}
                           </span>
                         </td>
                         <td>{event.required ? `${event.count}/${event.required}` : '-'}</td>
-                        <td><span className={styles.reason} title={event.reason}>{event.reason || '-'}</span></td>
                       </tr>
                     ))}
                   </tbody>
@@ -871,6 +995,28 @@ export function RoutingPolicyPage() {
           </section>
         </div>
       )}
+      <Modal
+        open={Boolean(selectedRuntimeDetail)}
+        onClose={() => setSelectedRuntimeDetail(null)}
+        title={t('routing_policy.runtime.details_title')}
+        width={720}
+        className={styles.runtimeDetailModal}
+        footer={(
+          <div className={styles.runtimeDetailModalActions}>
+            <Button variant="primary" size="sm" onClick={() => setSelectedRuntimeDetail(null)}>
+              {t('common.close')}
+            </Button>
+          </div>
+        )}
+      >
+        {selectedRuntimeDetail ? (
+          <RoutingRuntimeDetailPanel
+            detail={selectedRuntimeDetail}
+            t={t}
+            language={i18n.language}
+          />
+        ) : null}
+      </Modal>
       {shouldRenderFloatingActions && typeof document !== 'undefined'
         ? createPortal(floatingActions, document.body)
         : null}
