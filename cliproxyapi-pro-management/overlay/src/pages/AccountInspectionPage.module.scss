@@ -382,6 +382,36 @@
   min-width: 0;
 }
 
+.resultProviderSelect {
+  flex: 0 0 172px;
+  width: 172px;
+  min-width: 0;
+}
+
+.resultProviderSelectTrigger {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-color: color-mix(in srgb, var(--inspect-line) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--inspect-surface-muted) 78%, var(--inspect-surface));
+  color: var(--inspect-ink);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.resultProviderSelectTrigger:hover:not(:disabled),
+.resultProviderSelectTrigger[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--inspect-accent) 36%, var(--inspect-line));
+  background: color-mix(in srgb, var(--inspect-accent) 7%, var(--inspect-surface));
+  box-shadow: none;
+}
+
+.resultProviderSelectDropdown {
+  border-radius: 12px;
+}
+
 .operationModuleHeader h2 {
   margin: 0;
   color: var(--inspect-ink);
@@ -3122,6 +3152,11 @@
 
   .resultToolbar {
     justify-content: flex-start;
+  }
+
+  .resultProviderSelect {
+    flex-basis: 160px;
+    width: 160px;
   }
 
   .heroActions,

@@ -1158,6 +1158,20 @@ func TestSummarizeInspectionHTTPBodyExtractsCompleteNestedMessage(t *testing.T) 
 	}
 }
 
+func TestWithInspectionHTTPErrorDetailPreservesCompleteResponse(t *testing.T) {
+	body := `{"error":{"code":"invalid_token","message":"credential rejected"},"request_id":"req-123"}`
+	decision := withInspectionHTTPErrorDetail(
+		authErrorDecision(accountInspectionAccount{}, http.StatusUnauthorized),
+		"  "+body+"\n",
+	)
+	if decision.ErrorDetail != body {
+		t.Fatalf("ErrorDetail = %q, want complete response %q", decision.ErrorDetail, body)
+	}
+	if decision.Action != accountInspectionActionDisable {
+		t.Fatalf("Action = %q, want %q", decision.Action, accountInspectionActionDisable)
+	}
+}
+
 func TestXAIDeepProbeErrorCodeCanBeCleared(t *testing.T) {
 	decision := accountInspectionDecision{DeepProbeStatus: accountInspectionDeepProbeTransientError}
 	if got := accountInspectionDecisionErrorCode("xai", decision, nil); got != "xai_deep_probe_error" {

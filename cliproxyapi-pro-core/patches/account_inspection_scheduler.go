@@ -1887,6 +1887,7 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 	body := `{"project":"` + escapeJSONString(projectID) + `"}`
 	urls := antigravityQuotaURLs()
 	var priorityStatus *int
+	var priorityDetail string
 	for _, url := range urls {
 		resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
 			return s.apiCall(ctx, account.Auth, http.MethodPost, url, map[string]string{
@@ -1902,6 +1903,7 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			if isAccountErrorStatus(resp.StatusCode) {
 				priorityStatus = status
+				priorityDetail = resp.Body
 			}
 			continue
 		}
@@ -1926,7 +1928,7 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 		return decision, status, nil
 	}
 	if priorityStatus != nil {
-		return authErrorDecision(account, *priorityStatus), priorityStatus, nil
+		return withInspectionHTTPErrorDetail(authErrorDecision(account, *priorityStatus), priorityDetail), priorityStatus, nil
 	}
 	return accountInspectionDecision{}, priorityStatus, fmt.Errorf("antigravity quota unavailable")
 }
@@ -2161,6 +2163,11 @@ func inspectionHTTPErrorDetail(body string) string {
 	return strings.TrimSpace(body)
 }
 
+func withInspectionHTTPErrorDetail(decision accountInspectionDecision, body string) accountInspectionDecision {
+	decision.ErrorDetail = inspectionHTTPErrorDetail(body)
+	return decision
+}
+
 func statusValue(status *int) int {
 	if status == nil {
 		return 0
@@ -2185,7 +2192,7 @@ func (s *accountInspectionScheduler) inspectClaude(ctx context.Context, account 
 	}
 	if usageResp.StatusCode < 200 || usageResp.StatusCode >= 300 {
 		if isAccountErrorStatus(usageResp.StatusCode) {
-			return authErrorDecision(account, usageResp.StatusCode), status, nil
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, usageResp.StatusCode), usageResp.Body), status, nil
 		}
 		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", usageResp.StatusCode)
 	}
@@ -2228,7 +2235,11 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 	if payload != nil && len(windows) > 0 {
 		s.persistQuotaState(ctx, account, quotaSuccessState(codexQuotaStateValues(account.Auth, payload, windows, resp.Body)))
 	}
-	return codexDecision(account, resp.StatusCode, used, isQuota, settings.UsedPercentThreshold), status, nil
+	decision := codexDecision(account, resp.StatusCode, used, isQuota, settings.UsedPercentThreshold)
+	if isAccountErrorStatus(resp.StatusCode) {
+		decision = withInspectionHTTPErrorDetail(decision, resp.Body)
+	}
+	return decision, status, nil
 }
 
 func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
@@ -2247,7 +2258,7 @@ func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, accou
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if isAccountErrorStatus(resp.StatusCode) {
-			return authErrorDecision(account, resp.StatusCode), status, nil
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, resp.StatusCode), resp.Body), status, nil
 		}
 		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -2316,7 +2327,7 @@ func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account ac
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if isAccountErrorStatus(resp.StatusCode) {
-			return authErrorDecision(account, resp.StatusCode), status, nil
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, resp.StatusCode), resp.Body), status, nil
 		}
 		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -2336,10 +2347,10 @@ func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account acc
 	billing := mergeXAIBillingSummaries(weeklyBilling, monthlyBilling)
 	if billing == nil {
 		if isAccountErrorStatus(weeklyResp.StatusCode) {
-			return authErrorDecision(account, weeklyResp.StatusCode), status, nil
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, weeklyResp.StatusCode), weeklyResp.Body), status, nil
 		}
 		if isAccountErrorStatus(monthlyResp.StatusCode) {
-			return authErrorDecision(account, monthlyResp.StatusCode), status, nil
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, monthlyResp.StatusCode), monthlyResp.Body), status, nil
 		}
 		if weeklyErr != nil {
 			return accountInspectionDecision{}, status, weeklyErr

@@ -498,6 +498,7 @@ const buildHealthStatusLabel = (
 
 const hasInspectionErrorDetails = (item: AccountInspectionResultItem) => Boolean(
   item.error
+  || item.errorDetail?.trim()
   || item.errorCode?.trim()
   || item.deepProbeError
   || item.tokenRefreshError
@@ -1032,14 +1033,6 @@ const summaryToneClass: Record<NonNullable<SummaryCard['tone']>, string> = {
 
 const INSPECTION_TARGET_OPTIONS = [
   { value: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE, label: 'All' },
-  ...ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS.map((provider) => ({
-    value: provider,
-    label: resolveProviderDisplayLabel(provider),
-  })),
-] as const;
-
-const RESULT_PROVIDER_OPTIONS = [
-  { value: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE, labelKey: 'monitoring.filter_all_providers' },
   ...ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS.map((provider) => ({
     value: provider,
     label: resolveProviderDisplayLabel(provider),
@@ -2457,12 +2450,29 @@ export function AccountInspectionPage() {
     { key: 'highAvailable', label: t('monitoring.account_inspection_high_available') },
   ], [t]);
   const resultProviderOptions = useMemo(
-    () => RESULT_PROVIDER_OPTIONS.map((option) => ({
-      value: option.value,
-      label: 'labelKey' in option ? t(option.labelKey) : option.label,
-    })),
-    [t]
+    () => {
+      const providers = new Set<string>();
+      authFileStats.providers.forEach((provider) => providers.add(provider.provider));
+      result?.results.forEach((item) => {
+        const provider = item.provider.trim().toLowerCase();
+        if (ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET.has(provider)) providers.add(provider);
+      });
+      return [
+        { value: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE, label: t('monitoring.filter_all_providers') },
+        ...Array.from(providers).map((provider) => ({
+          value: provider,
+          label: resolveProviderDisplayLabel(provider),
+        })),
+      ];
+    },
+    [authFileStats.providers, result, t]
   );
+
+  useEffect(() => {
+    if (selectedResultProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE) return;
+    if (resultProviderOptions.some((option) => option.value === selectedResultProvider)) return;
+    setSelectedResultProvider(ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE);
+  }, [resultProviderOptions, selectedResultProvider]);
   const logLevelOptions = useMemo<Array<{ key: AccountInspectionLogLevel | 'all'; label: string }>>(() => [
     { key: 'all', label: t('monitoring.account_inspection_filter_all') },
     { key: 'success', label: t('monitoring.account_inspection_log_success') },
@@ -2764,11 +2774,18 @@ export function AccountInspectionPage() {
                   <span>{authFileStatsReady ? `${authFileStats.total} ${t('monitoring.account_inspection_account_total')}` : t('common.loading')}</span>
                 </div>
                 <span aria-hidden="true">
-                  <i style={{ '--bar-width': authFileStatsReady && authFileStats.total > 0 ? '100%' : '0%', '--bar-color': DONUT_COLORS[0] } as CSSProperties} />
+                  <i
+                    style={{
+                      '--bar-width': authFileStatsReady && authFileStats.total > 0
+                        ? `${Math.min(Math.max((authFileStats.highAvailable / authFileStats.total) * 100, 0), 100)}%`
+                        : '0%',
+                      '--bar-color': DONUT_COLORS[0],
+                    } as CSSProperties}
+                  />
                 </span>
               </button>
               {authFileStats.providers.length > 0 ? authFileStats.providers.map((provider, index) => {
-                const share = authFileStats.total > 0 ? provider.total / authFileStats.total : 0;
+                const highAvailableShare = provider.total > 0 ? provider.highAvailable / provider.total : 0;
                 return (
                   <button
                     type="button"
@@ -2790,7 +2807,7 @@ export function AccountInspectionPage() {
                       <span>{`${provider.total} ${t('monitoring.account_inspection_account_total')} · ${provider.highAvailable} ${t('monitoring.account_inspection_high_available')}`}</span>
                     </div>
                     <span aria-hidden="true">
-                      <i style={{ '--bar-width': `${Math.min(Math.max(share * 100, provider.total > 0 ? 1 : 0), 100)}%`, '--bar-color': DONUT_COLORS[index % DONUT_COLORS.length] } as CSSProperties} />
+                      <i style={{ '--bar-width': `${Math.min(Math.max(highAvailableShare * 100, 0), 100)}%`, '--bar-color': DONUT_COLORS[index % DONUT_COLORS.length] } as CSSProperties} />
                     </span>
                   </button>
                 );
@@ -2998,6 +3015,11 @@ export function AccountInspectionPage() {
                 options={resultProviderOptions}
                 onChange={setSelectedResultProvider}
                 ariaLabel={t('monitoring.account_inspection_filter_provider')}
+                className={styles.resultProviderSelect}
+                triggerClassName={styles.resultProviderSelectTrigger}
+                dropdownClassName={styles.resultProviderSelectDropdown}
+                fullWidth={false}
+                size="sm"
               />
               <div className={styles.resultFilterControl}>
                 {resultFilterTabs.map((tab) => (
