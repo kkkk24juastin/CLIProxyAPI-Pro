@@ -68,7 +68,7 @@
 
 .heroHeader {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 20px;
   min-width: 0;
@@ -148,21 +148,6 @@
   border-radius: 14px;
   background: color-mix(in srgb, var(--inspect-surface) 74%, transparent);
   box-shadow: 0 12px 28px -26px rgba(15, 23, 42, 0.5);
-}
-
-.heroExportSelect {
-  min-width: 148px;
-  min-height: 32px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--inspect-muted);
-  box-shadow: none;
-}
-
-.heroExportSelect:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--inspect-accent) 35%, var(--inspect-line-strong));
-  background: var(--inspect-surface-muted);
-  color: var(--inspect-ink);
 }
 
 .heroActionButton:global(.btn) {
@@ -690,7 +675,15 @@
   line-height: 1.5;
 }
 
-.providerDistributionHeader > span {
+.providerDistributionActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.providerDistributionSelection {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
@@ -706,6 +699,35 @@
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.providerExportButton:global(.btn) {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 30px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-color: color-mix(in srgb, var(--inspect-accent) 18%, var(--inspect-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--inspect-accent) 7%, var(--inspect-surface));
+  color: var(--inspect-accent);
+  box-shadow: none;
+}
+
+.providerExportButton:global(.btn) > span {
+  display: inline-grid;
+  place-items: center;
+  line-height: 0;
+}
+
+.providerExportButton:global(.btn):hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--inspect-accent) 38%, var(--inspect-line));
+  background: color-mix(in srgb, var(--inspect-accent) 12%, var(--inspect-surface));
+  box-shadow: none;
 }
 
 .providerSelectorList {
@@ -3144,8 +3166,12 @@
     grid-template-columns: none;
   }
 
-  .providerDistributionHeader > span {
-    max-width: min(46%, 180px);
+  .providerDistributionActions {
+    max-width: min(58%, 220px);
+  }
+
+  .providerDistributionSelection {
+    max-width: min(100%, 180px);
     white-space: nowrap;
   }
 

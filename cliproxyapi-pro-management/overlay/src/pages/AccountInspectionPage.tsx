@@ -9,6 +9,7 @@ import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   IconChevronDown,
   IconChevronUp,
+  IconDownload,
 } from '@/components/ui/icons';
 import { getAuthFileIcon } from '@/features/authFiles/constants';
 import {
@@ -1652,7 +1653,6 @@ export function AccountInspectionPage() {
   const [recheckingKey, setRecheckingKey] = useState<string | null>(null);
   const [refreshingTokenKey, setRefreshingTokenKey] = useState<string | null>(null);
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
-  const [exportAuthFilesProvider, setExportAuthFilesProvider] = useState<string>(ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE);
   const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
   const logListRef = useRef<HTMLDivElement | null>(null);
@@ -1974,8 +1974,8 @@ export function AccountInspectionPage() {
       const files = Array.isArray(response.files)
         ? response.files.filter((file) =>
             isInspectableAccountInspectionAuthFile(file) &&
-            (exportAuthFilesProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE ||
-              resolveAuthProvider(file) === exportAuthFilesProvider)
+            (selectedAssetProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE ||
+              resolveAuthProvider(file) === selectedAssetProvider)
           )
         : [];
       const downloadableFiles = files.filter((file) => typeof file.name === 'string' && file.name.trim());
@@ -2004,9 +2004,9 @@ export function AccountInspectionPage() {
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const archive = await buildZipArchive(entries);
-      const providerSuffix = exportAuthFilesProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
+      const providerSuffix = selectedAssetProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
         ? ''
-        : `-${exportAuthFilesProvider}`;
+        : `-${selectedAssetProvider}`;
       downloadBlobFile(`auth-files-export${providerSuffix}-${timestamp}.zip`, archive);
       showNotification(t('monitoring.account_inspection_auth_files_export_success', { count: entries.length }), 'success');
     } catch (error) {
@@ -2014,7 +2014,7 @@ export function AccountInspectionPage() {
     } finally {
       setExportingAuthFiles(false);
     }
-  }, [connectionStatus, exportAuthFilesProvider, showNotification, t]);
+  }, [connectionStatus, selectedAssetProvider, showNotification, t]);
 
   const handlePauseInspection = useCallback(() => {
     if (runStatus !== 'running') return;
@@ -2327,6 +2327,9 @@ export function AccountInspectionPage() {
   const selectedAssetLabel = selectedAssetProvider === 'all'
     ? t('monitoring.account_inspection_account_summary_title')
     : resolveProviderDisplayLabel(selectedAssetProvider);
+  const selectedAssetExportLabel = selectedAssetProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
+    ? t('monitoring.filter_all_providers')
+    : selectedAssetLabel;
 
   const accountAssetCards = useMemo<SummaryCard[]>(() => [
     {
@@ -2702,25 +2705,6 @@ export function AccountInspectionPage() {
             <h1 className={styles.heroTitle}>{t('monitoring.account_inspection_title')}</h1>
             <p className={styles.heroSubtitle}>{t('monitoring.account_inspection_desc')}</p>
           </div>
-          <div className={styles.heroActions}>
-            <Select
-              value={exportAuthFilesProvider}
-              options={resultProviderOptions}
-              onChange={setExportAuthFilesProvider}
-              ariaLabel={t('monitoring.account_inspection_auth_files_export_scope')}
-              triggerClassName={styles.heroExportSelect}
-              disabled={exportingAuthFiles || connectionStatus !== 'connected'}
-            />
-            <Button
-              variant="secondary"
-              className={styles.heroActionButton}
-              onClick={handleExportAuthFiles}
-              loading={exportingAuthFiles}
-              disabled={exportingAuthFiles || connectionStatus !== 'connected'}
-            >
-              {t('monitoring.account_inspection_auth_files_export')}
-            </Button>
-          </div>
         </div>
 
         <div className={styles.assetOverviewGrid}>
@@ -2750,7 +2734,21 @@ export function AccountInspectionPage() {
                 <h3>{t('monitoring.account_inspection_provider_distribution_title')}</h3>
                 <p>{authFileStatsReady ? t('monitoring.account_inspection_provider_distribution_desc', { count: authFileStats.providerCount }) : t('common.loading')}</p>
               </div>
-              <span>{selectedAssetLabel}</span>
+              <div className={styles.providerDistributionActions}>
+                <span className={styles.providerDistributionSelection}>{selectedAssetLabel}</span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={styles.providerExportButton}
+                  onClick={handleExportAuthFiles}
+                  loading={exportingAuthFiles}
+                  disabled={exportingAuthFiles || connectionStatus !== 'connected'}
+                  aria-label={t('monitoring.account_inspection_auth_files_export_selected', { provider: selectedAssetExportLabel })}
+                  title={t('monitoring.account_inspection_auth_files_export_selected', { provider: selectedAssetExportLabel })}
+                >
+                  {exportingAuthFiles ? null : <IconDownload size={16} />}
+                </Button>
+              </div>
             </div>
             <div className={styles.providerSelectorList}>
               <button
