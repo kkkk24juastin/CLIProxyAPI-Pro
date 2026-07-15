@@ -160,6 +160,43 @@ def replace_go_call_block(path: Path, call_start: str, new_block: str, present: 
 
 MODULE_PATH = module_path()
 
+usage_manager = ROOT / 'sdk/cliproxy/usage/manager.go'
+replace_once(
+    usage_manager,
+    'type serviceTierContextKey struct{}\n',
+    'type serviceTierContextKey struct{}\ntype streamContextKey struct{}\n',
+)
+insert_before(
+    usage_manager,
+    '// WithServiceTier stores the client-requested service tier for usage sinks.\n',
+    '''// WithStream stores whether the client requested streaming output for usage sinks.
+func WithStream(ctx context.Context, stream bool) context.Context {
+\tif ctx == nil {
+\t\tctx = context.Background()
+\t}
+\treturn context.WithValue(ctx, streamContextKey{}, stream)
+}
+
+// StreamFromContext returns whether the client requested streaming output.
+func StreamFromContext(ctx context.Context) bool {
+\tif ctx == nil {
+\t\treturn false
+\t}
+\tstream, _ := ctx.Value(streamContextKey{}).(bool)
+\treturn stream
+}
+
+''',
+    'func WithStream(ctx context.Context, stream bool) context.Context',
+)
+
+auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor.go'
+replace_once(
+    auth_conductor,
+    '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n',
+    '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n\tctx = coreusage.WithStream(ctx, opts.Stream)\n',
+)
+
 config_go = ROOT / 'internal/config/config.go'
 replace_once(
     config_go,

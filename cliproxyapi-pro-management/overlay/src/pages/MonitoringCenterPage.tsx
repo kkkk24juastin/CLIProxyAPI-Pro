@@ -120,6 +120,7 @@ const REALTIME_LOG_COLUMN_KEYS = [
   'type',
   'model',
   'reasoningEffort',
+  'stream',
   'apiKey',
   'recent',
   'status',
@@ -151,6 +152,7 @@ const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, number> =
   type: 170,
   model: 230,
   reasoningEffort: 116,
+  stream: 108,
   apiKey: 145,
   recent: 86,
   status: 180,
@@ -167,6 +169,7 @@ const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   type: 96,
   model: 132,
   reasoningEffort: 96,
+  stream: 92,
   apiKey: 104,
   recent: 76,
   status: 120,
@@ -263,6 +266,7 @@ const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPreferenc
   }
 
   const shouldMigrateReasoningEffort = next.length > 0 && !seen.has('reasoningEffort');
+  const shouldMigrateStream = next.length > 0 && !seen.has('stream');
 
   REALTIME_LOG_DEFAULT_COLUMNS.forEach((item) => {
     if (!seen.has(item.key)) {
@@ -277,6 +281,16 @@ const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPreferenc
       const [reasoningEffortColumn] = next.splice(reasoningEffortIndex, 1);
       const migratedModelIndex = next.findIndex((item) => item.key === 'model');
       next.splice(migratedModelIndex + 1, 0, reasoningEffortColumn);
+    }
+  }
+
+  if (shouldMigrateStream) {
+    const streamIndex = next.findIndex((item) => item.key === 'stream');
+    const reasoningEffortIndex = next.findIndex((item) => item.key === 'reasoningEffort');
+    if (streamIndex >= 0 && reasoningEffortIndex >= 0) {
+      const [streamColumn] = next.splice(streamIndex, 1);
+      const migratedReasoningEffortIndex = next.findIndex((item) => item.key === 'reasoningEffort');
+      next.splice(migratedReasoningEffortIndex + 1, 0, streamColumn);
     }
   }
 
@@ -313,6 +327,8 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
       return [row.model, row.modelAlias && row.modelAlias !== row.model ? row.modelAlias : buildRealtimeMetaText(row)];
     case 'reasoningEffort':
       return [row.reasoningEffort.trim() || '-'];
+    case 'stream':
+      return [row.stream ? 'Streaming' : 'Non-streaming'];
     case 'apiKey':
       return [row.clientApiKey.masked];
     case 'recent':
@@ -4483,6 +4499,21 @@ export function MonitoringCenterPage() {
           <span className={styles.mutedText}>-</span>
         );
       },
+    },
+    stream: {
+      key: 'stream',
+      label: t('monitoring.column_stream'),
+      colClassName: styles.realtimeStreamCol,
+      headerClassName: styles.realtimeCenterHeader,
+      cellClassName: () => `${styles.realtimeCenterCell} ${styles.realtimeNowrapCell}`,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.stream,
+      render: (row) => (
+        <span className={`${styles.realtimeReasoningBadge} ${row.stream ? '' : styles.realtimeNonStreamingBadge}`}>
+          <StatusBadge tone="good">
+            {t(row.stream ? 'monitoring.stream_mode_streaming' : 'monitoring.stream_mode_non_streaming')}
+          </StatusBadge>
+        </span>
+      ),
     },
     apiKey: {
       key: 'apiKey',

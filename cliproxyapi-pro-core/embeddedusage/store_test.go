@@ -41,6 +41,7 @@ func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Eve
 		StatusCode:        &status,
 		UpstreamRequestID: "upstream-request",
 		RetryAfter:        "30",
+		Stream:            index%2 == 0,
 		ReasoningEffort:   "medium",
 		ServiceTier:       "default",
 		Failed:            failed,
@@ -326,7 +327,7 @@ func TestRecentEventsUsesRecentIndex(t *testing.T) {
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
 		failed, raw_json, created_at_ms
 		from usage_events indexed by idx_usage_events_recent
 		order by timestamp_ms desc, id desc
@@ -377,7 +378,7 @@ func TestUsageDiagnosticsRoundTripAndAggregates(t *testing.T) {
 	if got.TTFTMS == nil || *got.TTFTMS != 20 || got.StatusCode == nil || *got.StatusCode != 429 {
 		t.Fatalf("diagnostics = ttft:%v status:%v, want 20/429", got.TTFTMS, got.StatusCode)
 	}
-	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || got.ReasoningEffort != "medium" || got.ServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
+	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || !got.Stream || got.ReasoningEffort != "medium" || got.ServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
 		t.Fatalf("diagnostic strings = %+v", got)
 	}
 

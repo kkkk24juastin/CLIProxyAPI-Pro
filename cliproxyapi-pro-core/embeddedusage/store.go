@@ -260,6 +260,7 @@ func (s *Store) init() error {
 			error_message text,
 			upstream_request_id text,
 			retry_after text,
+			stream integer not null default 0,
 			reasoning_effort text,
 			service_tier text,
 			estimated_cost real,
@@ -359,6 +360,7 @@ func (s *Store) init() error {
 		`alter table usage_events add column error_message text`,
 		`alter table usage_events add column upstream_request_id text`,
 		`alter table usage_events add column retry_after text`,
+		`alter table usage_events add column stream integer not null default 0`,
 		`alter table usage_events add column reasoning_effort text`,
 		`alter table usage_events add column service_tier text`,
 		`alter table usage_events add column executor_type text`,
@@ -400,9 +402,9 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 		request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return InsertResult{}, err
 	}
@@ -431,7 +433,7 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 			nullString(event.Provider), nullString(event.ExecutorType), event.Model, nullString(event.Alias), nullString(event.Endpoint), nullString(event.Method), nullString(event.Path),
 			nullString(event.AuthType), nullString(event.AuthIndex), nullString(event.Source), nullString(event.SourceHash), nullString(event.APIKeyHash),
 			event.InputTokens, event.OutputTokens, event.ReasoningTokens, event.CachedTokens, event.CacheTokens, event.CacheReadTokens, event.CacheWriteTokens, event.TotalTokens,
-			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.UpstreamRequestID), nullString(event.RetryAfter), nullString(event.ReasoningEffort), nullString(event.ServiceTier),
+			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.UpstreamRequestID), nullString(event.RetryAfter), boolToInt(event.Stream), nullString(event.ReasoningEffort), nullString(event.ServiceTier),
 			nullFloat64(event.EstimatedCost), nullPositiveInt64(event.PriceRuleID), nullString(event.CostBreakdownJSON), failed, nullString(event.RawJSON), event.CreatedAtMS,
 		)
 		if err != nil {
@@ -594,12 +596,12 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		var errorCode, errorMessage, upstreamRequestID, retryAfter, reasoningEffort, serviceTier, costBreakdown sql.NullString
 		var estimatedCost sql.NullFloat64
 		var priceRuleID sql.NullInt64
-		var failed int
+		var stream, failed int
 		if err := rows.Scan(
 			&event.ID, &requestID, &event.EventHash, &event.TimestampMS, &event.Timestamp, &provider, &executorType, &event.Model,
 			&alias, &endpoint, &method, &path, &authType, &authIndex, &source, &sourceHash, &apiKeyHash,
 			&event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheTokens, &event.CacheReadTokens, &event.CacheWriteTokens, &event.TotalTokens,
-			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &reasoningEffort, &serviceTier,
+			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &stream, &reasoningEffort, &serviceTier,
 			&estimatedCost, &priceRuleID, &costBreakdown, &failed, &rawJSON, &event.CreatedAtMS,
 		); err != nil {
 			return nil, err
@@ -634,6 +636,7 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		event.ErrorMessage = errorMessage.String
 		event.UpstreamRequestID = upstreamRequestID.String
 		event.RetryAfter = retryAfter.String
+		event.Stream = stream != 0
 		event.ReasoningEffort = reasoningEffort.String
 		event.ServiceTier = serviceTier.String
 		if estimatedCost.Valid {
@@ -655,7 +658,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]internalusage.Ev
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events indexed by idx_usage_events_recent
 		order by timestamp_ms desc, id desc
@@ -675,7 +678,7 @@ func (s *Store) EventsAfter(ctx context.Context, afterID int64, limit int) ([]in
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events
 		where id > ?
@@ -799,7 +802,7 @@ func (s *Store) QueryEvents(ctx context.Context, options UsageEventQueryOptions)
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events` + usageEventQueryWhere(queryWheres) + `
 		order by timestamp_ms desc, id desc
@@ -1589,6 +1592,13 @@ func nullString(value string) any {
 		return nil
 	}
 	return value
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func nullInt(value *int) any {

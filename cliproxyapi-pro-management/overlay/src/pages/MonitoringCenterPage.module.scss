@@ -4365,6 +4365,10 @@
   min-width: 96px;
 }
 
+.realtimeStreamCol {
+  min-width: 92px;
+}
+
 .realtimeReasoningBadge {
   display: inline-flex;
   max-width: 100%;
@@ -4630,6 +4634,12 @@
   min-width: 56px;
   max-width: 100%;
   padding-inline: 10px;
+}
+
+.realtimeTable .realtimeNonStreamingBadge .statusBadge {
+  color: var(--monitor-cyan);
+  border-color: color-mix(in srgb, var(--monitor-cyan) 26%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-cyan) 10%, var(--monitor-surface));
 }
 
 .realtimeTable .statusBadge::before {

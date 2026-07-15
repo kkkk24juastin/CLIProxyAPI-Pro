@@ -141,6 +141,7 @@ export interface UsageDetail {
   error_message?: string;
   upstream_request_id?: string;
   retry_after?: string;
+  stream?: boolean;
   reasoning_effort?: string;
   service_tier?: string;
   estimated_cost?: number;
@@ -459,6 +460,7 @@ const buildUsageDetail = (
       : typeof detailRaw.retryAfter === 'string'
         ? detailRaw.retryAfter
         : undefined,
+    stream: detailRaw.stream === true,
     reasoning_effort: typeof detailRaw.reasoning_effort === 'string'
       ? detailRaw.reasoning_effort
       : typeof detailRaw.reasoningEffort === 'string'

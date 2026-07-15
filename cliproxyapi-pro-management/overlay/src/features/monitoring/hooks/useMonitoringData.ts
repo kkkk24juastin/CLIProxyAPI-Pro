@@ -331,6 +331,7 @@ export type MonitoringEventRow = {
   errorMessage: string;
   upstreamRequestId: string;
   retryAfter: string;
+  stream: boolean;
   reasoningEffort: string;
   serviceTier: string;
   costBreakdown: UsageCostBreakdown | null;
@@ -1243,6 +1244,7 @@ const buildEventRows = (
       errorMessage: detail.error_message || '',
       upstreamRequestId: detail.upstream_request_id || '',
       retryAfter: detail.retry_after || '',
+      stream: detail.stream === true,
       reasoningEffort: detail.reasoning_effort || '',
       serviceTier: detail.service_tier || '',
       costBreakdown: detail.cost_breakdown ?? null,

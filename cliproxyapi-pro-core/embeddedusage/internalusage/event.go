@@ -44,6 +44,7 @@ type Event struct {
 	ErrorMessage      string   `json:"error_message,omitempty"`
 	UpstreamRequestID string   `json:"upstream_request_id,omitempty"`
 	RetryAfter        string   `json:"retry_after,omitempty"`
+	Stream            bool     `json:"stream"`
 	ReasoningEffort   string   `json:"reasoning_effort,omitempty"`
 	ServiceTier       string   `json:"service_tier,omitempty"`
 	EstimatedCost     *float64 `json:"estimated_cost,omitempty"`
@@ -83,6 +84,7 @@ type Detail struct {
 	ErrorMessage      string          `json:"error_message,omitempty"`
 	UpstreamRequestID string          `json:"upstream_request_id,omitempty"`
 	RetryAfter        string          `json:"retry_after,omitempty"`
+	Stream            bool            `json:"stream"`
 	ReasoningEffort   string          `json:"reasoning_effort,omitempty"`
 	ServiceTier       string          `json:"service_tier,omitempty"`
 	EstimatedCost     *float64        `json:"estimated_cost,omitempty"`
@@ -233,6 +235,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		ErrorMessage:      errorMessage,
 		UpstreamRequestID: upstreamRequestID,
 		RetryAfter:        retryAfter,
+		Stream:            readBool(record, "stream"),
 		ReasoningEffort:   readString(record, "reasoning_effort"),
 		ServiceTier:       readString(record, "service_tier"),
 		Failed:            failed,
@@ -310,6 +313,7 @@ func BuildPayload(events []Event) Payload {
 			ErrorMessage:      event.ErrorMessage,
 			UpstreamRequestID: event.UpstreamRequestID,
 			RetryAfter:        event.RetryAfter,
+			Stream:            event.Stream,
 			ReasoningEffort:   event.ReasoningEffort,
 			ServiceTier:       event.ServiceTier,
 			EstimatedCost:     event.EstimatedCost,
@@ -438,6 +442,24 @@ func readFailed(record map[string]any) bool {
 		return readInt(fail, "status_code") >= 400
 	}
 	return record["error_message"] != nil
+}
+
+func readBool(record map[string]any, keys ...string) bool {
+	raw := first(record, keys...)
+	switch value := raw.(type) {
+	case bool:
+		return value
+	case string:
+		parsed, _ := strconv.ParseBool(strings.TrimSpace(value))
+		return parsed
+	case json.Number:
+		parsed, _ := strconv.ParseBool(value.String())
+		return parsed
+	case float64:
+		return value != 0
+	default:
+		return false
+	}
 }
 
 func readOptionalInt32(record map[string]any, keys ...string) *int {
