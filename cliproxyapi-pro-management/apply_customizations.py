@@ -276,6 +276,86 @@ def copy_overlay(target: Path) -> None:
             shutil.copy2(src, dst)
 
 
+def patch_modal_focus_restore(target: Path) -> None:
+    path = target / 'src/components/ui/Modal.tsx'
+    replace_once(
+        path,
+        "  useEffect(() => {\n"
+        "    if (open || isVisible) return;\n"
+        "    previouslyFocusedRef.current?.focus();\n"
+        "    previouslyFocusedRef.current = null;\n"
+        "  }, [isVisible, open]);\n",
+        "  useEffect(() => {\n"
+        "    if (open || isVisible) return;\n"
+        "    const previouslyFocused = previouslyFocusedRef.current;\n"
+        "    if (previouslyFocused?.isConnected) {\n"
+        "      previouslyFocused.focus({ preventScroll: true });\n"
+        "    }\n"
+        "    previouslyFocusedRef.current = null;\n"
+        "  }, [isVisible, open]);\n",
+    )
+
+
+def patch_modal_scroll_lock(target: Path) -> None:
+    path = target / 'src/components/ui/scrollLock.ts'
+    text = read(path)
+    replacement_marker = "const snapshot = {\n  bodyOverflow: '',"
+    if replacement_marker in text:
+        return
+
+    start_marker = 'const snapshot = {'
+    end_marker = 'export const FOCUSABLE_SELECTOR'
+    start = text.find(start_marker)
+    end = text.find(end_marker, start)
+    if start == -1 or end == -1:
+        raise RuntimeError(f'Pattern not found in {path}: scroll lock implementation')
+
+    current = text[start:end]
+    required = (
+        "body.style.position = 'fixed';",
+        "body.style.width = '100%';",
+        'contentEl.scrollTo(',
+        'window.scrollTo(',
+    )
+    missing = [marker for marker in required if marker not in current]
+    if missing:
+        raise RuntimeError(f'Pattern not found in {path}: {missing[0]!r}')
+
+    replacement = (
+        "const snapshot = {\n"
+        "  bodyOverflow: '',\n"
+        "  htmlOverflow: '',\n"
+        "};\n\n"
+        "export function lockScroll(): void {\n"
+        "  if (typeof document === 'undefined') return;\n"
+        "  if (activeLockCount === 0) {\n"
+        "    const body = document.body;\n"
+        "    const html = document.documentElement;\n\n"
+        "    snapshot.bodyOverflow = body.style.overflow;\n"
+        "    snapshot.htmlOverflow = html.style.overflow;\n\n"
+        "    body.classList.add(MODAL_LOCK_CLASS);\n"
+        "    html.classList.add(MODAL_LOCK_CLASS);\n"
+        "    body.style.overflow = 'hidden';\n"
+        "    html.style.overflow = 'hidden';\n"
+        "  }\n"
+        "  activeLockCount += 1;\n"
+        "}\n\n"
+        "export function unlockScroll(): void {\n"
+        "  if (typeof document === 'undefined') return;\n"
+        "  activeLockCount = Math.max(0, activeLockCount - 1);\n"
+        "  if (activeLockCount === 0) {\n"
+        "    const body = document.body;\n"
+        "    const html = document.documentElement;\n\n"
+        "    body.classList.remove(MODAL_LOCK_CLASS);\n"
+        "    html.classList.remove(MODAL_LOCK_CLASS);\n"
+        "    body.style.overflow = snapshot.bodyOverflow;\n"
+        "    html.style.overflow = snapshot.htmlOverflow;\n"
+        "  }\n"
+        "}\n\n"
+    )
+    write(path, f'{text[:start]}{replacement}{text[end:]}')
+
+
 def patch_routes(target: Path) -> None:
     path = target / 'src/router/MainRoutes.tsx'
     replace_once(
@@ -1499,6 +1579,8 @@ def main() -> None:
         raise SystemExit(f'Overlay directory not found: {OVERLAY_DIR}')
 
     copy_overlay(target)
+    patch_modal_focus_restore(target)
+    patch_modal_scroll_lock(target)
     patch_routes(target)
     patch_layout(target)
     patch_icons(target)
