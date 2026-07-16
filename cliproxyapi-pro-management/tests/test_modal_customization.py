@@ -48,6 +48,13 @@ export function unlockScroll(): void {
 export const FOCUSABLE_SELECTOR = 'button';
 """
 
+GLOBAL_STYLE_SOURCE = """@use './layout.scss';
+
+body {
+  color: var(--text-primary);
+}
+"""
+
 
 class ModalCustomizationTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -94,6 +101,24 @@ class ModalCustomizationTest(unittest.TestCase):
             CUSTOMIZATIONS.patch_modal_scroll_lock(target)
             CUSTOMIZATIONS.flush_writes()
             self.assertEqual(patched, scroll_lock_path.read_text())
+
+    def test_root_scrollbar_gutter_stays_reserved_while_modal_is_open(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir)
+            styles_dir = target / 'src/styles'
+            styles_dir.mkdir(parents=True)
+            global_style_path = styles_dir / 'global.scss'
+            global_style_path.write_text(GLOBAL_STYLE_SOURCE)
+
+            CUSTOMIZATIONS.patch_modal_scrollbar_gutter(target)
+            CUSTOMIZATIONS.flush_writes()
+
+            patched = global_style_path.read_text()
+            self.assertIn('html {\n  scrollbar-gutter: stable;\n}', patched)
+
+            CUSTOMIZATIONS.patch_modal_scrollbar_gutter(target)
+            CUSTOMIZATIONS.flush_writes()
+            self.assertEqual(patched, global_style_path.read_text())
 
 
 if __name__ == '__main__':
