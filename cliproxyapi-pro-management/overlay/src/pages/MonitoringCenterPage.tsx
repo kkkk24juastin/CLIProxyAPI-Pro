@@ -1100,7 +1100,37 @@ const buildAccountSummaryMetrics = (
   },
 ];
 
-type AnyQuotaConfig = QuotaConfig<any, any>;
+type AnyQuotaConfig = {
+  type: QuotaConfig<QuotaStatusState, unknown>['type'];
+  i18nPrefix: string;
+  fetchQuota: (file: AuthFileItem, t: TFunction) => Promise<unknown>;
+  storeSelector: (state: QuotaStore) => Record<string, QuotaStatusState>;
+  storeSetter: keyof QuotaStore;
+  buildLoadingState: () => QuotaStatusState;
+  buildSuccessState: (data: unknown) => QuotaStatusState;
+  buildErrorState: (message: string, status?: number) => QuotaStatusState;
+  renderQuotaItems: (quota: QuotaStatusState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;
+};
+
+const adaptQuotaConfig = <TState extends QuotaStatusState, TData>(
+  config: QuotaConfig<TState, TData>
+): AnyQuotaConfig => ({
+  type: config.type,
+  i18nPrefix: config.i18nPrefix,
+  fetchQuota: config.fetchQuota,
+  storeSelector: config.storeSelector,
+  storeSetter: config.storeSetter,
+  buildLoadingState: config.buildLoadingState,
+  buildSuccessState: (data) => config.buildSuccessState(data as TData),
+  buildErrorState: config.buildErrorState,
+  renderQuotaItems: (quota, t, helpers) => config.renderQuotaItems(quota as TState, t, helpers),
+});
+
+const ACCOUNT_ANTIGRAVITY_QUOTA_CONFIG = adaptQuotaConfig(ANTIGRAVITY_CONFIG);
+const ACCOUNT_CLAUDE_QUOTA_CONFIG = adaptQuotaConfig(CLAUDE_CONFIG);
+const ACCOUNT_CODEX_QUOTA_CONFIG = adaptQuotaConfig(CODEX_CONFIG);
+const ACCOUNT_KIMI_QUOTA_CONFIG = adaptQuotaConfig(KIMI_CONFIG);
+const ACCOUNT_XAI_QUOTA_CONFIG = adaptQuotaConfig(XAI_CONFIG);
 
 type AccountQuotaTarget = {
   key: string;
@@ -2072,11 +2102,11 @@ const getQuotaProviderLabel = (config: AnyQuotaConfig, t: TFunction) => {
 };
 
 const getAccountQuotaConfig = (file: AuthFileItem): AnyQuotaConfig | undefined => {
-  if (isAntigravityFile(file)) return ANTIGRAVITY_CONFIG;
-  if (isClaudeFile(file)) return CLAUDE_CONFIG;
-  if (isCodexFile(file)) return CODEX_CONFIG;
-  if (isKimiFile(file)) return KIMI_CONFIG;
-  if (isXaiFile(file)) return XAI_CONFIG;
+  if (isAntigravityFile(file)) return ACCOUNT_ANTIGRAVITY_QUOTA_CONFIG;
+  if (isClaudeFile(file)) return ACCOUNT_CLAUDE_QUOTA_CONFIG;
+  if (isCodexFile(file)) return ACCOUNT_CODEX_QUOTA_CONFIG;
+  if (isKimiFile(file)) return ACCOUNT_KIMI_QUOTA_CONFIG;
+  if (isXaiFile(file)) return ACCOUNT_XAI_QUOTA_CONFIG;
   return undefined;
 };
 
@@ -4327,7 +4357,10 @@ export function MonitoringCenterPage() {
   const scopedFailureCount = scopedRowsState.failureCount;
 
   const usageRowGroups = useMemo(() => {
-    const nowMs = Date.now();
+    const nowMs = Math.max(
+      Number(usageAggregates?.snapshotAtMs) || 0,
+      allRows.reduce((latest, row) => Math.max(latest, row.timestampMs), 0)
+    );
     const summaryWindowStartMs = nowMs - 30 * 60 * 1000;
     const todayStart = new Date(nowMs);
     todayStart.setHours(0, 0, 0, 0);
@@ -4366,7 +4399,7 @@ export function MonitoringCenterPage() {
       todayCost,
       yesterdayCost,
     };
-  }, [allRows, timeRange]);
+  }, [allRows, timeRange, usageAggregates?.snapshotAtMs]);
   const {
     trendStatsRows,
     topSummary,

@@ -212,7 +212,10 @@ export function useUsageAggregates({
   }, [apiKeyHash, enabled, timeRange]);
 
   const loadRef = useRef(load);
-  loadRef.current = load;
+
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
 
   useEffect(() => {
     queryGenerationRef.current += 1;

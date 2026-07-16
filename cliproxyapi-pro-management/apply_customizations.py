@@ -163,6 +163,45 @@ AUTH_FILES_SEARCH_PLACEHOLDER_KEYS = {
     'zh-TW.json': '輸入名稱、類型、供應方、備註或套餐關鍵字，支援 * 萬用字元',
 }
 
+CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS = {
+    'en.json': {
+        'title': 'Anthropic Client Compatibility',
+        'description': 'Control how non-Claude model IDs are exposed to Anthropic-compatible clients.',
+        'label': 'Anthropic model ID compatibility mode',
+        'hint': 'Only changes non-Claude IDs returned by /v1/models. Auto cloaks IDs for identified Claude Desktop clients, while Claude Code and other Anthropic clients keep the original IDs.',
+        'auto': 'Auto (Claude Desktop only)',
+        'always': 'Always cloak IDs',
+        'never': 'Keep original IDs',
+    },
+    'ru.json': {
+        'title': 'Совместимость клиентов Anthropic',
+        'description': 'Управление отображением идентификаторов моделей не-Claude для Anthropic-совместимых клиентов.',
+        'label': 'Режим совместимости идентификаторов моделей Anthropic',
+        'hint': 'Изменяет только идентификаторы моделей не-Claude в ответе /v1/models. Автоматический режим маскирует их только для распознанного Claude Desktop; Claude Code и другие клиенты Anthropic получают исходные идентификаторы.',
+        'auto': 'Авто (только Claude Desktop)',
+        'always': 'Всегда маскировать',
+        'never': 'Сохранять исходные ID',
+    },
+    'zh-CN.json': {
+        'title': 'Anthropic 客户端兼容性',
+        'description': '控制非 Claude 模型 ID 向 Anthropic 兼容客户端的展示方式。',
+        'label': 'Anthropic 模型 ID 兼容模式',
+        'hint': '仅影响 /v1/models 返回的非 Claude 模型 ID。自动模式仅对识别出的 Claude Desktop 进行伪装，Claude Code 和其他 Anthropic 客户端保留原始 ID。',
+        'auto': '自动（仅 Claude Desktop）',
+        'always': '始终伪装 ID',
+        'never': '保留原始 ID',
+    },
+    'zh-TW.json': {
+        'title': 'Anthropic 用戶端相容性',
+        'description': '控制非 Claude 模型 ID 對 Anthropic 相容用戶端的顯示方式。',
+        'label': 'Anthropic 模型 ID 相容模式',
+        'hint': '僅影響 /v1/models 回傳的非 Claude 模型 ID。自動模式只對識別出的 Claude Desktop 進行偽裝，Claude Code 和其他 Anthropic 用戶端保留原始 ID。',
+        'auto': '自動（僅 Claude Desktop）',
+        'always': '一律偽裝 ID',
+        'never': '保留原始 ID',
+    },
+}
+
 
 _writes = {}
 
@@ -1548,6 +1587,171 @@ def patch_supporting_api_and_types(target: Path) -> None:
             raise RuntimeError(f'Pattern not found in {select_path}: Select trigger className')
 
 
+def patch_claude_model_id_cloak_setting(target: Path) -> None:
+    visual_types = target / 'src/types/visualConfig.ts'
+    replace_once(
+        visual_types,
+        "export type DisableImageGenerationMode = 'false' | 'true' | 'chat' | 'passthrough';\n",
+        "export type DisableImageGenerationMode = 'false' | 'true' | 'chat' | 'passthrough';\n"
+        "export type ClaudeModelIDCloakMode = 'auto' | 'always' | 'never';\n",
+    )
+    replace_once(
+        visual_types,
+        "  forceModelPrefix: boolean;\n  passthroughHeaders: boolean;\n",
+        "  forceModelPrefix: boolean;\n  claudeModelIDCloakMode: ClaudeModelIDCloakMode;\n  passthroughHeaders: boolean;\n",
+    )
+    replace_once(
+        visual_types,
+        "  forceModelPrefix: false,\n  passthroughHeaders: false,\n",
+        "  forceModelPrefix: false,\n  claudeModelIDCloakMode: 'auto',\n  passthroughHeaders: false,\n",
+    )
+
+    visual_hook = target / 'src/hooks/useVisualConfig.ts'
+    replace_once(
+        visual_hook,
+        "  DisableImageGenerationMode,\n",
+        "  ClaudeModelIDCloakMode,\n  DisableImageGenerationMode,\n",
+    )
+    replace_once(
+        visual_hook,
+        "export function parseDisableImageGenerationMode(raw: unknown): DisableImageGenerationMode {\n",
+        "export function parseClaudeModelIDCloakMode(raw: unknown): ClaudeModelIDCloakMode {\n"
+        "  if (typeof raw === 'string') {\n"
+        "    const normalized = raw.trim().toLowerCase();\n"
+        "    if (normalized === 'always' || normalized === 'never') return normalized;\n"
+        "  }\n"
+        "  return 'auto';\n"
+        "}\n\n"
+        "export function parseDisableImageGenerationMode(raw: unknown): DisableImageGenerationMode {\n",
+    )
+    replace_once(
+        visual_hook,
+        "      'forceModelPrefix',\n      'requestRetry',\n",
+        "      'forceModelPrefix',\n      'claudeModelIDCloakMode',\n      'requestRetry',\n",
+    )
+    replace_once(
+        visual_hook,
+        "        forceModelPrefix: Boolean(parsed['force-model-prefix']),\n        passthroughHeaders: Boolean(parsed['passthrough-headers']),\n",
+        "        forceModelPrefix: Boolean(parsed['force-model-prefix']),\n"
+        "        claudeModelIDCloakMode: parseClaudeModelIDCloakMode(\n"
+        "          parsed['claude-model-id-cloak-mode']\n"
+        "        ),\n"
+        "        passthroughHeaders: Boolean(parsed['passthrough-headers']),\n",
+    )
+    replace_once(
+        visual_hook,
+        "        if (dirtyFields.has('forceModelPrefix')) {\n"
+        "          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
+        "        }\n"
+        "        if (dirtyFields.has('passthroughHeaders')) {\n",
+        "        if (dirtyFields.has('forceModelPrefix')) {\n"
+        "          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
+        "        }\n"
+        "        if (dirtyFields.has('claudeModelIDCloakMode')) {\n"
+        "          setStringInDoc(\n"
+        "            doc,\n"
+        "            ['claude-model-id-cloak-mode'],\n"
+        "            values.claudeModelIDCloakMode\n"
+        "          );\n"
+        "        }\n"
+        "        if (dirtyFields.has('passthroughHeaders')) {\n",
+    )
+
+    visual_editor = target / 'src/components/config/VisualConfigEditor.tsx'
+    replace_once(
+        visual_editor,
+        "  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;\n"
+        "  const keepaliveInputId = useId();\n",
+        "  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;\n"
+        "  const claudeModelIDCloakModeLabelId = useId();\n"
+        "  const claudeModelIDCloakModeHintId = `${claudeModelIDCloakModeLabelId}-hint`;\n"
+        "  const keepaliveInputId = useId();\n",
+    )
+    replace_once(
+        visual_editor,
+        "  const countErrors = useCallback(\n",
+        "  const claudeModelIDCloakModeOptions = useMemo(\n"
+        "    () => [\n"
+        "      {\n"
+        "        value: 'auto',\n"
+        "        label: t('config_management.visual.sections.advanced.claude_model_id_cloak_auto'),\n"
+        "      },\n"
+        "      {\n"
+        "        value: 'always',\n"
+        "        label: t('config_management.visual.sections.advanced.claude_model_id_cloak_always'),\n"
+        "      },\n"
+        "      {\n"
+        "        value: 'never',\n"
+        "        label: t('config_management.visual.sections.advanced.claude_model_id_cloak_never'),\n"
+        "      },\n"
+        "    ],\n"
+        "    [t]\n"
+        "  );\n\n"
+        "  const countErrors = useCallback(\n",
+    )
+    replace_once(
+        visual_editor,
+        "                <Collapsible\n"
+        "                  label={t('config_management.visual.sections.headers.title')}\n",
+        "                <Collapsible\n"
+        "                  label={t(\n"
+        "                    'config_management.visual.sections.advanced.claude_model_id_cloak_title'\n"
+        "                  )}\n"
+        "                  hint={t(\n"
+        "                    'config_management.visual.sections.advanced.claude_model_id_cloak_description'\n"
+        "                  )}\n"
+        "                  defaultOpen={false}\n"
+        "                >\n"
+        "                  <SectionGrid>\n"
+        "                    <FieldAnchor fieldId=\"claudeModelIDCloakMode\">\n"
+        "                      <FieldShell\n"
+        "                        label={t(\n"
+        "                          'config_management.visual.sections.advanced.claude_model_id_cloak_label'\n"
+        "                        )}\n"
+        "                        labelId={claudeModelIDCloakModeLabelId}\n"
+        "                        hint={t(\n"
+        "                          'config_management.visual.sections.advanced.claude_model_id_cloak_hint'\n"
+        "                        )}\n"
+        "                        hintId={claudeModelIDCloakModeHintId}\n"
+        "                      >\n"
+        "                        <Select\n"
+        "                          value={values.claudeModelIDCloakMode}\n"
+        "                          options={claudeModelIDCloakModeOptions}\n"
+        "                          id={`${claudeModelIDCloakModeLabelId}-select`}\n"
+        "                          disabled={disabled}\n"
+        "                          ariaLabelledBy={claudeModelIDCloakModeLabelId}\n"
+        "                          ariaDescribedBy={claudeModelIDCloakModeHintId}\n"
+        "                          onChange={(nextValue) =>\n"
+        "                            onChange({\n"
+        "                              claudeModelIDCloakMode:\n"
+        "                                nextValue as VisualConfigValues['claudeModelIDCloakMode'],\n"
+        "                            })\n"
+        "                          }\n"
+        "                        />\n"
+        "                      </FieldShell>\n"
+        "                    </FieldAnchor>\n"
+        "                  </SectionGrid>\n"
+        "                </Collapsible>\n\n"
+        "                <Collapsible\n"
+        "                  label={t('config_management.visual.sections.headers.title')}\n",
+    )
+
+    search_index = target / 'src/components/config/configSearchIndex.ts'
+    replace_once(
+        search_index,
+        "  // Claude header defaults — qualifierKey disambiguates the shared \"User-Agent\" label.\n",
+        "  {\n"
+        "    fieldId: 'claudeModelIDCloakMode',\n"
+        "    sectionId: 'advanced',\n"
+        "    labelKey: L('sections.advanced.claude_model_id_cloak_label'),\n"
+        "    hintKey: L('sections.advanced.claude_model_id_cloak_hint'),\n"
+        "    yamlKeys: ['claude-model-id-cloak-mode'],\n"
+        "    keywords: ['anthropic', 'claude desktop', 'claude code', 'model id', 'cloak'],\n"
+        "  },\n"
+        "  // Claude header defaults — qualifierKey disambiguates the shared \"User-Agent\" label.\n",
+    )
+
+
 def patch_locales(target: Path) -> None:
     monitoring = json.loads(LOCALES_FILE.read_text())
     locales_dir = target / 'src/i18n/locales'
@@ -1577,6 +1781,27 @@ def patch_locales(target: Path) -> None:
             AUTH_FILES_SEARCH_PLACEHOLDER_KEYS['en.json'],
         )
         data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
+        cloak_locale = CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS.get(
+            locale_path.name,
+            CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS['en.json'],
+        )
+        advanced_locale = (
+            data.setdefault('config_management', {})
+            .setdefault('visual', {})
+            .setdefault('sections', {})
+            .setdefault('advanced', {})
+        )
+        advanced_locale.update(
+            {
+                'claude_model_id_cloak_title': cloak_locale['title'],
+                'claude_model_id_cloak_description': cloak_locale['description'],
+                'claude_model_id_cloak_label': cloak_locale['label'],
+                'claude_model_id_cloak_hint': cloak_locale['hint'],
+                'claude_model_id_cloak_auto': cloak_locale['auto'],
+                'claude_model_id_cloak_always': cloak_locale['always'],
+                'claude_model_id_cloak_never': cloak_locale['never'],
+            }
+        )
         locale_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
 
@@ -1609,6 +1834,7 @@ def main() -> None:
     patch_auth_files_page_search(target)
     patch_runtime_detection(target)
     patch_supporting_api_and_types(target)
+    patch_claude_model_id_cloak_setting(target)
     patch_locales(target)
     flush_writes()
     print(f'OK: CPA-Management customization applied to {target}')

@@ -292,11 +292,14 @@ const concatUint8Arrays = (parts: Uint8Array[]) => {
   return output;
 };
 
-const sanitizeZipPathSegment = (value: string) =>
-  value
-    .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
-    .replace(/^\.+$/, '_')
-    .trim() || 'unknown';
+const sanitizeZipPathSegment = (value: string) => {
+  const sanitized = value
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .split('')
+    .map((character) => character.charCodeAt(0) <= 0x1f ? '_' : character)
+    .join('');
+  return sanitized.replace(/^\.+$/, '_').trim() || 'unknown';
+};
 
 const getAuthFileZipPath = (entry: AuthFileExportEntry, usedPaths: Set<string>) => {
   const rawName = sanitizeZipPathSegment(entry.name);
@@ -989,7 +992,7 @@ const buildInspectionResultsViewState = (items: AccountInspectionResultItem[]): 
 
     if (isSuggestedAction(item) && !item.executed) {
       filterRowCounts.pending += 1;
-      row = pushResultRow(filterRows.pending, item, healthStatus, row);
+      pushResultRow(filterRows.pending, item, healthStatus, row);
       if (item.action === 'delete') actionableActionCounts.delete += 1;
       if (item.action === 'disable') actionableActionCounts.disable += 1;
       if (item.action === 'enable') actionableActionCounts.enable += 1;
@@ -2690,7 +2693,7 @@ export function AccountInspectionPage() {
     } finally {
       setScheduleLoading(false);
     }
-  }, [applyBackendResponse, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, settingsDraft, showNotification, t]);
+  }, [applyBackendResponse, inspectionSettings.autoExecuteConfirmations, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, settingsDraft, showNotification, t]);
 
   const handleResetSettings = useCallback(() => {
     clearAccountInspectionConfigurableSettings();
