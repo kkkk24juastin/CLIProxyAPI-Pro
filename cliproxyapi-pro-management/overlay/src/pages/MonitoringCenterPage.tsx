@@ -5358,8 +5358,9 @@ export function MonitoringCenterPage() {
                 className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
                 onClick={() => void loadMonitoringSettings()}
                 disabled={isMonitoringSettingsLoading}
+                aria-busy={isMonitoringSettingsLoading}
               >
-                {isMonitoringSettingsLoading ? t('common.loading') : t('usage_stats.monitoring_settings')}
+                {t('usage_stats.monitoring_settings')}
               </button>
               <input
                 ref={importInputRef}
