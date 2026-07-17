@@ -88,11 +88,11 @@ export type AuthFilesSortMode = (typeof AUTH_FILES_SORT_MODES)[number];
 """
 
 
-class AuthFilesPlanSortCustomizationTest(unittest.TestCase):
+class AuthFilesSortingCustomizationTest(unittest.TestCase):
     def setUp(self) -> None:
         CUSTOMIZATIONS._writes.clear()
 
-    def test_adds_provider_scoped_plan_sort_and_state_fallback(self) -> None:
+    def test_adds_provider_scoped_sorting_and_state_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             target = Path(temp_dir)
             pages_dir = target / 'src/pages'
@@ -104,30 +104,37 @@ class AuthFilesPlanSortCustomizationTest(unittest.TestCase):
             page_path.write_text(AUTH_FILES_PAGE_SOURCE)
             ui_state_path.write_text(UI_STATE_SOURCE)
 
-            CUSTOMIZATIONS.patch_auth_files_page_plan_sort(target)
+            CUSTOMIZATIONS.patch_auth_files_page_sorting(target)
             CUSTOMIZATIONS.flush_writes()
 
             page = page_path.read_text()
             ui_state = ui_state_path.read_text()
 
-            self.assertIn("['default', 'az', 'priority', 'plan']", ui_state)
+            self.assertIn("['default', 'az', 'priority', 'plan', 'quota']", ui_state)
             self.assertIn("from '@/features/authFiles/planSort'", page)
+            self.assertIn("from '@/features/authFiles/quotaSort'", page)
             self.assertIn(
                 'const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter);',
                 page,
             )
-            self.assertIn("if (sortMode !== 'plan' || planSortAvailable) return;", page)
+            self.assertIn(
+                'const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter);',
+                page,
+            )
+            self.assertIn('if (selectedSortModeAvailable) return;', page)
             self.assertIn("options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') });", page)
-            self.assertIn("sortMode === 'plan' && !planSortAvailable ? 'default' : sortMode", page)
+            self.assertIn("options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') });", page)
+            self.assertIn("selectedSortModeAvailable ? sortMode : 'default'", page)
             self.assertIn('compareAuthFilesByPlanDescending(a, b, quotaSearchStore)', page)
+            self.assertIn('compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore)', page)
             self.assertIn('value={effectiveSortMode}', page)
 
-            CUSTOMIZATIONS.patch_auth_files_page_plan_sort(target)
+            CUSTOMIZATIONS.patch_auth_files_page_sorting(target)
             CUSTOMIZATIONS.flush_writes()
             self.assertEqual(page, page_path.read_text())
             self.assertEqual(ui_state, ui_state_path.read_text())
 
-    def test_adds_plan_sort_locale_labels(self) -> None:
+    def test_adds_sort_locale_labels(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             target = Path(temp_dir)
             locales_dir = target / 'src/i18n/locales'
@@ -139,14 +146,15 @@ class AuthFilesPlanSortCustomizationTest(unittest.TestCase):
             CUSTOMIZATIONS.flush_writes()
 
             expected = {
-                'en.json': 'Plan: High to Low',
-                'ru.json': 'Тариф: по убыванию',
-                'zh-CN.json': '套餐从高到低',
-                'zh-TW.json': '套餐由高到低',
+                'en.json': ('Plan: High to Low', 'Available Quota: High to Low'),
+                'ru.json': ('Тариф: по убыванию', 'Доступная квота: по убыванию'),
+                'zh-CN.json': ('套餐从高到低', '可用额度从高到低'),
+                'zh-TW.json': ('套餐由高到低', '可用額度由高到低'),
             }
-            for name, label in expected.items():
+            for name, labels in expected.items():
                 data = json.loads((locales_dir / name).read_text())
-                self.assertEqual(label, data['auth_files']['sort_plan_desc'])
+                self.assertEqual(labels[0], data['auth_files']['sort_plan_desc'])
+                self.assertEqual(labels[1], data['auth_files']['sort_quota_desc'])
 
 
 if __name__ == '__main__':

@@ -170,6 +170,13 @@ AUTH_FILES_PLAN_SORT_LABEL_KEYS = {
     'zh-TW.json': '套餐由高到低',
 }
 
+AUTH_FILES_QUOTA_SORT_LABEL_KEYS = {
+    'en.json': 'Available Quota: High to Low',
+    'ru.json': 'Доступная квота: по убыванию',
+    'zh-CN.json': '可用额度从高到低',
+    'zh-TW.json': '可用額度由高到低',
+}
+
 CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS = {
     'en.json': {
         'title': 'Anthropic Client Compatibility',
@@ -1195,7 +1202,7 @@ def patch_auth_files_page_search(target: Path) -> None:
         "type AuthFileSearchTranslate = (key: string) => string;\n"
         "type AuthFileSearchQuotaStore = Pick<\n"
         "  ReturnType<typeof useQuotaStore.getState>,\n"
-        "  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'xaiQuota'\n"
+        "  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'kimiQuota' | 'xaiQuota'\n"
         ">;\n"
         "\n"
         "const AUTH_FILE_NESTED_SEARCH_KEY_PATTERN =\n"
@@ -1338,10 +1345,11 @@ def patch_auth_files_page_search(target: Path) -> None:
         "  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n"
         "  const codexQuota = useQuotaStore((state) => state.codexQuota);\n"
         "  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n"
+        "  const kimiQuota = useQuotaStore((state) => state.kimiQuota);\n"
         "  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n"
         "  const quotaSearchStore = useMemo(\n"
-        "    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, xaiQuota }),\n"
-        "    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, xaiQuota]\n"
+        "    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n"
+        "    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n"
         "  );\n",
         "quotaSearchStore",
     )
@@ -1367,14 +1375,14 @@ def patch_auth_files_page_search(target: Path) -> None:
     )
 
 
-def patch_auth_files_page_plan_sort(target: Path) -> None:
+def patch_auth_files_page_sorting(target: Path) -> None:
     page_path = target / 'src/pages/AuthFilesPage.tsx'
     ui_state_path = target / 'src/features/authFiles/uiState.ts'
 
     replace_once(
         ui_state_path,
         "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority'] as const;\n",
-        "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority', 'plan'] as const;\n",
+        "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority', 'plan', 'quota'] as const;\n",
     )
 
     insert_once(
@@ -1384,8 +1392,12 @@ def patch_auth_files_page_plan_sort(target: Path) -> None:
         "  compareAuthFilesByPlanDescending,\n"
         "  isAuthFilePlanSortProvider,\n"
         "} from '@/features/authFiles/planSort';\n"
+        "import {\n"
+        "  compareAuthFilesByAvailableQuotaDescending,\n"
+        "  isAuthFileQuotaSortProvider,\n"
+        "} from '@/features/authFiles/quotaSort';\n"
         "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
-        "from '@/features/authFiles/planSort'",
+        "from '@/features/authFiles/quotaSort'",
     )
 
     insert_once(
@@ -1393,8 +1405,12 @@ def patch_auth_files_page_plan_sort(target: Path) -> None:
         "  const enabledOnly = statusFilterMode === 'enabled';\n",
         "  const enabledOnly = statusFilterMode === 'enabled';\n"
         "  const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter);\n"
+        "  const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter);\n"
+        "  const selectedSortModeAvailable =\n"
+        "    (sortMode !== 'plan' || planSortAvailable)\n"
+        "    && (sortMode !== 'quota' || quotaSortAvailable);\n"
         "  const effectiveSortMode: AuthFilesSortMode =\n"
-        "    sortMode === 'plan' && !planSortAvailable ? 'default' : sortMode;\n",
+        "    selectedSortModeAvailable ? sortMode : 'default';\n",
         'effectiveSortMode',
     )
 
@@ -1402,13 +1418,13 @@ def patch_auth_files_page_plan_sort(target: Path) -> None:
         page_path,
         "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
         "  useEffect(() => {\n"
-        "    if (sortMode !== 'plan' || planSortAvailable) return;\n"
+        "    if (selectedSortModeAvailable) return;\n"
         "    setSortMode('default');\n"
         "    setPage(1);\n"
-        "  }, [planSortAvailable, sortMode]);\n"
+        "  }, [selectedSortModeAvailable]);\n"
         "\n"
         "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
-        "if (sortMode !== 'plan' || planSortAvailable) return;",
+        "if (selectedSortModeAvailable) return;",
     )
 
     replace_once(
@@ -1430,8 +1446,11 @@ def patch_auth_files_page_plan_sort(target: Path) -> None:
         "    if (planSortAvailable) {\n"
         "      options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') });\n"
         "    }\n"
+        "    if (quotaSortAvailable) {\n"
+        "      options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') });\n"
+        "    }\n"
         "    return options;\n"
-        "  }, [planSortAvailable, t]);\n",
+        "  }, [planSortAvailable, quotaSortAvailable, t]);\n",
     )
 
     replace_once(
@@ -1477,6 +1496,8 @@ def patch_auth_files_page_plan_sort(target: Path) -> None:
         "      });\n"
         "    } else if (effectiveSortMode === 'plan') {\n"
         "      copy.sort((a, b) => compareAuthFilesByPlanDescending(a, b, quotaSearchStore));\n"
+        "    } else if (effectiveSortMode === 'quota') {\n"
+        "      copy.sort((a, b) => compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore));\n"
         "    }\n"
         "    return copy;\n"
         "  }, [effectiveSortMode, filtered, quotaSearchStore]);\n",
@@ -1917,6 +1938,10 @@ def patch_locales(target: Path) -> None:
             locale_path.name,
             AUTH_FILES_PLAN_SORT_LABEL_KEYS['en.json'],
         )
+        data.setdefault('auth_files', {})['sort_quota_desc'] = AUTH_FILES_QUOTA_SORT_LABEL_KEYS.get(
+            locale_path.name,
+            AUTH_FILES_QUOTA_SORT_LABEL_KEYS['en.json'],
+        )
         data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
         cloak_locale = CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS.get(
             locale_path.name,
@@ -1969,7 +1994,7 @@ def main() -> None:
     patch_quota_styles(target)
     patch_account_inspection_page(target)
     patch_auth_files_page_search(target)
-    patch_auth_files_page_plan_sort(target)
+    patch_auth_files_page_sorting(target)
     patch_runtime_detection(target)
     patch_supporting_api_and_types(target)
     patch_claude_model_id_cloak_setting(target)
