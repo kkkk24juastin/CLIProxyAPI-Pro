@@ -32,6 +32,8 @@ COPY embeddedusage ./internal/embeddedusage
 COPY patches/apply_upstream_patches.py /tmp/apply_upstream_patches.py
 COPY patches/account_inspection_scheduler.go /tmp/account_inspection_scheduler.go
 COPY patches/account_inspection_scheduler_test.go /tmp/account_inspection_scheduler_test.go
+COPY patches/auth_runtime_state.go /tmp/auth_runtime_state.go
+COPY patches/auth_runtime_state_test.go /tmp/auth_runtime_state_test.go
 COPY patches/routing_protection_config.go /tmp/routing_protection_config.go
 COPY patches/routing_policy.go /tmp/routing_policy.go
 COPY patches/routing_policy_test.go /tmp/routing_policy_test.go

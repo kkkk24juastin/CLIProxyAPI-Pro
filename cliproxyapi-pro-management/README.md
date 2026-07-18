@@ -210,14 +210,14 @@ Workflow：
 .github/workflows/release-management.yml
 ```
 
-该 workflow 不再创建独立 management release。它只在 management upstream 更新、当前 latest release 缺少 `management.html`，或手动触发时，重建并覆盖当前仓库 latest release 中的 `management.html`。
+该 workflow 不再创建独立 management release。它在 management upstream 更新、`main` 分支的 management 定制层发生 push、当前 latest release 缺少 `management.html`，或手动触发时，重建并覆盖当前仓库 latest release 中的 `management.html`。
 
 流程：
 
 1. 检查当前仓库 latest release。
 2. 检查 upstream `router-for-me/Cli-Proxy-API-Management-Center` 最新 release。
 3. 读取 latest release notes 中记录的 management upstream 版本。
-4. 如果 upstream 更新、latest release 缺少 `management.html`，或 workflow 手动触发，则 checkout upstream 最新 release tag。
+4. 如果 upstream 更新、management 定制层发生 push、latest release 缺少 `management.html`，或 workflow 手动触发，则 checkout upstream 最新 release tag。
 5. 从 `cliproxyapi-pro-management/apply.sh` 应用本目录定制层。
 6. 执行 `npm ci` 和 `npm run build`。
 7. 将 `dist/index.html` 重命名为 `management.html`。

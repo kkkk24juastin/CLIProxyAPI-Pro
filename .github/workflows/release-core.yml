@@ -2,8 +2,18 @@ name: Publish CLIProxyAPI Pro Docker and Management
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cliproxyapi-pro-core/**'
+      - '.github/workflows/release-core.yml'
   schedule:
     - cron: '0 */3 * * *'
+
+concurrency:
+  group: cli-proxyapi-pro-release
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -76,7 +86,7 @@ jobs:
           fi
 
           should_release="false"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] || [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             should_release="true"
           elif [ "${target_exists}" = "false" ]; then
             should_release="true"

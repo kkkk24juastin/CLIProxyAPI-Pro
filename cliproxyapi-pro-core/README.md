@@ -281,6 +281,8 @@ Workflow：
 .github/workflows/release-core.yml
 ```
 
+该 workflow 会定时检查 upstream，也支持手动触发；`main` 分支的 `cliproxyapi-pro-core/**` 或 workflow 本身发生 push 时会强制重新发布，不受 upstream 版本未变化的条件限制。
+
 流程：
 
 1. 检查 upstream CLIProxyAPI 最新 release，并计算当前 Pro release tag，例如 `v7.1.18-pro`。

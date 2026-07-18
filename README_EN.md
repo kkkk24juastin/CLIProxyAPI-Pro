@@ -128,6 +128,8 @@ Workflow:
 
 The GitHub Release version is based on the upstream core version with a `-pro` suffix.
 
+In addition to scheduled checks and manual dispatches, this workflow runs when the core customization layer changes on `main`. A code push forces a rebuild even when the upstream core tag is unchanged.
+
 Example:
 
 ```text
@@ -183,13 +185,13 @@ Workflow:
 .github/workflows/release-management.yml
 ```
 
-This workflow no longer creates a separate release. It only rebuilds `management.html` when the management upstream changes, then uploads it to the current repository latest release.
+This workflow no longer creates a separate release. It rebuilds `management.html` when the management upstream changes, when the management customization layer is pushed, when manually dispatched, or when the latest release is missing the asset, then uploads it to the current repository latest release.
 
 Overview:
 
 1. Checks the latest upstream `router-for-me/Cli-Proxy-API-Management-Center` release.
 2. Reads the management upstream version recorded in the current repository latest release notes.
-3. If management upstream is newer, or the latest release has no `management.html`, checks out the latest management upstream release.
+3. If management upstream is newer, the management customization layer was pushed, or the latest release has no `management.html`, checks out the latest management upstream release.
 4. Applies the `cliproxyapi-pro-management` customization layer.
 5. Runs `npm ci` and `npm run build`.
 6. Renames `dist/index.html` to `management.html`.

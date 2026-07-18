@@ -187,14 +187,14 @@ Workflow:
 .github/workflows/release-management.yml
 ```
 
-This workflow no longer creates a separate management release. It rebuilds and clobbers `management.html` on the current repository latest release when the management upstream changes, when the latest release is missing `management.html`, or when the workflow is triggered manually.
+This workflow no longer creates a separate management release. It rebuilds and clobbers `management.html` on the current repository latest release when the management upstream changes, when the management customization layer is pushed to `main`, when the latest release is missing `management.html`, or when the workflow is triggered manually.
 
 The workflow:
 
 1. Checks the current repository latest release.
 2. Checks the latest upstream `router-for-me/Cli-Proxy-API-Management-Center` release.
 3. Reads the management upstream version recorded in the latest release notes.
-4. If upstream is newer, the latest release has no `management.html`, or the workflow was triggered manually, checks out the latest upstream release tag.
+4. If upstream is newer, the management customization layer was pushed, the latest release has no `management.html`, or the workflow was triggered manually, checks out the latest upstream release tag.
 5. Applies this customization layer from `cliproxyapi-pro-management/apply.sh`.
 6. Runs `npm ci` and `npm run build`.
 7. Renames `dist/index.html` to `management.html`.

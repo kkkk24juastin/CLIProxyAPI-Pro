@@ -2,8 +2,18 @@ name: Publish CLIProxyAPI Pro Management
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cliproxyapi-pro-management/**'
+      - '.github/workflows/release-management.yml'
   schedule:
     - cron: '0 20 * * *'
+
+concurrency:
+  group: cli-proxyapi-pro-release
+  cancel-in-progress: false
 
 jobs:
   check-version:
@@ -74,7 +84,7 @@ jobs:
           build_version="v${upstream_base_version}-pro"
 
           should_release="false"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] || [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             should_release="true"
           elif [ "${has_management_asset}" != "true" ]; then
             should_release="true"

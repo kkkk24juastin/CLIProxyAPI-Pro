@@ -156,6 +156,8 @@ Workflow：
 
 Release 版本号以 upstream core 版本为准，并追加 `-pro` 后缀。
 
+该 workflow 除定时检查和手动触发外，也会在 `main` 分支的 core 定制层发生变化时运行。代码 push 会强制重建，即使 upstream core tag 未变化。
+
 示例：
 
 ```text
@@ -211,13 +213,13 @@ Workflow：
 .github/workflows/release-management.yml
 ```
 
-该 workflow 不再创建独立 release。它只负责在 management upstream 更新时重建 `management.html`，并上传覆盖到当前仓库 latest release。
+该 workflow 不再创建独立 release。它会在 management upstream 更新、management 定制层 push、手动触发，或 latest release 缺少资产时重建 `management.html`，并上传覆盖到当前仓库 latest release。
 
 流程概览：
 
 1. 检查 upstream `router-for-me/Cli-Proxy-API-Management-Center` 最新 release。
 2. 读取当前仓库 latest release notes 中记录的 management upstream 版本。
-3. 如果 management upstream 更新，或 latest release 缺少 `management.html`，则 checkout management upstream 最新 release。
+3. 如果 management upstream 更新、management 定制层发生 push，或 latest release 缺少 `management.html`，则 checkout management upstream 最新 release。
 4. 应用 `cliproxyapi-pro-management` 定制层。
 5. 执行 `npm ci` 和 `npm run build`。
 6. 将 `dist/index.html` 重命名为 `management.html`。

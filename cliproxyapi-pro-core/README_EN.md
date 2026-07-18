@@ -265,6 +265,8 @@ Workflow:
 .github/workflows/release-core.yml
 ```
 
+The workflow checks upstream on a schedule and supports manual dispatch. A push to `cliproxyapi-pro-core/**` or the workflow itself on `main` forces a new publish even when the upstream version is unchanged.
+
 The workflow:
 
 1. Checks the latest upstream CLIProxyAPI release and computes the Pro release tag, for example `v7.1.18-pro`.
