@@ -58,6 +58,8 @@ Quota snapshots are persisted through the backend usage service:
 
 The UI starts `QuotaPersistenceBootstrap` from the main layout. It preloads saved quota snapshots into the Zustand quota store and syncs successful quota checks back to SQLite. Quota cache entries are also included in usage JSONL export/import as a `quota_cache` metadata record.
 
+“Refresh all credentials” in each provider section starts a persistent backend `account-inspection/quota-refresh` job instead of issuing unbounded browser requests. The button shows progress, reconnects to an active job after the page is reopened, and reloads SQLite snapshots by quota-cache generation when the job finishes. Only enabled credentials for that provider are included.
+
 Supported quota providers:
 
 - Antigravity

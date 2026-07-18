@@ -120,6 +120,7 @@ internal/embeddedusage
 - `GET /v0/management/account-inspection/logs`（WebSocket/WSS 日志和状态流）
 - `PUT /v0/management/account-inspection/schedule`
 - `POST /v0/management/account-inspection/run`
+- `POST /v0/management/account-inspection/quota-refresh` — 为指定 provider 启动仅配额刷新任务。
 - `POST /v0/management/account-inspection/pause`
 - `POST /v0/management/account-inspection/resume`
 - `POST /v0/management/account-inspection/stop`
@@ -133,6 +134,8 @@ internal/embeddedusage
 - Kimi
 
 能力包括 provider 过滤、worker 数量限制、重试/超时、抽样、按用量阈值判断、进度/状态/日志/结果快照、暂停/继续/停止控制、手动操作，以及对额度耗尽、额度恢复、账号错误的可选自动操作。
+
+配额刷新任务复用同一调度器，但只处理请求 provider 的启用凭证，禁用抽样、深度探测和自动账号操作，最长可运行 6 小时。瞬时网络错误、HTTP 408/425/429 和 5xx 使用带抖动的指数退避；Antigravity 套餐查询失败不会用未知套餐覆盖已有配额缓存。
 
 探测账号前，调度器会在认证记录本来已经进入 upstream 正常刷新窗口时尝试刷新 auth。巡检刷新路径复用 upstream provider 刷新逻辑和持久化逻辑，允许 disabled 账号，跳过 API key 账号、未到刷新窗口的账号，并遵守 `NextRefreshAfter`。刷新成功后使用刷新后的 auth 探测；刷新失败时保留账号，并跳过该账号本次探测。
 

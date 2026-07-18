@@ -120,6 +120,7 @@ Request monitoring also stores TTFT, HTTP status code, structured error, reasoni
 - `GET /v0/management/account-inspection/logs` (WebSocket/WSS log and status stream)
 - `PUT /v0/management/account-inspection/schedule`
 - `POST /v0/management/account-inspection/run`
+- `POST /v0/management/account-inspection/quota-refresh` — start a quota-only job for one provider.
 - `POST /v0/management/account-inspection/pause`
 - `POST /v0/management/account-inspection/resume`
 - `POST /v0/management/account-inspection/stop`
@@ -133,6 +134,8 @@ The scheduler can inspect accounts for:
 - Kimi
 
 It supports provider filtering, worker limits, retry/timeout settings, sampling, usage-threshold decisions, progress/status/log/result snapshots, pause/resume/stop controls, manual actions, and optional automatic actions for quota exhaustion, quota recovery, and account errors.
+
+Quota-refresh jobs reuse the scheduler but include only enabled credentials for the requested provider, with sampling, deep probes, and automatic account actions disabled. They may run for up to six hours. Transient network failures and HTTP 408/425/429/5xx responses use jittered exponential backoff; an Antigravity subscription lookup failure does not overwrite an existing cache entry with an unknown plan.
 
 Before probing an account, the scheduler can refresh its auth record when it is already in the normal upstream refresh window. This inspection refresh path reuses upstream provider refresh logic and persistence, allows disabled accounts, skips API-key accounts, skips accounts not yet due, and respects `NextRefreshAfter`. If refresh succeeds, probing uses the refreshed auth; if refresh fails, the scheduler keeps the account and skips probing it for that run.
 

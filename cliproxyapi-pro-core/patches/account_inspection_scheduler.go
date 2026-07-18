@@ -40,6 +40,8 @@ const (
 	accountInspectionMaxDeleteWorkers       = 4
 	accountInspectionMaxRetries             = 1
 	accountInspectionMaxRunDuration         = 30 * time.Minute
+	accountQuotaRefreshMaxRunDuration       = 6 * time.Hour
+	accountQuotaRefreshRetries              = 3
 	accountInspectionMaxProviderConcurrency = 2
 	accountInspectionMaxRefreshConcurrency  = 2
 	accountInspectionXAIMinAttempts         = 2
@@ -91,6 +93,8 @@ type accountInspectionSettings struct {
 	AutoExecuteAccountInvalidAction accountInspectionAction               `json:"autoExecuteAccountInvalidAction"`
 	AutoExecuteRequestErrorAction   accountInspectionAction               `json:"autoExecuteRequestErrorAction"`
 	AutoExecuteConfirmations        int                                   `json:"autoExecuteConfirmations,omitempty"`
+	EnabledOnly                     bool                                  `json:"-"`
+	QuotaOnly                       bool                                  `json:"-"`
 }
 
 type accountInspectionSchedule struct {
@@ -162,6 +166,8 @@ type accountInspectionHealthCounts struct {
 
 type accountInspectionRunState string
 
+type accountInspectionRunKind string
+
 type accountInspectionStreamMessageType string
 
 type accountInspectionDeepProbeStatus string
@@ -174,6 +180,11 @@ const (
 	accountInspectionStreamSnapshot accountInspectionStreamMessageType = "snapshot"
 	accountInspectionStreamLog      accountInspectionStreamMessageType = "log"
 	accountInspectionStreamStatus   accountInspectionStreamMessageType = "status"
+)
+
+const (
+	accountInspectionRunKindInspection   accountInspectionRunKind = "inspection"
+	accountInspectionRunKindQuotaRefresh accountInspectionRunKind = "quota-refresh"
 )
 
 const (
@@ -229,6 +240,8 @@ type accountInspectionProgress struct {
 
 type accountInspectionStatus struct {
 	State            accountInspectionRunState      `json:"state"`
+	RunKind          accountInspectionRunKind       `json:"runKind"`
+	TargetProvider   string                         `json:"targetProvider,omitempty"`
 	LastStartedAt    int64                          `json:"lastStartedAt"`
 	LastFinishedAt   int64                          `json:"lastFinishedAt"`
 	LastError        string                         `json:"lastError"`
@@ -362,6 +375,10 @@ type accountInspectionOneRequest struct {
 
 type accountInspectionRefreshTokenRequest struct {
 	Item accountInspectionActionItem `json:"item"`
+}
+
+type accountQuotaRefreshRequest struct {
+	Provider string `json:"provider"`
 }
 
 type accountInspectionActionOutcome struct {
@@ -1141,7 +1158,64 @@ func (s *accountInspectionScheduler) maybeRunDue() {
 }
 
 func (s *accountInspectionScheduler) startRun(manual bool) error {
-	ctx, cancel := context.WithTimeout(context.Background(), accountInspectionMaxRunDuration)
+	s.mu.Lock()
+	schedule := s.schedule
+	s.mu.Unlock()
+	return s.startRunWithSchedule(
+		manual,
+		schedule,
+		accountInspectionRunKindInspection,
+		strings.TrimSpace(schedule.Settings.TargetType),
+		accountInspectionMaxRunDuration,
+	)
+}
+
+func (s *accountInspectionScheduler) startQuotaRefresh(provider string) error {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if _, ok := accountInspectionSupportedProviders[provider]; !ok {
+		return fmt.Errorf("unsupported quota provider %q", provider)
+	}
+
+	s.mu.Lock()
+	schedule := s.schedule
+	s.mu.Unlock()
+	schedule = buildAccountQuotaRefreshSchedule(schedule, provider)
+
+	return s.startRunWithSchedule(
+		true,
+		schedule,
+		accountInspectionRunKindQuotaRefresh,
+		provider,
+		accountQuotaRefreshMaxRunDuration,
+	)
+}
+
+func buildAccountQuotaRefreshSchedule(schedule accountInspectionSchedule, provider string) accountInspectionSchedule {
+	settings := schedule.Settings
+	settings.TargetType = provider
+	settings.SampleSize = 0
+	settings.Retries = accountQuotaRefreshRetries
+	settings.AntigravityDeepProbeEnabled = false
+	settings.XAIDeepProbeEnabled = false
+	settings.AutoExecuteQuotaLimitDisable = false
+	settings.AutoExecuteQuotaRecoveryEnable = false
+	settings.AutoExecuteAccountInvalidAction = accountInspectionActionNone
+	settings.AutoExecuteRequestErrorAction = accountInspectionActionNone
+	settings.AutoExecuteConfirmations = 1
+	settings.EnabledOnly = true
+	settings.QuotaOnly = true
+	schedule.Settings = settings
+	return schedule
+}
+
+func (s *accountInspectionScheduler) startRunWithSchedule(
+	manual bool,
+	schedule accountInspectionSchedule,
+	runKind accountInspectionRunKind,
+	targetProvider string,
+	maxDuration time.Duration,
+) error {
+	ctx, cancel := context.WithTimeout(context.Background(), maxDuration)
 	s.mu.Lock()
 	if s.isRunningLocked() {
 		s.mu.Unlock()
@@ -1149,8 +1223,10 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 		return fmt.Errorf("account inspection already running")
 	}
 	s.cancel = cancel
-	s.lastRunSettings = s.schedule.Settings
+	s.lastRunSettings = schedule.Settings
 	s.setRunStateLocked(accountInspectionStateRunning)
+	s.status.RunKind = runKind
+	s.status.TargetProvider = targetProvider
 	s.status.RestoredSnapshot = false
 	s.status.LastStartedAt = time.Now().UnixMilli()
 	s.status.LastFinishedAt = 0
@@ -1160,7 +1236,6 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 	s.status.Logs = nil
 	s.status.Results = nil
 	s.healthCounts = accountInspectionHealthCounts{}
-	schedule := s.schedule
 	s.mu.Unlock()
 
 	go func() {
@@ -1169,7 +1244,7 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 		s.pause.Broadcast()
 		s.mu.Unlock()
 	}()
-	go s.run(ctx, cancel, schedule, manual)
+	go s.run(ctx, cancel, schedule, manual, runKind, targetProvider)
 	return nil
 }
 
@@ -1463,9 +1538,20 @@ func (s *accountInspectionScheduler) executeSingleInspection(ctx context.Context
 	return accountInspectionResult{}, accountInspectionSummary{}, fmt.Errorf("account not found")
 }
 
-func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.CancelFunc, schedule accountInspectionSchedule, manual bool) {
+func (s *accountInspectionScheduler) run(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	schedule accountInspectionSchedule,
+	manual bool,
+	runKind accountInspectionRunKind,
+	targetProvider string,
+) {
 	defer cancel()
-	s.appendLog("info", "后端账号巡检开始")
+	if runKind == accountInspectionRunKindQuotaRefresh {
+		s.appendLog("info", fmt.Sprintf("后端配额刷新开始：%s", targetProvider))
+	} else {
+		s.appendLog("info", "后端账号巡检开始")
+	}
 	results, summary, runErr := s.executeInspection(ctx, schedule.Settings)
 	finishedAt := time.Now().UnixMilli()
 	state := accountInspectionStateCompleted
@@ -1628,7 +1714,7 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 	for _, auth := range auths {
 		liveAuths = append(liveAuths, auth)
 		account := accountFromAuth(auth)
-		if shouldInspectAccount(account, settings.TargetType) {
+		if shouldInspectAccount(account, settings.TargetType) && (!settings.EnabledOnly || !account.Disabled) {
 			accounts = append(accounts, account)
 		}
 	}
@@ -1872,7 +1958,9 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		result.Error = refreshErr.Error()
 		result.ErrorCode = "token_refresh_error"
 		result.ActionReason = "刷新令牌失败，保留账号"
-		s.syncInspectionAuthError(ctx, account, "token_refresh_error", refreshErr.Error(), 0)
+		if !settings.QuotaOnly {
+			s.syncInspectionAuthError(ctx, account, "token_refresh_error", refreshErr.Error(), 0)
+		}
 		s.appendLog("warning", fmt.Sprintf("%s 刷新令牌失败，保留账号：%s", account.identity(), refreshErr.Error()))
 		return result
 	} else if refreshTriggered {
@@ -1913,12 +2001,16 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		result.ErrorCode = accountInspectionErrorCode(statusCode, "inspection_probe_error")
 		result.ActionReason = "探测异常，保留账号"
 		if statusCode != nil && isAccountErrorStatus(*statusCode) {
-			s.syncInspectionAuthStatus(ctx, account, *statusCode)
+			if !settings.QuotaOnly {
+				s.syncInspectionAuthStatus(ctx, account, *statusCode)
+			}
 		} else if missingIdentifier {
 			result.ErrorCode = "inspection_missing_identifier"
 			result.ActionReason = "缺少调用所需标识，保留账号"
-			s.syncInspectionAuthError(ctx, account, "inspection_missing_identifier", err.Error(), 0)
-		} else {
+			if !settings.QuotaOnly {
+				s.syncInspectionAuthError(ctx, account, "inspection_missing_identifier", err.Error(), 0)
+			}
+		} else if !settings.QuotaOnly {
 			s.syncInspectionAuthError(ctx, account, "inspection_probe_error", err.Error(), 0)
 		}
 		s.appendLog("warning", fmt.Sprintf("%s 探测异常，保留账号：%s", account.identity(), err.Error()))
@@ -1937,7 +2029,7 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		result.DeepProbeStatus = string(decision.DeepProbeStatus)
 		result.DeepProbeError = decision.DeepProbeError
 	}
-	if statusCode != nil && decision.DeepProbeStatus != accountInspectionDeepProbeTransientError {
+	if !settings.QuotaOnly && statusCode != nil && decision.DeepProbeStatus != accountInspectionDeepProbeTransientError {
 		s.syncInspectionAuthStatus(ctx, account, *statusCode)
 	}
 	level := "info"
@@ -2094,16 +2186,30 @@ func (s *accountInspectionScheduler) withRetry(ctx context.Context, retries int,
 	var err error
 	for i := 0; i <= retries; i++ {
 		last, err = task()
-		if err == nil {
+		if err == nil && !isRetryableAccountInspectionStatus(last.StatusCode) {
 			return last, nil
 		}
+		if i == retries {
+			break
+		}
+		baseDelay := 250 * time.Millisecond * time.Duration(1<<i)
+		jitter := time.Duration(rand.Int63n(int64(baseDelay) + 1))
+		timer := time.NewTimer(baseDelay + jitter)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return last, ctx.Err()
-		default:
+		case <-timer.C:
 		}
 	}
 	return last, err
+}
+
+func isRetryableAccountInspectionStatus(status int) bool {
+	return status == http.StatusRequestTimeout ||
+		status == http.StatusTooEarly ||
+		status == http.StatusTooManyRequests ||
+		status >= http.StatusInternalServerError
 }
 
 func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
@@ -2143,13 +2249,18 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 		if err != nil {
 			continue
 		}
-		quotaState := map[string]any{"groups": groups, "rawShapeHash": jsonShapeHash(resp.Body)}
-		if subscription := s.fetchAntigravitySubscription(ctx, account, settings); subscription != nil {
-			quotaState["subscription"] = subscription
-			if plan := stringFromAny(subscription["plan"]); plan != "" {
-				quotaState["plan"] = plan
-				quotaState["planType"] = plan
-			}
+		subscription, subscriptionErr := s.fetchAntigravitySubscription(ctx, account, settings)
+		if subscriptionErr != nil {
+			return accountInspectionDecision{}, status, subscriptionErr
+		}
+		quotaState := map[string]any{
+			"groups":       groups,
+			"subscription": subscription,
+			"rawShapeHash": jsonShapeHash(resp.Body),
+		}
+		if plan := stringFromAny(subscription["plan"]); plan != "" {
+			quotaState["plan"] = plan
+			quotaState["planType"] = plan
 		}
 		s.persistQuotaState(ctx, account, quotaSuccessState(quotaState))
 		used := antigravityUsedPercent(groups, settings.AntigravityQuotaMode)
@@ -2181,7 +2292,7 @@ func antigravityGenerateURLs() []string {
 	}
 }
 
-func (s *accountInspectionScheduler) fetchAntigravitySubscription(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) map[string]any {
+func (s *accountInspectionScheduler) fetchAntigravitySubscription(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (map[string]any, error) {
 	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
 		return s.apiCall(ctx, account.Auth, http.MethodPost, antigravityCodeAssistURL, map[string]string{
 			"Authorization": "Bearer $TOKEN$",
@@ -2189,14 +2300,21 @@ func (s *accountInspectionScheduler) fetchAntigravitySubscription(ctx context.Co
 			"User-Agent":    s.antigravityUserAgent(),
 		}, `{"metadata":{"ideType":"ANTIGRAVITY"}}`, settings.Timeout)
 	})
-	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("antigravity subscription request failed: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("antigravity subscription request failed with HTTP %d", resp.StatusCode)
 	}
 	payload, err := parseAntigravityQuotaPayload(resp.Body)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("antigravity subscription response invalid: %w", err)
 	}
-	return buildAntigravitySubscription(payload)
+	subscription := buildAntigravitySubscription(payload)
+	if subscription == nil {
+		return nil, fmt.Errorf("antigravity subscription response missing tier")
+	}
+	return subscription, nil
 }
 
 // discoverAntigravityProjectID 在凭证缺少 project id 时，调用 loadCodeAssist 让服务端返回托管的
@@ -5741,6 +5859,7 @@ func (h *Handler) RegisterAccountInspectionRoutes(group *gin.RouterGroup) {
 	group.PATCH("/account-inspection/schedule", h.PutAccountInspectionSchedule)
 	group.GET("/account-inspection/status", h.GetAccountInspectionStatus)
 	group.POST("/account-inspection/run", h.RunAccountInspection)
+	group.POST("/account-inspection/quota-refresh", h.RunAccountQuotaRefresh)
 	group.POST("/account-inspection/inspect-one", h.InspectOneAccount)
 	group.POST("/account-inspection/refresh-token", h.RefreshAccountInspectionToken)
 	group.POST("/account-inspection/pause", h.PauseAccountInspection)
@@ -5783,6 +5902,29 @@ func (h *Handler) RunAccountInspection(c *gin.Context) {
 		return
 	}
 	if err := scheduler.startRun(true); err != nil {
+		c.JSON(http.StatusConflict, scheduler.snapshotForRequest(c))
+		return
+	}
+	c.JSON(http.StatusAccepted, scheduler.snapshotForRequest(c))
+}
+
+func (h *Handler) RunAccountQuotaRefresh(c *gin.Context) {
+	scheduler := schedulerForHandler(h)
+	if scheduler == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account inspection scheduler unavailable"})
+		return
+	}
+	var request accountQuotaRefreshRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(request.Provider))
+	if _, ok := accountInspectionSupportedProviders[provider]; !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported quota provider"})
+		return
+	}
+	if err := scheduler.startQuotaRefresh(provider); err != nil {
 		c.JSON(http.StatusConflict, scheduler.snapshotForRequest(c))
 		return
 	}

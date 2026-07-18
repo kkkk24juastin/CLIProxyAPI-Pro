@@ -170,6 +170,8 @@ export type AccountInspectionBackendResultItem = Omit<AccountInspectionResultIte
 
 export type AccountInspectionBackendStatus = {
   state: AccountInspectionBackendRunState;
+  runKind?: 'inspection' | 'quota-refresh';
+  targetProvider?: string;
   lastStartedAt: number;
   lastFinishedAt: number;
   lastError: string;

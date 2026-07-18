@@ -58,6 +58,8 @@
 
 UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额快照预加载到 Zustand quota store，并把成功的配额检查同步回 SQLite。Quota cache entries 也会作为 `quota_cache` 元数据记录参与 usage JSONL 导入导出。
 
+各 provider 分组的“刷新全部凭证”会启动后端 `account-inspection/quota-refresh` 持久任务，不再由浏览器并发请求所有账号。按钮显示完成进度，页面重开后会重新接管运行中的任务，结束时按 quota-cache generation 重新加载 SQLite 快照。任务仅覆盖该 provider 的启用凭证。
+
 支持的配额 provider：
 
 - Antigravity

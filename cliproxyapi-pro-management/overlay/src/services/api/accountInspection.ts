@@ -122,6 +122,12 @@ export const accountInspectionApi = {
   runNow: () => apiClient.post<AccountInspectionScheduleResponse>('/account-inspection/run', {}, {
     params: { details: 0 },
   }),
+  runQuotaRefresh: (provider: string) =>
+    apiClient.post<AccountInspectionScheduleResponse>(
+      '/account-inspection/quota-refresh',
+      { provider },
+      { params: { details: 0 } }
+    ),
   inspectOne: (item: AccountInspectionInspectOneItem, options: boolean | AccountInspectionDetailsOptions = true) =>
     apiClient.post<AccountInspectionInspectOneResponse>('/account-inspection/inspect-one', { item }, {
       params: buildAccountInspectionDetailParams(options),

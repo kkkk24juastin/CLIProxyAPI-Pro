@@ -68,31 +68,48 @@ export function QuotaSection<TState, TData>({
 """
 
 
-QUOTA_SECTION_REFRESH_SOURCE = """interface QuotaSectionProps<TState, TData> {
-  files: AuthFileItem[];
-  loading: boolean;
-  disabled: boolean;
-}
+QUOTA_SECTION_REFRESH_SOURCE = """import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 
-export function QuotaSection<TState, TData>({
-  files,
-  loading,
-  disabled,
-}: QuotaSectionProps<TState, TData>) {
-  const filteredFiles = useMemo(
-    () => files.filter((file) => config.filterFn(file)),
-    [files, config]
-  );
+export function QuotaSection() {
+  const {
+    goToNext,
+    loading: sectionLoading,
+    setLoading,
+  } = useQuotaPagination(filteredFiles);
+
+  const { quota, loadQuota } = useQuotaLoader(config);
+
+  const pendingQuotaRefreshRef = useRef(false);
+  const prevFilesLoadingRef = useRef(loading);
+
+  const handleRefresh = useCallback(() => {
+    pendingQuotaRefreshRef.current = true;
+    void triggerHeaderRefresh();
+  }, []);
 
   useEffect(() => {
+    const wasLoading = prevFilesLoadingRef.current;
+    prevFilesLoadingRef.current = loading;
+
+    if (!pendingQuotaRefreshRef.current) return;
+    if (loading) return;
+    if (!wasLoading) return;
+
+    pendingQuotaRefreshRef.current = false;
     const targets = effectiveViewMode === 'all' ? filteredFiles : pageItems;
     if (targets.length === 0) return;
     loadQuota(targets, setLoading);
   }, [loading, effectiveViewMode, filteredFiles, pageItems, loadQuota, setLoading]);
 
+  const isRefreshing = sectionLoading || loading;
+
   return (
-    <Card
-    />
+    <Button
+            onClick={handleRefresh}
+    >
+            {t('quota_management.refresh_all_credentials')}
+    </Button>
   );
 }
 """
@@ -136,7 +153,7 @@ class QuotaSearchCustomizationTest(unittest.TestCase):
             self.assertEqual(page, (pages_dir / 'QuotaPage.tsx').read_text())
             self.assertEqual(section, (quota_dir / 'QuotaSection.tsx').read_text())
 
-    def test_refresh_all_uses_unfiltered_provider_credentials(self) -> None:
+    def test_refresh_all_uses_backend_job(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             target = Path(temp_dir)
             quota_dir = target / 'src/components/quota'
@@ -148,15 +165,12 @@ class QuotaSearchCustomizationTest(unittest.TestCase):
             CUSTOMIZATIONS.flush_writes()
 
             section = section_path.read_text()
-            self.assertIn('const targets = cacheFilesForProvider;', section)
-            self.assertIn(
-                '[loading, cacheFilesForProvider, loadQuota, setLoading]',
-                section,
-            )
-            self.assertNotIn(
-                "const targets = effectiveViewMode === 'all' ? filteredFiles : pageItems;",
-                section,
-            )
+            self.assertIn("import { useBackendQuotaRefresh }", section)
+            self.assertIn('useBackendQuotaRefresh(config.type)', section)
+            self.assertIn('onClick={() => void backendRefresh.start()}', section)
+            self.assertIn("t('quota_management.refresh_progress'", section)
+            self.assertNotIn('Promise.all', section)
+            self.assertNotIn('loadQuota(targets, setLoading)', section)
 
             CUSTOMIZATIONS.patch_quota_refresh_all(target)
             CUSTOMIZATIONS.flush_writes()

@@ -611,6 +611,53 @@ func TestQuotaSuccessStateIncludesParserMetadata(t *testing.T) {
 	}
 }
 
+func TestBuildAccountQuotaRefreshScheduleScopesAndDisablesActions(t *testing.T) {
+	schedule := accountInspectionSchedule{Settings: defaultAccountInspectionSettings()}
+	schedule.Settings.TargetType = accountInspectionProviderAll
+	schedule.Settings.SampleSize = 25
+	schedule.Settings.AntigravityDeepProbeEnabled = true
+	schedule.Settings.XAIDeepProbeEnabled = true
+	schedule.Settings.AutoExecuteQuotaLimitDisable = true
+	schedule.Settings.AutoExecuteQuotaRecoveryEnable = true
+	schedule.Settings.AutoExecuteAccountInvalidAction = accountInspectionActionDelete
+	schedule.Settings.AutoExecuteRequestErrorAction = accountInspectionActionDisable
+
+	got := buildAccountQuotaRefreshSchedule(schedule, "antigravity").Settings
+	if got.TargetType != "antigravity" || got.SampleSize != 0 {
+		t.Fatalf("quota refresh scope = provider:%q sample:%d, want antigravity/0", got.TargetType, got.SampleSize)
+	}
+	if got.Retries != accountQuotaRefreshRetries {
+		t.Fatalf("quota refresh retries = %d, want %d", got.Retries, accountQuotaRefreshRetries)
+	}
+	if !got.EnabledOnly {
+		t.Fatal("quota refresh should include enabled credentials only")
+	}
+	if !got.QuotaOnly {
+		t.Fatal("quota refresh should not mutate runtime auth status")
+	}
+	if got.AntigravityDeepProbeEnabled || got.XAIDeepProbeEnabled {
+		t.Fatal("quota refresh enabled a deep probe")
+	}
+	if got.AutoExecuteQuotaLimitDisable || got.AutoExecuteQuotaRecoveryEnable ||
+		got.AutoExecuteAccountInvalidAction != accountInspectionActionNone ||
+		got.AutoExecuteRequestErrorAction != accountInspectionActionNone {
+		t.Fatalf("quota refresh retained automatic actions: %+v", got)
+	}
+}
+
+func TestRetryableAccountInspectionStatuses(t *testing.T) {
+	for _, status := range []int{http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway} {
+		if !isRetryableAccountInspectionStatus(status) {
+			t.Fatalf("status %d should be retryable", status)
+		}
+	}
+	for _, status := range []int{http.StatusOK, http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound} {
+		if isRetryableAccountInspectionStatus(status) {
+			t.Fatalf("status %d should not be retryable", status)
+		}
+	}
+}
+
 func TestAntigravityQuotaURLsUseSummaryEndpoint(t *testing.T) {
 	for _, url := range antigravityQuotaURLs() {
 		if !strings.Contains(url, "retrieveUserQuotaSummary") {

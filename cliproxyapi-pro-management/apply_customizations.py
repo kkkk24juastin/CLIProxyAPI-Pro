@@ -23,6 +23,12 @@ QUOTA_LOCALE_KEYS = {
         'search_placeholder': 'Search config name, type, provider, note, or plan. Use * as a wildcard',
         'no_search_results': 'No matching quota credentials',
         'no_search_results_desc': 'No quota credential matches the current search.',
+        'refresh_progress': 'Refreshing {{completed}} / {{total}}',
+        'refresh_job_started': 'Backend quota refresh started',
+        'refresh_job_completed': 'Quota refresh finished: {{completed}} / {{total}}, {{failed}} failed',
+        'refresh_job_incomplete': 'Quota refresh stopped at {{completed}} / {{total}}: {{message}}',
+        'refresh_job_failed': 'Failed to start quota refresh: {{message}}',
+        'refresh_job_conflict': 'Another account inspection or quota refresh is already running',
     },
     'ru.json': {
         'cached_at': 'Обновлено',
@@ -37,6 +43,12 @@ QUOTA_LOCALE_KEYS = {
         'search_placeholder': 'Поиск по имени, типу, провайдеру, заметке или тарифу; поддерживается *',
         'no_search_results': 'Подходящие конфигурации квот не найдены',
         'no_search_results_desc': 'Текущему запросу не соответствует ни одна конфигурация квот.',
+        'refresh_progress': 'Обновление {{completed}} / {{total}}',
+        'refresh_job_started': 'Фоновое обновление квот запущено',
+        'refresh_job_completed': 'Обновление квот завершено: {{completed}} / {{total}}, ошибок: {{failed}}',
+        'refresh_job_incomplete': 'Обновление остановлено на {{completed}} / {{total}}: {{message}}',
+        'refresh_job_failed': 'Не удалось запустить обновление квот: {{message}}',
+        'refresh_job_conflict': 'Уже выполняется проверка аккаунтов или обновление квот',
     },
     'zh-CN.json': {
         'cached_at': '更新于',
@@ -48,6 +60,12 @@ QUOTA_LOCALE_KEYS = {
         'search_placeholder': '搜索配置文件名称、类型、提供商、备注或套餐，支持 * 通配',
         'no_search_results': '没有匹配的配额配置文件',
         'no_search_results_desc': '当前搜索条件下没有可显示的配额配置文件。',
+        'refresh_progress': '正在刷新 {{completed}} / {{total}}',
+        'refresh_job_started': '后端配额刷新任务已启动',
+        'refresh_job_completed': '配额刷新完成：{{completed}} / {{total}}，失败 {{failed}} 个',
+        'refresh_job_incomplete': '配额刷新在 {{completed}} / {{total}} 时停止：{{message}}',
+        'refresh_job_failed': '启动配额刷新失败：{{message}}',
+        'refresh_job_conflict': '已有账号检查或配额刷新任务正在运行',
     },
     'zh-TW.json': {
         'cached_at': '更新於',
@@ -59,6 +77,12 @@ QUOTA_LOCALE_KEYS = {
         'search_placeholder': '搜尋設定檔名稱、類型、供應商、備註或套餐，支援 * 萬用字元',
         'no_search_results': '沒有符合的配額設定檔',
         'no_search_results_desc': '目前搜尋條件下沒有可顯示的配額設定檔。',
+        'refresh_progress': '正在重新整理 {{completed}} / {{total}}',
+        'refresh_job_started': '後端配額重新整理工作已啟動',
+        'refresh_job_completed': '配額重新整理完成：{{completed}} / {{total}}，失敗 {{failed}} 個',
+        'refresh_job_incomplete': '配額重新整理在 {{completed}} / {{total}} 時停止：{{message}}',
+        'refresh_job_failed': '啟動配額重新整理失敗：{{message}}',
+        'refresh_job_conflict': '已有帳號檢查或配額重新整理工作正在執行',
     },
 }
 
@@ -872,6 +896,53 @@ def patch_quota_types(target: Path) -> None:
 
 def patch_quota_configs(target: Path) -> None:
     path = target / 'src/components/quota/quotaConfigs.ts'
+    insert_once(
+        path,
+        "const fetchAntigravityQuota = async (\n",
+        "const ANTIGRAVITY_SUBSCRIPTION_RETRY_DELAYS_MS = [400, 1_200, 2_800] as const;\n"
+        "\n"
+        "const waitForAntigravitySubscriptionRetry = (delayMs: number) =>\n"
+        "  new Promise<void>((resolve) => {\n"
+        "    window.setTimeout(resolve, delayMs + Math.floor(Math.random() * delayMs));\n"
+        "  });\n"
+        "\n"
+        "const isRetryableAntigravitySubscriptionError = (error: unknown): boolean => {\n"
+        "  const status = getStatusFromError(error);\n"
+        "  return status === undefined || status === 408 || status === 425 || status === 429 || status >= 500;\n"
+        "};\n"
+        "\n"
+        "const fetchAntigravitySubscriptionWithRetry = async (authIndex: string) => {\n"
+        "  let lastError: unknown;\n"
+        "  for (let attempt = 0; attempt <= ANTIGRAVITY_SUBSCRIPTION_RETRY_DELAYS_MS.length; attempt += 1) {\n"
+        "    try {\n"
+        "      const subscription = toAntigravityQuotaSubscription(\n"
+        "        await antigravitySubscriptionApi.get(authIndex)\n"
+        "      );\n"
+        "      if (!subscription) throw new Error('Antigravity subscription response missing tier');\n"
+        "      return subscription;\n"
+        "    } catch (error: unknown) {\n"
+        "      lastError = error;\n"
+        "      if (attempt >= ANTIGRAVITY_SUBSCRIPTION_RETRY_DELAYS_MS.length ||\n"
+        "          !isRetryableAntigravitySubscriptionError(error)) {\n"
+        "        throw error;\n"
+        "      }\n"
+        "      await waitForAntigravitySubscriptionRetry(ANTIGRAVITY_SUBSCRIPTION_RETRY_DELAYS_MS[attempt]);\n"
+        "    }\n"
+        "  }\n"
+        "  throw lastError;\n"
+        "};\n"
+        "\n"
+        "const fetchAntigravityQuota = async (\n",
+        "fetchAntigravitySubscriptionWithRetry",
+    )
+    replace_once(
+        path,
+        "  const subscriptionPromise = antigravitySubscriptionApi\n"
+        "    .get(authIndex)\n"
+        "    .then(toAntigravityQuotaSubscription)\n"
+        "    .catch(() => null);\n",
+        "  const subscriptionPromise = fetchAntigravitySubscriptionWithRetry(authIndex);\n",
+    )
     replace_once(
         path,
         "  CodexUsagePayload,\n  KimiQuotaRow,",
@@ -1249,13 +1320,68 @@ def patch_quota_refresh_all(target: Path) -> None:
     path = target / 'src/components/quota/QuotaSection.tsx'
     replace_once(
         path,
-        "    const targets = effectiveViewMode === 'all' ? filteredFiles : pageItems;\n",
-        "    const targets = cacheFilesForProvider;\n",
+        "import { useCallback, useEffect, useMemo, useRef, useState } from 'react';\n",
+        "import { useCallback, useEffect, useMemo, useState } from 'react';\n",
     )
     replace_once(
         path,
+        "import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
+        "import { useBackendQuotaRefresh } from '@/extensions/quota/useBackendQuotaRefresh';\n",
+    )
+    replace_once(
+        path,
+        "    goToNext,\n    loading: sectionLoading,\n    setLoading,\n  } = useQuotaPagination(filteredFiles);\n",
+        "    goToNext,\n  } = useQuotaPagination(filteredFiles);\n",
+    )
+    replace_once(
+        path,
+        "  const { quota, loadQuota } = useQuotaLoader(config);\n"
+        "\n"
+        "  const pendingQuotaRefreshRef = useRef(false);\n"
+        "  const prevFilesLoadingRef = useRef(loading);\n"
+        "\n"
+        "  const handleRefresh = useCallback(() => {\n"
+        "    pendingQuotaRefreshRef.current = true;\n"
+        "    void triggerHeaderRefresh();\n"
+        "  }, []);\n"
+        "\n"
+        "  useEffect(() => {\n"
+        "    const wasLoading = prevFilesLoadingRef.current;\n"
+        "    prevFilesLoadingRef.current = loading;\n"
+        "\n"
+        "    if (!pendingQuotaRefreshRef.current) return;\n"
+        "    if (loading) return;\n"
+        "    if (!wasLoading) return;\n"
+        "\n"
+        "    pendingQuotaRefreshRef.current = false;\n"
+        "    const targets = effectiveViewMode === 'all' ? filteredFiles : pageItems;\n"
+        "    if (targets.length === 0) return;\n"
+        "    loadQuota(targets, setLoading);\n"
         "  }, [loading, effectiveViewMode, filteredFiles, pageItems, loadQuota, setLoading]);\n",
-        "  }, [loading, cacheFilesForProvider, loadQuota, setLoading]);\n",
+        "  const { quota } = useQuotaLoader(config);\n"
+        "  const backendRefresh = useBackendQuotaRefresh(config.type);\n",
+    )
+    replace_once(
+        path,
+        "  const isRefreshing = sectionLoading || loading;\n",
+        "  const isRefreshing = backendRefresh.isRefreshing || loading;\n"
+        "  const refreshLabel =\n"
+        "    backendRefresh.isRefreshing && backendRefresh.total > 0\n"
+        "      ? t('quota_management.refresh_progress', {\n"
+        "          completed: backendRefresh.completed,\n"
+        "          total: backendRefresh.total,\n"
+        "        })\n"
+        "      : t('quota_management.refresh_all_credentials');\n",
+    )
+    replace_once(
+        path,
+        "            onClick={handleRefresh}\n",
+        "            onClick={() => void backendRefresh.start()}\n",
+    )
+    replace_once(
+        path,
+        "            {t('quota_management.refresh_all_credentials')}\n",
+        "            {refreshLabel}\n",
     )
 
 
