@@ -45,7 +45,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 主要能力：
 
 - 构建 upstream CLIProxyAPI release 的多架构 Docker 镜像。
-- 构建与 upstream 平台和打包格式一致的 Pro 二进制 release 资产。
+- 构建并发布 `linux/amd64` 和 `linux/arm64` Pro Docker 镜像。
 - 内嵌 SQLite usage service。
 - 暴露 `/v0/management/usage` 系列 API，包括状态、增量事件轮询和 SSE 流。
 - 支持 usage JSONL/NDJSON 导入导出，包含 usage events、模型价格、quota cache、账号巡检调度和最近一次巡检结果快照。
@@ -140,7 +140,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 
 后端巡检时，如果认证记录本来已经进入正常刷新窗口，会在配额/账号探测前尝试刷新 token。巡检刷新路径会跳过 API key 账号、未到刷新窗口的账号，以及仍受 `NextRefreshAfter` 限制的账号；disabled 账号允许刷新。刷新成功后使用刷新后的 auth 继续探测；刷新失败时保留该账号，并跳过该账号本次探测。
 
-后端启动时会强制 `usage-statistics-enabled=true` 和 `remote-management.panel-github-repository=https://github.com/ssfun/CLIProxyAPI-Pro`，并且只在加载到的配置不一致时同步回写 `config.yaml`。
+后端启动时会强制 `usage-statistics-enabled=true` 和 `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro`，并且只在加载到的配置不一致时同步回写 `config.yaml`。
 
 如果只使用 upstream 后端，管理端中的请求监控、SQLite 持久化、模型价格和后端账号巡检等功能会显示错误或空数据。
 
@@ -169,12 +169,11 @@ v7.1.18-pro
 1. 检查 upstream `router-for-me/CLIProxyAPI` 最新 release。
 2. 计算 Pro release tag，例如 `v7.1.18-pro`。
 3. checkout upstream core 和 upstream management 最新 release。
-4. 应用 core patch，构建并推送 Docker 镜像。
-5. 构建 Pro 二进制资产：默认桌面/Linux 包启用 CGO 并支持动态库插件，`_no-plugin` 包保留 CGO-free 静态便携构建。
-6. 应用 management 定制层，构建单文件 `management.html`。
-7. 创建或更新当前仓库的 GitHub Release，并上传二进制、`checksums.txt` 和 `management.html`。
-8. release notes 同时包含 core upstream 和 management upstream 的版本映射与 release notes。
-9. 执行 WebDAV usage 备份、Render 部署触发、Telegram 通知和 workflow run 清理。
+4. 应用 core patch 并运行全量 Go 测试，构建并推送 Docker 镜像。
+5. 应用 management 定制层，运行定制测试、前端测试和 lint，构建单文件 `management.html`。
+6. 创建或更新当前仓库的 GitHub Release，并上传 `management.html`。
+7. release notes 记录 core upstream、management upstream 和定制提交的版本映射。
+8. 清理旧 workflow runs。
 
 Docker 镜像 tag 使用 Pro release tag：
 
@@ -183,27 +182,7 @@ latest
 v7.1.18-pro
 ```
 
-Docker 构建参数中 `CLIPROXY_VERSION` 用于下载 upstream core tag，`CLIPROXY_BUILD_VERSION` 用于写入运行时版本号，因此镜像和二进制显示的版本是 `v7.1.18-pro`，但源码仍来自 upstream `v7.1.18`。
-
-二进制资产平台和压缩格式与 upstream CLIProxyAPI 保持一致，版本号使用 Pro release tag，因此资产名前缀保持为 `CLIProxyAPI`。默认桌面/Linux 包支持动态库插件；`_no-plugin` 包用于静态或受限环境。Docker 镜像对齐 upstream，使用 CGO-enabled Debian 构建并支持动态库插件：
-
-```text
-CLIProxyAPI_7.1.18-pro_linux_amd64.tar.gz
-CLIProxyAPI_7.1.18-pro_linux_aarch64.tar.gz
-CLIProxyAPI_7.1.18-pro_linux_amd64_no-plugin.tar.gz
-CLIProxyAPI_7.1.18-pro_linux_aarch64_no-plugin.tar.gz
-CLIProxyAPI_7.1.18-pro_darwin_amd64.tar.gz
-CLIProxyAPI_7.1.18-pro_darwin_aarch64.tar.gz
-CLIProxyAPI_7.1.18-pro_freebsd_amd64.tar.gz
-CLIProxyAPI_7.1.18-pro_freebsd_amd64_no-plugin.tar.gz
-CLIProxyAPI_7.1.18-pro_freebsd_aarch64_no-plugin.tar.gz
-CLIProxyAPI_7.1.18-pro_windows_amd64.zip
-CLIProxyAPI_7.1.18-pro_windows_aarch64.zip
-checksums.txt
-management.html
-```
-
-归档内 README 使用本仓库的 `README.md` 和 `README_EN.md`。
+Docker 构建参数中 `CLIPROXY_VERSION` 用于下载 upstream core tag，`CLIPROXY_BUILD_VERSION` 用于写入运行时版本号，因此镜像显示的版本是 `v7.1.18-pro`，但源码仍来自 upstream `v7.1.18`。镜像使用 CGO-enabled Debian 构建并支持动态库插件。本项目不发布独立平台二进制；GitHub Release 只承载管理面板资产 `management.html`。
 
 ### Management 资产更新
 
@@ -221,12 +200,12 @@ Workflow：
 2. 读取当前仓库 latest release notes 中记录的 management upstream 版本。
 3. 如果 management upstream 更新、management 定制层发生 push，或 latest release 缺少 `management.html`，则 checkout management upstream 最新 release。
 4. 应用 `cliproxyapi-pro-management` 定制层。
-5. 执行 `npm ci` 和 `npm run build`。
+5. 执行定制测试、`bun run test`、`bun run lint` 和 `bun run build`。
 6. 将 `dist/index.html` 重命名为 `management.html`。
 7. 上传覆盖当前 latest release 中的 `management.html`。
 8. 更新 release notes 中的 management 版本映射和 release notes。
 
-这样 `remote-management.panel-github-repository=https://github.com/ssfun/CLIProxyAPI-Pro` 仍然可以通过 GitHub `/releases/latest` 获取到最新 `management.html`。
+这样 `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro` 可以通过 GitHub `/releases/latest` 获取到最新 `management.html`。
 
 ## 本地构建
 

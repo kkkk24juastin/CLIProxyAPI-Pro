@@ -5685,7 +5685,7 @@ export function MonitoringCenterPage() {
               {t('monitoring.previous_page')}
             </Button>
             <div className={quotaStyles.pageInfo}>
-              {t('monitoring.pagination_info', {
+              {t('usage_stats.pagination_info', {
                 from: realtimeLogPagination.from,
                 to: realtimeLogPagination.to,
                 total: realtimeLogPagination.total,

@@ -1245,6 +1245,20 @@ def patch_quota_section(target: Path) -> None:
     )
 
 
+def patch_quota_refresh_all(target: Path) -> None:
+    path = target / 'src/components/quota/QuotaSection.tsx'
+    replace_once(
+        path,
+        "    const targets = effectiveViewMode === 'all' ? filteredFiles : pageItems;\n",
+        "    const targets = cacheFilesForProvider;\n",
+    )
+    replace_once(
+        path,
+        "  }, [loading, effectiveViewMode, filteredFiles, pageItems, loadQuota, setLoading]);\n",
+        "  }, [loading, cacheFilesForProvider, loadQuota, setLoading]);\n",
+    )
+
+
 def patch_quota_page_search(target: Path) -> None:
     page_path = target / 'src/pages/QuotaPage.tsx'
     if 'const QUOTA_SEARCH_FIELD_KEYS' in read(page_path):
@@ -2679,6 +2693,7 @@ def main() -> None:
     patch_antigravity_quota_builders(target)
     patch_quota_page(target)
     patch_quota_section(target)
+    patch_quota_refresh_all(target)
     patch_quota_page_search(target)
     patch_quota_card(target)
     patch_quota_styles(target)

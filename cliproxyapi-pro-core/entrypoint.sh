@@ -7,6 +7,28 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [$1] [$2] $3"
 }
 
+KOMARI_PID=""
+MAIN_PID=""
+
+shutdown() {
+    trap - TERM INT
+    if [ -n "$MAIN_PID" ]; then
+        kill -TERM "$MAIN_PID" 2>/dev/null || true
+    fi
+    if [ -n "$KOMARI_PID" ]; then
+        kill -TERM "$KOMARI_PID" 2>/dev/null || true
+    fi
+    if [ -n "$MAIN_PID" ]; then
+        wait "$MAIN_PID" 2>/dev/null || true
+    fi
+    if [ -n "$KOMARI_PID" ]; then
+        wait "$KOMARI_PID" 2>/dev/null || true
+    fi
+    exit 0
+}
+
+trap shutdown TERM INT
+
 # ==========================================
 # 环境变量配置
 # ==========================================
@@ -26,6 +48,7 @@ MANAGEMENT_PASSWORD="${MANAGEMENT_PASSWORD:-}"
 if [ -n "$KOMARI_SERVER" ] && [ -n "$KOMARI_SECRET" ]; then
     log "Komari" "INFO" "Starting agent..."
     /CLIProxyAPI/komari-agent -e "$KOMARI_SERVER" -t "$KOMARI_SECRET" --disable-auto-update >/dev/null 2>&1 &
+    KOMARI_PID=$!
 else
     log "Komari" "WARN" "Skipped."
 fi
@@ -88,5 +111,12 @@ else
     log "UsageRestore" "WARN" "WebDAV config incomplete, skipping restore."
 fi
 
-# 等待主进程
-wait $MAIN_PID
+# 等待主进程，并在其退出后清理辅助进程
+wait "$MAIN_PID"
+MAIN_STATUS=$?
+MAIN_PID=""
+if [ -n "$KOMARI_PID" ]; then
+    kill -TERM "$KOMARI_PID" 2>/dev/null || true
+    wait "$KOMARI_PID" 2>/dev/null || true
+fi
+exit "$MAIN_STATUS"

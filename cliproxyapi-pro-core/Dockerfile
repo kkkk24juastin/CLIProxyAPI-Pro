@@ -42,6 +42,8 @@ COPY patches/redisqueue_usage_toggle.go /tmp/redisqueue_usage_toggle.go
 
 RUN python3 /tmp/apply_upstream_patches.py
 
+RUN go test ./...
+
 RUN set -eux; \
     go mod tidy; \
     CLIPROXY_SOURCE_VERSION="$(cat /tmp/cliproxy-version)"; \
@@ -76,6 +78,6 @@ VOLUME ["/CLIProxyAPI/usage"]
 
 EXPOSE 8317
 
-RUN chmod -R 777 /CLIProxyAPI && chmod +x /CLIProxyAPI/entrypoint.sh
+RUN sh -n /CLIProxyAPI/entrypoint.sh && chmod -R 777 /CLIProxyAPI && chmod +x /CLIProxyAPI/entrypoint.sh
 
 CMD ["/CLIProxyAPI/entrypoint.sh"]

@@ -31,7 +31,7 @@ internal/embeddedusage
 服务启动时，补丁层会强制 Pro 依赖的 upstream 配置值：
 
 - `usage-statistics-enabled: true`
-- `remote-management.panel-github-repository: https://github.com/ssfun/CLIProxyAPI-Pro`
+- `remote-management.panel-github-repository: https://github.com/kkkk24juastin/CLIProxyAPI-Pro`
 
 加载后的内存配置始终会被修正。只有当加载到的值不一致时才会更新 `config.yaml`，文件已经正确时不会重复落盘。
 
@@ -172,7 +172,7 @@ internal/embeddedusage
 补丁层会将 upstream 的远程管理面板默认仓库改为：
 
 ```text
-https://github.com/ssfun/CLIProxyAPI-Pro
+https://github.com/kkkk24juastin/CLIProxyAPI-Pro
 ```
 
 该修改会同时影响内置默认配置、`config.example.yaml`，以及 management asset updater 的默认 latest-release API 地址。
@@ -195,7 +195,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
 - `patches/routing_policy.go` — 注入统一路由配置和请求状态保护 handlers、usage plugin 与自动解除任务。
 - `patches/routing_protection_config.go` — 注入 `routing.request-protection` 配置类型。
-- `.github/workflows/release-core.yml` — 镜像发布、Pro 二进制资产、management.html 发布、usage 备份、Render 部署触发、Telegram 通知和 workflow 清理。
+- `.github/workflows/release-core.yml` — 多架构镜像和 `management.html` 发布、测试门禁及 workflow 清理。
 
 ## Docker 构建
 
@@ -287,77 +287,16 @@ Workflow：
 
 1. 检查 upstream CLIProxyAPI 最新 release，并计算当前 Pro release tag，例如 `v7.1.18-pro`。
 2. 检查 upstream management 最新 release。
-3. 构建并推送 `linux/amd64` 和 `linux/arm64` Docker 镜像，tag 包括 `latest` 和 Pro release tag。
-4. 构建与 upstream 平台和压缩格式一致的 Pro 二进制资产，资产名前缀保持为 `CLIProxyAPI`；默认桌面/Linux 包启用 CGO 以支持动态库插件，`_no-plugin` 包保留 CGO-free 静态便携构建。
-5. 应用 management 定制层并构建 `management.html`。
-6. 创建或更新当前仓库 GitHub Release，上传二进制资产、`checksums.txt` 和 `management.html`。
-7. Release notes 写入 core upstream 与 management upstream 的版本映射和 release notes。
-8. 从一个或多个正在运行的 CPA 实例导出 usage statistics 到 WebDAV。
-9. 触发一个或多个 Render 部署。
-10. 发送 Telegram 通知。
-11. 清理旧 workflow runs。
+3. 应用 core 补丁并运行全量 Go 测试，构建并推送 `linux/amd64` 和 `linux/arm64` Docker 镜像，tag 包括 `latest` 和 Pro release tag。
+4. 应用 management 定制层，运行定制测试、前端测试和 lint，再构建 `management.html`。
+5. 创建或更新当前仓库 GitHub Release 并上传 `management.html`；不发布独立平台二进制。
+6. Release notes 写入 core upstream、management upstream 和定制提交的版本映射。
+7. 清理旧 workflow runs。
 
 ### Docker 发布 secrets
 
 - `DOCKER_USERNAME`
 - `DOCKER_PASSWORD`
-
-### 多实例 usage 备份
-
-workflow 使用一个可选 JSON secret 配置全部 WebDAV 备份目标：
-
-```text
-CLIPROXY_USAGE_BACKUP_TARGETS
-```
-
-示例：
-
-```json
-[
-  {
-    "name": "cpa-main",
-    "api_url": "https://cpa-main.example.com",
-    "management_password": "management-password-1",
-    "webdav_url": "https://webdav.example.com/cpa-main",
-    "webdav_username": "webdav-user-1",
-    "webdav_password": "webdav-password-1"
-  }
-]
-```
-
-每个目标会从自己的 CPA API 导出 usage，并上传到自己的 WebDAV 目录，文件名为：
-
-```text
-usage-export-YYYYMMDD_HHMMSS.jsonl
-```
-
-workflow 会在每个 WebDAV 目录内保留最近 7 个备份，并同时清理 `.jsonl` 和历史 `.json` 文件。如果 secret 未配置、格式无效或某个目标失败，workflow 会记录警告并继续执行。
-
-### 多 Render 部署 hook
-
-workflow 使用一个可选 JSON secret 配置全部 Render deploy hooks：
-
-```text
-CLIPROXY_RENDER_DEPLOY_HOOKS
-```
-
-示例：
-
-```json
-[
-  {
-    "name": "cpa-main",
-    "hook_url": "https://api.render.com/deploy/srv-xxx?key=xxx"
-  }
-]
-```
-
-`url` 也可作为 `hook_url` 的别名。如果 secret 未配置、格式无效或某个目标失败，workflow 会记录警告并继续执行。
-
-### Telegram 通知 secrets
-
-- `TELEGRAM_CHAT_ID`
-- `TELEGRAM_BOT_TOKEN`
 
 ## 本地验证
 

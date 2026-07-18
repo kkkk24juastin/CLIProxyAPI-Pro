@@ -196,13 +196,13 @@ The workflow:
 3. Reads the management upstream version recorded in the latest release notes.
 4. If upstream is newer, the management customization layer was pushed, the latest release has no `management.html`, or the workflow was triggered manually, checks out the latest upstream release tag.
 5. Applies this customization layer from `cliproxyapi-pro-management/apply.sh`.
-6. Runs `npm ci` and `npm run build`.
+6. Runs customization tests, `bun run test`, `bun run lint`, and `bun run build`.
 7. Renames `dist/index.html` to `management.html`.
 8. Uploads and clobbers `management.html` on the current latest release.
 9. Updates the management version mapping and upstream release notes in the release notes.
 10. Deletes old workflow runs.
 
-This keeps `remote-management.panel-github-repository=https://github.com/ssfun/CLIProxyAPI-Pro` able to fetch the latest `management.html` through GitHub `/releases/latest`.
+This keeps `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro` able to fetch the latest `management.html` through GitHub `/releases/latest`.
 
 ## Backend expectations
 

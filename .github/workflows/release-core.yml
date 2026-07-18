@@ -255,6 +255,9 @@ jobs:
           path: upstream-management
           fetch-depth: 1
 
+      - name: Test management customizations
+        run: python3 -m unittest discover -s customizations-repo/cliproxyapi-pro-management/tests -p 'test_*.py'
+
       - name: Apply Pro management customizations
         run: bash customizations-repo/cliproxyapi-pro-management/apply.sh upstream-management
 
@@ -274,6 +277,14 @@ jobs:
       - name: Install management dependencies
         working-directory: upstream-management
         run: bun install --frozen-lockfile
+
+      - name: Test management
+        working-directory: upstream-management
+        run: bun run test
+
+      - name: Lint management
+        working-directory: upstream-management
+        run: bun run lint
 
       - name: Build management HTML
         working-directory: upstream-management

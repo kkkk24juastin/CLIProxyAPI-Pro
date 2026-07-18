@@ -3183,7 +3183,7 @@ export function AccountInspectionPage() {
                   {t('monitoring.previous_page')}
                 </Button>
                 <div className={quotaStyles.pageInfo}>
-                  {t('monitoring.pagination_info', {
+                  {t('usage_stats.pagination_info', {
                     from: resultPagination.from,
                     to: resultPagination.to,
                     total: resultPagination.total,
@@ -3255,7 +3255,7 @@ export function AccountInspectionPage() {
                     {t('monitoring.previous_page')}
                   </Button>
                   <div className={quotaStyles.pageInfo}>
-                    {t('monitoring.pagination_info', {
+                    {t('usage_stats.pagination_info', {
                       from: logPagination.from,
                       to: logPagination.to,
                       total: logPagination.total,

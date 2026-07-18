@@ -505,7 +505,12 @@ replace_once(
     f'defaultManagementReleaseURL  = "{PRO_PANEL_RELEASE_API}"',
 )
 add_go_import(updater, '"net/http"\n', '\t"net/url"\n')
-replace_once(updater, '\tgitURL := strings.ToLower(strings.TrimSpace(os.Getenv("GITSTORE_GIT_URL")))\n', '')
+replace_once(
+    updater,
+    '\tgitURL := strings.ToLower(strings.TrimSpace(os.Getenv("GITSTORE_GIT_URL")))\n',
+    '',
+    'func isGitHubReleaseURL(releaseURL string) bool',
+)
 replace_once(updater, 'tok != "" && strings.Contains(gitURL, "github.com")', 'tok != "" && isGitHubReleaseURL(releaseURL)')
 insert_before(
     updater,
@@ -2805,7 +2810,7 @@ replace_once(
 \tproviderKey     string
 \tmodelKey        string
 \tpersistedCursors map[string]string''',
-    'providerKey     string\n\tmodelKey',
+    'type modelScheduler struct {\n\tproviderKey',
 )
 replace_once(
     auth_scheduler,

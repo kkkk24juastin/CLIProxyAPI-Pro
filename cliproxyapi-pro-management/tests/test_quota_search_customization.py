@@ -68,6 +68,36 @@ export function QuotaSection<TState, TData>({
 """
 
 
+QUOTA_SECTION_REFRESH_SOURCE = """interface QuotaSectionProps<TState, TData> {
+  files: AuthFileItem[];
+  loading: boolean;
+  disabled: boolean;
+}
+
+export function QuotaSection<TState, TData>({
+  files,
+  loading,
+  disabled,
+}: QuotaSectionProps<TState, TData>) {
+  const filteredFiles = useMemo(
+    () => files.filter((file) => config.filterFn(file)),
+    [files, config]
+  );
+
+  useEffect(() => {
+    const targets = effectiveViewMode === 'all' ? filteredFiles : pageItems;
+    if (targets.length === 0) return;
+    loadQuota(targets, setLoading);
+  }, [loading, effectiveViewMode, filteredFiles, pageItems, loadQuota, setLoading]);
+
+  return (
+    <Card
+    />
+  );
+}
+"""
+
+
 class QuotaSearchCustomizationTest(unittest.TestCase):
     def setUp(self) -> None:
         CUSTOMIZATIONS._writes.clear()
@@ -105,6 +135,32 @@ class QuotaSearchCustomizationTest(unittest.TestCase):
             CUSTOMIZATIONS.flush_writes()
             self.assertEqual(page, (pages_dir / 'QuotaPage.tsx').read_text())
             self.assertEqual(section, (quota_dir / 'QuotaSection.tsx').read_text())
+
+    def test_refresh_all_uses_unfiltered_provider_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir)
+            quota_dir = target / 'src/components/quota'
+            quota_dir.mkdir(parents=True)
+            section_path = quota_dir / 'QuotaSection.tsx'
+            section_path.write_text(QUOTA_SECTION_REFRESH_SOURCE)
+
+            CUSTOMIZATIONS.patch_quota_refresh_all(target)
+            CUSTOMIZATIONS.flush_writes()
+
+            section = section_path.read_text()
+            self.assertIn('const targets = cacheFilesForProvider;', section)
+            self.assertIn(
+                '[loading, cacheFilesForProvider, loadQuota, setLoading]',
+                section,
+            )
+            self.assertNotIn(
+                "const targets = effectiveViewMode === 'all' ? filteredFiles : pageItems;",
+                section,
+            )
+
+            CUSTOMIZATIONS.patch_quota_refresh_all(target)
+            CUSTOMIZATIONS.flush_writes()
+            self.assertEqual(section, section_path.read_text())
 
 
 if __name__ == '__main__':

@@ -133,6 +133,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Test management customizations
+        run: python3 -m unittest discover -s customizations-repo/cliproxyapi-pro-management/tests -p 'test_*.py'
+
       - name: Apply Pro customizations
         run: bash customizations-repo/cliproxyapi-pro-management/apply.sh upstream
 
@@ -152,6 +155,14 @@ jobs:
       - name: Install dependencies
         working-directory: upstream
         run: bun install --frozen-lockfile
+
+      - name: Test management
+        working-directory: upstream
+        run: bun run test
+
+      - name: Lint management
+        working-directory: upstream
+        run: bun run lint
 
       - name: Build all-in-one HTML
         working-directory: upstream

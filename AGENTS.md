@@ -29,7 +29,7 @@ Frontend (target dir must contain `src/` and `package.json`):
 
 - Both patch scripts use **idempotent string-replace helpers** (`replace_once`, `insert_before`, `insert_once`) that silently no-op if the target text already contains the replacement. Patches are order-dependent and fragile to upstream drift.
 - `apply_upstream_patches.py` rewrites module import paths (`github.com/router-for-me/CLIProxyAPI/vN` → actual module path from upstream `go.mod`) in every generated/copied Go file, and runs `gofmt` + `go mod tidy` at the end.
-- Backend patches hardcode `modernc.org/sqlite v1.51.0` and force `usage-statistics-enabled=true` + `panel-github-repository=ssfun/CLIProxyAPI-Pro` on startup (only writes config.yaml when value differs).
+- Backend patches hardcode `modernc.org/sqlite v1.51.0` and force `usage-statistics-enabled=true` + `panel-github-repository=kkkk24juastin/CLIProxyAPI-Pro` on startup (only writes config.yaml when value differs).
 - Frontend `apply_customizations.py` does NOT run a bundler; it only copies overlay files and mutates upstream source in-memory, flushing writes at the end. Locale merges use `monitoring-locales.json` keyed by filename.
 
 ## Test Commands
@@ -53,4 +53,4 @@ Frontend has no test runner; validation is `npm run type-check` (strict TS) and 
 
 ## Release
 
-Versions derive from upstream core tag + `-pro` suffix (e.g. `v7.1.18-pro`). Source still comes from upstream `v7.1.18`. Binary asset names keep `CLIProxyAPI` prefix. `_no-plugin` builds are CGO-free static.
+Versions derive from the upstream core tag plus a `-pro` suffix (for example `v7.1.18-pro`). Source still comes from the matching upstream tag. Releases publish multi-architecture Docker images and `management.html`, not standalone platform binaries.

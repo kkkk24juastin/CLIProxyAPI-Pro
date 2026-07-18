@@ -219,13 +219,13 @@ Workflow：
 3. 读取 latest release notes 中记录的 management upstream 版本。
 4. 如果 upstream 更新、management 定制层发生 push、latest release 缺少 `management.html`，或 workflow 手动触发，则 checkout upstream 最新 release tag。
 5. 从 `cliproxyapi-pro-management/apply.sh` 应用本目录定制层。
-6. 执行 `npm ci` 和 `npm run build`。
+6. 执行定制测试、`bun run test`、`bun run lint` 和 `bun run build`。
 7. 将 `dist/index.html` 重命名为 `management.html`。
 8. 上传并覆盖当前 latest release 中的 `management.html`。
 9. 更新 release notes 中的 management 版本映射和 upstream release notes。
 10. 清理旧 workflow runs。
 
-这样 `remote-management.panel-github-repository=https://github.com/ssfun/CLIProxyAPI-Pro` 始终可以通过 GitHub `/releases/latest` 获取最新 `management.html`。
+这样 `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro` 始终可以通过 GitHub `/releases/latest` 获取最新 `management.html`。
 
 ## 后端依赖
 

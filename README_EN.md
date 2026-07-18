@@ -37,7 +37,7 @@ Backend customization layer for building the Pro Docker image.
 Main capabilities:
 
 - Builds a multi-arch Docker image from an upstream CLIProxyAPI release.
-- Builds Pro binary release assets using the same platform matrix and archive formats as upstream.
+- Builds and publishes Pro Docker images for `linux/amd64` and `linux/arm64`.
 - Embeds a SQLite usage service.
 - Exposes `/v0/management/usage` API routes, including status, incremental event polling, and SSE streaming.
 - Supports usage JSONL/NDJSON import and export, including usage events, model prices, quota cache, account-inspection schedules, and the latest inspection-result snapshot.
@@ -112,7 +112,7 @@ Account inspection is executed by the backend only. The management UI configures
 
 During backend inspection, eligible auth records are refreshed before quota/account probing when they are already in their normal refresh window. The inspection refresh path skips API-key accounts, accounts not yet due for refresh, and accounts still blocked by `NextRefreshAfter`; disabled accounts are allowed to refresh. If refresh succeeds, probing uses the refreshed auth. If refresh fails, the account is kept and probing is skipped for that account.
 
-The backend forces `usage-statistics-enabled=true` and `remote-management.panel-github-repository=https://github.com/ssfun/CLIProxyAPI-Pro` at startup, then writes those values back to `config.yaml` only when the loaded config differs.
+The backend forces `usage-statistics-enabled=true` and `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro` at startup, then writes those values back to `config.yaml` only when the loaded config differs.
 
 If the management UI is used with the unmodified upstream backend, request monitoring, SQLite persistence, model prices, and backend account inspection will show errors or empty data.
 
@@ -141,12 +141,11 @@ Overview:
 1. Checks the latest upstream `router-for-me/CLIProxyAPI` release.
 2. Computes the Pro release tag, for example `v7.1.18-pro`.
 3. Checks out the latest upstream core and upstream management releases.
-4. Applies core patches, then builds and pushes the Docker image.
-5. Builds Pro binary assets: default desktop/Linux archives enable CGO for dynamic-library plugin support, while `_no-plugin` archives remain CGO-free portable builds.
-6. Applies the management customization layer and builds the single-file `management.html`.
-7. Creates or updates the current repository GitHub Release, then uploads binaries, `checksums.txt`, and `management.html`.
-8. Includes both core upstream and management upstream version mapping and release notes in the release notes.
-9. Runs WebDAV usage backup, Render deployment hooks, Telegram notification, and old workflow-run cleanup.
+4. Applies core patches, runs the full Go test suite, then builds and pushes the Docker image.
+5. Applies the management customization layer, runs customization tests, frontend tests, and lint, then builds the single-file `management.html`.
+6. Creates or updates the current repository GitHub Release and uploads `management.html`.
+7. Records the core upstream, management upstream, and customization revisions in the release notes.
+8. Deletes old workflow runs.
 
 Docker image tags use the Pro release tag:
 
@@ -155,27 +154,7 @@ latest
 v7.1.18-pro
 ```
 
-During Docker builds, `CLIPROXY_VERSION` selects the upstream core tag to download, while `CLIPROXY_BUILD_VERSION` sets the runtime version. This lets the image and binary report `v7.1.18-pro` while still building from upstream `v7.1.18` source.
-
-Binary asset platforms and archive formats match upstream CLIProxyAPI. The version already carries the Pro release tag, so the asset prefix remains `CLIProxyAPI`. Default desktop/Linux archives support dynamic-library plugins; `_no-plugin` archives are for static or constrained environments. Docker images follow upstream with CGO-enabled Debian builds and dynamic-library plugin support:
-
-```text
-CLIProxyAPI_7.1.18-pro_linux_amd64.tar.gz
-CLIProxyAPI_7.1.18-pro_linux_aarch64.tar.gz
-CLIProxyAPI_7.1.18-pro_linux_amd64_no-plugin.tar.gz
-CLIProxyAPI_7.1.18-pro_linux_aarch64_no-plugin.tar.gz
-CLIProxyAPI_7.1.18-pro_darwin_amd64.tar.gz
-CLIProxyAPI_7.1.18-pro_darwin_aarch64.tar.gz
-CLIProxyAPI_7.1.18-pro_freebsd_amd64.tar.gz
-CLIProxyAPI_7.1.18-pro_freebsd_amd64_no-plugin.tar.gz
-CLIProxyAPI_7.1.18-pro_freebsd_aarch64_no-plugin.tar.gz
-CLIProxyAPI_7.1.18-pro_windows_amd64.zip
-CLIProxyAPI_7.1.18-pro_windows_aarch64.zip
-checksums.txt
-management.html
-```
-
-The binary archives include this repository's `README.md` and `README_EN.md`.
+During Docker builds, `CLIPROXY_VERSION` selects the upstream core tag to download, while `CLIPROXY_BUILD_VERSION` sets the runtime version. This lets the image report `v7.1.18-pro` while still building from upstream `v7.1.18` source. The image uses a CGO-enabled Debian build and supports dynamic-library plugins. This project does not publish standalone platform binaries; the GitHub Release carries only the `management.html` panel asset.
 
 ### Management asset update
 
@@ -193,12 +172,12 @@ Overview:
 2. Reads the management upstream version recorded in the current repository latest release notes.
 3. If management upstream is newer, the management customization layer was pushed, or the latest release has no `management.html`, checks out the latest management upstream release.
 4. Applies the `cliproxyapi-pro-management` customization layer.
-5. Runs `npm ci` and `npm run build`.
+5. Runs customization tests, `bun run test`, `bun run lint`, and `bun run build`.
 6. Renames `dist/index.html` to `management.html`.
 7. Uploads and clobbers `management.html` on the current latest release.
 8. Updates the management version mapping and release notes section.
 
-This keeps `remote-management.panel-github-repository=https://github.com/ssfun/CLIProxyAPI-Pro` compatible with GitHub `/releases/latest`, because the latest release always carries `management.html`.
+This keeps `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro` compatible with GitHub `/releases/latest`, because the latest release always carries `management.html`.
 
 ## Local build
 

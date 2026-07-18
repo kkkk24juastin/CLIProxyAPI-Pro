@@ -31,7 +31,7 @@ The image declares `/CLIProxyAPI/usage` as a Docker volume so usage data, quota 
 At service startup the patch layer forces the upstream config values required by Pro:
 
 - `usage-statistics-enabled: true`
-- `remote-management.panel-github-repository: https://github.com/ssfun/CLIProxyAPI-Pro`
+- `remote-management.panel-github-repository: https://github.com/kkkk24juastin/CLIProxyAPI-Pro`
 
 The loaded in-memory config is always corrected. `config.yaml` is updated only when the loaded values differ, preserving normal startup behavior when the file is already correct.
 
@@ -158,7 +158,7 @@ The patch layer also changes upstream API behavior:
 The patch layer changes upstream's default remote management panel repository to:
 
 ```text
-https://github.com/ssfun/CLIProxyAPI-Pro
+https://github.com/kkkk24juastin/CLIProxyAPI-Pro
 ```
 
 This affects the built-in default config, `config.example.yaml`, and the management asset updater's default latest-release API URL.
@@ -179,7 +179,7 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `embeddedusage/` — embedded SQLite usage service and management routes.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.
 - `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
-- `.github/workflows/release-core.yml` — image publish, Pro binary assets, `management.html` publish, usage backup, Render deployment trigger, Telegram notification, and run cleanup.
+- `.github/workflows/release-core.yml` — multi-architecture image and `management.html` publishing, test gates, and run cleanup.
 
 ## Docker build
 
@@ -271,77 +271,16 @@ The workflow:
 
 1. Checks the latest upstream CLIProxyAPI release and computes the Pro release tag, for example `v7.1.18-pro`.
 2. Checks the latest upstream management release.
-3. Builds and pushes `linux/amd64` and `linux/arm64` Docker images tagged with `latest` and the Pro release tag.
-4. Builds Pro binary assets with the same platform matrix and archive formats as upstream, with the `CLIProxyAPI` asset prefix; default desktop/Linux archives enable CGO for dynamic-library plugin support, while `_no-plugin` archives remain CGO-free portable builds.
-5. Applies the management customization layer and builds `management.html`.
-6. Creates or updates the current repository GitHub Release, then uploads binary assets, `checksums.txt`, and `management.html`.
-7. Writes core upstream and management upstream version mappings plus release notes into the GitHub Release notes.
-8. Exports usage statistics from one or more running CPA instances to WebDAV.
-9. Triggers one or more Render deployments.
-10. Sends a Telegram notification.
-11. Deletes old workflow runs.
+3. Applies the core patches, runs the full Go test suite, and builds and pushes `linux/amd64` and `linux/arm64` Docker images tagged with `latest` and the Pro release tag.
+4. Applies the management customization layer, runs customization tests, frontend tests, and lint, then builds `management.html`.
+5. Creates or updates the current repository GitHub Release and uploads `management.html`; standalone platform binaries are not published.
+6. Writes core upstream, management upstream, and customization revision mappings into the GitHub Release notes.
+7. Deletes old workflow runs.
 
 ### Required Docker secrets
 
 - `DOCKER_USERNAME`
 - `DOCKER_PASSWORD`
-
-### Multi-instance usage backup
-
-The workflow uses one optional JSON secret for all WebDAV backup targets:
-
-```text
-CLIPROXY_USAGE_BACKUP_TARGETS
-```
-
-Example:
-
-```json
-[
-  {
-    "name": "cpa-main",
-    "api_url": "https://cpa-main.example.com",
-    "management_password": "management-password-1",
-    "webdav_url": "https://webdav.example.com/cpa-main",
-    "webdav_username": "webdav-user-1",
-    "webdav_password": "webdav-password-1"
-  }
-]
-```
-
-Each target is exported from its own CPA API and uploaded to its own WebDAV directory as:
-
-```text
-usage-export-YYYYMMDD_HHMMSS.jsonl
-```
-
-The workflow keeps the latest 7 backups per WebDAV directory and cleans both `.jsonl` and legacy `.json` files. If the secret is missing, invalid, or a target fails, the workflow logs a warning and continues.
-
-### Multi-target Render deploy hooks
-
-The workflow uses one optional JSON secret for all Render deploy hooks:
-
-```text
-CLIPROXY_RENDER_DEPLOY_HOOKS
-```
-
-Example:
-
-```json
-[
-  {
-    "name": "cpa-main",
-    "hook_url": "https://api.render.com/deploy/srv-xxx?key=xxx"
-  }
-]
-```
-
-`url` is also accepted as an alias for `hook_url`. If the secret is missing, invalid, or a target fails, the workflow logs a warning and continues.
-
-### Telegram notification secrets
-
-- `TELEGRAM_CHAT_ID`
-- `TELEGRAM_BOT_TOKEN`
 
 ## Local validation
 
