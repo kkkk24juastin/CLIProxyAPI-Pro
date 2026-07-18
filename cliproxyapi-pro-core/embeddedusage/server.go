@@ -3,6 +3,7 @@ package embeddedusage
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,13 +16,37 @@ import (
 )
 
 const accountInspectionScheduleExportRecordType = "account_inspection_schedule"
+const accountInspectionSnapshotExportRecordType = "account_inspection_snapshot"
+const usageHistoryStartCursorValue = int64(1<<63 - 1)
 
 type usageStreamEvent = internalusage.Payload
+
+type usageHistoryCursor struct {
+	SnapshotMaxID   int64  `json:"snapshot_max_id"`
+	MatchedTotal    int64  `json:"matched_total"`
+	BeforeTimestamp int64  `json:"before_timestamp_ms"`
+	BeforeID        int64  `json:"before_id"`
+	FromMS          int64  `json:"from_ms,omitempty"`
+	ToMS            int64  `json:"to_ms,omitempty"`
+	Provider        string `json:"provider,omitempty"`
+	Model           string `json:"model,omitempty"`
+	AuthIndex       string `json:"auth_index,omitempty"`
+	APIKeyHash      string `json:"api_key_hash,omitempty"`
+	Status          string `json:"status,omitempty"`
+	Search          string `json:"search,omitempty"`
+}
 
 type accountInspectionScheduleExportRecord struct {
 	RecordType string          `json:"record_type"`
 	Version    int             `json:"version"`
 	Schedule   json.RawMessage `json:"schedule"`
+	ExportedAt int64           `json:"exported_at_ms"`
+}
+
+type accountInspectionSnapshotExportRecord struct {
+	RecordType string          `json:"record_type"`
+	Version    int             `json:"version"`
+	Snapshot   json.RawMessage `json:"snapshot"`
 	ExportedAt int64           `json:"exported_at_ms"`
 }
 
@@ -44,6 +69,9 @@ func RegisterGinRoutes(group *gin.RouterGroup) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
 		group.POST("/import", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.POST("/reset", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
 		group.GET("/status", func(c *gin.Context) {
@@ -73,6 +101,24 @@ func RegisterGinRoutes(group *gin.RouterGroup) {
 		group.PUT("/model-prices", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
+		group.GET("/model-price-rules", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.PUT("/model-price-rules", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.DELETE("/model-price-rules", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.POST("/model-prices/sync", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.GET("/model-prices/sync-status", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.POST("/model-prices/recalculate", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
 		group.GET("/settings", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
@@ -88,6 +134,7 @@ func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
 	group.GET("", s.handleUsage)
 	group.GET("/export", s.handleUsageExport)
 	group.POST("/import", s.handleUsageImport)
+	group.POST("/reset", s.handleUsageReset)
 	group.GET("/status", s.handleStatus)
 	group.GET("/events", s.handleUsageEvents)
 	group.GET("/aggregates", s.handleUsageAggregates)
@@ -97,6 +144,12 @@ func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
 	group.DELETE("/quota-cache", s.handleQuotaCacheDelete)
 	group.GET("/model-prices", s.handleModelPricesGet)
 	group.PUT("/model-prices", s.handleModelPricesPut)
+	group.GET("/model-price-rules", s.handleModelPriceRulesGet)
+	group.PUT("/model-price-rules", s.handleModelPriceRulesPut)
+	group.DELETE("/model-price-rules", s.handleModelPriceRulesDelete)
+	group.POST("/model-prices/sync", s.handleModelPricesSync)
+	group.GET("/model-prices/sync-status", s.handleModelPricesSyncStatus)
+	group.POST("/model-prices/recalculate", s.handleModelPricesRecalculate)
 	group.GET("/settings", s.handleMonitoringSettingsGet)
 	group.PUT("/settings", s.handleMonitoringSettingsPut)
 }
@@ -114,6 +167,18 @@ func parseQueryInt64(c *gin.Context, key string, fallback int64) int64 {
 }
 
 func parseQueryInt(c *gin.Context, key string, fallback int) int {
+	value := strings.TrimSpace(c.Query(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseQueryIntSigned(c *gin.Context, key string, fallback int) int {
 	value := strings.TrimSpace(c.Query(key))
 	if value == "" {
 		return fallback
@@ -152,6 +217,187 @@ func usagePayloadWithDetailLimit(events []internalusage.Event, limit int, detail
 	return payload
 }
 
+func applyUsageDatasetState(payload *internalusage.Payload, state UsageDatasetState) {
+	payload.Generation = state.Generation
+	payload.ResetAtMS = state.ResetAtMS
+}
+
+func (s *Server) usageDatasetState(ctx context.Context) (UsageDatasetState, error) {
+	return s.store.UsageDatasetState(ctx)
+}
+
+func encodeUsageHistoryCursor(cursor usageHistoryCursor) string {
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeUsageHistoryCursor(value string) (usageHistoryCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return usageHistoryCursor{}, fmt.Errorf("invalid usage cursor")
+	}
+	var cursor usageHistoryCursor
+	if err := json.Unmarshal(decoded, &cursor); err != nil {
+		return usageHistoryCursor{}, fmt.Errorf("invalid usage cursor")
+	}
+	if cursor.SnapshotMaxID <= 0 || cursor.BeforeTimestamp <= 0 || cursor.BeforeID <= 0 {
+		return usageHistoryCursor{}, fmt.Errorf("invalid usage cursor")
+	}
+	return cursor, nil
+}
+
+func usageStatusFilter(value string) (*bool, string) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "failed", "failure":
+		failed := true
+		return &failed, "failed"
+	case "success", "succeeded":
+		failed := false
+		return &failed, "success"
+	default:
+		return nil, ""
+	}
+}
+
+func usageEventQueryOptionsFromCursor(cursor usageHistoryCursor, limit int) UsageEventQueryOptions {
+	failed, _ := usageStatusFilter(cursor.Status)
+	return UsageEventQueryOptions{
+		SnapshotMaxID:   cursor.SnapshotMaxID,
+		BeforeTimestamp: cursor.BeforeTimestamp,
+		BeforeID:        cursor.BeforeID,
+		FromMS:          cursor.FromMS,
+		ToMS:            cursor.ToMS,
+		Provider:        cursor.Provider,
+		Model:           cursor.Model,
+		AuthIndex:       cursor.AuthIndex,
+		APIKeyHash:      cursor.APIKeyHash,
+		Failed:          failed,
+		Search:          cursor.Search,
+		Limit:           limit,
+		MatchedTotal:    cursor.MatchedTotal,
+		SkipCount:       true,
+	}
+}
+
+func usageHistoryCursorFromOptions(options UsageEventQueryOptions, status string, matchedTotal int64, event internalusage.Event) usageHistoryCursor {
+	return usageHistoryCursor{
+		SnapshotMaxID:   options.SnapshotMaxID,
+		MatchedTotal:    matchedTotal,
+		BeforeTimestamp: event.TimestampMS,
+		BeforeID:        event.ID,
+		FromMS:          options.FromMS,
+		ToMS:            options.ToMS,
+		Provider:        options.Provider,
+		Model:           options.Model,
+		AuthIndex:       options.AuthIndex,
+		APIKeyHash:      options.APIKeyHash,
+		Status:          status,
+		Search:          options.Search,
+	}
+}
+
+func (s *Server) handleUsageHistoryEvents(c *gin.Context) {
+	limit := usageEventPageLimit(parseQueryInt(c, "limit", 100))
+	cursorValue := strings.TrimSpace(c.Query("cursor"))
+	status := ""
+	var options UsageEventQueryOptions
+	if cursorValue != "" {
+		cursor, err := decodeUsageHistoryCursor(cursorValue)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		options = usageEventQueryOptionsFromCursor(cursor, limit)
+		status = cursor.Status
+		page, err := s.store.QueryEvents(c.Request.Context(), options)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		payload := internalusage.BuildPayload(page.Events)
+		state, err := s.usageDatasetState(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		applyUsageDatasetState(&payload, state)
+		payload.DetailsLimit = int64(limit)
+		payload.DetailsLimited = page.HasMore
+		payload.MatchedTotal = page.MatchedTotal
+		payload.SnapshotMaxID = options.SnapshotMaxID
+		payload.PageCursor = cursorValue
+		payload.HasMore = page.HasMore
+		if page.HasMore && len(page.Events) > 0 {
+			payload.NextCursor = encodeUsageHistoryCursor(usageHistoryCursorFromOptions(options, status, page.MatchedTotal, page.Events[len(page.Events)-1]))
+		}
+		c.JSON(http.StatusOK, payload)
+		return
+	} else {
+		latestID, _, err := s.store.LatestCursor(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if latestID <= 0 {
+			payload := internalusage.BuildPayload(nil)
+			state, stateErr := s.usageDatasetState(c.Request.Context())
+			if stateErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": stateErr.Error()})
+				return
+			}
+			applyUsageDatasetState(&payload, state)
+			payload.DetailsLimit = int64(limit)
+			c.JSON(http.StatusOK, payload)
+			return
+		}
+		failed, normalizedStatus := usageStatusFilter(c.Query("status"))
+		status = normalizedStatus
+		options = UsageEventQueryOptions{
+			SnapshotMaxID: latestID,
+			FromMS:        parseQueryInt64(c, "from_ms", 0),
+			ToMS:          parseQueryInt64(c, "to_ms", 0),
+			Provider:      strings.TrimSpace(c.Query("provider")),
+			Model:         strings.TrimSpace(c.Query("model")),
+			AuthIndex:     strings.TrimSpace(c.Query("auth_index")),
+			APIKeyHash:    strings.TrimSpace(c.Query("api_key_hash")),
+			Failed:        failed,
+			Search:        strings.TrimSpace(c.Query("search")),
+			Limit:         limit,
+		}
+	}
+
+	page, err := s.store.QueryEvents(c.Request.Context(), options)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	payload := internalusage.BuildPayload(page.Events)
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	applyUsageDatasetState(&payload, state)
+	payload.DetailsLimit = int64(limit)
+	payload.DetailsLimited = page.HasMore
+	payload.MatchedTotal = page.MatchedTotal
+	payload.SnapshotMaxID = options.SnapshotMaxID
+	payload.PageCursor = encodeUsageHistoryCursor(usageHistoryCursorFromOptions(
+		options,
+		status,
+		page.MatchedTotal,
+		internalusage.Event{TimestampMS: usageHistoryStartCursorValue, ID: usageHistoryStartCursorValue},
+	))
+	payload.HasMore = page.HasMore
+	if page.HasMore && len(page.Events) > 0 {
+		payload.NextCursor = encodeUsageHistoryCursor(usageHistoryCursorFromOptions(options, status, page.MatchedTotal, page.Events[len(page.Events)-1]))
+	}
+	c.JSON(http.StatusOK, payload)
+}
+
 func (s *Server) handleUsage(c *gin.Context) {
 	limit := parseQueryInt(c, "limit", s.cfg.QueryLimit)
 	if limit <= 0 {
@@ -171,6 +417,12 @@ func (s *Server) handleUsage(c *gin.Context) {
 		return
 	}
 	payload := internalusage.BuildPayload(events)
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	applyUsageDatasetState(&payload, state)
 	if latestID > payload.LatestID {
 		payload.LatestID = latestID
 	}
@@ -191,29 +443,58 @@ func (s *Server) handleUsage(c *gin.Context) {
 }
 
 func (s *Server) handleUsageEvents(c *gin.Context) {
+	if strings.TrimSpace(c.Query("cursor")) != "" || strings.EqualFold(strings.TrimSpace(c.Query("direction")), "before") {
+		s.handleUsageHistoryEvents(c)
+		return
+	}
 	afterID := parseQueryInt64(c, "after_id", 0)
 	events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), afterID, parseQueryInt(c, "limit", s.cfg.BatchSize))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, usagePayloadWithDetailLimit(events, limit, detailsLimited))
+	payload := usagePayloadWithDetailLimit(events, limit, detailsLimited)
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	applyUsageDatasetState(&payload, state)
+	c.JSON(http.StatusOK, payload)
 }
 
 func (s *Server) handleUsageAggregates(c *gin.Context) {
+	latestID, _, err := s.store.LatestCursor(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	options := UsageAggregateOptions{
-		FromMS:   parseQueryInt64(c, "from_ms", 0),
-		ToMS:     parseQueryInt64(c, "to_ms", 0),
-		Interval: strings.TrimSpace(c.Query("interval")),
-		GroupBy:  parseCSVQuery(c.Query("group_by")),
-		Limit:    parseQueryInt(c, "limit", 1000),
+		FromMS:                parseQueryInt64(c, "from_ms", 0),
+		ToMS:                  parseQueryInt64(c, "to_ms", 0),
+		Interval:              strings.TrimSpace(c.Query("interval")),
+		GroupBy:               parseCSVQuery(c.Query("group_by")),
+		Limit:                 parseQueryInt(c, "limit", 1000),
+		APIKeyHash:            strings.TrimSpace(c.Query("api_key_hash")),
+		TimezoneOffsetMinutes: parseQueryIntSigned(c, "timezone_offset_minutes", 0),
 	}
 	buckets, err := s.store.UsageAggregates(c.Request.Context(), options)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": buckets})
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"items":          buckets,
+		"latest_id":      latestID,
+		"generation":     state.Generation,
+		"reset_at_ms":    state.ResetAtMS,
+		"snapshot_at_ms": time.Now().UnixMilli(),
+	})
 }
 
 func (s *Server) handleUsageStream(c *gin.Context) {
@@ -224,6 +505,16 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 	}
 
 	lastID := parseQueryInt64(c, "after_id", 0)
+	clientGeneration := parseQueryInt64(c, "generation", 0)
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	resetRequired := clientGeneration > 0 && clientGeneration != state.Generation
+	if resetRequired {
+		lastID = 0
+	}
 	initialEvents, initialLimit, initialDetailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -235,8 +526,8 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	keepaliveTicker := time.NewTicker(15 * time.Second)
+	defer keepaliveTicker.Stop()
 
 	writeEvent := func(name string, payload usageStreamEvent) bool {
 		data, err := json.Marshal(payload)
@@ -250,12 +541,23 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 		return true
 	}
 
+	if resetRequired {
+		payload := internalusage.BuildPayload(nil)
+		applyUsageDatasetState(&payload, state)
+		if !writeEvent("reset", payload) {
+			return
+		}
+		return
+	}
 	if len(initialEvents) == 0 {
-		if !writeEvent("ready", internalusage.BuildPayload(nil)) {
+		payload := internalusage.BuildPayload(nil)
+		applyUsageDatasetState(&payload, state)
+		if !writeEvent("ready", payload) {
 			return
 		}
 	} else {
 		payload := usagePayloadWithDetailLimit(initialEvents, initialLimit, initialDetailsLimited)
+		applyUsageDatasetState(&payload, state)
 		lastID = payload.LatestID
 		if !writeEvent("usage", payload) {
 			return
@@ -263,26 +565,45 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 	}
 
 	for {
-		select {
-		case <-c.Request.Context().Done():
+		eventSignal := s.store.EventSignal()
+		currentState, err := s.usageDatasetState(c.Request.Context())
+		if err != nil {
 			return
-		case <-ticker.C:
-			events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
-			if err != nil {
+		}
+		if currentState.Generation != state.Generation {
+			state = currentState
+			lastID = 0
+			payload := internalusage.BuildPayload(nil)
+			applyUsageDatasetState(&payload, state)
+			if !writeEvent("reset", payload) {
 				return
 			}
-			if len(events) == 0 {
-				if _, err := fmt.Fprint(c.Writer, ": keepalive\n\n"); err != nil {
-					return
-				}
-				flusher.Flush()
-				continue
-			}
+			return
+		}
+		events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
+		if err != nil {
+			return
+		}
+		if len(events) > 0 {
 			payload := usagePayloadWithDetailLimit(events, limit, detailsLimited)
+			applyUsageDatasetState(&payload, state)
 			lastID = payload.LatestID
 			if !writeEvent("usage", payload) {
 				return
 			}
+			continue
+		}
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-keepaliveTicker.C:
+			if _, err := fmt.Fprint(c.Writer, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+			continue
+		case <-eventSignal:
+			continue
 		}
 	}
 }
@@ -311,6 +632,25 @@ func (s *Server) exportJSONL(ctx context.Context) ([]byte, error) {
 			data = append(data, '\n')
 		}
 	}
+	if accountInspectionSnapshotExporter != nil {
+		snapshot, ok, err := accountInspectionSnapshotExporter()
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			line, err := json.Marshal(accountInspectionSnapshotExportRecord{
+				RecordType: accountInspectionSnapshotExportRecordType,
+				Version:    1,
+				Snapshot:   snapshot,
+				ExportedAt: time.Now().UnixMilli(),
+			})
+			if err != nil {
+				return nil, err
+			}
+			data = append(data, line...)
+			data = append(data, '\n')
+		}
+	}
 	return data, nil
 }
 
@@ -327,7 +667,7 @@ func (s *Server) handleUsageExport(c *gin.Context) {
 
 func (s *Server) handleUsageImport(c *gin.Context) {
 	reader := bufio.NewScanner(c.Request.Body)
-	reader.Buffer(make([]byte, 64*1024), 10*1024*1024)
+	reader.Buffer(make([]byte, 64*1024), 64*1024*1024)
 	events := make([]internalusage.Event, 0, s.cfg.BatchSize)
 	result := InsertResult{}
 	totalEvents := 0
@@ -345,11 +685,18 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		return nil
 	}
 	var modelPrices map[string]ModelPrice
+	var modelPriceRules []ModelPriceRule
 	modelPriceRecords := 0
 	var quotaEntries []QuotaCacheEntry
 	quotaCacheRecords := 0
+	var routingCursors []RoutingCursorState
+	routingCursorRecords := 0
+	var authRuntimeStats []AuthRuntimeStats
+	authRuntimeStatsRecords := 0
 	var accountInspectionSchedule json.RawMessage
 	accountInspectionScheduleRecords := 0
+	var accountInspectionSnapshot json.RawMessage
+	accountInspectionSnapshotRecords := 0
 	var monitoringSettings *MonitoringSettings
 	monitoringSettingsRecords := 0
 	failed := 0
@@ -374,13 +721,23 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			accountInspectionSchedule = schedule
 			accountInspectionScheduleRecords++
 			continue
+		case accountInspectionSnapshotExportRecordType:
+			snapshot, err := parseAccountInspectionSnapshotImportRecord(raw)
+			if err != nil {
+				failed++
+				continue
+			}
+			accountInspectionSnapshot = snapshot
+			accountInspectionSnapshotRecords++
+			continue
 		case modelPricesExportRecordType:
-			prices, err := parseModelPricesImportRecord(raw)
+			prices, rules, err := parseModelPricesImportRecord(raw)
 			if err != nil {
 				failed++
 				continue
 			}
 			modelPrices = prices
+			modelPriceRules = rules
 			modelPriceRecords++
 			continue
 		case monitoringSettingsExportRecordType:
@@ -400,6 +757,24 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			}
 			quotaEntries = append(quotaEntries, entries...)
 			quotaCacheRecords++
+			continue
+		case routingCursorExportRecordType:
+			items, err := parseRoutingCursorImportRecord(raw)
+			if err != nil {
+				failed++
+				continue
+			}
+			routingCursors = append(routingCursors, items...)
+			routingCursorRecords++
+			continue
+		case authRuntimeStatsExportRecordType:
+			items, err := parseAuthRuntimeStatsImportRecord(raw)
+			if err != nil {
+				failed++
+				continue
+			}
+			authRuntimeStats = append(authRuntimeStats, items...)
+			authRuntimeStatsRecords++
 			continue
 		}
 		event, err := internalusage.NormalizeRaw(raw)
@@ -430,13 +805,32 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return
 		}
 	}
-	if len(quotaEntries) > 0 {
-		for _, entry := range quotaEntries {
-			if err := s.store.SetQuotaCache(c.Request.Context(), entry); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
+	for _, rule := range modelPriceRules {
+		if _, _, err := s.store.UpsertModelPriceRule(c.Request.Context(), rule, true); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
 		}
+	}
+	if modelPrices != nil || len(modelPriceRules) > 0 {
+		if _, err := s.store.RecalculateEventCosts(c.Request.Context(), true); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	importedQuotaEntries, err := s.store.ImportQuotaCache(c.Request.Context(), quotaEntries)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	importedRoutingCursors, err := s.store.ImportRoutingCursorStates(c.Request.Context(), routingCursors)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	importedAuthRuntimeStats, err := s.store.ImportAuthRuntimeStats(c.Request.Context(), authRuntimeStats)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 	if monitoringSettings != nil {
 		if err := s.store.SetMonitoringSettings(c.Request.Context(), *monitoringSettings); err != nil {
@@ -450,6 +844,12 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return
 		}
 	}
+	if accountInspectionSnapshot != nil && accountInspectionSnapshotImporter != nil {
+		if err := accountInspectionSnapshotImporter(accountInspectionSnapshot); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"added":                            result.Inserted,
 		"skipped":                          result.Skipped,
@@ -457,13 +857,40 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		"failed":                           failed,
 		"modelPrices":                      len(modelPrices),
 		"modelPriceRecords":                modelPriceRecords,
-		"quotaCache":                       len(quotaEntries),
+		"modelPriceRules":                  len(modelPriceRules),
+		"quotaCache":                       importedQuotaEntries,
 		"quotaCacheRecords":                quotaCacheRecords,
+		"routingCursors":                   importedRoutingCursors,
+		"routingCursorRecords":             routingCursorRecords,
+		"authRuntimeStats":                 importedAuthRuntimeStats,
+		"authRuntimeStatsRecords":          authRuntimeStatsRecords,
 		"accountInspectionSchedule":        accountInspectionSchedule != nil,
 		"accountInspectionScheduleRecords": accountInspectionScheduleRecords,
+		"accountInspectionSnapshot":        accountInspectionSnapshot != nil,
+		"accountInspectionSnapshotRecords": accountInspectionSnapshotRecords,
 		"monitoringSettings":               monitoringSettings != nil,
 		"monitoringSettingsRecords":        monitoringSettingsRecords,
 	})
+}
+
+func (s *Server) handleUsageReset(c *gin.Context) {
+	var payload struct {
+		Confirm bool `json:"confirm"`
+	}
+	if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !payload.Confirm {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reset confirmation is required"})
+		return
+	}
+	result, err := s.store.ResetUsageStatistics(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func readImportRecordType(raw []byte) (string, error) {
@@ -487,12 +914,68 @@ func parseAccountInspectionScheduleImportRecord(raw []byte) (json.RawMessage, er
 	return record.Schedule, nil
 }
 
+func parseAccountInspectionSnapshotImportRecord(raw []byte) (json.RawMessage, error) {
+	var record accountInspectionSnapshotExportRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, err
+	}
+	if len(record.Snapshot) == 0 {
+		return nil, nil
+	}
+	return record.Snapshot, nil
+}
+
 func parseQuotaCacheImportRecord(raw []byte) ([]QuotaCacheEntry, error) {
 	var record quotaCacheExportRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
 		return nil, err
 	}
+	if record.Version < 1 || record.Version > 2 {
+		return nil, fmt.Errorf("unsupported quota cache export version %d", record.Version)
+	}
+	for index := range record.Entries {
+		entry := &record.Entries[index]
+		if entry.Provider == "" || entry.FileName == "" || len(entry.Data) == 0 || !json.Valid(entry.Data) {
+			return nil, fmt.Errorf("invalid quota cache entry at index %d", index)
+		}
+		if record.Version == 1 && entry.ObservedAt <= 0 {
+			entry.ObservedAt = entry.CachedAt
+		}
+	}
 	return record.Entries, nil
+}
+
+func parseRoutingCursorImportRecord(raw []byte) ([]RoutingCursorState, error) {
+	var record routingCursorExportRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, err
+	}
+	if record.Version != 1 {
+		return nil, fmt.Errorf("unsupported routing cursor export version %d", record.Version)
+	}
+	for index, item := range record.Items {
+		if strings.TrimSpace(item.CursorKey) == "" || strings.TrimSpace(item.LastAuthID) == "" {
+			return nil, fmt.Errorf("invalid routing cursor at index %d", index)
+		}
+	}
+	return record.Items, nil
+}
+
+func parseAuthRuntimeStatsImportRecord(raw []byte) ([]AuthRuntimeStats, error) {
+	var record authRuntimeStatsExportRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, err
+	}
+	if record.Version != 1 {
+		return nil, fmt.Errorf("unsupported auth runtime stats export version %d", record.Version)
+	}
+	for index, item := range record.Items {
+		if strings.TrimSpace(item.AuthIndex) == "" || strings.TrimSpace(item.AuthID) == "" ||
+			item.SelectedCount < 0 || item.SuccessCount < 0 || item.FailureCount < 0 || len(item.RecentBuckets) > 20 {
+			return nil, fmt.Errorf("invalid auth runtime stats at index %d", index)
+		}
+	}
+	return record.Items, nil
 }
 
 func parseMonitoringSettingsImportRecord(raw []byte) (MonitoringSettings, error) {
@@ -503,15 +986,15 @@ func parseMonitoringSettingsImportRecord(raw []byte) (MonitoringSettings, error)
 	return normalizeMonitoringSettings(record.Settings), nil
 }
 
-func parseModelPricesImportRecord(raw []byte) (map[string]ModelPrice, error) {
+func parseModelPricesImportRecord(raw []byte) (map[string]ModelPrice, []ModelPriceRule, error) {
 	var record modelPricesExportRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if record.Prices == nil {
 		record.Prices = map[string]ModelPrice{}
 	}
-	return record.Prices, nil
+	return record.Prices, record.Rules, nil
 }
 
 func (s *Server) handleStatus(c *gin.Context) {
@@ -530,6 +1013,11 @@ func (s *Server) handleStatus(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"service":           "embedded-usage-service",
 		"dbPath":            s.cfg.DBPath,
@@ -538,6 +1026,8 @@ func (s *Server) handleStatus(c *gin.Context) {
 		"deadLetterSamples": deadLetterSamples,
 		"latestId":          latestID,
 		"latestTimestampMs": latestTimestamp,
+		"generation":        state.Generation,
+		"resetAtMs":         state.ResetAtMS,
 	})
 }
 
@@ -628,6 +1118,99 @@ func (s *Server) handleModelPricesPut(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) handleModelPriceRulesGet(c *gin.Context) {
+	rules, err := s.store.ActiveModelPriceRules(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	observed, err := s.store.ObservedModels(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rules": rules, "observedModels": observed})
+}
+
+func (s *Server) handleModelPriceRulesPut(c *gin.Context) {
+	var payload struct {
+		Rule ModelPriceRule `json:"rule"`
+	}
+	if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	payload.Rule.Source = modelPriceSourceManual
+	payload.Rule.Locked = true
+	rule, changed, err := s.store.UpsertModelPriceRule(c.Request.Context(), payload.Rule, true)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rule": rule, "changed": changed})
+}
+
+func (s *Server) handleModelPriceRulesDelete(c *gin.Context) {
+	provider := strings.TrimSpace(c.Query("provider"))
+	model := strings.TrimSpace(c.Query("model"))
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+	if err := s.store.DeleteModelPriceRule(c.Request.Context(), provider, model); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) handleModelPricesSync(c *gin.Context) {
+	var payload struct {
+		DryRun               bool     `json:"dryRun"`
+		RecalculateUnpriced  bool     `json:"recalculateUnpriced"`
+		OverrideLockedModels []string `json:"overrideLockedModels"`
+	}
+	if c.Request.ContentLength != 0 {
+		if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	result, err := s.store.SyncModelsDevPrices(c.Request.Context(), payload.DryRun, payload.RecalculateUnpriced, payload.OverrideLockedModels...)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (s *Server) handleModelPricesSyncStatus(c *gin.Context) {
+	state, err := s.store.GetModelPriceSyncState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"state": state})
+}
+
+func (s *Server) handleModelPricesRecalculate(c *gin.Context) {
+	var payload struct {
+		All bool `json:"all"`
+	}
+	if c.Request.ContentLength != 0 {
+		if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	updated, err := s.store.RecalculateEventCosts(c.Request.Context(), !payload.All)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"updated": updated})
 }
 
 func (s *Server) handleMonitoringSettingsGet(c *gin.Context) {

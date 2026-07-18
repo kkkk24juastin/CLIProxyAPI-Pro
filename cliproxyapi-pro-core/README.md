@@ -45,14 +45,23 @@ internal/embeddedusage
 - `GET /v0/management/usage/stream` — usage 实时更新 SSE 流。
 - `GET /v0/management/usage/export` — JSONL/NDJSON 导出。
 - `POST /v0/management/usage/import` — JSONL/NDJSON 导入。
+- `POST /v0/management/usage/reset` — 原子清空请求事件和派生统计，保留监控设置、模型价格、配额缓存和备份。
 - `GET /v0/management/usage/status` — 服务状态和记录数量。
 - `GET /v0/management/usage/quota-cache` — 读取配额缓存或统计信息。
 - `PUT /v0/management/usage/quota-cache` — 写入配额缓存。
 - `DELETE /v0/management/usage/quota-cache` — 删除配额缓存。
 - `GET /v0/management/usage/model-prices` — 读取模型价格设置。
 - `PUT /v0/management/usage/model-prices` — 写入模型价格设置。
-- `GET /v0/management/usage/settings` — 读取监控日志保留和 WebDAV 备份设置。
-- `PUT /v0/management/usage/settings` — 写入监控日志保留和 WebDAV 备份设置。
+- `GET|PUT|DELETE /v0/management/usage/model-price-rules` — 管理 provider/model 价格规则和上下文阶梯。
+- `POST /v0/management/usage/model-prices/sync` — 从 models.dev 同步请求历史中出现过的模型。
+- `GET /v0/management/usage/model-prices/sync-status` — 读取同步状态。
+- `POST /v0/management/usage/model-prices/recalculate` — 显式重新估算历史成本。
+- `GET /v0/management/usage/settings` — 读取监控日志保留、WebDAV 备份和模型价格同步设置。
+- `PUT /v0/management/usage/settings` — 写入监控日志保留、WebDAV 备份和模型价格同步设置。
+
+`/usage/events` 和 `/usage/stream` 的 detail 会携带稳定事件 `id`，管理端用它进行增量去重和断线追平。usage 响应还会返回持久化的 `generation`；手动重置或保留期清理推进版本后，SSE 会发送 `reset` 事件，已打开页面据此替换完整快照。SSE 在事件成功写入 SQLite 后由进程内通知立即唤醒，仅保留低频 keepalive，不再为每个连接每秒轮询数据库。
+
+`/usage/aggregates` 支持 `from_ms`、`to_ms`、`interval=minute|hour|day|all`、`group_by=provider,model,endpoint,api_key_hash`、`api_key_hash` 和 `timezone_offset_minutes`。响应同时返回 `latest_id`、`snapshot_at_ms` 和逐事件累加的 `estimatedCost`，避免使用聚合 Token 错选上下文价格阶梯。
 
 ### JSONL usage 备份与恢复
 
@@ -60,12 +69,13 @@ internal/embeddedusage
 
 导出内容包含 usage events，也可能包含元数据记录：
 
-- `model_prices` — 管理页面成本视图使用的模型价格设置。
+- `model_prices` — 基础价格兼容数据和完整 provider/model 价格规则。
 - `quota_cache` — 配额卡片和账号级刷新使用的 SQLite-backed quota snapshots。
-- `monitoring_settings` — 监控日志保留时间、WebDAV 备份配置和 WebDAV 备份保留天数。
+- `monitoring_settings` — 监控日志保留时间、WebDAV 备份配置和 models.dev 定期同步配置。
 - `account_inspection_schedule` — 后端账号巡检调度设置。
+- `account_inspection_snapshot` — 最近一次已结束的账号巡检结果，包含运行设置、汇总、健康统计、完整结果和原始错误详情，不包含巡检日志。
 
-`/usage/import` 接受同样的 JSONL 格式。导入时会对每行只读取一次 `record_type`，导入 usage events，恢复模型价格、quota cache entries、监控设置，并在存在账号巡检调度记录时恢复调度设置。
+`/usage/import` 接受同样的 JSONL 格式。导入时会对每行只读取一次 `record_type`，导入 usage events，恢复模型价格、quota cache entries、监控设置、账号巡检调度和最近一次巡检结果快照。恢复的结果快照为只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。
 
 导入响应示例字段：
 
@@ -81,6 +91,8 @@ internal/embeddedusage
   "quotaCacheRecords": 1,
   "accountInspectionSchedule": true,
   "accountInspectionScheduleRecords": 1,
+  "accountInspectionSnapshot": true,
+  "accountInspectionSnapshotRecords": 1,
   "monitoringSettings": true,
   "monitoringSettingsRecords": 1
 }
@@ -132,6 +144,22 @@ internal/embeddedusage
 
 如需自定义，可设置 `ACCOUNT_INSPECTION_SCHEDULE_PATH`。
 
+最近一次已结束的巡检结果会单独持久化到 `/CLIProxyAPI/usage/account-inspection-snapshot.json`，文件权限为 `0600`。进程重启或 usage 导入恢复后，该快照会标记为只读；下一次完整巡检结束时覆盖。可通过 `ACCOUNT_INSPECTION_SNAPSHOT_PATH` 自定义路径。
+
+### 路由策略与请求状态保护
+
+补丁层在 management API 下增加统一路由策略接口：
+
+- `GET /v0/management/routing-policy`
+- `PUT|PATCH /v0/management/routing-policy`
+- `POST /v0/management/routing-policy/release`
+
+接口聚合 upstream 的路由策略、会话粘性、请求重试、账号切换、冷却、配额回退和 Codex 身份混淆配置，并增加 `routing.request-protection` 请求状态保护配置。内置 provider 支持 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi。
+
+请求状态保护默认关闭，模式默认为 `observe`。接口通过 `availableProviders` 返回当前已有 API 配置或凭据的受支持 provider。启用后可按 provider 配置 HTTP 状态码、连续确认次数、确认窗口、429 配额证据、自动解除和兜底禁用时长。`enforce` 模式达到门槛后会禁用对应认证记录，并写入 `request_protection` 归属元数据；自动解除和管理端手动解除只处理由该策略禁用的账号，不会重新启用用户手动禁用或由其他模块禁用的账号。
+
+自动解除时间优先读取 `Retry-After`、Codex reset headers、响应体 `resets_at` / `resets_in_seconds`，无法解析时使用 provider 的兜底禁用时长。运行状态接口同时返回当前受保护账号和进程内最近事件。
+
 ### 根路径跳转和 health 响应
 
 补丁层还修改了 upstream API 行为：
@@ -165,6 +193,8 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `embeddedusage/` — 内嵌 SQLite usage service 和 management routes。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。
 - `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
+- `patches/routing_policy.go` — 注入统一路由配置和请求状态保护 handlers、usage plugin 与自动解除任务。
+- `patches/routing_protection_config.go` — 注入 `routing.request-protection` 配置类型。
 - `.github/workflows/release-core.yml` — 镜像发布、Pro 二进制资产、management.html 发布、usage 备份、Render 部署触发、Telegram 通知和 workflow 清理。
 
 ## Docker 构建
@@ -214,6 +244,7 @@ docker build \
 ### 账号巡检
 
 - `ACCOUNT_INSPECTION_SCHEDULE_PATH` — 可选调度 JSON 路径。默认 `USAGE_DATA_DIR/account-inspection-schedule.json`。
+- `ACCOUNT_INSPECTION_SNAPSHOT_PATH` — 可选最近一次巡检结果快照 JSON 路径。默认 `USAGE_DATA_DIR/account-inspection-snapshot.json`。
 
 ### WebDAV usage 恢复
 

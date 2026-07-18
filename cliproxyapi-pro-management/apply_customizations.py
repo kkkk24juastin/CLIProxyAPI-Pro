@@ -19,6 +19,10 @@ QUOTA_LOCALE_KEYS = {
         'hours_ago_plural': '{{count}} hours ago',
         'days_ago': '{{count}} day ago',
         'days_ago_plural': '{{count}} days ago',
+        'search_label': 'Search quota credentials',
+        'search_placeholder': 'Search config name, type, provider, note, or plan. Use * as a wildcard',
+        'no_search_results': 'No matching quota credentials',
+        'no_search_results_desc': 'No quota credential matches the current search.',
     },
     'ru.json': {
         'cached_at': 'Обновлено',
@@ -29,6 +33,10 @@ QUOTA_LOCALE_KEYS = {
         'hours_ago_plural': '{{count}} часов назад',
         'days_ago': '{{count}} день назад',
         'days_ago_plural': '{{count}} дней назад',
+        'search_label': 'Поиск конфигураций квот',
+        'search_placeholder': 'Поиск по имени, типу, провайдеру, заметке или тарифу; поддерживается *',
+        'no_search_results': 'Подходящие конфигурации квот не найдены',
+        'no_search_results_desc': 'Текущему запросу не соответствует ни одна конфигурация квот.',
     },
     'zh-CN.json': {
         'cached_at': '更新于',
@@ -36,6 +44,10 @@ QUOTA_LOCALE_KEYS = {
         'minutes_ago': '{{count}} 分钟前',
         'hours_ago': '{{count}} 小时前',
         'days_ago': '{{count}} 天前',
+        'search_label': '搜索配额配置文件',
+        'search_placeholder': '搜索配置文件名称、类型、提供商、备注或套餐，支持 * 通配',
+        'no_search_results': '没有匹配的配额配置文件',
+        'no_search_results_desc': '当前搜索条件下没有可显示的配额配置文件。',
     },
     'zh-TW.json': {
         'cached_at': '更新於',
@@ -43,6 +55,10 @@ QUOTA_LOCALE_KEYS = {
         'minutes_ago': '{{count}} 分鐘前',
         'hours_ago': '{{count}} 小時前',
         'days_ago': '{{count}} 天前',
+        'search_label': '搜尋配額設定檔',
+        'search_placeholder': '搜尋設定檔名稱、類型、供應商、備註或套餐，支援 * 萬用字元',
+        'no_search_results': '沒有符合的配額設定檔',
+        'no_search_results_desc': '目前搜尋條件下沒有可顯示的配額設定檔。',
     },
 }
 
@@ -323,6 +339,66 @@ QUOTA_DELETE_LOCALE_KEYS = {
     },
 }
 
+AUTH_FILES_PLAN_SORT_LABEL_KEYS = {
+    'en.json': 'Plan: High to Low',
+    'ru.json': 'Тариф: по убыванию',
+    'zh-CN.json': '套餐从高到低',
+    'zh-TW.json': '套餐由高到低',
+}
+
+AUTH_FILES_QUOTA_SORT_LABEL_KEYS = {
+    'en.json': 'Available Quota: High to Low',
+    'ru.json': 'Доступная квота: по убыванию',
+    'zh-CN.json': '可用额度从高到低',
+    'zh-TW.json': '可用額度由高到低',
+}
+
+AUTH_FILES_SELECTED_COUNT_LABEL_KEYS = {
+    'en.json': 'Scheduled',
+    'ru.json': 'Назначено',
+    'zh-CN.json': '调度',
+    'zh-TW.json': '調度',
+}
+
+CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS = {
+    'en.json': {
+        'title': 'Anthropic Client Compatibility',
+        'description': 'Control how non-Claude model IDs are exposed to Anthropic-compatible clients.',
+        'label': 'Anthropic model ID compatibility mode',
+        'hint': 'Only changes non-Claude IDs returned by /v1/models. Auto cloaks IDs for identified Claude Desktop clients, while Claude Code and other Anthropic clients keep the original IDs.',
+        'auto': 'Auto (Claude Desktop only)',
+        'always': 'Always cloak IDs',
+        'never': 'Keep original IDs',
+    },
+    'ru.json': {
+        'title': 'Совместимость клиентов Anthropic',
+        'description': 'Управление отображением идентификаторов моделей не-Claude для Anthropic-совместимых клиентов.',
+        'label': 'Режим совместимости идентификаторов моделей Anthropic',
+        'hint': 'Изменяет только идентификаторы моделей не-Claude в ответе /v1/models. Автоматический режим маскирует их только для распознанного Claude Desktop; Claude Code и другие клиенты Anthropic получают исходные идентификаторы.',
+        'auto': 'Авто (только Claude Desktop)',
+        'always': 'Всегда маскировать',
+        'never': 'Сохранять исходные ID',
+    },
+    'zh-CN.json': {
+        'title': 'Anthropic 客户端兼容性',
+        'description': '控制非 Claude 模型 ID 向 Anthropic 兼容客户端的展示方式。',
+        'label': 'Anthropic 模型 ID 兼容模式',
+        'hint': '仅影响 /v1/models 返回的非 Claude 模型 ID。自动模式仅对识别出的 Claude Desktop 进行伪装，Claude Code 和其他 Anthropic 客户端保留原始 ID。',
+        'auto': '自动（仅 Claude Desktop）',
+        'always': '始终伪装 ID',
+        'never': '保留原始 ID',
+    },
+    'zh-TW.json': {
+        'title': 'Anthropic 用戶端相容性',
+        'description': '控制非 Claude 模型 ID 對 Anthropic 相容用戶端的顯示方式。',
+        'label': 'Anthropic 模型 ID 相容模式',
+        'hint': '僅影響 /v1/models 回傳的非 Claude 模型 ID。自動模式只對識別出的 Claude Desktop 進行偽裝，Claude Code 和其他 Anthropic 用戶端保留原始 ID。',
+        'auto': '自動（僅 Claude Desktop）',
+        'always': '一律偽裝 ID',
+        'never': '保留原始 ID',
+    },
+}
+
 
 _writes = {}
 
@@ -451,17 +527,108 @@ def copy_overlay(target: Path) -> None:
             shutil.copy2(src, dst)
 
 
+def patch_modal_focus_restore(target: Path) -> None:
+    path = target / 'src/components/ui/Modal.tsx'
+    replace_once(
+        path,
+        "  useEffect(() => {\n"
+        "    if (open || isVisible) return;\n"
+        "    previouslyFocusedRef.current?.focus();\n"
+        "    previouslyFocusedRef.current = null;\n"
+        "  }, [isVisible, open]);\n",
+        "  useEffect(() => {\n"
+        "    if (open || isVisible) return;\n"
+        "    const previouslyFocused = previouslyFocusedRef.current;\n"
+        "    if (previouslyFocused?.isConnected) {\n"
+        "      previouslyFocused.focus({ preventScroll: true });\n"
+        "    }\n"
+        "    previouslyFocusedRef.current = null;\n"
+        "  }, [isVisible, open]);\n",
+    )
+
+
+def patch_modal_scroll_lock(target: Path) -> None:
+    path = target / 'src/components/ui/scrollLock.ts'
+    text = read(path)
+    replacement_marker = "const snapshot = {\n  bodyOverflow: '',"
+    if replacement_marker in text:
+        return
+
+    start_marker = 'const snapshot = {'
+    end_marker = 'export const FOCUSABLE_SELECTOR'
+    start = text.find(start_marker)
+    end = text.find(end_marker, start)
+    if start == -1 or end == -1:
+        raise RuntimeError(f'Pattern not found in {path}: scroll lock implementation')
+
+    current = text[start:end]
+    required = (
+        "body.style.position = 'fixed';",
+        "body.style.width = '100%';",
+        'contentEl.scrollTo(',
+        'window.scrollTo(',
+    )
+    missing = [marker for marker in required if marker not in current]
+    if missing:
+        raise RuntimeError(f'Pattern not found in {path}: {missing[0]!r}')
+
+    replacement = (
+        "const snapshot = {\n"
+        "  bodyOverflow: '',\n"
+        "  htmlOverflow: '',\n"
+        "};\n\n"
+        "export function lockScroll(): void {\n"
+        "  if (typeof document === 'undefined') return;\n"
+        "  if (activeLockCount === 0) {\n"
+        "    const body = document.body;\n"
+        "    const html = document.documentElement;\n\n"
+        "    snapshot.bodyOverflow = body.style.overflow;\n"
+        "    snapshot.htmlOverflow = html.style.overflow;\n\n"
+        "    body.classList.add(MODAL_LOCK_CLASS);\n"
+        "    html.classList.add(MODAL_LOCK_CLASS);\n"
+        "    body.style.overflow = 'hidden';\n"
+        "    html.style.overflow = 'hidden';\n"
+        "  }\n"
+        "  activeLockCount += 1;\n"
+        "}\n\n"
+        "export function unlockScroll(): void {\n"
+        "  if (typeof document === 'undefined') return;\n"
+        "  activeLockCount = Math.max(0, activeLockCount - 1);\n"
+        "  if (activeLockCount === 0) {\n"
+        "    const body = document.body;\n"
+        "    const html = document.documentElement;\n\n"
+        "    body.classList.remove(MODAL_LOCK_CLASS);\n"
+        "    html.classList.remove(MODAL_LOCK_CLASS);\n"
+        "    body.style.overflow = snapshot.bodyOverflow;\n"
+        "    html.style.overflow = snapshot.htmlOverflow;\n"
+        "  }\n"
+        "}\n\n"
+    )
+    write(path, f'{text[:start]}{replacement}{text[end:]}')
+
+
+def patch_modal_content_scrollbar_layout(target: Path) -> None:
+    path = target / 'src/styles/global.scss'
+    text = read(path)
+    content_lock = "body.modal-open .content {\n  overflow: hidden;\n}\n\n"
+    if content_lock in text:
+        write(path, text.replace(content_lock, '', 1))
+        return
+    if 'body.modal-open .content' in text:
+        raise RuntimeError(f'Pattern not found in {path}: modal content scroll lock')
+
+
 def patch_routes(target: Path) -> None:
     path = target / 'src/router/MainRoutes.tsx'
     replace_once(
         path,
         "import { QuotaPage } from '@/pages/QuotaPage';\n",
-        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\n",
+        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\n",
     )
     replace_once(
         path,
         "  { path: '/quota', element: <QuotaPage /> },\n",
-        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n",
+        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n",
     )
 
 
@@ -476,13 +643,13 @@ def patch_layout(target: Path) -> None:
     insert_once(
         path,
         "  IconSidebarProviders,\n",
-        "  IconSidebarMonitor,\n  IconSidebarProviders,\n",
-        "  IconSidebarMonitor,\n",
+        "  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
+        "  IconSidebarAccountInspection,\n",
     )
     replace_once(
         path,
         "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n",
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n",
+        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n",
     )
     text = read(path)
     if "path: '/monitoring'" not in text:
@@ -502,7 +669,7 @@ def patch_layout(target: Path) -> None:
                     flat_quota_item,
                     flat_quota_item
                     + "    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },\n"
-                    + "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
+                    + "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
                     1,
                 ),
             )
@@ -522,13 +689,71 @@ def patch_layout(target: Path) -> None:
                     + "          path: '/account-inspection',\n"
                     + "          labelKey: 'nav.account_inspection',\n"
                     + "          metaKey: 'nav_meta.account_inspection',\n"
-                    + "          icon: sidebarIcons.monitoring,\n"
+                    + "          icon: sidebarIcons.accountInspection,\n"
                     + "        },\n",
                     1,
                 ),
             )
         else:
             raise RuntimeError(f'Pattern not found in {path}: quota navigation item')
+    replace_once_if_present(
+        path,
+        "        {\n"
+        "          path: '/account-inspection',\n"
+        "          labelKey: 'nav.account_inspection',\n"
+        "          metaKey: 'nav_meta.account_inspection',\n"
+        "          icon: sidebarIcons.monitoring,\n"
+        "        },\n",
+        "        {\n"
+        "          path: '/account-inspection',\n"
+        "          labelKey: 'nav.account_inspection',\n"
+        "          metaKey: 'nav_meta.account_inspection',\n"
+        "          icon: sidebarIcons.accountInspection,\n"
+        "        },\n",
+    )
+    replace_once_if_present(
+        path,
+        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
+        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
+    )
+    flat_routing_item = (
+        "    { path: '/routing', label: t('nav.routing_policy'), icon: sidebarIcons.routing },\n"
+    )
+    flat_account_inspection_item = (
+        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n"
+    )
+    grouped_routing_item = (
+        "        {\n"
+        "          path: '/routing',\n"
+        "          labelKey: 'nav.routing_policy',\n"
+        "          metaKey: 'nav_meta.routing_policy',\n"
+        "          icon: sidebarIcons.routing,\n"
+        "        },\n"
+    )
+    grouped_account_inspection_item = (
+        "        {\n"
+        "          path: '/account-inspection',\n"
+        "          labelKey: 'nav.account_inspection',\n"
+        "          metaKey: 'nav_meta.account_inspection',\n"
+        "          icon: sidebarIcons.accountInspection,\n"
+        "        },\n"
+    )
+    text = read(path).replace(flat_routing_item, '').replace(grouped_routing_item, '')
+    if flat_account_inspection_item in text:
+        text = text.replace(
+            flat_account_inspection_item,
+            flat_account_inspection_item + flat_routing_item,
+            1,
+        )
+    elif grouped_account_inspection_item in text:
+        text = text.replace(
+            grouped_account_inspection_item,
+            grouped_account_inspection_item + grouped_routing_item,
+            1,
+        )
+    else:
+        raise RuntimeError(f'Pattern not found in {path}: account inspection navigation item')
+    write(path, text)
     replace_once(
         path,
         "            <PageTransition\n",
@@ -538,8 +763,6 @@ def patch_layout(target: Path) -> None:
 def patch_icons(target: Path) -> None:
     path = target / 'src/components/ui/icons.tsx'
     text = read(path)
-    if "export function IconSidebarMonitor" in text:
-        return
 
     if "baseSvgProps" in text:
         svg_props = "baseSvgProps"
@@ -559,16 +782,53 @@ def patch_icons(target: Path) -> None:
         "  );\n"
         "}\n\n"
     )
+    account_inspection_icon = (
+        "export function IconSidebarAccountInspection({ size = 20, ...props }: IconProps) {\n"
+        "  return (\n"
+        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
+        "      <rect x=\"5\" y=\"3\" width=\"11\" height=\"16\" rx=\"2\" />\n"
+        "      <path d=\"M9 7h3\" />\n"
+        "      <path d=\"m8.5 11 1.4 1.4 2.6-2.8\" />\n"
+        "      <circle cx=\"16.5\" cy=\"16.5\" r=\"3\" />\n"
+        "      <path d=\"m19 19 2 2\" />\n"
+        "      <path d=\"M8 3.5h5\" fill=\"currentColor\" fillOpacity=\"0.08\" />\n"
+        "    </svg>\n"
+        "  );\n"
+        "}\n\n"
+    )
+    routing_icon = (
+        "export function IconSidebarRouting({ size = 20, ...props }: IconProps) {\n"
+        "  return (\n"
+        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
+        "      <circle cx=\"6\" cy=\"6\" r=\"2\" />\n"
+        "      <circle cx=\"18\" cy=\"6\" r=\"2\" />\n"
+        "      <circle cx=\"12\" cy=\"18\" r=\"2\" />\n"
+        "      <path d=\"M8 6h8\" />\n"
+        "      <path d=\"m7.5 7.5 3.2 7.2\" />\n"
+        "      <path d=\"m16.5 7.5-3.2 7.2\" />\n"
+        "    </svg>\n"
+        "  );\n"
+        "}\n\n"
+    )
+    icons_to_insert = ""
+    if "export function IconSidebarMonitor" not in text:
+        icons_to_insert += monitor_icon
+    if "export function IconSidebarAccountInspection" not in text:
+        icons_to_insert += account_inspection_icon
+    if "export function IconSidebarRouting" not in text:
+        icons_to_insert += routing_icon
+    if not icons_to_insert:
+        return
     for marker in (
         "export function IconSidebarLogs({ size = 20, ...props }: IconProps) {\n",
         "export const IconSidebarLogs = ",
         "export function IconSidebarSystem({ size = 20, ...props }: IconProps) {\n",
     ):
         if marker in text:
-            write(path, text.replace(marker, monitor_icon + marker, 1))
+            write(path, text.replace(marker, icons_to_insert + marker, 1))
             return
 
-    write(path, text.rstrip() + "\n\n" + monitor_icon)
+    write(path, text.rstrip() + "\n\n" + icons_to_insert)
 
 
 def patch_quota_types(target: Path) -> None:
@@ -649,6 +909,13 @@ def patch_quota_configs(target: Path) -> None:
             "        ...group.buckets.map((bucket) => {\n",
             "        ...(Array.isArray(group.buckets) ? group.buckets : []).map((bucket) => {\n",
         ),
+    ]:
+        replace_once(path, old, new)
+
+    if 'billing.productUsage' not in read(path):
+        return
+
+    for old, new in [
         (
             "  const clampedUsed =\n",
             "  const productUsageItems = Array.isArray(billing.productUsage) ? billing.productUsage : [];\n\n  const clampedUsed =\n",
@@ -667,6 +934,41 @@ def patch_quota_configs(target: Path) -> None:
 
 def patch_quota_page(target: Path) -> None:
     path = target / 'src/pages/QuotaPage.tsx'
+    insert_once(
+        path,
+        "export function QuotaPage() {\n",
+        "const QUOTA_SEARCH_FIELD_KEYS = [\n"
+        "  'name',\n  'type',\n  'provider',\n  'note',\n  'remark',\n  'remarks',\n"
+        "  'description',\n  'plan',\n  'plan_type',\n  'planType',\n  'package',\n"
+        "  'package_name',\n  'packageName',\n  'subscription',\n  'subscription_plan',\n"
+        "  'subscriptionPlan',\n  'tier',\n  'tier_id',\n  'tierId',\n  'tier_label',\n"
+        "  'tierLabel',\n  'product',\n  'product_name',\n  'productName',\n  'quota_plan',\n"
+        "  'quotaPlan',\n] as const;\n\n"
+        "const QUOTA_NESTED_SEARCH_KEY_PATTERN =\n"
+        "  /(note|remark|description|desc|plan|package|subscription|tier|product|quota)/i;\n\n"
+        "const escapeQuotaSearchSegment = (value: string): string =>\n"
+        "  value.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n\n"
+        "const buildQuotaWildcardSearch = (value: string): RegExp | null => {\n"
+        "  if (!value.includes('*')) return null;\n"
+        "  return new RegExp(value.split('*').map(escapeQuotaSearchSegment).join('.*'), 'i');\n"
+        "};\n\n"
+        "const collectQuotaSearchValues = (value: unknown, depth = 0): string[] => {\n"
+        "  if (value == null) return [];\n"
+        "  if (typeof value === 'string') return value.trim() ? [value] : [];\n"
+        "  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];\n"
+        "  if (depth >= 2 || typeof value !== 'object') return [];\n"
+        "  if (Array.isArray(value)) return value.flatMap((item) => collectQuotaSearchValues(item, depth + 1));\n"
+        "  return Object.entries(value as Record<string, unknown>).flatMap(([key, nestedValue]) =>\n"
+        "    QUOTA_NESTED_SEARCH_KEY_PATTERN.test(key)\n"
+        "      ? collectQuotaSearchValues(nestedValue, depth + 1)\n"
+        "      : []\n"
+        "  );\n"
+        "};\n\n"
+        "const buildQuotaSearchValues = (item: AuthFileItem): string[] =>\n"
+        "  QUOTA_SEARCH_FIELD_KEYS.flatMap((key) => collectQuotaSearchValues(item[key]));\n\n"
+        "export function QuotaPage() {\n",
+        "QUOTA_SEARCH_FIELD_KEYS",
+    )
     insert_once(
         path,
         "import { useAuthStore } from '@/stores';\n",
@@ -777,7 +1079,11 @@ def patch_quota_page(target: Path) -> None:
         "    },\n"
         "    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n"
         "  );\n\n"
-        "  const normalizedSearch = searchText.trim().toLowerCase();\n"
+        "  const normalizedSearch = searchText.trim();\n"
+        "  const wildcardSearch = useMemo(\n"
+        "    () => buildQuotaWildcardSearch(normalizedSearch),\n"
+        "    [normalizedSearch]\n"
+        "  );\n"
         "  const planOptions = useMemo(() => {\n"
         "    const plans = new Set<string>();\n"
         "    for (const file of files) {\n"
@@ -788,8 +1094,14 @@ def patch_quota_page(target: Path) -> None:
         "  }, [files, resolveFilePlan]);\n\n"
         "  const filteredFiles = useMemo(() => {\n"
         "    return files.filter((file) => {\n"
-        "      if (normalizedSearch && !file.name.toLowerCase().includes(normalizedSearch)) {\n"
-        "        return false;\n"
+        "      if (normalizedSearch) {\n"
+        "        const normalizedTerm = normalizedSearch.toLowerCase();\n"
+        "        const matchesSearch = buildQuotaSearchValues(file).some((value) =>\n"
+        "          wildcardSearch\n"
+        "            ? wildcardSearch.test(value)\n"
+        "            : value.toLowerCase().includes(normalizedTerm)\n"
+        "        );\n"
+        "        if (!matchesSearch) return false;\n"
         "      }\n"
         "      if (planFilter !== 'all') {\n"
         "        const filePlan = resolveFilePlan(file);\n"
@@ -802,7 +1114,7 @@ def patch_quota_page(target: Path) -> None:
         "      }\n"
         "      return true;\n"
         "    });\n"
-        "  }, [files, normalizedSearch, planFilter, statusFilter, resolveFilePlan, resolveFileQuota]);\n",
+        "  }, [files, normalizedSearch, wildcardSearch, planFilter, statusFilter, resolveFilePlan, resolveFileQuota]);\n",
         "const filteredFiles",
     )
     replace_once(
@@ -930,6 +1242,263 @@ def patch_quota_section(target: Path) -> None:
         "                  selected={selectedNames?.has(item.name) ?? false}\n"
         "                  onToggleSelect={onToggleSelect}\n"
         "                  onDeleteFile={onDeleteFile}\n",
+    )
+
+
+def patch_quota_page_search(target: Path) -> None:
+    page_path = target / 'src/pages/QuotaPage.tsx'
+    if 'const QUOTA_SEARCH_FIELD_KEYS' in read(page_path):
+        return
+    replace_once(
+        page_path,
+        "import { useCallback, useEffect, useState } from 'react';\n",
+        "import { useCallback, useEffect, useMemo, useState } from 'react';\n",
+    )
+    insert_once(
+        page_path,
+        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
+        "import { EmptyState } from '@/components/ui/EmptyState';\n"
+        "import { Input } from '@/components/ui/Input';\n"
+        "import { IconSearch } from '@/components/ui/icons';\n"
+        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
+        "quota_management.search_label",
+    )
+    insert_once(
+        page_path,
+        "export function QuotaPage() {\n",
+        "const QUOTA_SEARCH_FIELD_KEYS = [\n"
+        "  'name',\n"
+        "  'type',\n"
+        "  'provider',\n"
+        "  'note',\n"
+        "  'remark',\n"
+        "  'remarks',\n"
+        "  'description',\n"
+        "  'plan',\n"
+        "  'plan_type',\n"
+        "  'planType',\n"
+        "  'package',\n"
+        "  'package_name',\n"
+        "  'packageName',\n"
+        "  'subscription',\n"
+        "  'subscription_plan',\n"
+        "  'subscriptionPlan',\n"
+        "  'tier',\n"
+        "  'tier_id',\n"
+        "  'tierId',\n"
+        "  'tier_label',\n"
+        "  'tierLabel',\n"
+        "  'product',\n"
+        "  'product_name',\n"
+        "  'productName',\n"
+        "  'quota_plan',\n"
+        "  'quotaPlan',\n"
+        "] as const;\n"
+        "\n"
+        "const QUOTA_NESTED_SEARCH_KEY_PATTERN =\n"
+        "  /(note|remark|description|desc|plan|package|subscription|tier|product|quota)/i;\n"
+        "\n"
+        "const escapeQuotaSearchSegment = (value: string): string =>\n"
+        "  value.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n"
+        "\n"
+        "const buildQuotaWildcardSearch = (value: string): RegExp | null => {\n"
+        "  if (!value.includes('*')) return null;\n"
+        "  const pattern = value.split('*').map(escapeQuotaSearchSegment).join('.*');\n"
+        "  return new RegExp(pattern, 'i');\n"
+        "};\n"
+        "\n"
+        "const collectQuotaSearchValues = (value: unknown, depth = 0): string[] => {\n"
+        "  if (value == null) return [];\n"
+        "  if (typeof value === 'string') return value.trim() ? [value] : [];\n"
+        "  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];\n"
+        "  if (depth >= 2) return [];\n"
+        "  if (Array.isArray(value)) {\n"
+        "    return value.flatMap((item) => collectQuotaSearchValues(item, depth + 1));\n"
+        "  }\n"
+        "  if (typeof value !== 'object') return [];\n"
+        "\n"
+        "  return Object.entries(value as Record<string, unknown>).flatMap(([key, nestedValue]) =>\n"
+        "    QUOTA_NESTED_SEARCH_KEY_PATTERN.test(key)\n"
+        "      ? collectQuotaSearchValues(nestedValue, depth + 1)\n"
+        "      : []\n"
+        "  );\n"
+        "};\n"
+        "\n"
+        "const buildQuotaSearchValues = (item: AuthFileItem): string[] =>\n"
+        "  QUOTA_SEARCH_FIELD_KEYS.flatMap((key) => collectQuotaSearchValues(item[key]));\n"
+        "\n"
+        "export function QuotaPage() {\n",
+        "QUOTA_SEARCH_FIELD_KEYS",
+    )
+    replace_once(
+        page_path,
+        "  const [error, setError] = useState('');\n\n  const disableControls",
+        "  const [error, setError] = useState('');\n"
+        "  const [search, setSearch] = useState('');\n"
+        "\n"
+        "  const normalizedSearch = search.trim();\n"
+        "  const wildcardSearch = useMemo(\n"
+        "    () => buildQuotaWildcardSearch(normalizedSearch),\n"
+        "    [normalizedSearch]\n"
+        "  );\n"
+        "  const searchFileNames = useMemo(() => {\n"
+        "    if (!normalizedSearch) return null;\n"
+        "    const normalizedTerm = normalizedSearch.toLowerCase();\n"
+        "    return new Set(\n"
+        "      files\n"
+        "        .filter((item) =>\n"
+        "          buildQuotaSearchValues(item).some((value) =>\n"
+        "            wildcardSearch\n"
+        "              ? wildcardSearch.test(value)\n"
+        "              : value.toLowerCase().includes(normalizedTerm)\n"
+        "          )\n"
+        "        )\n"
+        "        .map((item) => item.name)\n"
+        "    );\n"
+        "  }, [files, normalizedSearch, wildcardSearch]);\n"
+        "  const hasQuotaSearchResults = useMemo(() => {\n"
+        "    if (!searchFileNames) return true;\n"
+        "    const filters = [\n"
+        "      CLAUDE_CONFIG.filterFn,\n"
+        "      ANTIGRAVITY_CONFIG.filterFn,\n"
+        "      CODEX_CONFIG.filterFn,\n"
+        "      GEMINI_CLI_CONFIG.filterFn,\n"
+        "      XAI_CONFIG.filterFn,\n"
+        "      KIMI_CONFIG.filterFn,\n"
+        "    ];\n"
+        "    return files.some(\n"
+        "      (file) => searchFileNames.has(file.name) && filters.some((filterFn) => filterFn(file))\n"
+        "    );\n"
+        "  }, [files, searchFileNames]);\n"
+        "\n"
+        "  const disableControls",
+    )
+    insert_once(
+        page_path,
+        "      {error && <div className={styles.errorBox}>{error}</div>}\n",
+        "      <div className={styles.searchBar}>\n"
+        "        <Input\n"
+        "          className={styles.searchInput}\n"
+        "          type=\"search\"\n"
+        "          value={search}\n"
+        "          onChange={(event) => setSearch(event.target.value)}\n"
+        "          placeholder={t('quota_management.search_placeholder')}\n"
+        "          aria-label={t('quota_management.search_label')}\n"
+        "          rightElement={<IconSearch className={styles.searchIcon} size={18} />}\n"
+        "        />\n"
+        "      </div>\n"
+        "\n"
+        "      {error && <div className={styles.errorBox}>{error}</div>}\n"
+        "\n"
+        "      {normalizedSearch && !hasQuotaSearchResults && (\n"
+        "        <EmptyState\n"
+        "          title={t('quota_management.no_search_results')}\n"
+        "          description={t('quota_management.no_search_results_desc')}\n"
+        "        />\n"
+        "      )}\n",
+        "quota_management.no_search_results",
+    )
+    replace_all(
+        page_path,
+        "        disabled={disableControls}\n      />",
+        "        disabled={disableControls}\n"
+        "        searchFileNames={searchFileNames}\n"
+        "        hideWhenEmpty={Boolean(normalizedSearch)}\n"
+        "      />",
+    )
+
+    section_path = target / 'src/components/quota/QuotaSection.tsx'
+    replace_once(
+        section_path,
+        "  disabled: boolean;\n}",
+        "  disabled: boolean;\n"
+        "  searchFileNames?: ReadonlySet<string> | null;\n"
+        "  hideWhenEmpty?: boolean;\n"
+        "}",
+    )
+    replace_once(
+        section_path,
+        "  loading,\n  disabled,\n}: QuotaSectionProps<TState, TData>)",
+        "  loading,\n"
+        "  disabled,\n"
+        "  searchFileNames = null,\n"
+        "  hideWhenEmpty = false,\n"
+        "}: QuotaSectionProps<TState, TData>)",
+    )
+    replace_once(
+        section_path,
+        "  const filteredFiles = useMemo(\n"
+        "    () => files.filter((file) => config.filterFn(file)),\n"
+        "    [files, config]\n"
+        "  );\n",
+        "  const providerFiles = useMemo(\n"
+        "    () => files.filter((file) => config.filterFn(file)),\n"
+        "    [files, config]\n"
+        "  );\n"
+        "  const filteredFiles = useMemo(\n"
+        "    () =>\n"
+        "      searchFileNames\n"
+        "        ? providerFiles.filter((file) => searchFileNames.has(file.name))\n"
+        "        : providerFiles,\n"
+        "    [providerFiles, searchFileNames]\n"
+        "  );\n",
+    )
+    replace_once(
+        section_path,
+        "    if (filteredFiles.length === 0) {\n"
+        "      setQuota({});\n"
+        "      return;\n"
+        "    }\n"
+        "    setQuota((prev) => {\n"
+        "      const nextState: Record<string, TState> = {};\n"
+        "      filteredFiles.forEach((file) => {\n",
+        "    if (providerFiles.length === 0) {\n"
+        "      setQuota({});\n"
+        "      return;\n"
+        "    }\n"
+        "    setQuota((prev) => {\n"
+        "      const nextState: Record<string, TState> = {};\n"
+        "      providerFiles.forEach((file) => {\n",
+    )
+    replace_once(
+        section_path,
+        "  }, [filteredFiles, loading, setQuota]);\n",
+        "  }, [loading, providerFiles, setQuota]);\n",
+    )
+    insert_once(
+        section_path,
+        "  return (\n    <Card\n",
+        "  if (hideWhenEmpty && filteredFiles.length === 0) return null;\n\n"
+        "  return (\n    <Card\n",
+        "hideWhenEmpty && filteredFiles.length",
+    )
+
+    styles_path = target / 'src/pages/QuotaPage.module.scss'
+    insert_once(
+        styles_path,
+        ".errorBox {\n",
+        ".searchBar {\n"
+        "  width: min(100%, 560px);\n"
+        "\n"
+        "  :global(.form-group) {\n"
+        "    margin: 0;\n"
+        "  }\n"
+        "}\n"
+        "\n"
+        ".searchInput {\n"
+        "  width: 100%;\n"
+        "  min-height: 42px;\n"
+        "  padding-right: 40px;\n"
+        "}\n"
+        "\n"
+        ".searchIcon {\n"
+        "  display: block;\n"
+        "  color: var(--text-tertiary);\n"
+        "  pointer-events: none;\n"
+        "}\n"
+        "\n"
+        ".errorBox {\n",
+        ".searchBar",
     )
 
 
@@ -1062,7 +1631,7 @@ def patch_antigravity_quota_builders(target: Path) -> None:
         "        description: normalizeStringValue(group.description) ?? undefined,\n",
         "        description,\n",
     )
-    replace_once(
+    replace_once_if_present(
         path,
         "    productUsage: primary.productUsage.length > 0 ? primary.productUsage : fallback.productUsage,\n",
         "    productUsage: Array.isArray(primary.productUsage) && primary.productUsage.length > 0\n      ? primary.productUsage\n      : Array.isArray(fallback.productUsage)\n        ? fallback.productUsage\n        : [],\n",
@@ -1176,7 +1745,7 @@ def patch_auth_files_page_search(target: Path) -> None:
         "type AuthFileSearchTranslate = (key: string) => string;\n"
         "type AuthFileSearchQuotaStore = Pick<\n"
         "  ReturnType<typeof useQuotaStore.getState>,\n"
-        "  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'xaiQuota'\n"
+        "  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'kimiQuota' | 'xaiQuota'\n"
         ">;\n"
         "\n"
         "const AUTH_FILE_NESTED_SEARCH_KEY_PATTERN =\n"
@@ -1319,10 +1888,11 @@ def patch_auth_files_page_search(target: Path) -> None:
         "  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n"
         "  const codexQuota = useQuotaStore((state) => state.codexQuota);\n"
         "  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n"
+        "  const kimiQuota = useQuotaStore((state) => state.kimiQuota);\n"
         "  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n"
         "  const quotaSearchStore = useMemo(\n"
-        "    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, xaiQuota }),\n"
-        "    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, xaiQuota]\n"
+        "    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n"
+        "    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n"
         "  );\n",
         "quotaSearchStore",
     )
@@ -1345,6 +1915,284 @@ def patch_auth_files_page_search(target: Path) -> None:
         path,
         "  }, [filesMatchingStatusFilters, normalizedFilter, normalizedSearch, wildcardSearch]);\n",
         "  }, [filesMatchingStatusFilters, normalizedFilter, normalizedSearch, quotaSearchStore, t, wildcardSearch]);\n",
+    )
+
+
+def patch_auth_files_page_sorting(target: Path) -> None:
+    page_path = target / 'src/pages/AuthFilesPage.tsx'
+    ui_state_path = target / 'src/features/authFiles/uiState.ts'
+
+    replace_once(
+        ui_state_path,
+        "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority'] as const;\n",
+        "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority', 'plan', 'quota'] as const;\n",
+    )
+
+    insert_once(
+        page_path,
+        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
+        "import {\n"
+        "  compareAuthFilesByPlanDescending,\n"
+        "  isAuthFilePlanSortProvider,\n"
+        "} from '@/features/authFiles/planSort';\n"
+        "import {\n"
+        "  compareAuthFilesByAvailableQuotaDescending,\n"
+        "  isAuthFileQuotaSortProvider,\n"
+        "} from '@/features/authFiles/quotaSort';\n"
+        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
+        "from '@/features/authFiles/quotaSort'",
+    )
+
+    insert_once(
+        page_path,
+        "  const enabledOnly = statusFilterMode === 'enabled';\n",
+        "  const enabledOnly = statusFilterMode === 'enabled';\n"
+        "  const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter);\n"
+        "  const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter);\n"
+        "  const selectedSortModeAvailable =\n"
+        "    (sortMode !== 'plan' || planSortAvailable)\n"
+        "    && (sortMode !== 'quota' || quotaSortAvailable);\n"
+        "  const effectiveSortMode: AuthFilesSortMode =\n"
+        "    selectedSortModeAvailable ? sortMode : 'default';\n",
+        'effectiveSortMode',
+    )
+
+    insert_once(
+        page_path,
+        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
+        "  useEffect(() => {\n"
+        "    if (selectedSortModeAvailable) return;\n"
+        "    setSortMode('default');\n"
+        "    setPage(1);\n"
+        "  }, [selectedSortModeAvailable]);\n"
+        "\n"
+        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
+        "if (selectedSortModeAvailable) return;",
+    )
+
+    replace_once(
+        page_path,
+        "  const sortOptions = useMemo(\n"
+        "    () => [\n"
+        "      { value: 'default', label: t('auth_files.sort_default') },\n"
+        "      { value: 'az', label: t('auth_files.sort_az') },\n"
+        "      { value: 'priority', label: t('auth_files.sort_priority') },\n"
+        "    ],\n"
+        "    [t]\n"
+        "  );\n",
+        "  const sortOptions = useMemo(() => {\n"
+        "    const options: Array<{ value: AuthFilesSortMode; label: string }> = [\n"
+        "      { value: 'default', label: t('auth_files.sort_default') },\n"
+        "      { value: 'az', label: t('auth_files.sort_az') },\n"
+        "      { value: 'priority', label: t('auth_files.sort_priority') },\n"
+        "    ];\n"
+        "    if (planSortAvailable) {\n"
+        "      options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') });\n"
+        "    }\n"
+        "    if (quotaSortAvailable) {\n"
+        "      options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') });\n"
+        "    }\n"
+        "    return options;\n"
+        "  }, [planSortAvailable, quotaSortAvailable, t]);\n",
+    )
+    replace_once(
+        page_path,
+        "  const sorted = useMemo(() => {\n"
+        "    const copy = [...filtered];\n"
+        "    if (sortMode === 'default') {\n"
+        "      copy.sort((a, b) => {\n"
+        "        const providerA = normalizeProviderKey(String(a.provider ?? a.type ?? 'unknown'));\n"
+        "        const providerB = normalizeProviderKey(String(b.provider ?? b.type ?? 'unknown'));\n"
+        "        const providerCompare = providerA.localeCompare(providerB);\n"
+        "        if (providerCompare !== 0) return providerCompare;\n"
+        "        return a.name.localeCompare(b.name);\n"
+        "      });\n"
+        "    } else if (sortMode === 'az') {\n"
+        "      copy.sort((a, b) => a.name.localeCompare(b.name));\n"
+        "    } else if (sortMode === 'priority') {\n"
+        "      copy.sort((a, b) => {\n"
+        "        const pa = parsePriorityValue(a.priority) ?? 0;\n"
+        "        const pb = parsePriorityValue(b.priority) ?? 0;\n"
+        "        return pb - pa; // 高优先级排前面\n"
+        "      });\n"
+        "    }\n"
+        "    return copy;\n"
+        "  }, [filtered, sortMode]);\n",
+        "  const sorted = useMemo(() => {\n"
+        "    const copy = [...filtered];\n"
+        "    if (effectiveSortMode === 'default') {\n"
+        "      copy.sort((a, b) => {\n"
+        "        const providerA = normalizeProviderKey(String(a.provider ?? a.type ?? 'unknown'));\n"
+        "        const providerB = normalizeProviderKey(String(b.provider ?? b.type ?? 'unknown'));\n"
+        "        const providerCompare = providerA.localeCompare(providerB);\n"
+        "        if (providerCompare !== 0) return providerCompare;\n"
+        "        return a.name.localeCompare(b.name);\n"
+        "      });\n"
+        "    } else if (effectiveSortMode === 'az') {\n"
+        "      copy.sort((a, b) => a.name.localeCompare(b.name));\n"
+        "    } else if (effectiveSortMode === 'priority') {\n"
+        "      copy.sort((a, b) => {\n"
+        "        const pa = parsePriorityValue(a.priority) ?? 0;\n"
+        "        const pb = parsePriorityValue(b.priority) ?? 0;\n"
+        "        return pb - pa; // 高优先级排前面\n"
+        "      });\n"
+        "    } else if (effectiveSortMode === 'plan') {\n"
+        "      copy.sort((a, b) => compareAuthFilesByPlanDescending(a, b, quotaSearchStore));\n"
+        "    } else if (effectiveSortMode === 'quota') {\n"
+        "      copy.sort((a, b) => compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore));\n"
+        "    }\n"
+        "    return copy;\n"
+        "  }, [effectiveSortMode, filtered, quotaSearchStore]);\n",
+    )
+
+    replace_once(
+        page_path,
+        "                      value={sortMode}\n"
+        "                      options={sortOptions}\n"
+        "                      onChange={handleSortModeChange}\n",
+        "                      value={effectiveSortMode}\n"
+        "                      options={sortOptions}\n"
+        "                      onChange={handleSortModeChange}\n",
+    )
+
+
+def patch_auth_files_runtime_state(target: Path) -> None:
+    type_path = target / 'src/types/authFile.ts'
+    card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
+    page_path = target / 'src/pages/AuthFilesPage.tsx'
+
+    insert_once(
+        type_path,
+        "  success?: unknown;\n",
+        "  selected?: unknown;\n  success?: unknown;\n",
+        "selected?: unknown;",
+    )
+    replace_once(
+        card_path,
+        "  const fileStats = {\n    success: normalizeUsageTotal(file.success),\n    failure: normalizeUsageTotal(file.failed),\n  };\n",
+        "  const fileStats = {\n    selected: normalizeUsageTotal(file.selected),\n    success: normalizeUsageTotal(file.success),\n    failure: normalizeUsageTotal(file.failed),\n  };\n",
+    )
+    insert_once(
+        card_path,
+        "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n",
+        "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n"
+        "              <div className={styles.statPill}>\n"
+        "                <span className={styles.statLabel}>{t('auth_files.selected_count')}</span>\n"
+        "                <span className={styles.statValue}>{fileStats.selected}</span>\n"
+        "              </div>\n",
+        "t('auth_files.selected_count')",
+    )
+
+    insert_once(
+        page_path,
+        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
+        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n"
+        "import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n",
+        "quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware'",
+    )
+    replace_once(
+        page_path,
+        "  const handleHeaderRefresh = useCallback(async () => {\n"
+        "    await Promise.all([loadFiles(), loadExcluded(), loadModelAlias()]);\n"
+        "  }, [loadFiles, loadExcluded, loadModelAlias]);\n",
+        "  const handleHeaderRefresh = useCallback(async () => {\n"
+        "    await Promise.all([\n"
+        "      loadFiles(),\n"
+        "      loadExcluded(),\n"
+        "      loadModelAlias(),\n"
+        "      quotaPersistenceMiddleware.ensureFresh(),\n"
+        "    ]);\n"
+        "  }, [loadFiles, loadExcluded, loadModelAlias]);\n",
+    )
+    insert_once(
+        page_path,
+        "  const existingTypes = useMemo(() => {\n",
+        "  useEffect(() => {\n"
+        "    if (!isCurrentLayer) return;\n"
+        "    void quotaPersistenceMiddleware.ensureFresh();\n"
+        "  }, [files, isCurrentLayer]);\n\n"
+        "  const existingTypes = useMemo(() => {\n",
+        "}, [files, isCurrentLayer]);",
+    )
+
+
+def patch_runtime_detection(target: Path) -> None:
+    version_path = target / 'src/services/api/version.ts'
+    if "apiClient.get('/nodes')" not in read(version_path):
+        return
+
+    client_path = target / 'src/services/api/client.ts'
+    insert_once(
+        client_path,
+        "  private managementKey: string = '';\n",
+        "  private managementKey: string = '';\n  private runtimeKind: ServerRuntimeKind = 'unknown';\n",
+        "private runtimeKind: ServerRuntimeKind",
+    )
+    replace_once(
+        client_path,
+        "    this.apiBase = computeApiUrl(config.apiBase);\n"
+        "    this.managementKey = config.managementKey;\n"
+        "\n"
+        "    if (config.timeout) {\n",
+        "    const nextApiBase = computeApiUrl(config.apiBase);\n"
+        "    const connectionChanged =\n"
+        "      this.apiBase !== nextApiBase || this.managementKey !== config.managementKey;\n"
+        "    this.apiBase = nextApiBase;\n"
+        "    this.managementKey = config.managementKey;\n"
+        "    if (connectionChanged) {\n"
+        "      this.runtimeKind = 'unknown';\n"
+        "    }\n"
+        "\n"
+        "    if (config.timeout) {\n",
+    )
+    insert_once(
+        client_path,
+        "  private readHeader(headers: Record<string, unknown> | undefined, keys: string[]): string | null {\n",
+        "  getRuntimeKind(): ServerRuntimeKind {\n"
+        "    return this.runtimeKind;\n"
+        "  }\n"
+        "\n"
+        "  private readHeader(headers: Record<string, unknown> | undefined, keys: string[]): string | null {\n",
+        "getRuntimeKind(): ServerRuntimeKind",
+    )
+    replace_once(
+        client_path,
+        "        const runtimeKind: ServerRuntimeKind | null =\n"
+        "          homeVersion || homeBuildDate ? 'home' : cpaVersion || cpaBuildDate ? 'cpa' : null;\n"
+        "\n"
+        "        // 触发版本更新事件（后续通过 store 处理）\n",
+        "        const runtimeKind: ServerRuntimeKind | null =\n"
+        "          homeVersion || homeBuildDate ? 'home' : cpaVersion || cpaBuildDate ? 'cpa' : null;\n"
+        "        if (runtimeKind) {\n"
+        "          this.runtimeKind = runtimeKind;\n"
+        "        }\n"
+        "\n"
+        "        // 触发版本更新事件（后续通过 store 处理）\n",
+    )
+
+    replace_all(
+        version_path,
+        "import { isRecord } from '@/utils/helpers';\n",
+        "",
+    )
+    replace_once(
+        version_path,
+        "  async detectRuntimeKind(): Promise<ServerRuntimeKind> {\n"
+        "    try {\n"
+        "      const data = await apiClient.get('/nodes');\n"
+        "      return isRecord(data) && Array.isArray(data.nodes) ? 'home' : 'unknown';\n"
+        "    } catch (error: unknown) {\n"
+        "      const status = isRecord(error) ? error.status : undefined;\n"
+        "      if (status === 404 || status === 405) {\n"
+        "        return 'cpa';\n"
+        "      }\n"
+        "      return 'unknown';\n"
+        "    }\n"
+        "  },\n",
+        "  async detectRuntimeKind(): Promise<ServerRuntimeKind> {\n"
+        "    const runtimeKind = apiClient.getRuntimeKind();\n"
+        "    return runtimeKind === 'unknown' ? 'cpa' : runtimeKind;\n"
+        "  },\n",
     )
 
 
@@ -1427,7 +2275,7 @@ def patch_supporting_api_and_types(target: Path) -> None:
     replace_once(
         api_index_path,
         "export * from './apiCall';\n",
-        "export * from './apiCall';\nexport * from './accountInspection';\n",
+        "export * from './apiCall';\nexport * from './accountInspection';\nexport * from './routingPolicy';\n",
     )
 
     format_path = target / 'src/utils/format.ts'
@@ -1554,6 +2402,188 @@ def patch_auth_files_batch_actions(target: Path) -> None:
         ".batchResultSummary {",
     )
 
+def patch_claude_model_id_cloak_setting(target: Path) -> None:
+    visual_types = target / 'src/types/visualConfig.ts'
+    disable_image_generation_type = (
+        "export type DisableImageGenerationMode = 'false' | 'true' | 'chat' | 'passthrough';\n"
+        if "'passthrough'" in read(visual_types)
+        else "export type DisableImageGenerationMode = 'false' | 'true' | 'chat';\n"
+    )
+    replace_once(
+        visual_types,
+        disable_image_generation_type,
+        disable_image_generation_type + "export type ClaudeModelIDCloakMode = 'auto' | 'always' | 'never';\n",
+    )
+    replace_once(
+        visual_types,
+        "  forceModelPrefix: boolean;\n  passthroughHeaders: boolean;\n",
+        "  forceModelPrefix: boolean;\n  claudeModelIDCloakMode: ClaudeModelIDCloakMode;\n  passthroughHeaders: boolean;\n",
+    )
+    replace_once(
+        visual_types,
+        "  forceModelPrefix: false,\n  passthroughHeaders: false,\n",
+        "  forceModelPrefix: false,\n  claudeModelIDCloakMode: 'auto',\n  passthroughHeaders: false,\n",
+    )
+
+    visual_hook = target / 'src/hooks/useVisualConfig.ts'
+    replace_once(
+        visual_hook,
+        "  DisableImageGenerationMode,\n",
+        "  ClaudeModelIDCloakMode,\n  DisableImageGenerationMode,\n",
+    )
+    parse_disable_image_generation_signature = (
+        "export function parseDisableImageGenerationMode(raw: unknown): DisableImageGenerationMode {\n"
+        if "export function parseDisableImageGenerationMode" in read(visual_hook)
+        else "function parseDisableImageGenerationMode(raw: unknown): DisableImageGenerationMode {\n"
+    )
+    replace_once(
+        visual_hook,
+        parse_disable_image_generation_signature,
+        "export function parseClaudeModelIDCloakMode(raw: unknown): ClaudeModelIDCloakMode {\n"
+        "  if (typeof raw === 'string') {\n"
+        "    const normalized = raw.trim().toLowerCase();\n"
+        "    if (normalized === 'always' || normalized === 'never') return normalized;\n"
+        "  }\n"
+        "  return 'auto';\n"
+        "}\n\n" + parse_disable_image_generation_signature,
+    )
+    replace_once(
+        visual_hook,
+        "      'forceModelPrefix',\n      'requestRetry',\n",
+        "      'forceModelPrefix',\n      'claudeModelIDCloakMode',\n      'requestRetry',\n",
+    )
+    replace_once(
+        visual_hook,
+        "        forceModelPrefix: Boolean(parsed['force-model-prefix']),\n        passthroughHeaders: Boolean(parsed['passthrough-headers']),\n",
+        "        forceModelPrefix: Boolean(parsed['force-model-prefix']),\n"
+        "        claudeModelIDCloakMode: parseClaudeModelIDCloakMode(\n"
+        "          parsed['claude-model-id-cloak-mode']\n"
+        "        ),\n"
+        "        passthroughHeaders: Boolean(parsed['passthrough-headers']),\n",
+    )
+    if "if (dirtyFields.has('forceModelPrefix'))" in read(visual_hook):
+        replace_once(
+            visual_hook,
+            "        if (dirtyFields.has('forceModelPrefix')) {\n"
+            "          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
+            "        }\n"
+            "        if (dirtyFields.has('passthroughHeaders')) {\n",
+            "        if (dirtyFields.has('forceModelPrefix')) {\n"
+            "          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
+            "        }\n"
+            "        if (dirtyFields.has('claudeModelIDCloakMode')) {\n"
+            "          setStringInDoc(doc, ['claude-model-id-cloak-mode'], values.claudeModelIDCloakMode);\n"
+            "        }\n"
+            "        if (dirtyFields.has('passthroughHeaders')) {\n",
+        )
+    else:
+        replace_once(
+            visual_hook,
+            "        setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
+            "        setBooleanInDoc(doc, ['passthrough-headers'], values.passthroughHeaders);\n",
+            "        setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
+            "        setStringInDoc(\n"
+            "          doc,\n"
+            "          ['claude-model-id-cloak-mode'],\n"
+            "          values.claudeModelIDCloakMode\n"
+            "        );\n"
+            "        setBooleanInDoc(doc, ['passthrough-headers'], values.passthroughHeaders);\n",
+        )
+
+    visual_editor = target / 'src/components/config/VisualConfigEditor.tsx'
+    replace_once(
+        visual_editor,
+        "  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;\n"
+        "  const keepaliveInputId = useId();\n",
+        "  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;\n"
+        "  const claudeModelIDCloakModeLabelId = useId();\n"
+        "  const claudeModelIDCloakModeHintId = `${claudeModelIDCloakModeLabelId}-hint`;\n"
+        "  const keepaliveInputId = useId();\n",
+    )
+    replace_once(
+        visual_editor,
+        "  const countErrors = useCallback(\n",
+        "  const claudeModelIDCloakModeOptions = useMemo(\n"
+        "    () => [\n"
+        "      {\n"
+        "        value: 'auto',\n"
+        "        label: t('config_management.visual.sections.advanced.claude_model_id_cloak_auto'),\n"
+        "      },\n"
+        "      {\n"
+        "        value: 'always',\n"
+        "        label: t('config_management.visual.sections.advanced.claude_model_id_cloak_always'),\n"
+        "      },\n"
+        "      {\n"
+        "        value: 'never',\n"
+        "        label: t('config_management.visual.sections.advanced.claude_model_id_cloak_never'),\n"
+        "      },\n"
+        "    ],\n"
+        "    [t]\n"
+        "  );\n\n"
+        "  const countErrors = useCallback(\n",
+    )
+    replace_once(
+        visual_editor,
+        "                <Collapsible\n"
+        "                  label={t('config_management.visual.sections.headers.title')}\n",
+        "                <Collapsible\n"
+        "                  label={t(\n"
+        "                    'config_management.visual.sections.advanced.claude_model_id_cloak_title'\n"
+        "                  )}\n"
+        "                  hint={t(\n"
+        "                    'config_management.visual.sections.advanced.claude_model_id_cloak_description'\n"
+        "                  )}\n"
+        "                  defaultOpen={false}\n"
+        "                >\n"
+        "                  <SectionGrid>\n"
+        "                    <FieldAnchor fieldId=\"claudeModelIDCloakMode\">\n"
+        "                      <FieldShell\n"
+        "                        label={t(\n"
+        "                          'config_management.visual.sections.advanced.claude_model_id_cloak_label'\n"
+        "                        )}\n"
+        "                        labelId={claudeModelIDCloakModeLabelId}\n"
+        "                        hint={t(\n"
+        "                          'config_management.visual.sections.advanced.claude_model_id_cloak_hint'\n"
+        "                        )}\n"
+        "                        hintId={claudeModelIDCloakModeHintId}\n"
+        "                      >\n"
+        "                        <Select\n"
+        "                          value={values.claudeModelIDCloakMode}\n"
+        "                          options={claudeModelIDCloakModeOptions}\n"
+        "                          id={`${claudeModelIDCloakModeLabelId}-select`}\n"
+        "                          disabled={disabled}\n"
+        "                          ariaLabelledBy={claudeModelIDCloakModeLabelId}\n"
+        "                          ariaDescribedBy={claudeModelIDCloakModeHintId}\n"
+        "                          onChange={(nextValue) =>\n"
+        "                            onChange({\n"
+        "                              claudeModelIDCloakMode:\n"
+        "                                nextValue as VisualConfigValues['claudeModelIDCloakMode'],\n"
+        "                            })\n"
+        "                          }\n"
+        "                        />\n"
+        "                      </FieldShell>\n"
+        "                    </FieldAnchor>\n"
+        "                  </SectionGrid>\n"
+        "                </Collapsible>\n\n"
+        "                <Collapsible\n"
+        "                  label={t('config_management.visual.sections.headers.title')}\n",
+    )
+
+    search_index = target / 'src/components/config/configSearchIndex.ts'
+    replace_once(
+        search_index,
+        "  // Claude header defaults — qualifierKey disambiguates the shared \"User-Agent\" label.\n",
+        "  {\n"
+        "    fieldId: 'claudeModelIDCloakMode',\n"
+        "    sectionId: 'advanced',\n"
+        "    labelKey: L('sections.advanced.claude_model_id_cloak_label'),\n"
+        "    hintKey: L('sections.advanced.claude_model_id_cloak_hint'),\n"
+        "    yamlKeys: ['claude-model-id-cloak-mode'],\n"
+        "    keywords: ['anthropic', 'claude desktop', 'claude code', 'model id', 'cloak'],\n"
+        "  },\n"
+        "  // Claude header defaults — qualifierKey disambiguates the shared \"User-Agent\" label.\n",
+    )
+
 
 def patch_locales(target: Path) -> None:
     monitoring = json.loads(LOCALES_FILE.read_text())
@@ -1569,17 +2599,31 @@ def patch_locales(target: Path) -> None:
                 {
                     'monitoring_center': nav_additions.get('monitoring_center', 'Request Monitoring'),
                     'account_inspection': nav_additions.get('account_inspection', 'Account Inspection'),
+                    'routing_policy': nav_additions.get('routing_policy', 'Routing Policy'),
                 },
             )
         )
         data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
         data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
+        data['routing_policy'] = additions.get('routing_policy', data.get('routing_policy', {}))
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
         gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(locale_path.name, GEMINI_CLI_LOCALE_KEYS['en.json'])
         data.setdefault('auth_files', {})['filter_gemini-cli'] = gemini_cli_locale['auth_filter']
         data.setdefault('auth_files', {})['search_placeholder'] = AUTH_FILES_SEARCH_PLACEHOLDER_KEYS.get(
             locale_path.name,
             AUTH_FILES_SEARCH_PLACEHOLDER_KEYS['en.json'],
+        )
+        data.setdefault('auth_files', {})['sort_plan_desc'] = AUTH_FILES_PLAN_SORT_LABEL_KEYS.get(
+            locale_path.name,
+            AUTH_FILES_PLAN_SORT_LABEL_KEYS['en.json'],
+        )
+        data.setdefault('auth_files', {})['sort_quota_desc'] = AUTH_FILES_QUOTA_SORT_LABEL_KEYS.get(
+            locale_path.name,
+            AUTH_FILES_QUOTA_SORT_LABEL_KEYS['en.json'],
+        )
+        data.setdefault('auth_files', {})['selected_count'] = AUTH_FILES_SELECTED_COUNT_LABEL_KEYS.get(
+            locale_path.name,
+            AUTH_FILES_SELECTED_COUNT_LABEL_KEYS['en.json'],
         )
         data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
         batch_locale = AUTH_FILES_BATCH_LOCALE_KEYS.get(locale_path.name, AUTH_FILES_BATCH_LOCALE_KEYS['en.json'])
@@ -1588,6 +2632,27 @@ def patch_locales(target: Path) -> None:
         data.setdefault('quota_management', {}).update(quota_search_locale)
         quota_delete_locale = QUOTA_DELETE_LOCALE_KEYS.get(locale_path.name, QUOTA_DELETE_LOCALE_KEYS['en.json'])
         data.setdefault('quota_management', {}).update(quota_delete_locale)
+        cloak_locale = CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS.get(
+            locale_path.name,
+            CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS['en.json'],
+        )
+        advanced_locale = (
+            data.setdefault('config_management', {})
+            .setdefault('visual', {})
+            .setdefault('sections', {})
+            .setdefault('advanced', {})
+        )
+        advanced_locale.update(
+            {
+                'claude_model_id_cloak_title': cloak_locale['title'],
+                'claude_model_id_cloak_description': cloak_locale['description'],
+                'claude_model_id_cloak_label': cloak_locale['label'],
+                'claude_model_id_cloak_hint': cloak_locale['hint'],
+                'claude_model_id_cloak_auto': cloak_locale['auto'],
+                'claude_model_id_cloak_always': cloak_locale['always'],
+                'claude_model_id_cloak_never': cloak_locale['never'],
+            }
+        )
         locale_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
 
@@ -1601,6 +2666,9 @@ def main() -> None:
         raise SystemExit(f'Overlay directory not found: {OVERLAY_DIR}')
 
     copy_overlay(target)
+    patch_modal_focus_restore(target)
+    patch_modal_scroll_lock(target)
+    patch_modal_content_scrollbar_layout(target)
     patch_routes(target)
     patch_layout(target)
     patch_icons(target)
@@ -1611,12 +2679,17 @@ def main() -> None:
     patch_antigravity_quota_builders(target)
     patch_quota_page(target)
     patch_quota_section(target)
+    patch_quota_page_search(target)
     patch_quota_card(target)
     patch_quota_styles(target)
     patch_account_inspection_page(target)
     patch_auth_files_page_search(target)
     patch_auth_files_batch_actions(target)
+    patch_auth_files_page_sorting(target)
+    patch_auth_files_runtime_state(target)
+    patch_runtime_detection(target)
     patch_supporting_api_and_types(target)
+    patch_claude_model_id_cloak_setting(target)
     patch_locales(target)
     flush_writes()
     print(f'OK: CPA-Management customization applied to {target}')

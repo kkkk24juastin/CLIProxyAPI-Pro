@@ -16,6 +16,7 @@ import (
 )
 
 type Service struct {
+	ctx    context.Context
 	cfg    Config
 	store  *Store
 	server *Server
@@ -37,6 +38,7 @@ func Start(ctx context.Context) (*Service, error) {
 	redisqueue.SetUsageStatisticsEnabled(true)
 
 	service := &Service{
+		ctx:   ctx,
 		cfg:   cfg,
 		store: store,
 	}
@@ -44,8 +46,10 @@ func Start(ctx context.Context) (*Service, error) {
 	go service.collect(ctx)
 	go service.maintain(ctx)
 	go service.runWebDAVBackups(ctx)
+	go service.runModelPriceSync(ctx)
 	go func() {
 		<-ctx.Done()
+		stopRuntimeStateWriter(service)
 		if err := store.Close(); err != nil {
 			log.WithError(err).Warn("failed to close embedded usage store")
 		}
@@ -53,6 +57,36 @@ func Start(ctx context.Context) (*Service, error) {
 
 	log.Infof("embedded usage service started with db %s", cfg.DBPath)
 	return service, nil
+}
+
+func (s *Service) runModelPriceSync(ctx context.Context) {
+	for {
+		settings, err := s.store.GetMonitoringSettings(ctx)
+		if err != nil {
+			log.WithError(err).Warn("failed to load model price sync settings")
+		} else if settings.ModelPriceSync.Enabled {
+			state, stateErr := s.store.GetModelPriceSyncState(ctx)
+			if stateErr != nil {
+				log.WithError(stateErr).Warn("failed to load model price sync state")
+			} else if lastRun := maxModelPriceSyncTimestamp(state.LastSuccess, state.LastAttempt); lastRun <= 0 || time.Since(time.UnixMilli(lastRun)) >= time.Duration(settings.ModelPriceSync.IntervalMinutes)*time.Minute {
+				if _, syncErr := s.store.SyncModelsDevPrices(ctx, false, true); syncErr != nil {
+					log.WithError(syncErr).Warn("failed to sync model prices from models.dev")
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Minute):
+		}
+	}
+}
+
+func maxModelPriceSyncTimestamp(left, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func (s *Service) Server() *Server {

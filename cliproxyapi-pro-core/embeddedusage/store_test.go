@@ -2,6 +2,7 @@ package embeddedusage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,7 @@ func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Eve
 		StatusCode:        &status,
 		UpstreamRequestID: "upstream-request",
 		RetryAfter:        "30",
+		Stream:            index%2 == 0,
 		ReasoningEffort:   "medium",
 		ServiceTier:       "default",
 		Failed:            failed,
@@ -75,6 +77,26 @@ func insertTestUsageEvents(t *testing.T, store *Store, events ...internalusage.E
 	}
 	if result.Inserted != len(events) {
 		t.Fatalf("InsertEvents() inserted = %d, want %d", result.Inserted, len(events))
+	}
+}
+
+func TestInsertEventsNotifiesSubscribers(t *testing.T) {
+	store := openTestStore(t)
+	signal := store.EventSignal()
+
+	insertTestUsageEvents(t, store, testUsageEvent(0, false, 10))
+
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatal("event signal was not closed after inserting usage events")
+	}
+
+	nextSignal := store.EventSignal()
+	select {
+	case <-nextSignal:
+		t.Fatal("replacement event signal must remain open until the next insert")
+	default:
 	}
 }
 
@@ -236,12 +258,16 @@ func TestUsageSummaryPersistsAcrossStoreReopen(t *testing.T) {
 func TestUsageSummaryUpdatesAfterDeleteEventsBefore(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-
+	beforeState, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() before delete error = %v", err)
+	}
 	insertTestUsageEvents(t, store,
 		testUsageEvent(0, false, 10),
 		testUsageEvent(1, true, 20),
 		testUsageEvent(2, false, 30),
 	)
+	signal := store.EventSignal()
 	deleted, err := store.DeleteEventsBefore(ctx, testUsageEvent(2, false, 30).TimestampMS)
 	if err != nil {
 		t.Fatalf("DeleteEventsBefore() error = %v", err)
@@ -259,6 +285,119 @@ func TestUsageSummaryUpdatesAfterDeleteEventsBefore(t *testing.T) {
 	}
 	if summary.TotalRequests != 1 || summary.SuccessCount != 1 || summary.FailureCount != 0 || summary.TotalTokens != 30 {
 		t.Fatalf("UsageSummary() after delete = %+v, want total=1 success=1 failure=0 tokens=30", summary)
+	}
+	afterState, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() after delete error = %v", err)
+	}
+	if afterState.Generation != beforeState.Generation+1 {
+		t.Fatalf("generation after delete = %d, want %d", afterState.Generation, beforeState.Generation+1)
+	}
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatal("retention delete did not notify subscribers")
+	}
+}
+
+func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	settings := MonitoringSettings{RetentionDays: 30}
+	if err := store.SetMonitoringSettings(ctx, settings); err != nil {
+		t.Fatalf("SetMonitoringSettings() error = %v", err)
+	}
+	if err := store.AddDeadLetter(ctx, `{"authorization":"secret"}`, errTestParse); err != nil {
+		t.Fatalf("AddDeadLetter() error = %v", err)
+	}
+	insertTestUsageEvents(t, store,
+		testUsageEvent(0, false, 10),
+		testUsageEvent(1, true, 20),
+	)
+	latestIDBefore, _, err := store.LatestCursor(ctx)
+	if err != nil {
+		t.Fatalf("LatestCursor() before reset error = %v", err)
+	}
+	stateBefore, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() before reset error = %v", err)
+	}
+	signal := store.EventSignal()
+
+	result, err := store.ResetUsageStatistics(ctx)
+	if err != nil {
+		t.Fatalf("ResetUsageStatistics() error = %v", err)
+	}
+	if result.DeletedEvents != 2 {
+		t.Fatalf("deleted events = %d, want 2", result.DeletedEvents)
+	}
+	if result.Generation != stateBefore.Generation+1 || result.ResetAtMS <= 0 {
+		t.Fatalf("reset state = %+v, want generation %d and reset timestamp", result, stateBefore.Generation+1)
+	}
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatal("reset did not notify subscribers")
+	}
+
+	events, deadLetters, err := store.Counts(ctx)
+	if err != nil {
+		t.Fatalf("Counts() error = %v", err)
+	}
+	if events != 0 || deadLetters != 1 {
+		t.Fatalf("counts after reset = events:%d deadLetters:%d, want 0/1", events, deadLetters)
+	}
+	latestID, _, err := store.LatestCursor(ctx)
+	if err != nil {
+		t.Fatalf("LatestCursor() after reset error = %v", err)
+	}
+	if latestID != 0 {
+		t.Fatalf("latest id after reset = %d, want 0", latestID)
+	}
+	storedSettings, err := store.GetMonitoringSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetMonitoringSettings() error = %v", err)
+	}
+	if storedSettings.RetentionDays != settings.RetentionDays {
+		t.Fatalf("retention days after reset = %d, want %d", storedSettings.RetentionDays, settings.RetentionDays)
+	}
+
+	insertTestUsageEvents(t, store, testUsageEvent(2, false, 30))
+	newEvents, err := store.EventsAfter(ctx, 0, 10)
+	if err != nil {
+		t.Fatalf("EventsAfter() error = %v", err)
+	}
+	if len(newEvents) != 1 || newEvents[0].ID <= latestIDBefore {
+		t.Fatalf("new event ids = %+v, want one id greater than %d", newEvents, latestIDBefore)
+	}
+	stateAfter, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() after insert error = %v", err)
+	}
+	if stateAfter.Generation != result.Generation {
+		t.Fatalf("generation after new insert = %d, want %d", stateAfter.Generation, result.Generation)
+	}
+}
+
+func TestResetUsageStatisticsOnEmptyStoreIsNoop(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	stateBefore, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() error = %v", err)
+	}
+	signal := store.EventSignal()
+	result, err := store.ResetUsageStatistics(ctx)
+	if err != nil {
+		t.Fatalf("ResetUsageStatistics() error = %v", err)
+	}
+	if result.DeletedEvents != 0 || result.Generation != stateBefore.Generation || result.ResetAtMS != stateBefore.ResetAtMS {
+		t.Fatalf("empty reset result = %+v, want unchanged state %+v", result, stateBefore)
+	}
+	select {
+	case <-signal:
+		t.Fatal("empty reset must not notify subscribers")
+	default:
 	}
 }
 
@@ -306,7 +445,7 @@ func TestRecentEventsUsesRecentIndex(t *testing.T) {
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
 		failed, raw_json, created_at_ms
 		from usage_events indexed by idx_usage_events_recent
 		order by timestamp_ms desc, id desc
@@ -357,7 +496,7 @@ func TestUsageDiagnosticsRoundTripAndAggregates(t *testing.T) {
 	if got.TTFTMS == nil || *got.TTFTMS != 20 || got.StatusCode == nil || *got.StatusCode != 429 {
 		t.Fatalf("diagnostics = ttft:%v status:%v, want 20/429", got.TTFTMS, got.StatusCode)
 	}
-	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || got.ReasoningEffort != "medium" || got.ServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
+	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || !got.Stream || got.ReasoningEffort != "medium" || got.ServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
 		t.Fatalf("diagnostic strings = %+v", got)
 	}
 
@@ -377,6 +516,84 @@ func TestUsageDiagnosticsRoundTripAndAggregates(t *testing.T) {
 	}
 }
 
+func TestUsageAggregatesSupportsAllIntervalAndAPIKeyFilter(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	first := testUsageEvent(0, false, 10)
+	first.APIKeyHash = "key-a"
+	second := testUsageEvent(1, true, 20)
+	second.APIKeyHash = "key-b"
+	insertTestUsageEvents(t, store, first, second)
+
+	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{
+		FromMS:     first.TimestampMS - 1,
+		Interval:   "all",
+		GroupBy:    []string{"model"},
+		APIKeyHash: "key-a",
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("UsageAggregates() error = %v", err)
+	}
+	if len(buckets) != 1 || buckets[0].TotalRequests != 1 || buckets[0].TotalTokens != 10 {
+		t.Fatalf("all interval buckets = %+v, want one filtered request", buckets)
+	}
+}
+
+func TestUsageAggregatesIncludesUnattributedAPIKeyBucket(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	attributed := testUsageEvent(0, false, 10)
+	attributed.APIKeyHash = "key-a"
+	unattributed := testUsageEvent(1, false, 20)
+	insertTestUsageEvents(t, store, attributed, unattributed)
+
+	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{
+		Interval: "all",
+		GroupBy:  []string{"api_key_hash"},
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("UsageAggregates() error = %v", err)
+	}
+	if len(buckets) != 2 {
+		t.Fatalf("UsageAggregates() len = %d, want attributed and unattributed buckets", len(buckets))
+	}
+	requestsByHash := make(map[string]int64, len(buckets))
+	for _, bucket := range buckets {
+		requestsByHash[bucket.APIKeyHash] += bucket.TotalRequests
+	}
+	if requestsByHash["key-a"] != 1 || requestsByHash[""] != 1 {
+		t.Fatalf("requests by API key hash = %#v, want one attributed and one unattributed request", requestsByHash)
+	}
+}
+
+func TestUsageAggregatesSupportsAuthIndexGroupingAndLastSeen(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	first := testUsageEvent(0, false, 10)
+	first.AuthIndex = "auth-a"
+	second := testUsageEvent(1, true, 20)
+	second.AuthIndex = "auth-a"
+	insertTestUsageEvents(t, store, first, second)
+
+	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{
+		Interval: "all",
+		GroupBy:  []string{"auth_index", "provider", "model"},
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("UsageAggregates() error = %v", err)
+	}
+	if len(buckets) != 1 {
+		t.Fatalf("UsageAggregates() len = %d, want 1", len(buckets))
+	}
+	bucket := buckets[0]
+	if bucket.AuthIndex != "auth-a" || bucket.TotalRequests != 2 || bucket.LastSeenAtMS != second.TimestampMS {
+		t.Fatalf("aggregate bucket = %+v, want auth-a total=2 last_seen=%d", bucket, second.TimestampMS)
+	}
+}
+
 func TestRecentDeadLettersLimitsPayload(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -393,5 +610,91 @@ func TestRecentDeadLettersLimitsPayload(t *testing.T) {
 	}
 	if strings.Contains(samples[0].Payload, "sk-secret") || !strings.Contains(samples[0].Payload, "[redacted]") {
 		t.Fatalf("dead letter payload was not redacted: %s", samples[0].Payload)
+	}
+}
+
+func TestQuotaCacheRejectsStaleWritesAndTracksGeneration(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	initial, err := store.QuotaCacheStats(ctx)
+	if err != nil {
+		t.Fatalf("QuotaCacheStats() error = %v", err)
+	}
+	newer := QuotaCacheEntry{Provider: "codex", FileName: "a.json", Data: json.RawMessage(`{"status":"success","value":2}`), CachedAt: 200, ObservedAt: 200}
+	if err := store.SetQuotaCache(ctx, newer); err != nil {
+		t.Fatalf("SetQuotaCache(newer) error = %v", err)
+	}
+	if err := store.SetQuotaCache(ctx, QuotaCacheEntry{Provider: "codex", FileName: "a.json", Data: json.RawMessage(`{"status":"success","value":1}`), CachedAt: 100, ObservedAt: 100}); err != nil {
+		t.Fatalf("SetQuotaCache(stale) error = %v", err)
+	}
+	entries, err := store.GetQuotaCache(ctx, "codex", "a.json")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("GetQuotaCache() = %+v, %v", entries, err)
+	}
+	if !strings.Contains(string(entries[0].Data), `"value":2`) || entries[0].Revision != 1 {
+		t.Fatalf("quota entry = %+v, want newer revision 1", entries[0])
+	}
+	afterSet, _ := store.QuotaCacheStats(ctx)
+	if afterSet.Generation != initial.Generation+1 {
+		t.Fatalf("generation after set = %d, want %d", afterSet.Generation, initial.Generation+1)
+	}
+	if err := store.DeleteQuotaCache(ctx, "codex", "a.json"); err != nil {
+		t.Fatalf("DeleteQuotaCache() error = %v", err)
+	}
+	afterDelete, _ := store.QuotaCacheStats(ctx)
+	if afterDelete.Generation != afterSet.Generation+1 {
+		t.Fatalf("generation after delete = %d, want %d", afterDelete.Generation, afterSet.Generation+1)
+	}
+}
+
+func TestRoutingCursorAndAuthRuntimeStatsRoundTrip(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cursor := RoutingCursorState{CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "auth-b", UpdatedAtMS: 123}
+	if err := store.SetRoutingCursorState(ctx, cursor); err != nil {
+		t.Fatalf("SetRoutingCursorState() error = %v", err)
+	}
+	gotCursor, ok, err := store.GetRoutingCursorState(ctx, cursor.CursorKey)
+	if err != nil || !ok || gotCursor.LastAuthID != cursor.LastAuthID {
+		t.Fatalf("GetRoutingCursorState() = %+v, %v, %v", gotCursor, ok, err)
+	}
+	stats := AuthRuntimeStats{
+		AuthIndex: "idx-a", AuthID: "auth-a", IdentityFingerprint: "fp-a",
+		SelectedCount: 7, SuccessCount: 5, FailureCount: 2, UpdatedAtMS: 456,
+		RecentBuckets: []RuntimeRequestBucket{{BucketID: 100, Success: 5, Failed: 2}},
+	}
+	if err := store.SetAuthRuntimeStats(ctx, stats); err != nil {
+		t.Fatalf("SetAuthRuntimeStats() error = %v", err)
+	}
+	gotStats, ok, err := store.GetAuthRuntimeStats(ctx, stats.AuthIndex, stats.AuthID)
+	if err != nil || !ok || gotStats.SelectedCount != 7 || len(gotStats.RecentBuckets) != 1 {
+		t.Fatalf("GetAuthRuntimeStats() = %+v, %v, %v", gotStats, ok, err)
+	}
+	exported, err := store.ExportJSONL(ctx)
+	if err != nil {
+		t.Fatalf("ExportJSONL() error = %v", err)
+	}
+	if !strings.Contains(string(exported), `"record_type":"routing_cursor_state"`) ||
+		!strings.Contains(string(exported), `"record_type":"auth_runtime_stats"`) {
+		t.Fatalf("export missing runtime state records: %s", exported)
+	}
+}
+
+func TestQueuedAuthRuntimeDeleteCannotBeOverwrittenByPendingSnapshot(t *testing.T) {
+	store := openTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := &Service{ctx: ctx, store: store}
+	SetDefaultService(service)
+	defer stopRuntimeStateWriter(service)
+
+	QueueAuthRuntimeStats(AuthRuntimeStats{
+		AuthIndex: "idx-delete", AuthID: "auth-delete", SelectedCount: 3, UpdatedAtMS: time.Now().UnixMilli(),
+	})
+	if err := DeleteAuthRuntimeState(context.Background(), "auth-delete", "idx-delete", "delete.json"); err != nil {
+		t.Fatalf("DeleteAuthRuntimeState() error = %v", err)
+	}
+	if stats, ok, err := store.GetAuthRuntimeStats(context.Background(), "idx-delete", "auth-delete"); err != nil || ok {
+		t.Fatalf("GetAuthRuntimeStats() after delete = %+v, %v, %v; want missing", stats, ok, err)
 	}
 }
