@@ -1898,8 +1898,8 @@ func (s *Store) ImportRoutingCursorStates(ctx context.Context, items []RoutingCu
 			item.UpdatedAtMS = time.Now().UnixMilli()
 		}
 		result, err := tx.ExecContext(ctx, `insert into routing_cursor_state(cursor_key, last_auth_id, updated_at_ms) values(?, ?, ?)
-			on conflict(cursor_key) do update set last_auth_id = excluded.last_auth_id, updated_at_ms = excluded.updated_at_ms
-			where excluded.updated_at_ms >= routing_cursor_state.updated_at_ms`, item.CursorKey, item.LastAuthID, item.UpdatedAtMS)
+			on conflict(cursor_key) do update set last_auth_id = excluded.last_auth_id, updated_at_ms = excluded.updated_at_ms`,
+			item.CursorKey, item.LastAuthID, item.UpdatedAtMS)
 		if err != nil {
 			return 0, err
 		}
@@ -1976,7 +1976,7 @@ func normalizeRuntimeBuckets(items []RuntimeRequestBucket) []RuntimeRequestBucke
 	return out
 }
 
-func setAuthRuntimeStatsTx(ctx context.Context, tx *sql.Tx, item AuthRuntimeStats) (bool, error) {
+func setAuthRuntimeStatsTx(ctx context.Context, tx *sql.Tx, item AuthRuntimeStats, force bool) (bool, error) {
 	item.AuthIndex = strings.TrimSpace(item.AuthIndex)
 	item.AuthID = strings.TrimSpace(item.AuthID)
 	if item.AuthIndex == "" || item.AuthID == "" || item.SelectedCount < 0 || item.SuccessCount < 0 || item.FailureCount < 0 {
@@ -1993,7 +1993,7 @@ func setAuthRuntimeStatsTx(ctx context.Context, tx *sql.Tx, item AuthRuntimeStat
 	if item.UpdatedAtMS <= 0 {
 		item.UpdatedAtMS = time.Now().UnixMilli()
 	}
-	result, err := tx.ExecContext(ctx, `insert into auth_runtime_stats(auth_index, auth_id, file_name, identity_fingerprint,
+	query := `insert into auth_runtime_stats(auth_index, auth_id, file_name, identity_fingerprint,
 		selected_count, success_count, failure_count, recent_buckets_json, generation, updated_at_ms)
 		values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		on conflict(auth_index) do update set
@@ -2005,8 +2005,11 @@ func setAuthRuntimeStatsTx(ctx context.Context, tx *sql.Tx, item AuthRuntimeStat
 			failure_count = excluded.failure_count,
 			recent_buckets_json = excluded.recent_buckets_json,
 			generation = auth_runtime_stats.generation + 1,
-			updated_at_ms = excluded.updated_at_ms
-		where excluded.updated_at_ms >= auth_runtime_stats.updated_at_ms`, item.AuthIndex, item.AuthID, item.FileName,
+			updated_at_ms = excluded.updated_at_ms`
+	if !force {
+		query += ` where excluded.updated_at_ms >= auth_runtime_stats.updated_at_ms`
+	}
+	result, err := tx.ExecContext(ctx, query, item.AuthIndex, item.AuthID, item.FileName,
 		item.IdentityFingerprint, item.SelectedCount, item.SuccessCount, item.FailureCount, string(buckets),
 		item.Generation, item.UpdatedAtMS)
 	if err != nil {
@@ -2022,7 +2025,7 @@ func (s *Store) SetAuthRuntimeStats(ctx context.Context, item AuthRuntimeStats) 
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	changed, err := setAuthRuntimeStatsTx(ctx, tx, item)
+	changed, err := setAuthRuntimeStatsTx(ctx, tx, item, false)
 	if err != nil {
 		return err
 	}
@@ -2042,7 +2045,7 @@ func (s *Store) ImportAuthRuntimeStats(ctx context.Context, items []AuthRuntimeS
 	defer func() { _ = tx.Rollback() }()
 	imported := 0
 	for _, item := range items {
-		changed, err := setAuthRuntimeStatsTx(ctx, tx, item)
+		changed, err := setAuthRuntimeStatsTx(ctx, tx, item, true)
 		if err != nil {
 			return 0, err
 		}

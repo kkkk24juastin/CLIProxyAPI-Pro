@@ -13,6 +13,7 @@ var accountInspectionScheduleExporter func() (jsonBytes []byte, ok bool, err err
 var accountInspectionScheduleImporter func(jsonBytes []byte) error
 var accountInspectionSnapshotExporter func() (jsonBytes []byte, ok bool, err error)
 var accountInspectionSnapshotImporter func(jsonBytes []byte) error
+var authRuntimeStateImporter func(cursors []RoutingCursorState, stats []AuthRuntimeStats) error
 var globalStateMu sync.RWMutex
 var globalStateWriterCancel context.CancelFunc
 var globalStateWriterDone chan struct{}
@@ -22,6 +23,7 @@ type runtimeStateMutation struct {
 	cursor *RoutingCursorState
 	stats  *AuthRuntimeStats
 	delete *runtimeStateDelete
+	flush  chan error
 }
 
 type runtimeStateDelete struct {
@@ -82,23 +84,37 @@ func runRuntimeStateWriter(ctx context.Context, store *Store, queue <-chan runti
 			}
 		}
 	}
-	flush := func() {
+	flush := func() error {
+		var firstErr error
 		for key, state := range cursors {
-			_ = store.SetRoutingCursorState(context.Background(), state)
+			if err := store.SetRoutingCursorState(context.Background(), state); err != nil && firstErr == nil {
+				firstErr = err
+			}
 			delete(cursors, key)
 		}
 		for key, item := range stats {
-			_ = store.SetAuthRuntimeStats(context.Background(), item)
+			if err := store.SetAuthRuntimeStats(context.Background(), item); err != nil && firstErr == nil {
+				firstErr = err
+			}
 			delete(stats, key)
 		}
+		return firstErr
 	}
 	process := func(mutation runtimeStateMutation) {
+		if mutation.flush != nil {
+			mutation.flush <- flush()
+			close(mutation.flush)
+			return
+		}
 		if mutation.delete == nil {
 			merge(mutation)
 			return
 		}
-		flush()
+		flushErr := flush()
 		err := store.DeleteAuthRuntimeState(context.Background(), mutation.delete.authID, mutation.delete.authIndex, mutation.delete.fileName)
+		if err == nil {
+			err = flushErr
+		}
 		if mutation.delete.authIndex != "" {
 			deletedAt[mutation.delete.authIndex] = mutation.delete.updatedAt
 		}
@@ -113,14 +129,14 @@ func runRuntimeStateWriter(ctx context.Context, store *Store, queue <-chan runti
 				case mutation := <-queue:
 					process(mutation)
 				default:
-					flush()
+					_ = flush()
 					return
 				}
 			}
 		case mutation := <-queue:
 			process(mutation)
 		case <-ticker.C:
-			flush()
+			_ = flush()
 		}
 	}
 }
@@ -160,6 +176,33 @@ func enqueueRuntimeState(mutation runtimeStateMutation) {
 	}
 }
 
+func flushRuntimeStateWrites(ctx context.Context, store *Store) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	globalStateMu.RLock()
+	var queue chan runtimeStateMutation
+	if globalService != nil && globalService.store == store {
+		queue = globalStateQueue
+	}
+	globalStateMu.RUnlock()
+	if queue == nil {
+		return nil
+	}
+	done := make(chan error, 1)
+	select {
+	case queue <- runtimeStateMutation{flush: done}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func SetAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
 	accountInspectionScheduleExporter = exporter
 	accountInspectionScheduleImporter = importer
@@ -168,6 +211,10 @@ func SetAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error),
 func SetAccountInspectionSnapshotHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
 	accountInspectionSnapshotExporter = exporter
 	accountInspectionSnapshotImporter = importer
+}
+
+func SetAuthRuntimeStateImportHandler(importer func([]RoutingCursorState, []AuthRuntimeStats) error) {
+	authRuntimeStateImporter = importer
 }
 
 func defaultServer() *Server {

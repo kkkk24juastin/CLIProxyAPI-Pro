@@ -698,3 +698,60 @@ func TestQueuedAuthRuntimeDeleteCannotBeOverwrittenByPendingSnapshot(t *testing.
 		t.Fatalf("GetAuthRuntimeStats() after delete = %+v, %v, %v; want missing", stats, ok, err)
 	}
 }
+
+func TestServerExportFlushesQueuedRuntimeState(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	service := &Service{ctx: ctx, store: store}
+	SetDefaultService(service)
+	defer stopRuntimeStateWriter(service)
+	QueueRoutingCursorState(RoutingCursorState{
+		CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "auth-b", UpdatedAtMS: 123,
+	})
+	QueueAuthRuntimeStats(AuthRuntimeStats{
+		AuthIndex: "idx-a", AuthID: "auth-a", SelectedCount: 7, SuccessCount: 5, FailureCount: 2, UpdatedAtMS: 456,
+	})
+
+	server := NewServer(Config{}, store)
+	exported, err := server.exportJSONL(ctx)
+	if err != nil {
+		t.Fatalf("exportJSONL() error = %v", err)
+	}
+	if !strings.Contains(string(exported), `"lastAuthId":"auth-b"`) ||
+		!strings.Contains(string(exported), `"selectedCount":7`) {
+		t.Fatalf("export missing queued runtime state: %s", exported)
+	}
+}
+
+func TestRuntimeStateImportUsesExplicitRestoreSemantics(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.SetRoutingCursorState(ctx, RoutingCursorState{
+		CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "current-auth", UpdatedAtMS: 500,
+	}); err != nil {
+		t.Fatalf("SetRoutingCursorState() error = %v", err)
+	}
+	if err := store.SetAuthRuntimeStats(ctx, AuthRuntimeStats{
+		AuthIndex: "idx-a", AuthID: "auth-a", SelectedCount: 1, SuccessCount: 1, UpdatedAtMS: 500,
+	}); err != nil {
+		t.Fatalf("SetAuthRuntimeStats() error = %v", err)
+	}
+	if imported, err := store.ImportRoutingCursorStates(ctx, []RoutingCursorState{{
+		CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "backup-auth", UpdatedAtMS: 100,
+	}}); err != nil || imported != 1 {
+		t.Fatalf("ImportRoutingCursorStates() = %d, %v", imported, err)
+	}
+	if imported, err := store.ImportAuthRuntimeStats(ctx, []AuthRuntimeStats{{
+		AuthIndex: "idx-a", AuthID: "auth-a", SelectedCount: 9, SuccessCount: 7, FailureCount: 2, UpdatedAtMS: 100,
+	}}); err != nil || imported != 1 {
+		t.Fatalf("ImportAuthRuntimeStats() = %d, %v", imported, err)
+	}
+	cursor, ok, err := store.GetRoutingCursorState(ctx, "single|codex|gpt-5|0|all")
+	if err != nil || !ok || cursor.LastAuthID != "backup-auth" {
+		t.Fatalf("restored cursor = %+v, %v, %v", cursor, ok, err)
+	}
+	stats, ok, err := store.GetAuthRuntimeStats(ctx, "idx-a", "auth-a")
+	if err != nil || !ok || stats.SelectedCount != 9 || stats.SuccessCount != 7 || stats.FailureCount != 2 {
+		t.Fatalf("restored stats = %+v, %v, %v", stats, ok, err)
+	}
+}
