@@ -526,6 +526,15 @@ server_main = ROOT / 'cmd/server/main.go'
 add_go_import(server_main, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/pluginstore') + '"\n')
 replace_once(
     server_main,
+    '\tmanagementasset.SetCurrentConfig(cfg)\n',
+    '''\tcfg.UsageStatisticsEnabled = true
+\tcfg.RemoteManagement.PanelGitHubRepository = config.DefaultPanelGitHubRepository
+\tmanagementasset.SetCurrentConfig(cfg)
+''',
+    'cfg.RemoteManagement.PanelGitHubRepository = config.DefaultPanelGitHubRepository',
+)
+replace_once(
+    server_main,
     '''\tconfigaccess.Register(&cfg.SDKConfig)
 \tpluginHost.ApplyConfig(context.Background(), cfg)
 ''',
@@ -3008,6 +3017,12 @@ replace_once(
 )
 
 flush_writes()
+startup_panel_config = '''\tcfg.UsageStatisticsEnabled = true
+\tcfg.RemoteManagement.PanelGitHubRepository = config.DefaultPanelGitHubRepository
+\tmanagementasset.SetCurrentConfig(cfg)
+'''
+if startup_panel_config not in read_text(server_main):
+    raise RuntimeError('Pro panel configuration must be applied before the management asset updater starts')
 subprocess.run([
     'gofmt',
     '-w',
