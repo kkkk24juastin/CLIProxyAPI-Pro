@@ -629,6 +629,14 @@ func TestBuildAccountQuotaRefreshScheduleScopesAndDisablesActions(t *testing.T) 
 	if got.Retries != accountQuotaRefreshRetries {
 		t.Fatalf("quota refresh retries = %d, want %d", got.Retries, accountQuotaRefreshRetries)
 	}
+	if got.Workers != accountQuotaRefreshConcurrency || got.ProviderConcurrency != accountQuotaRefreshConcurrency {
+		t.Fatalf(
+			"quota refresh concurrency = workers:%d provider:%d, want %d",
+			got.Workers,
+			got.ProviderConcurrency,
+			accountQuotaRefreshConcurrency,
+		)
+	}
 	if !got.EnabledOnly {
 		t.Fatal("quota refresh should include enabled credentials only")
 	}
@@ -655,6 +663,17 @@ func TestRetryableAccountInspectionStatuses(t *testing.T) {
 		if isRetryableAccountInspectionStatus(status) {
 			t.Fatalf("status %d should not be retryable", status)
 		}
+	}
+}
+
+func TestAccountInspectionProviderLimitersKeepSeparateDefaults(t *testing.T) {
+	inspection := accountInspectionProviderLimiters(0)
+	if got := cap(inspection["antigravity"]); got != accountInspectionMaxProviderConcurrency {
+		t.Fatalf("inspection provider concurrency = %d, want %d", got, accountInspectionMaxProviderConcurrency)
+	}
+	quotaRefresh := accountInspectionProviderLimiters(accountQuotaRefreshConcurrency)
+	if got := cap(quotaRefresh["antigravity"]); got != accountQuotaRefreshConcurrency {
+		t.Fatalf("quota refresh provider concurrency = %d, want %d", got, accountQuotaRefreshConcurrency)
 	}
 }
 

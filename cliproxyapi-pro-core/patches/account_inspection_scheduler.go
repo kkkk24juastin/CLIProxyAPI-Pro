@@ -41,6 +41,7 @@ const (
 	accountInspectionMaxRetries             = 1
 	accountInspectionMaxRunDuration         = 30 * time.Minute
 	accountQuotaRefreshMaxRunDuration       = 6 * time.Hour
+	accountQuotaRefreshConcurrency          = 25
 	accountQuotaRefreshRetries              = 3
 	accountInspectionMaxProviderConcurrency = 2
 	accountInspectionMaxRefreshConcurrency  = 2
@@ -95,6 +96,7 @@ type accountInspectionSettings struct {
 	AutoExecuteConfirmations        int                                   `json:"autoExecuteConfirmations,omitempty"`
 	EnabledOnly                     bool                                  `json:"-"`
 	QuotaOnly                       bool                                  `json:"-"`
+	ProviderConcurrency             int                                   `json:"-"`
 }
 
 type accountInspectionSchedule struct {
@@ -1193,6 +1195,7 @@ func (s *accountInspectionScheduler) startQuotaRefresh(provider string) error {
 func buildAccountQuotaRefreshSchedule(schedule accountInspectionSchedule, provider string) accountInspectionSchedule {
 	settings := schedule.Settings
 	settings.TargetType = provider
+	settings.Workers = accountQuotaRefreshConcurrency
 	settings.SampleSize = 0
 	settings.Retries = accountQuotaRefreshRetries
 	settings.AntigravityDeepProbeEnabled = false
@@ -1204,6 +1207,7 @@ func buildAccountQuotaRefreshSchedule(schedule accountInspectionSchedule, provid
 	settings.AutoExecuteConfirmations = 1
 	settings.EnabledOnly = true
 	settings.QuotaOnly = true
+	settings.ProviderConcurrency = accountQuotaRefreshConcurrency
 	schedule.Settings = settings
 	return schedule
 }
@@ -1730,7 +1734,7 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 	s.appendLog("info", fmt.Sprintf("巡检集合 %d 个账号，本次探测 %d 个账号", probeSetCount, len(accounts)))
 
 	results := make([]accountInspectionResult, len(accounts))
-	providerLimiters := accountInspectionProviderLimiters()
+	providerLimiters := accountInspectionProviderLimiters(settings.ProviderConcurrency)
 	refreshLimiter := make(chan struct{}, accountInspectionMaxRefreshConcurrency)
 	completed := 0
 	inFlight := 0
@@ -1804,10 +1808,13 @@ func completedInspectionResults(results []accountInspectionResult) []accountInsp
 	return out
 }
 
-func accountInspectionProviderLimiters() map[string]chan struct{} {
+func accountInspectionProviderLimiters(concurrency int) map[string]chan struct{} {
+	if concurrency <= 0 {
+		concurrency = accountInspectionMaxProviderConcurrency
+	}
 	limiters := make(map[string]chan struct{}, len(accountInspectionSupportedProviders))
 	for provider := range accountInspectionSupportedProviders {
-		limiters[provider] = make(chan struct{}, accountInspectionMaxProviderConcurrency)
+		limiters[provider] = make(chan struct{}, concurrency)
 	}
 	return limiters
 }
