@@ -609,6 +609,9 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 }
 
 func (s *Server) exportJSONL(ctx context.Context) ([]byte, error) {
+	if err := flushRuntimeStateWrites(ctx, s.store); err != nil {
+		return nil, err
+	}
 	data, err := s.store.ExportJSONL(ctx)
 	if err != nil {
 		return nil, err
@@ -822,6 +825,12 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	if len(routingCursors) > 0 || len(authRuntimeStats) > 0 {
+		if err := flushRuntimeStateWrites(c.Request.Context(), s.store); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	importedRoutingCursors, err := s.store.ImportRoutingCursorStates(c.Request.Context(), routingCursors)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -831,6 +840,22 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if authRuntimeStateImporter != nil && (importedRoutingCursors > 0 || importedAuthRuntimeStats > 0) {
+		currentRoutingCursors, errLoad := s.store.ListRoutingCursorStates(c.Request.Context())
+		if errLoad != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": errLoad.Error()})
+			return
+		}
+		currentAuthRuntimeStats, errLoad := s.store.ListAuthRuntimeStats(c.Request.Context())
+		if errLoad != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": errLoad.Error()})
+			return
+		}
+		if errApply := authRuntimeStateImporter(currentRoutingCursors, currentAuthRuntimeStats); errApply != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": errApply.Error()})
+			return
+		}
 	}
 	if monitoringSettings != nil {
 		if err := s.store.SetMonitoringSettings(c.Request.Context(), *monitoringSettings); err != nil {

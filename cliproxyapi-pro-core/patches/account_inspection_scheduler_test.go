@@ -22,6 +22,29 @@ type accountInspectionTestStorage struct {
 	meta map[string]any
 }
 
+type accountInspectionAuthStore struct {
+	path string
+}
+
+func (s *accountInspectionAuthStore) List(context.Context) ([]*coreauth.Auth, error) {
+	return nil, nil
+}
+
+func (s *accountInspectionAuthStore) Save(_ context.Context, auth *coreauth.Auth) (string, error) {
+	raw, err := json.Marshal(auth.Metadata)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(s.path, append(raw, '\n'), 0o600); err != nil {
+		return "", err
+	}
+	return s.path, nil
+}
+
+func (s *accountInspectionAuthStore) Delete(context.Context, string) error {
+	return nil
+}
+
 func (s *accountInspectionTestStorage) SetMetadata(meta map[string]any) {
 	s.meta = meta
 }
@@ -463,6 +486,120 @@ func TestSyncInspectionAuthErrorPersistsLastErrorMetadata(t *testing.T) {
 	}
 	if lastError["code"] != "token_refresh_error" || lastError["message"] != "refresh failed" {
 		t.Fatalf("metadata last_error = %#v, want token_refresh_error/refresh failed", lastError)
+	}
+}
+
+func TestCleanupLegacyQuotaCacheFromOrdinaryAuthPersistsJSONRemoval(t *testing.T) {
+	authPath := filepath.Join(t.TempDir(), "codex-user.json")
+	manager := coreauth.NewManager(&accountInspectionAuthStore{path: authPath}, nil, nil)
+	registered, err := manager.Register(context.Background(), &coreauth.Auth{
+		Provider: "codex",
+		ID:       "codex-user",
+		FileName: "codex-user.json",
+		Metadata: map[string]any{
+			"email":       "user@example.com",
+			"quota_cache": map[string]any{"status": "success", "cachedAt": float64(123)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	if err := scheduler.cleanupLegacyQuotaCacheFromAuth(context.Background(), accountFromAuth(registered)); err != nil {
+		t.Fatalf("cleanupLegacyQuotaCacheFromAuth() error = %v", err)
+	}
+	raw, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if _, ok := persisted["quota_cache"]; ok {
+		t.Fatalf("persisted quota_cache = %#v, want removed", persisted["quota_cache"])
+	}
+	if persisted["email"] != "user@example.com" {
+		t.Fatalf("persisted email = %#v, want preserved", persisted["email"])
+	}
+	got, ok := manager.GetByID(registered.ID)
+	if !ok || got == nil {
+		t.Fatal("updated auth not found")
+	}
+	if _, ok := got.Metadata["quota_cache"]; ok {
+		t.Fatalf("runtime quota_cache = %#v, want removed", got.Metadata["quota_cache"])
+	}
+}
+
+func TestCleanupLegacyQuotaCachesPreservesPluginVirtualSourceMetadata(t *testing.T) {
+	authPath := filepath.Join(t.TempDir(), "gemini-cli.json")
+	legacyQuota := map[string]any{"status": "success", "cachedAt": float64(123)}
+	if err := os.WriteFile(authPath, []byte(`{"type":"gemini-cli","email":"user@example.com","project_id":"project-a","project_ids":["project-a","project-b"],"quota_cache":{"status":"success","cachedAt":123}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	primary := &coreauth.Auth{
+		Provider: "gemini-cli",
+		ID:       "gemini-cli-primary",
+		FileName: "gemini-cli.json",
+		Metadata: map[string]any{
+			"type":        "gemini-cli",
+			"email":       "user@example.com",
+			"project_id":  "project-a",
+			"quota_cache": legacyQuota,
+		},
+		Attributes: map[string]string{"path": authPath, "project_id": "project-a"},
+	}
+	coreauth.MarkPluginVirtualAuth(primary, authPath, 0)
+	secondary := &coreauth.Auth{
+		Provider: "gemini-cli",
+		ID:       "gemini-cli-project-b",
+		FileName: "user-project-b.json",
+		Metadata: map[string]any{
+			"type":        "gemini-cli",
+			"email":       "user@example.com",
+			"project_id":  "project-b",
+			"virtual":     true,
+			"quota_cache": legacyQuota,
+		},
+		Attributes: map[string]string{"path": authPath, "project_id": "project-b", "runtime_only": "true"},
+	}
+	coreauth.MarkPluginVirtualAuth(secondary, authPath, 1)
+	if _, err := manager.Register(context.Background(), secondary); err != nil {
+		t.Fatalf("Register(secondary) error = %v", err)
+	}
+	if _, err := manager.Register(context.Background(), primary); err != nil {
+		t.Fatalf("Register(primary) error = %v", err)
+	}
+
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	scheduler.cleanupLegacyQuotaCaches(context.Background())
+
+	raw, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if _, ok := persisted["quota_cache"]; ok {
+		t.Fatalf("persisted quota_cache = %#v, want removed", persisted["quota_cache"])
+	}
+	if persisted["project_id"] != "project-a" {
+		t.Fatalf("persisted project_id = %#v, want project-a", persisted["project_id"])
+	}
+	projectIDs, ok := persisted["project_ids"].([]any)
+	if !ok || len(projectIDs) != 2 || projectIDs[0] != "project-a" || projectIDs[1] != "project-b" {
+		t.Fatalf("persisted project_ids = %#v, want original project list", persisted["project_ids"])
+	}
+	for _, auth := range manager.List() {
+		if auth != nil && auth.Metadata != nil {
+			if _, ok := auth.Metadata["quota_cache"]; ok {
+				t.Fatalf("runtime auth %q quota_cache = %#v, want removed", auth.ID, auth.Metadata["quota_cache"])
+			}
+		}
 	}
 }
 

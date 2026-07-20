@@ -645,7 +645,12 @@
       "refresh": "Refresh",
       "request_events_page_source_hint": "Showing {{from}}-{{to}} of {{total}} matching events from a stable snapshot.",
       "request_events_coverage_hint": "Statistics cover all {{total}} requests; the live detail cache keeps the latest {{shown}}.",
-      "request_events_new_available": "{{count}} new events available"
+      "request_events_new_available": "{{count}} new events available",
+      "request_events_live_follow": "Live follow",
+      "request_events_live_follow_hint": "Automatically apply new events only while this log is at the top and no request detail is open.",
+      "request_events_paused_hint": "List updates are paused to keep your current browsing position.",
+      "request_events_following_hint": "Live follow is active. New events will be applied shortly.",
+      "request_events_view_latest": "View latest"
     },
     "usage_stats": {
       "title": "Usage Statistics",
@@ -682,8 +687,8 @@
       "import_success": "Import complete: added {{added}}, skipped {{skipped}}, total {{total}}, failed {{failed}}",
       "import_model_prices_restored": "Model prices restored: {{count}}",
       "import_quota_cache_restored": "Quota cache restored: {{count}}",
-      "import_routing_cursors_restored": "Routing cursors restored: {{count}} (applies after restart)",
-      "import_auth_runtime_stats_restored": "Account runtime statistics restored: {{count}} (applies after restart)",
+      "import_routing_cursors_restored": "Routing cursors restored: {{count}}",
+      "import_auth_runtime_stats_restored": "Account runtime statistics restored: {{count}}",
       "import_account_inspection_schedule_restored": "Account inspection settings restored",
       "import_account_inspection_snapshot_restored": "Latest account inspection snapshot restored in read-only mode",
       "import_invalid": "Invalid usage export file",
@@ -1636,7 +1641,12 @@
       "refresh": "Обновить",
       "request_events_page_source_hint": "Показаны события {{from}}-{{to}} из {{total}} совпадений в стабильном снимке.",
       "request_events_coverage_hint": "Статистика охватывает все {{total}} запросов; в кеше деталей сохранены последние {{shown}}.",
-      "request_events_new_available": "Доступно новых событий: {{count}}"
+      "request_events_new_available": "Доступно новых событий: {{count}}",
+      "request_events_live_follow": "Следить в реальном времени",
+      "request_events_live_follow_hint": "Новые события применяются автоматически, только когда журнал прокручен вверх и детали запроса закрыты.",
+      "request_events_paused_hint": "Обновление списка приостановлено, чтобы сохранить текущую позицию просмотра.",
+      "request_events_following_hint": "Отслеживание включено. Новые события скоро появятся в списке.",
+      "request_events_view_latest": "Показать новые"
     },
     "usage_stats": {
       "title": "Статистика использования",
@@ -1673,8 +1683,8 @@
       "import_success": "Импорт завершён: добавлено {{added}}, пропущено {{skipped}}, всего {{total}}, ошибок {{failed}}",
       "import_model_prices_restored": "Цены моделей восстановлены: {{count}}",
       "import_quota_cache_restored": "Кэш квот восстановлен: {{count}}",
-      "import_routing_cursors_restored": "Курсоры маршрутизации восстановлены: {{count}} (применится после перезапуска)",
-      "import_auth_runtime_stats_restored": "Статистика аккаунтов восстановлена: {{count}} (применится после перезапуска)",
+      "import_routing_cursors_restored": "Курсоры маршрутизации восстановлены: {{count}}",
+      "import_auth_runtime_stats_restored": "Статистика аккаунтов восстановлена: {{count}}",
       "import_account_inspection_schedule_restored": "Настройки проверки аккаунтов восстановлены",
       "import_account_inspection_snapshot_restored": "Последний снимок проверки аккаунтов восстановлен в режиме только для чтения",
       "import_invalid": "Недопустимый файл экспорта использования",
@@ -2627,7 +2637,12 @@
       "refresh": "刷新",
       "request_events_page_source_hint": "稳定快照中显示第 {{from}}-{{to}} 条，共 {{total}} 条匹配事件。",
       "request_events_coverage_hint": "统计覆盖全部 {{total}} 次请求；实时明细缓存保留最近 {{shown}} 条。",
-      "request_events_new_available": "有 {{count}} 条新事件可查看"
+      "request_events_new_available": "有 {{count}} 条新事件可查看",
+      "request_events_live_follow": "实时跟随",
+      "request_events_live_follow_hint": "仅当日志位于顶部且未打开请求详情时，自动应用新事件。",
+      "request_events_paused_hint": "列表更新已暂停，当前浏览位置将保持不变。",
+      "request_events_following_hint": "实时跟随已开启，新事件即将自动载入。",
+      "request_events_view_latest": "查看最新"
     },
     "usage_stats": {
       "title": "使用统计",
@@ -2664,8 +2679,8 @@
       "import_success": "导入完成：新增 {{added}}，跳过 {{skipped}}，总请求 {{total}}，失败 {{failed}}",
       "import_model_prices_restored": "模型价格已恢复：{{count}} 个",
       "import_quota_cache_restored": "额度缓存已恢复：{{count}} 条",
-      "import_routing_cursors_restored": "路由游标已恢复：{{count}} 条（重启后生效）",
-      "import_auth_runtime_stats_restored": "账号运行统计已恢复：{{count}} 条（重启后生效）",
+      "import_routing_cursors_restored": "路由游标已恢复：{{count}} 条",
+      "import_auth_runtime_stats_restored": "账号运行统计已恢复：{{count}} 条",
       "import_account_inspection_schedule_restored": "账号巡检设置已恢复",
       "import_account_inspection_snapshot_restored": "最近一次账号巡检快照已以只读模式恢复",
       "import_invalid": "导入文件格式不正确",
@@ -3618,7 +3633,12 @@
       "refresh": "重新整理",
       "request_events_page_source_hint": "穩定快照中顯示第 {{from}}-{{to}} 條，共 {{total}} 條符合事件。",
       "request_events_coverage_hint": "統計涵蓋全部 {{total}} 次請求；即時明細快取保留最近 {{shown}} 條。",
-      "request_events_new_available": "有 {{count}} 條新事件可查看"
+      "request_events_new_available": "有 {{count}} 條新事件可查看",
+      "request_events_live_follow": "即時跟隨",
+      "request_events_live_follow_hint": "僅當日誌位於頂部且未開啟請求詳情時，自動套用新事件。",
+      "request_events_paused_hint": "清單更新已暫停，目前瀏覽位置將保持不變。",
+      "request_events_following_hint": "即時跟隨已開啟，新事件即將自動載入。",
+      "request_events_view_latest": "查看最新"
     },
     "usage_stats": {
       "title": "使用統計",
@@ -3655,8 +3675,8 @@
       "import_success": "匯入完成：新增 {{added}}，跳過 {{skipped}}，總請求 {{total}}，失敗 {{failed}}",
       "import_model_prices_restored": "模型價格已恢復：{{count}} 個",
       "import_quota_cache_restored": "額度快取已恢復：{{count}} 筆",
-      "import_routing_cursors_restored": "路由游標已還原：{{count}} 筆（重新啟動後生效）",
-      "import_auth_runtime_stats_restored": "帳號執行統計已還原：{{count}} 筆（重新啟動後生效）",
+      "import_routing_cursors_restored": "路由游標已還原：{{count}} 筆",
+      "import_auth_runtime_stats_restored": "帳號執行統計已還原：{{count}} 筆",
       "import_account_inspection_schedule_restored": "帳號巡檢設定已恢復",
       "import_account_inspection_snapshot_restored": "最近一次帳號巡檢快照已以唯讀模式還原",
       "import_invalid": "匯入檔案格式不正確",

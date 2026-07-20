@@ -538,6 +538,14 @@ func TestUsageExportImportPreservesAntigravitySubscriptionQuotaCache(t *testing.
 }
 
 func TestUsageExportImportPreservesRoutingCursorAndAuthRuntimeStats(t *testing.T) {
+	defer SetAuthRuntimeStateImportHandler(nil)
+	var appliedCursors []RoutingCursorState
+	var appliedStats []AuthRuntimeStats
+	SetAuthRuntimeStateImportHandler(func(cursors []RoutingCursorState, stats []AuthRuntimeStats) error {
+		appliedCursors = append([]RoutingCursorState(nil), cursors...)
+		appliedStats = append([]AuthRuntimeStats(nil), stats...)
+		return nil
+	})
 	sourceStore := openTestStore(t)
 	ctx := context.Background()
 	if err := sourceStore.SetRoutingCursorState(ctx, RoutingCursorState{
@@ -571,8 +579,60 @@ func TestUsageExportImportPreservesRoutingCursorAndAuthRuntimeStats(t *testing.T
 	if response["routingCursors"] != float64(1) || response["authRuntimeStats"] != float64(1) {
 		t.Fatalf("import response = %+v", response)
 	}
+	if len(appliedCursors) != 1 || appliedCursors[0].LastAuthID != "auth-b" || len(appliedStats) != 1 || appliedStats[0].SelectedCount != 9 {
+		t.Fatalf("runtime import callback cursors=%+v stats=%+v", appliedCursors, appliedStats)
+	}
 	cursor, ok, err := targetStore.GetRoutingCursorState(ctx, "single|codex|gpt-5|0|all")
 	if err != nil || !ok || cursor.LastAuthID != "auth-b" {
+		t.Fatalf("restored cursor = %+v, %v, %v", cursor, ok, err)
+	}
+	stats, ok, err := targetStore.GetAuthRuntimeStats(ctx, "idx-a", "auth-a")
+	if err != nil || !ok || stats.SelectedCount != 9 || stats.SuccessCount != 7 || stats.FailureCount != 2 {
+		t.Fatalf("restored stats = %+v, %v, %v", stats, ok, err)
+	}
+}
+
+func TestUsageImportFlushesQueuedRuntimeStateBeforeExplicitRestore(t *testing.T) {
+	sourceStore := openTestStore(t)
+	ctx := context.Background()
+	if err := sourceStore.SetRoutingCursorState(ctx, RoutingCursorState{
+		CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "backup-auth", UpdatedAtMS: 100,
+	}); err != nil {
+		t.Fatalf("SetRoutingCursorState() error = %v", err)
+	}
+	if err := sourceStore.SetAuthRuntimeStats(ctx, AuthRuntimeStats{
+		AuthIndex: "idx-a", AuthID: "auth-a", SelectedCount: 9, SuccessCount: 7, FailureCount: 2, UpdatedAtMS: 100,
+	}); err != nil {
+		t.Fatalf("SetAuthRuntimeStats() error = %v", err)
+	}
+	exported, err := sourceStore.ExportJSONL(ctx)
+	if err != nil {
+		t.Fatalf("ExportJSONL() error = %v", err)
+	}
+
+	targetStore := openTestStore(t)
+	service := &Service{ctx: ctx, store: targetStore}
+	SetDefaultService(service)
+	defer stopRuntimeStateWriter(service)
+	QueueRoutingCursorState(RoutingCursorState{
+		CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "queued-current-auth", UpdatedAtMS: 500,
+	})
+	QueueAuthRuntimeStats(AuthRuntimeStats{
+		AuthIndex: "idx-a", AuthID: "auth-a", SelectedCount: 1, SuccessCount: 1, UpdatedAtMS: 500,
+	})
+
+	router := testUsageRouter(targetStore)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/usage/import", bytes.NewReader(exported))
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := flushRuntimeStateWrites(ctx, targetStore); err != nil {
+		t.Fatalf("flushRuntimeStateWrites() error = %v", err)
+	}
+	cursor, ok, err := targetStore.GetRoutingCursorState(ctx, "single|codex|gpt-5|0|all")
+	if err != nil || !ok || cursor.LastAuthID != "backup-auth" {
 		t.Fatalf("restored cursor = %+v, %v, %v", cursor, ok, err)
 	}
 	stats, ok, err := targetStore.GetAuthRuntimeStats(ctx, "idx-a", "auth-a")

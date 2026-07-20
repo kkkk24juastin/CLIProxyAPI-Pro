@@ -2558,11 +2558,12 @@ replace_once(
 ''',
     '''\tauth.EnsureIndex()
 \trestoreAuthRuntimeStats(auth)
+\tcleanupLegacyQuotaCacheOnRegister(auth)
 \tauthClone := auth.Clone()
 \tm.mu.Lock()
 \tm.auths[auth.ID] = authClone
 ''',
-    'restoreAuthRuntimeStats(auth)',
+    'cleanupLegacyQuotaCacheOnRegister(auth)',
 )
 replace_once(
     auth_conductor,
@@ -2975,6 +2976,35 @@ replace_once(
 \t}
 }''',
     'persistedCursors := make(map[string]string)',
+)
+insert_before(
+    auth_scheduler,
+    '// selectorStrategy maps a selector implementation to the scheduler semantics it should emulate.\n',
+    '''func (s *authScheduler) applyImportedRuntimeState(states []embeddedusage.RoutingCursorState, auths []*Auth) {
+\tif s == nil {
+\t\treturn
+\t}
+\tpersistedCursors := make(map[string]string, len(states))
+\tfor _, state := range states {
+\t\tif state.CursorKey != "" && state.LastAuthID != "" {
+\t\t\tpersistedCursors[state.CursorKey] = state.LastAuthID
+\t\t}
+\t}
+\ts.mu.Lock()
+\tdefer s.mu.Unlock()
+\ts.persistedCursors = persistedCursors
+\ts.providers = make(map[string]*providerScheduler)
+\ts.authProviders = make(map[string]string)
+\ts.mixedCursors = make(map[string]int)
+\ts.mixedRestored = make(map[string]bool)
+\tnow := time.Now()
+\tfor _, auth := range auths {
+\t\ts.upsertAuthLocked(auth, now)
+\t}
+}
+
+''',
+    'func (s *authScheduler) applyImportedRuntimeState',
 )
 replace_once(
     auth_scheduler,

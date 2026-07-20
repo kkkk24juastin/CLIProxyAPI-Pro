@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type UIEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -117,6 +117,8 @@ const REALTIME_LOG_PAGE_SIZE = 100;
 const REALTIME_LOG_ENRICH_LIMIT = REALTIME_LOG_PAGE_SIZE;
 const ACCOUNT_QUOTA_REQUEST_CONCURRENCY = 4;
 const REALTIME_LOG_COLUMNS_STORAGE_KEY = 'cli-proxy-realtime-log-columns-v2';
+const REALTIME_LOG_FOLLOW_STORAGE_KEY = 'cli-proxy-realtime-log-follow-v1';
+const REALTIME_LOG_TOP_THRESHOLD_PX = 8;
 const REALTIME_LOG_COLUMN_KEYS = [
   'type',
   'model',
@@ -148,6 +150,14 @@ type RealtimeLogColumnDefinition = {
   cellClassName?: (row: RealtimeLogRow) => string | undefined;
   render: (row: RealtimeLogRow) => ReactNode;
   width: number;
+};
+type RealtimeLogScrollMode = 'preserve' | 'top';
+type RealtimeLogScrollSnapshot = {
+  mode: RealtimeLogScrollMode;
+  top: number;
+  left: number;
+  anchorId: string;
+  anchorOffset: number;
 };
 const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   type: 170,
@@ -317,6 +327,24 @@ const saveRealtimeLogColumns = (columns: RealtimeLogColumnPreference[]) => {
     window.localStorage.setItem(REALTIME_LOG_COLUMNS_STORAGE_KEY, JSON.stringify(columns));
   } catch {
     // Column preferences are convenience state; storage failures should not break logs.
+  }
+};
+
+const loadRealtimeLogFollowEnabled = () => {
+  if (typeof window === 'undefined') return true;
+  try {
+    return window.localStorage.getItem(REALTIME_LOG_FOLLOW_STORAGE_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+};
+
+const saveRealtimeLogFollowEnabled = (enabled: boolean) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(REALTIME_LOG_FOLLOW_STORAGE_KEY, String(enabled));
+  } catch {
+    // Live-follow preference is optional; storage failures should not break logs.
   }
 };
 
@@ -3890,11 +3918,15 @@ export function MonitoringCenterPage() {
   const [realtimeLogLoading, setRealtimeLogLoading] = useState(false);
   const [realtimeLogError, setRealtimeLogError] = useState('');
   const [realtimeLogColumns, setRealtimeLogColumns] = useState<RealtimeLogColumnPreference[]>(loadRealtimeLogColumns);
+  const [realtimeLogFollowEnabled, setRealtimeLogFollowEnabled] = useState(loadRealtimeLogFollowEnabled);
+  const [realtimeLogAtTop, setRealtimeLogAtTop] = useState(true);
   const [draggedRealtimeLogColumnKey, setDraggedRealtimeLogColumnKey] = useState<RealtimeLogColumnKey | null>(null);
   const [isRealtimeColumnsMenuOpen, setIsRealtimeColumnsMenuOpen] = useState(false);
   const accountQuotaStatesRef = useRef<Record<string, AccountQuotaState>>({});
   const accountQuotaRequestIdsRef = useRef<Record<string, number>>({});
   const realtimeColumnsMenuRef = useRef<HTMLDivElement | null>(null);
+  const realtimeLogWrapperRef = useRef<HTMLDivElement | null>(null);
+  const pendingRealtimeLogScrollSnapshotRef = useRef<RealtimeLogScrollSnapshot | null>(null);
   const usageGenerationRef = useRef(0);
   const deferredSearchInput = useDeferredValue(searchInput);
   const [deferredSearch, setDeferredSearch] = useState(searchInput);
@@ -3963,8 +3995,26 @@ export function MonitoringCenterPage() {
 
   const realtimeLogRequestIdRef = useRef(0);
   const realtimeLogAbortControllerRef = useRef<AbortController | null>(null);
-  const realtimeLogPageRef = useRef(1);
   const realtimeLogAutoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const captureRealtimeLogScroll = useCallback((mode: RealtimeLogScrollMode): RealtimeLogScrollSnapshot | null => {
+    const wrapper = realtimeLogWrapperRef.current;
+    if (!wrapper) return null;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const rows = Array.from(wrapper.querySelectorAll<HTMLTableRowElement>('tbody tr[data-realtime-row-id]'));
+    const anchor = rows.find((row) => row.getBoundingClientRect().bottom > wrapperRect.top + 1);
+    return {
+      mode,
+      top: wrapper.scrollTop,
+      left: wrapper.scrollLeft,
+      anchorId: anchor?.dataset.realtimeRowId ?? '',
+      anchorOffset: anchor ? anchor.getBoundingClientRect().top - wrapperRect.top : 0,
+    };
+  }, []);
+
+  const handleRealtimeLogScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    setRealtimeLogAtTop(event.currentTarget.scrollTop <= REALTIME_LOG_TOP_THRESHOLD_PX);
+  }, []);
 
   const buildRealtimeLogFilters = useCallback((): UsageEventPageFilters => {
     const nowMs = Date.now();
@@ -3982,9 +4032,14 @@ export function MonitoringCenterPage() {
     };
   }, [deferredSearch, searchMatchedAuthIndexFilter, selectedApiKey, selectedModel, selectedProvider, selectedStatus, timeRange]);
 
-  const fetchRealtimeLogPage = useCallback(async (page: number, cursor = '') => {
+  const fetchRealtimeLogPage = useCallback(async (
+    page: number,
+    cursor = '',
+    scrollMode: RealtimeLogScrollMode = 'preserve'
+  ) => {
     if (connectionStatus !== 'connected') return false;
     const requestId = realtimeLogRequestIdRef.current + 1;
+    const scrollSnapshot = captureRealtimeLogScroll(scrollMode);
     realtimeLogRequestIdRef.current = requestId;
     realtimeLogAbortControllerRef.current?.abort();
     const controller = new AbortController();
@@ -3994,6 +4049,7 @@ export function MonitoringCenterPage() {
     try {
       const result = await loadEventPage({ ...buildRealtimeLogFilters(), cursor, signal: controller.signal });
       if (realtimeLogRequestIdRef.current !== requestId) return false;
+      pendingRealtimeLogScrollSnapshotRef.current = scrollSnapshot;
       setRealtimeLogUsage(result.usage);
       setRealtimeLogMatchedTotal(result.matchedTotal);
       setRealtimeLogNextCursor(result.nextCursor);
@@ -4018,25 +4074,25 @@ export function MonitoringCenterPage() {
         realtimeLogAbortControllerRef.current = null;
       }
     }
-  }, [buildRealtimeLogFilters, connectionStatus, loadEventPage]);
+  }, [buildRealtimeLogFilters, captureRealtimeLogScroll, connectionStatus, loadEventPage]);
 
-  const refreshRealtimeLogs = useCallback(async () => {
+  const refreshRealtimeLogs = useCallback(async (scrollMode: RealtimeLogScrollMode = 'preserve') => {
     setRealtimeLogPageCursors(['']);
-    return fetchRealtimeLogPage(1, '');
+    return fetchRealtimeLogPage(1, '', scrollMode);
   }, [fetchRealtimeLogPage]);
 
   const showPreviousRealtimeLogPage = useCallback(async () => {
     if (realtimeLogLoading || realtimeLogPage <= 1) return;
     const previousPage = realtimeLogPage - 1;
     const cursor = realtimeLogPageCursors[previousPage - 1] ?? '';
-    await fetchRealtimeLogPage(previousPage, cursor);
+    await fetchRealtimeLogPage(previousPage, cursor, 'top');
   }, [fetchRealtimeLogPage, realtimeLogLoading, realtimeLogPage, realtimeLogPageCursors]);
 
   const showNextRealtimeLogPage = useCallback(async () => {
     if (realtimeLogLoading || !realtimeLogNextCursor) return;
     const nextPage = realtimeLogPage + 1;
     const cursor = realtimeLogNextCursor;
-    const success = await fetchRealtimeLogPage(nextPage, cursor);
+    const success = await fetchRealtimeLogPage(nextPage, cursor, 'top');
     if (!success) return;
   }, [fetchRealtimeLogPage, realtimeLogLoading, realtimeLogNextCursor, realtimeLogPage]);
 
@@ -4218,6 +4274,18 @@ export function MonitoringCenterPage() {
   const combinedError = [usageError, monitoringError, realtimeLogError].filter(Boolean).join('；');
   const hasPrices = Object.keys(modelPrices).length > 0;
   const pendingRealtimeEventCount = realtimeLogSnapshotMaxId > 0 ? Math.max(latestId - realtimeLogSnapshotMaxId, 0) : 0;
+  const realtimeLogAutoRefreshPaused = realtimeLogPage !== 1
+    || !realtimeLogFollowEnabled
+    || !realtimeLogAtTop
+    || Boolean(selectedRealtimeErrorRow);
+  const realtimeLogCanAutoRefresh = connectionStatus === 'connected'
+    && realtimeLogPage === 1
+    && pendingRealtimeEventCount > 0
+    && !realtimeLogAutoRefreshPaused;
+
+  useEffect(() => {
+    saveRealtimeLogFollowEnabled(realtimeLogFollowEnabled);
+  }, [realtimeLogFollowEnabled]);
 
   useEffect(() => {
     const nextGeneration = Number(usage?.generation) || 0;
@@ -4229,29 +4297,26 @@ export function MonitoringCenterPage() {
     setRealtimeLogMatchedTotal(0);
     setRealtimeLogPageCursors(['']);
     void refreshAggregates();
-    void refreshRealtimeLogs();
+    void refreshRealtimeLogs('top');
   }, [refreshAggregates, refreshRealtimeLogs, usage?.generation]);
 
   useEffect(() => {
-    realtimeLogPageRef.current = realtimeLogPage;
-  }, [realtimeLogPage]);
+    if (!realtimeLogCanAutoRefresh) {
+      if (realtimeLogAutoRefreshTimerRef.current) {
+        clearTimeout(realtimeLogAutoRefreshTimerRef.current);
+        realtimeLogAutoRefreshTimerRef.current = null;
+      }
+    }
+  }, [realtimeLogCanAutoRefresh]);
 
   useEffect(() => {
-    if (
-      connectionStatus !== 'connected'
-      || realtimeLogPage !== 1
-      || pendingRealtimeEventCount <= 0
-      || realtimeLogAutoRefreshTimerRef.current
-    ) {
-      return;
-    }
+    if (!realtimeLogCanAutoRefresh) return;
+    if (realtimeLogAutoRefreshTimerRef.current) return;
     realtimeLogAutoRefreshTimerRef.current = setTimeout(() => {
       realtimeLogAutoRefreshTimerRef.current = null;
-      if (realtimeLogPageRef.current === 1) {
-        void refreshRealtimeLogs();
-      }
+      void refreshRealtimeLogs('top');
     }, 1000);
-  }, [connectionStatus, pendingRealtimeEventCount, realtimeLogPage, refreshRealtimeLogs]);
+  }, [pendingRealtimeEventCount, realtimeLogCanAutoRefresh, refreshRealtimeLogs]);
 
   useEffect(() => () => {
     realtimeLogAbortControllerRef.current?.abort();
@@ -4810,9 +4875,33 @@ export function MonitoringCenterPage() {
   const realtimeLogVisibleColumnCount = Math.max(1, visibleRealtimeLogColumns.length);
   const realtimeLogVisiblePreferenceCount = realtimeLogColumns.filter((column) => column.visible).length;
 
+  useLayoutEffect(() => {
+    const snapshot = pendingRealtimeLogScrollSnapshotRef.current;
+    const wrapper = realtimeLogWrapperRef.current;
+    if (!snapshot || !wrapper) return;
+    pendingRealtimeLogScrollSnapshotRef.current = null;
+
+    wrapper.scrollLeft = snapshot.left;
+    if (snapshot.mode === 'top') {
+      wrapper.scrollTop = 0;
+      setRealtimeLogAtTop(true);
+      return;
+    }
+
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const anchor = Array.from(wrapper.querySelectorAll<HTMLTableRowElement>('tbody tr[data-realtime-row-id]'))
+      .find((row) => row.dataset.realtimeRowId === snapshot.anchorId);
+    if (anchor) {
+      wrapper.scrollTop += anchor.getBoundingClientRect().top - wrapperRect.top - snapshot.anchorOffset;
+    } else {
+      wrapper.scrollTop = snapshot.top;
+    }
+    setRealtimeLogAtTop(wrapper.scrollTop <= REALTIME_LOG_TOP_THRESHOLD_PX);
+  }, [realtimeLogUsage]);
+
   useEffect(() => {
     if (connectionStatus !== 'connected') return;
-    void refreshRealtimeLogs();
+    void refreshRealtimeLogs('top');
   }, [connectionStatus, refreshRealtimeLogs]);
 
   const accountQuotaTargetsByAccount = useMemo(
@@ -5589,89 +5678,126 @@ export function MonitoringCenterPage() {
 
         {combinedError ? <div className={styles.errorBox}>{combinedError}</div> : null}
 
-        <div className={styles.inlineMetrics}>
-          <span>{`${t('monitoring.log_rows')}: ${realtimeLogTotalCount}`}</span>
-          <span>{`${t('monitoring.recent_failures')}: ${scopedFailureCount}`}</span>
-          {realtimeLogMatchedTotal > 0 ? (
-            <span>
-              {t('monitoring.request_events_page_source_hint', {
-                from: realtimeLogPagination.from,
-                to: realtimeLogPagination.to,
-                total: realtimeLogMatchedTotal,
-                defaultValue: `Showing ${realtimeLogPagination.from}-${realtimeLogPagination.to} of ${realtimeLogMatchedTotal} matching events from a stable snapshot.`,
-              })}
-            </span>
-          ) : null}
-          {pendingRealtimeEventCount > 0 ? (
-            <button type="button" className={styles.inlineActionButton} onClick={() => void refreshRealtimeLogs()}>
-              {t('monitoring.request_events_new_available', {
-                count: pendingRealtimeEventCount,
-                defaultValue: `${pendingRealtimeEventCount} new events available`,
-              })}
-            </button>
-          ) : null}
+        <div className={styles.realtimeLogStatusRow}>
+          <div className={styles.inlineMetrics}>
+            <span>{`${t('monitoring.log_rows')}: ${realtimeLogTotalCount}`}</span>
+            <span>{`${t('monitoring.recent_failures')}: ${scopedFailureCount}`}</span>
+            {realtimeLogMatchedTotal > 0 ? (
+              <span>
+                {t('monitoring.request_events_page_source_hint', {
+                  from: realtimeLogPagination.from,
+                  to: realtimeLogPagination.to,
+                  total: realtimeLogMatchedTotal,
+                  defaultValue: `Showing ${realtimeLogPagination.from}-${realtimeLogPagination.to} of ${realtimeLogMatchedTotal} matching events from a stable snapshot.`,
+                })}
+              </span>
+            ) : null}
+          </div>
+          <label className={styles.realtimeFollowToggle} title={t('monitoring.request_events_live_follow_hint')}>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={realtimeLogFollowEnabled}
+              onChange={(event) => setRealtimeLogFollowEnabled(event.target.checked)}
+            />
+            <span className={styles.realtimeFollowTrack} aria-hidden="true"><span /></span>
+            <span className={styles.realtimeFollowLabel}>{t('monitoring.request_events_live_follow')}</span>
+          </label>
         </div>
 
-        <div className={`${styles.tableWrapper} ${styles.tableScrollWrapper} ${styles.realtimeTableWrapper}`}>
-          <table
-            className={`${styles.table} ${styles.realtimeTable}`}
-            style={{ '--realtime-table-min-width': `${realtimeLogTableMinWidth}px` } as CSSProperties}
+        <div className={styles.realtimeTableShell}>
+          {pendingRealtimeEventCount > 0 && realtimeLogAutoRefreshPaused ? (
+            <div className={styles.realtimeUpdateBar} role="status" aria-live="polite">
+              <div className={styles.realtimeUpdateCopy}>
+                <strong>
+                  {t('monitoring.request_events_new_available', {
+                    count: pendingRealtimeEventCount,
+                    defaultValue: `${pendingRealtimeEventCount} new events available`,
+                  })}
+                </strong>
+                <span>{t('monitoring.request_events_paused_hint')}</span>
+              </div>
+              <button
+                type="button"
+                className={styles.inlineActionButton}
+                onClick={() => void refreshRealtimeLogs('top')}
+                disabled={realtimeLogLoading}
+              >
+                {t('monitoring.request_events_view_latest')}
+              </button>
+            </div>
+          ) : null}
+
+          <div
+            ref={realtimeLogWrapperRef}
+            className={`${styles.tableWrapper} ${styles.tableScrollWrapper} ${styles.realtimeTableWrapper}`}
+            onScroll={handleRealtimeLogScroll}
+            aria-busy={realtimeLogLoading}
           >
-            <colgroup>
-              {visibleRealtimeLogColumns.map((column) => (
-                <col key={column.key} className={column.colClassName} style={{ width: `${column.width}px` }} />
-              ))}
-            </colgroup>
-            <thead>
-              <tr>
+            <table
+              className={`${styles.table} ${styles.realtimeTable}`}
+              style={{ '--realtime-table-min-width': `${realtimeLogTableMinWidth}px` } as CSSProperties}
+            >
+              <colgroup>
                 {visibleRealtimeLogColumns.map((column) => (
-                  <th
-                    key={column.key}
-                    className={[
-                      styles.realtimeDraggableHeader,
-                      column.key === 'time' ? styles.realtimeFixedHeader : '',
-                      column.headerClassName,
-                      draggedRealtimeLogColumnKey === column.key ? styles.realtimeDraggableHeaderActive : '',
-                    ].filter(Boolean).join(' ')}
-                    draggable={column.key !== 'time'}
-                    scope="col"
-                    onDragStart={(event) => handleRealtimeLogHeaderDragStart(event, column.key)}
-                    onDragOver={handleRealtimeLogHeaderDragOver}
-                    onDrop={(event) => handleRealtimeLogHeaderDrop(event, column.key)}
-                    onDragEnd={handleRealtimeLogHeaderDragEnd}
-                  >
-                    <span className={styles.realtimeHeaderContent}>{column.label}</span>
-                    <span
-                      className={styles.realtimeColumnResizeHandle}
-                      role="separator"
-                      aria-label={t('monitoring.realtime_column_resize', { column: column.label })}
-                      onMouseDown={(event) => startRealtimeLogColumnResize(event, column.key)}
-                    />
-                  </th>
+                  <col key={column.key} className={column.colClassName} style={{ width: `${column.width}px` }} />
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {realtimeLogPageRows.map((row) => (
-                <tr key={row.id} className={row.failed ? styles.logRowFailed : undefined}>
+              </colgroup>
+              <thead>
+                <tr>
                   {visibleRealtimeLogColumns.map((column) => (
-                    <td key={column.key} className={column.cellClassName?.(row)}>
-                      {column.render(row)}
-                    </td>
+                    <th
+                      key={column.key}
+                      className={[
+                        styles.realtimeDraggableHeader,
+                        column.key === 'time' ? styles.realtimeFixedHeader : '',
+                        column.headerClassName,
+                        draggedRealtimeLogColumnKey === column.key ? styles.realtimeDraggableHeaderActive : '',
+                      ].filter(Boolean).join(' ')}
+                      draggable={column.key !== 'time'}
+                      scope="col"
+                      onDragStart={(event) => handleRealtimeLogHeaderDragStart(event, column.key)}
+                      onDragOver={handleRealtimeLogHeaderDragOver}
+                      onDrop={(event) => handleRealtimeLogHeaderDrop(event, column.key)}
+                      onDragEnd={handleRealtimeLogHeaderDragEnd}
+                    >
+                      <span className={styles.realtimeHeaderContent}>{column.label}</span>
+                      <span
+                        className={styles.realtimeColumnResizeHandle}
+                        role="separator"
+                        aria-label={t('monitoring.realtime_column_resize', { column: column.label })}
+                        onMouseDown={(event) => startRealtimeLogColumnResize(event, column.key)}
+                      />
+                    </th>
                   ))}
                 </tr>
-              ))}
-              {realtimeLogPageRows.length === 0 ? (
-                <tr>
-                  <td colSpan={realtimeLogVisibleColumnCount}>
-                    <div className={styles.emptyTable}>
-                      {monitoringLoading ? t('common.loading') : deferredSearch.trim() ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
-                    </div>
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {realtimeLogPageRows.map((row) => (
+                  <tr
+                    key={row.id}
+                    data-realtime-row-id={row.id}
+                    className={row.failed ? styles.logRowFailed : undefined}
+                  >
+                    {visibleRealtimeLogColumns.map((column) => (
+                      <td key={column.key} className={column.cellClassName?.(row)}>
+                        {column.render(row)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                {realtimeLogPageRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={realtimeLogVisibleColumnCount}>
+                      <div className={styles.emptyTable}>
+                        {monitoringLoading ? t('common.loading') : deferredSearch.trim() ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         </div>
         {realtimeLogPagination.totalPages > 1 ? (
           <div className={quotaStyles.pagination}>

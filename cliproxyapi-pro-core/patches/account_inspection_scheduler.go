@@ -406,6 +406,10 @@ func (h *Handler) startAccountInspectionScheduler() {
 	if scheduler != nil {
 		embeddedusage.SetAccountInspectionScheduleHandlers(scheduler.exportSchedule, scheduler.importSchedule)
 		embeddedusage.SetAccountInspectionSnapshotHandlers(scheduler.exportResultSnapshot, scheduler.importResultSnapshot)
+		if h.authManager != nil {
+			embeddedusage.SetAuthRuntimeStateImportHandler(h.authManager.ApplyImportedRuntimeState)
+		}
+		scheduler.cleanupLegacyQuotaCaches(context.Background())
 		go scheduler.loop()
 	}
 	startRoutingPolicyController(h)
@@ -4013,6 +4017,48 @@ func jsonShape(value any) any {
 func (s *accountInspectionScheduler) persistQuotaState(ctx context.Context, account accountInspectionAccount, state map[string]any) {
 	if err := persistQuotaState(ctx, account, state); err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 配额缓存写入失败：%s", account.identity(), err.Error()))
+		return
+	}
+	if err := s.cleanupLegacyQuotaCacheFromAuth(ctx, account); err != nil {
+		s.appendLog("warning", fmt.Sprintf("%s 旧认证文件配额缓存清理失败：%s", account.identity(), err.Error()))
+	}
+}
+
+func (s *accountInspectionScheduler) cleanupLegacyQuotaCacheFromAuth(ctx context.Context, account accountInspectionAccount) error {
+	if s == nil || s.h == nil || s.h.authManager == nil || account.AuthIndex == "" {
+		return nil
+	}
+	auth := s.h.authByIndex(account.AuthIndex)
+	if auth == nil || auth.Metadata == nil {
+		return nil
+	}
+	if _, exists := auth.Metadata["quota_cache"]; !exists {
+		return nil
+	}
+	return s.updateInspectionAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
+		if auth.Metadata == nil {
+			return
+		}
+		delete(auth.Metadata, "quota_cache")
+		auth.UpdatedAt = time.Now()
+	})
+}
+
+func (s *accountInspectionScheduler) cleanupLegacyQuotaCaches(ctx context.Context) {
+	if s == nil || s.h == nil || s.h.authManager == nil {
+		return
+	}
+	for _, auth := range s.h.authManager.List() {
+		if auth == nil || auth.Metadata == nil {
+			continue
+		}
+		if _, exists := auth.Metadata["quota_cache"]; !exists {
+			continue
+		}
+		account := accountFromAuth(auth)
+		if err := s.cleanupLegacyQuotaCacheFromAuth(ctx, account); err != nil {
+			s.appendLog("warning", fmt.Sprintf("%s 启动清理旧认证文件配额缓存失败：%s", account.identity(), err.Error()))
+		}
 	}
 }
 

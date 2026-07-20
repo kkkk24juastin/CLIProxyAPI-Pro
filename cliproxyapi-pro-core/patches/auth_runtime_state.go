@@ -43,9 +43,23 @@ func restoreAuthRuntimeStats(auth *Auth) {
 	if err != nil || !ok {
 		return
 	}
+	applyStoredAuthRuntimeStats(auth, stored)
+}
+
+func cleanupLegacyQuotaCacheOnRegister(auth *Auth) {
+	if auth == nil || IsPluginVirtualAuth(auth) || auth.Metadata == nil {
+		return
+	}
+	delete(auth.Metadata, "quota_cache")
+}
+
+func applyStoredAuthRuntimeStats(auth *Auth, stored embeddedusage.AuthRuntimeStats) bool {
+	if auth == nil {
+		return false
+	}
 	fingerprint := authRuntimeIdentityFingerprint(auth)
 	if stored.IdentityFingerprint != "" && fingerprint != "" && stored.IdentityFingerprint != fingerprint {
-		return
+		return false
 	}
 	auth.Selected = stored.SelectedCount
 	auth.Success = stored.SuccessCount
@@ -62,6 +76,7 @@ func restoreAuthRuntimeStats(auth *Auth) {
 			failed:   item.Failed,
 		}
 	}
+	return true
 }
 
 func authRuntimeStatsSnapshot(auth *Auth, now time.Time) embeddedusage.AuthRuntimeStats {
@@ -113,4 +128,44 @@ func (m *Manager) recordAuthSelected(authID string) {
 	}
 	m.mu.Unlock()
 	queueAuthRuntimeStats(snapshot)
+}
+
+// ApplyImportedRuntimeState applies authoritative imported cursor/stat state to the running manager.
+// This makes usage JSONL restore visible immediately without requiring another process restart.
+func (m *Manager) ApplyImportedRuntimeState(cursors []embeddedusage.RoutingCursorState, stats []embeddedusage.AuthRuntimeStats) error {
+	if m == nil {
+		return nil
+	}
+	statsByIndex := make(map[string]embeddedusage.AuthRuntimeStats, len(stats))
+	statsByID := make(map[string]embeddedusage.AuthRuntimeStats, len(stats))
+	for _, item := range stats {
+		if index := strings.TrimSpace(item.AuthIndex); index != "" {
+			statsByIndex[index] = item
+		}
+		if authID := strings.TrimSpace(item.AuthID); authID != "" {
+			statsByID[authID] = item
+		}
+	}
+
+	snapshots := make([]*Auth, 0)
+	m.mu.Lock()
+	for _, auth := range m.auths {
+		if auth == nil {
+			continue
+		}
+		item, ok := statsByIndex[strings.TrimSpace(auth.Index)]
+		if !ok {
+			item, ok = statsByID[strings.TrimSpace(auth.ID)]
+		}
+		if ok {
+			applyStoredAuthRuntimeStats(auth, item)
+		}
+		snapshots = append(snapshots, auth.Clone())
+	}
+	m.mu.Unlock()
+
+	if m.scheduler != nil {
+		m.scheduler.applyImportedRuntimeState(cursors, snapshots)
+	}
+	return nil
 }
