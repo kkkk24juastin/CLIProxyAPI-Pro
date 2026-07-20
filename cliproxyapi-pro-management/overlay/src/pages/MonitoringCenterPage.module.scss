@@ -485,8 +485,17 @@
 
 .inlineMetrics {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.inlineMetrics::-webkit-scrollbar {
+  display: none;
 }
 
 .inlineMetrics span {
@@ -499,6 +508,8 @@
   background: var(--monitor-surface-elevated);
   color: var(--monitor-muted);
   font-size: 12px;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .realtimeLogStatusRow {
@@ -573,15 +584,21 @@
 }
 
 .realtimeUpdateBar {
+  position: absolute;
+  top: 50px;
+  right: 14px;
+  z-index: 6;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  width: min(460px, calc(100% - 28px));
   min-width: 0;
   padding: 9px 11px;
   border: 1px solid color-mix(in srgb, var(--monitor-accent) 30%, var(--monitor-line));
   border-radius: 8px;
   background: color-mix(in srgb, var(--monitor-accent) 7%, var(--monitor-surface));
+  box-shadow: var(--shadow);
 }
 
 .realtimeUpdateCopy {
@@ -604,6 +621,12 @@
 
 .realtimeUpdateBar .inlineActionButton {
   flex: 0 0 auto;
+}
+
+.realtimeTableShell {
+  position: relative;
+  min-width: 0;
+  height: min(620px, 68vh);
 }
 
 .realtimeColumnsMenu {
@@ -4047,7 +4070,8 @@
 }
 
 .realtimeTableWrapper {
-  max-height: min(620px, 68vh);
+  height: 100%;
+  max-height: none;
   overflow-x: auto;
   overflow-y: auto;
   overflow-anchor: none;

@@ -51,6 +51,16 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
         self.assertIn("monitoring.request_events_paused_hint", source)
         self.assertIn("monitoring.request_events_view_latest", source)
 
+    def test_realtime_follow_refresh_does_not_change_outer_layout_height(self) -> None:
+        source = PAGE_PATH.read_text()
+        styles = STYLE_PATH.read_text()
+
+        self.assertIn("pendingRealtimeEventCount > 0 && realtimeLogAutoRefreshPaused", source)
+        self.assertIn("className={styles.realtimeTableShell}", source)
+        self.assertIn("height: min(620px, 68vh);", styles)
+        self.assertIn(".realtimeUpdateBar {\n  position: absolute;", styles)
+        self.assertIn("flex-wrap: nowrap;", styles)
+
 
 if __name__ == '__main__':
     unittest.main()

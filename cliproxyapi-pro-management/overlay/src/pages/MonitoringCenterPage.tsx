@@ -5705,101 +5705,99 @@ export function MonitoringCenterPage() {
           </label>
         </div>
 
-        {pendingRealtimeEventCount > 0 ? (
-          <div className={styles.realtimeUpdateBar} role="status" aria-live="polite">
-            <div className={styles.realtimeUpdateCopy}>
-              <strong>
-                {t('monitoring.request_events_new_available', {
-                  count: pendingRealtimeEventCount,
-                  defaultValue: `${pendingRealtimeEventCount} new events available`,
-                })}
-              </strong>
-              <span>
-                {t(realtimeLogAutoRefreshPaused
-                  ? 'monitoring.request_events_paused_hint'
-                  : 'monitoring.request_events_following_hint')}
-              </span>
+        <div className={styles.realtimeTableShell}>
+          {pendingRealtimeEventCount > 0 && realtimeLogAutoRefreshPaused ? (
+            <div className={styles.realtimeUpdateBar} role="status" aria-live="polite">
+              <div className={styles.realtimeUpdateCopy}>
+                <strong>
+                  {t('monitoring.request_events_new_available', {
+                    count: pendingRealtimeEventCount,
+                    defaultValue: `${pendingRealtimeEventCount} new events available`,
+                  })}
+                </strong>
+                <span>{t('monitoring.request_events_paused_hint')}</span>
+              </div>
+              <button
+                type="button"
+                className={styles.inlineActionButton}
+                onClick={() => void refreshRealtimeLogs('top')}
+                disabled={realtimeLogLoading}
+              >
+                {t('monitoring.request_events_view_latest')}
+              </button>
             </div>
-            <button
-              type="button"
-              className={styles.inlineActionButton}
-              onClick={() => void refreshRealtimeLogs('top')}
-              disabled={realtimeLogLoading}
-            >
-              {t('monitoring.request_events_view_latest')}
-            </button>
-          </div>
-        ) : null}
+          ) : null}
 
-        <div
-          ref={realtimeLogWrapperRef}
-          className={`${styles.tableWrapper} ${styles.tableScrollWrapper} ${styles.realtimeTableWrapper}`}
-          onScroll={handleRealtimeLogScroll}
-          aria-busy={realtimeLogLoading}
-        >
-          <table
-            className={`${styles.table} ${styles.realtimeTable}`}
-            style={{ '--realtime-table-min-width': `${realtimeLogTableMinWidth}px` } as CSSProperties}
+          <div
+            ref={realtimeLogWrapperRef}
+            className={`${styles.tableWrapper} ${styles.tableScrollWrapper} ${styles.realtimeTableWrapper}`}
+            onScroll={handleRealtimeLogScroll}
+            aria-busy={realtimeLogLoading}
           >
-            <colgroup>
-              {visibleRealtimeLogColumns.map((column) => (
-                <col key={column.key} className={column.colClassName} style={{ width: `${column.width}px` }} />
-              ))}
-            </colgroup>
-            <thead>
-              <tr>
+            <table
+              className={`${styles.table} ${styles.realtimeTable}`}
+              style={{ '--realtime-table-min-width': `${realtimeLogTableMinWidth}px` } as CSSProperties}
+            >
+              <colgroup>
                 {visibleRealtimeLogColumns.map((column) => (
-                  <th
-                    key={column.key}
-                    className={[
-                      styles.realtimeDraggableHeader,
-                      column.key === 'time' ? styles.realtimeFixedHeader : '',
-                      column.headerClassName,
-                      draggedRealtimeLogColumnKey === column.key ? styles.realtimeDraggableHeaderActive : '',
-                    ].filter(Boolean).join(' ')}
-                    draggable={column.key !== 'time'}
-                    scope="col"
-                    onDragStart={(event) => handleRealtimeLogHeaderDragStart(event, column.key)}
-                    onDragOver={handleRealtimeLogHeaderDragOver}
-                    onDrop={(event) => handleRealtimeLogHeaderDrop(event, column.key)}
-                    onDragEnd={handleRealtimeLogHeaderDragEnd}
-                  >
-                    <span className={styles.realtimeHeaderContent}>{column.label}</span>
-                    <span
-                      className={styles.realtimeColumnResizeHandle}
-                      role="separator"
-                      aria-label={t('monitoring.realtime_column_resize', { column: column.label })}
-                      onMouseDown={(event) => startRealtimeLogColumnResize(event, column.key)}
-                    />
-                  </th>
+                  <col key={column.key} className={column.colClassName} style={{ width: `${column.width}px` }} />
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {realtimeLogPageRows.map((row) => (
-                <tr
-                  key={row.id}
-                  data-realtime-row-id={row.id}
-                  className={row.failed ? styles.logRowFailed : undefined}
-                >
+              </colgroup>
+              <thead>
+                <tr>
                   {visibleRealtimeLogColumns.map((column) => (
-                    <td key={column.key} className={column.cellClassName?.(row)}>
-                      {column.render(row)}
-                    </td>
+                    <th
+                      key={column.key}
+                      className={[
+                        styles.realtimeDraggableHeader,
+                        column.key === 'time' ? styles.realtimeFixedHeader : '',
+                        column.headerClassName,
+                        draggedRealtimeLogColumnKey === column.key ? styles.realtimeDraggableHeaderActive : '',
+                      ].filter(Boolean).join(' ')}
+                      draggable={column.key !== 'time'}
+                      scope="col"
+                      onDragStart={(event) => handleRealtimeLogHeaderDragStart(event, column.key)}
+                      onDragOver={handleRealtimeLogHeaderDragOver}
+                      onDrop={(event) => handleRealtimeLogHeaderDrop(event, column.key)}
+                      onDragEnd={handleRealtimeLogHeaderDragEnd}
+                    >
+                      <span className={styles.realtimeHeaderContent}>{column.label}</span>
+                      <span
+                        className={styles.realtimeColumnResizeHandle}
+                        role="separator"
+                        aria-label={t('monitoring.realtime_column_resize', { column: column.label })}
+                        onMouseDown={(event) => startRealtimeLogColumnResize(event, column.key)}
+                      />
+                    </th>
                   ))}
                 </tr>
-              ))}
-              {realtimeLogPageRows.length === 0 ? (
-                <tr>
-                  <td colSpan={realtimeLogVisibleColumnCount}>
-                    <div className={styles.emptyTable}>
-                      {monitoringLoading ? t('common.loading') : deferredSearch.trim() ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
-                    </div>
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {realtimeLogPageRows.map((row) => (
+                  <tr
+                    key={row.id}
+                    data-realtime-row-id={row.id}
+                    className={row.failed ? styles.logRowFailed : undefined}
+                  >
+                    {visibleRealtimeLogColumns.map((column) => (
+                      <td key={column.key} className={column.cellClassName?.(row)}>
+                        {column.render(row)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                {realtimeLogPageRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={realtimeLogVisibleColumnCount}>
+                      <div className={styles.emptyTable}>
+                        {monitoringLoading ? t('common.loading') : deferredSearch.trim() ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         </div>
         {realtimeLogPagination.totalPages > 1 ? (
           <div className={quotaStyles.pagination}>
