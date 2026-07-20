@@ -501,6 +501,111 @@
   font-size: 12px;
 }
 
+.realtimeLogStatusRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.realtimeFollowToggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 30px;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.realtimeFollowToggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.realtimeFollowTrack {
+  position: relative;
+  display: inline-flex;
+  width: 34px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--monitor-muted) 44%, var(--monitor-line));
+  border-radius: 999px;
+  background: var(--monitor-surface-muted);
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.realtimeFollowTrack > span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--monitor-muted);
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.realtimeFollowToggle input:checked + .realtimeFollowTrack {
+  border-color: var(--monitor-accent-strong);
+  background: color-mix(in srgb, var(--monitor-accent) 28%, var(--monitor-surface));
+}
+
+.realtimeFollowToggle input:checked + .realtimeFollowTrack > span {
+  transform: translateX(16px);
+  background: var(--monitor-accent-strong);
+}
+
+.realtimeFollowToggle input:focus-visible + .realtimeFollowTrack {
+  outline: 2px solid color-mix(in srgb, var(--monitor-accent-strong) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.realtimeFollowLabel {
+  color: var(--monitor-ink);
+  font-weight: 650;
+}
+
+.realtimeUpdateBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--monitor-accent) 30%, var(--monitor-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--monitor-accent) 7%, var(--monitor-surface));
+}
+
+.realtimeUpdateCopy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.realtimeUpdateCopy strong {
+  color: var(--monitor-ink);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.realtimeUpdateCopy span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.realtimeUpdateBar .inlineActionButton {
+  flex: 0 0 auto;
+}
+
 .realtimeColumnsMenu {
   position: relative;
   min-width: 0;
@@ -3945,6 +4050,7 @@
   max-height: min(620px, 68vh);
   overflow-x: auto;
   overflow-y: auto;
+  overflow-anchor: none;
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
 }
@@ -5340,6 +5446,16 @@
 }
 
 @container monitoring-page (max-width: 680px) {
+  .realtimeLogStatusRow {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .realtimeUpdateBar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
   .usageTrendActions {
     align-items: center;
     overflow: visible;

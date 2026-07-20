@@ -644,7 +644,12 @@
       "refresh": "Refresh",
       "request_events_page_source_hint": "Showing {{from}}-{{to}} of {{total}} matching events from a stable snapshot.",
       "request_events_coverage_hint": "Statistics cover all {{total}} requests; the live detail cache keeps the latest {{shown}}.",
-      "request_events_new_available": "{{count}} new events available"
+      "request_events_new_available": "{{count}} new events available",
+      "request_events_live_follow": "Live follow",
+      "request_events_live_follow_hint": "Automatically apply new events only while this log is at the top and no request detail is open.",
+      "request_events_paused_hint": "List updates are paused to keep your current browsing position.",
+      "request_events_following_hint": "Live follow is active. New events will be applied shortly.",
+      "request_events_view_latest": "View latest"
     },
     "usage_stats": {
       "title": "Usage Statistics",
@@ -1634,7 +1639,12 @@
       "refresh": "Обновить",
       "request_events_page_source_hint": "Показаны события {{from}}-{{to}} из {{total}} совпадений в стабильном снимке.",
       "request_events_coverage_hint": "Статистика охватывает все {{total}} запросов; в кеше деталей сохранены последние {{shown}}.",
-      "request_events_new_available": "Доступно новых событий: {{count}}"
+      "request_events_new_available": "Доступно новых событий: {{count}}",
+      "request_events_live_follow": "Следить в реальном времени",
+      "request_events_live_follow_hint": "Новые события применяются автоматически, только когда журнал прокручен вверх и детали запроса закрыты.",
+      "request_events_paused_hint": "Обновление списка приостановлено, чтобы сохранить текущую позицию просмотра.",
+      "request_events_following_hint": "Отслеживание включено. Новые события скоро появятся в списке.",
+      "request_events_view_latest": "Показать новые"
     },
     "usage_stats": {
       "title": "Статистика использования",
@@ -2624,7 +2634,12 @@
       "refresh": "刷新",
       "request_events_page_source_hint": "稳定快照中显示第 {{from}}-{{to}} 条，共 {{total}} 条匹配事件。",
       "request_events_coverage_hint": "统计覆盖全部 {{total}} 次请求；实时明细缓存保留最近 {{shown}} 条。",
-      "request_events_new_available": "有 {{count}} 条新事件可查看"
+      "request_events_new_available": "有 {{count}} 条新事件可查看",
+      "request_events_live_follow": "实时跟随",
+      "request_events_live_follow_hint": "仅当日志位于顶部且未打开请求详情时，自动应用新事件。",
+      "request_events_paused_hint": "列表更新已暂停，当前浏览位置将保持不变。",
+      "request_events_following_hint": "实时跟随已开启，新事件即将自动载入。",
+      "request_events_view_latest": "查看最新"
     },
     "usage_stats": {
       "title": "使用统计",
@@ -3614,7 +3629,12 @@
       "refresh": "重新整理",
       "request_events_page_source_hint": "穩定快照中顯示第 {{from}}-{{to}} 條，共 {{total}} 條符合事件。",
       "request_events_coverage_hint": "統計涵蓋全部 {{total}} 次請求；即時明細快取保留最近 {{shown}} 條。",
-      "request_events_new_available": "有 {{count}} 條新事件可查看"
+      "request_events_new_available": "有 {{count}} 條新事件可查看",
+      "request_events_live_follow": "即時跟隨",
+      "request_events_live_follow_hint": "僅當日誌位於頂部且未開啟請求詳情時，自動套用新事件。",
+      "request_events_paused_hint": "清單更新已暫停，目前瀏覽位置將保持不變。",
+      "request_events_following_hint": "即時跟隨已開啟，新事件即將自動載入。",
+      "request_events_view_latest": "查看最新"
     },
     "usage_stats": {
       "title": "使用統計",
