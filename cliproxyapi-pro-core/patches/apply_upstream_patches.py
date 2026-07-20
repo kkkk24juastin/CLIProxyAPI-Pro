@@ -2717,10 +2717,142 @@ replace_once(
 )
 
 auth_files_handler = ROOT / 'internal/api/handlers/management/auth_files.go'
+auth_files_delete_missing_test = ROOT / 'internal/api/handlers/management/auth_files_delete_missing_test.go'
+auth_files_delete_missing_test_source = Path('/tmp/auth_files_delete_missing_test.go')
+if not auth_files_delete_missing_test_source.is_file():
+    auth_files_delete_missing_test_source = Path(__file__).resolve().parent / 'auth_files_delete_missing_test.go'
+write_text(
+    auth_files_delete_missing_test,
+    re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(auth_files_delete_missing_test_source)),
+)
 add_go_import(
     auth_files_handler,
     '"' + import_path('internal/config') + '"\n',
     '\t"' + import_path('internal/embeddedusage') + '"\n',
+)
+replace_once(
+    auth_files_handler,
+    '''\tctx := c.Request.Context()
+\tif all := c.Query("all"); all == "true" || all == "1" || all == "*" {
+\t\tentries, err := os.ReadDir(h.cfg.AuthDir)
+\t\tif err != nil {
+\t\t\tc.JSON(500, gin.H{"error": fmt.Sprintf("failed to read auth dir: %v", err)})
+\t\t\treturn
+\t\t}
+\t\tdeleted := 0
+\t\tfor _, e := range entries {
+\t\t\tif e.IsDir() {
+\t\t\t\tcontinue
+\t\t\t}
+\t\t\tname := e.Name()
+\t\t\tif !strings.HasSuffix(strings.ToLower(name), ".json") {
+\t\t\t\tcontinue
+\t\t\t}
+\t\t\tfull := filepath.Join(h.cfg.AuthDir, name)
+\t\t\tif !filepath.IsAbs(full) {
+\t\t\t\tif abs, errAbs := filepath.Abs(full); errAbs == nil {
+\t\t\t\t\tfull = abs
+\t\t\t\t}
+\t\t\t}
+\t\t\tif err = os.Remove(full); err == nil {
+\t\t\t\tif errDel := h.deleteTokenRecord(ctx, full); errDel != nil {
+\t\t\t\t\tc.JSON(500, gin.H{"error": errDel.Error()})
+\t\t\t\t\treturn
+\t\t\t\t}
+\t\t\t\tdeleted++
+\t\t\t\th.removeAuth(ctx, full)
+\t\t\t}
+\t\t}
+\t\tc.JSON(200, gin.H{"status": "ok", "deleted": deleted})
+\t\treturn
+\t}
+''',
+    '''\tctx := c.Request.Context()
+\tif all := c.Query("all"); all == "true" || all == "1" || all == "*" {
+\t\tnames, errNames := h.authFileNamesForDeleteAll()
+\t\tif errNames != nil {
+\t\t\tc.JSON(http.StatusInternalServerError, gin.H{"error": errNames.Error()})
+\t\t\treturn
+\t\t}
+\t\tdeleted := 0
+\t\tfor _, name := range names {
+\t\t\tif _, status, errDelete := h.deleteAuthFileByName(ctx, name); errDelete != nil {
+\t\t\t\tc.JSON(status, gin.H{"error": errDelete.Error(), "deleted": deleted})
+\t\t\t\treturn
+\t\t\t}
+\t\t\tdeleted++
+\t\t}
+\t\tc.JSON(http.StatusOK, gin.H{"status": "ok", "deleted": deleted})
+\t\treturn
+\t}
+''',
+    'names, errNames := h.authFileNamesForDeleteAll()',
+)
+insert_before(
+    auth_files_handler,
+    'func (h *Handler) multipartAuthFileHeaders(c *gin.Context) ([]*multipart.FileHeader, error) {\n',
+    '''func (h *Handler) authFileNamesForDeleteAll() ([]string, error) {
+\tnames := make(map[string]struct{})
+\taddName := func(name string) {
+\t\tname = strings.TrimSpace(filepath.Base(name))
+\t\tif isUnsafeAuthFileName(name) || !strings.HasSuffix(strings.ToLower(name), ".json") {
+\t\t\treturn
+\t\t}
+\t\tnames[name] = struct{}{}
+\t}
+
+\tentries, err := os.ReadDir(h.cfg.AuthDir)
+\tif err != nil && !os.IsNotExist(err) {
+\t\treturn nil, fmt.Errorf("failed to read auth dir: %w", err)
+\t}
+\tfor _, entry := range entries {
+\t\tif !entry.IsDir() {
+\t\t\taddName(entry.Name())
+\t\t}
+\t}
+
+\tif h.authManager != nil {
+\t\tfor _, auth := range h.authManager.List() {
+\t\t\tif auth == nil || isRuntimeOnlyAuth(auth) {
+\t\t\t\tcontinue
+\t\t\t}
+\t\t\tpath := strings.TrimSpace(authAttribute(auth, "path"))
+\t\t\tif sourcePath := strings.TrimSpace(authAttribute(auth, coreauth.AttributeVirtualSource)); sourcePath != "" {
+\t\t\t\tpath = sourcePath
+\t\t\t}
+\t\t\tif path != "" {
+\t\t\t\taddName(path)
+\t\t\t\tcontinue
+\t\t\t}
+\t\t\taddName(auth.FileName)
+\t\t}
+\t}
+
+\tout := make([]string, 0, len(names))
+\tfor name := range names {
+\t\tout = append(out, name)
+\t}
+\tsort.Strings(out)
+\treturn out, nil
+}
+
+''',
+    'func (h *Handler) authFileNamesForDeleteAll()',
+)
+replace_once(
+    auth_files_handler,
+    '''\tif errRemove := os.Remove(targetPath); errRemove != nil {
+\t\tif os.IsNotExist(errRemove) {
+\t\t\treturn filepath.Base(name), http.StatusNotFound, errAuthFileNotFound
+\t\t}
+\t\treturn filepath.Base(name), http.StatusInternalServerError, fmt.Errorf("failed to remove file: %w", errRemove)
+\t}
+''',
+    '''\tif errRemove := os.Remove(targetPath); errRemove != nil && !os.IsNotExist(errRemove) {
+\t\treturn filepath.Base(name), http.StatusInternalServerError, fmt.Errorf("failed to remove file: %w", errRemove)
+\t}
+''',
+    'errRemove != nil && !os.IsNotExist(errRemove)',
 )
 replace_once(
     auth_files_handler,
@@ -2732,17 +2864,6 @@ replace_once(
 \tentry["failed"] = auth.Failed
 ''',
     'entry["selected"] = auth.Selected',
-)
-replace_once(
-    auth_files_handler,
-    '''\t\t\t\tdeleted++
-\t\t\t\th.removeAuth(ctx, full)
-''',
-    '''\t\t\t\tdeleted++
-\t\t\t\th.removeAuth(ctx, full)
-\t\t\t\t_ = embeddedusage.DeleteAuthRuntimeState(ctx, "", "", name)
-''',
-    'DeleteAuthRuntimeState(ctx, "", "", name)',
 )
 replace_once(
     auth_files_handler,
@@ -3035,6 +3156,7 @@ subprocess.run([
     'internal/api/server.go',
     'internal/api/server_test.go',
     'internal/api/handlers/management/auth_files.go',
+    'internal/api/handlers/management/auth_files_delete_missing_test.go',
     'internal/config/sdk_config.go',
     'internal/logging/requestid.go',
     'internal/logging/requestmeta.go',
