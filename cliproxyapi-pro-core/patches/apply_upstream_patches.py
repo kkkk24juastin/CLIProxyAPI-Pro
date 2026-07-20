@@ -3172,6 +3172,32 @@ replace_once(
     's.persistedCursors[persistedCursorKey] = picked.ID',
 )
 
+# Harden flaky upstream debounce test under high CI package parallelism (esp. arm64).
+watcher_test = ROOT / 'internal/watcher/watcher_test.go'
+replace_once(
+    watcher_test,
+    '''	w.scheduleConfigReload()
+	w.scheduleConfigReload()
+
+	time.Sleep(400 * time.Millisecond)
+
+	if atomic.LoadInt32(&reloads) != 1 {
+		t.Fatalf("expected single debounced reload, got %d", reloads)
+	}
+''',
+    '''	w.scheduleConfigReload()
+	w.scheduleConfigReload()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&reloads) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&reloads); got != 1 {
+		t.Fatalf("expected single debounced reload, got %d", got)
+	}
+''',
+)
+
 flush_writes()
 startup_panel_config = '''\tcfg.UsageStatisticsEnabled = true
 \tcfg.RemoteManagement.PanelGitHubRepository = config.DefaultPanelGitHubRepository
