@@ -1134,11 +1134,16 @@ def patch_quota_configs(target: Path) -> None:
         path,
         "  const plan = resolveXaiPlan(billing.monthlyLimitCents);\n",
         "  const plan = resolveXaiPlan(billing);\n"
-        "  const freeQuotaUsed = xaiFreeQuotaUsedPercent(billing);\n"
+        "  const planType = billing.planType ?? resolveXaiPlanType(\n"
+        "    billing.monthlyLimitCents,\n"
+        "    billing.monthlyLimitCents !== null\n"
+        "  );\n"
+        "  const freeQuota = planType === 'free' ? billing.freeQuota : undefined;\n"
+        "  const freeQuotaUsed = freeQuota ? xaiFreeQuotaUsedPercent(billing) : null;\n"
         "  const freeQuotaRemaining =\n"
         "    freeQuotaUsed === null ? null : Math.max(0, Math.min(100, 100 - freeQuotaUsed));\n"
-        "  const freeQuotaLabel = billing.freeQuota?.model\n"
-        "    ? `${t('xai_quota.free_quota')} · ${billing.freeQuota.model}`\n"
+        "  const freeQuotaLabel = freeQuota?.model\n"
+        "    ? `${t('xai_quota.free_quota')} · ${freeQuota.model}`\n"
         "    : t('xai_quota.free_quota');\n",
     )
     replace_once(
@@ -1149,7 +1154,7 @@ def patch_quota_configs(target: Path) -> None:
     replace_once(
         path,
         "    hasWeeklyData\n      ? h(\n",
-        "    billing.freeQuota\n"
+        "    freeQuota\n"
         "      ? h(\n"
         "          'div',\n"
         "          { key: 'free-quota', className: styleMap.quotaRow },\n"
@@ -1163,7 +1168,7 @@ def patch_quota_configs(target: Path) -> None:
         "              h(\n"
         "                'span',\n"
         "                { className: styleMap.quotaPercent },\n"
-        "                billing.freeQuota.exhausted\n"
+        "                freeQuota.exhausted\n"
         "                  ? t('xai_quota.free_quota_exhausted')\n"
         "                  : t('xai_quota.used_percent', { percent: formatXaiPercent(freeQuotaUsed) })\n"
         "              ),\n"

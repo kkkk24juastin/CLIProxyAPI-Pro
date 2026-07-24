@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { TFunction } from 'i18next';
+import { createElement, Fragment } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { QuotaRenderHelpers } from '@/components/quota/QuotaCard';
 import { XAI_CONFIG } from '@/components/quota/quotaConfigs';
 import {
   XAI_FREE_QUOTA_PROBE_URL,
@@ -17,6 +20,10 @@ import {
 
 const t = ((key: string) => key) as unknown as TFunction;
 const originalApiCallRequest = apiCallApi.request;
+const renderHelpers = {
+  styles: {} as QuotaRenderHelpers['styles'],
+  QuotaProgressBar: () => createElement('div'),
+};
 
 const result = (
   statusCode: number,
@@ -137,6 +144,38 @@ describe('xAI quota normalization', () => {
       exhausted: true,
       model: 'grok-4.5',
     });
+  });
+
+  test('renders the free-token row only for the Free plan', () => {
+    const billing = {
+      mode: 'billing' as const,
+      periodType: 'monthly' as const,
+      usagePercent: null,
+      productUsage: [],
+      monthlyLimitCents: 0,
+      usedCents: null,
+      includedUsedCents: null,
+      onDemandCapCents: null,
+      onDemandUsedCents: null,
+      onDemandUsedPercent: null,
+      usedPercent: null,
+      freeQuota: { model: 'grok-4.5', usedTokens: 25, limitTokens: 100 },
+    };
+    const render = (planType: 'free' | 'x-premium-plus') =>
+      renderToStaticMarkup(
+        createElement(
+          Fragment,
+          null,
+          XAI_CONFIG.renderQuotaItems(
+            { status: 'success', billing: { ...billing, planType } },
+            t,
+            renderHelpers
+          )
+        )
+      );
+
+    expect(render('free')).toContain('xai_quota.free_quota · grok-4.5');
+    expect(render('x-premium-plus')).not.toContain('xai_quota.free_quota');
   });
 });
 
