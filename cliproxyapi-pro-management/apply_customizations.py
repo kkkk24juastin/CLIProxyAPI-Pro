@@ -1981,12 +1981,12 @@ def patch_auth_files_page_sorting(target: Path) -> None:
 
     replace_once(
         page_path,
-        "                      value={sortMode}\n"
-        "                      options={sortOptions}\n"
-        "                      onChange={handleSortModeChange}\n",
-        "                      value={effectiveSortMode}\n"
-        "                      options={sortOptions}\n"
-        "                      onChange={handleSortModeChange}\n",
+        "                value={sortMode}\n"
+        "                options={sortOptions}\n"
+        "                onChange={handleSortModeChange}\n",
+        "                value={effectiveSortMode}\n"
+        "                options={sortOptions}\n"
+        "                onChange={handleSortModeChange}\n",
     )
 
 

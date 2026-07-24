@@ -74,9 +74,9 @@ export function AuthFilesPage() {
 
   return (
     <Select
-                      value={sortMode}
-                      options={sortOptions}
-                      onChange={handleSortModeChange}
+                value={sortMode}
+                options={sortOptions}
+                onChange={handleSortModeChange}
     />
   );
 }
