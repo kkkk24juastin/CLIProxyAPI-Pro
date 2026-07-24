@@ -159,7 +159,6 @@ GEMINI_CLI_LOCALE_KEYS = {
 
 XAI_QUOTA_LOCALE_KEYS = {
     'en.json': {
-        'plan_free': 'Free',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': 'Paid (unknown tier)',
         'free_quota': 'Free token quota',
@@ -167,7 +166,6 @@ XAI_QUOTA_LOCALE_KEYS = {
         'free_quota_window': 'Rolling 24 hours',
     },
     'ru.json': {
-        'plan_free': 'Бесплатный',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': 'Платный (неизвестный уровень)',
         'free_quota': 'Бесплатная квота токенов',
@@ -175,7 +173,6 @@ XAI_QUOTA_LOCALE_KEYS = {
         'free_quota_window': 'Скользящие 24 часа',
     },
     'zh-CN.json': {
-        'plan_free': '免费版',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': '付费版（未知档位）',
         'free_quota': '免费 Token 额度',
@@ -183,7 +180,6 @@ XAI_QUOTA_LOCALE_KEYS = {
         'free_quota_window': '滚动 24 小时',
     },
     'zh-TW.json': {
-        'plan_free': '免費版',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': '付費版（未知級別）',
         'free_quota': '免費 Token 配額',
@@ -962,12 +958,19 @@ def patch_quota_configs(target: Path) -> None:
         "  CodexUsagePayload,\n  KimiQuotaRow,",
         "  CodexUsagePayload,\n  GeminiCliQuotaState,\n  KimiQuotaRow,",
     )
+    replace_once(
+        path,
+        "  XaiBillingSummary,\n  XaiQuotaState,",
+        "  XaiBillingSummary,\n  XaiFreeQuotaSummary,\n  XaiQuotaState,",
+    )
     insert_once(
         path,
         "import type { QuotaRenderHelpers } from './QuotaCard';\n",
         "import { useQuotaStore } from '@/stores';\n"
         "import {\n"
+        "  XAI_FREE_QUOTA_PROBE_URL,\n"
         "  mergeXaiBillingRuntimeState,\n"
+        "  parseXaiFreeQuotaProbe,\n"
         "  resolveXaiPlanType,\n"
         "  xaiFreeQuotaUsedPercent,\n"
         "  type XaiNormalizedPlanType,\n"
@@ -1024,11 +1027,47 @@ def patch_quota_configs(target: Path) -> None:
 
     replace_once(
         path,
+        "const requestXaiPaidHealth = async (authIndex: string): Promise<XaiBillingSummary> => {\n",
+        "const requestXaiFreeQuota = async (\n"
+        "  authIndex: string,\n"
+        "  t: TFunction\n"
+        "): Promise<XaiFreeQuotaSummary> => {\n"
+        "  const result = await apiCallApi.request(\n"
+        "    {\n"
+        "      authIndex,\n"
+        "      method: 'POST',\n"
+        "      url: XAI_FREE_QUOTA_PROBE_URL,\n"
+        "      header: {\n"
+        "        ...XAI_API_REQUEST_HEADERS,\n"
+        "        'Content-Type': 'application/json',\n"
+        "      },\n"
+        "      data: JSON.stringify({\n"
+        "        model: XAI_PAID_HEALTH_MODEL,\n"
+        "        input: 'ping',\n"
+        "        max_output_tokens: 1,\n"
+        "        stream: false,\n"
+        "      }),\n"
+        "      useExecutor: true,\n"
+        "    },\n"
+        "    { timeout: XAI_PAID_HEALTH_REQUEST_TIMEOUT_MS }\n"
+        "  );\n"
+        "  const quota = parseXaiFreeQuotaProbe(result, XAI_PAID_HEALTH_MODEL);\n"
+        "  if (quota) return quota;\n"
+        "  if (result.statusCode < 200 || result.statusCode >= 300) {\n"
+        "    throw createStatusError(getApiCallErrorMessage(result), result.statusCode);\n"
+        "  }\n"
+        "  throw new Error(t('xai_quota.empty_data'));\n"
+        "};\n\n"
+        "const requestXaiPaidHealth = async (authIndex: string): Promise<XaiBillingSummary> => {\n",
+    )
+    replace_once(
+        path,
         "  if (isPaidXaiAuthFile(file)) {\n    return requestXaiPaidHealth(authIndex);\n  }\n",
+        "  const previousBilling = useQuotaStore.getState().xaiQuota[file.name]?.billing;\n"
         "  const mergeRuntimeState = (billing: XaiBillingSummary): XaiBillingSummary =>\n"
         "    mergeXaiBillingRuntimeState(\n"
         "      billing,\n"
-        "      useQuotaStore.getState().xaiQuota[file.name]?.billing\n"
+        "      previousBilling\n"
         "    );\n\n"
         "  if (isPaidXaiAuthFile(file)) {\n"
         "    return mergeRuntimeState(await requestXaiPaidHealth(authIndex));\n"
@@ -1039,13 +1078,18 @@ def patch_quota_configs(target: Path) -> None:
         "  const summary = mergeXaiBillingSummaries(weeklySummary, monthlySummary);\n  if (summary) return summary;\n",
         "  const summary = mergeXaiBillingSummaries(weeklySummary, monthlySummary);\n"
         "  if (summary) {\n"
-        "    return mergeRuntimeState({\n"
+        "    const planType = resolveXaiPlanType(\n"
+        "      summary.monthlyLimitCents,\n"
+        "      monthlyResult.status === 'fulfilled'\n"
+        "    );\n"
+        "    const effectivePlanType = planType ?? previousBilling?.planType;\n"
+        "    const freeQuota =\n"
+        "      effectivePlanType === 'free' ? await requestXaiFreeQuota(authIndex, t) : undefined;\n"
+        "    const billing = mergeRuntimeState({\n"
         "      ...summary,\n"
-        "      planType: resolveXaiPlanType(\n"
-        "        summary.monthlyLimitCents,\n"
-        "        monthlyResult.status === 'fulfilled'\n"
-        "      ),\n"
+        "      planType,\n"
         "    });\n"
+        "    return freeQuota ? { ...billing, freeQuota } : billing;\n"
         "  }\n",
     )
     replace_once(
@@ -1070,13 +1114,13 @@ def patch_quota_configs(target: Path) -> None:
         "};\n",
         "const resolveXaiPlan = (\n"
         "  billing: XaiBillingSummary\n"
-        "): { labelKey: string; premium: boolean } | null => {\n"
+        "): { labelKey?: string; label?: string; premium: boolean } | null => {\n"
         "  const planType = billing.planType ?? resolveXaiPlanType(\n"
         "    billing.monthlyLimitCents,\n"
         "    billing.monthlyLimitCents !== null\n"
         "  );\n"
-        "  const plans: Partial<Record<XaiNormalizedPlanType, { labelKey: string; premium: boolean }>> = {\n"
-        "    free: { labelKey: 'plan_free', premium: false },\n"
+        "  const plans: Partial<Record<XaiNormalizedPlanType, { labelKey?: string; label?: string; premium: boolean }>> = {\n"
+        "    free: { label: 'Free', premium: false },\n"
         "    supergrok: { labelKey: 'plan_supergrok', premium: false },\n"
         "    'x-premium-plus': { labelKey: 'plan_x_premium_plus', premium: true },\n"
         "    'supergrok-heavy': { labelKey: 'plan_supergrok_heavy', premium: true },\n"
@@ -1096,6 +1140,11 @@ def patch_quota_configs(target: Path) -> None:
         "  const freeQuotaLabel = billing.freeQuota?.model\n"
         "    ? `${t('xai_quota.free_quota')} · ${billing.freeQuota.model}`\n"
         "    : t('xai_quota.free_quota');\n",
+    )
+    replace_once(
+        path,
+        "            t(`xai_quota.${plan.labelKey}`)\n",
+        "            plan.label ?? t(`xai_quota.${plan.labelKey}`)\n",
     )
     replace_once(
         path,
@@ -1707,7 +1756,7 @@ def patch_auth_files_page_search(target: Path) -> None:
         "  const planType = storedPlanType || resolveXaiPlanType(monthlyLimitCents, monthlyLimitCents !== null);\n"
         "  if (!planType) return;\n"
         "  values.push(planType, planType.replace(/-/g, ' '));\n"
-        "  if (planType === 'free') values.push(t('xai_quota.plan_free'));\n"
+        "  if (planType === 'free') values.push('Free');\n"
         "  else if (planType === 'supergrok') values.push(t('xai_quota.plan_supergrok'), 'supergrok');\n"
         "  else if (planType === 'x-premium-plus') values.push(t('xai_quota.plan_x_premium_plus'), 'x premium+');\n"
         "  else if (planType === 'supergrok-heavy') values.push(t('xai_quota.plan_supergrok_heavy'), 'supergrok heavy');\n"

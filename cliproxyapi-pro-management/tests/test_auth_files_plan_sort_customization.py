@@ -156,6 +156,7 @@ class AuthFilesSortingCustomizationTest(unittest.TestCase):
                 self.assertEqual(labels[0], data['auth_files']['sort_plan_desc'])
                 self.assertEqual(labels[1], data['auth_files']['sort_quota_desc'])
                 self.assertEqual('X Premium+', data['xai_quota']['plan_x_premium_plus'])
+                self.assertNotIn('plan_free', data['xai_quota'])
                 self.assertIn('free_quota_window', data['xai_quota'])
 
 
