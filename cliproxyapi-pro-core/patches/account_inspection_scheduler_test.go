@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 )
 
 type accountInspectionTestStorage struct {
@@ -23,6 +25,43 @@ type accountInspectionTestStorage struct {
 
 type accountInspectionAuthStore struct {
 	path string
+}
+
+type xaiInspectionRoutingExecutor struct {
+	requests []*http.Request
+}
+
+func (e *xaiInspectionRoutingExecutor) Identifier() string { return "xai" }
+
+func (e *xaiInspectionRoutingExecutor) Execute(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	return coreexecutor.Response{}, nil
+}
+
+func (e *xaiInspectionRoutingExecutor) ExecuteStream(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (*coreexecutor.StreamResult, error) {
+	return nil, nil
+}
+
+func (e *xaiInspectionRoutingExecutor) Refresh(_ context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
+	return auth, nil
+}
+
+func (e *xaiInspectionRoutingExecutor) CountTokens(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	return coreexecutor.Response{}, nil
+}
+
+func (e *xaiInspectionRoutingExecutor) HttpRequest(_ context.Context, _ *coreauth.Auth, req *http.Request) (*http.Response, error) {
+	e.requests = append(e.requests, req.Clone(context.Background()))
+	body := `{"id":"chatcmpl-test","choices":[]}`
+	if strings.Contains(req.URL.RawQuery, "format=credits") {
+		body = `{"config":{"period_type":"weekly","usage_percent":10}}`
+	} else if strings.HasSuffix(req.URL.Path, "/billing") {
+		body = `{"config":{"monthly_limit":0,"used":0}}`
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}, nil
 }
 
 func (s *accountInspectionAuthStore) List(context.Context) ([]*coreauth.Auth, error) {
@@ -1414,6 +1453,66 @@ func TestXAIInspectionUsesExecutorHTTPRequest(t *testing.T) {
 	}
 }
 
+func TestXAIInspectionRoutesByUsingAPI(t *testing.T) {
+	tests := []struct {
+		name          string
+		usingAPI      string
+		wantURLs      []string
+		forbiddenPath string
+	}{
+		{
+			name:          "official api",
+			usingAPI:      "true",
+			wantURLs:      []string{"https://api.x.ai/v1/chat/completions"},
+			forbiddenPath: "/billing",
+		},
+		{
+			name:     "grok cli",
+			usingAPI: "false",
+			wantURLs: []string{
+				"https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+				"https://cli-chat-proxy.grok.com/v1/billing",
+			},
+			forbiddenPath: "/chat/completions",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			executor := &xaiInspectionRoutingExecutor{}
+			manager := coreauth.NewManager(nil, nil, nil)
+			manager.RegisterExecutor(executor)
+			scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+			auth := &coreauth.Auth{
+				Provider: "xai",
+				Attributes: map[string]string{
+					"api_key":   "test-token",
+					"base_url":  "https://api.x.ai/v1",
+					"using_api": tt.usingAPI,
+				},
+			}
+			decision, status, err := scheduler.inspectXAI(context.Background(), accountInspectionAccount{
+				Auth:      auth,
+				Provider:  "xai",
+				FileName:  tt.name + ".json",
+				AuthIndex: tt.name,
+			}, accountInspectionSettings{Timeout: 3_000, XAIDeepProbeModel: "grok-4.5"})
+			if err != nil || status == nil || *status != http.StatusOK || decision.Action != accountInspectionActionKeep {
+				t.Fatalf("inspectXAI() = decision:%#v status:%v err:%v", decision, status, err)
+			}
+			gotURLs := make([]string, 0, len(executor.requests))
+			for _, request := range executor.requests {
+				gotURLs = append(gotURLs, request.URL.String())
+				if strings.Contains(request.URL.String(), tt.forbiddenPath) {
+					t.Fatalf("inspectXAI() requested forbidden URL %q", request.URL.String())
+				}
+			}
+			if strings.Join(gotURLs, "\n") != strings.Join(tt.wantURLs, "\n") {
+				t.Fatalf("inspectXAI() URLs = %#v, want %#v", gotURLs, tt.wantURLs)
+			}
+		})
+	}
+}
+
 func TestXAIBillingURLMatchesUpstreamQuotaConfig(t *testing.T) {
 	if got := xaiBillingURL(); got != "https://cli-chat-proxy.grok.com/v1/billing" {
 		t.Fatalf("xaiBillingURL() = %q, want upstream billing endpoint", got)
@@ -1453,6 +1552,9 @@ func TestXAIResponsesURLUsesConfiguredBaseURL(t *testing.T) {
 	if got := xaiResponsesURL(api); got != "https://api.x.ai/v1/responses" {
 		t.Fatalf("xaiResponsesURL(api) = %q", got)
 	}
+	if got := xaiOfficialChatURL(api); got != "https://api.x.ai/v1/chat/completions" {
+		t.Fatalf("xaiOfficialChatURL(api) = %q", got)
+	}
 	metadataOAuth := &coreauth.Auth{Metadata: map[string]any{"base_url": "https://api.x.ai/v1", "using_api": false}}
 	if got := xaiResponsesURL(metadataOAuth); got != "https://cli-chat-proxy.grok.com/v1/responses" {
 		t.Fatalf("xaiResponsesURL(metadataOAuth) = %q", got)
@@ -1473,10 +1575,43 @@ func TestXAIResponsesURLUsesConfiguredBaseURL(t *testing.T) {
 	if apiHeaders["x-xai-token-auth"] != "" || apiHeaders["Authorization"] != "Bearer $TOKEN$" {
 		t.Fatalf("xaiDeepProbeHeaders(api) = %#v", apiHeaders)
 	}
+	officialHeaders := xaiOfficialAPIHeaders()
+	if officialHeaders["x-xai-token-auth"] != "" || officialHeaders["Accept"] != "application/json" {
+		t.Fatalf("xaiOfficialAPIHeaders() = %#v", officialHeaders)
+	}
 	customOAuth := &coreauth.Auth{Attributes: map[string]string{"base_url": "https://xai.example/v1", "using_api": "false"}}
 	customHeaders := xaiDeepProbeHeaders(customOAuth)
 	if customHeaders["x-xai-token-auth"] != "" {
 		t.Fatalf("xaiDeepProbeHeaders(customOAuth) = %#v", customHeaders)
+	}
+}
+
+func TestBuildXAIOfficialHealthRequestAndSummary(t *testing.T) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(buildXAIOfficialHealthBody(" grok-4.5 ")), &payload); err != nil {
+		t.Fatalf("buildXAIOfficialHealthBody() JSON error = %v", err)
+	}
+	messages, _ := payload["messages"].([]any)
+	if payload["model"] != "grok-4.5" || len(messages) != 1 || payload["stream"] != false || payload["max_tokens"] != float64(1) {
+		t.Fatalf("official health payload = %#v", payload)
+	}
+	summary := xaiPaidHealthSummary()
+	if summary["mode"] != "paid-health" || summary["planType"] != "paid" || summary["healthStatus"] != "chat-ok" {
+		t.Fatalf("paid health summary = %#v", summary)
+	}
+	if _, exists := summary["freeQuota"]; exists {
+		t.Fatalf("paid health summary contains free quota: %#v", summary)
+	}
+}
+
+func TestXAIOfficialAPIQuotaDecision(t *testing.T) {
+	active := xaiOfficialAPIQuotaDecision(accountInspectionAccount{}, `{"error":"credits exhausted"}`)
+	if active.Action != accountInspectionActionDisable || !active.IsQuota || !strings.Contains(active.ErrorDetail, "credits exhausted") {
+		t.Fatalf("active official quota decision = %#v", active)
+	}
+	disabled := xaiOfficialAPIQuotaDecision(accountInspectionAccount{Disabled: true}, `{"error":"credits exhausted"}`)
+	if disabled.Action != accountInspectionActionKeep || !disabled.IsQuota {
+		t.Fatalf("disabled official quota decision = %#v", disabled)
 	}
 }
 

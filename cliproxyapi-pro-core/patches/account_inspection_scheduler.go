@@ -2597,6 +2597,47 @@ func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account ac
 }
 
 func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
+	if xaiInspectionUsingAPI(account.Auth) {
+		return s.inspectXAIOfficialAPI(ctx, account, settings)
+	}
+	return s.inspectXAICLI(ctx, account, settings)
+}
+
+func (s *accountInspectionScheduler) inspectXAIOfficialAPI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
+	model := strings.TrimSpace(settings.XAIDeepProbeModel)
+	if model == "" {
+		model = "grok-4.5"
+	}
+	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
+		return s.apiCall(ctx, account.Auth, http.MethodPost, xaiOfficialChatURL(account.Auth), xaiOfficialAPIHeaders(), buildXAIOfficialHealthBody(model), settings.Timeout)
+	})
+	status := intPtr(resp.StatusCode)
+	if err != nil {
+		return accountInspectionDecision{}, status, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if isAccountErrorStatus(resp.StatusCode) {
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, resp.StatusCode), resp.Body), status, nil
+		}
+		if resp.StatusCode == http.StatusPaymentRequired || isXAIQuotaFailure(resp.Body) {
+			return xaiOfficialAPIQuotaDecision(account, resp.Body), status, nil
+		}
+		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	billing := xaiPaidHealthSummary()
+	s.persistQuotaState(ctx, account, quotaSuccessState(map[string]any{
+		"billing":      billing,
+		"rawShapeHash": jsonShapeHash(resp.Body),
+	}))
+	decision := healthyDecision(account)
+	if settings.XAIDeepProbeEnabled {
+		return s.applyXAIDeepProbe(ctx, account, settings, decision, status)
+	}
+	return decision, status, nil
+}
+
+func (s *accountInspectionScheduler) inspectXAICLI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
 	headers := xaiRequestHeaders(account.Auth)
 	weeklyBilling, weeklyResp, weeklyErr := s.fetchXAIBillingSummary(ctx, account, settings, xaiBillingWeeklyURL(), headers)
 	monthlyBilling, monthlyResp, monthlyErr := s.fetchXAIBillingSummary(ctx, account, settings, xaiBillingURL(), headers)
@@ -2666,7 +2707,9 @@ func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, acco
 	resp, status, message, err := runXAIDeepProbeWithRetry(ctx, settings.Retries, accountInspectionXAIRetryDelay, func() (accountInspectionHTTPResult, error) {
 		return s.apiCall(ctx, account.Auth, http.MethodPost, xaiResponsesURL(account.Auth), xaiDeepProbeHeaders(account.Auth), buildXAIDeepProbeBody(model), settings.Timeout)
 	})
-	observeAccountXAIQuota(ctx, account, model, resp)
+	if !xaiInspectionUsingAPI(account.Auth) {
+		observeAccountXAIQuota(ctx, account, model, resp)
+	}
 	var probeStatus *int
 	if resp.StatusCode != 0 {
 		probeStatus = intPtr(resp.StatusCode)
@@ -2794,7 +2837,7 @@ func shouldRetryXAIDeepProbe(status accountInspectionDeepProbeStatus, message st
 	return !strings.Contains(strings.ToLower(message), "content_filter")
 }
 
-func xaiResponsesURL(auth *coreauth.Auth) string {
+func xaiInspectionBaseURL(auth *coreauth.Auth) string {
 	baseURL := ""
 	if auth != nil {
 		baseURL = strings.TrimSpace(auth.Attributes["base_url"])
@@ -2807,7 +2850,15 @@ func xaiResponsesURL(auth *coreauth.Auth) string {
 	} else if baseURL == "" {
 		baseURL = "https://api.x.ai/v1"
 	}
-	return strings.TrimRight(baseURL, "/") + "/responses"
+	return strings.TrimRight(baseURL, "/")
+}
+
+func xaiResponsesURL(auth *coreauth.Auth) string {
+	return xaiInspectionBaseURL(auth) + "/responses"
+}
+
+func xaiOfficialChatURL(auth *coreauth.Auth) string {
+	return xaiInspectionBaseURL(auth) + "/chat/completions"
 }
 
 func xaiInspectionUsingAPI(auth *coreauth.Auth) bool {
@@ -2837,13 +2888,56 @@ func xaiInspectionUsingAPI(auth *coreauth.Auth) bool {
 
 func xaiDeepProbeHeaders(auth *coreauth.Auth) map[string]string {
 	headers := map[string]string{"Authorization": "Bearer $TOKEN$"}
-	if !xaiInspectionUsingAPI(auth) && strings.HasPrefix(xaiResponsesURL(auth), "https://cli-chat-proxy.grok.com/v1/") {
+	if !xaiInspectionUsingAPI(auth) && strings.EqualFold(xaiInspectionBaseURL(auth), "https://cli-chat-proxy.grok.com/v1") {
 		headers = xaiRequestHeaders(auth)
 	}
 	headers["Content-Type"] = "application/json"
 	headers["Accept"] = "text/event-stream"
 	headers["Connection"] = "Keep-Alive"
 	return headers
+}
+
+func xaiOfficialAPIHeaders() map[string]string {
+	return map[string]string{
+		"Authorization": "Bearer $TOKEN$",
+		"Content-Type":  "application/json",
+		"Accept":        "application/json",
+		"Connection":    "Keep-Alive",
+	}
+}
+
+func buildXAIOfficialHealthBody(model string) string {
+	raw, _ := json.Marshal(map[string]any{
+		"model":      strings.TrimSpace(model),
+		"messages":   []map[string]any{{"role": "user", "content": "ping"}},
+		"max_tokens": 1,
+		"stream":     false,
+	})
+	return string(raw)
+}
+
+func xaiPaidHealthSummary() map[string]any {
+	summary := emptyXAIBillingSummary()
+	summary["mode"] = "paid-health"
+	summary["source"] = "api.x.ai"
+	summary["planType"] = "paid"
+	summary["healthStatus"] = "chat-ok"
+	return summary
+}
+
+func xaiOfficialAPIQuotaDecision(account accountInspectionAccount, body string) accountInspectionDecision {
+	reason := "xAI 官方 API 额度不足，建议禁用账号"
+	action := accountInspectionActionDisable
+	if account.Disabled {
+		reason = "xAI 官方 API 额度不足，但账号已禁用"
+		action = accountInspectionActionKeep
+	}
+	return accountInspectionDecision{
+		Action:       action,
+		ActionReason: reason,
+		IsQuota:      true,
+		ErrorDetail:  summarizeInspectionHTTPBody(body),
+	}
 }
 
 func buildXAIDeepProbeBody(model string) string {
