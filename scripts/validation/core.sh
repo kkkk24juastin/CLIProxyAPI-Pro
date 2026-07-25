@@ -107,10 +107,12 @@ fi
 
 go -C "${upstream_root}" test "${test_flags[@]}" ./internal/embeddedusage/...
 go -C "${upstream_root}" test "${test_flags[@]}" \
+  ./internal/client/claude/models \
   ./internal/api/handlers/management \
   ./internal/pluginhost \
   ./internal/pluginstore \
   ./internal/redisqueue \
+  ./sdk/api/handlers/claude \
   ./sdk/cliproxy/auth
 
 build_dir="$(mktemp -d "${TMPDIR:-/tmp}/cliproxyapi-pro-build.XXXXXX")"

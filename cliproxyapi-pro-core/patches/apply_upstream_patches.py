@@ -675,19 +675,11 @@ replace_once(
 ''',
 )
 
-claude_model_util = ROOT / 'internal/util/claude_model.go'
-replace_once(
-    claude_model_util,
-    'import "strings"\n',
-    '''import (
-\t"net/http"
-\t"strings"
-)
-''',
-)
+claude_models = ROOT / 'internal/client/claude/models/models.go'
+add_go_import(claude_models, '\t"sort"\n', '\t"net/http"\n')
 insert_before(
-    claude_model_util,
-    '// EnsureClaudeModelIDPrefix rewrites model IDs for Anthropic /models listings.\n',
+    claude_models,
+    '// BuildResponse builds an Anthropic model response from available models.\n',
     '''const (
 \tClaudeModelIDCloakModeAuto   = "auto"
 \tClaudeModelIDCloakModeAlways = "always"
@@ -727,20 +719,47 @@ func isClaudeDesktopModelClient(headers http.Header) bool {
 ''',
     'func ShouldCloakClaudeModelIDs(mode string, headers http.Header) bool',
 )
+replace_once(
+    claude_models,
+    'func BuildResponse(availableModels []map[string]any) map[string]any {\n',
+    '''func BuildResponse(availableModels []map[string]any) map[string]any {
+\treturn BuildResponseWithCloak(availableModels, true)
+}
+
+// BuildResponseWithCloak builds an Anthropic model response with optional model ID cloaking.
+func BuildResponseWithCloak(availableModels []map[string]any, cloakModelIDs bool) map[string]any {
+''',
+    'func BuildResponseWithCloak(availableModels []map[string]any, cloakModelIDs bool)',
+)
+replace_once(
+    claude_models,
+    '''\tfor i, model := range availableModels {
+\t\tmodels[i] = cloneModel(model)
+\t\tif id, ok := models[i]["id"].(string); ok {
+\t\t\tmodels[i]["id"] = EnsureClaudeModelIDPrefix(id)
+\t\t}
+\t}
+''',
+    '''\tfor i, model := range availableModels {
+\t\tmodels[i] = cloneModel(model)
+\t\tif cloakModelIDs {
+\t\t\tif id, ok := models[i]["id"].(string); ok {
+\t\t\t\tmodels[i]["id"] = EnsureClaudeModelIDPrefix(id)
+\t\t\t}
+\t\t}
+\t}
+''',
+    'if cloakModelIDs {',
+)
 
 claude_handler = ROOT / 'sdk/api/handlers/claude/code_handlers.go'
 replace_once(
     claude_handler,
     '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
-\tmodels := h.Models()
-\tfor i := range models {
-\t\tif id, ok := models[i]["id"].(string); ok {
-\t\t\tmodels[i]["id"] = util.EnsureClaudeModelIDPrefix(id)
-\t\t}
-\t}
+\tc.JSON(http.StatusOK, claudemodels.BuildResponse(h.Models()))
+}
 ''',
     '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
-\tmodels := h.Models()
 \tmode := ""
 \tif h != nil && h.BaseAPIHandler != nil && h.Cfg != nil {
 \t\tmode = h.Cfg.ClaudeModelIDCloakMode
@@ -749,19 +768,15 @@ replace_once(
 \tif c != nil && c.Request != nil {
 \t\theaders = c.Request.Header
 \t}
-\tif util.ShouldCloakClaudeModelIDs(mode, headers) {
-\t\tfor i := range models {
-\t\t\tif id, ok := models[i]["id"].(string); ok {
-\t\t\t\tmodels[i]["id"] = util.EnsureClaudeModelIDPrefix(id)
-\t\t\t}
-\t\t}
-\t}
+\tcloakModelIDs := claudemodels.ShouldCloakClaudeModelIDs(mode, headers)
+\tc.JSON(http.StatusOK, claudemodels.BuildResponseWithCloak(h.Models(), cloakModelIDs))
+}
 ''',
 )
 
-claude_model_util_test = ROOT / 'internal/util/claude_model_test.go'
+claude_models_test = ROOT / 'internal/client/claude/models/models_test.go'
 replace_once(
-    claude_model_util_test,
+    claude_models_test,
     'import "testing"\n',
     '''import (
 \t"net/http"
@@ -769,8 +784,27 @@ replace_once(
 )
 ''',
 )
-if 'func TestShouldCloakClaudeModelIDs' not in read(claude_model_util_test):
-    write(claude_model_util_test, read(claude_model_util_test).rstrip() + '''
+if 'func TestShouldCloakClaudeModelIDs' not in read(claude_models_test):
+    write(claude_models_test, read(claude_models_test).rstrip() + '''
+
+func TestBuildResponseWithCloakDisabled(t *testing.T) {
+\tresponse := BuildResponseWithCloak([]map[string]any{{
+\t\t"id": "gpt-4o", "display_name": "GPT-4o",
+\t}}, false)
+\tmodels, ok := response["data"].([]map[string]any)
+\tif !ok || len(models) != 1 {
+\t\tt.Fatalf("data = %T %v, want one model", response["data"], response["data"])
+\t}
+\tif got, _ := models[0]["id"].(string); got != "gpt-4o" {
+\t\tt.Fatalf("id = %q, want gpt-4o", got)
+\t}
+\tif got := response["first_id"]; got != "gpt-4o" {
+\t\tt.Fatalf("first_id = %v, want gpt-4o", got)
+\t}
+\tif got := response["last_id"]; got != "gpt-4o" {
+\t\tt.Fatalf("last_id = %v, want gpt-4o", got)
+\t}
+}
 
 func TestShouldCloakClaudeModelIDs(t *testing.T) {
 \ttests := []struct {
@@ -800,7 +834,7 @@ func TestShouldCloakClaudeModelIDs(t *testing.T) {
 
 claude_handler_test = ROOT / 'sdk/api/handlers/claude/code_handlers_model_test.go'
 add_go_import(claude_handler_test, '"encoding/json"\n', '\t"net/http"\n')
-add_go_import(claude_handler_test, '"' + import_path('sdk/api/handlers') + '"\n', '\t"' + import_path('sdk/config') + '"\n')
+add_go_import(claude_handler_test, '"' + import_path('internal/registry') + '"\n', '\t"' + import_path('internal/config') + '"\n')
 if 'func TestClaudeModelsCloakMode' not in read(claude_handler_test):
     write(claude_handler_test, read(claude_handler_test).rstrip() + '''
 
@@ -1086,7 +1120,8 @@ write(routing_policy_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+',
 replace_once(
     server,
     '''\tif isClaude {
-\t\tout := formatHomeClaudeModels(entries)
+\t\tc.JSON(http.StatusOK, claudemodels.BuildResponse(formatHomeClaudeModels(entries)))
+\t\treturn
 ''',
     '''\tif isClaude {
 \t\tmode := ""
@@ -1097,42 +1132,9 @@ replace_once(
 \t\tif c != nil && c.Request != nil {
 \t\t\theaders = c.Request.Header
 \t\t}
-\t\tout := formatHomeClaudeModels(entries, util.ShouldCloakClaudeModelIDs(mode, headers))
-''',
-)
-replace_once(
-    server,
-    '''func formatHomeClaudeModels(entries []homeModelEntry) []map[string]any {
-\tout := make([]map[string]any, 0, len(entries))
-\tfor _, entry := range entries {
-\t\tout = append(out, formatHomeClaudeModel(entry))
-''',
-    '''func formatHomeClaudeModels(entries []homeModelEntry, cloakModelIDs bool) []map[string]any {
-\tout := make([]map[string]any, 0, len(entries))
-\tfor _, entry := range entries {
-\t\tout = append(out, formatHomeClaudeModel(entry, cloakModelIDs))
-''',
-)
-replace_once(
-    server,
-    '''func formatHomeClaudeModel(entry homeModelEntry) map[string]any {
-\tdisplayName := entry.displayName
-''',
-    '''func formatHomeClaudeModel(entry homeModelEntry, cloakModelID bool) map[string]any {
-\tdisplayName := entry.displayName
-''',
-)
-replace_once(
-    server,
-    '''\tmodel := map[string]any{
-\t\t"id":               util.EnsureClaudeModelIDPrefix(entry.id),
-''',
-    '''\tmodelID := entry.id
-\tif cloakModelID {
-\t\tmodelID = util.EnsureClaudeModelIDPrefix(modelID)
-\t}
-\tmodel := map[string]any{
-\t\t"id":               modelID,
+\t\tcloakModelIDs := claudemodels.ShouldCloakClaudeModelIDs(mode, headers)
+\t\tc.JSON(http.StatusOK, claudemodels.BuildResponseWithCloak(formatHomeClaudeModels(entries), cloakModelIDs))
+\t\treturn
 ''',
 )
 
@@ -1178,55 +1180,6 @@ replace_once(
 \t\tif rawModel == nil {
 \t\t\tt.Fatalf("expected raw gpt-4o in response, got %s", rr.Body.String())
 \t\t}
-''',
-)
-replace_once(
-    server_test,
-    '''\t\tmaxCompletionTokens: 64000,
-\t})
-''',
-    '''\t\tmaxCompletionTokens: 64000,
-\t}, true)
-''',
-)
-replace_once(
-    server_test,
-    'withDefaults := formatHomeClaudeModel(homeModelEntry{id: "claude-no-limits"})\n',
-    'withDefaults := formatHomeClaudeModel(homeModelEntry{id: "claude-no-limits"}, true)\n',
-)
-replace_once(
-    server_test,
-    'prefixed := formatHomeClaudeModel(homeModelEntry{id: "gpt-4o", displayName: "GPT-4o"})\n',
-    'prefixed := formatHomeClaudeModel(homeModelEntry{id: "gpt-4o", displayName: "GPT-4o"}, true)\n',
-)
-replace_once(
-    server_test,
-    '''\tif got := prefixed["display_name"]; got != "GPT-4o" {
-\t\tt.Fatalf("display_name = %v, want GPT-4o", got)
-\t}
-''',
-    '''\tif got := prefixed["display_name"]; got != "GPT-4o" {
-\t\tt.Fatalf("display_name = %v, want GPT-4o", got)
-\t}
-\traw := formatHomeClaudeModel(homeModelEntry{id: "gpt-4o", displayName: "GPT-4o"}, false)
-\tif got := raw["id"]; got != "gpt-4o" {
-\t\tt.Fatalf("raw id = %v, want gpt-4o", got)
-\t}
-''',
-)
-replace_once(
-    server_test,
-    '''\tout := formatHomeClaudeModels([]homeModelEntry{
-\t\t{id: "claude-z", displayName: "Zebra"},
-\t\t{id: "gpt-4o", displayName: "Alpha"},
-\t\t{id: "claude-b", displayName: "Beta"},
-\t})
-''',
-    '''\tout := formatHomeClaudeModels([]homeModelEntry{
-\t\t{id: "claude-z", displayName: "Zebra"},
-\t\t{id: "gpt-4o", displayName: "Alpha"},
-\t\t{id: "claude-b", displayName: "Beta"},
-\t}, true)
 ''',
 )
 
@@ -2306,6 +2259,8 @@ subprocess.run([
     'internal/api/handlers/management/handler.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
+    'internal/client/claude/models/models.go',
+    'internal/client/claude/models/models_test.go',
     'internal/config/sdk_config.go',
     'internal/logging/requestid.go',
     'internal/logging/requestmeta.go',
