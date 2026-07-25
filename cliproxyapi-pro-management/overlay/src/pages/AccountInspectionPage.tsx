@@ -78,6 +78,7 @@ import {
   inspectionBackendReducer,
   isInspectableAccountInspectionAuthFile,
   levelClassMap,
+  resolveAccountInspectionPlanLabel,
   scheduleAuthFileAccountStats,
   summaryToneClass,
   toAccountInspectionApiItem,
@@ -129,6 +130,7 @@ export function AccountInspectionPage() {
   const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
   const claudeQuota = useQuotaStore((state) => state.claudeQuota);
   const codexQuota = useQuotaStore((state) => state.codexQuota);
+  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);
   const kimiQuota = useQuotaStore((state) => state.kimiQuota);
   const xaiQuota = useQuotaStore((state) => state.xaiQuota);
 
@@ -868,8 +870,13 @@ export function AccountInspectionPage() {
 
 
   const quotaStore = useMemo(
-    () => ({ antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota }),
-    [antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota]
+    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),
+    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]
+  );
+
+  const authFilesByName = useMemo(
+    () => new Map(authFiles.map((file) => [file.name, file])),
+    [authFiles]
   );
 
   useEffect(() => {
@@ -1637,6 +1644,7 @@ export function AccountInspectionPage() {
               <table className={styles.table}>
                 <colgroup>
                   <col className={styles.accountColumn} />
+                  <col className={styles.planColumn} />
                   <col className={styles.healthColumn} />
                   <col className={styles.enabledColumn} />
                   <col className={styles.quotaColumn} />
@@ -1647,6 +1655,7 @@ export function AccountInspectionPage() {
                 <thead>
                   <tr>
                     <th>{t('monitoring.account_label')}</th>
+                    <th>{t('monitoring.account_inspection_account_plan')}</th>
                     <th>{t('monitoring.account_inspection_health_status')}</th>
                     <th>{t('monitoring.account_inspection_enabled_status')}</th>
                     <th>{t('monitoring.account_inspection_remaining_quota')}</th>
@@ -1660,10 +1669,17 @@ export function AccountInspectionPage() {
                     visibleResultRows.map(({ item, healthStatus, manualActions }) => {
                       const tokenRefreshDetail = formatTokenRefreshDetail(item, i18n.language, t);
                       const healthStatusLabel = buildHealthStatusLabel(item, healthStatus, t);
+                      const planLabel = resolveAccountInspectionPlanLabel(
+                        item,
+                        authFilesByName.get(item.fileName),
+                        quotaStore,
+                        t
+                      );
                       const showErrorDetails = hasInspectionErrorDetails(item);
                       return (
                         <tr key={item.key}>
                           <td><div className={styles.primaryCell}><span>{item.fileName}</span><small>{item.provider}</small></div></td>
+                          <td><span className={styles.planCell} title={planLabel}>{planLabel}</span></td>
                           <td>
                             <div className={styles.healthCell}>
                               {showErrorDetails ? (
@@ -1723,7 +1739,7 @@ export function AccountInspectionPage() {
                       );
                     })
                   ) : (
-                    <tr><td colSpan={7}><div className={styles.emptyBlockSmall}>{t('monitoring.account_inspection_no_filtered_results')}</div></td></tr>
+                    <tr><td colSpan={8}><div className={styles.emptyBlockSmall}>{t('monitoring.account_inspection_no_filtered_results')}</div></td></tr>
                   )}
                 </tbody>
               </table>

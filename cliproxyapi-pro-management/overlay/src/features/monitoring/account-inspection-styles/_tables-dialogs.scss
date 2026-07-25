@@ -25,7 +25,7 @@
 }
 
 .table {
-  min-width: 980px;
+  min-width: 1120px;
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
@@ -33,19 +33,23 @@
 }
 
 .accountColumn {
-  width: 26%;
+  width: 20%;
+}
+
+.planColumn {
+  width: 11%;
 }
 
 .healthColumn {
-  width: 15%;
+  width: 14%;
 }
 
 .enabledColumn {
-  width: 9%;
+  width: 8%;
 }
 
 .quotaColumn {
-  width: 9%;
+  width: 8%;
 }
 
 .tokenColumn {
@@ -53,7 +57,7 @@
 }
 
 .verdictColumn {
-  width: 14%;
+  width: 12%;
 }
 
 .operationColumn {
@@ -110,6 +114,15 @@
   font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.planCell {
+  display: block;
+  overflow: hidden;
+  color: var(--inspect-ink);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .statusCell,

@@ -3,8 +3,10 @@ import {
   buildInspectionResultsViewState,
   getPaginationRange,
   isXaiQuotaLow,
+  resolveAccountInspectionPlanLabel,
   toSettingsDraft,
 } from '../src/features/monitoring/accountInspectionPageModel';
+import type { TFunction } from 'i18next';
 import {
   DEFAULT_ACCOUNT_INSPECTION_SETTINGS,
   type AccountInspectionResultItem,
@@ -74,5 +76,39 @@ describe('account inspection page model', () => {
         freeQuota: { exhausted: true },
       },
     }, 90)).toBe(false);
+  });
+
+  test('resolves account plans from quota state with auth-file fallback', () => {
+    const t = ((key: string) => ({
+      'codex_quota.plan_pro': '专业版',
+      'xai_quota.plan_x_premium_plus': 'X Premium+',
+    }[key] ?? key)) as TFunction;
+    const quotaStore = {
+      antigravityQuota: {},
+      claudeQuota: {},
+      codexQuota: { 'account.json': { status: 'success', planType: 'pro' } },
+      geminiCliQuota: {},
+      kimiQuota: {},
+      xaiQuota: {},
+    } as Parameters<typeof resolveAccountInspectionPlanLabel>[2];
+
+    expect(resolveAccountInspectionPlanLabel(result(), undefined, quotaStore, t)).toBe('专业版');
+    expect(resolveAccountInspectionPlanLabel(
+      result({ provider: 'gemini-cli' }),
+      { name: 'account.json', type: 'gemini-cli', tier_id: 'standard-tier' },
+      quotaStore,
+      t
+    )).toBe('Standard Tier');
+    expect(resolveAccountInspectionPlanLabel(
+      result({ provider: 'xai' }),
+      undefined,
+      {
+        ...quotaStore,
+        xaiQuota: {
+          'account.json': { status: 'success', billing: { monthlyLimitCents: 20_000 } },
+        },
+      } as Parameters<typeof resolveAccountInspectionPlanLabel>[2],
+      t
+    )).toBe('X Premium+');
   });
 });
