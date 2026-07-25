@@ -2664,12 +2664,7 @@ func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, acco
 
 	s.appendLog("info", fmt.Sprintf("%s xAI 深度检测开始：%s", account.identity(), model))
 	resp, status, message, err := runXAIDeepProbeWithRetry(ctx, settings.Retries, accountInspectionXAIRetryDelay, func() (accountInspectionHTTPResult, error) {
-		return s.apiCall(ctx, account.Auth, http.MethodPost, xaiResponsesURL(account.Auth), map[string]string{
-			"Authorization": "Bearer $TOKEN$",
-			"Content-Type":  "application/json",
-			"Accept":        "text/event-stream",
-			"Connection":    "Keep-Alive",
-		}, buildXAIDeepProbeBody(model), settings.Timeout)
+		return s.apiCall(ctx, account.Auth, http.MethodPost, xaiResponsesURL(account.Auth), xaiDeepProbeHeaders(account.Auth), buildXAIDeepProbeBody(model), settings.Timeout)
 	})
 	observeAccountXAIQuota(ctx, account, model, resp)
 	var probeStatus *int
@@ -2807,18 +2802,64 @@ func xaiResponsesURL(auth *coreauth.Auth) string {
 			baseURL = strings.TrimSpace(stringFromAny(auth.Metadata["base_url"]))
 		}
 	}
-	if baseURL == "" {
+	if !xaiInspectionUsingAPI(auth) && (baseURL == "" || strings.EqualFold(strings.TrimRight(baseURL, "/"), "https://api.x.ai/v1")) {
+		baseURL = "https://cli-chat-proxy.grok.com/v1"
+	} else if baseURL == "" {
 		baseURL = "https://api.x.ai/v1"
 	}
 	return strings.TrimRight(baseURL, "/") + "/responses"
 }
 
+func xaiInspectionUsingAPI(auth *coreauth.Auth) bool {
+	if auth == nil {
+		return true
+	}
+	if raw := strings.TrimSpace(auth.Attributes["using_api"]); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			return parsed
+		}
+	}
+	if raw, ok := auth.Metadata["using_api"]; ok && raw != nil {
+		switch value := raw.(type) {
+		case bool:
+			return value
+		case string:
+			if parsed, err := strconv.ParseBool(strings.TrimSpace(value)); err == nil {
+				return parsed
+			}
+		}
+	}
+	if authKind := strings.TrimSpace(auth.Attributes["auth_kind"]); authKind != "" {
+		return !strings.EqualFold(authKind, "oauth")
+	}
+	return !strings.EqualFold(strings.TrimSpace(stringFromAny(auth.Metadata["auth_kind"])), "oauth")
+}
+
+func xaiDeepProbeHeaders(auth *coreauth.Auth) map[string]string {
+	headers := map[string]string{"Authorization": "Bearer $TOKEN$"}
+	if !xaiInspectionUsingAPI(auth) && strings.HasPrefix(xaiResponsesURL(auth), "https://cli-chat-proxy.grok.com/v1/") {
+		headers = xaiRequestHeaders(auth)
+	}
+	headers["Content-Type"] = "application/json"
+	headers["Accept"] = "text/event-stream"
+	headers["Connection"] = "Keep-Alive"
+	return headers
+}
+
 func buildXAIDeepProbeBody(model string) string {
 	raw, _ := json.Marshal(map[string]any{
-		"model":             strings.TrimSpace(model),
-		"input":             "ping",
+		"model": strings.TrimSpace(model),
+		"input": []map[string]any{{
+			"role": "user",
+			"content": []map[string]any{{
+				"type": "input_text",
+				"text": "ping",
+			}},
+		}},
+		"instructions":      "You are a helpful assistant. Reply briefly.",
 		"max_output_tokens": 1,
 		"stream":            true,
+		"store":             false,
 	})
 	return string(raw)
 }

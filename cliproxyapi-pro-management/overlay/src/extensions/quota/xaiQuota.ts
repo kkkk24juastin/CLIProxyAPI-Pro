@@ -3,7 +3,7 @@ import type { XaiBillingSummary, XaiFreeQuotaSummary } from '@/types';
 export const XAI_SUPERGROK_LIMIT_CENTS = 15_000;
 export const XAI_X_PREMIUM_PLUS_LIMIT_CENTS = 20_000;
 export const XAI_SUPERGROK_HEAVY_LIMIT_CENTS = 150_000;
-export const XAI_FREE_QUOTA_PROBE_URL = 'https://api.x.ai/v1/responses';
+export const XAI_FREE_QUOTA_PROBE_URL = 'https://cli-chat-proxy.grok.com/v1/responses';
 
 export type XaiNormalizedPlanType =
   | 'free'

@@ -1445,9 +1445,38 @@ func TestXAIResponsesURLUsesConfiguredBaseURL(t *testing.T) {
 	if got := xaiResponsesURL(nil); got != "https://api.x.ai/v1/responses" {
 		t.Fatalf("xaiResponsesURL(nil) = %q", got)
 	}
+	oauth := &coreauth.Auth{Attributes: map[string]string{"base_url": "https://api.x.ai/v1", "auth_kind": "oauth"}}
+	if got := xaiResponsesURL(oauth); got != "https://cli-chat-proxy.grok.com/v1/responses" {
+		t.Fatalf("xaiResponsesURL(oauth) = %q", got)
+	}
+	api := &coreauth.Auth{Attributes: map[string]string{"base_url": "https://api.x.ai/v1", "using_api": "true"}}
+	if got := xaiResponsesURL(api); got != "https://api.x.ai/v1/responses" {
+		t.Fatalf("xaiResponsesURL(api) = %q", got)
+	}
+	metadataOAuth := &coreauth.Auth{Metadata: map[string]any{"base_url": "https://api.x.ai/v1", "using_api": false}}
+	if got := xaiResponsesURL(metadataOAuth); got != "https://cli-chat-proxy.grok.com/v1/responses" {
+		t.Fatalf("xaiResponsesURL(metadataOAuth) = %q", got)
+	}
+	defaultAPI := &coreauth.Auth{Attributes: map[string]string{"base_url": "https://api.x.ai/v1"}}
+	if got := xaiResponsesURL(defaultAPI); got != "https://api.x.ai/v1/responses" {
+		t.Fatalf("xaiResponsesURL(defaultAPI) = %q", got)
+	}
 	auth := &coreauth.Auth{Attributes: map[string]string{"base_url": "https://xai.example/v1/"}}
 	if got := xaiResponsesURL(auth); got != "https://xai.example/v1/responses" {
 		t.Fatalf("xaiResponsesURL(custom) = %q", got)
+	}
+	headers := xaiDeepProbeHeaders(oauth)
+	if headers["x-xai-token-auth"] != "xai-grok-cli" || headers["Accept"] != "text/event-stream" {
+		t.Fatalf("xaiDeepProbeHeaders(oauth) = %#v", headers)
+	}
+	apiHeaders := xaiDeepProbeHeaders(api)
+	if apiHeaders["x-xai-token-auth"] != "" || apiHeaders["Authorization"] != "Bearer $TOKEN$" {
+		t.Fatalf("xaiDeepProbeHeaders(api) = %#v", apiHeaders)
+	}
+	customOAuth := &coreauth.Auth{Attributes: map[string]string{"base_url": "https://xai.example/v1", "using_api": "false"}}
+	customHeaders := xaiDeepProbeHeaders(customOAuth)
+	if customHeaders["x-xai-token-auth"] != "" {
+		t.Fatalf("xaiDeepProbeHeaders(customOAuth) = %#v", customHeaders)
 	}
 }
 
@@ -1456,7 +1485,8 @@ func TestBuildXAIDeepProbeBodyUsesMinimalResponsesRequest(t *testing.T) {
 	if err := json.Unmarshal([]byte(buildXAIDeepProbeBody(" grok-4.3 ")), &payload); err != nil {
 		t.Fatalf("buildXAIDeepProbeBody() JSON error = %v", err)
 	}
-	if payload["model"] != "grok-4.3" || payload["input"] != "ping" || payload["stream"] != true || payload["max_output_tokens"] != float64(1) {
+	input, _ := payload["input"].([]any)
+	if payload["model"] != "grok-4.3" || len(input) != 1 || payload["stream"] != true || payload["store"] != false || payload["max_output_tokens"] != float64(1) {
 		t.Fatalf("deep probe payload = %#v", payload)
 	}
 }

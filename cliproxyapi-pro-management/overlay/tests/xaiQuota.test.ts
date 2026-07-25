@@ -220,11 +220,24 @@ describe('xAI free quota forced refresh', () => {
     expect(requests.map((request) => request.url)).toContain(XAI_FREE_QUOTA_PROBE_URL);
     const probe = requests.find((request) => request.url === XAI_FREE_QUOTA_PROBE_URL);
     expect(probe).toMatchObject({ method: 'POST', useExecutor: true });
+    expect(probe?.url).toBe('https://cli-chat-proxy.grok.com/v1/responses');
+    expect(probe?.url).not.toContain('api.x.ai');
+    expect(probe?.header).toMatchObject({
+      accept: 'text/event-stream',
+      'x-xai-token-auth': 'xai-grok-cli',
+    });
     expect(JSON.parse(probe?.data ?? '{}')).toMatchObject({
       model: XAI_PAID_HEALTH_MODEL,
-      input: 'ping',
+      input: [
+        {
+          role: 'user',
+          content: [{ type: 'input_text', text: 'ping' }],
+        },
+      ],
+      instructions: 'You are a helpful assistant. Reply briefly.',
       max_output_tokens: 1,
-      stream: false,
+      stream: true,
+      store: false,
     });
     expect(summary).toMatchObject({
       planType: 'free',
