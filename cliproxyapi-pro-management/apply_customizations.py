@@ -1213,10 +1213,11 @@ def patch_quota_page(target: Path) -> None:
         "import { FEATURES } from '@/config/features';\nimport { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n",
         "",
     )
-    replace_once(
+    insert_once(
         path,
         "import { useAuthStore } from '@/stores';\n",
         "import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\nimport { useAuthStore } from '@/stores';\n",
+        "quotaPersistenceMiddleware",
     )
     replace_once(
         path,

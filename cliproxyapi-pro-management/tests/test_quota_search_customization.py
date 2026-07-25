@@ -12,10 +12,16 @@ SPEC.loader.exec_module(CUSTOMIZATIONS)
 
 
 QUOTA_PAGE_SOURCE = """import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
+import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';
+import { useAuthStore } from '@/stores';
 
 export function QuotaPage() {
-  const [files, setFiles] = useState([]);
+  const { t } = useTranslation();
+  const connectionStatus = useAuthStore((state) => state.connectionStatus);
+
+  const [files, setFiles] = useState<AuthFileItem[]>([]);
   const [error, setError] = useState('');
 
   const disableControls = false;
@@ -91,6 +97,9 @@ class QuotaSearchCustomizationTest(unittest.TestCase):
             styles = (pages_dir / 'QuotaPage.module.scss').read_text()
 
             self.assertIn('QUOTA_SEARCH_FIELD_KEYS', page)
+            self.assertIn("import { resolveXaiPlanType } from '@/extensions/quota/xaiQuota';", page)
+            self.assertIn("import { useAuthStore, useQuotaStore } from '@/stores';", page)
+            self.assertIn('buildQuotaStateSearchValues', page)
             self.assertIn("value.split('*')", page)
             self.assertIn("placeholder={t('quota_management.search_placeholder')}", page)
             self.assertIn('searchFileNames={searchFileNames}', page)
