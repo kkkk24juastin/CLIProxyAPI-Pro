@@ -568,14 +568,34 @@ def patch_modal_content_scrollbar_layout(target: Path) -> None:
 
 def patch_api_client_connection_isolation(target: Path) -> None:
     client = target / 'src/services/api/client.ts'
-    replace_once(
+    insert_once(
         client,
-        "  private runtimeKind: ServerRuntimeKind = 'unknown';\n",
-        "  private runtimeKind: ServerRuntimeKind = 'unknown';\n"
+        "  private managementKey: string = '';\n",
+        "  private managementKey: string = '';\n"
         "  private connectionGeneration: number = 0;\n"
         "  private connectionAbortController = new AbortController();\n",
+        "private connectionGeneration: number",
     )
-    replace_once(
+    replace_once_if_present(
+        client,
+        "    this.apiBase = computeApiUrl(config.apiBase);\n"
+        "    this.managementKey = config.managementKey;\n"
+        "\n"
+        "    if (config.timeout) {\n",
+        "    const nextApiBase = computeApiUrl(config.apiBase);\n"
+        "    const connectionChanged =\n"
+        "      this.apiBase !== nextApiBase || this.managementKey !== config.managementKey;\n"
+        "    this.apiBase = nextApiBase;\n"
+        "    this.managementKey = config.managementKey;\n"
+        "    if (connectionChanged) {\n"
+        "      this.connectionAbortController.abort();\n"
+        "      this.connectionAbortController = new AbortController();\n"
+        "      this.connectionGeneration += 1;\n"
+        "    }\n"
+        "\n"
+        "    if (config.timeout) {\n",
+    )
+    replace_once_if_present(
         client,
         "    if (connectionChanged) {\n"
         "      this.runtimeKind = 'unknown';\n"
@@ -587,6 +607,8 @@ def patch_api_client_connection_isolation(target: Path) -> None:
         "      this.runtimeKind = 'unknown';\n"
         "    }\n",
     )
+    if 'this.connectionGeneration += 1;' not in read(client):
+        raise RuntimeError(f'Pattern not found in {client}: connection change handling')
     insert_once(
         client,
         "  /**\n   * 设置请求/响应拦截器\n   */\n",
