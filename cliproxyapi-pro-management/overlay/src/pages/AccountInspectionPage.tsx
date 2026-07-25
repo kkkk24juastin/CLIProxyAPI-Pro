@@ -53,7 +53,6 @@ import {
   buildHighAvailabilityBarStyle,
   buildInspectionResultsViewState,
   buildManualActionItem,
-  buildRefreshTokenConfirmationMessage,
   collectActionableInspectionResults,
   countActions,
   createEmptyAuthFileAccountStats,
@@ -68,7 +67,6 @@ import {
   formatTimestamp,
   formatTokenRefreshDetail,
   formatTokenRefreshLabel,
-  formatTokenRefreshToast,
   getDocumentTheme,
   getPaginationRange,
   getProviderInitial,
@@ -168,7 +166,6 @@ export function AccountInspectionPage() {
   const [executing, setExecuting] = useState(false);
   const [loadingFullInspectionDetails, setLoadingFullInspectionDetails] = useState(false);
   const [recheckingKey, setRecheckingKey] = useState<string | null>(null);
-  const [refreshingTokenKey, setRefreshingTokenKey] = useState<string | null>(null);
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
   const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
@@ -819,55 +816,6 @@ export function AccountInspectionPage() {
     },
     [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, restoredSnapshot, showNotification, t]
   );
-
-  const refreshTokenSingle = useCallback(
-    async (item: AccountInspectionResultItem) => {
-      if (restoredSnapshot) {
-        showNotification(t('monitoring.account_inspection_restored_snapshot_action_blocked'), 'warning');
-        return;
-      }
-      setRefreshingTokenKey(item.key);
-      setLogsCollapsed(false);
-      appendLog('info', t('monitoring.account_inspection_refresh_token_started', {
-        account: item.fileName,
-      }));
-      try {
-        const response = await accountInspectionApi.refreshToken(toAccountInspectionApiItem(item), currentInspectionDetailOptions);
-        applyBackendResponse(response);
-        const refreshedItem = response.result?.key ? accountInspectionBackendResultToItem(response.result) : null;
-        const toast = refreshedItem
-          ? formatTokenRefreshToast(refreshedItem, response.error, i18n.language, t)
-          : { message: response.error || t('common.unknown_error'), tone: 'error' as const };
-        showNotification(toast.message, toast.tone);
-        void loadAuthFiles();
-      } catch (error) {
-        handleAccountInspectionControlError(error, appendLog, showNotification, t('common.unknown_error'));
-      } finally {
-        setRefreshingTokenKey(null);
-      }
-    },
-    [appendLog, applyBackendResponse, currentInspectionDetailOptions, i18n.language, loadAuthFiles, restoredSnapshot, showNotification, t]
-  );
-
-  const handleRefreshTokenSingle = useCallback(
-    (item: AccountInspectionResultItem) => {
-      if (connectionStatus !== 'connected') {
-        showNotification(t('notification.connection_required'), 'warning');
-        return;
-      }
-      showConfirmation({
-        title: t('monitoring.account_inspection_refresh_token_confirm_title'),
-        message: buildRefreshTokenConfirmationMessage(item, t),
-        confirmText: t('monitoring.account_inspection_refresh_token_action'),
-        cancelText: t('common.cancel'),
-        variant: 'primary',
-        onConfirm: () => void refreshTokenSingle(item),
-      });
-    },
-    [connectionStatus, refreshTokenSingle, showConfirmation, showNotification, t]
-  );
-
-
 
   const quotaStore = useMemo(
     () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),
@@ -1715,21 +1663,11 @@ export function AccountInspectionPage() {
                           </td>
                           <td className={styles.operationCell}>
                             <div className={styles.operationActions}>
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => void handleRefreshTokenSingle(item)}
-                                loading={refreshingTokenKey === item.key}
-                                disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}
-                                title={t('monitoring.account_inspection_refresh_token_tooltip')}
-                              >
-                                {t('monitoring.account_inspection_refresh_token_action')}
-                              </Button>
-                              <Button size="sm" variant="secondary" onClick={() => void handleRecheckSingle(item)} loading={recheckingKey === item.key} disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}>
+                              <Button size="sm" variant="secondary" onClick={() => void handleRecheckSingle(item)} loading={recheckingKey === item.key} disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null}>
                                 {t('monitoring.account_inspection_recheck_account')}
                               </Button>
                               {manualActions.map((action) => (
-                                <Button key={action} size="sm" variant={action === 'delete' ? 'danger' : 'secondary'} onClick={() => handleExecuteSingle(item, action)} disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}>
+                                <Button key={action} size="sm" variant={action === 'delete' ? 'danger' : 'secondary'} onClick={() => handleExecuteSingle(item, action)} disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null}>
                                   {formatActionLabel(action, t)}
                                 </Button>
                               ))}

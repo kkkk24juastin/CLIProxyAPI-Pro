@@ -1106,35 +1106,6 @@ export const formatInspectionResultToast = (
   };
 };
 
-export const formatTokenRefreshToast = (
-  item: AccountInspectionResultItem,
-  fallbackError: string | undefined,
-  locale: string,
-  t: TFunction
-) => {
-  const detail = item.tokenRefreshError || fallbackError || formatTokenRefreshDetail(item, locale, t);
-  if (item.tokenRefreshStatus === 'success') {
-    return {
-      message: detail
-        ? `${item.fileName}: ${t('monitoring.account_inspection_token_refresh_success')} · ${detail}`
-        : `${item.fileName}: ${t('monitoring.account_inspection_token_refresh_success')}`,
-      tone: 'success' as const,
-    };
-  }
-  if (item.tokenRefreshStatus === 'failed' || fallbackError) {
-    return {
-      message: detail
-        ? `${item.fileName}: ${t('monitoring.account_inspection_token_refresh_failed')} · ${detail}`
-        : `${item.fileName}: ${t('monitoring.account_inspection_token_refresh_failed')}`,
-      tone: 'error' as const,
-    };
-  }
-  return {
-    message: `${item.fileName}: ${t('monitoring.account_inspection_token_refresh_not_triggered')}`,
-    tone: 'warning' as const,
-  };
-};
-
 export const formatCurrentStateLabel = (item: AccountInspectionResultItem, t: TFunction) => {
   if (item.disabled) return t('monitoring.account_inspection_state_disabled');
   return t('monitoring.account_inspection_state_enabled');
@@ -1266,26 +1237,6 @@ export const buildDeleteConfirmationMessage = (
     {buildConfirmationAccountCard(item, t)}
     <div className={`${styles.confirmationNotice} ${styles.confirmationNoticeDanger}`}>
       {t('monitoring.account_inspection_delete_single_warning')}
-    </div>
-  </div>
-);
-
-export const buildRefreshTokenConfirmationMessage = (
-  item: AccountInspectionResultItem,
-  t: TFunction
-) => (
-  <div className={styles.confirmationBody}>
-    <div className={styles.confirmationLead}>
-      <strong>{t('monitoring.account_inspection_refresh_token_confirm_title')}</strong>
-      <span>
-        {t('monitoring.account_inspection_refresh_token_confirm_body', {
-          account: item.fileName,
-        })}
-      </span>
-    </div>
-    {buildConfirmationAccountCard(item, t)}
-    <div className={styles.confirmationNotice}>
-      {t('monitoring.account_inspection_refresh_token_confirm_hint')}
     </div>
   </div>
 );

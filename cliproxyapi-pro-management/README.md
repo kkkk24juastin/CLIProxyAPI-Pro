@@ -96,7 +96,7 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - 通过后端 WebSocket/WSS 流接收日志和实时状态
 - 建议操作：保留、删除、禁用、启用
 - 通过后端手动执行单个建议操作或全部建议操作
-- 刷新令牌和单账号重检 toast 显示真实业务结果，例如刷新成功/失败、账号异常、额度耗尽或健康状态
+- 单账号重检 toast 显示真实业务结果，例如账号异常、额度耗尽或健康状态
 - 针对额度耗尽禁用、额度恢复启用、账号错误禁用/删除的后端可选自动执行策略
 - 根据后端巡检结果刷新配额快照
 
@@ -108,7 +108,6 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - `PUT|PATCH /account-inspection/schedule`
 - `POST /account-inspection/run`
 - `POST /account-inspection/inspect-one`
-- `POST /account-inspection/refresh-token`
 - `POST /account-inspection/pause`
 - `POST /account-inspection/resume`
 - `POST /account-inspection/stop`

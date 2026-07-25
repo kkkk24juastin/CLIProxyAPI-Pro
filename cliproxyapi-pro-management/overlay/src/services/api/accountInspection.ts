@@ -58,13 +58,6 @@ export type AccountInspectionInspectOneResponse = AccountInspectionBackendRespon
   error?: string;
 };
 
-export type AccountInspectionRefreshTokenItem = AccountInspectionInspectOneItem;
-
-export type AccountInspectionRefreshTokenResponse = AccountInspectionBackendResponse & {
-  result: AccountInspectionBackendResultItem;
-  error?: string;
-};
-
 export type AccountInspectionScheduleResponse = AccountInspectionBackendResponse;
 
 export type AccountInspectionDetailsOptions = {
@@ -134,10 +127,6 @@ export const accountInspectionApi = {
   }),
   inspectOne: (item: AccountInspectionInspectOneItem, options: boolean | AccountInspectionDetailsOptions = true) =>
     apiClient.post<AccountInspectionInspectOneResponse>('/account-inspection/inspect-one', { item }, {
-      params: buildAccountInspectionDetailParams(options),
-    }),
-  refreshToken: (item: AccountInspectionRefreshTokenItem, options: boolean | AccountInspectionDetailsOptions = true) =>
-    apiClient.post<AccountInspectionRefreshTokenResponse>('/account-inspection/refresh-token', { item }, {
       params: buildAccountInspectionDetailParams(options),
     }),
   pause: () => apiClient.post<AccountInspectionScheduleResponse>('/account-inspection/pause', {}, {

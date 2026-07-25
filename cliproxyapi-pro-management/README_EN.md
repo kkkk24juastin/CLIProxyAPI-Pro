@@ -96,7 +96,7 @@ Features include:
 - logs and live status from the backend WebSocket/WSS stream
 - suggested actions: keep, delete, disable, enable
 - manual execution for a single planned action or all planned actions through the backend
-- business-result toast messages for token refresh and single-account recheck, such as refresh success/failure, account errors, quota exhaustion, or healthy state
+- business-result toast messages for single-account rechecks, such as account errors, quota exhaustion, or healthy state
 - optional backend auto-execution policies for quota-limit disable, quota-recovery enable, and account-error disable/delete
 - quota snapshot refresh from backend inspection results
 
@@ -108,7 +108,6 @@ Backend schedule/status/control routes expected by the page:
 - `PUT|PATCH /account-inspection/schedule`
 - `POST /account-inspection/run`
 - `POST /account-inspection/inspect-one`
-- `POST /account-inspection/refresh-token`
 - `POST /account-inspection/pause`
 - `POST /account-inspection/resume`
 - `POST /account-inspection/stop`
