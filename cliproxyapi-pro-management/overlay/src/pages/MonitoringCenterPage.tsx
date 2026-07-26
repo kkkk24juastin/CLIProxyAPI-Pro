@@ -130,8 +130,8 @@ type RealtimeLogColumnDefinition = {
 };
 const formatTokenCount = (value: number) => Math.max(0, Math.round(Number(value) || 0)).toLocaleString();
 
-const getCacheHitRate = (row: Pick<MonitoringEventRow, 'inputTokens' | 'cachedTokens'>): number | null => (
-  row.inputTokens > 0 ? Math.min(Math.max(row.cachedTokens / row.inputTokens, 0), 1) : null
+const getCacheHitRate = (row: Pick<MonitoringEventRow, 'cacheInputTokens' | 'cachedTokens'>): number | null => (
+  row.cacheInputTokens > 0 ? Math.min(Math.max(row.cachedTokens / row.cacheInputTokens, 0), 1) : null
 );
 
 const getSuccessRateClassName = (rate: number) => (
@@ -171,7 +171,7 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
     case 'cacheRead':
       return [
         formatTokenCount(row.cachedTokens),
-        row.inputTokens > 0 ? formatPercent(Math.min(row.cachedTokens / row.inputTokens, 1)) : '--',
+        row.cacheInputTokens > 0 ? formatPercent(Math.min(row.cachedTokens / row.cacheInputTokens, 1)) : '--',
       ];
     case 'cost':
       return [formatUsdPrecise(row.totalCost)];
@@ -1152,11 +1152,11 @@ export function MonitoringCenterPage() {
       key: 'cache',
       title: t('monitoring.cache_title'),
       label: t('monitoring.today_cache_hit_rate'),
-      value: formatPercent(effectiveTodaySummary.inputTokens > 0 ? effectiveTodaySummary.cachedTokens / effectiveTodaySummary.inputTokens : 0),
+      value: formatPercent(effectiveTodaySummary.cacheInputTokens > 0 ? effectiveTodaySummary.cachedTokens / effectiveTodaySummary.cacheInputTokens : 0),
       accent: 'green',
       footer: [
         { label: t('monitoring.today_cached_tokens'), value: formatCompactNumber(effectiveTodaySummary.cachedTokens) },
-        { label: t('monitoring.total_cache_hits'), value: `${formatCompactNumber(effectiveTopSummary.cachedTokens)} / ${formatPercent(effectiveTopSummary.inputTokens > 0 ? effectiveTopSummary.cachedTokens / effectiveTopSummary.inputTokens : 0)}` },
+        { label: t('monitoring.total_cache_hits'), value: `${formatCompactNumber(effectiveTopSummary.cachedTokens)} / ${formatPercent(effectiveTopSummary.cacheInputTokens > 0 ? effectiveTopSummary.cachedTokens / effectiveTopSummary.cacheInputTokens : 0)}` },
       ],
     },
     {

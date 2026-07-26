@@ -18,6 +18,7 @@ const bucket = (overrides: Partial<UsageAggregateBucket> = {}): UsageAggregateBu
   outputTokens: 20,
   reasoningTokens: 3,
   cacheTokens: 4,
+  cacheInputTokens: 10,
   cacheReadTokens: 4,
   cacheWriteTokens: 0,
   estimatedCost: 1.25,
@@ -35,6 +36,7 @@ describe('monitoring server aggregates', () => {
     expect(summary.totalCalls).toBe(3);
     expect(summary.successCalls).toBe(2);
     expect(summary.totalCost).toBe(2);
+    expect(summary.cacheInputTokens).toBe(20);
     expect(summary.averageLatencyMs).toBeCloseTo(100);
   });
 });

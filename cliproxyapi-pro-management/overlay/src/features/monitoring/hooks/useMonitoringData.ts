@@ -189,6 +189,7 @@ export type MonitoringEventRow = {
   outputTokens: number;
   reasoningTokens: number;
   cachedTokens: number;
+  cacheInputTokens: number;
   totalTokens: number;
   totalCost: number;
   taskKey: string;
@@ -204,6 +205,7 @@ export type MonitoringSummary = {
   outputTokens: number;
   reasoningTokens: number;
   cachedTokens: number;
+  cacheInputTokens: number;
   totalTokens: number;
   totalCost: number;
   averageLatencyMs: number | null;
@@ -861,8 +863,9 @@ const buildEventRows = (
     const reasoningTokens = Math.max(Number(detail.tokens?.reasoning_tokens) || 0, 0);
     const cachedTokens = Math.max(
       Math.max(Number(detail.tokens?.cached_tokens) || 0, 0),
-      Math.max(Number(detail.tokens?.cache_tokens) || 0, 0)
+      Math.max(Number(detail.tokens?.cache_read_tokens) || 0, 0)
     );
+    const cacheInputTokens = Math.max(Number(detail.tokens?.cache_input_tokens) || 0, 0);
     const totalTokens = Math.max(Number(detail.tokens?.total_tokens) || 0, extractTotalTokens(detail));
     const totalCost = calculateCost(detail, modelPrices);
     const apiKeyHash = readStringValue(detail.api_key_hash) || '-';
@@ -931,6 +934,7 @@ const buildEventRows = (
       outputTokens,
       reasoningTokens,
       cachedTokens,
+      cacheInputTokens,
       totalTokens,
       totalCost,
       taskKey,

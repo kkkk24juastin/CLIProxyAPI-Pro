@@ -80,6 +80,7 @@ type UsageAggregateBucket struct {
 	OutputTokens     int64   `json:"outputTokens"`
 	ReasoningTokens  int64   `json:"reasoningTokens"`
 	CacheTokens      int64   `json:"cacheTokens"`
+	CacheInputTokens int64   `json:"cacheInputTokens"`
 	CacheReadTokens  int64   `json:"cacheReadTokens"`
 	CacheWriteTokens int64   `json:"cacheWriteTokens"`
 	EstimatedCost    float64 `json:"estimatedCost"`
@@ -397,6 +398,11 @@ func (s *Store) init() error {
 			cache_read_tokens integer not null default 0,
 			cache_write_tokens integer not null default 0,
 			total_tokens integer not null default 0,
+			accounting_version integer not null default 0,
+			accounting_quality text not null default '',
+			uncached_input_tokens integer not null default 0,
+			unclassified_tokens integer not null default 0,
+			token_breakdown_json text,
 			latency_ms integer,
 			ttft_ms integer,
 			status_code integer,
@@ -539,6 +545,11 @@ func (s *Store) init() error {
 		`alter table usage_events add column alias text`,
 		`alter table usage_events add column cache_read_tokens integer not null default 0`,
 		`alter table usage_events add column cache_write_tokens integer not null default 0`,
+		`alter table usage_events add column accounting_version integer not null default 0`,
+		`alter table usage_events add column accounting_quality text not null default ''`,
+		`alter table usage_events add column uncached_input_tokens integer not null default 0`,
+		`alter table usage_events add column unclassified_tokens integer not null default 0`,
+		`alter table usage_events add column token_breakdown_json text`,
 		`alter table usage_events add column estimated_cost real`,
 		`alter table usage_events add column price_rule_id integer`,
 		`alter table usage_events add column cost_breakdown_json text`,
@@ -559,13 +570,127 @@ func (s *Store) init() error {
 		('quota_cache', 1, 0), ('auth_runtime_stats', 1, 0), ('routing_cursor_state', 1, 0)`); err != nil {
 		return err
 	}
+	migratedAccounting, err := s.migrateTokenAccounting(context.Background())
+	if err != nil {
+		return err
+	}
 	if err := s.migrateLegacyModelPrices(context.Background()); err != nil {
 		return err
 	}
 	if err := s.migrateProviderBoundModelPriceRules(context.Background()); err != nil {
 		return err
 	}
+	if migratedAccounting > 0 {
+		if _, err := s.RecalculateEventCosts(context.Background(), true); err != nil {
+			return err
+		}
+		return s.rebuildUsageSummary(context.Background())
+	}
 	return s.ensureUsageSummary()
+}
+
+func (s *Store) migrateTokenAccounting(ctx context.Context) (int64, error) {
+	type migrationItem struct {
+		id      int64
+		event   internalusage.Event
+		rawJSON string
+	}
+	const batchSize = 1000
+	var migrated, lastID int64
+	for {
+		rows, err := s.db.QueryContext(ctx, `select
+			id, coalesce(provider, ''), coalesce(executor_type, ''),
+			input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens,
+			cache_read_tokens, cache_write_tokens, total_tokens, coalesce(raw_json, '')
+			from usage_events where accounting_version < 2 and id > ? order by id limit ?`, lastID, batchSize)
+		if err != nil {
+			return migrated, err
+		}
+		items := make([]migrationItem, 0, batchSize)
+		for rows.Next() {
+			var item migrationItem
+			if err := rows.Scan(
+				&item.id, &item.event.Provider, &item.event.ExecutorType,
+				&item.event.InputTokens, &item.event.OutputTokens, &item.event.ReasoningTokens,
+				&item.event.CachedTokens, &item.event.CacheTokens, &item.event.CacheReadTokens,
+				&item.event.CacheWriteTokens, &item.event.TotalTokens, &item.rawJSON,
+			); err != nil {
+				_ = rows.Close()
+				return migrated, err
+			}
+			items = append(items, item)
+		}
+		rowsErr := rows.Err()
+		if err := rows.Close(); err != nil {
+			return migrated, err
+		}
+		if rowsErr != nil {
+			return migrated, rowsErr
+		}
+		if len(items) == 0 {
+			return migrated, nil
+		}
+
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return migrated, err
+		}
+		stmt, err := tx.PrepareContext(ctx, `update usage_events set
+			input_tokens = ?, output_tokens = ?, reasoning_tokens = ?, cached_tokens = ?, cache_tokens = ?,
+			cache_read_tokens = ?, cache_write_tokens = ?, total_tokens = ?, accounting_version = ?,
+			accounting_quality = ?, uncached_input_tokens = ?, unclassified_tokens = ?, token_breakdown_json = ?,
+			estimated_cost = null, price_rule_id = null, cost_breakdown_json = null
+			where id = ?`)
+		if err != nil {
+			_ = tx.Rollback()
+			return migrated, err
+		}
+		for _, item := range items {
+			normalized := internalusage.NormalizeEventAccounting(item.event)
+			if item.rawJSON != "" {
+				if parsed, parseErr := internalusage.NormalizeRaw([]byte(item.rawJSON)); parseErr == nil {
+					normalized = parsed
+				}
+			}
+			breakdownJSON, err := marshalTokenBreakdown(normalized)
+			if err != nil {
+				_ = stmt.Close()
+				_ = tx.Rollback()
+				return migrated, err
+			}
+			if _, err := stmt.ExecContext(ctx,
+				normalized.InputTokens, normalized.OutputTokens, normalized.ReasoningTokens,
+				normalized.CachedTokens, normalized.CacheTokens, normalized.CacheReadTokens,
+				normalized.CacheWriteTokens, normalized.TotalTokens, normalized.AccountingVersion,
+				normalized.AccountingQuality, normalized.UncachedInputTokens, normalized.UnclassifiedTokens,
+				nullString(breakdownJSON), item.id,
+			); err != nil {
+				_ = stmt.Close()
+				_ = tx.Rollback()
+				return migrated, err
+			}
+		}
+		if err := stmt.Close(); err != nil {
+			_ = tx.Rollback()
+			return migrated, err
+		}
+		if err := tx.Commit(); err != nil {
+			return migrated, err
+		}
+		migrated += int64(len(items))
+		lastID = items[len(items)-1].id
+	}
+}
+
+func marshalTokenBreakdown(event internalusage.Event) (string, error) {
+	if !event.TokenBreakdown.Valid() {
+		return "", nil
+	}
+	raw, err := json.Marshal(event.TokenBreakdown)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) (InsertResult, error) {
@@ -616,9 +741,10 @@ func (s *Store) insertEvents(ctx context.Context, events []internalusage.Event) 
 		request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return InsertResult{}, err
 	}
@@ -628,6 +754,11 @@ func (s *Store) insertEvents(ctx context.Context, events []internalusage.Event) 
 	summaryDelta := UsageSummary{}
 	latestInsertedID := int64(0)
 	for _, event := range events {
+		event = internalusage.NormalizeEventAccounting(event)
+		breakdownJSON, err := marshalTokenBreakdown(event)
+		if err != nil {
+			return InsertResult{}, err
+		}
 		if event.EstimatedCost == nil {
 			if rule, ok := findModelPriceRule(rules, event.Provider, event.Model); ok {
 				cost, breakdown := evaluateEventCost(event, rule)
@@ -647,6 +778,7 @@ func (s *Store) insertEvents(ctx context.Context, events []internalusage.Event) 
 			nullString(event.Provider), nullString(event.ExecutorType), event.Model, nullString(event.Alias), nullString(event.Endpoint), nullString(event.Method), nullString(event.Path),
 			nullString(event.AuthType), nullString(event.AuthIndex), nullString(event.Source), nullString(event.SourceHash), nullString(event.APIKeyHash),
 			event.InputTokens, event.OutputTokens, event.ReasoningTokens, event.CachedTokens, event.CacheTokens, event.CacheReadTokens, event.CacheWriteTokens, event.TotalTokens,
+			event.AccountingVersion, nullString(event.AccountingQuality), event.UncachedInputTokens, event.UnclassifiedTokens, nullString(breakdownJSON),
 			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.UpstreamRequestID), nullString(event.RetryAfter), nullInt64(event.AttemptIndex), boolToInt(event.Stream), nullString(event.ReasoningEffort), nullString(event.ServiceTier),
 			nullFloat64(event.EstimatedCost), nullPositiveInt64(event.PriceRuleID), nullString(event.CostBreakdownJSON), failed, nullString(event.RawJSON), event.CreatedAtMS,
 		)
@@ -832,7 +964,7 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		var requestID, provider, executorType, alias, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, rawJSON sql.NullString
 		var latency, ttft, attemptIndex sql.NullInt64
 		var statusCode sql.NullInt64
-		var errorCode, errorMessage, upstreamRequestID, retryAfter, reasoningEffort, serviceTier, costBreakdown sql.NullString
+		var errorCode, errorMessage, upstreamRequestID, retryAfter, reasoningEffort, serviceTier, costBreakdown, accountingQuality, tokenBreakdownJSON sql.NullString
 		var estimatedCost sql.NullFloat64
 		var priceRuleID sql.NullInt64
 		var stream, failed int
@@ -840,6 +972,7 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 			&event.ID, &requestID, &event.EventHash, &event.TimestampMS, &event.Timestamp, &provider, &executorType, &event.Model,
 			&alias, &endpoint, &method, &path, &authType, &authIndex, &source, &sourceHash, &apiKeyHash,
 			&event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheTokens, &event.CacheReadTokens, &event.CacheWriteTokens, &event.TotalTokens,
+			&event.AccountingVersion, &accountingQuality, &event.UncachedInputTokens, &event.UnclassifiedTokens, &tokenBreakdownJSON,
 			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &attemptIndex, &stream, &reasoningEffort, &serviceTier,
 			&estimatedCost, &priceRuleID, &costBreakdown, &failed, &rawJSON, &event.CreatedAtMS,
 		); err != nil {
@@ -888,6 +1021,10 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		}
 		event.PriceRuleID = priceRuleID.Int64
 		event.CostBreakdownJSON = costBreakdown.String
+		event.AccountingQuality = accountingQuality.String
+		if tokenBreakdownJSON.String != "" {
+			_ = json.Unmarshal([]byte(tokenBreakdownJSON.String), &event.TokenBreakdown)
+		}
 		events = append(events, event)
 	}
 	return events, rows.Err()
@@ -905,6 +1042,7 @@ func (s *Store) recentEventsFrom(ctx context.Context, queryer sqlQueryer, limit 
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events indexed by idx_usage_events_recent
@@ -925,6 +1063,7 @@ func (s *Store) EventsAfter(ctx context.Context, afterID int64, limit int) ([]in
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events
@@ -1061,6 +1200,7 @@ func (s *Store) QueryEvents(ctx context.Context, options UsageEventQueryOptions)
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events` + usageEventQueryWhere(queryWheres) + `
@@ -1298,9 +1438,10 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 		`coalesce(sum(input_tokens), 0) as input_tokens`,
 		`coalesce(sum(output_tokens), 0) as output_tokens`,
 		`coalesce(sum(reasoning_tokens), 0) as reasoning_tokens`,
-		`coalesce(sum(max(cached_tokens, cache_tokens)), 0) as cache_tokens`,
-		`coalesce(sum(cache_read_tokens), 0) as cache_read_tokens`,
-		`coalesce(sum(cache_write_tokens), 0) as cache_write_tokens`,
+		`coalesce(sum(case when accounting_quality = 'complete' then cache_read_tokens else 0 end), 0) as cache_tokens`,
+		`coalesce(sum(case when accounting_quality = 'complete' then input_tokens else 0 end), 0) as cache_input_tokens`,
+		`coalesce(sum(case when accounting_quality = 'complete' then cache_read_tokens else 0 end), 0) as cache_read_tokens`,
+		`coalesce(sum(case when accounting_quality = 'complete' then cache_write_tokens else 0 end), 0) as cache_write_tokens`,
 		`coalesce(sum(estimated_cost), 0) as estimated_cost`,
 		`cast(avg(latency_ms) as integer) as avg_latency_ms`,
 		`cast(avg(ttft_ms) as integer) as avg_ttft_ms`,
@@ -1343,7 +1484,7 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 			}
 		}
 		var avgLatency, avgTTFT sql.NullInt64
-		dest = append(dest, &bucket.TotalRequests, &bucket.SuccessCount, &bucket.FailureCount, &bucket.TotalTokens, &bucket.InputTokens, &bucket.OutputTokens, &bucket.ReasoningTokens, &bucket.CacheTokens, &bucket.CacheReadTokens, &bucket.CacheWriteTokens, &bucket.EstimatedCost, &avgLatency, &avgTTFT, &bucket.LastSeenAtMS)
+		dest = append(dest, &bucket.TotalRequests, &bucket.SuccessCount, &bucket.FailureCount, &bucket.TotalTokens, &bucket.InputTokens, &bucket.OutputTokens, &bucket.ReasoningTokens, &bucket.CacheTokens, &bucket.CacheInputTokens, &bucket.CacheReadTokens, &bucket.CacheWriteTokens, &bucket.EstimatedCost, &avgLatency, &avgTTFT, &bucket.LastSeenAtMS)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
@@ -1425,8 +1566,8 @@ func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (
 		coalesce(sum(input_tokens), 0),
 		coalesce(sum(output_tokens), 0),
 		coalesce(sum(reasoning_tokens), 0),
-		coalesce(sum(max(cached_tokens, cache_tokens)), 0),
-		coalesce(sum(case when max(cached_tokens, cache_tokens) > 0 then 1 else 0 end), 0),
+		coalesce(sum(case when accounting_quality = 'complete' then cache_read_tokens else 0 end), 0),
+		coalesce(sum(case when accounting_quality = 'complete' and cache_read_tokens > 0 then 1 else 0 end), 0),
 		coalesce(sum(estimated_cost), 0),
 		coalesce(sum(case when estimated_cost is not null then 1 else 0 end), 0),
 		cast(avg(latency_ms) as integer),
@@ -1521,7 +1662,7 @@ func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (
 	modelQuery := `select
 		coalesce(nullif(model, ''), '-'), count(*), coalesce(sum(total_tokens), 0),
 		coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0), coalesce(sum(reasoning_tokens), 0),
-		coalesce(sum(max(cached_tokens, cache_tokens)), 0), coalesce(sum(estimated_cost), 0)
+		coalesce(sum(case when accounting_quality = 'complete' then cache_read_tokens else 0 end), 0), coalesce(sum(estimated_cost), 0)
 		from usage_events where ` + where + ` group by model order by count(*) desc, model asc`
 	modelRows, err := s.db.QueryContext(ctx, modelQuery, args...)
 	if err != nil {

@@ -575,6 +575,83 @@ func TestUsageAggregatesSupportsAllIntervalAndAPIKeyFilter(t *testing.T) {
 	}
 }
 
+func TestUsageAggregatesUseCanonicalCacheReadAcrossProviderSemantics(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	openAI := testUsageEvent(0, false, 130)
+	openAI.Provider = "codex"
+	openAI.ExecutorType = "CodexExecutor"
+	openAI.InputTokens = 100
+	openAI.OutputTokens = 30
+	openAI.CachedTokens = 40
+	openAI.CacheReadTokens = 40
+	openAI.CacheWriteTokens = 10
+	claude := testUsageEvent(1, false, 55)
+	claude.Provider = "claude"
+	claude.ExecutorType = "ClaudeExecutor"
+	claude.InputTokens = 30
+	claude.OutputTokens = 5
+	claude.CachedTokens = 7
+	claude.CacheReadTokens = 7
+	claude.CacheWriteTokens = 13
+	insertTestUsageEvents(t, store, openAI, claude)
+
+	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{Interval: "all", Limit: 10})
+	if err != nil || len(buckets) != 1 {
+		t.Fatalf("UsageAggregates() = %+v, %v", buckets, err)
+	}
+	bucket := buckets[0]
+	if bucket.InputTokens != 150 || bucket.CacheInputTokens != 150 || bucket.CacheReadTokens != 47 ||
+		bucket.CacheWriteTokens != 23 || bucket.CacheTokens != 47 {
+		t.Fatalf("canonical aggregate = %+v, want input/cache-input/read/write/cache 150/150/47/23/47", bucket)
+	}
+	if bucket.CacheReadTokens > bucket.CacheInputTokens {
+		t.Fatalf("cache hit ratio exceeds 100%%: %+v", bucket)
+	}
+}
+
+func TestOpenStoreMigratesLegacyTokenAccountingFromRawPayload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-usage.sqlite")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	raw := `{
+		"timestamp":"2026-07-26T00:00:00Z","provider":"claude","executor_type":"ClaudeExecutor","model":"claude-test",
+		"tokens":{"input_tokens":30,"output_tokens":5,"cached_tokens":7,"cache_read_tokens":7,"cache_creation_tokens":13,"total_tokens":55},
+		"accounting_version":2,
+		"token_breakdown":{"schema_version":2,"quality":"complete","total_tokens":55,"input":{"total_tokens":50,"uncached_tokens":30,"cache_read_tokens":7,"cache_write_tokens":13},"output":{"total_tokens":5,"non_reasoning_tokens":5,"reasoning_tokens":0},"unclassified_tokens":0}
+	}`
+	if _, err := store.db.Exec(`insert into usage_events(
+		event_hash, timestamp_ms, timestamp, provider, executor_type, model,
+		input_tokens, output_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+		raw_json, created_at_ms
+	) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"legacy-accounting-event", int64(1_785_024_000_000), "2026-07-26T00:00:00Z", "claude", "ClaudeExecutor", "claude-test",
+		int64(30), int64(5), int64(7), int64(20), int64(7), int64(13), int64(55), raw, int64(1_785_024_000_000),
+	); err != nil {
+		t.Fatalf("insert legacy event: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	migrated, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore(migrate) error = %v", err)
+	}
+	defer func() { _ = migrated.Close() }()
+	events, err := migrated.RecentEvents(context.Background(), 1)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("RecentEvents() = %+v, %v", events, err)
+	}
+	event := events[0]
+	if event.AccountingVersion != 2 || event.AccountingQuality != "complete" || event.InputTokens != 50 ||
+		event.UncachedInputTokens != 30 || event.CacheReadTokens != 7 || event.CacheWriteTokens != 13 || event.CachedTokens != 7 {
+		t.Fatalf("migrated event = %+v", event)
+	}
+}
+
 func TestUsageAggregatesIncludesUnattributedAPIKeyBucket(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()

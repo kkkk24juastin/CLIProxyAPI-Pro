@@ -81,6 +81,7 @@ type MonitoringSummaryAccumulator = {
   outputTokens: number;
   reasoningTokens: number;
   cachedTokens: number;
+  cacheInputTokens: number;
   totalTokens: number;
   totalCost: number;
   latencySum: number;
@@ -100,6 +101,7 @@ export const createMonitoringSummaryAccumulator = (): MonitoringSummaryAccumulat
   outputTokens: 0,
   reasoningTokens: 0,
   cachedTokens: 0,
+  cacheInputTokens: 0,
   totalTokens: 0,
   totalCost: 0,
   latencySum: 0,
@@ -124,6 +126,7 @@ export const addMonitoringSummaryRow = (
   accumulator.outputTokens += row.outputTokens;
   accumulator.reasoningTokens += row.reasoningTokens;
   accumulator.cachedTokens += row.cachedTokens;
+  accumulator.cacheInputTokens += row.cacheInputTokens;
   accumulator.totalTokens += row.totalTokens;
   accumulator.totalCost += row.totalCost;
   accumulator.activeDays.add(row.dayKey);
@@ -163,6 +166,7 @@ export const finalizeMonitoringSummary = (accumulator: MonitoringSummaryAccumula
     outputTokens: accumulator.outputTokens,
     reasoningTokens: accumulator.reasoningTokens,
     cachedTokens: accumulator.cachedTokens,
+    cacheInputTokens: accumulator.cacheInputTokens,
     totalTokens: accumulator.totalTokens,
     totalCost: accumulator.totalCost,
     averageLatencyMs: accumulator.latencyCount > 0 ? accumulator.latencySum / accumulator.latencyCount : null,

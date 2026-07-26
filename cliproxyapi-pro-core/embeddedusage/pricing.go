@@ -183,7 +183,9 @@ func evaluateEventCost(event internalusage.Event, rule ModelPriceRule) (float64,
 	cachedTokens := cacheReadTokens + cacheWriteTokens
 	inputTokens := event.InputTokens
 	uncachedInputTokens := inputTokens
-	if inputTokens >= cachedTokens {
+	if event.AccountingQuality == "complete" {
+		uncachedInputTokens = event.UncachedInputTokens
+	} else if inputTokens >= cachedTokens {
 		uncachedInputTokens = inputTokens - cachedTokens
 	}
 	reasoningTokens := event.ReasoningTokens
@@ -460,7 +462,7 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 		return 0, err
 	}
 	query := `select id, provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens,
-		cache_read_tokens, cache_write_tokens, service_tier from usage_events`
+		cache_read_tokens, cache_write_tokens, uncached_input_tokens, accounting_quality, service_tier from usage_events`
 	if onlyUnpriced {
 		query += ` where estimated_cost is null`
 	}
@@ -475,14 +477,15 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 	items := make([]pricedEvent, 0)
 	for rows.Next() {
 		var item pricedEvent
-		var provider, serviceTier sql.NullString
+		var provider, serviceTier, accountingQuality sql.NullString
 		if err := rows.Scan(&item.id, &provider, &item.event.Model, &item.event.InputTokens, &item.event.OutputTokens,
 			&item.event.ReasoningTokens, &item.event.CachedTokens, &item.event.CacheTokens, &item.event.CacheReadTokens,
-			&item.event.CacheWriteTokens, &serviceTier); err != nil {
+			&item.event.CacheWriteTokens, &item.event.UncachedInputTokens, &accountingQuality, &serviceTier); err != nil {
 			_ = rows.Close()
 			return 0, err
 		}
 		item.event.Provider = provider.String
+		item.event.AccountingQuality = accountingQuality.String
 		item.event.ServiceTier = serviceTier.String
 		items = append(items, item)
 	}

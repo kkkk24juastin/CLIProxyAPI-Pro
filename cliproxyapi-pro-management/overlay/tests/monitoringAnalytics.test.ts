@@ -14,6 +14,7 @@ const event = (overrides: Partial<MonitoringEventRow> = {}): MonitoringEventRow 
   outputTokens: 20,
   reasoningTokens: 3,
   cachedTokens: 4,
+  cacheInputTokens: 10,
   totalTokens: 30,
   totalCost: 1.5,
   dayKey: '2026-07-22',
@@ -42,6 +43,7 @@ describe('monitoring analytics', () => {
       outputTokens: 0,
       reasoningTokens: 0,
       cachedTokens: 0,
+      cacheInputTokens: 0,
       latencyMs: null,
       taskKey: 'task-1',
     }), 0, 2000);
@@ -52,6 +54,7 @@ describe('monitoring analytics', () => {
     expect(summary.approxTasks).toBe(1);
     expect(summary.approxTaskFailures).toBe(1);
     expect(summary.averageLatencyMs).toBe(100);
+    expect(summary.cacheInputTokens).toBe(10);
     expect(summary.zeroTokenModels).toEqual(['gpt-test']);
   });
 

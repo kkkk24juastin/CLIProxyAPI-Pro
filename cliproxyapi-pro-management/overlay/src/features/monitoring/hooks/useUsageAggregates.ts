@@ -20,6 +20,7 @@ export type UsageAggregateBucket = {
   outputTokens: number;
   reasoningTokens: number;
   cacheTokens: number;
+  cacheInputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
   estimatedCost: number;

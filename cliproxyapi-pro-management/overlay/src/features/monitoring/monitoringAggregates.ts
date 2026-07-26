@@ -28,6 +28,7 @@ export const buildAggregateSummary = (
   let outputTokens = 0;
   let reasoningTokens = 0;
   let cachedTokens = 0;
+  let cacheInputTokens = 0;
   let totalTokens = 0;
   let totalCost = 0;
   let weightedLatency = 0;
@@ -40,6 +41,7 @@ export const buildAggregateSummary = (
     outputTokens += bucket.outputTokens;
     reasoningTokens += bucket.reasoningTokens;
     cachedTokens += bucket.cacheTokens;
+    cacheInputTokens += bucket.cacheInputTokens;
     totalTokens += bucket.totalTokens;
     totalCost += calculateAggregateCost(bucket, modelPrices);
     if (typeof bucket.avgLatencyMs === 'number' && bucket.totalRequests > 0) {
@@ -56,6 +58,7 @@ export const buildAggregateSummary = (
     outputTokens,
     reasoningTokens,
     cachedTokens,
+    cacheInputTokens,
     totalTokens,
     totalCost,
     averageLatencyMs: latencyCalls > 0 ? weightedLatency / latencyCalls : null,
