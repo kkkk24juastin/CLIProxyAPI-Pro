@@ -2349,49 +2349,61 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
     )
     insert_once(
         card_path,
-        '              {!isRuntimeOnly && (\n                <div className={styles.cardUtilityActions}>\n',
-        '''              {authIndexKey && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => onShowUsage(file)}
-                  className={compact ? styles.iconButton : `${styles.primaryActionButton} ${styles.usageActionButton}`}
-                  title={t('account_usage.card_action')}
-                  aria-label={t('account_usage.card_action')}
-                  disabled={disableControls}
-                >
-                  <IconChartColumnIncreasing className={styles.actionIcon} size={16} />
-                  {!compact && <span className={styles.actionButtonLabel}>{t('account_usage.card_action')}</span>}
-                </Button>
-              )}
-              {!isRuntimeOnly && (
-                <div className={styles.cardUtilityActions}>
-''',
+        '            </div>\n          </div>\n\n          <div className={`${styles.cardMeta}',
+        '''            </div>
+            {authIndexKey && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onShowUsage(file)}
+                className={styles.usageCornerButton}
+                title={t('account_usage.card_action')}
+                aria-label={t('account_usage.card_action')}
+                disabled={disableControls}
+              >
+                <IconChartColumnIncreasing className={styles.actionIcon} size={17} />
+              </Button>
+            )}
+          </div>
+
+          <div className={`${styles.cardMeta}''',
         "onClick={() => onShowUsage(file)}",
     )
     insert_once(
         styles_path,
         '.modelsActionButton:global(.btn.btn-sm) {\n',
-        '''.usageActionButton:global(.btn.btn-sm) {
+        '''.usageCornerButton:global(.btn.btn-sm) {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  padding: 0;
   background: color-mix(in srgb, #0f766e 9%, var(--bg-secondary));
   border-color: color-mix(in srgb, #0f766e 22%, var(--border-color));
+  color: color-mix(in srgb, #0f766e 78%, var(--text-primary));
 }
 
-.usageActionButton:global(.btn.btn-sm):hover {
+.usageCornerButton:global(.btn.btn-sm):hover {
   background: color-mix(in srgb, #0f766e 14%, var(--bg-secondary));
   border-color: color-mix(in srgb, #0f766e 38%, var(--border-color));
 }
 
-.usageActionButton:global(.btn.btn-sm) > span {
+.usageCornerButton:global(.btn.btn-sm) > span {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  min-width: 0;
+  justify-content: center;
+}
+
+.fileCardCompact .usageCornerButton:global(.btn.btn-sm) {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
 }
 
 .modelsActionButton:global(.btn.btn-sm) {
 ''',
-        '.usageActionButton:global(.btn.btn-sm)',
+        '.usageCornerButton:global(.btn.btn-sm)',
     )
 
     insert_once(

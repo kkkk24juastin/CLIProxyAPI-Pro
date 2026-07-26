@@ -191,7 +191,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
       open={Boolean(file)}
       title={title}
       onClose={onClose}
-      width={1180}
+      width={960}
       className={styles.modal}
     >
       <div className={styles.accountHeader}>
