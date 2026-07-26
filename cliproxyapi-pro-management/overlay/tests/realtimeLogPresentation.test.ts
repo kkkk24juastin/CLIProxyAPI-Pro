@@ -57,4 +57,23 @@ describe('realtime log presentation', () => {
       hasNext: true,
     });
   });
+
+  test('keeps realtime badges and recent status bars styled', async () => {
+    const styles = await Bun.file(
+      new URL('../src/features/monitoring/styles/_realtime.scss', import.meta.url)
+    ).text();
+
+    [
+      'statusBadge',
+      'tonegood',
+      'tonewarn',
+      'tonebad',
+      'patternBars',
+      'patternBarsPlain',
+      'patternBar',
+      'patternBarPlain',
+      'patternSuccess',
+      'patternFailed',
+    ].forEach((className) => expect(styles).toContain(`.${className}`));
+  });
 });
