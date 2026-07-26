@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildAccountUsageLogPath,
   ratio,
+  resolveAccountUsageLabel,
 } from '../src/features/monitoring/accountUsage';
 import {
   buildConfiguredApiKeyMap,
@@ -9,6 +10,21 @@ import {
 } from '../src/features/monitoring/apiKeyIdentity';
 
 describe('account usage helpers', () => {
+  test('uses the full auth-file name when no account email is available', () => {
+    expect(resolveAccountUsageLabel({
+      name: 'xai-workspace_oauth_creds.json',
+      account: 'workspace-user',
+      label: 'xAI workspace',
+    }, 'xai:opaque-account')).toBe('xai-workspace_oauth_creds.json');
+  });
+
+  test('prefers an available account email over the auth-file name', () => {
+    expect(resolveAccountUsageLabel({
+      name: 'codex-account.json',
+      id_token: { email: 'owner@example.com' },
+    }, 'codex:opaque-account')).toBe('owner@example.com');
+  });
+
   test('builds an exact, encoded request-log scope', () => {
     expect(buildAccountUsageLogPath('codex:user+one@example.com', 100.4, 200.6)).toBe(
       '/monitoring?auth_index=codex%3Auser%2Bone%40example.com&from_ms=100&to_ms=201#request-events'

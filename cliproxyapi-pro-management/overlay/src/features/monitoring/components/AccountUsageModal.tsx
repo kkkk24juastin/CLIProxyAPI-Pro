@@ -27,7 +27,7 @@ import {
   formatUsd,
   normalizeAuthIndex,
 } from '@/utils/usage';
-import { buildAccountUsageLogPath, ratio } from '../accountUsage';
+import { buildAccountUsageLogPath, ratio, resolveAccountUsageLabel } from '../accountUsage';
 import {
   buildConfiguredApiKeyMap,
   resolveConfiguredApiKeyLabel,
@@ -51,29 +51,6 @@ const MODEL_COLORS = ['#0f8a7c', '#2563eb', '#f59e0b', '#8b5cf6', '#dc2626'];
 
 function formatPercent(value: number): string {
   return `${(Math.min(Math.max(value, 0), 1) * 100).toFixed(1)}%`;
-}
-
-function readText(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function resolveAccountLabel(file: AuthFileItem | null, authIndex: string | null): string {
-  const idToken = file?.id_token && typeof file.id_token === 'object'
-    ? file.id_token as Record<string, unknown>
-    : null;
-  const authSuffix = authIndex?.includes(':') ? authIndex.split(':').slice(1).join(':') : authIndex;
-  const candidates = [
-    readText(file?.email),
-    readText(idToken?.email),
-    readText(file?.account),
-    readText(idToken?.preferred_username),
-    readText(file?.label),
-    readText(authSuffix),
-  ].filter(Boolean);
-  if (candidates.length > 0) return candidates[0];
-
-  const fileName = readText(file?.name).replace(/\.json$/i, '').replace(/_oauth_creds$/i, '');
-  return fileName || authIndex || '-';
 }
 
 function distributionValue(item: DistributionItem, metric: DistributionMetric): number {
@@ -110,7 +87,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const [modelMetric, setModelMetric] = useState<DistributionMetric>('requests');
   const [apiKeyMetric, setApiKeyMetric] = useState<DistributionMetric>('requests');
   const authIndex = normalizeAuthIndex(file?.['auth_index'] ?? file?.authIndex);
-  const accountLabel = resolveAccountLabel(file, authIndex);
+  const accountLabel = resolveAccountUsageLabel(file, authIndex);
   const { data, loading, error, refresh } = useAccountUsage(authIndex, rangeDays, Boolean(file));
   const detail = data?.detail ?? null;
   const configuredApiKeys = useMemo(
