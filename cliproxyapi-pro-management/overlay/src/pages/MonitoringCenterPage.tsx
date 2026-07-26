@@ -11,7 +11,6 @@ import {
   IconSlidersHorizontal,
 } from '@/components/ui/icons';
 import {
-  buildAccountRowsByAccount,
   buildLocalDayKey,
   getRangeStartMs,
   useMonitoringEventRows,
@@ -22,17 +21,6 @@ import { REALTIME_LOG_PAGE_SIZE, useRealtimeLogData } from '@/features/monitorin
 import { useUsageData, type UsageEventPageFilters, type UsagePayload } from '@/features/monitoring/hooks/useUsageData';
 import { useUsageAggregates, type UsageAggregateBucket } from '@/features/monitoring/hooks/useUsageAggregates';
 import { findMonitoringAuthIndexes } from '@/features/monitoring/monitoringAuthSearch';
-import {
-  buildAccountQuotaEntriesByAccount,
-  buildAccountQuotaTargetsByAccount,
-  getQuotaForTarget,
-  requestAccountQuota,
-  settleWithConcurrency,
-  type AccountQuotaSourceRow,
-  type AccountQuotaState,
-  type AnyQuotaConfig,
-} from '@/features/monitoring/accountQuota';
-import { AccountStatsPanel } from '@/features/monitoring/components/AccountStatsPanel';
 import { ModelPriceManagerModal } from '@/features/monitoring/components/ModelPriceManagerModal';
 import { MonitoringSettingsModal } from '@/features/monitoring/components/MonitoringSettingsModal';
 import {
@@ -52,21 +40,15 @@ import {
   UsageTrendPanel,
   type UsageMetricCard,
 } from '@/features/monitoring/components/UsageAnalyticsPanels';
-import {
-  buildAggregateSummary,
-  buildServerAccountRows,
-} from '@/features/monitoring/monitoringAggregates';
+import { buildAggregateSummary } from '@/features/monitoring/monitoringAggregates';
 import {
   addMonitoringSummaryRow,
   buildServerUsageTrendAnalytics,
   buildUsageTrendAnalytics,
-  buildUsageTrendRangeLabel,
   createMonitoringSummaryAccumulator,
   finalizeMonitoringSummary,
   formatPercent,
-  getAccountSortValue,
   getRankingMetricValue,
-  type AccountSortMetric,
   type RankingMetric,
 } from '@/features/monitoring/monitoringAnalytics';
 import { TIME_RANGE_OPTIONS } from '@/features/monitoring/monitoringOptions';
@@ -112,10 +94,8 @@ import {
 import { hasUsageBackupManifest } from '@/features/monitoring/usageBackup';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { apiClient } from '@/services/api/client';
-import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
-import type { AuthFileItem } from '@/types';
+import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
 import { maskSensitiveText } from '@/utils/format';
-import { getStatusFromError } from '@/utils/quota';
 import {
   deleteModelPriceRule,
   formatCompactNumber,
@@ -124,7 +104,6 @@ import {
   formatUsdPrecise,
   loadModelPriceRules,
   loadModelPriceSyncState,
-  normalizeAuthIndex,
   recalculateModelPriceHistory,
   saveModelPriceRule,
   syncModelPricesFromModelsDev,
@@ -133,7 +112,6 @@ import {
   type ModelPriceSyncState,
   type ObservedModelPriceTarget,
 } from '@/utils/usage';
-import type { QuotaStatusState } from '@/components/quota/QuotaCard';
 import quotaStyles from '@/pages/QuotaPage.module.scss';
 import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';
 import styles from '@/features/monitoring/monitoring.module.scss';
@@ -141,8 +119,6 @@ import styles from '@/features/monitoring/monitoring.module.scss';
 type StatusFilter = 'all' | 'success' | 'failed';
 type LinkedRequestLogScope = { authIndex: string; fromMs: number; toMs: number };
 
-const ACCOUNT_STATS_ANALYTICS_ROW_LIMIT = 6000;
-const ACCOUNT_QUOTA_REQUEST_CONCURRENCY = 4;
 type RealtimeLogColumnDefinition = {
   key: RealtimeLogColumnKey;
   label: string;
@@ -264,7 +240,6 @@ export function MonitoringCenterPage() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
-  const quotaStore = useQuotaStore((state) => state);
   const [timeRange, setTimeRange] = useState<MonitoringTimeRange>('today');
   const [searchInput, setSearchInput] = useState('');
   const [selectedProvider, setSelectedProvider] = useState('all');
@@ -272,7 +247,6 @@ export function MonitoringCenterPage() {
   const [selectedApiKey, setSelectedApiKey] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
   const [linkedRequestLogScope, setLinkedRequestLogScope] = useState<LinkedRequestLogScope | null>(null);
-  const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
   const [selectedRealtimeErrorRow, setSelectedRealtimeErrorRow] = useState<RealtimeLogRow | null>(null);
   const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
   const [isMonitoringSettingsOpen, setIsMonitoringSettingsOpen] = useState(false);
@@ -295,20 +269,15 @@ export function MonitoringCenterPage() {
   const [isPriceSyncing, setIsPriceSyncing] = useState(false);
   const [isImportingUsage, setIsImportingUsage] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>({});
   const [isUsageTrendHidden, setIsUsageTrendHidden] = useState(false);
   const [modelRankingMetric, setModelRankingMetric] = useState<RankingMetric>('requests');
   const [apiKeyRankingMetric, setApiKeyRankingMetric] = useState<RankingMetric>('requests');
   const [usageTrendApiKey, setUsageTrendApiKey] = useState('all');
-  const [accountStatsMetric, setAccountStatsMetric] = useState<AccountSortMetric>('recent');
-  const [isAccountStatsHidden, setIsAccountStatsHidden] = useState(false);
   const [realtimeLogUsage, setRealtimeLogUsage] = useState<UsagePayload | null>(null);
   const [realtimeLogColumns, setRealtimeLogColumns] = useState<RealtimeLogColumnPreference[]>(loadRealtimeLogColumns);
   const [realtimeLogFollowEnabled, setRealtimeLogFollowEnabled] = useState(loadRealtimeLogFollowEnabled);
   const [draggedRealtimeLogColumnKey, setDraggedRealtimeLogColumnKey] = useState<RealtimeLogColumnKey | null>(null);
   const [isRealtimeColumnsMenuOpen, setIsRealtimeColumnsMenuOpen] = useState(false);
-  const accountQuotaStatesRef = useRef<Record<string, AccountQuotaState>>({});
-  const accountQuotaRequestIdsRef = useRef<Record<string, number>>({});
   const realtimeColumnsMenuRef = useRef<HTMLDivElement | null>(null);
   const deferredSearchInput = useDeferredValue(searchInput);
   const [deferredSearch, setDeferredSearch] = useState(searchInput);
@@ -623,18 +592,6 @@ export function MonitoringCenterPage() {
     saveRealtimeLogFollowEnabled(realtimeLogFollowEnabled);
   }, [realtimeLogFollowEnabled]);
 
-  useEffect(() => {
-    accountQuotaStatesRef.current = accountQuotaStates;
-  }, [accountQuotaStates]);
-
-  const setQuotaForConfig = useCallback(
-    (quotaConfig: AnyQuotaConfig, updater: Record<string, QuotaStatusState> | ((prev: Record<string, QuotaStatusState>) => Record<string, QuotaStatusState>)) => {
-      const setter = useQuotaStore.getState()[quotaConfig.storeSetter] as (value: typeof updater) => void;
-      setter(updater);
-    },
-    []
-  );
-
   const requestLogRows = filteredRows;
 
   const requestLogDerived = useMemo(() => {
@@ -709,16 +666,6 @@ export function MonitoringCenterPage() {
       setSelectedApiKey('all');
     }
   }, [apiKeyOptions, modelOptions, providerOptions, selectedApiKey, selectedModel, selectedProvider]);
-
-  const authFilesByAuthIndex = useMemo(() => {
-    const map = new Map<string, AuthFileItem>();
-    authFiles.forEach((file) => {
-      const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
-      if (!authIndex || map.has(authIndex)) return;
-      map.set(authIndex, file);
-    });
-    return map;
-  }, [authFiles]);
 
   const scopedRowsState = useMemo(() => ({
     rows: requestLogRows,
@@ -846,35 +793,6 @@ export function MonitoringCenterPage() {
     ),
     [apiKeyRankingMetric, usageTrendAnalytics.apiKeyRows]
   );
-  const accountStatsFilteredRows = useMemo(
-    () => trendStatsRows.length > ACCOUNT_STATS_ANALYTICS_ROW_LIMIT
-      ? trendStatsRows.slice(0, ACCOUNT_STATS_ANALYTICS_ROW_LIMIT)
-      : trendStatsRows,
-    [trendStatsRows]
-  );
-  const clientAccountStatsRows = useMemo(
-    () => buildAccountRowsByAccount(accountStatsFilteredRows, true),
-    [accountStatsFilteredRows]
-  );
-  const serverAccountStatsRows = useMemo(
-    () => usageAggregates
-      ? buildServerAccountRows(usageAggregates.accounts, allRows, authFilesByAuthIndex, modelPrices, t('monitoring.deleted_credential'))
-      : null,
-    [allRows, authFilesByAuthIndex, modelPrices, t, usageAggregates]
-  );
-  const accountStatsRows = useMemo(
-    () => [...(
-      aggregatesError && usageAggregates?.scopeTimeRange !== timeRange
-        ? clientAccountStatsRows
-        : serverAccountStatsRows ?? clientAccountStatsRows
-    )]
-      .sort((left, right) => (
-        getAccountSortValue(right, accountStatsMetric) - getAccountSortValue(left, accountStatsMetric)
-        || right.lastSeenAt - left.lastSeenAt
-        || right.totalCalls - left.totalCalls
-      )),
-    [accountStatsMetric, aggregatesError, clientAccountStatsRows, serverAccountStatsRows, timeRange, usageAggregates?.scopeTimeRange]
-  );
   const serverTopSummary = useMemo(
     () => usageAggregates ? buildAggregateSummary(usageAggregates.allSummary, modelPrices) : null,
     [modelPrices, usageAggregates]
@@ -901,7 +819,6 @@ export function MonitoringCenterPage() {
   const effectiveTodaySummary = recentDailySummaries?.today ?? todaySummary;
   const effectiveTodayCost = effectiveTodaySummary.totalCost;
   const effectiveYesterdayCost = recentDailySummaries?.yesterday.totalCost ?? yesterdayCost;
-  const timeRangeLabel = useMemo(() => buildUsageTrendRangeLabel(timeRange, t), [timeRange, t]);
   const realtimeLogTotalCount = realtimeLogMatchedTotal;
   const realtimeLogTotalPages = realtimeLogTotalCount > 0 ? Math.ceil(realtimeLogTotalCount / REALTIME_LOG_PAGE_SIZE) : 0;
   const normalizedRealtimeLogPage = Math.min(Math.max(1, realtimeLogPage), Math.max(1, realtimeLogTotalPages));
@@ -1172,35 +1089,6 @@ export function MonitoringCenterPage() {
   const realtimeLogVisibleColumnCount = Math.max(1, visibleRealtimeLogColumns.length);
   const realtimeLogVisiblePreferenceCount = realtimeLogColumns.filter((column) => column.visible).length;
 
-  const accountQuotaTargetsByAccount = useMemo(
-    () => {
-      if (!usageAggregates || aggregatesError) {
-        return buildAccountQuotaTargetsByAccount(accountStatsFilteredRows, authFilesByAuthIndex);
-      }
-      const sources = Array.from(new Set(usageAggregates.accounts.map((bucket) => bucket.authIndex).filter(Boolean)))
-        .map((authIndex) => {
-          const file = authFilesByAuthIndex.get(authIndex as string);
-          const account = file
-            ? [file.email, file.account, file.label, file.name]
-                .map((value) => typeof value === 'string' ? value.trim() : '')
-                .find(Boolean) || authIndex as string
-            : authIndex as string;
-          return {
-            authIndex: authIndex as string,
-            account,
-            authLabel: file?.name || account,
-          } satisfies AccountQuotaSourceRow;
-        });
-      return buildAccountQuotaTargetsByAccount(sources, authFilesByAuthIndex);
-    },
-    [accountStatsFilteredRows, aggregatesError, authFilesByAuthIndex, usageAggregates]
-  );
-  const accountQuotaEntriesByAccount = useMemo(
-    () => buildAccountQuotaEntriesByAccount(accountQuotaTargetsByAccount, quotaStore, t),
-    [accountQuotaTargetsByAccount, quotaStore, t]
-  );
-  const quotaTargetsByAccountForLoading = accountQuotaTargetsByAccount;
-
   const priceRuleTargets = useMemo<PriceRuleTarget[]>(() => {
     const targets = new Map<string, PriceRuleTarget>();
     observedPriceModels.forEach((item) => {
@@ -1392,96 +1280,6 @@ export function MonitoringCenterPage() {
       document.removeEventListener('mousedown', handleDocumentMouseDown);
     };
   }, [isRealtimeColumnsMenuOpen]);
-
-  const loadAccountQuota = useCallback(
-    async (account: string, force: boolean = false) => {
-      const currentState = accountQuotaStatesRef.current[account];
-      const targets = quotaTargetsByAccountForLoading.get(account) ?? [];
-      const targetKey = targets.map((target) => target.key).join('|');
-      if (!force && currentState && currentState.status !== 'idle' && currentState.targetKey === targetKey) {
-        return;
-      }
-
-      const requestId = (accountQuotaRequestIdsRef.current[account] ?? 0) + 1;
-      accountQuotaRequestIdsRef.current[account] = requestId;
-
-      setAccountQuotaStates((previous) => ({
-        ...previous,
-        [account]: {
-          status: 'loading',
-          targetKey,
-          lastRefreshedAt: previous[account]?.lastRefreshedAt,
-        },
-      }));
-
-      if (targets.length === 0) {
-        if (accountQuotaRequestIdsRef.current[account] !== requestId) return;
-        setAccountQuotaStates((previous) => ({
-          ...previous,
-          [account]: {
-            status: 'success',
-            targetKey,
-            lastRefreshedAt: Date.now(),
-          },
-        }));
-        return;
-      }
-
-      targets.forEach((target) => {
-        setQuotaForConfig(target.config, (prev) => ({
-          ...prev,
-          [target.fileName]: target.config.buildLoadingState(),
-        }));
-      });
-
-      const settled = await settleWithConcurrency(
-        targets,
-        ACCOUNT_QUOTA_REQUEST_CONCURRENCY,
-        (target) => requestAccountQuota(target, t)
-      );
-      if (accountQuotaRequestIdsRef.current[account] !== requestId) return;
-
-      settled.forEach((result, index) => {
-        const target = targets[index];
-        const quota = result.status === 'fulfilled'
-          ? result.value
-          : target.config.buildErrorState(
-              result.reason instanceof Error ? result.reason.message : String(result.reason || t('common.unknown_error')),
-              getStatusFromError(result.reason)
-            ) as QuotaStatusState;
-
-        setQuotaForConfig(target.config, (prev) => ({
-          ...prev,
-          [target.fileName]: quota,
-        }));
-      });
-
-      const currentStore = useQuotaStore.getState();
-      const entries = targets.map((target) => getQuotaForTarget(currentStore, target)).filter(Boolean) as QuotaStatusState[];
-      const hasSuccess = entries.some((entry) => entry.status === 'success');
-      const firstError = entries.find((entry) => entry.status === 'error')?.error;
-      setAccountQuotaStates((previous) => ({
-        ...previous,
-        [account]: {
-          status: hasSuccess ? 'success' : 'error',
-          targetKey,
-          error: hasSuccess ? '' : firstError || t('common.unknown_error'),
-          lastRefreshedAt: Date.now(),
-        },
-      }));
-    },
-    [quotaTargetsByAccountForLoading, setQuotaForConfig, t]
-  );
-
-  const toggleAccountExpanded = useCallback((accountId: string, account: string) => {
-    if (account && !expandedAccounts[accountId]) {
-      void loadAccountQuota(account);
-    }
-    setExpandedAccounts((previous) => ({
-      ...previous,
-      [accountId]: !previous[accountId],
-    }));
-  }, [expandedAccounts, loadAccountQuota]);
 
   const refreshPriceManagement = useCallback(async () => {
     const [rulesPayload, syncState] = await Promise.all([loadModelPriceRules(), loadModelPriceSyncState()]);
@@ -1763,39 +1561,6 @@ export function MonitoringCenterPage() {
           </div>
           <button type="button" className={styles.usageTrendHideButton} onClick={() => setIsUsageTrendHidden(false)}>
             {t('monitoring.show_analysis')}
-          </button>
-        </section>
-      )}
-
-      {!isAccountStatsHidden ? (
-        <section className={styles.usageTrendSection}>
-          <AccountStatsPanel
-            rows={accountStatsRows}
-            metric={accountStatsMetric}
-            emptyText={t('monitoring.no_data')}
-            hasPrices={hasPrices}
-            locale={i18n.language}
-            t={t}
-            rangeLabel={timeRangeLabel}
-            range={timeRange}
-            onRangeChange={setTimeRange}
-            onHide={() => setIsAccountStatsHidden(true)}
-            expandedAccounts={expandedAccounts}
-            accountQuotaStates={accountQuotaStates}
-            accountQuotaEntriesByAccount={accountQuotaEntriesByAccount}
-            onMetricChange={setAccountStatsMetric}
-            onToggleAccount={toggleAccountExpanded}
-            onRefreshQuota={(account) => void loadAccountQuota(account, true)}
-          />
-        </section>
-      ) : (
-        <section className={styles.usageTrendCollapsed}>
-          <div>
-            <h2>{t('monitoring.account_stats_title')}</h2>
-            <p>{t('monitoring.account_stats_hidden_desc')}</p>
-          </div>
-          <button type="button" className={styles.usageTrendHideButton} onClick={() => setIsAccountStatsHidden(false)}>
-            {t('monitoring.show_account_stats')}
           </button>
         </section>
       )}

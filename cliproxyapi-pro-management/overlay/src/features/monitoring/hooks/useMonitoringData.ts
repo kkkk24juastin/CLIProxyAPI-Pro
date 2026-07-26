@@ -662,9 +662,6 @@ export const buildAccountRows = ({
     );
 };
 
-export const buildAccountRowsByAccount = (rows: MonitoringEventRow[], includeRows = false) =>
-  buildAccountRows({ rows, groupBy: 'account', includeRows });
-
 export const buildAccountRowsByApiKey = (rows: MonitoringEventRow[]) =>
   buildAccountRows({ rows, groupBy: 'apiKey' });
 

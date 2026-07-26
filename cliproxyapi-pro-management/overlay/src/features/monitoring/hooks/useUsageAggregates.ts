@@ -38,7 +38,6 @@ export type UsageAggregates = {
   models: UsageAggregateBucket[];
   apiKeys: UsageAggregateBucket[];
   providers: UsageAggregateBucket[];
-  accounts: UsageAggregateBucket[];
   allSummary: UsageAggregateBucket[];
   recentDailySummary: UsageAggregateBucket[];
   latestId: number;
@@ -142,12 +141,12 @@ export function useUsageAggregates({
     };
 
     try {
-      const [trendPayload, accountPayload, apiKeyPayload, allSummaryPayload, recentDailySummaryPayload] = await Promise.all([
+      const [trendPayload, providerPayload, apiKeyPayload, allSummaryPayload, recentDailySummaryPayload] = await Promise.all([
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
           params: trendParams,
         }),
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
-          params: { ...rankingParams, group_by: 'auth_index,provider,model' },
+          params: { ...rankingParams, group_by: 'provider' },
         }),
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
           params: { ...rankingParams, group_by: 'api_key_hash,model' },
@@ -176,24 +175,23 @@ export function useUsageAggregates({
       if (requestIdRef.current !== requestId || queryGenerationRef.current !== queryGeneration) return;
       const snapshotAtMs = Math.max(
         Number(trendPayload?.snapshot_at_ms) || 0,
-        Number(accountPayload?.snapshot_at_ms) || 0,
+        Number(providerPayload?.snapshot_at_ms) || 0,
         Number(apiKeyPayload?.snapshot_at_ms) || 0,
         Number(allSummaryPayload?.snapshot_at_ms) || 0,
         Number(recentDailySummaryPayload?.snapshot_at_ms) || 0
       );
-      const accountItems = normalizeItems(accountPayload);
+      const providerItems = normalizeItems(providerPayload);
       const apiKeyItems = normalizeItems(apiKeyPayload);
       setData({
         trend: normalizeItems(trendPayload),
         models: apiKeyItems,
         apiKeys: apiKeyItems,
-        providers: accountItems,
-        accounts: accountItems,
+        providers: providerItems,
         allSummary: normalizeItems(allSummaryPayload),
         recentDailySummary: normalizeItems(recentDailySummaryPayload),
         latestId: Math.min(
           Number(trendPayload?.latest_id) || 0,
-          Number(accountPayload?.latest_id) || 0,
+          Number(providerPayload?.latest_id) || 0,
           Number(apiKeyPayload?.latest_id) || 0,
           Number(allSummaryPayload?.latest_id) || 0,
           Number(recentDailySummaryPayload?.latest_id) || 0

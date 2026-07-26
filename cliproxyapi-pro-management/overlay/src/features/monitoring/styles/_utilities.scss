@@ -100,29 +100,8 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .accountOverviewTable {
-    min-width: 920px;
-  }
-
   .realtimeTable {
     min-width: 1360px;
-  }
-
-  .accountOverviewTable th:first-child,
-  .accountOverviewTable td:first-child {
-    position: sticky;
-    left: 0;
-    z-index: 2;
-    box-shadow: 8px 0 14px color-mix(in srgb, var(--monitor-bg) 56%, transparent);
-  }
-
-  .accountOverviewTable th:first-child {
-    z-index: 4;
-    background: var(--monitor-surface);
-  }
-
-  .accountOverviewTable td:first-child {
-    background: var(--monitor-surface-elevated);
   }
 
 }
@@ -186,61 +165,6 @@
 
   .trendChartLegend {
     justify-content: flex-start;
-  }
-
-  .accountStatsToolbar {
-    align-items: stretch;
-    flex-direction: column;
-    flex-wrap: nowrap;
-  }
-
-  .accountStatsFilters {
-    display: grid;
-    grid-template-columns: minmax(112px, 1fr) minmax(104px, 0.9fr) minmax(96px, 0.8fr);
-    gap: 8px;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    scrollbar-width: none;
-  }
-
-  .accountStatsFilters::-webkit-scrollbar {
-    display: none;
-  }
-
-  .accountStatsSearchInput,
-  .accountStatsSelect {
-    width: 100%;
-  }
-
-  .accountStatsToolbar > .rankingMetricSwitch {
-    width: max-content;
-    max-width: 100%;
-    overflow-x: auto;
-    justify-content: flex-start;
-    scrollbar-width: none;
-  }
-
-  .accountStatsToolbar > .rankingMetricSwitch::-webkit-scrollbar {
-    display: none;
-  }
-
-  .accountStatsToolbar > .rankingMetricSwitch .rankingMetricButton {
-    flex: 0 0 auto;
-    min-width: 58px;
-    padding: 0 12px;
-  }
-
-  .accountStatsClearButton {
-    display: none;
-  }
-
-  .accountOverviewCardGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .healthMetricGrid,
-  .accountOverviewMetricGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .trendCardHeader {
@@ -639,10 +563,6 @@
 
   .table {
     min-width: 0;
-  }
-
-  .accountOverviewTable {
-    min-width: 920px;
   }
 
   .realtimeTable {

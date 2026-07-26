@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildAggregateSummary,
-  buildServerAccountRows,
 } from '../src/features/monitoring/monitoringAggregates';
 import type { UsageAggregateBucket } from '../src/features/monitoring/hooks/useUsageAggregates';
 
@@ -37,17 +36,5 @@ describe('monitoring server aggregates', () => {
     expect(summary.successCalls).toBe(2);
     expect(summary.totalCost).toBe(2);
     expect(summary.averageLatencyMs).toBeCloseTo(100);
-  });
-
-  test('groups account buckets while preserving model and auth metadata boundaries', () => {
-    const rows = buildServerAccountRows([
-      bucket(),
-      bucket({ model: 'gpt-other', totalRequests: 1, successCount: 1, failureCount: 0 }),
-    ], [], new Map([['auth-1', { name: 'account.json', email: 'owner@example.com' }]]), {}, 'Deleted');
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0].account).toBe('owner@example.com');
-    expect(rows[0].totalCalls).toBe(3);
-    expect(rows[0].models.map(({ model }) => model)).toEqual(['gpt-test', 'gpt-other']);
   });
 });

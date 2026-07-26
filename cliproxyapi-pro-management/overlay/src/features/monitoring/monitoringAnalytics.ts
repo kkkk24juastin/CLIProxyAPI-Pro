@@ -3,7 +3,6 @@ import {
   buildDayLabel,
   buildHourLabel,
   buildLocalDayKey,
-  formatShortDateTime,
   getRangeStartMs,
   type MonitoringAccountRow,
   type MonitoringEventRow,
@@ -18,7 +17,6 @@ import { formatCompactNumber, formatUsd, type ModelPrice } from '@/utils/usage';
 export const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
 
 export type RankingMetric = 'requests' | 'tokens' | 'cost';
-export type AccountSortMetric = 'recent' | RankingMetric;
 
 export type TrendPoint = {
   key: string;
@@ -75,7 +73,6 @@ export type UsageTrendAnalytics = {
   scopedTotals: Record<RankingMetric, number>;
 };
 
-export type AccountHealthTone = 'good' | 'warn' | 'bad';
 
 type MonitoringSummaryAccumulator = {
   totalCalls: number;
@@ -190,11 +187,6 @@ export const getRankingMetricValue = (row: MonitoringAccountRow, metric: Ranking
   return row.totalCalls;
 };
 
-export const getAccountSortValue = (row: MonitoringAccountRow, metric: AccountSortMetric) => {
-  if (metric === 'recent') return row.lastSeenAt;
-  return getRankingMetricValue(row, metric);
-};
-
 export const getRankingMetricLabel = (metric: RankingMetric, t: TFunction) => {
   if (metric === 'cost') return t('monitoring.ranking_metric_cost');
   if (metric === 'tokens') return t('monitoring.ranking_metric_tokens');
@@ -210,12 +202,6 @@ export const getRankingSummaryLabel = (metric: RankingMetric, t: TFunction) => {
 export const formatRankingMetricValue = (value: number, metric: RankingMetric, hasPrices: boolean) => {
   if (metric === 'cost') return hasPrices ? formatUsd(value) : '--';
   return formatCompactNumber(value);
-};
-
-export const getAccountHealthTone = (row: MonitoringAccountRow): AccountHealthTone => {
-  if (row.successRate >= 0.95) return 'good';
-  if (row.successRate >= 0.85) return 'warn';
-  return 'bad';
 };
 
 export const getProgressWidth = (value: number) => {
@@ -237,13 +223,6 @@ export const getChartAxisLabels = <T extends { key: string; label: string }>(poi
     labels.push({ key: last.key, label: last.label, index: points.length - 1 });
   }
   return labels;
-};
-
-export const buildUsageTrendRangeLabel = (range: MonitoringTimeRange, t: TFunction) => {
-  if (range === 'all') return t('monitoring.all_retained_logs');
-
-  const nowMs = Date.now();
-  return `${formatShortDateTime(getRangeStartMs(range, nowMs))} - ${formatShortDateTime(nowMs)}`;
 };
 
 const getEmptyTrendPoint = (key: string, label: string): TrendPoint => ({

@@ -1,5 +1,5 @@
 import type { MonitoringTimeRange } from './hooks/useMonitoringData';
-import type { AccountSortMetric, RankingMetric } from './monitoringAnalytics';
+import type { RankingMetric } from './monitoringAnalytics';
 
 export const TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: string }> = [
   { value: 'today', labelKey: 'monitoring.range_today' },
@@ -10,13 +10,6 @@ export const TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: s
 ];
 
 export const RANKING_METRIC_OPTIONS: Array<{ value: RankingMetric; labelKey: string }> = [
-  { value: 'requests', labelKey: 'monitoring.ranking_metric_requests' },
-  { value: 'tokens', labelKey: 'monitoring.ranking_metric_tokens' },
-  { value: 'cost', labelKey: 'monitoring.ranking_metric_cost' },
-];
-
-export const ACCOUNT_SORT_OPTIONS: Array<{ value: AccountSortMetric; labelKey: string }> = [
-  { value: 'recent', labelKey: 'monitoring.account_sort_recent' },
   { value: 'requests', labelKey: 'monitoring.ranking_metric_requests' },
   { value: 'tokens', labelKey: 'monitoring.ranking_metric_tokens' },
   { value: 'cost', labelKey: 'monitoring.ranking_metric_cost' },
