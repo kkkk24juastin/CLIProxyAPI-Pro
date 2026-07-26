@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildAccountUsageLogPath,
-  maskAccountUsageAPIKeyHash,
   ratio,
 } from '../src/features/monitoring/accountUsage';
+import {
+  buildConfiguredApiKeyMap,
+  resolveConfiguredApiKeyLabel,
+} from '../src/features/monitoring/apiKeyIdentity';
 
 describe('account usage helpers', () => {
   test('builds an exact, encoded request-log scope', () => {
@@ -12,9 +15,20 @@ describe('account usage helpers', () => {
     );
   });
 
-  test('masks attributed API key hashes and labels unattributed usage', () => {
-    expect(maskAccountUsageAPIKeyHash('', 'Unattributed')).toBe('Unattributed');
-    expect(maskAccountUsageAPIKeyHash('1234567890abcdef', 'Unattributed')).not.toBe('1234567890abcdef');
+  test('resolves API key hashes through the configured keys used by request monitoring', () => {
+    const configured = buildConfiguredApiKeyMap(['sk-live-1234567890']);
+    const identity = configured.keys[0];
+
+    expect(resolveConfiguredApiKeyLabel(identity.hash, configured, 'Unattributed', 'Unknown')).toBe(identity.masked);
+    expect(identity.masked).toBe('sk******90');
+    expect(identity.masked).not.toContain(identity.hash);
+  });
+
+  test('labels unattributed and unknown API key hashes without displaying hashes', () => {
+    const configured = buildConfiguredApiKeyMap(['sk-live-1234567890']);
+
+    expect(resolveConfiguredApiKeyLabel('', configured, 'Unattributed', 'Unknown')).toBe('Unattributed');
+    expect(resolveConfiguredApiKeyLabel('deleted-key-hash', configured, 'Unattributed', 'Unknown')).toBe('Unknown');
   });
 
   test('clamps ratios and handles empty denominators', () => {

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { IconRefreshCw, IconScrollText } from '@/components/ui/icons';
+import { useConfigStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { normalizeAuthIndex } from '@/utils/usage';
 import {
@@ -13,9 +14,12 @@ import {
 } from '@/utils/usage';
 import {
   buildAccountUsageLogPath,
-  maskAccountUsageAPIKeyHash,
   ratio,
 } from '../accountUsage';
+import {
+  buildConfiguredApiKeyMap,
+  resolveConfiguredApiKeyLabel,
+} from '../apiKeyIdentity';
 import { useAccountUsage } from '../hooks/useAccountUsage';
 import type {
   AccountUsageDayStat,
@@ -40,11 +44,16 @@ function formatPercent(value: number): string {
 export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const configuredApiKeyValues = useConfigStore((state) => state.config?.apiKeys);
   const [rangeDays, setRangeDays] = useState<AccountUsageRangeDays>(30);
   const [activeTab, setActiveTab] = useState<AccountUsageTab>('overview');
   const authIndex = normalizeAuthIndex(file?.['auth_index'] ?? file?.authIndex);
   const { data, loading, error, refresh } = useAccountUsage(authIndex, rangeDays, Boolean(file));
   const detail = data?.detail ?? null;
+  const configuredApiKeys = useMemo(
+    () => buildConfiguredApiKeyMap(configuredApiKeyValues),
+    [configuredApiKeyValues]
+  );
 
   useEffect(() => {
     setActiveTab('overview');
@@ -276,7 +285,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
                     <thead><tr><th>{t('account_usage.api_key')}</th><th>{t('account_usage.requests')}</th><th>{t('account_usage.tokens')}</th><th>{t('account_usage.estimated_cost')}</th></tr></thead>
                     <tbody>
                       {detail.apiKeys.map((item, index) => (
-                        <tr key={`${item.apiKeyHash || 'unattributed'}-${index}`}><td><code>{maskAccountUsageAPIKeyHash(item.apiKeyHash, t('account_usage.unattributed'))}</code></td><td>{formatCompactNumber(item.requests)}</td><td>{formatCompactNumber(item.tokens)}</td><td>{formatUsd(item.estimatedCost)}</td></tr>
+                        <tr key={`${item.apiKeyHash || 'unattributed'}-${index}`}><td><code>{resolveConfiguredApiKeyLabel(item.apiKeyHash, configuredApiKeys, t('account_usage.unattributed'), t('account_usage.api_key_unknown'))}</code></td><td>{formatCompactNumber(item.requests)}</td><td>{formatCompactNumber(item.tokens)}</td><td>{formatUsd(item.estimatedCost)}</td></tr>
                       ))}
                     </tbody>
                   </table>

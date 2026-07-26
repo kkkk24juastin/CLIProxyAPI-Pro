@@ -5,7 +5,6 @@ import { useAuthStore } from '@/stores/useAuthStore';
 import type { AuthFileItem } from '@/types/authFile';
 import type { Config } from '@/types/config';
 import type { CredentialInfo } from '@/types/sourceInfo';
-import { sha256Hex } from '@/utils/hash';
 import { isRecordValue, readBooleanValue, readStringValue } from '@/utils/quota';
 import { buildSourceInfoMap, resolveProviderDisplayLabel, resolveSourceDisplay, type SourceInfoMapInput } from '@/utils/sourceResolver';
 import {
@@ -17,6 +16,10 @@ import {
   type UsageCostBreakdown,
   type UsageDetailWithEndpoint,
 } from '@/utils/usage';
+import {
+  buildConfiguredApiKeyMap,
+  type MonitoringApiKeyIdentity,
+} from '../apiKeyIdentity';
 
 const padNumber = (value: number) => String(value).padStart(2, '0');
 
@@ -81,13 +84,6 @@ const maskHash = (value: string) => {
   return `${trimmed.slice(0, 6)}...${trimmed.slice(-6)}`;
 };
 
-const maskClientApiKey = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === '-') return '-';
-  const visibleChars = trimmed.length < 4 ? 1 : 2;
-  return `${trimmed.slice(0, visibleChars)}${'*'.repeat(Math.max(10 - visibleChars * 2, 1))}${trimmed.slice(-visibleChars)}`;
-};
-
 const extractArrayPayload = (payload: unknown, key: string): unknown[] => {
   if (Array.isArray(payload)) return payload;
   if (!isRecordValue(payload)) return [];
@@ -119,31 +115,6 @@ const buildSearchText = (...parts: Array<string | number | boolean | null | unde
     .map((part) => (part === null || part === undefined ? '' : String(part).trim().toLowerCase()))
     .filter(Boolean)
     .join(' ');
-
-const buildConfiguredApiKeyMap = (apiKeys: readonly string[] | undefined) => {
-  const keys = (apiKeys || [])
-    .map((key) => key.trim())
-    .filter(Boolean)
-    .map((key, index): MonitoringApiKeyIdentity => {
-      const hash = sha256Hex(key);
-      return {
-        id: `clientApiKey:${hash || index}`,
-        hash,
-        masked: maskClientApiKey(key),
-      };
-    });
-
-  return {
-    keys,
-    byHash: new Map(keys.map((key) => [key.hash, key])),
-  };
-};
-
-type MonitoringApiKeyIdentity = {
-  id: string;
-  hash: string;
-  masked: string;
-};
 
 type MonitoringChannelMeta = {
   key: string;
