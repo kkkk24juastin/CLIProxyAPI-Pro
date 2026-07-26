@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,6 +95,71 @@ type UsageAggregateOptions struct {
 	Limit                 int
 	APIKeyHash            string
 	TimezoneOffsetMinutes int
+}
+
+type AccountUsageDayStat struct {
+	BucketStartMS int64   `json:"bucketStartMs"`
+	Requests      int64   `json:"requests"`
+	Tokens        int64   `json:"tokens"`
+	EstimatedCost float64 `json:"estimatedCost"`
+}
+
+type AccountUsageModelStat struct {
+	Model           string  `json:"model"`
+	Requests        int64   `json:"requests"`
+	Tokens          int64   `json:"tokens"`
+	InputTokens     int64   `json:"inputTokens"`
+	OutputTokens    int64   `json:"outputTokens"`
+	ReasoningTokens int64   `json:"reasoningTokens"`
+	CacheTokens     int64   `json:"cacheTokens"`
+	EstimatedCost   float64 `json:"estimatedCost"`
+}
+
+type AccountUsageAPIKeyStat struct {
+	APIKeyHash    string  `json:"apiKeyHash"`
+	Requests      int64   `json:"requests"`
+	Tokens        int64   `json:"tokens"`
+	EstimatedCost float64 `json:"estimatedCost"`
+}
+
+type AccountUsageDetail struct {
+	AuthIndex         string                   `json:"authIndex"`
+	PeriodDays        int                      `json:"periodDays"`
+	FromMS            int64                    `json:"fromMs"`
+	ToMS              int64                    `json:"toMs"`
+	ActiveDays        int64                    `json:"activeDays"`
+	TotalRequests     int64                    `json:"totalRequests"`
+	SuccessCount      int64                    `json:"successCount"`
+	FailureCount      int64                    `json:"failureCount"`
+	TotalTokens       int64                    `json:"totalTokens"`
+	InputTokens       int64                    `json:"inputTokens"`
+	OutputTokens      int64                    `json:"outputTokens"`
+	ReasoningTokens   int64                    `json:"reasoningTokens"`
+	CacheTokens       int64                    `json:"cacheTokens"`
+	CacheHitRequests  int64                    `json:"cacheHitRequests"`
+	EstimatedCost     float64                  `json:"estimatedCost"`
+	PricedRequests    int64                    `json:"pricedRequests"`
+	AverageLatencyMS  *int64                   `json:"averageLatencyMs,omitempty"`
+	LatencySamples    int64                    `json:"latencySamples"`
+	AverageTTFTMS     *int64                   `json:"averageTtftMs,omitempty"`
+	TTFTSamples       int64                    `json:"ttftSamples"`
+	P95LatencyMS      *int64                   `json:"p95LatencyMs,omitempty"`
+	RetryAttempts     int64                    `json:"retryAttempts"`
+	RetrySamples      int64                    `json:"retrySamples"`
+	StreamRequests    int64                    `json:"streamRequests"`
+	Today             AccountUsageDayStat      `json:"today"`
+	HighestCostDay    *AccountUsageDayStat     `json:"highestCostDay,omitempty"`
+	HighestRequestDay *AccountUsageDayStat     `json:"highestRequestDay,omitempty"`
+	History           []AccountUsageDayStat    `json:"history"`
+	Models            []AccountUsageModelStat  `json:"models"`
+	APIKeys           []AccountUsageAPIKeyStat `json:"apiKeys"`
+}
+
+type AccountUsageOptions struct {
+	AuthIndex             string
+	Days                  int
+	TimezoneOffsetMinutes int
+	NowMS                 int64
 }
 
 type DeadLetterSample struct {
@@ -337,6 +404,7 @@ func (s *Store) init() error {
 			error_message text,
 			upstream_request_id text,
 			retry_after text,
+			attempt_index integer,
 			stream integer not null default 0,
 			reasoning_effort text,
 			service_tier text,
@@ -355,6 +423,7 @@ func (s *Store) init() error {
 		`create index if not exists idx_usage_events_model_recent on usage_events(model, timestamp_ms desc, id desc)`,
 		`create index if not exists idx_usage_events_failed_recent on usage_events(failed, timestamp_ms desc, id desc)`,
 		`create index if not exists idx_usage_events_auth_index on usage_events(auth_index)`,
+		`create index if not exists idx_usage_events_auth_index_timestamp on usage_events(auth_index, timestamp_ms, id)`,
 		`create index if not exists idx_usage_events_api_key_timestamp on usage_events(api_key_hash, timestamp_ms)`,
 		`create index if not exists idx_usage_events_api_key_recent on usage_events(api_key_hash, timestamp_ms desc, id desc)`,
 		`create table if not exists usage_summary (
@@ -462,6 +531,7 @@ func (s *Store) init() error {
 		`alter table usage_events add column error_message text`,
 		`alter table usage_events add column upstream_request_id text`,
 		`alter table usage_events add column retry_after text`,
+		`alter table usage_events add column attempt_index integer`,
 		`alter table usage_events add column stream integer not null default 0`,
 		`alter table usage_events add column reasoning_effort text`,
 		`alter table usage_events add column service_tier text`,
@@ -546,9 +616,9 @@ func (s *Store) insertEvents(ctx context.Context, events []internalusage.Event) 
 		request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return InsertResult{}, err
 	}
@@ -577,7 +647,7 @@ func (s *Store) insertEvents(ctx context.Context, events []internalusage.Event) 
 			nullString(event.Provider), nullString(event.ExecutorType), event.Model, nullString(event.Alias), nullString(event.Endpoint), nullString(event.Method), nullString(event.Path),
 			nullString(event.AuthType), nullString(event.AuthIndex), nullString(event.Source), nullString(event.SourceHash), nullString(event.APIKeyHash),
 			event.InputTokens, event.OutputTokens, event.ReasoningTokens, event.CachedTokens, event.CacheTokens, event.CacheReadTokens, event.CacheWriteTokens, event.TotalTokens,
-			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.UpstreamRequestID), nullString(event.RetryAfter), boolToInt(event.Stream), nullString(event.ReasoningEffort), nullString(event.ServiceTier),
+			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.UpstreamRequestID), nullString(event.RetryAfter), nullInt64(event.AttemptIndex), boolToInt(event.Stream), nullString(event.ReasoningEffort), nullString(event.ServiceTier),
 			nullFloat64(event.EstimatedCost), nullPositiveInt64(event.PriceRuleID), nullString(event.CostBreakdownJSON), failed, nullString(event.RawJSON), event.CreatedAtMS,
 		)
 		if err != nil {
@@ -760,7 +830,7 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 	for rows.Next() {
 		var event internalusage.Event
 		var requestID, provider, executorType, alias, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, rawJSON sql.NullString
-		var latency, ttft sql.NullInt64
+		var latency, ttft, attemptIndex sql.NullInt64
 		var statusCode sql.NullInt64
 		var errorCode, errorMessage, upstreamRequestID, retryAfter, reasoningEffort, serviceTier, costBreakdown sql.NullString
 		var estimatedCost sql.NullFloat64
@@ -770,7 +840,7 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 			&event.ID, &requestID, &event.EventHash, &event.TimestampMS, &event.Timestamp, &provider, &executorType, &event.Model,
 			&alias, &endpoint, &method, &path, &authType, &authIndex, &source, &sourceHash, &apiKeyHash,
 			&event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheTokens, &event.CacheReadTokens, &event.CacheWriteTokens, &event.TotalTokens,
-			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &stream, &reasoningEffort, &serviceTier,
+			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &attemptIndex, &stream, &reasoningEffort, &serviceTier,
 			&estimatedCost, &priceRuleID, &costBreakdown, &failed, &rawJSON, &event.CreatedAtMS,
 		); err != nil {
 			return nil, err
@@ -805,6 +875,10 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		event.ErrorMessage = errorMessage.String
 		event.UpstreamRequestID = upstreamRequestID.String
 		event.RetryAfter = retryAfter.String
+		if attemptIndex.Valid {
+			value := attemptIndex.Int64
+			event.AttemptIndex = &value
+		}
 		event.Stream = stream != 0
 		event.ReasoningEffort = reasoningEffort.String
 		event.ServiceTier = serviceTier.String
@@ -831,7 +905,7 @@ func (s *Store) recentEventsFrom(ctx context.Context, queryer sqlQueryer, limit 
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events indexed by idx_usage_events_recent
 		order by timestamp_ms desc, id desc
@@ -851,7 +925,7 @@ func (s *Store) EventsAfter(ctx context.Context, afterID int64, limit int) ([]in
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events
 		where id > ?
@@ -987,7 +1061,7 @@ func (s *Store) QueryEvents(ctx context.Context, options UsageEventQueryOptions)
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events` + usageEventQueryWhere(queryWheres) + `
 		order by timestamp_ms desc, id desc
@@ -1300,6 +1374,195 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 		buckets = append(buckets, bucket)
 	}
 	return buckets, rows.Err()
+}
+
+func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (AccountUsageDetail, error) {
+	authIndex := strings.TrimSpace(options.AuthIndex)
+	if authIndex == "" {
+		return AccountUsageDetail{}, fmt.Errorf("auth_index is required")
+	}
+	if options.Days != 0 && options.Days != 7 && options.Days != 30 && options.Days != 90 {
+		return AccountUsageDetail{}, fmt.Errorf("days must be one of 0, 7, 30, or 90")
+	}
+	if options.TimezoneOffsetMinutes < -14*60 || options.TimezoneOffsetMinutes > 14*60 {
+		return AccountUsageDetail{}, fmt.Errorf("timezone offset is out of range")
+	}
+	nowMS := options.NowMS
+	if nowMS <= 0 {
+		nowMS = time.Now().UnixMilli()
+	}
+	const dayMS = int64(24 * time.Hour / time.Millisecond)
+	offsetMS := int64(options.TimezoneOffsetMinutes) * int64(time.Minute/time.Millisecond)
+	todayStartMS := ((nowMS + offsetMS) / dayMS * dayMS) - offsetMS
+	fromMS := int64(0)
+	if options.Days > 0 {
+		fromMS = todayStartMS - int64(options.Days-1)*dayMS
+	}
+
+	detail := AccountUsageDetail{
+		AuthIndex:  authIndex,
+		PeriodDays: options.Days,
+		FromMS:     fromMS,
+		ToMS:       nowMS,
+		Today:      AccountUsageDayStat{BucketStartMS: todayStartMS},
+		History:    []AccountUsageDayStat{},
+		Models:     []AccountUsageModelStat{},
+		APIKeys:    []AccountUsageAPIKeyStat{},
+	}
+	where := `auth_index = ? and timestamp_ms <= ?`
+	args := []any{authIndex, nowMS}
+	if fromMS > 0 {
+		where += ` and timestamp_ms >= ?`
+		args = append(args, fromMS)
+	}
+
+	var avgLatency, avgTTFT sql.NullInt64
+	summaryQuery := `select
+		count(*),
+		coalesce(sum(case when failed = 0 then 1 else 0 end), 0),
+		coalesce(sum(case when failed != 0 then 1 else 0 end), 0),
+		coalesce(sum(total_tokens), 0),
+		coalesce(sum(input_tokens), 0),
+		coalesce(sum(output_tokens), 0),
+		coalesce(sum(reasoning_tokens), 0),
+		coalesce(sum(max(cached_tokens, cache_tokens)), 0),
+		coalesce(sum(case when max(cached_tokens, cache_tokens) > 0 then 1 else 0 end), 0),
+		coalesce(sum(estimated_cost), 0),
+		coalesce(sum(case when estimated_cost is not null then 1 else 0 end), 0),
+		cast(avg(latency_ms) as integer),
+		coalesce(sum(case when latency_ms is not null then 1 else 0 end), 0),
+		cast(avg(ttft_ms) as integer),
+		coalesce(sum(case when ttft_ms is not null then 1 else 0 end), 0),
+		coalesce(sum(case when attempt_index > 0 then 1 else 0 end), 0),
+		coalesce(sum(case when attempt_index is not null then 1 else 0 end), 0),
+		coalesce(sum(case when stream != 0 then 1 else 0 end), 0)
+		from usage_events where ` + where
+	if err := s.db.QueryRowContext(ctx, summaryQuery, args...).Scan(
+		&detail.TotalRequests,
+		&detail.SuccessCount,
+		&detail.FailureCount,
+		&detail.TotalTokens,
+		&detail.InputTokens,
+		&detail.OutputTokens,
+		&detail.ReasoningTokens,
+		&detail.CacheTokens,
+		&detail.CacheHitRequests,
+		&detail.EstimatedCost,
+		&detail.PricedRequests,
+		&avgLatency,
+		&detail.LatencySamples,
+		&avgTTFT,
+		&detail.TTFTSamples,
+		&detail.RetryAttempts,
+		&detail.RetrySamples,
+		&detail.StreamRequests,
+	); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	if avgLatency.Valid {
+		value := avgLatency.Int64
+		detail.AverageLatencyMS = &value
+	}
+	if avgTTFT.Valid {
+		value := avgTTFT.Int64
+		detail.AverageTTFTMS = &value
+	}
+	if detail.LatencySamples > 0 {
+		offset := int64(math.Ceil(float64(detail.LatencySamples)*0.95)) - 1
+		p95Args := append(append([]any{}, args...), 1, offset)
+		query := `select latency_ms from usage_events where ` + where + ` and latency_ms is not null order by latency_ms asc limit ? offset ?`
+		var p95 int64
+		if err := s.db.QueryRowContext(ctx, query, p95Args...).Scan(&p95); err != nil {
+			return AccountUsageDetail{}, err
+		}
+		detail.P95LatencyMS = &p95
+	}
+
+	dayQuery := `select
+		((timestamp_ms + ?) / ?) * ? - ? as bucket_start_ms,
+		count(*),
+		coalesce(sum(total_tokens), 0),
+		coalesce(sum(estimated_cost), 0)
+		from usage_events where ` + where + ` group by bucket_start_ms order by bucket_start_ms asc`
+	dayArgs := append([]any{offsetMS, dayMS, dayMS, offsetMS}, args...)
+	dayRows, err := s.db.QueryContext(ctx, dayQuery, dayArgs...)
+	if err != nil {
+		return AccountUsageDetail{}, err
+	}
+	for dayRows.Next() {
+		var day AccountUsageDayStat
+		if err := dayRows.Scan(&day.BucketStartMS, &day.Requests, &day.Tokens, &day.EstimatedCost); err != nil {
+			_ = dayRows.Close()
+			return AccountUsageDetail{}, err
+		}
+		detail.History = append(detail.History, day)
+		if day.BucketStartMS == todayStartMS {
+			detail.Today = day
+		}
+		if detail.HighestCostDay == nil || day.EstimatedCost > detail.HighestCostDay.EstimatedCost ||
+			(day.EstimatedCost == detail.HighestCostDay.EstimatedCost && day.Requests > detail.HighestCostDay.Requests) {
+			copyDay := day
+			detail.HighestCostDay = &copyDay
+		}
+		if detail.HighestRequestDay == nil || day.Requests > detail.HighestRequestDay.Requests ||
+			(day.Requests == detail.HighestRequestDay.Requests && day.EstimatedCost > detail.HighestRequestDay.EstimatedCost) {
+			copyDay := day
+			detail.HighestRequestDay = &copyDay
+		}
+	}
+	if err := dayRows.Close(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	if err := dayRows.Err(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	detail.ActiveDays = int64(len(detail.History))
+
+	modelQuery := `select
+		coalesce(nullif(model, ''), '-'), count(*), coalesce(sum(total_tokens), 0),
+		coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0), coalesce(sum(reasoning_tokens), 0),
+		coalesce(sum(max(cached_tokens, cache_tokens)), 0), coalesce(sum(estimated_cost), 0)
+		from usage_events where ` + where + ` group by model order by count(*) desc, model asc`
+	modelRows, err := s.db.QueryContext(ctx, modelQuery, args...)
+	if err != nil {
+		return AccountUsageDetail{}, err
+	}
+	for modelRows.Next() {
+		var item AccountUsageModelStat
+		if err := modelRows.Scan(&item.Model, &item.Requests, &item.Tokens, &item.InputTokens, &item.OutputTokens, &item.ReasoningTokens, &item.CacheTokens, &item.EstimatedCost); err != nil {
+			_ = modelRows.Close()
+			return AccountUsageDetail{}, err
+		}
+		detail.Models = append(detail.Models, item)
+	}
+	if err := modelRows.Close(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	if err := modelRows.Err(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+
+	keyQuery := `select coalesce(api_key_hash, ''), count(*), coalesce(sum(total_tokens), 0), coalesce(sum(estimated_cost), 0)
+		from usage_events where ` + where + ` group by api_key_hash order by count(*) desc, api_key_hash asc`
+	keyRows, err := s.db.QueryContext(ctx, keyQuery, args...)
+	if err != nil {
+		return AccountUsageDetail{}, err
+	}
+	for keyRows.Next() {
+		var item AccountUsageAPIKeyStat
+		if err := keyRows.Scan(&item.APIKeyHash, &item.Requests, &item.Tokens, &item.EstimatedCost); err != nil {
+			_ = keyRows.Close()
+			return AccountUsageDetail{}, err
+		}
+		detail.APIKeys = append(detail.APIKeys, item)
+	}
+	if err := keyRows.Close(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	if err := keyRows.Err(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	return detail, nil
 }
 
 func aggregateIntervalMS(interval string) int64 {

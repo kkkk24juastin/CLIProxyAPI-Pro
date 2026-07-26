@@ -44,6 +44,7 @@ type Event struct {
 	ErrorMessage      string   `json:"error_message,omitempty"`
 	UpstreamRequestID string   `json:"upstream_request_id,omitempty"`
 	RetryAfter        string   `json:"retry_after,omitempty"`
+	AttemptIndex      *int64   `json:"attempt_index,omitempty"`
 	Stream            bool     `json:"stream"`
 	ReasoningEffort   string   `json:"reasoning_effort,omitempty"`
 	ServiceTier       string   `json:"service_tier,omitempty"`
@@ -84,6 +85,7 @@ type Detail struct {
 	ErrorMessage      string          `json:"error_message,omitempty"`
 	UpstreamRequestID string          `json:"upstream_request_id,omitempty"`
 	RetryAfter        string          `json:"retry_after,omitempty"`
+	AttemptIndex      *int64          `json:"attempt_index,omitempty"`
 	Stream            bool            `json:"stream"`
 	ReasoningEffort   string          `json:"reasoning_effort,omitempty"`
 	ServiceTier       string          `json:"service_tier,omitempty"`
@@ -190,6 +192,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	if retryAfter == "" {
 		retryAfter = readHeaderValue(record, "retry-after")
 	}
+	attemptIndex := readOptionalInt(record, "attempt_index")
 	failed := readFailed(record)
 	sourceRaw := readString(record, "source")
 	source := maskSource(sourceRaw)
@@ -237,6 +240,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		ErrorMessage:      errorMessage,
 		UpstreamRequestID: upstreamRequestID,
 		RetryAfter:        retryAfter,
+		AttemptIndex:      attemptIndex,
 		Stream:            readBool(record, "stream"),
 		ReasoningEffort:   readString(record, "reasoning_effort"),
 		ServiceTier:       readString(record, "service_tier"),
@@ -315,6 +319,7 @@ func BuildPayload(events []Event) Payload {
 			ErrorMessage:      event.ErrorMessage,
 			UpstreamRequestID: event.UpstreamRequestID,
 			RetryAfter:        event.RetryAfter,
+			AttemptIndex:      event.AttemptIndex,
 			Stream:            event.Stream,
 			ReasoningEffort:   event.ReasoningEffort,
 			ServiceTier:       event.ServiceTier,
@@ -641,6 +646,9 @@ func buildEventHash(event Event) string {
 	}
 	if event.LatencyMS != nil {
 		parts = append(parts, strconv.FormatInt(*event.LatencyMS, 10))
+	}
+	if event.AttemptIndex != nil {
+		parts = append(parts, strconv.FormatInt(*event.AttemptIndex, 10))
 	}
 	return hashString(strings.Join(parts, "|"))
 }

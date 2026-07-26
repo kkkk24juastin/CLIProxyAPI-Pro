@@ -604,6 +604,42 @@ func TestHandleUsageAggregatesReturnsBuckets(t *testing.T) {
 	}
 }
 
+func TestHandleAccountUsageValidatesScopeAndReturnsDatasetState(t *testing.T) {
+	store := openTestStore(t)
+	event := testUsageEvent(0, false, 10)
+	event.AuthIndex = "codex:account"
+	insertTestUsageEvents(t, store, event)
+	router := testUsageRouter(store)
+
+	invalidRecorder := httptest.NewRecorder()
+	router.ServeHTTP(invalidRecorder, httptest.NewRequest(http.MethodGet, "/usage/account?days=30", nil))
+	if invalidRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("missing auth_index status = %d, want 400", invalidRecorder.Code)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/usage/account?auth_index=codex%3Aaccount&days=0&timezone_offset_minutes=480", nil)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Detail     AccountUsageDetail `json:"detail"`
+		LatestID   int64              `json:"latest_id"`
+		Generation int64              `json:"generation"`
+		SnapshotAt int64              `json:"snapshot_at_ms"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload.Detail.AuthIndex != "codex:account" || payload.Detail.TotalRequests != 1 {
+		t.Fatalf("detail = %+v", payload.Detail)
+	}
+	if payload.LatestID != 1 || payload.Generation < 1 || payload.SnapshotAt <= 0 {
+		t.Fatalf("dataset state = latest:%d generation:%d snapshot:%d", payload.LatestID, payload.Generation, payload.SnapshotAt)
+	}
+}
+
 func TestUsagePayloadDetailsIncludeEventID(t *testing.T) {
 	store := openTestStore(t)
 	insertTestUsageEvents(t, store, testUsageEvent(0, false, 10))

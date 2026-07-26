@@ -42,6 +42,7 @@ internal/embeddedusage
 - `GET /v0/management/usage` — 管理页面使用的聚合 usage 数据。
 - `GET /v0/management/usage/events` — cursor 之后的增量 usage events。
 - `GET /v0/management/usage/aggregates` — 按时间桶和 provider/model/endpoint/API key 聚合 usage。
+- `GET /v0/management/usage/account` — 按精确 `auth_index` 聚合单账号的概览、明细和质量指标。
 - `GET /v0/management/usage/stream` — usage 实时更新 SSE 流。
 - `GET /v0/management/usage/export` — JSONL/NDJSON 导出。
 - `POST /v0/management/usage/import` — JSONL/NDJSON 导入。
@@ -64,6 +65,8 @@ internal/embeddedusage
 历史 `/usage/events` 分页支持 `from_ms`、`to_ms`、`provider`、`model`、`auth_index`、`api_key_hash`、`status` 和 `search`。可选的逗号分隔 `search_auth_indexes` 会与原始事件文本 `search` 按 OR 联合，其他结构化过滤条件仍按 AND 叠加；首个响应返回的稳定快照 cursor 会在后续页面保留完整过滤范围。
 
 `/usage/aggregates` 支持 `from_ms`、`to_ms`、`interval=minute|hour|day|all`、`group_by=provider,model,endpoint,api_key_hash`、`api_key_hash` 和 `timezone_offset_minutes`。响应同时返回 `latest_id`、`snapshot_at_ms` 和逐事件累加的 `estimatedCost`，避免使用聚合 Token 错选上下文价格阶梯。
+
+`/usage/account` 必须传入精确 `auth_index`，支持 `days=7|30|90|0`（`0` 表示全部）和 `timezone_offset_minutes`。响应包含每日趋势、模型与 API key 分布、费用覆盖率、延迟/TTFT/P95、流式占比，以及基于真实零基 `attempt_index` 的重试次数和样本覆盖率；历史事件没有尝试序号时保持未知，不根据 `Retry-After` 推断。
 
 ### JSONL usage 备份与恢复
 

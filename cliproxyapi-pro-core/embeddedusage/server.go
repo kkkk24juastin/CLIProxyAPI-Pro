@@ -96,6 +96,9 @@ func RegisterGinRoutes(group *gin.RouterGroup) {
 		group.GET("/aggregates", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
+		group.GET("/account", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
 		group.GET("/stream", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
@@ -151,6 +154,7 @@ func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
 	group.GET("/status", s.handleStatus)
 	group.GET("/events", s.handleUsageEvents)
 	group.GET("/aggregates", s.handleUsageAggregates)
+	group.GET("/account", s.handleAccountUsage)
 	group.GET("/stream", s.handleUsageStream)
 	group.GET("/quota-cache", s.handleQuotaCacheGet)
 	group.PUT("/quota-cache", s.handleQuotaCachePut)
@@ -514,6 +518,58 @@ func (s *Server) handleUsageAggregates(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"items":          buckets,
+		"latest_id":      latestID,
+		"generation":     state.Generation,
+		"reset_at_ms":    state.ResetAtMS,
+		"snapshot_at_ms": time.Now().UnixMilli(),
+	})
+}
+
+func (s *Server) handleAccountUsage(c *gin.Context) {
+	authIndex := strings.TrimSpace(c.Query("auth_index"))
+	if authIndex == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "auth_index is required"})
+		return
+	}
+	days := 30
+	if rawDays := strings.TrimSpace(c.Query("days")); rawDays != "" {
+		parsed, err := strconv.Atoi(rawDays)
+		if err != nil || (parsed != 0 && parsed != 7 && parsed != 30 && parsed != 90) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "days must be one of 0, 7, 30, or 90"})
+			return
+		}
+		days = parsed
+	}
+	timezoneOffset := 0
+	if rawOffset := strings.TrimSpace(c.Query("timezone_offset_minutes")); rawOffset != "" {
+		parsed, err := strconv.Atoi(rawOffset)
+		if err != nil || parsed < -14*60 || parsed > 14*60 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "timezone_offset_minutes is invalid"})
+			return
+		}
+		timezoneOffset = parsed
+	}
+	detail, err := s.store.AccountUsage(c.Request.Context(), AccountUsageOptions{
+		AuthIndex:             authIndex,
+		Days:                  days,
+		TimezoneOffsetMinutes: timezoneOffset,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	latestID, _, err := s.store.LatestCursor(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"detail":         detail,
 		"latest_id":      latestID,
 		"generation":     state.Generation,
 		"reset_at_ms":    state.ResetAtMS,

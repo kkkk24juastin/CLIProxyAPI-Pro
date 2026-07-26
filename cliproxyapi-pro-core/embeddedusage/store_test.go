@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -625,6 +626,80 @@ func TestUsageAggregatesSupportsAuthIndexGroupingAndLastSeen(t *testing.T) {
 	bucket := buckets[0]
 	if bucket.AuthIndex != "auth-a" || bucket.TotalRequests != 2 || bucket.LastSeenAtMS != second.TimestampMS {
 		t.Fatalf("aggregate bucket = %+v, want auth-a total=2 last_seen=%d", bucket, second.TimestampMS)
+	}
+}
+
+func TestAccountUsageAggregatesExactAuthIndexAndQualityMetrics(t *testing.T) {
+	store := openTestStore(t)
+	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
+	now := time.Date(2026, 7, 26, 15, 0, 0, 0, shanghai)
+	todayStart := time.Date(2026, 7, 26, 0, 0, 0, 0, shanghai)
+	attempt0 := int64(0)
+	attempt1 := int64(1)
+	makeEvent := func(index int, at time.Time, model, apiKey string, failed bool, cost float64, attempt *int64) internalusage.Event {
+		event := testUsageEvent(index, failed, int64((index+1)*100))
+		event.EventHash = fmt.Sprintf("account-event-%d", index)
+		event.TimestampMS = at.UnixMilli()
+		event.Timestamp = at.UTC().Format(time.RFC3339Nano)
+		event.CreatedAtMS = at.UnixMilli()
+		event.AuthIndex = "codex:account-a"
+		event.Model = model
+		event.APIKeyHash = apiKey
+		event.EstimatedCost = &cost
+		event.AttemptIndex = attempt
+		event.CacheTokens = int64(index * 10)
+		latency := int64((index + 1) * 1000)
+		ttft := int64((index + 1) * 100)
+		event.LatencyMS = &latency
+		event.TTFTMS = &ttft
+		return event
+	}
+	events := []internalusage.Event{
+		makeEvent(0, todayStart.Add(time.Hour), "gpt-5", "key-a", false, 1.25, &attempt0),
+		makeEvent(1, todayStart.AddDate(0, 0, -1).Add(time.Hour), "gpt-5", "key-a", true, 2.50, &attempt1),
+		makeEvent(2, todayStart.AddDate(0, 0, -1).Add(2*time.Hour), "gpt-4.1", "", false, 3.75, nil),
+		makeEvent(3, todayStart.AddDate(0, 0, -40), "old", "key-a", false, 9.99, &attempt0),
+	}
+	other := makeEvent(4, todayStart.Add(2*time.Hour), "other", "key-b", false, 8.88, &attempt0)
+	other.AuthIndex = "codex:account-b"
+	events = append(events, other)
+	insertTestUsageEvents(t, store, events...)
+
+	detail, err := store.AccountUsage(context.Background(), AccountUsageOptions{
+		AuthIndex:             "codex:account-a",
+		Days:                  30,
+		TimezoneOffsetMinutes: 480,
+		NowMS:                 now.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("AccountUsage() error = %v", err)
+	}
+	if detail.TotalRequests != 3 || detail.SuccessCount != 2 || detail.FailureCount != 1 {
+		t.Fatalf("request summary = %+v", detail)
+	}
+	if detail.ActiveDays != 2 || detail.Today.Requests != 1 || len(detail.History) != 2 {
+		t.Fatalf("day summary = active:%d today:%+v history:%+v", detail.ActiveDays, detail.Today, detail.History)
+	}
+	if detail.EstimatedCost != 7.5 || detail.PricedRequests != 3 {
+		t.Fatalf("cost summary = %.2f/%d", detail.EstimatedCost, detail.PricedRequests)
+	}
+	if detail.RetryAttempts != 1 || detail.RetrySamples != 2 {
+		t.Fatalf("retry summary = %d/%d", detail.RetryAttempts, detail.RetrySamples)
+	}
+	if detail.AverageLatencyMS == nil || *detail.AverageLatencyMS != 2000 || detail.P95LatencyMS == nil || *detail.P95LatencyMS != 3000 {
+		t.Fatalf("latency summary = avg:%v p95:%v", detail.AverageLatencyMS, detail.P95LatencyMS)
+	}
+	if detail.AverageTTFTMS == nil || *detail.AverageTTFTMS != 200 {
+		t.Fatalf("TTFT average = %v", detail.AverageTTFTMS)
+	}
+	if len(detail.Models) != 2 || detail.Models[0].Model != "gpt-5" || detail.Models[0].Requests != 2 {
+		t.Fatalf("models = %+v", detail.Models)
+	}
+	if len(detail.APIKeys) != 2 || detail.APIKeys[0].APIKeyHash != "key-a" || detail.APIKeys[0].Requests != 2 {
+		t.Fatalf("api keys = %+v", detail.APIKeys)
+	}
+	if detail.HighestCostDay == nil || detail.HighestCostDay.EstimatedCost != 6.25 || detail.HighestRequestDay == nil || detail.HighestRequestDay.Requests != 2 {
+		t.Fatalf("highlights = cost:%+v requests:%+v", detail.HighestCostDay, detail.HighestRequestDay)
 	}
 }
 

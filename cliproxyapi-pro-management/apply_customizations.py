@@ -2304,6 +2304,132 @@ def patch_auth_files_runtime_state(target: Path) -> None:
         "    ]);\n"
         "  }, [loadFiles, loadExcluded, loadModelAlias]);\n",
     )
+
+
+def patch_account_usage_feature(target: Path) -> None:
+    icons_path = target / 'src/components/ui/icons.tsx'
+    card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
+    page_path = target / 'src/pages/AuthFilesPage.tsx'
+    styles_path = target / 'src/pages/AuthFilesPage.module.scss'
+
+    insert_once(
+        icons_path,
+        'export function IconModelCluster({ size = 20, ...props }: IconProps) {\n',
+        '''export function IconChartColumnIncreasing({ size = 20, ...props }: IconProps) {
+  return (
+    <svg {...baseSvgProps} width={size} height={size} {...props}>
+      <path d="M3 3v18h18" />
+      <path d="M7 16v1" />
+      <path d="M11 12v5" />
+      <path d="M15 8v9" />
+      <path d="M19 4v13" />
+    </svg>
+  );
+}
+
+export function IconModelCluster({ size = 20, ...props }: IconProps) {
+''',
+        'export function IconChartColumnIncreasing',
+    )
+
+    replace_once(
+        card_path,
+        '  IconDownload,\n  IconInfo,\n',
+        '  IconChartColumnIncreasing,\n  IconDownload,\n  IconInfo,\n',
+    )
+    replace_once(
+        card_path,
+        '  onShowModels: (file: AuthFileItem) => void;\n',
+        '  onShowModels: (file: AuthFileItem) => void;\n  onShowUsage: (file: AuthFileItem) => void;\n',
+    )
+    replace_once(
+        card_path,
+        '    onShowModels,\n    onDownload,\n',
+        '    onShowModels,\n    onShowUsage,\n    onDownload,\n',
+    )
+    insert_once(
+        card_path,
+        '              {!isRuntimeOnly && (\n                <div className={styles.cardUtilityActions}>\n',
+        '''              {authIndexKey && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onShowUsage(file)}
+                  className={compact ? styles.iconButton : `${styles.primaryActionButton} ${styles.usageActionButton}`}
+                  title={t('account_usage.card_action')}
+                  aria-label={t('account_usage.card_action')}
+                  disabled={disableControls}
+                >
+                  <IconChartColumnIncreasing className={styles.actionIcon} size={16} />
+                  {!compact && <span className={styles.actionButtonLabel}>{t('account_usage.card_action')}</span>}
+                </Button>
+              )}
+              {!isRuntimeOnly && (
+                <div className={styles.cardUtilityActions}>
+''',
+        "onClick={() => onShowUsage(file)}",
+    )
+    insert_once(
+        styles_path,
+        '.modelsActionButton:global(.btn.btn-sm) {\n',
+        '''.usageActionButton:global(.btn.btn-sm) {
+  background: color-mix(in srgb, #0f766e 9%, var(--bg-secondary));
+  border-color: color-mix(in srgb, #0f766e 22%, var(--border-color));
+}
+
+.usageActionButton:global(.btn.btn-sm):hover {
+  background: color-mix(in srgb, #0f766e 14%, var(--bg-secondary));
+  border-color: color-mix(in srgb, #0f766e 38%, var(--border-color));
+}
+
+.usageActionButton:global(.btn.btn-sm) > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.modelsActionButton:global(.btn.btn-sm) {
+''',
+        '.usageActionButton:global(.btn.btn-sm)',
+    )
+
+    insert_once(
+        page_path,
+        "import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';\n",
+        "import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';\n"
+        "import { AccountUsageModal } from '@/features/monitoring/components/AccountUsageModal';\n",
+        "AccountUsageModal } from '@/features/monitoring/components/AccountUsageModal'",
+    )
+    insert_once(
+        page_path,
+        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
+        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n"
+        "import type { AuthFileItem } from '@/types';\n",
+        "import type { AuthFileItem } from '@/types';",
+    )
+    insert_once(
+        page_path,
+        "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n",
+        "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n"
+        "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n",
+        'const [accountUsageFile, setAccountUsageFile]',
+    )
+    replace_once(
+        page_path,
+        "                  onShowModels={showModels}\n                  onDownload={handleDownload}\n",
+        "                  onShowModels={showModels}\n"
+        "                  onShowUsage={setAccountUsageFile}\n"
+        "                  onDownload={handleDownload}\n",
+    )
+    insert_once(
+        page_path,
+        "      <AuthFileModelsModal\n",
+        "      <AccountUsageModal file={accountUsageFile} onClose={() => setAccountUsageFile(null)} />\n\n"
+        "      <AuthFileModelsModal\n",
+        '<AccountUsageModal file={accountUsageFile}',
+    )
+
     insert_once(
         page_path,
         "  const existingTypes = useMemo(() => {\n",
@@ -2727,6 +2853,7 @@ def patch_locales(target: Path) -> None:
             )
         )
         data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
+        data['account_usage'] = additions.get('account_usage', data.get('account_usage', {}))
         data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
         data['routing_policy'] = additions.get('routing_policy', data.get('routing_policy', {}))
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
@@ -2806,6 +2933,7 @@ def main() -> None:
     patch_auth_files_page_sorting(target)
     patch_auth_files_gemini_quota(target)
     patch_auth_files_runtime_state(target)
+    patch_account_usage_feature(target)
     patch_runtime_detection(target)
     patch_api_client_connection_isolation(target)
     patch_supporting_api_and_types(target)

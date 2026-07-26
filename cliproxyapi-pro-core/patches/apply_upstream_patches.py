@@ -510,6 +510,36 @@ replace_once(
     'type serviceTierContextKey struct{}\n',
     'type serviceTierContextKey struct{}\ntype streamContextKey struct{}\n',
 )
+replace_once(
+    usage_manager,
+    '''type streamContextKey struct{}
+type generateContextKey struct{}
+''',
+    '''type streamContextKey struct{}
+type attemptTrackerContextKey struct{}
+type attemptIndexContextKey struct{}
+type generateContextKey struct{}
+
+type attemptTracker struct {
+\tmu   sync.Mutex
+\tnext int64
+}
+''',
+    'type attemptTrackerContextKey struct{}',
+)
+replace_once(
+    usage_manager,
+    '''\tTTFT        time.Duration
+\tFailed      bool
+''',
+    '''\tTTFT        time.Duration
+\t// AttemptIndex is the zero-based upstream attempt number for this request.
+\t// Nil means the caller did not instrument attempts.
+\tAttemptIndex *int64
+\tFailed       bool
+''',
+    'AttemptIndex *int64',
+)
 insert_before(
     usage_manager,
     '// WithServiceTier stores the client-requested service tier for usage sinks.\n',
@@ -532,6 +562,43 @@ func StreamFromContext(ctx context.Context) bool {
 
 ''',
     'func WithStream(ctx context.Context, stream bool) context.Context',
+)
+insert_before(
+    usage_manager,
+    '// WithServiceTier stores the client-requested service tier for usage sinks.\n',
+    '''// WithAttemptTracking attaches one request-scoped upstream-attempt counter.
+func WithAttemptTracking(ctx context.Context) context.Context {
+\tif ctx == nil {
+\t\tctx = context.Background()
+\t}
+\tif tracker, ok := ctx.Value(attemptTrackerContextKey{}).(*attemptTracker); ok && tracker != nil {
+\t\treturn ctx
+\t}
+\treturn context.WithValue(ctx, attemptTrackerContextKey{}, &attemptTracker{})
+}
+
+// NextAttemptContext allocates the next zero-based upstream-attempt index.
+func NextAttemptContext(ctx context.Context) context.Context {
+\tctx = WithAttemptTracking(ctx)
+\ttracker, _ := ctx.Value(attemptTrackerContextKey{}).(*attemptTracker)
+\ttracker.mu.Lock()
+\tindex := tracker.next
+\ttracker.next++
+\ttracker.mu.Unlock()
+\treturn context.WithValue(ctx, attemptIndexContextKey{}, index)
+}
+
+// AttemptIndexFromContext returns the current upstream-attempt index when instrumented.
+func AttemptIndexFromContext(ctx context.Context) (int64, bool) {
+\tif ctx == nil {
+\t\treturn 0, false
+\t}
+\tindex, ok := ctx.Value(attemptIndexContextKey{}).(int64)
+\treturn index, ok
+}
+
+''',
+    'func WithAttemptTracking(ctx context.Context) context.Context',
 )
 replace_once(
     usage_manager,
@@ -649,6 +716,125 @@ replace_once(
     '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n',
     '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n\tctx = coreusage.WithStream(ctx, opts.Stream)\n',
 )
+replace_once(
+    auth_conductor,
+    '''func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+\tnormalized := m.normalizeProviders(providers)
+''',
+    '''func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+\tctx = coreusage.WithAttemptTracking(ctx)
+\tnormalized := m.normalizeProviders(providers)
+''',
+    'ctx = coreusage.WithAttemptTracking(ctx)\n\tnormalized := m.normalizeProviders(providers)',
+)
+replace_once(
+    auth_conductor,
+    '''func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+\tnormalized := m.normalizeProviders(providers)
+''',
+    '''func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+\tctx = coreusage.WithAttemptTracking(ctx)
+\tnormalized := m.normalizeProviders(providers)
+''',
+    'ExecuteCount(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {\n\tctx = coreusage.WithAttemptTracking(ctx)',
+)
+replace_once(
+    auth_conductor,
+    '''func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+\tif m.HomeEnabled() {
+''',
+    '''func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+\tctx = coreusage.WithAttemptTracking(ctx)
+\tif m.HomeEnabled() {
+''',
+    'ExecuteStream(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {\n\tctx = coreusage.WithAttemptTracking(ctx)',
+)
+
+for old_call, new_call, marker in (
+    (
+        '\t\tstreamResult, errStream := executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
+        '\t\tctx = coreusage.NextAttemptContext(ctx)\n\t\tstreamResult, errStream := executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
+        'ctx = coreusage.NextAttemptContext(ctx)\n\t\tstreamResult, errStream := executor.ExecuteStream',
+    ),
+    (
+        '\t\t\t\t\tstreamResult, errStream = executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
+        '\t\t\t\t\tctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tstreamResult, errStream = executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
+        'ctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tstreamResult, errStream = executor.ExecuteStream',
+    ),
+    (
+        '\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
+        '\t\t\t\t\tctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
+        'ctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream',
+    ),
+    (
+        '\t\t\t\tresponse, errExecute = selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
+        '\t\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\tresponse, errExecute = selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
+        'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\tresponse, errExecute = selection.Executor.CountTokens',
+    ),
+    (
+        '\t\t\tresp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)\n',
+        '\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\tresp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)\n',
+        'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\tresp, errExec := executor.Execute',
+    ),
+    (
+        '\t\t\t\t\tresp, errExec = executor.Execute(execCtx, auth, execReq, execOpts)\n',
+        '\t\t\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\t\tresp, errExec = executor.Execute(execCtx, auth, execReq, execOpts)\n',
+        'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\t\tresp, errExec = executor.Execute',
+    ),
+    (
+        '\t\t\tresp, errExec := executor.CountTokens(execCtx, auth, execReq, execOpts)\n',
+        '\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\tresp, errExec := executor.CountTokens(execCtx, auth, execReq, execOpts)\n',
+        'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\tresp, errExec := executor.CountTokens',
+    ),
+    (
+        '\t\t\t\t\tresp, errExec = executor.CountTokens(execCtx, auth, execReq, execOpts)\n',
+        '\t\t\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\t\tresp, errExec = executor.CountTokens(execCtx, auth, execReq, execOpts)\n',
+        'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\t\tresp, errExec = executor.CountTokens',
+    ),
+    (
+        '\t\t\tresp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, creditsOpts)\n',
+        '\t\t\tcreditsCtx = coreusage.NextAttemptContext(creditsCtx)\n\t\t\tresp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, creditsOpts)\n',
+        'creditsCtx = coreusage.NextAttemptContext(creditsCtx)',
+    ),
+):
+    replace_once(auth_conductor, old_call, new_call, marker)
+
+usage_helpers = ROOT / 'internal/runtime/executor/helps/usage_helpers.go'
+replace_once(
+    usage_helpers,
+    '''func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
+\trecord.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
+\tusage.PublishRecord(ctx, record)
+}
+''',
+    '''func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
+\trecord.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
+\tif attemptIndex, ok := usage.AttemptIndexFromContext(ctx); ok {
+\t\trecord.AttemptIndex = &attemptIndex
+\t}
+\tusage.PublishRecord(ctx, record)
+}
+''',
+    'record.AttemptIndex = &attemptIndex',
+)
+
+if 'func TestAttemptTrackingAllocatesZeroBasedIndexes' not in read(usage_manager_test):
+    write(usage_manager_test, read(usage_manager_test).rstrip() + '''
+
+func TestAttemptTrackingAllocatesZeroBasedIndexes(t *testing.T) {
+\tctx := WithAttemptTracking(context.Background())
+\tfor want := int64(0); want < 3; want++ {
+\t\tattemptCtx := NextAttemptContext(ctx)
+\t\tgot, ok := AttemptIndexFromContext(attemptCtx)
+\t\tif !ok || got != want {
+\t\t\tt.Fatalf("attempt index = %d, %t; want %d, true", got, ok, want)
+\t\t}
+\t}
+\tif _, ok := AttemptIndexFromContext(context.Background()); ok {
+\t\tt.Fatal("uninstrumented context unexpectedly has an attempt index")
+\t}
+}
+''')
 
 config_go = ROOT / 'internal/config/config.go'
 replace_once(
@@ -1491,6 +1677,17 @@ replace_once(
     '\t\tRequestID:           requestID,\n\t\tStream:              stream,\n\t\tReasoningEffort:',
     'Stream:              stream',
 )
+replace_once(
+    redisqueue_plugin,
+    '''\t\tAuthIndex:       record.AuthIndex,
+\t\tTokens:          tokens,
+''',
+    '''\t\tAuthIndex:       record.AuthIndex,
+\t\tAttemptIndex:    record.AttemptIndex,
+\t\tTokens:          tokens,
+''',
+    'AttemptIndex:    record.AttemptIndex',
+)
 redisqueue_plugin_text = read(redisqueue_plugin)
 stream_field = '\tStream bool `json:"stream"`\n'
 if '`json:"stream"`' not in redisqueue_plugin_text:
@@ -1503,6 +1700,19 @@ if '`json:"stream"`' not in redisqueue_plugin_text:
     write(
         redisqueue_plugin,
         request_id_field.sub(lambda match: match.group(0) + stream_field, redisqueue_plugin_text, count=1),
+    )
+redisqueue_plugin_text = read(redisqueue_plugin)
+attempt_field = '\tAttemptIndex *int64 `json:"attempt_index,omitempty"`\n'
+if '`json:"attempt_index,omitempty"`' not in redisqueue_plugin_text:
+    auth_index_field = re.compile(r'(?m)^\tAuthIndex[ \t]+string[ \t]+`json:"auth_index"`\n')
+    matches = auth_index_field.findall(redisqueue_plugin_text)
+    if len(matches) != 1:
+        raise SystemExit(
+            f'expected one auth index field in {redisqueue_plugin}, found {len(matches)}'
+        )
+    write(
+        redisqueue_plugin,
+        auth_index_field.sub(lambda match: match.group(0) + attempt_field, redisqueue_plugin_text, count=1),
     )
 redisqueue_plugin_test = ROOT / 'internal/redisqueue/plugin_test.go'
 if redisqueue_plugin_test.exists():

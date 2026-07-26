@@ -42,6 +42,7 @@ The embedded service exposes these management routes:
 - `GET /v0/management/usage` — aggregated usage payload for the management UI.
 - `GET /v0/management/usage/events` — incremental usage events after a cursor.
 - `GET /v0/management/usage/aggregates` — aggregate usage by time bucket and provider/model/endpoint/API key.
+- `GET /v0/management/usage/account` — aggregate overview, breakdown, and quality metrics for one exact `auth_index`.
 - `GET /v0/management/usage/stream` — SSE stream for live usage updates.
 - `GET /v0/management/usage/export` — JSONL/NDJSON export.
 - `POST /v0/management/usage/import` — JSONL/NDJSON import.
@@ -64,6 +65,8 @@ Details returned by `/usage/events` and `/usage/stream` include a stable event `
 Historical `/usage/events` paging accepts `from_ms`, `to_ms`, `provider`, `model`, `auth_index`, `api_key_hash`, `status`, and `search`. The optional comma-separated `search_auth_indexes` is ORed with raw event-text `search`, while the other structured filters remain AND conditions. The first response returns a stable snapshot cursor that carries the complete filter scope across later pages.
 
 `/usage/aggregates` supports `from_ms`, `to_ms`, `interval=minute|hour|day|all`, `group_by=provider,model,endpoint,api_key_hash`, `api_key_hash`, and `timezone_offset_minutes`. Responses include `latest_id`, `snapshot_at_ms`, and event-level `estimatedCost` sums so context tiers are never selected from aggregated token totals.
+
+`/usage/account` requires an exact `auth_index` and supports `days=7|30|90|0` (`0` means all history) plus `timezone_offset_minutes`. It returns daily history, model and API-key breakdowns, pricing coverage, latency/TTFT/P95, streaming share, and retry counts with sample coverage from real zero-based `attempt_index` instrumentation. Historical events without attempt indexes remain unknown and are never inferred from `Retry-After`.
 
 ### JSONL usage backup and restore
 

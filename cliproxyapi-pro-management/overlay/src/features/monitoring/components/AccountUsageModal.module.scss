@@ -1,0 +1,488 @@
+.modal :global(.modal-body) {
+  padding: 0;
+  max-height: min(72vh, 760px);
+}
+
+.modal :global(.modal-footer .btn > span) {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.titleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  small {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+  }
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+
+  span {
+    flex: 0 0 auto;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  code {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.rangeActions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.segmented,
+.tabs {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-primary);
+
+  button {
+    min-height: 30px;
+    padding: 0 11px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0;
+    white-space: nowrap;
+
+    &:hover {
+      color: var(--text-primary);
+      background: var(--bg-tertiary);
+    }
+  }
+}
+
+.segmented .segmentActive,
+.tabs .tabActive {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  box-shadow: 0 0 0 1px var(--border-color);
+}
+
+.refreshButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+}
+
+.tabs {
+  display: flex;
+  width: fit-content;
+  margin: 14px 20px 0;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px 22px;
+  transition: opacity 0.15s ease;
+
+  &[aria-busy='true'] {
+    opacity: 0.68;
+  }
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 260px;
+  gap: 10px;
+  padding: 24px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.errorState strong {
+  color: var(--danger-color, #dc2626);
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.metricItem {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 112px;
+  gap: 8px;
+  padding: 16px;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-primary);
+
+  &:nth-child(4n),
+  &:last-child {
+    border-right: 0;
+  }
+
+  > span {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  > strong {
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  > small {
+    margin-top: auto;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+}
+
+.qualityMetricGrid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+
+  .metricItem:nth-child(4) {
+    border-right: 1px solid var(--border-color);
+  }
+}
+
+.section {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+
+  h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+
+  p {
+    margin: 5px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+}
+
+.trendChart {
+  display: grid;
+  grid-auto-columns: minmax(30px, 1fr);
+  grid-auto-flow: column;
+  align-items: end;
+  min-height: 210px;
+  margin-top: 14px;
+  padding: 8px 2px 0;
+  overflow-x: auto;
+}
+
+.trendColumn {
+  display: grid;
+  grid-template-rows: 18px 140px 30px;
+  align-items: end;
+  justify-items: center;
+  min-width: 30px;
+  gap: 5px;
+
+  small,
+  .trendValue {
+    max-width: 48px;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.trendTrack {
+  display: flex;
+  align-items: flex-end;
+  width: 12px;
+  height: 140px;
+  border-radius: 3px 3px 0 0;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+
+  > span {
+    display: block;
+    width: 100%;
+    border-radius: 3px 3px 0 0;
+    background: #2563eb;
+  }
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.definitionList {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+
+  > div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  dt {
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  dd {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 650;
+    text-align: right;
+  }
+}
+
+.compositionList {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.compositionRow {
+  display: grid;
+  grid-template-columns: 112px minmax(120px, 1fr) 80px;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+
+  > div {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    overflow: hidden;
+
+    > span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: #0f766e;
+    }
+  }
+
+  strong {
+    color: var(--text-primary);
+    text-align: right;
+  }
+}
+
+.tableWrapper {
+  margin: 12px -16px -16px;
+  overflow-x: auto;
+
+  table {
+    width: 100%;
+    min-width: 620px;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  th,
+  td {
+    padding: 10px 16px;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-primary);
+    font-size: 12px;
+    text-align: right;
+    vertical-align: middle;
+  }
+
+  th {
+    color: var(--text-secondary);
+    font-weight: 650;
+  }
+
+  th:first-child,
+  td:first-child {
+    width: 46%;
+    text-align: left;
+  }
+
+  code {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.empty {
+  padding: 20px 0 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.note {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 820px) {
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .qualityMetricGrid .metricItem:nth-child(4) {
+    border-right: 0;
+  }
+
+  .metricItem:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .metricItem:nth-child(n + 3) {
+    border-top: 1px solid var(--border-color);
+  }
+
+  .summaryGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .modal :global(.modal-body) {
+    max-height: 72vh;
+  }
+
+  .headerRow {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 12px 14px;
+  }
+
+  .rangeActions {
+    width: 100%;
+  }
+
+  .segmented {
+    display: grid;
+    flex: 1;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+
+    button {
+      padding: 0 6px;
+    }
+  }
+
+  .tabs {
+    display: grid;
+    width: auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 12px 14px 0;
+  }
+
+  .content {
+    padding: 14px;
+  }
+
+  .metricGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .qualityMetricGrid .metricItem:nth-child(4) {
+    border-right: 0;
+  }
+
+  .metricItem,
+  .metricItem:nth-child(2n) {
+    border-top: 1px solid var(--border-color);
+    border-right: 0;
+  }
+
+  .metricItem:first-child {
+    border-top: 0;
+  }
+
+  .compositionRow {
+    grid-template-columns: 88px minmax(80px, 1fr) 64px;
+    gap: 8px;
+  }
+}

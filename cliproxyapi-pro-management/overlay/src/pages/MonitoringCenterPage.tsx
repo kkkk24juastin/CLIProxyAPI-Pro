@@ -1,5 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -138,6 +139,7 @@ import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddle
 import styles from '@/features/monitoring/monitoring.module.scss';
 
 type StatusFilter = 'all' | 'success' | 'failed';
+type LinkedRequestLogScope = { authIndex: string; fromMs: number; toMs: number };
 
 const ACCOUNT_STATS_ANALYTICS_ROW_LIMIT = 6000;
 const ACCOUNT_QUOTA_REQUEST_CONCURRENCY = 4;
@@ -257,6 +259,7 @@ type UsageResetResult = {
 
 export function MonitoringCenterPage() {
   const { t, i18n } = useTranslation();
+  const location = useLocation();
   const config = useConfigStore((state) => state.config);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
@@ -268,6 +271,7 @@ export function MonitoringCenterPage() {
   const [selectedModel, setSelectedModel] = useState('all');
   const [selectedApiKey, setSelectedApiKey] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
+  const [linkedRequestLogScope, setLinkedRequestLogScope] = useState<LinkedRequestLogScope | null>(null);
   const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
   const [selectedRealtimeErrorRow, setSelectedRealtimeErrorRow] = useState<RealtimeLogRow | null>(null);
   const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
@@ -308,6 +312,22 @@ export function MonitoringCenterPage() {
   const realtimeColumnsMenuRef = useRef<HTMLDivElement | null>(null);
   const deferredSearchInput = useDeferredValue(searchInput);
   const [deferredSearch, setDeferredSearch] = useState(searchInput);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const authIndex = params.get('auth_index')?.trim() ?? '';
+    const fromMs = Number(params.get('from_ms'));
+    const toMs = Number(params.get('to_ms'));
+    if (!authIndex || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs < 0 || toMs <= 0 || fromMs > toMs) {
+      setLinkedRequestLogScope(null);
+      return;
+    }
+    setLinkedRequestLogScope({ authIndex, fromMs, toMs });
+    setSearchInput(authIndex);
+    window.requestAnimationFrame(() => {
+      document.getElementById('request-events')?.scrollIntoView({ block: 'start' });
+    });
+  }, [location.search]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDeferredSearch(deferredSearchInput), 300);
@@ -357,19 +377,20 @@ export function MonitoringCenterPage() {
 
   const buildRealtimeLogFilters = useCallback((): UsageEventPageFilters => {
     const nowMs = Date.now();
-    const fromMs = getRangeStartMs(timeRange, nowMs);
+    const fromMs = linkedRequestLogScope?.fromMs ?? getRangeStartMs(timeRange, nowMs);
     return {
       fromMs: Number.isFinite(fromMs) && fromMs > 0 ? fromMs : undefined,
-      toMs: nowMs,
+      toMs: linkedRequestLogScope?.toMs ?? nowMs,
       provider: selectedProvider === 'all' ? undefined : selectedProvider,
       model: selectedModel === 'all' ? undefined : selectedModel,
-      searchAuthIndexes: searchMatchedAuthIndexFilter || undefined,
+      authIndex: linkedRequestLogScope?.authIndex,
+      searchAuthIndexes: linkedRequestLogScope ? undefined : (searchMatchedAuthIndexFilter || undefined),
       apiKeyHash: selectedApiKey === 'all' ? undefined : selectedApiKey,
       status: selectedStatus,
-      search: deferredSearch,
+      search: linkedRequestLogScope ? undefined : deferredSearch,
       limit: REALTIME_LOG_PAGE_SIZE,
     };
-  }, [deferredSearch, searchMatchedAuthIndexFilter, selectedApiKey, selectedModel, selectedProvider, selectedStatus, timeRange]);
+  }, [deferredSearch, linkedRequestLogScope, searchMatchedAuthIndexFilter, selectedApiKey, selectedModel, selectedProvider, selectedStatus, timeRange]);
 
   const handleRealtimeLogGenerationChange = useCallback(() => {
     setSelectedRealtimeErrorRow(null);
@@ -1264,6 +1285,7 @@ export function MonitoringCenterPage() {
   ];
 
   const clearFilters = useCallback(() => {
+    setLinkedRequestLogScope(null);
     setSearchInput('');
     setSelectedProvider('all');
     setSelectedModel('all');
@@ -1805,10 +1827,13 @@ export function MonitoringCenterPage() {
         </div>
 
         <Card className={styles.realtimePanel}>
-        <div className={styles.filterGrid}>
+        <div id="request-events" className={styles.filterGrid}>
           <Input
             value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
+            onChange={(event) => {
+              setLinkedRequestLogScope(null);
+              setSearchInput(event.target.value);
+            }}
             placeholder={t('monitoring.search_placeholder')}
             className={styles.toolbarHeaderSearchInput}
             rightElement={<IconSearch size={16} />}

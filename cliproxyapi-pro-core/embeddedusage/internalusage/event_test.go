@@ -18,6 +18,7 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 		"tokens":{"input_tokens":10,"output_tokens":20,"cache_read_tokens":7,"cache_creation_tokens":3},
 		"latency_ms":1234,
 		"ttft_ms":321,
+		"attempt_index":1,
 		"stream":true,
 		"reasoning_effort":"high",
 		"service_tier":"priority",
@@ -36,6 +37,9 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 	}
 	if !event.Stream || event.ReasoningEffort != "high" || event.ServiceTier != "priority" {
 		t.Fatalf("request fields = stream:%t reasoning:%q tier:%q, want true/high/priority", event.Stream, event.ReasoningEffort, event.ServiceTier)
+	}
+	if event.AttemptIndex == nil || *event.AttemptIndex != 1 {
+		t.Fatalf("attempt index = %v, want 1", event.AttemptIndex)
 	}
 	if event.Provider != "antigravity" || event.ExecutorType != "AntigravityExecutor" || event.Alias != "client-gpt" {
 		t.Fatalf("provider fields = %q/%q/%q, want antigravity/AntigravityExecutor/client-gpt", event.Provider, event.ExecutorType, event.Alias)
