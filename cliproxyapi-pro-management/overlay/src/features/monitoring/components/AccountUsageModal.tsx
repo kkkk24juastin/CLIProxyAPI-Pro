@@ -140,7 +140,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
     <div className={styles.titleBlock}>
       <span>{t('account_usage.modal_title')}</span>
       <span aria-hidden="true">—</span>
-      <strong>{accountLabel}</strong>
+      <strong title={accountLabel}>{accountLabel}</strong>
     </div>
   );
 
@@ -175,7 +175,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
         <div className={styles.accountIdentity}>
           <span className={styles.accountIcon}><IconChartColumnIncreasing size={23} /></span>
           <div>
-            <strong>{accountLabel}</strong>
+            <strong title={accountLabel}>{accountLabel}</strong>
             <p>{t('account_usage.range_summary', { range: rangeLabel })}</p>
           </div>
         </div>

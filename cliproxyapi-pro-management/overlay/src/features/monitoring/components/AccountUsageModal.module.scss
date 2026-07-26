@@ -1,4 +1,5 @@
 .modal {
+  min-width: 0;
   border-radius: 8px;
 }
 
@@ -27,6 +28,7 @@
 .titleBlock {
   display: flex;
   align-items: baseline;
+  width: 100%;
   min-width: 0;
   gap: 8px;
   letter-spacing: 0;
@@ -938,6 +940,16 @@
 }
 
 @media (max-width: 720px) {
+  .modal {
+    max-height: calc(100vh - 32px);
+  }
+
+  @supports (height: 100dvh) {
+    .modal {
+      max-height: calc(100dvh - 32px);
+    }
+  }
+
   .modal :global(.modal-header) {
     min-height: 58px;
     padding: 14px 52px 14px 16px;
@@ -948,25 +960,35 @@
   }
 
   .modal :global(.modal-body) {
-    max-height: calc(100dvh - 92px);
-    padding: 12px;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    padding: 10px;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   .titleBlock {
-    gap: 5px;
+    gap: 0;
 
-    > span:first-child {
-      flex: 0 0 auto;
+    > span[aria-hidden='true'],
+    strong {
+      display: none;
     }
   }
 
   .accountHeader {
-    gap: 14px;
-    padding: 14px;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .accountIdentity {
+    width: 100%;
+    gap: 10px;
   }
 
   .accountIdentity strong {
-    font-size: 16px;
+    font-size: 15px;
   }
 
   .accountIdentity p {
@@ -974,13 +996,14 @@
   }
 
   .accountIcon {
-    width: 46px;
-    height: 46px;
+    width: 40px;
+    height: 40px;
   }
 
   .accountActions {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
   }
 
   .logButton {
@@ -999,12 +1022,12 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) 36px;
     align-items: stretch;
-    padding: 12px 14px;
+    min-height: 56px;
+    gap: 8px;
+    padding: 9px 12px;
 
     > span {
-      display: flex;
-      align-items: center;
-      grid-column: 1 / -1;
+      display: none;
     }
   }
 
@@ -1041,18 +1064,37 @@
   }
 
   .primaryMetrics {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 
     > div,
     > div:first-child,
     > div:last-child {
-      padding: 10px 0;
-      border-right: 0;
-      border-bottom: 1px solid var(--border-color);
+      gap: 3px 6px;
+      padding: 11px 8px;
+      border-right: 1px solid var(--border-color);
+      border-bottom: 0;
+    }
+
+    > div:first-child {
+      padding-left: 0;
     }
 
     > div:last-child {
-      border-bottom: 0;
+      padding-right: 0;
+      border-right: 0;
+    }
+
+    > div span {
+      font-size: 10px;
+    }
+
+    > div svg {
+      grid-row: auto;
+    }
+
+    > div strong {
+      grid-column: 1 / -1;
+      font-size: 16px;
     }
   }
 
