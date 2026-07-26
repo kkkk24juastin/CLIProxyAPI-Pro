@@ -223,24 +223,32 @@ write(
     ),
 )
 
-xai_executor = ROOT / 'internal/runtime/executor/xai_executor.go'
+xai_executor_sources = (
+    ROOT / 'internal/runtime/executor/xai_executor_execute.go',
+    ROOT / 'internal/runtime/executor/xai_executor_stream.go',
+    ROOT / 'internal/runtime/executor/xai_executor_media.go',
+)
 xai_observation_marker = '\thelps.AppendAPIResponseChunk(ctx, e.cfg, data)\n'
-xai_executor_text = read(xai_executor)
-if 'observeXAIQuotaResponse(ctx, auth, req.Model' not in xai_executor_text:
-    if xai_executor_text.count(xai_observation_marker) != 6:
+xai_executor_texts = {path: read(path) for path in xai_executor_sources}
+if not any(
+    'observeXAIQuotaResponse(ctx, auth, req.Model' in text
+    for text in xai_executor_texts.values()
+):
+    if sum(text.count(xai_observation_marker) for text in xai_executor_texts.values()) != 6:
         raise SystemExit('unexpected xAI response chunk observation anchors')
-    xai_executor_text = xai_executor_text.replace(
-        xai_observation_marker,
-        xai_observation_marker + '\tobserveXAIQuotaResponse(ctx, auth, req.Model, httpResp.StatusCode, httpResp.Header.Clone(), data)\n',
-    )
     xai_metadata_marker = '\thelps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())\n'
-    if xai_executor_text.count(xai_metadata_marker) != 5:
+    if sum(text.count(xai_metadata_marker) for text in xai_executor_texts.values()) != 5:
         raise SystemExit('unexpected xAI response metadata observation anchors')
-    xai_executor_text = xai_executor_text.replace(
-        xai_metadata_marker,
-        xai_metadata_marker + '\tobserveXAIQuotaResponse(ctx, auth, req.Model, httpResp.StatusCode, httpResp.Header.Clone(), nil)\n',
-    )
-    write(xai_executor, xai_executor_text)
+    for path, text in xai_executor_texts.items():
+        text = text.replace(
+            xai_observation_marker,
+            xai_observation_marker + '\tobserveXAIQuotaResponse(ctx, auth, req.Model, httpResp.StatusCode, httpResp.Header.Clone(), data)\n',
+        )
+        text = text.replace(
+            xai_metadata_marker,
+            xai_metadata_marker + '\tobserveXAIQuotaResponse(ctx, auth, req.Model, httpResp.StatusCode, httpResp.Header.Clone(), nil)\n',
+        )
+        write(path, text)
 
 xai_websocket_executor = ROOT / 'internal/runtime/executor/xai_websockets_executor.go'
 replace_once(
@@ -710,7 +718,7 @@ func TestUnregisterNamedPreservesReplacement(t *testing.T) {
 }
 ''')
 
-auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor.go'
+auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_execution.go'
 replace_once(
     auth_conductor,
     '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n',
@@ -719,9 +727,11 @@ replace_once(
 replace_once(
     auth_conductor,
     '''func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+\treq, opts = cliproxysession.Enrich(req, opts)
 \tnormalized := m.normalizeProviders(providers)
 ''',
     '''func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+\treq, opts = cliproxysession.Enrich(req, opts)
 \tctx = coreusage.WithAttemptTracking(ctx)
 \tnormalized := m.normalizeProviders(providers)
 ''',
@@ -730,9 +740,11 @@ replace_once(
 replace_once(
     auth_conductor,
     '''func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+\treq, opts = cliproxysession.Enrich(req, opts)
 \tnormalized := m.normalizeProviders(providers)
 ''',
     '''func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+\treq, opts = cliproxysession.Enrich(req, opts)
 \tctx = coreusage.WithAttemptTracking(ctx)
 \tnormalized := m.normalizeProviders(providers)
 ''',
@@ -741,63 +753,89 @@ replace_once(
 replace_once(
     auth_conductor,
     '''func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+\treq, opts = cliproxysession.Enrich(req, opts)
 \tif m.HomeEnabled() {
 ''',
     '''func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+\treq, opts = cliproxysession.Enrich(req, opts)
 \tctx = coreusage.WithAttemptTracking(ctx)
 \tif m.HomeEnabled() {
 ''',
     'ExecuteStream(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {\n\tctx = coreusage.WithAttemptTracking(ctx)',
 )
 
-for old_call, new_call, marker in (
+auth_conductor_stream = ROOT / 'sdk/cliproxy/auth/conductor_stream.go'
+auth_conductor_home_execution = ROOT / 'sdk/cliproxy/auth/conductor_home_execution.go'
+auth_conductor_home = ROOT / 'sdk/cliproxy/auth/conductor_home.go'
+
+for target in (
+    auth_conductor_stream,
+    auth_conductor_home_execution,
+    auth_conductor_home,
+):
+    add_go_import(
+        target,
+        f'\tcliproxyexecutor "{import_path("sdk/cliproxy/executor")}"\n',
+        f'\tcoreusage "{import_path("sdk/cliproxy/usage")}"\n',
+    )
+
+for target, old_call, new_call, marker in (
     (
+        auth_conductor_stream,
         '\t\tstreamResult, errStream := executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
         '\t\tctx = coreusage.NextAttemptContext(ctx)\n\t\tstreamResult, errStream := executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
         'ctx = coreusage.NextAttemptContext(ctx)\n\t\tstreamResult, errStream := executor.ExecuteStream',
     ),
     (
+        auth_conductor_stream,
         '\t\t\t\t\tstreamResult, errStream = executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
         '\t\t\t\t\tctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tstreamResult, errStream = executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
         'ctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tstreamResult, errStream = executor.ExecuteStream',
     ),
     (
+        auth_conductor_stream,
         '\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
         '\t\t\t\t\tctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
         'ctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream',
     ),
     (
+        auth_conductor_home_execution,
         '\t\t\t\tresponse, errExecute = selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
         '\t\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\tresponse, errExecute = selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
         'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\tresponse, errExecute = selection.Executor.CountTokens',
     ),
     (
+        auth_conductor,
         '\t\t\tresp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)\n',
         '\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\tresp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)\n',
         'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\tresp, errExec := executor.Execute',
     ),
     (
+        auth_conductor,
         '\t\t\t\t\tresp, errExec = executor.Execute(execCtx, auth, execReq, execOpts)\n',
         '\t\t\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\t\tresp, errExec = executor.Execute(execCtx, auth, execReq, execOpts)\n',
         'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\t\tresp, errExec = executor.Execute',
     ),
     (
+        auth_conductor,
         '\t\t\tresp, errExec := executor.CountTokens(execCtx, auth, execReq, execOpts)\n',
         '\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\tresp, errExec := executor.CountTokens(execCtx, auth, execReq, execOpts)\n',
         'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\tresp, errExec := executor.CountTokens',
     ),
     (
+        auth_conductor,
         '\t\t\t\t\tresp, errExec = executor.CountTokens(execCtx, auth, execReq, execOpts)\n',
         '\t\t\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\t\tresp, errExec = executor.CountTokens(execCtx, auth, execReq, execOpts)\n',
         'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\t\tresp, errExec = executor.CountTokens',
     ),
     (
+        auth_conductor_home,
         '\t\t\tresp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, creditsOpts)\n',
         '\t\t\tcreditsCtx = coreusage.NextAttemptContext(creditsCtx)\n\t\t\tresp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, creditsOpts)\n',
         'creditsCtx = coreusage.NextAttemptContext(creditsCtx)',
     ),
 ):
-    replace_once(auth_conductor, old_call, new_call, marker)
+    replace_once(target, old_call, new_call, marker)
 
 usage_helpers = ROOT / 'internal/runtime/executor/helps/usage_helpers.go'
 replace_once(
@@ -836,9 +874,9 @@ func TestAttemptTrackingAllocatesZeroBasedIndexes(t *testing.T) {
 }
 ''')
 
-config_go = ROOT / 'internal/config/config.go'
+config_defaults = ROOT / 'internal/config/config_defaults.go'
 replace_once(
-    config_go,
+    config_defaults,
     'DefaultPanelGitHubRepository = "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"',
     f'DefaultPanelGitHubRepository = "{PRO_PANEL_REPOSITORY}"',
 )
@@ -1087,8 +1125,9 @@ func TestClaudeModelsCloakMode(t *testing.T) {
 
 routing_protection_config = ROOT / 'internal/config/routing_protection_config.go'
 write(routing_protection_config, read_text(Path(__file__).resolve().parent / 'routing_protection_config.go'))
+config_types = ROOT / 'internal/config/config_types.go'
 replace_once(
-    config_go,
+    config_types,
     '''\tSessionAffinityTTL string `yaml:"session-affinity-ttl,omitempty" json:"session-affinity-ttl,omitempty"`
 }
 ''',
@@ -1144,14 +1183,15 @@ replace_once(
 ''',
 )
 
+config_yaml = ROOT / 'internal/config/config_yaml.go'
 insert_before(
-    config_go,
+    config_yaml,
     '// NormalizeCommentIndentation removes indentation from standalone YAML comment lines to keep them left aligned.\n',
     '// SaveConfigPreserveCommentsUpdateNestedBoolScalar updates a nested bool scalar while preserving comments and positions.\nfunc SaveConfigPreserveCommentsUpdateNestedBoolScalar(configFile string, path []string, value bool) error {\n\tdata, err := os.ReadFile(configFile)\n\tif err != nil {\n\t\treturn err\n\t}\n\tvar root yaml.Node\n\tif err = yaml.Unmarshal(data, &root); err != nil {\n\t\treturn err\n\t}\n\tif root.Kind != yaml.DocumentNode || len(root.Content) == 0 {\n\t\treturn fmt.Errorf("invalid yaml document structure")\n\t}\n\tnode := root.Content[0]\n\tfor i, key := range path {\n\t\tif i == len(path)-1 {\n\t\t\tv := getOrCreateMapValue(node, key)\n\t\t\tv.Kind = yaml.ScalarNode\n\t\t\tv.Tag = "!!bool"\n\t\t\tif value {\n\t\t\t\tv.Value = "true"\n\t\t\t} else {\n\t\t\t\tv.Value = "false"\n\t\t\t}\n\t\t} else {\n\t\t\tnext := getOrCreateMapValue(node, key)\n\t\t\tif next.Kind != yaml.MappingNode {\n\t\t\t\tnext.Kind = yaml.MappingNode\n\t\t\t\tnext.Tag = "!!map"\n\t\t\t}\n\t\t\tnode = next\n\t\t}\n\t}\n\tf, err := os.Create(configFile)\n\tif err != nil {\n\t\treturn err\n\t}\n\tdefer func() { _ = f.Close() }()\n\tvar buf bytes.Buffer\n\tenc := yaml.NewEncoder(&buf)\n\tenc.SetIndent(2)\n\tif err = enc.Encode(&root); err != nil {\n\t\t_ = enc.Close()\n\t\treturn err\n\t}\n\tif err = enc.Close(); err != nil {\n\t\treturn err\n\t}\n\tdata = NormalizeCommentIndentation(buf.Bytes())\n\t_, err = f.Write(data)\n\treturn err\n}\n\n',
     'func SaveConfigPreserveCommentsUpdateNestedBoolScalar',
 )
 insert_before(
-    config_go,
+    config_yaml,
     '// NormalizeCommentIndentation removes indentation from standalone YAML comment lines to keep them left aligned.\n',
     '// PluginAutoInstallProxyURL returns the proxy URL used by plugin store auto-install requests.\nfunc (cfg *Config) PluginAutoInstallProxyURL() string {\n\tif cfg == nil {\n\t\treturn ""\n\t}\n\treturn cfg.ProxyURL\n}\n\n// PluginAutoInstallEnabled reports whether dynamic plugins are enabled.\nfunc (cfg *Config) PluginAutoInstallEnabled() bool {\n\treturn cfg != nil && cfg.Plugins.Enabled\n}\n\n// PluginAutoInstallDir returns the normalized plugin discovery directory.\nfunc (cfg *Config) PluginAutoInstallDir() string {\n\tif cfg == nil {\n\t\treturn ""\n\t}\n\treturn cfg.Plugins.Dir\n}\n\n// PluginAutoInstallStoreSources returns configured third-party plugin registry URLs.\nfunc (cfg *Config) PluginAutoInstallStoreSources() []string {\n\tif cfg == nil || len(cfg.Plugins.StoreSources) == 0 {\n\t\treturn nil\n\t}\n\treturn append([]string(nil), cfg.Plugins.StoreSources...)\n}\n\n// PluginAutoInstallEnabledIDs returns configured plugin IDs that should be present at startup.\nfunc (cfg *Config) PluginAutoInstallEnabledIDs() []string {\n\tif cfg == nil || len(cfg.Plugins.Configs) == 0 {\n\t\treturn nil\n\t}\n\tids := make([]string, 0, len(cfg.Plugins.Configs))\n\tfor id, item := range cfg.Plugins.Configs {\n\t\tif item.Enabled == nil || !*item.Enabled {\n\t\t\tcontinue\n\t\t}\n\t\tids = append(ids, id)\n\t}\n\treturn ids\n}\n\n',
     'func (cfg *Config) PluginAutoInstallProxyURL',
@@ -1247,7 +1287,7 @@ replace_once(
 )
 
 replace_once(
-    ROOT / 'internal/pluginhost/adapters.go',
+    ROOT / 'internal/pluginhost/adapters_executors.go',
     '''func storageJSONFromAuth(auth *coreauth.Auth) []byte {
 \tif auth == nil {
 \t\treturn nil
@@ -1289,7 +1329,10 @@ queue_go_source('internal/pluginhost/gemini_cli_storage_compat.go')
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat_test.go')
 
 server = ROOT / 'internal/api/server.go'
+server_routes = ROOT / 'internal/api/server_routes.go'
+server_management = ROOT / 'internal/api/server_management.go'
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
+auth_files_fields = ROOT / 'internal/api/handlers/management/auth_files_fields.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
 management_scheduler = ROOT / 'internal/api/handlers/management/account_inspection_scheduler.go'
 management_scheduler_test = ROOT / 'internal/api/handlers/management/account_inspection_scheduler_test.go'
@@ -1304,7 +1347,7 @@ write(routing_policy, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODU
 write(routing_policy_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy_test.go')))
 
 replace_once(
-    server,
+    server_routes,
     '''\tif isClaude {
 \t\tc.JSON(http.StatusOK, claudemodels.BuildResponse(formatHomeClaudeModels(entries)))
 \t\treturn
@@ -1370,7 +1413,7 @@ replace_once(
 )
 
 replace_once(
-    auth_files,
+    auth_files_fields,
     '''\tmetadata["disabled"] = disabled
 \traw, errMarshal := json.Marshal(metadata)
 ''',
@@ -1380,7 +1423,7 @@ replace_once(
 ''',
 )
 replace_once(
-    auth_files,
+    auth_files_fields,
     '''\tif auth.Metadata == nil {
 \t\tauth.Metadata = make(map[string]any)
 \t}
@@ -1396,7 +1439,7 @@ replace_once(
 ''',
 )
 replace_once(
-    auth_files,
+    auth_files_fields,
     '''func syncAuthFileDisabledState(auth *coreauth.Auth) {
 \tif auth == nil {
 \t\treturn
@@ -1734,10 +1777,10 @@ queue_go_source('internal/logging/requestid.go')
 logging_request_meta = ROOT / 'internal/logging/requestmeta.go'
 queue_go_source('internal/logging/requestmeta.go')
 
-add_go_import(server, '"' + import_path('internal/config') + '"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
+add_go_import(server_management, '"github.com/gin-gonic/gin"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
 
 replace_go_call_block(
-    server,
+    server_routes,
     '\ts.engine.GET("/", func(c *gin.Context) {',
     '''\ts.engine.GET("/", func(c *gin.Context) {
 \t\tc.Redirect(http.StatusTemporaryRedirect, "/management.html")
@@ -1746,7 +1789,7 @@ replace_go_call_block(
     'c.Redirect(http.StatusTemporaryRedirect, "/management.html")',
 )
 replace_once(
-    server,
+    server_management,
     '''\t{
 \t\tmgmt.GET("/config", s.mgmt.GetConfig)
 ''',
@@ -1757,7 +1800,7 @@ replace_once(
 ''',
 )
 replace_once(
-    server,
+    server_management,
     '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n''',
     '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n''',
 )
@@ -1953,7 +1996,7 @@ replace_once(
     'Selected int64',
 )
 
-auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor.go'
+auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_lifecycle.go'
 replace_once(
     auth_conductor,
     '''\tauth.EnsureIndex()
@@ -1983,6 +2026,8 @@ replace_once(
 ''',
     'auth.Selected = existing.Selected',
 )
+
+auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_cooldown.go'
 replace_once(
     auth_conductor,
     '''\tm.mu.Unlock()
@@ -1998,6 +2043,8 @@ replace_once(
 ''',
     'queueAuthRuntimeStats(authSnapshot)',
 )
+
+auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_selection.go'
 replace_once(
     auth_conductor,
     '''\tif m.HomeEnabled() {
@@ -2090,18 +2137,16 @@ replace_once(
 )
 replace_once(
     auth_conductor,
-    '''\t\treturn authCopy, executor, providerKey, nil
-\t}
+    '''\treturn authCopy, executor, providerKey, nil
 }
 
-type homeErrorEnvelope''',
-    '''\t\tm.recordAuthSelected(authCopy.ID)
-\t\treturn authCopy, executor, providerKey, nil
-\t}
+func (m *Manager) pickNextMixed(''',
+    '''\tm.recordAuthSelected(authCopy.ID)
+\treturn authCopy, executor, providerKey, nil
 }
 
-type homeErrorEnvelope''',
-    'm.recordAuthSelected(authCopy.ID)\n\t\treturn authCopy, executor, providerKey, nil',
+func (m *Manager) pickNextMixed(''',
+    'm.recordAuthSelected(authCopy.ID)\n\treturn authCopy, executor, providerKey, nil',
 )
 replace_once(
     auth_conductor,
@@ -2123,9 +2168,10 @@ replace_once(
 )
 
 auth_files_handler = ROOT / 'internal/api/handlers/management/auth_files.go'
+auth_files_crud_handler = ROOT / 'internal/api/handlers/management/auth_files_crud.go'
 add_go_import(
-    auth_files_handler,
-    '"' + import_path('internal/config') + '"\n',
+    auth_files_crud_handler,
+    '"github.com/gin-gonic/gin"\n',
     '\t"' + import_path('internal/embeddedusage') + '"\n',
 )
 replace_once(
@@ -2140,7 +2186,7 @@ replace_once(
     'entry["selected"] = auth.Selected',
 )
 replace_once(
-    auth_files_handler,
+    auth_files_crud_handler,
     '''\t\t\t\tdeleted++
 \t\t\t\th.removeAuth(ctx, full)
 ''',
@@ -2151,7 +2197,7 @@ replace_once(
     'DeleteAuthRuntimeState(ctx, "", "", name)',
 )
 replace_once(
-    auth_files_handler,
+    auth_files_crud_handler,
     '''\ttargetPath := filepath.Join(h.cfg.AuthDir, filepath.Base(name))
 \ttargetID := ""
 \tif targetAuth := h.findAuthForDelete(name); targetAuth != nil {
@@ -2164,7 +2210,7 @@ replace_once(
     'targetIndex := ""',
 )
 replace_once(
-    auth_files_handler,
+    auth_files_crud_handler,
     '''\t\ttargetID = strings.TrimSpace(targetAuth.ID)
 \t\tif path := strings.TrimSpace(authAttribute(targetAuth, "path")); path != "" {
 ''',
@@ -2175,7 +2221,7 @@ replace_once(
     'targetIndex = strings.TrimSpace(targetAuth.Index)',
 )
 replace_once(
-    auth_files_handler,
+    auth_files_crud_handler,
     '''\th.removeAuthsForPath(ctx, targetPath, targetID)
 \treturn filepath.Base(name), http.StatusOK, nil
 ''',
