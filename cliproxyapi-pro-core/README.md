@@ -42,6 +42,7 @@ internal/embeddedusage
 - `GET /v0/management/usage` — 管理页面使用的聚合 usage 数据。
 - `GET /v0/management/usage/events` — cursor 之后的增量 usage events。
 - `GET /v0/management/usage/aggregates` — 按时间桶和 provider/model/endpoint/API key 聚合 usage。
+- `GET /v0/management/usage/account` — 按精确 `auth_index` 聚合单账号的概览、明细和质量指标。
 - `GET /v0/management/usage/stream` — usage 实时更新 SSE 流。
 - `GET /v0/management/usage/export` — JSONL/NDJSON 导出。
 - `POST /v0/management/usage/import` — JSONL/NDJSON 导入。
@@ -52,7 +53,7 @@ internal/embeddedusage
 - `DELETE /v0/management/usage/quota-cache` — 删除配额缓存。
 - `GET /v0/management/usage/model-prices` — 读取模型价格设置。
 - `PUT /v0/management/usage/model-prices` — 写入模型价格设置。
-- `GET|PUT|DELETE /v0/management/usage/model-price-rules` — 管理 provider/model 价格规则和上下文阶梯。
+- `GET|PUT|DELETE /v0/management/usage/model-price-rules` — 管理按 model 全局生效的价格规则和上下文阶梯。
 - `POST /v0/management/usage/model-prices/sync` — 从 models.dev 同步请求历史中出现过的模型。
 - `GET /v0/management/usage/model-prices/sync-status` — 读取同步状态。
 - `POST /v0/management/usage/model-prices/recalculate` — 显式重新估算历史成本。
@@ -61,21 +62,27 @@ internal/embeddedusage
 
 `/usage/events` 和 `/usage/stream` 的 detail 会携带稳定事件 `id`，管理端用它进行增量去重和断线追平。usage 响应还会返回持久化的 `generation`；手动重置或保留期清理推进版本后，SSE 会发送 `reset` 事件，已打开页面据此替换完整快照。SSE 在事件成功写入 SQLite 后由进程内通知立即唤醒，仅保留低频 keepalive，不再为每个连接每秒轮询数据库。
 
+历史 `/usage/events` 分页支持 `from_ms`、`to_ms`、`provider`、`model`、`auth_index`、`api_key_hash`、`status` 和 `search`。可选的逗号分隔 `search_auth_indexes` 会与原始事件文本 `search` 按 OR 联合，其他结构化过滤条件仍按 AND 叠加；首个响应返回的稳定快照 cursor 会在后续页面保留完整过滤范围。
+
 `/usage/aggregates` 支持 `from_ms`、`to_ms`、`interval=minute|hour|day|all`、`group_by=provider,model,endpoint,api_key_hash`、`api_key_hash` 和 `timezone_offset_minutes`。响应同时返回 `latest_id`、`snapshot_at_ms` 和逐事件累加的 `estimatedCost`，避免使用聚合 Token 错选上下文价格阶梯。
+
+`/usage/account` 必须传入精确 `auth_index`，支持 `days=7|30|90|0`（`0` 表示全部）和 `timezone_offset_minutes`。响应包含每日趋势、模型与 API key 分布、费用覆盖率、延迟/TTFT/P95、流式占比，以及基于真实零基 `attempt_index` 的重试次数和样本覆盖率；历史事件没有尝试序号时保持未知，不根据 `Retry-After` 推断。
 
 ### JSONL usage 备份与恢复
 
-`/usage/export` 返回 `application/x-ndjson`，一行一个 JSON 对象。
+`/usage/export` 返回 `application/x-ndjson`，一行一个 JSON 对象。新导出的第一行是 `backup_manifest`，记录后续行数和 SHA-256；导入会在任何数据库写入前校验完整文件，因此截断或篡改的备份会被整体拒绝。
 
 导出内容包含 usage events，也可能包含元数据记录：
 
-- `model_prices` — 基础价格兼容数据和完整 provider/model 价格规则。
+- `model_prices` — 基础价格兼容数据和完整的全局 model 价格规则。
 - `quota_cache` — 配额卡片和账号级刷新使用的 SQLite-backed quota snapshots。
 - `monitoring_settings` — 监控日志保留时间、WebDAV 备份配置和 models.dev 定期同步配置。
+- `routing_cursor_state` — 账号路由轮转游标。
+- `auth_runtime_stats` — 账号选择、成功/失败和近期请求桶统计。
 - `account_inspection_schedule` — 后端账号巡检调度设置。
 - `account_inspection_snapshot` — 最近一次已结束的账号巡检结果，包含运行设置、汇总、健康统计、完整结果和原始错误详情，不包含巡检日志。
 
-`/usage/import` 接受同样的 JSONL 格式。导入时会对每行只读取一次 `record_type`，导入 usage events，恢复模型价格、quota cache entries、监控设置、账号巡检调度和最近一次巡检结果快照。恢复的结果快照为只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。
+`/usage/import` 接受同样的 JSONL 格式。导入时会先完整读取和校验请求，再导入 usage events，恢复模型价格、quota cache entries、运行时路由状态、监控设置、账号巡检调度和最近一次巡检结果快照。路由游标与账号运行统计在同一个 SQLite 事务中恢复。恢复的结果快照为只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。无 manifest 的旧版 event-only 或混合 JSONL 默认拒绝，因为它们无法获得文件级完整性校验；可信旧备份可显式使用 `?allow_legacy=1` 或 `X-CLIProxy-Allow-Legacy-Backup: true` 请求头导入，管理端会在启用兼容模式前要求确认。
 
 导入响应示例字段：
 
@@ -87,14 +94,20 @@ internal/embeddedusage
   "failed": 0,
   "modelPrices": 12,
   "modelPriceRecords": 1,
+  "modelPriceRules": 12,
   "quotaCache": 8,
   "quotaCacheRecords": 1,
+  "routingCursors": 4,
+  "routingCursorRecords": 1,
+  "authRuntimeStats": 8,
+  "authRuntimeStatsRecords": 1,
   "accountInspectionSchedule": true,
   "accountInspectionScheduleRecords": 1,
   "accountInspectionSnapshot": true,
   "accountInspectionSnapshotRecords": 1,
   "monitoringSettings": true,
-  "monitoringSettingsRecords": 1
+  "monitoringSettingsRecords": 1,
+  "legacyBackup": false
 }
 ```
 
@@ -105,9 +118,19 @@ internal/embeddedusage
 - Antigravity
 - Claude
 - Codex
+- Gemini CLI
 - Kimi
+- xAI
 
 管理页面通过 `/usage/quota-cache` 读写该缓存，因此配额卡片可在页面刷新、浏览器切换和后端重启后恢复。
+
+### QuotaProvider 插件协议
+
+补丁层为 upstream 插件 SDK/ABI 增加可选 `QuotaProvider` 能力，并提供
+`POST /v0/management/quota/fetch`。宿主负责回调生命周期、规范化快照、SQLite 持久化以及
+套餐信息的 last-known-good 保留。当前 Gemini CLI 插件无需修改：Core 会通过插件已有的
+`Executor.HttpRequest` 提供兼容适配；插件未来原生实现协议后会自动优先使用原生能力。
+协议字段与兼容策略见 [QUOTA_PROVIDER.md](QUOTA_PROVIDER.md)。
 
 ### 后端账号巡检调度器
 
@@ -118,9 +141,11 @@ internal/embeddedusage
 - `GET /v0/management/account-inspection/schedule`
 - `GET /v0/management/account-inspection/status`
 - `GET /v0/management/account-inspection/logs`（WebSocket/WSS 日志和状态流）
-- `PUT /v0/management/account-inspection/schedule`
+- `PUT|PATCH /v0/management/account-inspection/schedule`
 - `POST /v0/management/account-inspection/run`
 - `POST /v0/management/account-inspection/quota-refresh` — 为指定 provider 启动仅配额刷新任务。
+- `POST /v0/management/account-inspection/inspect-one`
+- `POST /v0/management/account-inspection/refresh-token`
 - `POST /v0/management/account-inspection/pause`
 - `POST /v0/management/account-inspection/resume`
 - `POST /v0/management/account-inspection/stop`
@@ -131,9 +156,11 @@ internal/embeddedusage
 - Antigravity
 - Claude
 - Codex
+- Gemini CLI
 - Kimi
+- xAI
 
-能力包括 provider 过滤、worker 数量限制、重试/超时、抽样、按用量阈值判断、进度/状态/日志/结果快照、暂停/继续/停止控制、手动操作，以及对额度耗尽、额度恢复、账号错误的可选自动操作。
+能力包括 provider 过滤、worker 数量限制、重试/超时、抽样、按用量阈值判断、进度/状态/日志/结果快照、暂停/继续/停止控制、手动操作，以及对额度耗尽、额度恢复、账号错误的可选自动操作。Antigravity 和 xAI 还支持可选深度探测。
 
 配额刷新任务复用同一调度器，以 25 个 worker 处理请求 provider 的启用凭证，禁用抽样、深度探测和自动账号操作，最长可运行 6 小时。瞬时网络错误、HTTP 408/425/429 和 5xx 使用带抖动的指数退避；Antigravity 套餐查询失败不会用未知套餐覆盖已有配额缓存。
 
@@ -192,10 +219,13 @@ https://github.com/kkkk24juastin/CLIProxyAPI-Pro
 ## 目录结构
 
 - `Dockerfile` — 下载 upstream CLIProxyAPI，应用定制层，并构建最终镜像。
+- `Dockerfile.runtime` — GitHub Actions 使用预构建 Linux 二进制组装运行时镜像。
+- `QUOTA_PROVIDER.md` — QuotaProvider 插件协议和兼容策略。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
 - `embeddedusage/` — 内嵌 SQLite usage service 和 management routes。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。
 - `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
+- 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放巡检、路由保护、登录清理及全局回调。
 - `patches/routing_policy.go` — 注入统一路由配置和请求状态保护 handlers、usage plugin 与自动解除任务。
 - `patches/routing_protection_config.go` — 注入 `routing.request-protection` 配置类型。
 - `.github/workflows/release-core.yml` — 多架构镜像和 `management.html` 发布、测试门禁及 workflow 清理。
@@ -218,9 +248,9 @@ docker build -t cliproxyapi-pro ./cliproxyapi-pro-core
 
 ```bash
 docker build \
-  --build-arg CLIPROXY_VERSION=v7.1.18 \
-  --build-arg CLIPROXY_BUILD_VERSION=v7.1.18-pro \
-  -t cliproxyapi-pro:v7.1.18-pro \
+  --build-arg CLIPROXY_VERSION=vX.Y.Z \
+  --build-arg CLIPROXY_BUILD_VERSION=vX.Y.Z-pro \
+  -t cliproxyapi-pro:vX.Y.Z-pro \
   ./cliproxyapi-pro-core
 ```
 
@@ -230,8 +260,12 @@ docker build \
 
 - `CLIPROXY_REPO` — upstream 仓库，默认 `router-for-me/CLIProxyAPI`。
 - `CLIPROXY_VERSION` — upstream release tag。为空时 Dockerfile 自动解析 latest release。
+- `CLIPROXY_COMMIT` — 可选 upstream commit SHA；设置后按该提交下载源码，同时保留 `CLIPROXY_VERSION` 作为版本标识。
 - `CLIPROXY_BUILD_VERSION` — 可选 runtime 版本号。为空时使用 `CLIPROXY_VERSION` 解析到的 upstream 版本。
+- `SOURCE_DATE_EPOCH` — 可选 Unix 时间戳，用于写入确定的构建时间；与不可变 upstream commit 一起设置可获得确定的 source binary。
 - `GITHUB_TOKEN` — 可选 GitHub API token。
+
+Release workflow 会从 Core、models 和定制层三个不可变提交中取最新时间作为 `SOURCE_DATE_EPOCH`。Core 归档统一规范文件顺序、时间戳、属主和权限，Go 构建同时启用 `-trimpath`。
 
 ## 运行时环境变量
 
@@ -265,6 +299,8 @@ usage-export-YYYYMMDD_HHMMSS.json
 usage-export-YYYYMMDD_HHMMSS.jsonl
 ```
 
+Docker WebDAV 自动恢复在过渡阶段固定调用 `/usage/import?allow_legacy=1`。带 manifest 的新备份仍会严格校验完整性；无 manifest 的旧版备份会强制导入，并在日志中明确记录正在使用未经完整性校验的兼容路径。管理 API 的普通导入仍默认拒绝无 manifest 文件。
+
 导入请求使用：
 
 ```text
@@ -288,7 +324,7 @@ Workflow：
 
 流程：
 
-1. 检查 upstream CLIProxyAPI 最新 release，并计算当前 Pro release tag，例如 `v7.1.18-pro`。
+1. 检查 upstream CLIProxyAPI 最新 release，并计算当前 Pro release tag，例如 `v<core-version>-pro`。
 2. 检查 upstream management 最新 release。
 3. 应用 core 补丁并运行全量 Go 测试，构建并推送 `linux/amd64` 和 `linux/arm64` Docker 镜像，tag 包括 `latest` 和 Pro release tag。
 4. 应用 management 定制层，运行定制测试、前端测试和 lint，再构建 `management.html`。
@@ -303,19 +339,13 @@ Workflow：
 
 ## 本地验证
 
-在 upstream checkout 中验证 embedded usage 包：
+使用仓库验证脚本检查干净的 upstream checkout。脚本会验证 source hash 预检、拒绝重复应用、相关 Go packages 和 server build：
 
 ```bash
-cp -R /path/to/CLIProxyAPI /tmp/cliproxy-check
-rm -rf /tmp/cliproxy-check/internal/embeddedusage
-cp -R cliproxyapi-pro-core/embeddedusage /tmp/cliproxy-check/internal/embeddedusage
-cp cliproxyapi-pro-core/patches/account_inspection_scheduler.go /tmp/account_inspection_scheduler.go
-SRC_ROOT=/tmp/cliproxy-check python3 cliproxyapi-pro-core/patches/apply_upstream_patches.py
-go -C /tmp/cliproxy-check mod tidy
-go -C /tmp/cliproxy-check test ./internal/embeddedusage/...
+bash scripts/validation/core.sh /path/to/clean/CLIProxyAPI
 ```
 
-验证 entrypoint 语法：
+仅验证 entrypoint 语法：
 
 ```bash
 sh -n cliproxyapi-pro-core/entrypoint.sh

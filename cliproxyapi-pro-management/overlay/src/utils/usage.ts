@@ -100,6 +100,7 @@ export interface UsageTokens {
   cache_creation_tokens?: number;
   cache_tokens?: number;
   cache_write_tokens?: number;
+  cache_input_tokens?: number;
   total_tokens?: number;
 }
 
@@ -328,6 +329,7 @@ const readTokens = (detail: Record<string, unknown>): UsageTokens => {
     cache_creation_tokens: cacheCreationTokens,
     cache_tokens: toFiniteNumber(tokensRaw.cache_tokens) || cacheReadTokens + cacheCreationTokens,
     cache_write_tokens: toFiniteNumber(tokensRaw.cache_write_tokens),
+    cache_input_tokens: toFiniteNumber(tokensRaw.cache_input_tokens),
     total_tokens: toFiniteNumber(tokensRaw.total_tokens),
   };
 };

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,20 +40,21 @@ type UsageResetResult struct {
 }
 
 type UsageEventQueryOptions struct {
-	SnapshotMaxID   int64
-	BeforeTimestamp int64
-	BeforeID        int64
-	FromMS          int64
-	ToMS            int64
-	Provider        string
-	Model           string
-	AuthIndex       string
-	APIKeyHash      string
-	Failed          *bool
-	Search          string
-	Limit           int
-	MatchedTotal    int64
-	SkipCount       bool
+	SnapshotMaxID     int64
+	BeforeTimestamp   int64
+	BeforeID          int64
+	FromMS            int64
+	ToMS              int64
+	Provider          string
+	Model             string
+	AuthIndex         string
+	SearchAuthIndexes string
+	APIKeyHash        string
+	Failed            *bool
+	Search            string
+	Limit             int
+	MatchedTotal      int64
+	SkipCount         bool
 }
 
 type UsageEventQueryPage struct {
@@ -77,6 +80,7 @@ type UsageAggregateBucket struct {
 	OutputTokens     int64   `json:"outputTokens"`
 	ReasoningTokens  int64   `json:"reasoningTokens"`
 	CacheTokens      int64   `json:"cacheTokens"`
+	CacheInputTokens int64   `json:"cacheInputTokens"`
 	CacheReadTokens  int64   `json:"cacheReadTokens"`
 	CacheWriteTokens int64   `json:"cacheWriteTokens"`
 	EstimatedCost    float64 `json:"estimatedCost"`
@@ -92,6 +96,71 @@ type UsageAggregateOptions struct {
 	Limit                 int
 	APIKeyHash            string
 	TimezoneOffsetMinutes int
+}
+
+type AccountUsageDayStat struct {
+	BucketStartMS int64   `json:"bucketStartMs"`
+	Requests      int64   `json:"requests"`
+	Tokens        int64   `json:"tokens"`
+	EstimatedCost float64 `json:"estimatedCost"`
+}
+
+type AccountUsageModelStat struct {
+	Model           string  `json:"model"`
+	Requests        int64   `json:"requests"`
+	Tokens          int64   `json:"tokens"`
+	InputTokens     int64   `json:"inputTokens"`
+	OutputTokens    int64   `json:"outputTokens"`
+	ReasoningTokens int64   `json:"reasoningTokens"`
+	CacheTokens     int64   `json:"cacheTokens"`
+	EstimatedCost   float64 `json:"estimatedCost"`
+}
+
+type AccountUsageAPIKeyStat struct {
+	APIKeyHash    string  `json:"apiKeyHash"`
+	Requests      int64   `json:"requests"`
+	Tokens        int64   `json:"tokens"`
+	EstimatedCost float64 `json:"estimatedCost"`
+}
+
+type AccountUsageDetail struct {
+	AuthIndex         string                   `json:"authIndex"`
+	PeriodDays        int                      `json:"periodDays"`
+	FromMS            int64                    `json:"fromMs"`
+	ToMS              int64                    `json:"toMs"`
+	ActiveDays        int64                    `json:"activeDays"`
+	TotalRequests     int64                    `json:"totalRequests"`
+	SuccessCount      int64                    `json:"successCount"`
+	FailureCount      int64                    `json:"failureCount"`
+	TotalTokens       int64                    `json:"totalTokens"`
+	InputTokens       int64                    `json:"inputTokens"`
+	OutputTokens      int64                    `json:"outputTokens"`
+	ReasoningTokens   int64                    `json:"reasoningTokens"`
+	CacheTokens       int64                    `json:"cacheTokens"`
+	CacheHitRequests  int64                    `json:"cacheHitRequests"`
+	EstimatedCost     float64                  `json:"estimatedCost"`
+	PricedRequests    int64                    `json:"pricedRequests"`
+	AverageLatencyMS  *int64                   `json:"averageLatencyMs,omitempty"`
+	LatencySamples    int64                    `json:"latencySamples"`
+	AverageTTFTMS     *int64                   `json:"averageTtftMs,omitempty"`
+	TTFTSamples       int64                    `json:"ttftSamples"`
+	P95LatencyMS      *int64                   `json:"p95LatencyMs,omitempty"`
+	RetryAttempts     int64                    `json:"retryAttempts"`
+	RetrySamples      int64                    `json:"retrySamples"`
+	StreamRequests    int64                    `json:"streamRequests"`
+	Today             AccountUsageDayStat      `json:"today"`
+	HighestCostDay    *AccountUsageDayStat     `json:"highestCostDay,omitempty"`
+	HighestRequestDay *AccountUsageDayStat     `json:"highestRequestDay,omitempty"`
+	History           []AccountUsageDayStat    `json:"history"`
+	Models            []AccountUsageModelStat  `json:"models"`
+	APIKeys           []AccountUsageAPIKeyStat `json:"apiKeys"`
+}
+
+type AccountUsageOptions struct {
+	AuthIndex             string
+	Days                  int
+	TimezoneOffsetMinutes int
+	NowMS                 int64
 }
 
 type DeadLetterSample struct {
@@ -226,9 +295,26 @@ const monitoringSettingsExportRecordType = "monitoring_settings"
 const routingCursorExportRecordType = "routing_cursor_state"
 const authRuntimeStatsExportRecordType = "auth_runtime_stats"
 
+type sqlQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type usageExportSnapshot struct {
+	Events           []internalusage.Event
+	Prices           map[string]ModelPrice
+	PriceRules       []ModelPriceRule
+	QuotaEntries     []QuotaCacheEntry
+	RoutingCursors   []RoutingCursorState
+	AuthRuntimeStats []AuthRuntimeStats
+	Settings         MonitoringSettings
+	ExportedAt       int64
+}
+
 type Store struct {
 	db           *sql.DB
 	quotaCacheMu sync.Mutex
+	usageWriteMu sync.Mutex
 	summaryMu    sync.RWMutex
 	summaryCache *cachedUsageSummary
 	eventMu      sync.Mutex
@@ -312,6 +398,11 @@ func (s *Store) init() error {
 			cache_read_tokens integer not null default 0,
 			cache_write_tokens integer not null default 0,
 			total_tokens integer not null default 0,
+			accounting_version integer not null default 0,
+			accounting_quality text not null default '',
+			uncached_input_tokens integer not null default 0,
+			unclassified_tokens integer not null default 0,
+			token_breakdown_json text,
 			latency_ms integer,
 			ttft_ms integer,
 			status_code integer,
@@ -319,6 +410,7 @@ func (s *Store) init() error {
 			error_message text,
 			upstream_request_id text,
 			retry_after text,
+			attempt_index integer,
 			stream integer not null default 0,
 			reasoning_effort text,
 			service_tier text,
@@ -337,6 +429,7 @@ func (s *Store) init() error {
 		`create index if not exists idx_usage_events_model_recent on usage_events(model, timestamp_ms desc, id desc)`,
 		`create index if not exists idx_usage_events_failed_recent on usage_events(failed, timestamp_ms desc, id desc)`,
 		`create index if not exists idx_usage_events_auth_index on usage_events(auth_index)`,
+		`create index if not exists idx_usage_events_auth_index_timestamp on usage_events(auth_index, timestamp_ms, id)`,
 		`create index if not exists idx_usage_events_api_key_timestamp on usage_events(api_key_hash, timestamp_ms)`,
 		`create index if not exists idx_usage_events_api_key_recent on usage_events(api_key_hash, timestamp_ms desc, id desc)`,
 		`create table if not exists usage_summary (
@@ -444,6 +537,7 @@ func (s *Store) init() error {
 		`alter table usage_events add column error_message text`,
 		`alter table usage_events add column upstream_request_id text`,
 		`alter table usage_events add column retry_after text`,
+		`alter table usage_events add column attempt_index integer`,
 		`alter table usage_events add column stream integer not null default 0`,
 		`alter table usage_events add column reasoning_effort text`,
 		`alter table usage_events add column service_tier text`,
@@ -451,6 +545,11 @@ func (s *Store) init() error {
 		`alter table usage_events add column alias text`,
 		`alter table usage_events add column cache_read_tokens integer not null default 0`,
 		`alter table usage_events add column cache_write_tokens integer not null default 0`,
+		`alter table usage_events add column accounting_version integer not null default 0`,
+		`alter table usage_events add column accounting_quality text not null default ''`,
+		`alter table usage_events add column uncached_input_tokens integer not null default 0`,
+		`alter table usage_events add column unclassified_tokens integer not null default 0`,
+		`alter table usage_events add column token_breakdown_json text`,
 		`alter table usage_events add column estimated_cost real`,
 		`alter table usage_events add column price_rule_id integer`,
 		`alter table usage_events add column cost_breakdown_json text`,
@@ -471,16 +570,160 @@ func (s *Store) init() error {
 		('quota_cache', 1, 0), ('auth_runtime_stats', 1, 0), ('routing_cursor_state', 1, 0)`); err != nil {
 		return err
 	}
+	migratedAccounting, err := s.migrateTokenAccounting(context.Background())
+	if err != nil {
+		return err
+	}
 	if err := s.migrateLegacyModelPrices(context.Background()); err != nil {
 		return err
 	}
 	if err := s.migrateProviderBoundModelPriceRules(context.Background()); err != nil {
 		return err
 	}
+	if migratedAccounting > 0 {
+		if _, err := s.RecalculateEventCosts(context.Background(), true); err != nil {
+			return err
+		}
+		return s.rebuildUsageSummary(context.Background())
+	}
 	return s.ensureUsageSummary()
 }
 
+func (s *Store) migrateTokenAccounting(ctx context.Context) (int64, error) {
+	type migrationItem struct {
+		id      int64
+		event   internalusage.Event
+		rawJSON string
+	}
+	const batchSize = 1000
+	var migrated, lastID int64
+	for {
+		rows, err := s.db.QueryContext(ctx, `select
+			id, coalesce(provider, ''), coalesce(executor_type, ''),
+			input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens,
+			cache_read_tokens, cache_write_tokens, total_tokens, coalesce(raw_json, '')
+			from usage_events where accounting_version < 2 and id > ? order by id limit ?`, lastID, batchSize)
+		if err != nil {
+			return migrated, err
+		}
+		items := make([]migrationItem, 0, batchSize)
+		for rows.Next() {
+			var item migrationItem
+			if err := rows.Scan(
+				&item.id, &item.event.Provider, &item.event.ExecutorType,
+				&item.event.InputTokens, &item.event.OutputTokens, &item.event.ReasoningTokens,
+				&item.event.CachedTokens, &item.event.CacheTokens, &item.event.CacheReadTokens,
+				&item.event.CacheWriteTokens, &item.event.TotalTokens, &item.rawJSON,
+			); err != nil {
+				_ = rows.Close()
+				return migrated, err
+			}
+			items = append(items, item)
+		}
+		rowsErr := rows.Err()
+		if err := rows.Close(); err != nil {
+			return migrated, err
+		}
+		if rowsErr != nil {
+			return migrated, rowsErr
+		}
+		if len(items) == 0 {
+			return migrated, nil
+		}
+
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return migrated, err
+		}
+		stmt, err := tx.PrepareContext(ctx, `update usage_events set
+			input_tokens = ?, output_tokens = ?, reasoning_tokens = ?, cached_tokens = ?, cache_tokens = ?,
+			cache_read_tokens = ?, cache_write_tokens = ?, total_tokens = ?, accounting_version = ?,
+			accounting_quality = ?, uncached_input_tokens = ?, unclassified_tokens = ?, token_breakdown_json = ?,
+			estimated_cost = null, price_rule_id = null, cost_breakdown_json = null
+			where id = ?`)
+		if err != nil {
+			_ = tx.Rollback()
+			return migrated, err
+		}
+		for _, item := range items {
+			normalized := internalusage.NormalizeEventAccounting(item.event)
+			if item.rawJSON != "" {
+				if parsed, parseErr := internalusage.NormalizeRaw([]byte(item.rawJSON)); parseErr == nil {
+					normalized = parsed
+				}
+			}
+			breakdownJSON, err := marshalTokenBreakdown(normalized)
+			if err != nil {
+				_ = stmt.Close()
+				_ = tx.Rollback()
+				return migrated, err
+			}
+			if _, err := stmt.ExecContext(ctx,
+				normalized.InputTokens, normalized.OutputTokens, normalized.ReasoningTokens,
+				normalized.CachedTokens, normalized.CacheTokens, normalized.CacheReadTokens,
+				normalized.CacheWriteTokens, normalized.TotalTokens, normalized.AccountingVersion,
+				normalized.AccountingQuality, normalized.UncachedInputTokens, normalized.UnclassifiedTokens,
+				nullString(breakdownJSON), item.id,
+			); err != nil {
+				_ = stmt.Close()
+				_ = tx.Rollback()
+				return migrated, err
+			}
+		}
+		if err := stmt.Close(); err != nil {
+			_ = tx.Rollback()
+			return migrated, err
+		}
+		if err := tx.Commit(); err != nil {
+			return migrated, err
+		}
+		migrated += int64(len(items))
+		lastID = items[len(items)-1].id
+	}
+}
+
+func marshalTokenBreakdown(event internalusage.Event) (string, error) {
+	if !event.TokenBreakdown.Valid() {
+		return "", nil
+	}
+	raw, err := json.Marshal(event.TokenBreakdown)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
 func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) (InsertResult, error) {
+	s.usageWriteMu.Lock()
+	defer s.usageWriteMu.Unlock()
+	return s.insertEvents(ctx, events)
+}
+
+func (s *Store) InsertLiveEvents(ctx context.Context, events []internalusage.Event) (InsertResult, error) {
+	s.usageWriteMu.Lock()
+	defer s.usageWriteMu.Unlock()
+	if len(events) == 0 {
+		return InsertResult{}, nil
+	}
+	snapshot, err := s.readUsageSummarySnapshot(ctx)
+	if err != nil {
+		return InsertResult{}, err
+	}
+	filtered := make([]internalusage.Event, 0, len(events))
+	skipped := 0
+	for _, event := range events {
+		if snapshot.State.ResetAtMS > 0 && event.TimestampMS <= snapshot.State.ResetAtMS {
+			skipped++
+			continue
+		}
+		filtered = append(filtered, event)
+	}
+	result, err := s.insertEvents(ctx, filtered)
+	result.Skipped += skipped
+	return result, err
+}
+
+func (s *Store) insertEvents(ctx context.Context, events []internalusage.Event) (InsertResult, error) {
 	if len(events) == 0 {
 		return InsertResult{}, nil
 	}
@@ -498,9 +741,10 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 		request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
+		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return InsertResult{}, err
 	}
@@ -510,6 +754,11 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 	summaryDelta := UsageSummary{}
 	latestInsertedID := int64(0)
 	for _, event := range events {
+		event = internalusage.NormalizeEventAccounting(event)
+		breakdownJSON, err := marshalTokenBreakdown(event)
+		if err != nil {
+			return InsertResult{}, err
+		}
 		if event.EstimatedCost == nil {
 			if rule, ok := findModelPriceRule(rules, event.Provider, event.Model); ok {
 				cost, breakdown := evaluateEventCost(event, rule)
@@ -529,7 +778,8 @@ func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) 
 			nullString(event.Provider), nullString(event.ExecutorType), event.Model, nullString(event.Alias), nullString(event.Endpoint), nullString(event.Method), nullString(event.Path),
 			nullString(event.AuthType), nullString(event.AuthIndex), nullString(event.Source), nullString(event.SourceHash), nullString(event.APIKeyHash),
 			event.InputTokens, event.OutputTokens, event.ReasoningTokens, event.CachedTokens, event.CacheTokens, event.CacheReadTokens, event.CacheWriteTokens, event.TotalTokens,
-			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.UpstreamRequestID), nullString(event.RetryAfter), boolToInt(event.Stream), nullString(event.ReasoningEffort), nullString(event.ServiceTier),
+			event.AccountingVersion, nullString(event.AccountingQuality), event.UncachedInputTokens, event.UnclassifiedTokens, nullString(breakdownJSON),
+			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.UpstreamRequestID), nullString(event.RetryAfter), nullInt64(event.AttemptIndex), boolToInt(event.Stream), nullString(event.ReasoningEffort), nullString(event.ServiceTier),
 			nullFloat64(event.EstimatedCost), nullPositiveInt64(event.PriceRuleID), nullString(event.CostBreakdownJSON), failed, nullString(event.RawJSON), event.CreatedAtMS,
 		)
 		if err != nil {
@@ -712,9 +962,9 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 	for rows.Next() {
 		var event internalusage.Event
 		var requestID, provider, executorType, alias, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, rawJSON sql.NullString
-		var latency, ttft sql.NullInt64
+		var latency, ttft, attemptIndex sql.NullInt64
 		var statusCode sql.NullInt64
-		var errorCode, errorMessage, upstreamRequestID, retryAfter, reasoningEffort, serviceTier, costBreakdown sql.NullString
+		var errorCode, errorMessage, upstreamRequestID, retryAfter, reasoningEffort, serviceTier, costBreakdown, accountingQuality, tokenBreakdownJSON sql.NullString
 		var estimatedCost sql.NullFloat64
 		var priceRuleID sql.NullInt64
 		var stream, failed int
@@ -722,7 +972,8 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 			&event.ID, &requestID, &event.EventHash, &event.TimestampMS, &event.Timestamp, &provider, &executorType, &event.Model,
 			&alias, &endpoint, &method, &path, &authType, &authIndex, &source, &sourceHash, &apiKeyHash,
 			&event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheTokens, &event.CacheReadTokens, &event.CacheWriteTokens, &event.TotalTokens,
-			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &stream, &reasoningEffort, &serviceTier,
+			&event.AccountingVersion, &accountingQuality, &event.UncachedInputTokens, &event.UnclassifiedTokens, &tokenBreakdownJSON,
+			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &attemptIndex, &stream, &reasoningEffort, &serviceTier,
 			&estimatedCost, &priceRuleID, &costBreakdown, &failed, &rawJSON, &event.CreatedAtMS,
 		); err != nil {
 			return nil, err
@@ -757,6 +1008,10 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		event.ErrorMessage = errorMessage.String
 		event.UpstreamRequestID = upstreamRequestID.String
 		event.RetryAfter = retryAfter.String
+		if attemptIndex.Valid {
+			value := attemptIndex.Int64
+			event.AttemptIndex = &value
+		}
 		event.Stream = stream != 0
 		event.ReasoningEffort = reasoningEffort.String
 		event.ServiceTier = serviceTier.String
@@ -766,20 +1021,29 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		}
 		event.PriceRuleID = priceRuleID.Int64
 		event.CostBreakdownJSON = costBreakdown.String
+		event.AccountingQuality = accountingQuality.String
+		if tokenBreakdownJSON.String != "" {
+			_ = json.Unmarshal([]byte(tokenBreakdownJSON.String), &event.TokenBreakdown)
+		}
 		events = append(events, event)
 	}
 	return events, rows.Err()
 }
 
 func (s *Store) RecentEvents(ctx context.Context, limit int) ([]internalusage.Event, error) {
+	return s.recentEventsFrom(ctx, s.db, limit)
+}
+
+func (s *Store) recentEventsFrom(ctx context.Context, queryer sqlQueryer, limit int) ([]internalusage.Event, error) {
 	if limit <= 0 {
 		limit = 50000
 	}
-	rows, err := s.db.QueryContext(ctx, `select
+	rows, err := queryer.QueryContext(ctx, `select
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
+		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events indexed by idx_usage_events_recent
 		order by timestamp_ms desc, id desc
@@ -799,7 +1063,8 @@ func (s *Store) EventsAfter(ctx context.Context, afterID int64, limit int) ([]in
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
+		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events
 		where id > ?
@@ -857,12 +1122,14 @@ func appendUsageEventQueryFilters(options UsageEventQueryOptions, includeCursor 
 		wheres = append(wheres, `failed = ?`)
 		args = append(args, failed)
 	}
+	searchPredicates := make([]string, 0, 2)
+	searchArgs := make([]any, 0, 101)
 	if value := strings.ToLower(strings.TrimSpace(options.Search)); value != "" {
 		searchRunes := []rune(value)
 		if len(searchRunes) > 200 {
 			value = string(searchRunes[:200])
 		}
-		wheres = append(wheres, `instr(lower(
+		searchPredicates = append(searchPredicates, `instr(lower(
 			coalesce(request_id, '') || char(10) || coalesce(provider, '') || char(10) ||
 			coalesce(executor_type, '') || char(10) || coalesce(model, '') || char(10) ||
 			coalesce(alias, '') || char(10) || coalesce(endpoint, '') || char(10) ||
@@ -872,7 +1139,17 @@ func appendUsageEventQueryFilters(options UsageEventQueryOptions, includeCursor 
 			coalesce(api_key_hash, '') || char(10) || coalesce(error_code, '') || char(10) ||
 			coalesce(error_message, '') || char(10) || coalesce(upstream_request_id, '')
 		), ?) > 0`)
-		args = append(args, value)
+		searchArgs = append(searchArgs, value)
+	}
+	if values := splitUsageEventFilterValues(options.SearchAuthIndexes, 100); len(values) > 0 {
+		searchPredicates = append(searchPredicates, `auth_index in (`+strings.TrimRight(strings.Repeat("?,", len(values)), ",")+`)`)
+		for _, value := range values {
+			searchArgs = append(searchArgs, value)
+		}
+	}
+	if len(searchPredicates) > 0 {
+		wheres = append(wheres, `(`+strings.Join(searchPredicates, ` or `)+`)`)
+		args = append(args, searchArgs...)
 	}
 	return wheres, args
 }
@@ -923,7 +1200,8 @@ func (s *Store) QueryEvents(ctx context.Context, options UsageEventQueryOptions)
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
+		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
 		from usage_events` + usageEventQueryWhere(queryWheres) + `
 		order by timestamp_ms desc, id desc
@@ -1160,9 +1438,10 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 		`coalesce(sum(input_tokens), 0) as input_tokens`,
 		`coalesce(sum(output_tokens), 0) as output_tokens`,
 		`coalesce(sum(reasoning_tokens), 0) as reasoning_tokens`,
-		`coalesce(sum(max(cached_tokens, cache_tokens)), 0) as cache_tokens`,
-		`coalesce(sum(cache_read_tokens), 0) as cache_read_tokens`,
-		`coalesce(sum(cache_write_tokens), 0) as cache_write_tokens`,
+		`coalesce(sum(case when accounting_quality = 'complete' then cache_read_tokens else 0 end), 0) as cache_tokens`,
+		`coalesce(sum(case when accounting_quality = 'complete' then input_tokens else 0 end), 0) as cache_input_tokens`,
+		`coalesce(sum(case when accounting_quality = 'complete' then cache_read_tokens else 0 end), 0) as cache_read_tokens`,
+		`coalesce(sum(case when accounting_quality = 'complete' then cache_write_tokens else 0 end), 0) as cache_write_tokens`,
 		`coalesce(sum(estimated_cost), 0) as estimated_cost`,
 		`cast(avg(latency_ms) as integer) as avg_latency_ms`,
 		`cast(avg(ttft_ms) as integer) as avg_ttft_ms`,
@@ -1205,7 +1484,7 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 			}
 		}
 		var avgLatency, avgTTFT sql.NullInt64
-		dest = append(dest, &bucket.TotalRequests, &bucket.SuccessCount, &bucket.FailureCount, &bucket.TotalTokens, &bucket.InputTokens, &bucket.OutputTokens, &bucket.ReasoningTokens, &bucket.CacheTokens, &bucket.CacheReadTokens, &bucket.CacheWriteTokens, &bucket.EstimatedCost, &avgLatency, &avgTTFT, &bucket.LastSeenAtMS)
+		dest = append(dest, &bucket.TotalRequests, &bucket.SuccessCount, &bucket.FailureCount, &bucket.TotalTokens, &bucket.InputTokens, &bucket.OutputTokens, &bucket.ReasoningTokens, &bucket.CacheTokens, &bucket.CacheInputTokens, &bucket.CacheReadTokens, &bucket.CacheWriteTokens, &bucket.EstimatedCost, &avgLatency, &avgTTFT, &bucket.LastSeenAtMS)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
@@ -1236,6 +1515,195 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 		buckets = append(buckets, bucket)
 	}
 	return buckets, rows.Err()
+}
+
+func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (AccountUsageDetail, error) {
+	authIndex := strings.TrimSpace(options.AuthIndex)
+	if authIndex == "" {
+		return AccountUsageDetail{}, fmt.Errorf("auth_index is required")
+	}
+	if options.Days != 0 && options.Days != 7 && options.Days != 30 && options.Days != 90 {
+		return AccountUsageDetail{}, fmt.Errorf("days must be one of 0, 7, 30, or 90")
+	}
+	if options.TimezoneOffsetMinutes < -14*60 || options.TimezoneOffsetMinutes > 14*60 {
+		return AccountUsageDetail{}, fmt.Errorf("timezone offset is out of range")
+	}
+	nowMS := options.NowMS
+	if nowMS <= 0 {
+		nowMS = time.Now().UnixMilli()
+	}
+	const dayMS = int64(24 * time.Hour / time.Millisecond)
+	offsetMS := int64(options.TimezoneOffsetMinutes) * int64(time.Minute/time.Millisecond)
+	todayStartMS := ((nowMS + offsetMS) / dayMS * dayMS) - offsetMS
+	fromMS := int64(0)
+	if options.Days > 0 {
+		fromMS = todayStartMS - int64(options.Days-1)*dayMS
+	}
+
+	detail := AccountUsageDetail{
+		AuthIndex:  authIndex,
+		PeriodDays: options.Days,
+		FromMS:     fromMS,
+		ToMS:       nowMS,
+		Today:      AccountUsageDayStat{BucketStartMS: todayStartMS},
+		History:    []AccountUsageDayStat{},
+		Models:     []AccountUsageModelStat{},
+		APIKeys:    []AccountUsageAPIKeyStat{},
+	}
+	where := `auth_index = ? and timestamp_ms <= ?`
+	args := []any{authIndex, nowMS}
+	if fromMS > 0 {
+		where += ` and timestamp_ms >= ?`
+		args = append(args, fromMS)
+	}
+
+	var avgLatency, avgTTFT sql.NullInt64
+	summaryQuery := `select
+		count(*),
+		coalesce(sum(case when failed = 0 then 1 else 0 end), 0),
+		coalesce(sum(case when failed != 0 then 1 else 0 end), 0),
+		coalesce(sum(total_tokens), 0),
+		coalesce(sum(input_tokens), 0),
+		coalesce(sum(output_tokens), 0),
+		coalesce(sum(reasoning_tokens), 0),
+		coalesce(sum(case when accounting_quality = 'complete' then cache_read_tokens else 0 end), 0),
+		coalesce(sum(case when accounting_quality = 'complete' and cache_read_tokens > 0 then 1 else 0 end), 0),
+		coalesce(sum(estimated_cost), 0),
+		coalesce(sum(case when estimated_cost is not null then 1 else 0 end), 0),
+		cast(avg(latency_ms) as integer),
+		coalesce(sum(case when latency_ms is not null then 1 else 0 end), 0),
+		cast(avg(ttft_ms) as integer),
+		coalesce(sum(case when ttft_ms is not null then 1 else 0 end), 0),
+		coalesce(sum(case when attempt_index > 0 then 1 else 0 end), 0),
+		coalesce(sum(case when attempt_index is not null then 1 else 0 end), 0),
+		coalesce(sum(case when stream != 0 then 1 else 0 end), 0)
+		from usage_events where ` + where
+	if err := s.db.QueryRowContext(ctx, summaryQuery, args...).Scan(
+		&detail.TotalRequests,
+		&detail.SuccessCount,
+		&detail.FailureCount,
+		&detail.TotalTokens,
+		&detail.InputTokens,
+		&detail.OutputTokens,
+		&detail.ReasoningTokens,
+		&detail.CacheTokens,
+		&detail.CacheHitRequests,
+		&detail.EstimatedCost,
+		&detail.PricedRequests,
+		&avgLatency,
+		&detail.LatencySamples,
+		&avgTTFT,
+		&detail.TTFTSamples,
+		&detail.RetryAttempts,
+		&detail.RetrySamples,
+		&detail.StreamRequests,
+	); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	if avgLatency.Valid {
+		value := avgLatency.Int64
+		detail.AverageLatencyMS = &value
+	}
+	if avgTTFT.Valid {
+		value := avgTTFT.Int64
+		detail.AverageTTFTMS = &value
+	}
+	if detail.LatencySamples > 0 {
+		offset := int64(math.Ceil(float64(detail.LatencySamples)*0.95)) - 1
+		p95Args := append(append([]any{}, args...), 1, offset)
+		query := `select latency_ms from usage_events where ` + where + ` and latency_ms is not null order by latency_ms asc limit ? offset ?`
+		var p95 int64
+		if err := s.db.QueryRowContext(ctx, query, p95Args...).Scan(&p95); err != nil {
+			return AccountUsageDetail{}, err
+		}
+		detail.P95LatencyMS = &p95
+	}
+
+	dayQuery := `select
+		((timestamp_ms + ?) / ?) * ? - ? as bucket_start_ms,
+		count(*),
+		coalesce(sum(total_tokens), 0),
+		coalesce(sum(estimated_cost), 0)
+		from usage_events where ` + where + ` group by bucket_start_ms order by bucket_start_ms asc`
+	dayArgs := append([]any{offsetMS, dayMS, dayMS, offsetMS}, args...)
+	dayRows, err := s.db.QueryContext(ctx, dayQuery, dayArgs...)
+	if err != nil {
+		return AccountUsageDetail{}, err
+	}
+	for dayRows.Next() {
+		var day AccountUsageDayStat
+		if err := dayRows.Scan(&day.BucketStartMS, &day.Requests, &day.Tokens, &day.EstimatedCost); err != nil {
+			_ = dayRows.Close()
+			return AccountUsageDetail{}, err
+		}
+		detail.History = append(detail.History, day)
+		if day.BucketStartMS == todayStartMS {
+			detail.Today = day
+		}
+		if detail.HighestCostDay == nil || day.EstimatedCost > detail.HighestCostDay.EstimatedCost ||
+			(day.EstimatedCost == detail.HighestCostDay.EstimatedCost && day.Requests > detail.HighestCostDay.Requests) {
+			copyDay := day
+			detail.HighestCostDay = &copyDay
+		}
+		if detail.HighestRequestDay == nil || day.Requests > detail.HighestRequestDay.Requests ||
+			(day.Requests == detail.HighestRequestDay.Requests && day.EstimatedCost > detail.HighestRequestDay.EstimatedCost) {
+			copyDay := day
+			detail.HighestRequestDay = &copyDay
+		}
+	}
+	if err := dayRows.Close(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	if err := dayRows.Err(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	detail.ActiveDays = int64(len(detail.History))
+
+	modelQuery := `select
+		coalesce(nullif(model, ''), '-'), count(*), coalesce(sum(total_tokens), 0),
+		coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0), coalesce(sum(reasoning_tokens), 0),
+		coalesce(sum(case when accounting_quality = 'complete' then cache_read_tokens else 0 end), 0), coalesce(sum(estimated_cost), 0)
+		from usage_events where ` + where + ` group by model order by count(*) desc, model asc`
+	modelRows, err := s.db.QueryContext(ctx, modelQuery, args...)
+	if err != nil {
+		return AccountUsageDetail{}, err
+	}
+	for modelRows.Next() {
+		var item AccountUsageModelStat
+		if err := modelRows.Scan(&item.Model, &item.Requests, &item.Tokens, &item.InputTokens, &item.OutputTokens, &item.ReasoningTokens, &item.CacheTokens, &item.EstimatedCost); err != nil {
+			_ = modelRows.Close()
+			return AccountUsageDetail{}, err
+		}
+		detail.Models = append(detail.Models, item)
+	}
+	if err := modelRows.Close(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	if err := modelRows.Err(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+
+	keyQuery := `select coalesce(api_key_hash, ''), count(*), coalesce(sum(total_tokens), 0), coalesce(sum(estimated_cost), 0)
+		from usage_events where ` + where + ` group by api_key_hash order by count(*) desc, api_key_hash asc`
+	keyRows, err := s.db.QueryContext(ctx, keyQuery, args...)
+	if err != nil {
+		return AccountUsageDetail{}, err
+	}
+	for keyRows.Next() {
+		var item AccountUsageAPIKeyStat
+		if err := keyRows.Scan(&item.APIKeyHash, &item.Requests, &item.Tokens, &item.EstimatedCost); err != nil {
+			_ = keyRows.Close()
+			return AccountUsageDetail{}, err
+		}
+		detail.APIKeys = append(detail.APIKeys, item)
+	}
+	if err := keyRows.Close(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	if err := keyRows.Err(); err != nil {
+		return AccountUsageDetail{}, err
+	}
+	return detail, nil
 }
 
 func aggregateIntervalMS(interval string) int64 {
@@ -1284,32 +1752,52 @@ func isDuplicateColumnError(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "duplicate column")
 }
 
+func (s *Store) readUsageExportSnapshot(ctx context.Context, afterEventsRead func()) (usageExportSnapshot, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return usageExportSnapshot{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	snapshot := usageExportSnapshot{ExportedAt: time.Now().UnixMilli()}
+	snapshot.Events, err = s.recentEventsFrom(ctx, tx, 0)
+	if err != nil {
+		return usageExportSnapshot{}, err
+	}
+	if afterEventsRead != nil {
+		afterEventsRead()
+	}
+	snapshot.Prices, err = getModelPricesFrom(ctx, tx, false)
+	if err != nil {
+		return usageExportSnapshot{}, err
+	}
+	snapshot.PriceRules, err = activeModelPriceRulesFrom(ctx, tx, false)
+	if err != nil {
+		return usageExportSnapshot{}, err
+	}
+	snapshot.QuotaEntries, err = getQuotaCacheFrom(ctx, tx, "", "")
+	if err != nil {
+		return usageExportSnapshot{}, err
+	}
+	snapshot.RoutingCursors, err = listRoutingCursorStatesFrom(ctx, tx)
+	if err != nil {
+		return usageExportSnapshot{}, err
+	}
+	snapshot.AuthRuntimeStats, err = listAuthRuntimeStatsFrom(ctx, tx)
+	if err != nil {
+		return usageExportSnapshot{}, err
+	}
+	snapshot.Settings, err = getMonitoringSettingsFrom(ctx, tx)
+	if err != nil {
+		return usageExportSnapshot{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return usageExportSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
 func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
-	events, err := s.RecentEvents(ctx, 0)
-	if err != nil {
-		return nil, err
-	}
-	prices, err := s.getModelPrices(ctx, false)
-	if err != nil {
-		return nil, err
-	}
-	priceRules, err := s.ActiveModelPriceRules(ctx)
-	if err != nil {
-		return nil, err
-	}
-	quotaEntries, err := s.GetQuotaCache(ctx, "", "")
-	if err != nil {
-		return nil, err
-	}
-	routingCursors, err := s.ListRoutingCursorStates(ctx)
-	if err != nil {
-		return nil, err
-	}
-	authRuntimeStats, err := s.ListAuthRuntimeStats(ctx)
-	if err != nil {
-		return nil, err
-	}
-	settings, err := s.GetMonitoringSettings(ctx)
+	snapshot, err := s.readUsageExportSnapshot(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1318,21 +1806,21 @@ func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
 	line, err := json.Marshal(monitoringSettingsExportRecord{
 		RecordType: monitoringSettingsExportRecordType,
 		Version:    1,
-		Settings:   settings,
-		ExportedAt: time.Now().UnixMilli(),
+		Settings:   snapshot.Settings,
+		ExportedAt: snapshot.ExportedAt,
 	})
 	if err != nil {
 		return nil, err
 	}
 	output = append(output, line...)
 	output = append(output, '\n')
-	if len(prices) > 0 || len(priceRules) > 0 {
+	if len(snapshot.Prices) > 0 || len(snapshot.PriceRules) > 0 {
 		line, err := json.Marshal(modelPricesExportRecord{
 			RecordType: modelPricesExportRecordType,
 			Version:    2,
-			Prices:     prices,
-			Rules:      priceRules,
-			ExportedAt: time.Now().UnixMilli(),
+			Prices:     snapshot.Prices,
+			Rules:      snapshot.PriceRules,
+			ExportedAt: snapshot.ExportedAt,
 		})
 		if err != nil {
 			return nil, err
@@ -1340,12 +1828,12 @@ func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
 		output = append(output, line...)
 		output = append(output, '\n')
 	}
-	if len(quotaEntries) > 0 {
+	if len(snapshot.QuotaEntries) > 0 {
 		line, err := json.Marshal(quotaCacheExportRecord{
 			RecordType: quotaCacheExportRecordType,
 			Version:    2,
-			Entries:    quotaEntries,
-			ExportedAt: time.Now().UnixMilli(),
+			Entries:    snapshot.QuotaEntries,
+			ExportedAt: snapshot.ExportedAt,
 		})
 		if err != nil {
 			return nil, err
@@ -1353,12 +1841,12 @@ func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
 		output = append(output, line...)
 		output = append(output, '\n')
 	}
-	if len(routingCursors) > 0 {
+	if len(snapshot.RoutingCursors) > 0 {
 		line, err := json.Marshal(routingCursorExportRecord{
 			RecordType: routingCursorExportRecordType,
 			Version:    1,
-			Items:      routingCursors,
-			ExportedAt: time.Now().UnixMilli(),
+			Items:      snapshot.RoutingCursors,
+			ExportedAt: snapshot.ExportedAt,
 		})
 		if err != nil {
 			return nil, err
@@ -1366,12 +1854,12 @@ func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
 		output = append(output, line...)
 		output = append(output, '\n')
 	}
-	if len(authRuntimeStats) > 0 {
+	if len(snapshot.AuthRuntimeStats) > 0 {
 		line, err := json.Marshal(authRuntimeStatsExportRecord{
 			RecordType: authRuntimeStatsExportRecordType,
 			Version:    1,
-			Items:      authRuntimeStats,
-			ExportedAt: time.Now().UnixMilli(),
+			Items:      snapshot.AuthRuntimeStats,
+			ExportedAt: snapshot.ExportedAt,
 		})
 		if err != nil {
 			return nil, err
@@ -1379,8 +1867,8 @@ func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
 		output = append(output, line...)
 		output = append(output, '\n')
 	}
-	for i := len(events) - 1; i >= 0; i-- {
-		event := events[i]
+	for i := len(snapshot.Events) - 1; i >= 0; i-- {
+		event := snapshot.Events[i]
 		event.RawJSON = ""
 		line, err := json.Marshal(event)
 		if err != nil {
@@ -1422,9 +1910,13 @@ func normalizeMonitoringSettings(settings MonitoringSettings) MonitoringSettings
 }
 
 func (s *Store) GetMonitoringSettings(ctx context.Context) (MonitoringSettings, error) {
+	return getMonitoringSettingsFrom(ctx, s.db)
+}
+
+func getMonitoringSettingsFrom(ctx context.Context, queryer sqlQueryer) (MonitoringSettings, error) {
 	settings := defaultMonitoringSettings()
 	var raw string
-	if err := s.db.QueryRowContext(ctx, `select settings_json from monitoring_settings where id = 1`).Scan(&raw); err != nil {
+	if err := queryer.QueryRowContext(ctx, `select settings_json from monitoring_settings where id = 1`).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return settings, nil
 		}
@@ -1451,6 +1943,8 @@ func (s *Store) DeleteEventsBefore(ctx context.Context, beforeMs int64) (int64, 
 	if beforeMs <= 0 {
 		return 0, nil
 	}
+	s.usageWriteMu.Lock()
+	defer s.usageWriteMu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -1512,6 +2006,8 @@ func (s *Store) DeleteEventsBefore(ctx context.Context, beforeMs int64) (int64, 
 }
 
 func (s *Store) ResetUsageStatistics(ctx context.Context) (UsageResetResult, error) {
+	s.usageWriteMu.Lock()
+	defer s.usageWriteMu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return UsageResetResult{}, err
@@ -1573,6 +2069,17 @@ func (s *Store) ApplyRetention(ctx context.Context, now time.Time) (int64, error
 }
 
 func (s *Store) GetQuotaCache(ctx context.Context, provider string, fileName string) ([]QuotaCacheEntry, error) {
+	entries, err := getQuotaCacheFrom(ctx, s.db, provider, fileName)
+	if err != nil {
+		return nil, err
+	}
+	if provider != "" || fileName != "" {
+		_ = s.touchQuotaCache(ctx, provider, fileName, time.Now().UnixMilli())
+	}
+	return entries, nil
+}
+
+func getQuotaCacheFrom(ctx context.Context, queryer sqlQueryer, provider string, fileName string) ([]QuotaCacheEntry, error) {
 	query := `select id, provider, file_name, auth_index, identity_fingerprint, data_json,
 		cached_at_ms, accessed_at_ms, observed_at_ms, stored_at_ms, version, revision from quota_cache`
 	args := []any{}
@@ -1589,7 +2096,7 @@ func (s *Store) GetQuotaCache(ctx context.Context, provider string, fileName str
 	}
 	query += " order by cached_at_ms desc"
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := queryer.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1608,9 +2115,6 @@ func (s *Store) GetQuotaCache(ctx context.Context, provider string, fileName str
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-	if provider != "" || fileName != "" {
-		_ = s.touchQuotaCache(ctx, provider, fileName, time.Now().UnixMilli())
 	}
 	return entries, nil
 }
@@ -1847,7 +2351,11 @@ func (s *Store) GetRoutingCursorState(ctx context.Context, cursorKey string) (Ro
 }
 
 func (s *Store) ListRoutingCursorStates(ctx context.Context) ([]RoutingCursorState, error) {
-	rows, err := s.db.QueryContext(ctx, `select cursor_key, last_auth_id, updated_at_ms from routing_cursor_state order by cursor_key`)
+	return listRoutingCursorStatesFrom(ctx, s.db)
+}
+
+func listRoutingCursorStatesFrom(ctx context.Context, queryer sqlQueryer) ([]RoutingCursorState, error) {
+	rows, err := queryer.QueryContext(ctx, `select cursor_key, last_auth_id, updated_at_ms from routing_cursor_state order by cursor_key`)
 	if err != nil {
 		return nil, err
 	}
@@ -1879,16 +2387,21 @@ func (s *Store) SetRoutingCursorState(ctx context.Context, state RoutingCursorSt
 }
 
 func (s *Store) ImportRoutingCursorStates(ctx context.Context, items []RoutingCursorState) (int, error) {
-	if len(items) == 0 {
-		return 0, nil
+	imported, _, err := s.ImportRuntimeState(ctx, items, nil)
+	return imported, err
+}
+
+func (s *Store) ImportRuntimeState(ctx context.Context, cursors []RoutingCursorState, stats []AuthRuntimeStats) (int, int, error) {
+	if len(cursors) == 0 && len(stats) == 0 {
+		return 0, 0, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	imported := 0
-	for _, item := range items {
+	importedCursors := 0
+	for _, item := range cursors {
 		item.CursorKey = strings.TrimSpace(item.CursorKey)
 		item.LastAuthID = strings.TrimSpace(item.LastAuthID)
 		if item.CursorKey == "" || item.LastAuthID == "" {
@@ -1901,18 +2414,36 @@ func (s *Store) ImportRoutingCursorStates(ctx context.Context, items []RoutingCu
 			on conflict(cursor_key) do update set last_auth_id = excluded.last_auth_id, updated_at_ms = excluded.updated_at_ms`,
 			item.CursorKey, item.LastAuthID, item.UpdatedAtMS)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if affected, _ := result.RowsAffected(); affected > 0 {
-			imported++
+			importedCursors++
 		}
 	}
-	if imported > 0 {
+	if importedCursors > 0 {
 		if err := bumpRuntimeGenerationTx(ctx, tx, "routing_cursor_state", time.Now().UnixMilli()); err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 	}
-	return imported, tx.Commit()
+	importedStats := 0
+	for _, item := range stats {
+		changed, err := setAuthRuntimeStatsTx(ctx, tx, item, true)
+		if err != nil {
+			return 0, 0, err
+		}
+		if changed {
+			importedStats++
+		}
+	}
+	if importedStats > 0 {
+		if err := bumpRuntimeGenerationTx(ctx, tx, "auth_runtime_stats", time.Now().UnixMilli()); err != nil {
+			return 0, 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return importedCursors, importedStats, nil
 }
 
 func (s *Store) GetAuthRuntimeStats(ctx context.Context, authIndex, authID string) (AuthRuntimeStats, bool, error) {
@@ -1940,7 +2471,11 @@ func (s *Store) GetAuthRuntimeStats(ctx context.Context, authIndex, authID strin
 }
 
 func (s *Store) ListAuthRuntimeStats(ctx context.Context) ([]AuthRuntimeStats, error) {
-	rows, err := s.db.QueryContext(ctx, `select auth_index, auth_id, file_name, identity_fingerprint, selected_count, success_count,
+	return listAuthRuntimeStatsFrom(ctx, s.db)
+}
+
+func listAuthRuntimeStatsFrom(ctx context.Context, queryer sqlQueryer) ([]AuthRuntimeStats, error) {
+	rows, err := queryer.QueryContext(ctx, `select auth_index, auth_id, file_name, identity_fingerprint, selected_count, success_count,
 		failure_count, recent_buckets_json, generation, updated_at_ms from auth_runtime_stats order by auth_index`)
 	if err != nil {
 		return nil, err
@@ -2038,27 +2573,8 @@ func (s *Store) SetAuthRuntimeStats(ctx context.Context, item AuthRuntimeStats) 
 }
 
 func (s *Store) ImportAuthRuntimeStats(ctx context.Context, items []AuthRuntimeStats) (int, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	imported := 0
-	for _, item := range items {
-		changed, err := setAuthRuntimeStatsTx(ctx, tx, item, true)
-		if err != nil {
-			return 0, err
-		}
-		if changed {
-			imported++
-		}
-	}
-	if imported > 0 {
-		if err := bumpRuntimeGenerationTx(ctx, tx, "auth_runtime_stats", time.Now().UnixMilli()); err != nil {
-			return 0, err
-		}
-	}
-	return imported, tx.Commit()
+	_, imported, err := s.ImportRuntimeState(ctx, nil, items)
+	return imported, err
 }
 
 func (s *Store) DeleteAuthRuntimeState(ctx context.Context, authID, authIndex, fileName string) error {
@@ -2099,6 +2615,10 @@ func (s *Store) GetModelPrices(ctx context.Context) (map[string]ModelPrice, erro
 }
 
 func (s *Store) getModelPrices(ctx context.Context, includeProviderRules bool) (map[string]ModelPrice, error) {
+	return getModelPricesFrom(ctx, s.db, includeProviderRules)
+}
+
+func getModelPricesFrom(ctx context.Context, queryer sqlQueryer, includeProviderRules bool) (map[string]ModelPrice, error) {
 	query := `select case when a.provider = '' then a.model else a.provider || '/' || a.model end,
 		json_extract(v.rule_json, '$.base.input'),
 		json_extract(v.rule_json, '$.base.output'), json_extract(v.rule_json, '$.base.cacheRead')
@@ -2108,7 +2628,7 @@ func (s *Store) getModelPrices(ctx context.Context, includeProviderRules bool) (
 		query += ` where a.provider = ''`
 	}
 	query += ` order by a.provider, a.model`
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := queryer.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

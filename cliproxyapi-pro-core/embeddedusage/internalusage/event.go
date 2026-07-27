@@ -9,50 +9,58 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	coreusage "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
 )
 
 type Event struct {
-	ID                int64    `json:"id,omitempty"`
-	RequestID         string   `json:"request_id,omitempty"`
-	EventHash         string   `json:"event_hash"`
-	TimestampMS       int64    `json:"timestamp_ms"`
-	Timestamp         string   `json:"timestamp"`
-	Provider          string   `json:"provider,omitempty"`
-	ExecutorType      string   `json:"executor_type,omitempty"`
-	Model             string   `json:"model"`
-	Alias             string   `json:"alias,omitempty"`
-	Endpoint          string   `json:"endpoint,omitempty"`
-	Method            string   `json:"method,omitempty"`
-	Path              string   `json:"path,omitempty"`
-	AuthType          string   `json:"auth_type,omitempty"`
-	AuthIndex         string   `json:"auth_index,omitempty"`
-	Source            string   `json:"source,omitempty"`
-	SourceHash        string   `json:"source_hash,omitempty"`
-	APIKeyHash        string   `json:"api_key_hash,omitempty"`
-	InputTokens       int64    `json:"input_tokens"`
-	OutputTokens      int64    `json:"output_tokens"`
-	ReasoningTokens   int64    `json:"reasoning_tokens"`
-	CachedTokens      int64    `json:"cached_tokens"`
-	CacheTokens       int64    `json:"cache_tokens"`
-	CacheReadTokens   int64    `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens  int64    `json:"cache_write_tokens,omitempty"`
-	TotalTokens       int64    `json:"total_tokens"`
-	LatencyMS         *int64   `json:"latency_ms,omitempty"`
-	TTFTMS            *int64   `json:"ttft_ms,omitempty"`
-	StatusCode        *int     `json:"status_code,omitempty"`
-	ErrorCode         string   `json:"error_code,omitempty"`
-	ErrorMessage      string   `json:"error_message,omitempty"`
-	UpstreamRequestID string   `json:"upstream_request_id,omitempty"`
-	RetryAfter        string   `json:"retry_after,omitempty"`
-	Stream            bool     `json:"stream"`
-	ReasoningEffort   string   `json:"reasoning_effort,omitempty"`
-	ServiceTier       string   `json:"service_tier,omitempty"`
-	EstimatedCost     *float64 `json:"estimated_cost,omitempty"`
-	PriceRuleID       int64    `json:"price_rule_id,omitempty"`
-	CostBreakdownJSON string   `json:"cost_breakdown_json,omitempty"`
-	Failed            bool     `json:"failed"`
-	RawJSON           string   `json:"raw_json,omitempty"`
-	CreatedAtMS       int64    `json:"created_at_ms"`
+	ID                  int64                    `json:"id,omitempty"`
+	RequestID           string                   `json:"request_id,omitempty"`
+	EventHash           string                   `json:"event_hash"`
+	TimestampMS         int64                    `json:"timestamp_ms"`
+	Timestamp           string                   `json:"timestamp"`
+	Provider            string                   `json:"provider,omitempty"`
+	ExecutorType        string                   `json:"executor_type,omitempty"`
+	Model               string                   `json:"model"`
+	Alias               string                   `json:"alias,omitempty"`
+	Endpoint            string                   `json:"endpoint,omitempty"`
+	Method              string                   `json:"method,omitempty"`
+	Path                string                   `json:"path,omitempty"`
+	AuthType            string                   `json:"auth_type,omitempty"`
+	AuthIndex           string                   `json:"auth_index,omitempty"`
+	Source              string                   `json:"source,omitempty"`
+	SourceHash          string                   `json:"source_hash,omitempty"`
+	APIKeyHash          string                   `json:"api_key_hash,omitempty"`
+	InputTokens         int64                    `json:"input_tokens"`
+	OutputTokens        int64                    `json:"output_tokens"`
+	ReasoningTokens     int64                    `json:"reasoning_tokens"`
+	CachedTokens        int64                    `json:"cached_tokens"`
+	CacheTokens         int64                    `json:"cache_tokens"`
+	CacheReadTokens     int64                    `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens    int64                    `json:"cache_write_tokens,omitempty"`
+	TotalTokens         int64                    `json:"total_tokens"`
+	AccountingVersion   int                      `json:"accounting_version,omitempty"`
+	AccountingQuality   string                   `json:"accounting_quality,omitempty"`
+	UncachedInputTokens int64                    `json:"uncached_input_tokens,omitempty"`
+	UnclassifiedTokens  int64                    `json:"unclassified_tokens,omitempty"`
+	TokenBreakdown      coreusage.TokenBreakdown `json:"token_breakdown"`
+	LatencyMS           *int64                   `json:"latency_ms,omitempty"`
+	TTFTMS              *int64                   `json:"ttft_ms,omitempty"`
+	StatusCode          *int                     `json:"status_code,omitempty"`
+	ErrorCode           string                   `json:"error_code,omitempty"`
+	ErrorMessage        string                   `json:"error_message,omitempty"`
+	UpstreamRequestID   string                   `json:"upstream_request_id,omitempty"`
+	RetryAfter          string                   `json:"retry_after,omitempty"`
+	AttemptIndex        *int64                   `json:"attempt_index,omitempty"`
+	Stream              bool                     `json:"stream"`
+	ReasoningEffort     string                   `json:"reasoning_effort,omitempty"`
+	ServiceTier         string                   `json:"service_tier,omitempty"`
+	EstimatedCost       *float64                 `json:"estimated_cost,omitempty"`
+	PriceRuleID         int64                    `json:"price_rule_id,omitempty"`
+	CostBreakdownJSON   string                   `json:"cost_breakdown_json,omitempty"`
+	Failed              bool                     `json:"failed"`
+	RawJSON             string                   `json:"raw_json,omitempty"`
+	CreatedAtMS         int64                    `json:"created_at_ms"`
 }
 
 type Tokens struct {
@@ -63,35 +71,40 @@ type Tokens struct {
 	CacheTokens      int64 `json:"cache_tokens"`
 	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
+	CacheInputTokens int64 `json:"cache_input_tokens,omitempty"`
 	TotalTokens      int64 `json:"total_tokens"`
 }
 
 type Detail struct {
-	ID                int64           `json:"id,omitempty"`
-	RequestID         string          `json:"request_id,omitempty"`
-	Timestamp         string          `json:"timestamp"`
-	Source            string          `json:"source"`
-	AuthIndex         string          `json:"auth_index,omitempty"`
-	APIKeyHash        string          `json:"api_key_hash,omitempty"`
-	Provider          string          `json:"provider,omitempty"`
-	ExecutorType      string          `json:"executor_type,omitempty"`
-	Alias             string          `json:"alias,omitempty"`
-	AuthType          string          `json:"auth_type,omitempty"`
-	LatencyMS         *int64          `json:"latency_ms,omitempty"`
-	TTFTMS            *int64          `json:"ttft_ms,omitempty"`
-	StatusCode        *int            `json:"status_code,omitempty"`
-	ErrorCode         string          `json:"error_code,omitempty"`
-	ErrorMessage      string          `json:"error_message,omitempty"`
-	UpstreamRequestID string          `json:"upstream_request_id,omitempty"`
-	RetryAfter        string          `json:"retry_after,omitempty"`
-	Stream            bool            `json:"stream"`
-	ReasoningEffort   string          `json:"reasoning_effort,omitempty"`
-	ServiceTier       string          `json:"service_tier,omitempty"`
-	EstimatedCost     *float64        `json:"estimated_cost,omitempty"`
-	PriceRuleID       int64           `json:"price_rule_id,omitempty"`
-	CostBreakdown     json.RawMessage `json:"cost_breakdown,omitempty"`
-	Tokens            Tokens          `json:"tokens"`
-	Failed            bool            `json:"failed"`
+	ID                int64                    `json:"id,omitempty"`
+	RequestID         string                   `json:"request_id,omitempty"`
+	Timestamp         string                   `json:"timestamp"`
+	Source            string                   `json:"source"`
+	AuthIndex         string                   `json:"auth_index,omitempty"`
+	APIKeyHash        string                   `json:"api_key_hash,omitempty"`
+	Provider          string                   `json:"provider,omitempty"`
+	ExecutorType      string                   `json:"executor_type,omitempty"`
+	Alias             string                   `json:"alias,omitempty"`
+	AuthType          string                   `json:"auth_type,omitempty"`
+	LatencyMS         *int64                   `json:"latency_ms,omitempty"`
+	TTFTMS            *int64                   `json:"ttft_ms,omitempty"`
+	StatusCode        *int                     `json:"status_code,omitempty"`
+	ErrorCode         string                   `json:"error_code,omitempty"`
+	ErrorMessage      string                   `json:"error_message,omitempty"`
+	UpstreamRequestID string                   `json:"upstream_request_id,omitempty"`
+	RetryAfter        string                   `json:"retry_after,omitempty"`
+	AttemptIndex      *int64                   `json:"attempt_index,omitempty"`
+	Stream            bool                     `json:"stream"`
+	ReasoningEffort   string                   `json:"reasoning_effort,omitempty"`
+	ServiceTier       string                   `json:"service_tier,omitempty"`
+	EstimatedCost     *float64                 `json:"estimated_cost,omitempty"`
+	PriceRuleID       int64                    `json:"price_rule_id,omitempty"`
+	CostBreakdown     json.RawMessage          `json:"cost_breakdown,omitempty"`
+	AccountingVersion int                      `json:"accounting_version,omitempty"`
+	AccountingQuality string                   `json:"accounting_quality,omitempty"`
+	TokenBreakdown    coreusage.TokenBreakdown `json:"token_breakdown"`
+	Tokens            Tokens                   `json:"tokens"`
+	Failed            bool                     `json:"failed"`
 }
 
 type ModelAggregate struct {
@@ -163,9 +176,6 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	}
 
 	inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheTokens, cacheReadTokens, cacheWriteTokens, totalTokens := readTokenFields(record, exported)
-	if totalTokens <= 0 {
-		totalTokens = inputTokens + outputTokens + reasoningTokens + maxInt64(cachedTokens, cacheTokens)
-	}
 
 	latencyMS := readOptionalInt(record, "latency_ms")
 	ttftMS := readOptionalInt(record, "ttft_ms")
@@ -190,6 +200,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	if retryAfter == "" {
 		retryAfter = readHeaderValue(record, "retry-after")
 	}
+	attemptIndex := readOptionalInt(record, "attempt_index")
 	failed := readFailed(record)
 	sourceRaw := readString(record, "source")
 	source := maskSource(sourceRaw)
@@ -206,7 +217,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		}
 	}
 
-	event := Event{
+	event := NormalizeEventAccounting(Event{
 		RequestID:         readString(record, "request_id"),
 		TimestampMS:       timestampMS,
 		Timestamp:         timestamp,
@@ -230,6 +241,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		CacheReadTokens:   cacheReadTokens,
 		CacheWriteTokens:  cacheWriteTokens,
 		TotalTokens:       totalTokens,
+		TokenBreakdown:    readTokenBreakdown(record),
 		LatencyMS:         latencyMS,
 		TTFTMS:            ttftMS,
 		StatusCode:        statusCode,
@@ -237,13 +249,14 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		ErrorMessage:      errorMessage,
 		UpstreamRequestID: upstreamRequestID,
 		RetryAfter:        retryAfter,
+		AttemptIndex:      attemptIndex,
 		Stream:            readBool(record, "stream"),
 		ReasoningEffort:   readString(record, "reasoning_effort"),
 		ServiceTier:       readString(record, "service_tier"),
 		Failed:            failed,
 		RawJSON:           rawJSON,
 		CreatedAtMS:       time.Now().UnixMilli(),
-	}
+	})
 	if exported {
 		if value, ok := readOptionalFloat(record, "estimated_cost"); ok {
 			event.EstimatedCost = &value
@@ -315,12 +328,16 @@ func BuildPayload(events []Event) Payload {
 			ErrorMessage:      event.ErrorMessage,
 			UpstreamRequestID: event.UpstreamRequestID,
 			RetryAfter:        event.RetryAfter,
+			AttemptIndex:      event.AttemptIndex,
 			Stream:            event.Stream,
 			ReasoningEffort:   event.ReasoningEffort,
 			ServiceTier:       event.ServiceTier,
 			EstimatedCost:     event.EstimatedCost,
 			PriceRuleID:       event.PriceRuleID,
 			CostBreakdown:     costBreakdown,
+			AccountingVersion: event.AccountingVersion,
+			AccountingQuality: event.AccountingQuality,
+			TokenBreakdown:    event.TokenBreakdown,
 			Failed:            event.Failed,
 			Tokens: Tokens{
 				InputTokens:      event.InputTokens,
@@ -330,11 +347,70 @@ func BuildPayload(events []Event) Payload {
 				CacheTokens:      event.CacheTokens,
 				CacheReadTokens:  event.CacheReadTokens,
 				CacheWriteTokens: event.CacheWriteTokens,
+				CacheInputTokens: cacheInputTokens(event),
 				TotalTokens:      event.TotalTokens,
 			},
 		})
 	}
 	return payload
+}
+
+func readTokenBreakdown(record map[string]any) coreusage.TokenBreakdown {
+	raw, ok := record["token_breakdown"]
+	if !ok || raw == nil {
+		return coreusage.TokenBreakdown{}
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return coreusage.TokenBreakdown{}
+	}
+	var breakdown coreusage.TokenBreakdown
+	if err := json.Unmarshal(data, &breakdown); err != nil || !breakdown.Valid() {
+		return coreusage.TokenBreakdown{}
+	}
+	return breakdown
+}
+
+// NormalizeEventAccounting converts provider-specific legacy token fields into
+// the upstream v2 non-overlapping accounting contract.
+func NormalizeEventAccounting(event Event) Event {
+	detail := coreusage.Detail{
+		InputTokens:         event.InputTokens,
+		OutputTokens:        event.OutputTokens,
+		ReasoningTokens:     event.ReasoningTokens,
+		CachedTokens:        event.CachedTokens,
+		CacheReadTokens:     event.CacheReadTokens,
+		CacheCreationTokens: event.CacheWriteTokens,
+		TotalTokens:         event.TotalTokens,
+		TokenBreakdown:      event.TokenBreakdown,
+	}
+	detail = coreusage.EnsureTokenBreakdownForProvider(detail, event.Provider, event.ExecutorType)
+	breakdown := detail.TokenBreakdown
+	event.TokenBreakdown = breakdown
+	event.AccountingVersion = breakdown.SchemaVersion
+	event.AccountingQuality = string(breakdown.Quality)
+	event.UncachedInputTokens = breakdown.Input.UncachedTokens
+	event.UnclassifiedTokens = breakdown.UnclassifiedTokens
+	if breakdown.Quality == coreusage.TokenAccountingQualityComplete {
+		event.InputTokens = breakdown.Input.TotalTokens
+		event.OutputTokens = breakdown.Output.TotalTokens
+		event.ReasoningTokens = breakdown.Output.ReasoningTokens
+		event.CacheReadTokens = breakdown.Input.CacheReadTokens
+		event.CacheWriteTokens = breakdown.Input.CacheWriteTokens
+		event.CachedTokens = breakdown.Input.CacheReadTokens
+		event.CacheTokens = breakdown.Input.CacheReadTokens + breakdown.Input.CacheWriteTokens
+		event.TotalTokens = breakdown.TotalTokens
+	} else if event.TotalTokens <= 0 {
+		event.TotalTokens = breakdown.TotalTokens
+	}
+	return event
+}
+
+func cacheInputTokens(event Event) int64 {
+	if event.AccountingQuality != string(coreusage.TokenAccountingQualityComplete) {
+		return 0
+	}
+	return event.InputTokens
 }
 
 func readOptionalFloat(record map[string]any, key string) (float64, bool) {
@@ -632,6 +708,7 @@ func buildEventHash(event Event) string {
 		event.Model,
 		event.AuthIndex,
 		event.SourceHash,
+		event.APIKeyHash,
 		strconv.FormatInt(event.InputTokens, 10),
 		strconv.FormatInt(event.OutputTokens, 10),
 		strconv.FormatInt(event.ReasoningTokens, 10),
@@ -640,6 +717,9 @@ func buildEventHash(event Event) string {
 	}
 	if event.LatencyMS != nil {
 		parts = append(parts, strconv.FormatInt(*event.LatencyMS, 10))
+	}
+	if event.AttemptIndex != nil {
+		parts = append(parts, strconv.FormatInt(*event.AttemptIndex, 10))
 	}
 	return hashString(strings.Join(parts, "|"))
 }

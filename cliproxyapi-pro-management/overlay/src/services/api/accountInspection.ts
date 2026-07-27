@@ -58,13 +58,6 @@ export type AccountInspectionInspectOneResponse = AccountInspectionBackendRespon
   error?: string;
 };
 
-export type AccountInspectionRefreshTokenItem = AccountInspectionInspectOneItem;
-
-export type AccountInspectionRefreshTokenResponse = AccountInspectionBackendResponse & {
-  result: AccountInspectionBackendResultItem;
-  error?: string;
-};
-
 export type AccountInspectionScheduleResponse = AccountInspectionBackendResponse;
 
 export type AccountInspectionDetailsOptions = {
@@ -106,6 +99,16 @@ export const buildAccountInspectionLogsWebSocketUrl = (apiBase: string, includeD
 export const accountInspectionWebSocketProtocol = (managementKey: string) =>
   `cpa-management.${encodeURIComponent(managementKey)}`;
 
+export const nextAccountInspectionReconnectDelay = (currentDelayMs: number) =>
+  Math.min(Math.max(currentDelayMs, 1000) * 2, 30000);
+
+export const refreshAccountInspectionAfterReconnect = async (
+  loadSummary: () => Promise<unknown>,
+  loadDetails: () => Promise<unknown>
+) => {
+  await Promise.allSettled([loadSummary(), loadDetails()]);
+};
+
 export const accountInspectionApi = {
   getSchedule: (includeDetails = false) =>
     apiClient.get<AccountInspectionScheduleResponse>('/account-inspection/schedule', {
@@ -130,10 +133,6 @@ export const accountInspectionApi = {
     ),
   inspectOne: (item: AccountInspectionInspectOneItem, options: boolean | AccountInspectionDetailsOptions = true) =>
     apiClient.post<AccountInspectionInspectOneResponse>('/account-inspection/inspect-one', { item }, {
-      params: buildAccountInspectionDetailParams(options),
-    }),
-  refreshToken: (item: AccountInspectionRefreshTokenItem, options: boolean | AccountInspectionDetailsOptions = true) =>
-    apiClient.post<AccountInspectionRefreshTokenResponse>('/account-inspection/refresh-token', { item }, {
       params: buildAccountInspectionDetailParams(options),
     }),
   pause: () => apiClient.post<AccountInspectionScheduleResponse>('/account-inspection/pause', {}, {

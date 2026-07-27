@@ -44,7 +44,7 @@
 
 如果后端还没有保存价格，页面可从旧 `localStorage` 价格设置做一次性迁移。之后正常读写都走 SQLite。
 
-价格规则以 `(provider, model)` 为键，支持 input、output、cache read、cache write、多个上下文长度阶梯和 service tier 覆盖。页面可手动从 models.dev 同步，也可在监控设置中启用定期同步；同步只保存请求历史中实际出现过的模型，手动规则默认锁定且不会被自动覆盖。
+价格规则按 model ID 全局生效，同一 model 在不同 provider 下共享规则；规则支持 input、output、cache read、cache write、多个上下文长度阶梯和 service tier 覆盖。页面可手动从 models.dev 同步，也可在监控设置中启用定期同步；同步只保存请求历史中实际出现过的模型，手动规则默认锁定且不会被自动覆盖。
 
 成本在后端按单次请求选择阶梯并固化到 usage event，聚合接口直接累加事件成本。模型价格和完整规则会作为 `model_prices` 元数据记录参与 JSONL 导入导出。
 
@@ -60,12 +60,16 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 
 各 provider 分组的“刷新全部凭证”会启动后端 `account-inspection/quota-refresh` 持久任务，不再由浏览器并发请求所有账号。按钮显示完成进度，页面重开后会重新接管运行中的任务，结束时按 quota-cache generation 重新加载 SQLite 快照。任务仅覆盖该 provider 的启用凭证。
 
+各 provider 分组的“刷新全部凭证”会启动后端 `account-inspection/quota-refresh` 持久任务，不再由浏览器并发请求所有账号。按钮显示完成进度，页面重开后会重新接管运行中的任务，结束时按 quota-cache generation 重新加载 SQLite 快照。任务仅覆盖该 provider 的启用凭证。
+
 支持的配额 provider：
 
 - Antigravity
 - Claude
 - Codex
+- Gemini CLI
 - Kimi
+- xAI
 
 当 `src/config/features.ts` 中的特性开关启用时，配额卡片还会显示缓存时间戳，并支持成功状态下的单卡刷新。
 
@@ -82,7 +86,9 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - Antigravity
 - Claude
 - Codex
+- Gemini CLI
 - Kimi
+- xAI
 
 主要能力：
 
@@ -94,7 +100,7 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - 通过后端 WebSocket/WSS 流接收日志和实时状态
 - 建议操作：保留、删除、禁用、启用
 - 通过后端手动执行单个建议操作或全部建议操作
-- 刷新令牌和单账号重检 toast 显示真实业务结果，例如刷新成功/失败、账号异常、额度耗尽或健康状态
+- 单账号重检 toast 显示真实业务结果，例如账号异常、额度耗尽或健康状态
 - 针对额度耗尽禁用、额度恢复启用、账号错误禁用/删除的后端可选自动执行策略
 - 根据后端巡检结果刷新配额快照
 
@@ -103,8 +109,9 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - `GET /account-inspection/schedule`
 - `GET /account-inspection/status`
 - `GET /account-inspection/logs`（WebSocket/WSS 日志和状态流）
-- `PUT /account-inspection/schedule`
+- `PUT|PATCH /account-inspection/schedule`
 - `POST /account-inspection/run`
+- `POST /account-inspection/inspect-one`
 - `POST /account-inspection/pause`
 - `POST /account-inspection/resume`
 - `POST /account-inspection/stop`
@@ -129,7 +136,7 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 页面使用：
 
 - `GET /routing-policy`
-- `PUT /routing-policy`
+- `PUT|PATCH /routing-policy`
 - `POST /routing-policy/release`
 
 状态码由用户配置，后端会过滤到 `100-599`、去重并排序。保护功能默认关闭；`observe` 只记录匹配事件，`enforce` 才会实际禁用账号。自动解除只处理带有 request-protection 归属元数据的账号。
@@ -159,10 +166,13 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - `overlay/src/features/monitoring/` — 监控与巡检逻辑。
 - `overlay/src/extensions/quota/` — SQLite 配额持久化集成。
 - `overlay/src/services/api/` — 新增 API clients。
+- `overlay-replacements.json` — 对有意覆盖 upstream 同路径文件的 full-file replacements，记录已审阅的 upstream SHA-256 与替换原因。
 - `monitoring-locales.json` — 合并进 upstream locale 文件的多语言文案。
 - `apply_customizations.py` — 将全部定制应用到目标 upstream checkout。
 - `apply.sh` — `apply_customizations.py` 的 shell 包装脚本。
 - `quota-persistence.patch` — 历史补丁文件，保留用于参考；当前构建使用 `apply_customizations.py`。
+
+Overlay collision 预检会校验每个已审阅替换的 upstream 内容。upstream 文件变化时必须显式更新 `overlay-replacements.json`；本地替换通过正常 PR diff 和行为测试审查，新的未审阅路径冲突会在复制任何 overlay 文件前被拒绝。
 
 ## 本地应用
 
@@ -188,20 +198,17 @@ python3 apply_customizations.py /path/to/Cli-Proxy-API-Management-Center
 应用到 upstream checkout 后执行：
 
 ```bash
-npm install
-npm run type-check
-npm run build
+bun install --frozen-lockfile
+bun run test
+bun run lint
+bun run type-check
+VERSION=review bun run build
 ```
 
-如需不污染 upstream 工作目录，可复制到临时目录验证：
+也可直接使用仓库验证脚本检查一个可丢弃的干净 upstream checkout；脚本会验证 overlay 预检、重复应用、测试、lint、type-check 和 build：
 
 ```bash
-rm -rf /tmp/cpa-management-check
-cp -R /path/to/Cli-Proxy-API-Management-Center /tmp/cpa-management-check
-python3 /path/to/CLIProxyAPI-Pro/cliproxyapi-pro-management/apply_customizations.py /tmp/cpa-management-check
-npm --prefix /tmp/cpa-management-check install
-npm --prefix /tmp/cpa-management-check run type-check
-npm --prefix /tmp/cpa-management-check run build
+bash scripts/validation/management.sh /path/to/disposable/clean-management-checkout
 ```
 
 ## GitHub Actions 发布流程
@@ -221,7 +228,7 @@ Workflow：
 3. 读取 latest release notes 中记录的 management upstream 版本。
 4. 如果 upstream 更新、management 定制层发生 push、latest release 缺少 `management.html`，或 workflow 手动触发，则 checkout upstream 最新 release tag。
 5. 从 `cliproxyapi-pro-management/apply.sh` 应用本目录定制层。
-6. 执行定制测试、`bun run test`、`bun run lint` 和 `bun run build`。
+6. 执行定制测试、`bun run test`、`bun run lint` 和 `bun run build`；Bun 版本读取 upstream `package.json`。
 7. 将 `dist/index.html` 重命名为 `management.html`。
 8. 上传并覆盖当前 latest release 中的 `management.html`。
 9. 更新 release notes 中的 management 版本映射和 upstream release notes。
@@ -231,26 +238,13 @@ Workflow：
 
 ## 后端依赖
 
-这些前端定制依赖 customized `cliproxyapi-pro-core` 后端在 management API 前缀下暴露 usage 和账号巡检接口：
+这些前端定制依赖 customized `cliproxyapi-pro-core` 后端在 management API 前缀下暴露以下稳定接口分组：
 
 - `/v0/management/usage`
-- `/v0/management/usage/status`
-- `/v0/management/usage/events`
-- `/v0/management/usage/aggregates`
-- `/v0/management/usage/stream`
-- `/v0/management/usage/export`
-- `/v0/management/usage/import`
-- `/v0/management/usage/reset`
-- `/v0/management/usage/quota-cache`
-- `/v0/management/usage/model-prices`
-- `/v0/management/usage/settings`
-- `/v0/management/account-inspection/schedule`
-- `/v0/management/account-inspection/status`
-- `/v0/management/account-inspection/logs`
-- `/v0/management/account-inspection/run`
-- `/v0/management/account-inspection/pause`
-- `/v0/management/account-inspection/resume`
-- `/v0/management/account-inspection/stop`
-- `/v0/management/account-inspection/actions`
+- `/v0/management/usage/*`
+- `/v0/management/quota/fetch`
+- `/v0/management/account-inspection/*`
+- `/v0/management/routing-policy`
+- `/v0/management/routing-policy/*`
 
-如果未使用 customized 后端，请求监控、SQLite 持久化、模型价格和后端账号巡检相关功能会显示错误或空数据。
+完整 method/path 清单以 Core README 为准。如果未使用 customized 后端，请求监控、SQLite 持久化、模型价格、后端账号巡检和路由保护相关功能会显示错误或空数据。

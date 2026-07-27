@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -401,6 +402,40 @@ func TestResetUsageStatisticsOnEmptyStoreIsNoop(t *testing.T) {
 	}
 }
 
+func TestInsertLiveEventsRejectsEventsFromBeforeReset(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	insertTestUsageEvents(t, store, testUsageEvent(0, false, 10))
+	reset, err := store.ResetUsageStatistics(ctx)
+	if err != nil {
+		t.Fatalf("ResetUsageStatistics() error = %v", err)
+	}
+
+	stale := testUsageEvent(1, false, 20)
+	result, err := store.InsertLiveEvents(ctx, []internalusage.Event{stale})
+	if err != nil {
+		t.Fatalf("InsertLiveEvents(stale) error = %v", err)
+	}
+	if result.Inserted != 0 || result.Skipped != 1 {
+		t.Fatalf("InsertLiveEvents(stale) = %+v, want skipped", result)
+	}
+
+	fresh := testUsageEvent(2, false, 30)
+	fresh.TimestampMS = reset.ResetAtMS + 1
+	fresh.Timestamp = time.UnixMilli(fresh.TimestampMS).UTC().Format(time.RFC3339Nano)
+	result, err = store.InsertLiveEvents(ctx, []internalusage.Event{fresh})
+	if err != nil {
+		t.Fatalf("InsertLiveEvents(fresh) error = %v", err)
+	}
+	if result.Inserted != 1 || result.Skipped != 0 {
+		t.Fatalf("InsertLiveEvents(fresh) = %+v, want inserted", result)
+	}
+	events, _, err := store.Counts(ctx)
+	if err != nil || events != 1 {
+		t.Fatalf("Counts() = %d, _, %v; want one fresh event", events, err)
+	}
+}
+
 func TestOpenStoreRebuildsStaleUsageSummary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "usage.sqlite")
 	ctx := context.Background()
@@ -540,6 +575,83 @@ func TestUsageAggregatesSupportsAllIntervalAndAPIKeyFilter(t *testing.T) {
 	}
 }
 
+func TestUsageAggregatesUseCanonicalCacheReadAcrossProviderSemantics(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	openAI := testUsageEvent(0, false, 130)
+	openAI.Provider = "codex"
+	openAI.ExecutorType = "CodexExecutor"
+	openAI.InputTokens = 100
+	openAI.OutputTokens = 30
+	openAI.CachedTokens = 40
+	openAI.CacheReadTokens = 40
+	openAI.CacheWriteTokens = 10
+	claude := testUsageEvent(1, false, 55)
+	claude.Provider = "claude"
+	claude.ExecutorType = "ClaudeExecutor"
+	claude.InputTokens = 30
+	claude.OutputTokens = 5
+	claude.CachedTokens = 7
+	claude.CacheReadTokens = 7
+	claude.CacheWriteTokens = 13
+	insertTestUsageEvents(t, store, openAI, claude)
+
+	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{Interval: "all", Limit: 10})
+	if err != nil || len(buckets) != 1 {
+		t.Fatalf("UsageAggregates() = %+v, %v", buckets, err)
+	}
+	bucket := buckets[0]
+	if bucket.InputTokens != 150 || bucket.CacheInputTokens != 150 || bucket.CacheReadTokens != 47 ||
+		bucket.CacheWriteTokens != 23 || bucket.CacheTokens != 47 {
+		t.Fatalf("canonical aggregate = %+v, want input/cache-input/read/write/cache 150/150/47/23/47", bucket)
+	}
+	if bucket.CacheReadTokens > bucket.CacheInputTokens {
+		t.Fatalf("cache hit ratio exceeds 100%%: %+v", bucket)
+	}
+}
+
+func TestOpenStoreMigratesLegacyTokenAccountingFromRawPayload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-usage.sqlite")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	raw := `{
+		"timestamp":"2026-07-26T00:00:00Z","provider":"claude","executor_type":"ClaudeExecutor","model":"claude-test",
+		"tokens":{"input_tokens":30,"output_tokens":5,"cached_tokens":7,"cache_read_tokens":7,"cache_creation_tokens":13,"total_tokens":55},
+		"accounting_version":2,
+		"token_breakdown":{"schema_version":2,"quality":"complete","total_tokens":55,"input":{"total_tokens":50,"uncached_tokens":30,"cache_read_tokens":7,"cache_write_tokens":13},"output":{"total_tokens":5,"non_reasoning_tokens":5,"reasoning_tokens":0},"unclassified_tokens":0}
+	}`
+	if _, err := store.db.Exec(`insert into usage_events(
+		event_hash, timestamp_ms, timestamp, provider, executor_type, model,
+		input_tokens, output_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+		raw_json, created_at_ms
+	) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"legacy-accounting-event", int64(1_785_024_000_000), "2026-07-26T00:00:00Z", "claude", "ClaudeExecutor", "claude-test",
+		int64(30), int64(5), int64(7), int64(20), int64(7), int64(13), int64(55), raw, int64(1_785_024_000_000),
+	); err != nil {
+		t.Fatalf("insert legacy event: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	migrated, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore(migrate) error = %v", err)
+	}
+	defer func() { _ = migrated.Close() }()
+	events, err := migrated.RecentEvents(context.Background(), 1)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("RecentEvents() = %+v, %v", events, err)
+	}
+	event := events[0]
+	if event.AccountingVersion != 2 || event.AccountingQuality != "complete" || event.InputTokens != 50 ||
+		event.UncachedInputTokens != 30 || event.CacheReadTokens != 7 || event.CacheWriteTokens != 13 || event.CachedTokens != 7 {
+		t.Fatalf("migrated event = %+v", event)
+	}
+}
+
 func TestUsageAggregatesIncludesUnattributedAPIKeyBucket(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -591,6 +703,80 @@ func TestUsageAggregatesSupportsAuthIndexGroupingAndLastSeen(t *testing.T) {
 	bucket := buckets[0]
 	if bucket.AuthIndex != "auth-a" || bucket.TotalRequests != 2 || bucket.LastSeenAtMS != second.TimestampMS {
 		t.Fatalf("aggregate bucket = %+v, want auth-a total=2 last_seen=%d", bucket, second.TimestampMS)
+	}
+}
+
+func TestAccountUsageAggregatesExactAuthIndexAndQualityMetrics(t *testing.T) {
+	store := openTestStore(t)
+	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
+	now := time.Date(2026, 7, 26, 15, 0, 0, 0, shanghai)
+	todayStart := time.Date(2026, 7, 26, 0, 0, 0, 0, shanghai)
+	attempt0 := int64(0)
+	attempt1 := int64(1)
+	makeEvent := func(index int, at time.Time, model, apiKey string, failed bool, cost float64, attempt *int64) internalusage.Event {
+		event := testUsageEvent(index, failed, int64((index+1)*100))
+		event.EventHash = fmt.Sprintf("account-event-%d", index)
+		event.TimestampMS = at.UnixMilli()
+		event.Timestamp = at.UTC().Format(time.RFC3339Nano)
+		event.CreatedAtMS = at.UnixMilli()
+		event.AuthIndex = "codex:account-a"
+		event.Model = model
+		event.APIKeyHash = apiKey
+		event.EstimatedCost = &cost
+		event.AttemptIndex = attempt
+		event.CacheTokens = int64(index * 10)
+		latency := int64((index + 1) * 1000)
+		ttft := int64((index + 1) * 100)
+		event.LatencyMS = &latency
+		event.TTFTMS = &ttft
+		return event
+	}
+	events := []internalusage.Event{
+		makeEvent(0, todayStart.Add(time.Hour), "gpt-5", "key-a", false, 1.25, &attempt0),
+		makeEvent(1, todayStart.AddDate(0, 0, -1).Add(time.Hour), "gpt-5", "key-a", true, 2.50, &attempt1),
+		makeEvent(2, todayStart.AddDate(0, 0, -1).Add(2*time.Hour), "gpt-4.1", "", false, 3.75, nil),
+		makeEvent(3, todayStart.AddDate(0, 0, -40), "old", "key-a", false, 9.99, &attempt0),
+	}
+	other := makeEvent(4, todayStart.Add(2*time.Hour), "other", "key-b", false, 8.88, &attempt0)
+	other.AuthIndex = "codex:account-b"
+	events = append(events, other)
+	insertTestUsageEvents(t, store, events...)
+
+	detail, err := store.AccountUsage(context.Background(), AccountUsageOptions{
+		AuthIndex:             "codex:account-a",
+		Days:                  30,
+		TimezoneOffsetMinutes: 480,
+		NowMS:                 now.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("AccountUsage() error = %v", err)
+	}
+	if detail.TotalRequests != 3 || detail.SuccessCount != 2 || detail.FailureCount != 1 {
+		t.Fatalf("request summary = %+v", detail)
+	}
+	if detail.ActiveDays != 2 || detail.Today.Requests != 1 || len(detail.History) != 2 {
+		t.Fatalf("day summary = active:%d today:%+v history:%+v", detail.ActiveDays, detail.Today, detail.History)
+	}
+	if detail.EstimatedCost != 7.5 || detail.PricedRequests != 3 {
+		t.Fatalf("cost summary = %.2f/%d", detail.EstimatedCost, detail.PricedRequests)
+	}
+	if detail.RetryAttempts != 1 || detail.RetrySamples != 2 {
+		t.Fatalf("retry summary = %d/%d", detail.RetryAttempts, detail.RetrySamples)
+	}
+	if detail.AverageLatencyMS == nil || *detail.AverageLatencyMS != 2000 || detail.P95LatencyMS == nil || *detail.P95LatencyMS != 3000 {
+		t.Fatalf("latency summary = avg:%v p95:%v", detail.AverageLatencyMS, detail.P95LatencyMS)
+	}
+	if detail.AverageTTFTMS == nil || *detail.AverageTTFTMS != 200 {
+		t.Fatalf("TTFT average = %v", detail.AverageTTFTMS)
+	}
+	if len(detail.Models) != 2 || detail.Models[0].Model != "gpt-5" || detail.Models[0].Requests != 2 {
+		t.Fatalf("models = %+v", detail.Models)
+	}
+	if len(detail.APIKeys) != 2 || detail.APIKeys[0].APIKeyHash != "key-a" || detail.APIKeys[0].Requests != 2 {
+		t.Fatalf("api keys = %+v", detail.APIKeys)
+	}
+	if detail.HighestCostDay == nil || detail.HighestCostDay.EstimatedCost != 6.25 || detail.HighestRequestDay == nil || detail.HighestRequestDay.Requests != 2 {
+		t.Fatalf("highlights = cost:%+v requests:%+v", detail.HighestCostDay, detail.HighestRequestDay)
 	}
 }
 
@@ -680,6 +866,61 @@ func TestRoutingCursorAndAuthRuntimeStatsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestUsageExportSnapshotKeepsAdjacentWritesOutOfEveryRecordType(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	initial := defaultMonitoringSettings()
+	initial.RetentionDays = 7
+	if err := store.SetMonitoringSettings(ctx, initial); err != nil {
+		t.Fatalf("SetMonitoringSettings(initial) error = %v", err)
+	}
+
+	eventsRead := make(chan struct{})
+	continueExport := make(chan struct{})
+	snapshotResult := make(chan usageExportSnapshot, 1)
+	snapshotError := make(chan error, 1)
+	go func() {
+		snapshot, err := store.readUsageExportSnapshot(ctx, func() {
+			close(eventsRead)
+			<-continueExport
+		})
+		snapshotResult <- snapshot
+		snapshotError <- err
+	}()
+	<-eventsRead
+
+	updated := initial
+	updated.RetentionDays = 30
+	writeStarted := make(chan struct{})
+	writeDone := make(chan error, 1)
+	go func() {
+		close(writeStarted)
+		writeDone <- store.SetMonitoringSettings(ctx, updated)
+	}()
+	<-writeStarted
+	select {
+	case err := <-writeDone:
+		t.Fatalf("adjacent write completed inside export transaction: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(continueExport)
+
+	snapshot := <-snapshotResult
+	if err := <-snapshotError; err != nil {
+		t.Fatalf("readUsageExportSnapshot() error = %v", err)
+	}
+	if snapshot.Settings.RetentionDays != initial.RetentionDays {
+		t.Fatalf("snapshot retention = %d, want %d", snapshot.Settings.RetentionDays, initial.RetentionDays)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("SetMonitoringSettings(updated) error = %v", err)
+	}
+	current, err := store.GetMonitoringSettings(ctx)
+	if err != nil || current.RetentionDays != updated.RetentionDays {
+		t.Fatalf("current settings = %+v, %v; want updated retention", current, err)
+	}
+}
+
 func TestQueuedAuthRuntimeDeleteCannotBeOverwrittenByPendingSnapshot(t *testing.T) {
 	store := openTestStore(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -696,6 +937,121 @@ func TestQueuedAuthRuntimeDeleteCannotBeOverwrittenByPendingSnapshot(t *testing.
 	}
 	if stats, ok, err := store.GetAuthRuntimeStats(context.Background(), "idx-delete", "auth-delete"); err != nil || ok {
 		t.Fatalf("GetAuthRuntimeStats() after delete = %+v, %v, %v; want missing", stats, ok, err)
+	}
+}
+
+func TestRuntimeStateWriterRetainsSnapshotsAfterWriteFailure(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `create trigger fail_auth_runtime_insert before insert on auth_runtime_stats begin select raise(abort, 'forced runtime write failure'); end`); err != nil {
+		t.Fatalf("create trigger error = %v", err)
+	}
+	service := &Service{ctx: ctx, store: store}
+	SetDefaultService(service)
+	defer stopRuntimeStateWriter(service)
+
+	QueueAuthRuntimeStats(AuthRuntimeStats{
+		AuthIndex: "idx-retry", AuthID: "auth-retry", SelectedCount: 7, UpdatedAtMS: 100,
+	})
+	if err := flushRuntimeStateWrites(ctx, store); err == nil {
+		t.Fatal("flushRuntimeStateWrites() error = nil, want forced write failure")
+	}
+	if _, err := store.db.ExecContext(ctx, `drop trigger fail_auth_runtime_insert`); err != nil {
+		t.Fatalf("drop trigger error = %v", err)
+	}
+	if err := flushRuntimeStateWrites(ctx, store); err != nil {
+		t.Fatalf("flushRuntimeStateWrites() retry error = %v", err)
+	}
+	stats, ok, err := store.GetAuthRuntimeStats(ctx, "idx-retry", "auth-retry")
+	if err != nil || !ok || stats.SelectedCount != 7 {
+		t.Fatalf("GetAuthRuntimeStats() after retry = %+v, %v, %v", stats, ok, err)
+	}
+}
+
+func TestRuntimeStateWriterCoalescesOverflowWithoutLosingLatestSnapshot(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	heldTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx() error = %v", err)
+	}
+	service := &Service{ctx: ctx, store: store}
+	SetDefaultService(service)
+	defer stopRuntimeStateWriter(service)
+	QueueAuthRuntimeStats(AuthRuntimeStats{
+		AuthIndex: "idx-overflow", AuthID: "auth-overflow", SelectedCount: 1, UpdatedAtMS: 1,
+	})
+	time.Sleep(300 * time.Millisecond)
+	for index := 2; index <= 2200; index++ {
+		QueueAuthRuntimeStats(AuthRuntimeStats{
+			AuthIndex: "idx-overflow", AuthID: "auth-overflow", SelectedCount: int64(index), UpdatedAtMS: int64(index),
+		})
+	}
+	if err := heldTx.Commit(); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	if err := flushRuntimeStateWrites(ctx, store); err != nil {
+		t.Fatalf("flushRuntimeStateWrites() error = %v", err)
+	}
+	stats, ok, err := store.GetAuthRuntimeStats(ctx, "idx-overflow", "auth-overflow")
+	if err != nil || !ok || stats.SelectedCount != 2200 {
+		t.Fatalf("GetAuthRuntimeStats() = %+v, %v, %v; want latest overflow snapshot", stats, ok, err)
+	}
+}
+
+func TestRuntimeStateWriterRemainsAvailableUntilExplicitStop(t *testing.T) {
+	store := openTestStore(t)
+	serviceCtx, cancelService := context.WithCancel(context.Background())
+	service := &Service{ctx: serviceCtx, store: store}
+	SetDefaultService(service)
+	defer stopRuntimeStateWriter(service)
+	cancelService()
+	time.Sleep(25 * time.Millisecond)
+
+	QueueAuthRuntimeStats(AuthRuntimeStats{
+		AuthIndex: "idx-shutdown", AuthID: "auth-shutdown", SelectedCount: 9, UpdatedAtMS: 900,
+	})
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), time.Second)
+	defer cancelFlush()
+	if err := flushRuntimeStateWrites(flushCtx, store); err != nil {
+		t.Fatalf("flushRuntimeStateWrites() after service cancellation error = %v", err)
+	}
+	stats, ok, err := store.GetAuthRuntimeStats(context.Background(), "idx-shutdown", "auth-shutdown")
+	if err != nil || !ok || stats.SelectedCount != 9 {
+		t.Fatalf("GetAuthRuntimeStats() = %+v, %v, %v; writer stopped before explicit shutdown", stats, ok, err)
+	}
+}
+
+func TestFailedRuntimeStateDeleteDoesNotSuppressLaterSnapshot(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.SetAuthRuntimeStats(ctx, AuthRuntimeStats{
+		AuthIndex: "idx-delete-failure", AuthID: "auth-delete-failure", SelectedCount: 1, UpdatedAtMS: 100,
+	}); err != nil {
+		t.Fatalf("SetAuthRuntimeStats() error = %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `create trigger fail_auth_runtime_delete before delete on auth_runtime_stats begin select raise(abort, 'forced runtime delete failure'); end`); err != nil {
+		t.Fatalf("create trigger error = %v", err)
+	}
+	service := &Service{ctx: ctx, store: store}
+	SetDefaultService(service)
+	defer stopRuntimeStateWriter(service)
+
+	if err := DeleteAuthRuntimeState(ctx, "auth-delete-failure", "idx-delete-failure", ""); err == nil {
+		t.Fatal("DeleteAuthRuntimeState() error = nil, want forced delete failure")
+	}
+	if _, err := store.db.ExecContext(ctx, `drop trigger fail_auth_runtime_delete`); err != nil {
+		t.Fatalf("drop trigger error = %v", err)
+	}
+	QueueAuthRuntimeStats(AuthRuntimeStats{
+		AuthIndex: "idx-delete-failure", AuthID: "auth-delete-failure", SelectedCount: 9, UpdatedAtMS: 200,
+	})
+	if err := flushRuntimeStateWrites(ctx, store); err != nil {
+		t.Fatalf("flushRuntimeStateWrites() error = %v", err)
+	}
+	stats, ok, err := store.GetAuthRuntimeStats(ctx, "idx-delete-failure", "auth-delete-failure")
+	if err != nil || !ok || stats.SelectedCount != 9 {
+		t.Fatalf("GetAuthRuntimeStats() = %+v, %v, %v; want later snapshot", stats, ok, err)
 	}
 }
 
@@ -753,5 +1109,23 @@ func TestRuntimeStateImportUsesExplicitRestoreSemantics(t *testing.T) {
 	stats, ok, err := store.GetAuthRuntimeStats(ctx, "idx-a", "auth-a")
 	if err != nil || !ok || stats.SelectedCount != 9 || stats.SuccessCount != 7 || stats.FailureCount != 2 {
 		t.Fatalf("restored stats = %+v, %v, %v", stats, ok, err)
+	}
+}
+
+func TestRuntimeStateImportRollsBackCursorWhenStatsFail(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `create trigger fail_auth_runtime_import before insert on auth_runtime_stats begin select raise(abort, 'forced runtime import failure'); end`); err != nil {
+		t.Fatalf("create trigger error = %v", err)
+	}
+	_, _, err := store.ImportRuntimeState(ctx,
+		[]RoutingCursorState{{CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "backup-auth", UpdatedAtMS: 100}},
+		[]AuthRuntimeStats{{AuthIndex: "idx-import", AuthID: "auth-import", SelectedCount: 2, UpdatedAtMS: 100}},
+	)
+	if err == nil {
+		t.Fatal("ImportRuntimeState() error = nil, want forced stats failure")
+	}
+	if _, ok, err := store.GetRoutingCursorState(ctx, "single|codex|gpt-5|0|all"); err != nil || ok {
+		t.Fatalf("GetRoutingCursorState() after rollback = _, %v, %v; want missing", ok, err)
 	}
 }

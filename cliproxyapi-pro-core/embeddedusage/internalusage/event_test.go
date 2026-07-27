@@ -18,6 +18,7 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 		"tokens":{"input_tokens":10,"output_tokens":20,"cache_read_tokens":7,"cache_creation_tokens":3},
 		"latency_ms":1234,
 		"ttft_ms":321,
+		"attempt_index":1,
 		"stream":true,
 		"reasoning_effort":"high",
 		"service_tier":"priority",
@@ -37,20 +38,73 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 	if !event.Stream || event.ReasoningEffort != "high" || event.ServiceTier != "priority" {
 		t.Fatalf("request fields = stream:%t reasoning:%q tier:%q, want true/high/priority", event.Stream, event.ReasoningEffort, event.ServiceTier)
 	}
+	if event.AttemptIndex == nil || *event.AttemptIndex != 1 {
+		t.Fatalf("attempt index = %v, want 1", event.AttemptIndex)
+	}
 	if event.Provider != "antigravity" || event.ExecutorType != "AntigravityExecutor" || event.Alias != "client-gpt" {
 		t.Fatalf("provider fields = %q/%q/%q, want antigravity/AntigravityExecutor/client-gpt", event.Provider, event.ExecutorType, event.Alias)
 	}
 	if event.UpstreamRequestID != "upstream-req-1" || event.RetryAfter != "30" {
 		t.Fatalf("upstream diagnostics = %q/%q, want upstream-req-1/30", event.UpstreamRequestID, event.RetryAfter)
 	}
-	if event.CacheTokens != 10 || event.TotalTokens != 40 {
-		t.Fatalf("cache/total tokens = %d/%d, want 10/40", event.CacheTokens, event.TotalTokens)
+	if event.CacheTokens != 10 || event.TotalTokens != 30 || event.InputTokens != 10 || event.UncachedInputTokens != 0 {
+		t.Fatalf("normalized tokens = input:%d uncached:%d cache:%d total:%d, want 10/0/10/30", event.InputTokens, event.UncachedInputTokens, event.CacheTokens, event.TotalTokens)
 	}
 	if event.CacheReadTokens != 7 || event.CacheWriteTokens != 3 {
 		t.Fatalf("cache read/write tokens = %d/%d, want 7/3", event.CacheReadTokens, event.CacheWriteTokens)
 	}
 	if strings.Contains(event.RawJSON, "secret-cookie") || strings.Contains(event.RawJSON, "sk-secret") {
 		t.Fatalf("RawJSON was not redacted: %s", event.RawJSON)
+	}
+}
+
+func TestNormalizeRawUsesCanonicalTokenBreakdownAcrossProviderSemantics(t *testing.T) {
+	tests := []struct {
+		name           string
+		raw            string
+		wantInput      int64
+		wantUncached   int64
+		wantCacheRead  int64
+		wantCacheWrite int64
+		wantOutput     int64
+		wantTotal      int64
+	}{
+		{
+			name: "openai cache is an input subset",
+			raw: `{
+				"timestamp":"2026-07-26T00:00:00Z","provider":"codex","executor_type":"CodexExecutor","model":"gpt-test",
+				"tokens":{"input_tokens":100,"output_tokens":30,"cached_tokens":40,"cache_read_tokens":40,"cache_creation_tokens":10,"total_tokens":130},
+				"accounting_version":2,
+				"token_breakdown":{"schema_version":2,"quality":"complete","total_tokens":130,"input":{"total_tokens":100,"uncached_tokens":50,"cache_read_tokens":40,"cache_write_tokens":10},"output":{"total_tokens":30,"non_reasoning_tokens":18,"reasoning_tokens":12},"unclassified_tokens":0}
+			}`,
+			wantInput: 100, wantUncached: 50, wantCacheRead: 40, wantCacheWrite: 10, wantOutput: 30, wantTotal: 130,
+		},
+		{
+			name: "anthropic cache is independent input",
+			raw: `{
+				"timestamp":"2026-07-26T00:00:00Z","provider":"claude","executor_type":"ClaudeExecutor","model":"claude-test",
+				"tokens":{"input_tokens":30,"output_tokens":5,"cached_tokens":7,"cache_read_tokens":7,"cache_creation_tokens":13,"total_tokens":55},
+				"accounting_version":2,
+				"token_breakdown":{"schema_version":2,"quality":"complete","total_tokens":55,"input":{"total_tokens":50,"uncached_tokens":30,"cache_read_tokens":7,"cache_write_tokens":13},"output":{"total_tokens":5,"non_reasoning_tokens":5,"reasoning_tokens":0},"unclassified_tokens":0}
+			}`,
+			wantInput: 50, wantUncached: 30, wantCacheRead: 7, wantCacheWrite: 13, wantOutput: 5, wantTotal: 55,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event, err := NormalizeRaw([]byte(tt.raw))
+			if err != nil {
+				t.Fatalf("NormalizeRaw() error = %v", err)
+			}
+			if event.AccountingVersion != 2 || event.AccountingQuality != "complete" || !event.TokenBreakdown.Valid() {
+				t.Fatalf("accounting metadata = version:%d quality:%q breakdown:%+v", event.AccountingVersion, event.AccountingQuality, event.TokenBreakdown)
+			}
+			if event.InputTokens != tt.wantInput || event.UncachedInputTokens != tt.wantUncached ||
+				event.CacheReadTokens != tt.wantCacheRead || event.CacheWriteTokens != tt.wantCacheWrite ||
+				event.CachedTokens != tt.wantCacheRead || event.OutputTokens != tt.wantOutput || event.TotalTokens != tt.wantTotal {
+				t.Fatalf("tokens = %+v", event)
+			}
+		})
 	}
 }
 
@@ -110,6 +164,34 @@ func TestNormalizeRawPreservesExportedHashes(t *testing.T) {
 	}
 	if event.EstimatedCost == nil || *event.EstimatedCost != 0.125 || event.PriceRuleID != 9 || event.CacheReadTokens != 4 || event.CacheWriteTokens != 2 {
 		t.Fatalf("exported pricing fields were not preserved: %+v", event)
+	}
+}
+
+func TestNormalizeRawEventHashSeparatesAPIKeys(t *testing.T) {
+	first, err := NormalizeRaw([]byte(`{
+		"timestamp":"2026-06-13T00:00:00Z",
+		"request_id":"req-shared",
+		"endpoint":"POST /v1/chat/completions",
+		"model":"gpt-test",
+		"api_key":"sk-first",
+		"tokens":{"input_tokens":10,"output_tokens":20}
+	}`))
+	if err != nil {
+		t.Fatalf("NormalizeRaw(first) error = %v", err)
+	}
+	second, err := NormalizeRaw([]byte(`{
+		"timestamp":"2026-06-13T00:00:00Z",
+		"request_id":"req-shared",
+		"endpoint":"POST /v1/chat/completions",
+		"model":"gpt-test",
+		"api_key":"sk-second",
+		"tokens":{"input_tokens":10,"output_tokens":20}
+	}`))
+	if err != nil {
+		t.Fatalf("NormalizeRaw(second) error = %v", err)
+	}
+	if first.EventHash == second.EventHash {
+		t.Fatalf("event hashes collide across API keys: %q", first.EventHash)
 	}
 }
 
