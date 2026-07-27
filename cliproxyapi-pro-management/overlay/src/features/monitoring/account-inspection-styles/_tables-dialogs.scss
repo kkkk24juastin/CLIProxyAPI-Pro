@@ -31,7 +31,7 @@
 }
 
 .accountColumn {
-  width: 25%;
+  width: 29%;
 }
 
 .planColumn {
@@ -39,7 +39,7 @@
 }
 
 .healthColumn {
-  width: 22%;
+  width: 18%;
 }
 
 .quotaColumn {
@@ -47,11 +47,11 @@
 }
 
 .tokenColumn {
-  width: 12%;
+  width: 13%;
 }
 
 .operationColumn {
-  width: 21%;
+  width: 20%;
 }
 
 .table th,
@@ -195,10 +195,10 @@
 }
 
 .resultDetailButton {
-  display: grid;
-  justify-items: start;
-  gap: 5px;
-  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -206,23 +206,6 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
-}
-
-.resultDetailButton small {
-  display: block;
-  width: 100%;
-  overflow: hidden;
-  color: var(--inspect-muted);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.resultDetailButton:hover small,
-.resultDetailButton:focus-visible small {
-  color: var(--inspect-ink);
 }
 
 .resultDetailButton:focus-visible {

@@ -64,7 +64,6 @@ import {
   formatCurrentStateLabel,
   formatInspectionInterval,
   formatInspectionResultToast,
-  formatInspectionVerdictPrimary,
   formatQuotaRemainingLabel,
   formatRunInspectionButtonLabel,
   formatTimestamp,
@@ -1777,7 +1776,9 @@ export function AccountInspectionPage() {
                     onClick={() => setResultFilter(tab.key)}
                   >
                     <span>{tab.label}</span>
-                    <span className={styles.resultFilterCount}>{tab.count}</span>
+                    {hasAutoExecutionPolicy && tab.key === 'pending' ? null : (
+                      <span className={styles.resultFilterCount}>{tab.count}</span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -1888,7 +1889,6 @@ export function AccountInspectionPage() {
                               aria-label={t('monitoring.account_inspection_result_details')}
                             >
                               <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{healthStatusLabel}</span>
-                              <small>{formatInspectionVerdictPrimary(item, healthStatus, t)}</small>
                             </button>
                           </td>
                           <td className={styles.quotaTableCell} data-label={t('monitoring.account_inspection_remaining_quota')}>

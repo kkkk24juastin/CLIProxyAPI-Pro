@@ -1,4 +1,12 @@
 @media (max-width: 1280px) {
+  .resultToolbar {
+    grid-template-columns: minmax(240px, 1fr) 180px;
+  }
+
+  .resultFilterControl {
+    grid-column: 1 / -1;
+  }
+
   .assetOverviewLayout {
     grid-template-columns: 1fr;
   }
@@ -59,33 +67,17 @@
     max-width: 100%;
   }
 
-  .resultFilterControl {
-    width: fit-content;
-    max-width: 100%;
-  }
-
-  .resultToolbar {
-    justify-content: flex-start;
-  }
-
   .resultMeta {
     justify-items: start;
   }
 
-  .resultToolbarPrimary {
-    flex-basis: 100%;
-    width: 100%;
-  }
-
   .resultSearchField {
-    flex-basis: 100%;
     width: 100%;
     min-width: 0;
   }
 
   .resultProviderSelect {
-    flex-basis: 160px;
-    width: 160px;
+    width: 100%;
   }
 
   .resultSelectionBar {
@@ -297,9 +289,8 @@
     flex: 0 0 auto;
   }
 
-  .resultToolbarPrimary {
-    display: grid;
-    grid-template-columns: 1fr;
+  .resultToolbar {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .resultSearchField,
@@ -309,6 +300,8 @@
   }
 
   .resultFilterControl {
+    grid-column: auto;
+    justify-content: flex-start;
     width: 100%;
   }
 
@@ -421,8 +414,7 @@
     grid-row: 4;
   }
 
-  .primaryCell > strong,
-  .resultDetailButton small {
+  .primaryCell > strong {
     white-space: normal;
     overflow-wrap: anywhere;
   }
