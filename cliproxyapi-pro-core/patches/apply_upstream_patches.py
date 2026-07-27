@@ -1416,6 +1416,18 @@ replace_once(
 \t\t}
 ''',
 )
+replace_once(
+    server_test,
+    '''\tif legacyRR.Code != http.StatusNotFound {
+\t\tt.Fatalf("legacy usage status = %d, want %d body=%s", legacyRR.Code, http.StatusNotFound, legacyRR.Body.String())
+\t}
+''',
+    '''\tif legacyRR.Code != http.StatusServiceUnavailable {
+\t\tt.Fatalf("legacy usage status = %d, want %d body=%s", legacyRR.Code, http.StatusServiceUnavailable, legacyRR.Body.String())
+\t}
+''',
+    'legacyRR.Code != http.StatusServiceUnavailable',
+)
 
 replace_once(
     auth_files_fields,

@@ -206,4 +206,3 @@ export function isQuotaStateAbnormal(quota: unknown): boolean {
   if (status !== null && QUOTA_BENIGN_ERROR_STATUSES.has(status)) return false;
   return true;
 }
-

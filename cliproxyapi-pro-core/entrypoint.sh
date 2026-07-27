@@ -10,6 +10,7 @@ log() {
 KOMARI_PID=""
 MAIN_PID=""
 
+# shellcheck disable=SC2317  # invoked indirectly via trap
 shutdown() {
     trap - TERM INT
     if [ -n "$MAIN_PID" ]; then
