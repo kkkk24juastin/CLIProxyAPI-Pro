@@ -2202,14 +2202,7 @@ replace_once(
 ''',
     'entry["selected"] = auth.Selected',
 )
-auth_files_delete_missing_test = ROOT / 'internal/api/handlers/management/auth_files_delete_missing_test.go'
-auth_files_delete_missing_test_source = Path('/tmp/auth_files_delete_missing_test.go')
-if not auth_files_delete_missing_test_source.is_file():
-    auth_files_delete_missing_test_source = Path(__file__).resolve().parent / 'auth_files_delete_missing_test.go'
-write_text(
-    auth_files_delete_missing_test,
-    re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(auth_files_delete_missing_test_source)),
-)
+queue_go_source('internal/api/handlers/management/auth_files_delete_missing_test.go')
 replace_once(
     auth_files_crud_handler,
     '''\tctx := c.Request.Context()
