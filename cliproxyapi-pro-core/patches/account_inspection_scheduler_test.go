@@ -343,8 +343,8 @@ func TestStreamStatusLockedOmitsDetailsForLightSnapshots(t *testing.T) {
 	}
 
 	status := scheduler.streamStatusLocked(accountInspectionSnapshotOptions{})
-	if status.Results != nil || status.Logs != nil || status.HealthCounts != nil {
-		t.Fatalf("streamStatusLocked(light) leaked details: results=%v logs=%v health=%v", status.Results, status.Logs, status.HealthCounts)
+	if status.Results != nil || status.Logs != nil || status.HealthCounts != nil || status.ProviderHealthCounts != nil {
+		t.Fatalf("streamStatusLocked(light) leaked details: results=%v logs=%v health=%v providerHealth=%v", status.Results, status.Logs, status.HealthCounts, status.ProviderHealthCounts)
 	}
 	if status.ResultsLimited || status.LogsLimited {
 		t.Fatalf("streamStatusLocked(light) limited flags = results:%v logs:%v, want false", status.ResultsLimited, status.LogsLimited)
@@ -384,6 +384,10 @@ func TestStreamStatusLockedReturnsPagedDetailsWithFullHealthCounts(t *testing.T)
 	}
 	if status.HealthCounts.Total != 4 || status.HealthCounts.Healthy != 2 || status.HealthCounts.AuthInvalid != 2 {
 		t.Fatalf("HealthCounts = %+v, want total=4 healthy=2 authInvalid=2", *status.HealthCounts)
+	}
+	providerCounts := status.ProviderHealthCounts["test"]
+	if providerCounts.Total != 4 || providerCounts.Healthy != 2 || providerCounts.AuthInvalid != 2 {
+		t.Fatalf("ProviderHealthCounts[test] = %+v, want total=4 healthy=2 authInvalid=2", providerCounts)
 	}
 	if status.ResultsPage == nil || status.ResultsPage.Total != 4 || status.ResultsPage.Page != 2 || status.ResultsPage.PageSize != 2 {
 		t.Fatalf("ResultsPage = %+v, want page=2 size=2 total=4", status.ResultsPage)
@@ -1803,6 +1807,11 @@ func TestClassifyXAIDeepProbeResponse(t *testing.T) {
 			want: accountInspectionDeepProbeQuota,
 		},
 		{
+			name: "credits exhausted returned as forbidden",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusForbidden, Body: `{"error":{"message":"You have run out of credits or need a Grok subscription. Add credits or upgrade to SuperGrok."}}`},
+			want: accountInspectionDeepProbeQuota,
+		},
+		{
 			name: "unauthorized",
 			resp: accountInspectionHTTPResult{StatusCode: http.StatusUnauthorized, Body: `{"error":{"message":"invalid token"}}`},
 			want: accountInspectionDeepProbeAuthError,
@@ -1825,6 +1834,27 @@ func TestClassifyXAIDeepProbeResponse(t *testing.T) {
 				t.Fatalf("classifyXAIDeepProbeResponse() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestClassifyAntigravityDeepProbePrefersQuotaEvidenceOverAuthStatus(t *testing.T) {
+	resp := accountInspectionHTTPResult{
+		StatusCode: http.StatusForbidden,
+		Body:       `{"error":{"status":"RESOURCE_EXHAUSTED","message":"quota exhausted"}}`,
+	}
+	status, _ := classifyAntigravityDeepProbeResponse(resp)
+	if status != accountInspectionDeepProbeQuota {
+		t.Fatalf("classifyAntigravityDeepProbeResponse() = %q, want %q", status, accountInspectionDeepProbeQuota)
+	}
+}
+
+func TestCodexDecisionPrefersQuotaEvidenceOverUnauthorizedStatus(t *testing.T) {
+	decision := codexDecision(accountInspectionAccount{}, http.StatusUnauthorized, nil, true, 95)
+	if !decision.IsQuota || decision.Action != accountInspectionActionDisable {
+		t.Fatalf("codexDecision() = %#v, want quota disable decision", decision)
+	}
+	if got := accountInspectionDecisionErrorCode("codex", decision, testStatusCode(http.StatusUnauthorized)); got != "" {
+		t.Fatalf("quota decision error code = %q, want empty", got)
 	}
 }
 

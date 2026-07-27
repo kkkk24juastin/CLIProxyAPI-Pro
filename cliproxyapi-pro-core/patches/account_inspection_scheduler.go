@@ -220,20 +220,21 @@ type accountInspectionProgress struct {
 }
 
 type accountInspectionStatus struct {
-	State            accountInspectionRunState      `json:"state"`
-	LastStartedAt    int64                          `json:"lastStartedAt"`
-	LastFinishedAt   int64                          `json:"lastFinishedAt"`
-	LastError        string                         `json:"lastError"`
-	Progress         accountInspectionProgress      `json:"progress"`
-	Summary          accountInspectionSummary       `json:"summary"`
-	HealthCounts     *accountInspectionHealthCounts `json:"healthCounts,omitempty"`
-	LogsPage         *accountInspectionPageInfo     `json:"logsPage,omitempty"`
-	ResultsPage      *accountInspectionPageInfo     `json:"resultsPage,omitempty"`
-	LogsLimited      bool                           `json:"logsLimited,omitempty"`
-	ResultsLimited   bool                           `json:"resultsLimited,omitempty"`
-	RestoredSnapshot bool                           `json:"restoredSnapshot,omitempty"`
-	Logs             []accountInspectionLogEntry    `json:"logs"`
-	Results          []accountInspectionResult      `json:"results"`
+	State                accountInspectionRunState                `json:"state"`
+	LastStartedAt        int64                                    `json:"lastStartedAt"`
+	LastFinishedAt       int64                                    `json:"lastFinishedAt"`
+	LastError            string                                   `json:"lastError"`
+	Progress             accountInspectionProgress                `json:"progress"`
+	Summary              accountInspectionSummary                 `json:"summary"`
+	HealthCounts         *accountInspectionHealthCounts           `json:"healthCounts,omitempty"`
+	ProviderHealthCounts map[string]accountInspectionHealthCounts `json:"providerHealthCounts,omitempty"`
+	LogsPage             *accountInspectionPageInfo               `json:"logsPage,omitempty"`
+	ResultsPage          *accountInspectionPageInfo               `json:"resultsPage,omitempty"`
+	LogsLimited          bool                                     `json:"logsLimited,omitempty"`
+	ResultsLimited       bool                                     `json:"resultsLimited,omitempty"`
+	RestoredSnapshot     bool                                     `json:"restoredSnapshot,omitempty"`
+	Logs                 []accountInspectionLogEntry              `json:"logs"`
+	Results              []accountInspectionResult                `json:"results"`
 }
 
 type accountInspectionResultSnapshot struct {
@@ -830,6 +831,18 @@ func accountInspectionResultHealthCounts(results []accountInspectionResult) acco
 	return counts
 }
 
+func accountInspectionResultProviderHealthCounts(results []accountInspectionResult) map[string]accountInspectionHealthCounts {
+	counts := make(map[string]accountInspectionHealthCounts)
+	for _, result := range results {
+		provider := strings.ToLower(strings.TrimSpace(result.Provider))
+		if provider == "" {
+			provider = "unknown"
+		}
+		counts[provider] = adjustAccountInspectionHealthCountsForResult(counts[provider], result, 1)
+	}
+	return counts
+}
+
 func adjustAccountInspectionHealthCountsForResult(counts accountInspectionHealthCounts, result accountInspectionResult, delta int) accountInspectionHealthCounts {
 	counts.Total += delta
 	switch accountInspectionResultHealthBucketOf(result) {
@@ -1021,6 +1034,7 @@ func (s *accountInspectionScheduler) streamStatusLocked(options accountInspectio
 		logs, logsPage := paginateAccountInspectionLogs(s.status.Logs, options.LogPage, options.LogPageSize, options.LogLevel)
 		results, resultsPage := paginateAccountInspectionResults(s.status.Results, options.ResultPage, options.ResultPageSize, options.ResultFilter, options.ResultProvider, options.ResultSearch)
 		status.HealthCounts = &healthCounts
+		status.ProviderHealthCounts = accountInspectionResultProviderHealthCounts(s.status.Results)
 		status.Logs = logs
 		status.Results = results
 		status.LogsPage = &logsPage
@@ -1029,6 +1043,7 @@ func (s *accountInspectionScheduler) streamStatusLocked(options accountInspectio
 		status.ResultsLimited = resultsPage.Total > len(results)
 	} else {
 		status.HealthCounts = nil
+		status.ProviderHealthCounts = nil
 		status.LogsPage = nil
 		status.ResultsPage = nil
 		status.Logs = nil
@@ -2023,7 +2038,9 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		result.DeepProbeStatus = string(decision.DeepProbeStatus)
 		result.DeepProbeError = decision.DeepProbeError
 	}
-	if statusCode != nil && decision.DeepProbeStatus != accountInspectionDeepProbeTransientError {
+	if decision.IsQuota {
+		s.clearInspectionAuthError(ctx, account)
+	} else if statusCode != nil && decision.DeepProbeStatus != accountInspectionDeepProbeTransientError {
 		s.syncInspectionAuthStatus(ctx, account, *statusCode)
 	}
 	level := "info"
@@ -2211,6 +2228,9 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 		}
 		status := intPtr(resp.StatusCode)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if isQuotaHTTPStatus(resp.StatusCode) || isAntigravityQuotaFailure(resp.Body) {
+				return quotaUnavailableDecision(account, "Antigravity 额度不可用，建议禁用账号", resp.Body), status, nil
+			}
 			if isAccountErrorStatus(resp.StatusCode) {
 				priorityStatus = status
 				priorityDetail = resp.Body
@@ -2398,11 +2418,11 @@ func classifyAntigravityDeepProbeResponse(resp accountInspectionHTTPResult) (acc
 	if message == "" {
 		message = fmt.Sprintf("HTTP %d", resp.StatusCode)
 	}
+	if isQuotaHTTPStatus(resp.StatusCode) || isAntigravityQuotaFailure(resp.Body) {
+		return accountInspectionDeepProbeQuota, message
+	}
 	if isAccountErrorStatus(resp.StatusCode) {
 		return accountInspectionDeepProbeAuthError, message
-	}
-	if resp.StatusCode == http.StatusPaymentRequired || isAntigravityQuotaFailure(resp.Body) {
-		return accountInspectionDeepProbeQuota, message
 	}
 	return accountInspectionDeepProbeTransientError, message
 }
@@ -2501,6 +2521,9 @@ func (s *accountInspectionScheduler) inspectClaude(ctx context.Context, account 
 		return accountInspectionDecision{}, status, err
 	}
 	if usageResp.StatusCode < 200 || usageResp.StatusCode >= 300 {
+		if isQuotaHTTPStatus(usageResp.StatusCode) {
+			return quotaUnavailableDecision(account, "Claude 额度不可用，建议禁用账号", usageResp.Body), status, nil
+		}
 		if isAccountErrorStatus(usageResp.StatusCode) {
 			return withInspectionHTTPErrorDetail(authErrorDecision(account, usageResp.StatusCode), usageResp.Body), status, nil
 		}
@@ -2538,7 +2561,7 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 		return accountInspectionDecision{}, status, err
 	}
 	payload, windows, used := buildCodexWindows(resp.Body)
-	isQuota := resp.StatusCode == 402 || strings.Contains(strings.ToLower(resp.Body), "quota exhausted") || strings.Contains(strings.ToLower(resp.Body), "limit reached") || strings.Contains(strings.ToLower(resp.Body), "payment_required")
+	isQuota := isQuotaHTTPStatus(resp.StatusCode) || strings.Contains(strings.ToLower(resp.Body), "quota exhausted") || strings.Contains(strings.ToLower(resp.Body), "limit reached") || strings.Contains(strings.ToLower(resp.Body), "payment_required")
 	if used != nil && *used >= float64(settings.UsedPercentThreshold) {
 		isQuota = true
 	}
@@ -2566,6 +2589,9 @@ func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, accou
 		status := upstreamStatus
 		if status == 0 {
 			status = serviceStatus
+		}
+		if isQuotaHTTPStatus(upstreamStatus) {
+			return quotaUnavailableDecision(account, "Gemini CLI 额度不可用，建议禁用账号", ""), intPtr(upstreamStatus), nil
 		}
 		if isAccountErrorStatus(upstreamStatus) {
 			return authErrorDecision(account, upstreamStatus), intPtr(upstreamStatus), nil
@@ -2603,6 +2629,9 @@ func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account ac
 		return accountInspectionDecision{}, status, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if isQuotaHTTPStatus(resp.StatusCode) {
+			return quotaUnavailableDecision(account, "Kimi 额度不可用，建议禁用账号", resp.Body), status, nil
+		}
 		if isAccountErrorStatus(resp.StatusCode) {
 			return withInspectionHTTPErrorDetail(authErrorDecision(account, resp.StatusCode), resp.Body), status, nil
 		}
@@ -2636,11 +2665,11 @@ func (s *accountInspectionScheduler) inspectXAIOfficialAPI(ctx context.Context, 
 		return accountInspectionDecision{}, status, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if isQuotaHTTPStatus(resp.StatusCode) || isXAIQuotaFailure(resp.Body) {
+			return xaiOfficialAPIQuotaDecision(account, resp.Body), status, nil
+		}
 		if isAccountErrorStatus(resp.StatusCode) {
 			return withInspectionHTTPErrorDetail(authErrorDecision(account, resp.StatusCode), resp.Body), status, nil
-		}
-		if resp.StatusCode == http.StatusPaymentRequired || isXAIQuotaFailure(resp.Body) {
-			return xaiOfficialAPIQuotaDecision(account, resp.Body), status, nil
 		}
 		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -2670,6 +2699,12 @@ func (s *accountInspectionScheduler) inspectXAICLI(ctx context.Context, account 
 		billing["planType"] = planType
 	}
 	if billing == nil {
+		if isQuotaHTTPStatus(weeklyResp.StatusCode) || isXAIQuotaFailure(weeklyResp.Body) {
+			return quotaUnavailableDecision(account, "xAI 额度不可用，建议禁用账号", weeklyResp.Body), status, nil
+		}
+		if isQuotaHTTPStatus(monthlyResp.StatusCode) || isXAIQuotaFailure(monthlyResp.Body) {
+			return quotaUnavailableDecision(account, "xAI 额度不可用，建议禁用账号", monthlyResp.Body), status, nil
+		}
 		if isAccountErrorStatus(weeklyResp.StatusCode) {
 			return withInspectionHTTPErrorDetail(authErrorDecision(account, weeklyResp.StatusCode), weeklyResp.Body), status, nil
 		}
@@ -2986,11 +3021,11 @@ func classifyXAIDeepProbeResponse(resp accountInspectionHTTPResult) (accountInsp
 	if message == "" {
 		message = fmt.Sprintf("HTTP %d", resp.StatusCode)
 	}
+	if isQuotaHTTPStatus(resp.StatusCode) || isXAIQuotaFailure(resp.Body) {
+		return accountInspectionDeepProbeQuota, message
+	}
 	if isAccountErrorStatus(resp.StatusCode) {
 		return accountInspectionDeepProbeAuthError, message
-	}
-	if resp.StatusCode == http.StatusPaymentRequired || isXAIQuotaFailure(resp.Body) {
-		return accountInspectionDeepProbeQuota, message
 	}
 	return accountInspectionDeepProbeTransientError, message
 }
@@ -3061,7 +3096,9 @@ func isXAIQuotaFailure(body string) bool {
 		strings.Contains(lower, "quota_exhausted") ||
 		strings.Contains(lower, "quota exhausted") ||
 		strings.Contains(lower, "usage limit") ||
-		strings.Contains(lower, "included free usage")
+		strings.Contains(lower, "included free usage") ||
+		strings.Contains(lower, "out of credits") ||
+		strings.Contains(lower, "grok subscription")
 }
 
 func (s *accountInspectionScheduler) fetchXAIBillingSummary(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, url string, headers map[string]string) (map[string]any, accountInspectionHTTPResult, error) {
@@ -3146,6 +3183,10 @@ func (s *accountInspectionScheduler) claudeHeaders() map[string]string {
 
 func isAccountErrorStatus(status int) bool {
 	return status == 400 || status == 401 || status == 403 || status == 404
+}
+
+func isQuotaHTTPStatus(status int) bool {
+	return status == http.StatusPaymentRequired || status == http.StatusTooManyRequests
 }
 
 func isInspectionAuthRecoveryStatus(status int) bool {
@@ -3540,6 +3581,9 @@ func accountInspectionErrorCode(status *int, fallback string) string {
 }
 
 func accountInspectionDecisionErrorCode(provider string, decision accountInspectionDecision, status *int) string {
+	if decision.IsQuota {
+		return ""
+	}
 	if decision.DeepProbeStatus == accountInspectionDeepProbeTransientError {
 		if strings.EqualFold(strings.TrimSpace(provider), "xai") {
 			return "xai_deep_probe_error"
@@ -3590,18 +3634,32 @@ func quotaDecision(account accountInspectionAccount, used *float64, hasQuotaData
 	return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: "额度可用，无需处理", UsedPercent: used}
 }
 
+func quotaUnavailableDecision(account accountInspectionAccount, reason string, body string) accountInspectionDecision {
+	action := accountInspectionActionDisable
+	if account.Disabled {
+		action = accountInspectionActionKeep
+		reason = strings.TrimSuffix(reason, "，建议禁用账号") + "，但账号已禁用"
+	}
+	return accountInspectionDecision{
+		Action:       action,
+		ActionReason: reason,
+		IsQuota:      true,
+		ErrorDetail:  inspectionHTTPErrorDetail(body),
+	}
+}
+
 func codexDecision(account accountInspectionAccount, status int, used *float64, isQuota bool, threshold int) accountInspectionDecision {
+	if isQuota || (used != nil && *used >= float64(threshold)) {
+		if account.Disabled {
+			return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: "额度超阈值，但账号已禁用", UsedPercent: used, IsQuota: true}
+		}
+		return accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "额度超阈值，建议禁用账号", UsedPercent: used, IsQuota: true}
+	}
 	if status == 401 {
 		return accountInspectionDecision{Action: accountInspectionActionDelete, ActionReason: "接口返回 401，建议删除失效账号", UsedPercent: used}
 	}
 	if isAccountErrorStatus(status) {
 		return authErrorDecision(account, status)
-	}
-	if isQuota || (used != nil && *used >= float64(threshold)) {
-		if account.Disabled {
-			return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: "额度超阈值，但账号已禁用", UsedPercent: used, IsQuota: isQuota}
-		}
-		return accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "额度超阈值，建议禁用账号", UsedPercent: used, IsQuota: true}
 	}
 	if status == 200 && account.Disabled {
 		return accountInspectionDecision{Action: accountInspectionActionEnable, ActionReason: "账号恢复健康，建议重新启用", UsedPercent: used}

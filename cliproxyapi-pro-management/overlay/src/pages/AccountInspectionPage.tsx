@@ -78,6 +78,7 @@ import {
   isInspectableAccountInspectionAuthFile,
   levelClassMap,
   resolveAccountInspectionPlanLabel,
+  resolveAssetInspectionHealthCounts,
   scheduleAuthFileAccountStats,
   summaryToneClass,
   toAccountInspectionApiItem,
@@ -879,6 +880,15 @@ export function AccountInspectionPage() {
     return authFileStats.providers.find((provider) => provider.provider === selectedAssetProvider) ?? authFileStats;
   }, [authFileStats, selectedAssetProvider]);
 
+  const selectedInspectionHealthCounts = useMemo(() => {
+    return resolveAssetInspectionHealthCounts(
+      result?.healthCounts,
+      result?.providerHealthCounts,
+      selectedAssetProvider,
+      selectedAssetStats.total
+    );
+  }, [result?.healthCounts, result?.providerHealthCounts, selectedAssetProvider, selectedAssetStats.total]);
+
   const selectedAssetLabel = selectedAssetProvider === 'all'
     ? t('monitoring.filter_all_accounts')
     : resolveProviderDisplayLabel(selectedAssetProvider);
@@ -910,25 +920,25 @@ export function AccountInspectionPage() {
     {
       key: 'quotaLow',
       label: t('monitoring.account_inspection_account_quota_low'),
-      value: authFileStatsReady ? String(selectedAssetStats.quotaLow) : '--',
+      value: authFileStatsReady ? String(selectedInspectionHealthCounts?.quotaExhausted ?? selectedAssetStats.quotaLow) : '--',
       description: t('monitoring.account_inspection_settings_auto_execute_quota_limit_disable_label'),
-      tone: authFileStatsReady && selectedAssetStats.quotaLow > 0 ? 'bad' : 'neutral',
+      tone: authFileStatsReady && (selectedInspectionHealthCounts?.quotaExhausted ?? selectedAssetStats.quotaLow) > 0 ? 'bad' : 'neutral',
     },
     {
       key: 'accountInvalid',
       label: t('monitoring.account_inspection_account_invalid'),
-      value: authFileStatsReady ? String(selectedAssetStats.accountInvalid) : '--',
+      value: authFileStatsReady ? String(selectedInspectionHealthCounts?.authInvalid ?? selectedAssetStats.accountInvalid) : '--',
       description: t('monitoring.account_inspection_settings_auto_execute_account_invalid_action_label'),
-      tone: authFileStatsReady && selectedAssetStats.accountInvalid > 0 ? 'bad' : 'neutral',
+      tone: authFileStatsReady && (selectedInspectionHealthCounts?.authInvalid ?? selectedAssetStats.accountInvalid) > 0 ? 'bad' : 'neutral',
     },
     {
       key: 'requestError',
       label: t('monitoring.account_inspection_account_request_error'),
-      value: authFileStatsReady ? String(selectedAssetStats.requestError) : '--',
+      value: authFileStatsReady ? String(selectedInspectionHealthCounts?.inspectionError ?? selectedAssetStats.requestError) : '--',
       description: t('monitoring.account_inspection_settings_auto_execute_request_error_action_label'),
-      tone: authFileStatsReady && selectedAssetStats.requestError > 0 ? 'bad' : 'neutral',
+      tone: authFileStatsReady && (selectedInspectionHealthCounts?.inspectionError ?? selectedAssetStats.requestError) > 0 ? 'bad' : 'neutral',
     },
-  ], [authFileStatsReady, selectedAssetLabel, selectedAssetStats, t]);
+  ], [authFileStatsReady, selectedAssetLabel, selectedAssetStats, selectedInspectionHealthCounts, t]);
 
   const actionStats = useMemo(() => {
     const autoTotal = autoExecutionCounts.delete + autoExecutionCounts.disable + autoExecutionCounts.enable;

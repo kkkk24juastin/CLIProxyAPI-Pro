@@ -8,6 +8,7 @@ import {
   isResultRequestError,
   isXaiQuotaLow,
   resolveAccountInspectionPlanLabel,
+  resolveAssetInspectionHealthCounts,
   resolveResultHealthStatus,
   toSettingsDraft,
 } from '../src/features/monitoring/accountInspectionPageModel';
@@ -115,6 +116,33 @@ describe('account inspection page model', () => {
 
     expect(isResultAccountInvalid(result({ statusCode: 401, errorCode: 'inspection_http_error' }))).toBe(true);
     expect(isResultRequestError(result({ statusCode: 400, errorCode: 'xai_deep_probe_error', error: 'probe failed' }))).toBe(true);
+
+    expect(isAuthFileRequestError({
+      name: 'quota-disabled.json',
+      type: 'xai',
+      disabled: true,
+      unavailable: true,
+      status: 'error',
+      status_message: 'disabled by scheduled account inspection',
+    })).toBe(false);
+  });
+
+  test('uses complete inspection health counts for aggregate and provider asset cards', () => {
+    const allCounts = {
+      total: 10,
+      healthy: 2,
+      disabled: 0,
+      authInvalid: 3,
+      quotaExhausted: 4,
+      inspectionError: 1,
+      recoverable: 0,
+    };
+    const xaiCounts = { ...allCounts, total: 6, authInvalid: 2, quotaExhausted: 3 };
+    const providerCounts = { xai: xaiCounts };
+
+    expect(resolveAssetInspectionHealthCounts(allCounts, providerCounts, 'all', 10)).toBe(allCounts);
+    expect(resolveAssetInspectionHealthCounts(allCounts, providerCounts, 'xai', 6)).toBe(xaiCounts);
+    expect(resolveAssetInspectionHealthCounts(allCounts, providerCounts, 'xai', 7)).toBeNull();
   });
 
   test('keeps pagination and settings draft conversion deterministic', () => {

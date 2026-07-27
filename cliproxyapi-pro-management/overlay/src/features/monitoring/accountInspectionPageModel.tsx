@@ -12,6 +12,7 @@ import {
   type AccountInspectionAntigravityQuotaMode,
   type AccountInspectionAutoErrorAction,
   type AccountInspectionConfigurableSettings,
+  type AccountInspectionHealthCounts,
   type AccountInspectionLogLevel,
   type AccountInspectionPageInfo,
   type AccountInspectionProgressSnapshot,
@@ -30,7 +31,6 @@ import {
   isQuotaLowState,
   isRecordValue,
   normalizeNumberValue,
-  readBooleanValue,
   readStringValue,
   resolveAuthProvider,
 } from '@/utils/quota';
@@ -408,12 +408,6 @@ export const isInspectableAccountInspectionAuthFile = (file: AuthFileItem) => {
   return ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET.has(provider) && !isAccountInspectionApiKeyAuthFile(file);
 };
 
-export const readAuthFileStatusMessage = (file: AuthFileItem) => {
-  const raw = file['status_message'] ?? file.statusMessage;
-  if (raw === undefined || raw === null) return '';
-  return String(raw).trim();
-};
-
 export const readAuthFileLastError = (file: AuthFileItem) => {
   const raw = file['last_error'] ?? file.lastError;
   return isRecordValue(raw) ? raw : null;
@@ -432,12 +426,11 @@ export const isAuthFileAccountInvalid = (file: AuthFileItem) =>
 
 export const isAuthFileRequestError = (file: AuthFileItem) => {
   const code = readAuthFileLastErrorCode(file);
-  if (code === 'inspection_probe_error' || code === 'antigravity_deep_probe_error') return true;
   if (isAuthFileAccountInvalid(file)) return false;
-  if (readAuthFileLastError(file)) return true;
-  if (readBooleanValue(file.unavailable ?? file['unavailable'])) return true;
-  const status = String(file.status ?? file.state ?? '').trim().toLowerCase();
-  return status === 'error' || readAuthFileStatusMessage(file).length > 0;
+  return code === 'inspection_probe_error'
+    || code === 'antigravity_deep_probe_error'
+    || code === 'xai_deep_probe_error'
+    || code === 'token_refresh_error';
 };
 
 export const incrementProviderStats = (stats: ProviderAccountStats, disabled: boolean, highAvailable: boolean, quotaLow: boolean, accountInvalid: boolean, requestError: boolean) => {
@@ -475,6 +468,18 @@ export const createEmptyAuthFileAccountStats = (): AuthFileAccountStats => ({
   requestError: 0,
   providers: [],
 });
+
+export const resolveAssetInspectionHealthCounts = (
+  healthCounts: AccountInspectionHealthCounts | undefined,
+  providerHealthCounts: Record<string, AccountInspectionHealthCounts> | undefined,
+  provider: string,
+  assetTotal: number
+) => {
+  const counts = provider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
+    ? healthCounts
+    : providerHealthCounts?.[provider];
+  return counts?.total === assetTotal ? counts : null;
+};
 
 export const finalizeAuthFileAccountStats = (
   stats: AuthFileAccountStats,

@@ -129,6 +129,7 @@ export interface AccountInspectionRunResult {
   startedAt: number;
   finishedAt: number;
   healthCounts?: AccountInspectionHealthCounts;
+  providerHealthCounts?: Record<string, AccountInspectionHealthCounts>;
   resultsPage?: AccountInspectionPageInfo;
   resultsLimited?: boolean;
 }
@@ -180,6 +181,7 @@ export type AccountInspectionBackendStatus = {
     executedEnableCount?: number;
   };
   healthCounts?: AccountInspectionHealthCounts;
+  providerHealthCounts?: Record<string, AccountInspectionHealthCounts>;
   logsPage?: AccountInspectionPageInfo;
   resultsPage?: AccountInspectionPageInfo;
   logsLimited?: boolean;
@@ -686,6 +688,7 @@ const buildAccountInspectionBackendRunResult = (
     startedAt,
     finishedAt,
     healthCounts: response.status.healthCounts,
+    providerHealthCounts: response.status.providerHealthCounts,
     resultsPage: response.status.resultsPage,
     resultsLimited: response.status.resultsLimited ?? false,
   };
