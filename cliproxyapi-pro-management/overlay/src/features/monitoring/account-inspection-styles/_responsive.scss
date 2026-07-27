@@ -68,6 +68,12 @@
     justify-content: flex-start;
   }
 
+  .resultSearchField {
+    flex-basis: 100%;
+    width: 100%;
+    min-width: 0;
+  }
+
   .resultProviderSelect {
     flex-basis: 160px;
     width: 160px;

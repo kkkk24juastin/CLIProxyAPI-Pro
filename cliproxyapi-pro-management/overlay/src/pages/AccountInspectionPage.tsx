@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -10,6 +10,7 @@ import {
   IconChevronDown,
   IconChevronUp,
   IconDownload,
+  IconSearch,
 } from '@/components/ui/icons';
 import { getAuthFileIcon } from '@/features/authFiles/constants';
 import {
@@ -156,6 +157,9 @@ export function AccountInspectionPage() {
   const [logsCollapsed, setLogsCollapsed] = useState(false);
   const [resultFilter, setResultFilter] = useState<ResultFilter>('accountInvalid');
   const [selectedResultProvider, setSelectedResultProvider] = useState<string>(ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE);
+  const [resultSearchInput, setResultSearchInput] = useState('');
+  const deferredResultSearchInput = useDeferredValue(resultSearchInput);
+  const [resultSearch, setResultSearch] = useState('');
   const [resultPage, setResultPage] = useState(1);
   const [logLevelFilter, setLogLevelFilter] = useState<AccountInspectionLogLevel | 'all'>('all');
   const [logPage, setLogPage] = useState(1);
@@ -198,6 +202,11 @@ export function AccountInspectionPage() {
       syncDraft: !isSettingsModalOpen,
     });
   }, [config, isSettingsModalOpen]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setResultSearch(deferredResultSearchInput.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [deferredResultSearchInput]);
 
   const loadAuthFiles = useCallback(async () => {
     if (connectionStatus !== 'connected') {
@@ -281,13 +290,14 @@ export function AccountInspectionPage() {
       resultPageSize: ACCOUNT_INSPECTION_RESULT_PAGE_SIZE,
       resultFilter,
       resultProvider: selectedResultProvider,
+      resultSearch,
       logPage,
       logPageSize: ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
       logLevel: logLevelFilter,
     });
     applyBackendResponse(response, true);
     return response;
-  }, [applyBackendResponse, logLevelFilter, logPage, resultFilter, resultPage, selectedResultProvider]);
+  }, [applyBackendResponse, logLevelFilter, logPage, resultFilter, resultPage, resultSearch, selectedResultProvider]);
   const inspectionDetailsLoaderRef = useRef(loadInspectionDetailsPage);
 
   useEffect(() => {
@@ -300,10 +310,11 @@ export function AccountInspectionPage() {
     resultPageSize: ACCOUNT_INSPECTION_RESULT_PAGE_SIZE,
     resultFilter,
     resultProvider: selectedResultProvider,
+    resultSearch,
     logPage,
     logPageSize: ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
     logLevel: logLevelFilter,
-  }), [logLevelFilter, logPage, resultFilter, resultPage, selectedResultProvider]);
+  }), [logLevelFilter, logPage, resultFilter, resultPage, resultSearch, selectedResultProvider]);
 
   const loadBackendSchedule = useCallback(async () => {
     const requestId = backendScheduleRequestIdRef.current + 1;
@@ -425,6 +436,7 @@ export function AccountInspectionPage() {
       progress.startedAt,
       resultFilter,
       selectedResultProvider,
+      resultSearch,
       resultPage,
       logLevelFilter,
       logPage,
@@ -470,12 +482,13 @@ export function AccountInspectionPage() {
     progress.total,
     resultFilter,
     resultPage,
+    resultSearch,
     selectedResultProvider,
   ]);
 
   useEffect(() => {
     setResultPage(1);
-  }, [resultFilter, selectedResultProvider]);
+  }, [resultFilter, resultSearch, selectedResultProvider]);
 
   useEffect(() => {
     setLogPage(1);
@@ -1556,6 +1569,17 @@ export function AccountInspectionPage() {
           </div>
           {result ? (
             <div className={styles.resultToolbar}>
+              <div className={styles.resultSearchField}>
+                <Input
+                  type="search"
+                  value={resultSearchInput}
+                  onChange={(event) => setResultSearchInput(event.target.value)}
+                  placeholder={t('monitoring.account_inspection_search_placeholder')}
+                  aria-label={t('monitoring.account_inspection_search_label')}
+                  className={styles.resultSearchInput}
+                  rightElement={<IconSearch size={16} />}
+                />
+              </div>
               <Select
                 value={selectedResultProvider}
                 options={resultProviderOptions}

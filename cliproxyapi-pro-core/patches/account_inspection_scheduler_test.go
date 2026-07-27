@@ -157,7 +157,7 @@ func TestPaginateAccountInspectionResultsReturnsRequestedPage(t *testing.T) {
 		testInspectionResult("auth-2", accountInspectionActionKeep, false, testStatusCode(401), false, ""),
 	}
 
-	page, info := paginateAccountInspectionResults(results, 2, 2, "", "")
+	page, info := paginateAccountInspectionResults(results, 2, 2, "", "", "")
 	if info.Page != 2 || info.PageSize != 2 || info.Total != 4 || info.TotalPages != 2 || info.HasMore {
 		t.Fatalf("page info = %+v, want page=2 size=2 total=4 totalPages=2 hasMore=false", info)
 	}
@@ -176,7 +176,7 @@ func TestPaginateAccountInspectionResultsFiltersHealthBuckets(t *testing.T) {
 		testInspectionResult("disabled", accountInspectionActionKeep, true, nil, false, ""),
 	}
 
-	page, info := paginateAccountInspectionResults(results, 1, 10, "quotaExhausted", "")
+	page, info := paginateAccountInspectionResults(results, 1, 10, "quotaExhausted", "", "")
 	if info.Total != 1 || info.HasMore {
 		t.Fatalf("quota page info = %+v, want total=1 hasMore=false", info)
 	}
@@ -184,7 +184,7 @@ func TestPaginateAccountInspectionResultsFiltersHealthBuckets(t *testing.T) {
 		t.Fatalf("quota page = %+v, want quota", page)
 	}
 
-	page, info = paginateAccountInspectionResults(results, 1, 10, "pending", "")
+	page, info = paginateAccountInspectionResults(results, 1, 10, "pending", "", "")
 	if info.Total != 3 {
 		t.Fatalf("pending page info = %+v, want total=3", info)
 	}
@@ -201,7 +201,7 @@ func TestPaginateAccountInspectionResultsFiltersProvider(t *testing.T) {
 		testInspectionProviderResult("claude-auth", "claude", accountInspectionActionDelete, false, nil, false, ""),
 	}
 
-	page, info := paginateAccountInspectionResults(results, 1, 10, "pending", "codex")
+	page, info := paginateAccountInspectionResults(results, 1, 10, "pending", "codex", "")
 	if info.Total != 1 || info.TotalPages != 1 || info.HasMore {
 		t.Fatalf("codex pending page info = %+v, want total=1 totalPages=1 hasMore=false", info)
 	}
@@ -209,9 +209,32 @@ func TestPaginateAccountInspectionResultsFiltersProvider(t *testing.T) {
 		t.Fatalf("codex pending page = %+v, want codex-auth", page)
 	}
 
-	page, info = paginateAccountInspectionResults(results, 1, 10, "healthy", "claude")
+	page, info = paginateAccountInspectionResults(results, 1, 10, "healthy", "claude", "")
 	if info.Total != 1 || len(page) != 1 || page[0].Key != "claude-healthy" {
 		t.Fatalf("claude healthy page = %+v info=%+v, want claude-healthy", page, info)
+	}
+}
+
+func TestPaginateAccountInspectionResultsSearchesAccountIdentity(t *testing.T) {
+	first := testInspectionProviderResult("first", "codex", accountInspectionActionKeep, false, nil, false, "")
+	first.FileName = "codex-alice.json"
+	first.DisplayName = "Alice Primary"
+	first.Email = "alice@example.com"
+	first.Name = "Alice"
+	first.AuthIndex = "auth-alice"
+	second := testInspectionProviderResult("second", "claude", accountInspectionActionKeep, false, nil, false, "")
+	second.FileName = "claude-bob.json"
+	second.Email = "bob@example.com"
+	results := []accountInspectionResult{first, second}
+
+	page, info := paginateAccountInspectionResults(results, 1, 10, "healthy", "codex", "ALICE@EXAMPLE")
+	if info.Total != 1 || len(page) != 1 || page[0].Key != "first" {
+		t.Fatalf("account search page = %+v info=%+v, want first result only", page, info)
+	}
+
+	page, info = paginateAccountInspectionResults(results, 1, 10, "healthy", "", "claude-bob")
+	if info.Total != 1 || len(page) != 1 || page[0].Key != "second" {
+		t.Fatalf("file-name search page = %+v info=%+v, want second result only", page, info)
 	}
 }
 
@@ -290,7 +313,7 @@ func TestPaginateAccountInspectionPageSizeCapsAtServerMax(t *testing.T) {
 	for index := range results {
 		results[index] = testInspectionResult("result", accountInspectionActionKeep, false, nil, false, "")
 	}
-	page, info := paginateAccountInspectionResults(results, 1, accountInspectionMaxResultPageSize+100, "", "")
+	page, info := paginateAccountInspectionResults(results, 1, accountInspectionMaxResultPageSize+100, "", "", "")
 	if info.PageSize != accountInspectionMaxResultPageSize {
 		t.Fatalf("result page size = %d, want capped %d", info.PageSize, accountInspectionMaxResultPageSize)
 	}
