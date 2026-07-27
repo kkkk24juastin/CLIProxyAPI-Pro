@@ -7,6 +7,7 @@ import {
   ACCOUNT_INSPECTION_SETTING_LIMITS,
   buildAccountInspectionBackendViewState,
   createIdleAccountInspectionProgressSnapshot,
+  isAccountInspectionBackendResponse,
   isSuggestedAction,
   type AccountInspectionAction,
   type AccountInspectionAntigravityQuotaMode,
@@ -353,8 +354,15 @@ export function InspectionErrorDetailsPanel({
   const httpStatusCode = extractHealthHttpStatusCode(item);
   const errorPresentation = buildInspectionErrorPresentation(item);
   const detailItems = [
-    { label: t('monitoring.account_label'), value: item.fileName },
+    { label: t('monitoring.account_label'), value: item.displayAccount?.trim() || item.email?.trim() || item.name?.trim() || item.fileName },
+    { label: t('monitoring.account_inspection_file_name'), value: item.fileName },
     { label: t('monitoring.filter_provider'), value: item.provider },
+    {
+      label: t('monitoring.account_inspection_enabled_status'),
+      value: item.disabled
+        ? t('monitoring.account_inspection_state_disabled')
+        : t('monitoring.account_inspection_state_enabled'),
+    },
     { label: t('monitoring.account_inspection_http_status'), value: httpStatusCode !== null ? String(httpStatusCode) : '' },
     { label: t('monitoring.account_inspection_error_code'), value: item.errorCode?.trim() || '' },
   ].filter((detail) => detail.value);
@@ -1446,6 +1454,7 @@ export const inspectionBackendReducer = (
       return nextState;
     }
     case 'backendResponseReceived':
+      if (!isAccountInspectionBackendResponse(action.response)) return state;
       return applyBackendViewState(state, action.response, buildAccountInspectionBackendViewState(action.response));
     case 'clearSchedule':
       return state.schedule === null ? state : { ...state, schedule: null };

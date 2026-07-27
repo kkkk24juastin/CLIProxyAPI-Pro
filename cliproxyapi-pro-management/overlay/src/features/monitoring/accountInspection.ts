@@ -203,6 +203,16 @@ export type AccountInspectionBackendResponse = {
   status: AccountInspectionBackendStatus;
 };
 
+export const isAccountInspectionBackendResponse = (value: unknown): value is AccountInspectionBackendResponse => {
+  if (!isRecordValue(value)) return false;
+  const schedule = value.schedule;
+  const status = value.status;
+  return isRecordValue(schedule)
+    && isRecordValue(schedule.settings)
+    && isRecordValue(status)
+    && isRecordValue(status.summary);
+};
+
 export type AccountInspectionDisplayRunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
 
 export interface AccountInspectionExecutionOutcome {

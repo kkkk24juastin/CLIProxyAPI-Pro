@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildInspectionResultsViewState,
+  createInspectionBackendState,
   getPaginationRange,
+  inspectionBackendReducer,
   isAuthFileAccountInvalid,
   isAuthFileRequestError,
   isResultAccountInvalid,
@@ -15,6 +17,7 @@ import {
 import type { TFunction } from 'i18next';
 import {
   DEFAULT_ACCOUNT_INSPECTION_SETTINGS,
+  isAccountInspectionBackendResponse,
   type AccountInspectionResultItem,
 } from '../src/features/monitoring/accountInspection';
 
@@ -39,6 +42,30 @@ const result = (overrides: Partial<AccountInspectionResultItem> = {}): AccountIn
 });
 
 describe('account inspection page model', () => {
+  test('ignores incomplete backend snapshots instead of crashing the page reducer', () => {
+    const state = createInspectionBackendState(DEFAULT_ACCOUNT_INSPECTION_SETTINGS);
+    const incompleteResponses = [
+      undefined,
+      {},
+      { status: { summary: {} } },
+      { schedule: {}, status: { summary: {} } },
+      { schedule: { settings: DEFAULT_ACCOUNT_INSPECTION_SETTINGS }, status: {} },
+    ];
+
+    incompleteResponses.forEach((response) => {
+      expect(isAccountInspectionBackendResponse(response)).toBe(false);
+      expect(inspectionBackendReducer(state, {
+        type: 'backendResponseReceived',
+        response: response as never,
+      })).toBe(state);
+    });
+
+    expect(isAccountInspectionBackendResponse({
+      schedule: { settings: DEFAULT_ACCOUNT_INSPECTION_SETTINGS },
+      status: { summary: {} },
+    })).toBe(true);
+  });
+
   test('classifies result rows and pending actions in one pass', () => {
     const view = buildInspectionResultsViewState([
       result(),

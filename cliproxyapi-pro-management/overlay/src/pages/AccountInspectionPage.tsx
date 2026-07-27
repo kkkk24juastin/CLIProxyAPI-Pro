@@ -10,6 +10,7 @@ import {
   IconChevronDown,
   IconChevronUp,
   IconDownload,
+  IconRefreshCw,
   IconSearch,
 } from '@/components/ui/icons';
 import { getAuthFileIcon } from '@/features/authFiles/constants';
@@ -21,6 +22,7 @@ import {
   clearAccountInspectionConfigurableSettings,
   DEFAULT_ACCOUNT_INSPECTION_SETTINGS,
   hasAccountInspectionAutoExecutePolicies,
+  isAccountInspectionBackendResponse,
   isSuggestedAction,
   loadAccountInspectionConfigurableSettings,
   normalizeAntigravityQuotaMode,
@@ -72,7 +74,6 @@ import {
   getPaginationRange,
   getProviderInitial,
   handleAccountInspectionControlError,
-  hasInspectionErrorDetails,
   healthToneClass,
   inspectionBackendReducer,
   isInspectableAccountInspectionAuthFile,
@@ -119,6 +120,8 @@ import { resolveProviderDisplayLabel } from '@/utils/sourceResolver';
 import quotaStyles from '@/pages/QuotaPage.module.scss';
 import styles from '@/features/monitoring/accountInspection.module.scss';
 
+type ResultBulkAction = 'suggested' | 'recheck' | ManualAccountInspectionAction;
+
 export function AccountInspectionPage() {
   const { t, i18n } = useTranslation();
   const config = useConfigStore((state) => state.config);
@@ -153,10 +156,10 @@ export function AccountInspectionPage() {
     restoredSnapshot,
   } = backendState;
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [selectedErrorResult, setSelectedErrorResult] = useState<AccountInspectionResultItem | null>(null);
+  const [selectedDetailResult, setSelectedDetailResult] = useState<AccountInspectionResultItem | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
-  const [resultFilter, setResultFilter] = useState<ResultFilter>('accountInvalid');
+  const [resultFilter, setResultFilter] = useState<ResultFilter>('pending');
   const [selectedResultProvider, setSelectedResultProvider] = useState<string>(ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE);
   const [resultSearchInput, setResultSearchInput] = useState('');
   const deferredResultSearchInput = useDeferredValue(resultSearchInput);
@@ -171,11 +174,16 @@ export function AccountInspectionPage() {
   const [executing, setExecuting] = useState(false);
   const [loadingFullInspectionDetails, setLoadingFullInspectionDetails] = useState(false);
   const [recheckingKey, setRecheckingKey] = useState<string | null>(null);
+  const [selectedResultKeys, setSelectedResultKeys] = useState<Set<string>>(() => new Set());
+  const [resultBulkAction, setResultBulkAction] = useState<ResultBulkAction>('suggested');
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [openResultActionMenuKey, setOpenResultActionMenuKey] = useState<string | null>(null);
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
   const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
   const logListRef = useRef<HTMLDivElement | null>(null);
   const resultsPanelRef = useRef<HTMLDivElement | null>(null);
+  const selectAllResultsRef = useRef<HTMLInputElement | null>(null);
   const settingsMainRef = useRef<HTMLDivElement | null>(null);
   const settingsSectionRefs = useRef<Record<SettingsSectionKey, HTMLElement | null>>({
     plan: null,
@@ -261,6 +269,7 @@ export function AccountInspectionPage() {
   }, [connectionStatus, loadAuthFiles]);
 
   const applyBackendResponse = useCallback((response: AccountInspectionScheduleResponse, deferred = false) => {
+    if (!isAccountInspectionBackendResponse(response)) return;
     const applyState = () => dispatchBackendState({ type: 'backendResponseReceived', response });
     if (deferred) {
       startTransition(applyState);
@@ -696,6 +705,7 @@ export function AccountInspectionPage() {
     healthCounts,
     actionableActionCounts,
     filterRows,
+    filterRowCounts,
   } = resultsViewState;
   const displayedHealthCounts = result?.healthCounts ?? healthCounts;
 
@@ -706,6 +716,11 @@ export function AccountInspectionPage() {
   }, [filterRows, resultFilter]);
   const resultPageInfo = result?.resultsPage ?? null;
   const visibleResultRows = filteredResultRows;
+  const selectedVisibleResultRows = useMemo(
+    () => visibleResultRows.filter(({ item }) => selectedResultKeys.has(item.key)),
+    [selectedResultKeys, visibleResultRows]
+  );
+  const allVisibleResultsSelected = visibleResultRows.length > 0 && selectedVisibleResultRows.length === visibleResultRows.length;
 
   const filteredLogs = useMemo(
     () => (logLevelFilter === 'all' ? logs : logs.filter((entry) => entry.level === logLevelFilter)),
@@ -715,6 +730,33 @@ export function AccountInspectionPage() {
   const visibleLogs = filteredLogs;
   const resultPagination = getPaginationRange(resultPageInfo, visibleResultRows.length);
   const logPagination = getPaginationRange(logPageInfo, visibleLogs.length);
+
+  useEffect(() => {
+    if (!selectAllResultsRef.current) return;
+    selectAllResultsRef.current.indeterminate = selectedVisibleResultRows.length > 0 && !allVisibleResultsSelected;
+  }, [allVisibleResultsSelected, selectedVisibleResultRows.length]);
+
+  useEffect(() => {
+    setSelectedResultKeys(new Set());
+    setOpenResultActionMenuKey(null);
+  }, [resultFilter, resultPage, resultSearch, selectedResultProvider]);
+
+  useEffect(() => {
+    if (!openResultActionMenuKey) return undefined;
+    const closeMenu = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest('[data-result-action-menu]')) return;
+      setOpenResultActionMenuKey(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenResultActionMenuKey(null);
+    };
+    document.addEventListener('click', closeMenu);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('click', closeMenu);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [openResultActionMenuKey]);
 
   const handleExecutePlanned = useCallback(() => {
     if (!result) return;
@@ -830,6 +872,102 @@ export function AccountInspectionPage() {
     },
     [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, restoredSnapshot, showNotification, t]
   );
+
+  const toggleResultSelection = useCallback((key: string, selected: boolean) => {
+    setSelectedResultKeys((current) => {
+      const next = new Set(current);
+      if (selected) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
+
+  const toggleVisibleResultSelection = useCallback((selected: boolean) => {
+    setSelectedResultKeys(selected ? new Set(visibleResultRows.map(({ item }) => item.key)) : new Set());
+  }, [visibleResultRows]);
+
+  const recheckSelectedResults = useCallback(async (items: AccountInspectionResultItem[]) => {
+    if (restoredSnapshot) {
+      showNotification(t('monitoring.account_inspection_restored_snapshot_action_blocked'), 'warning');
+      return;
+    }
+    if (connectionStatus !== 'connected') {
+      showNotification(t('notification.connection_required'), 'warning');
+      return;
+    }
+
+    setBulkActionLoading(true);
+    setLogsCollapsed(false);
+    appendLog('info', t('monitoring.account_inspection_recheck_selected_started', { count: items.length }));
+    try {
+      const outcomes = await mapWithConcurrency(items, 4, async (item) => {
+        try {
+          const response = await accountInspectionApi.inspectOne(toAccountInspectionApiItem(item), currentInspectionDetailOptions);
+          return { success: Boolean(response.result?.key), response };
+        } catch {
+          return { success: false, response: null };
+        }
+      });
+      outcomes.forEach((outcome) => {
+        if (outcome.response) applyBackendResponse(outcome.response);
+      });
+      const success = outcomes.filter((outcome) => outcome.success).length;
+      const failed = outcomes.length - success;
+      showNotification(
+        t('monitoring.account_inspection_recheck_selected_summary', {
+          total: outcomes.length,
+          success,
+          failed,
+        }),
+        failed > 0 ? 'warning' : 'success'
+      );
+      setSelectedResultKeys(new Set());
+      void loadInspectionDetailsPage();
+    } finally {
+      setBulkActionLoading(false);
+    }
+  }, [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, loadInspectionDetailsPage, restoredSnapshot, showNotification, t]);
+
+  const handleExecuteSelectedResults = useCallback(() => {
+    const items = selectedVisibleResultRows.map(({ item }) => item);
+    if (items.length === 0) return;
+
+    if (resultBulkAction === 'recheck') {
+      showConfirmation({
+        title: t('monitoring.account_inspection_recheck_selected_title'),
+        message: t('monitoring.account_inspection_recheck_selected_confirm', { count: items.length }),
+        confirmText: t('monitoring.account_inspection_recheck_account'),
+        cancelText: t('common.cancel'),
+        variant: 'primary',
+        onConfirm: () => void recheckSelectedResults(items),
+      });
+      return;
+    }
+
+    const targets = resultBulkAction === 'suggested'
+      ? items.filter((item) => isSuggestedAction(item) && !item.executed)
+      : items.map((item) => buildManualActionItem(item, resultBulkAction));
+    if (targets.length === 0) {
+      showNotification(t('monitoring.account_inspection_no_selected_suggestions'), 'info');
+      return;
+    }
+    const counts = countActions(targets);
+    showConfirmation({
+      title: t('monitoring.account_inspection_execute_confirm_title'),
+      message: buildExecuteConfirmationMessage(
+        targets,
+        t,
+        hasAccountInspectionAutoExecutePolicies(inspectionSettings)
+      ),
+      confirmText: t('monitoring.account_inspection_execute_confirm_button', { count: targets.length }),
+      cancelText: t('common.cancel'),
+      variant: counts.delete > 0 ? 'danger' : 'primary',
+      onConfirm: () => {
+        setSelectedResultKeys(new Set());
+        void executeItems(targets);
+      },
+    });
+  }, [executeItems, inspectionSettings, recheckSelectedResults, resultBulkAction, selectedVisibleResultRows, showConfirmation, showNotification, t]);
 
   const quotaStore = useMemo(
     () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),
@@ -1013,13 +1151,28 @@ export function AccountInspectionPage() {
     : runStatus === 'error'
       ? t('monitoring.account_inspection_results_error_empty')
       : t('monitoring.account_inspection_empty');
-  const resultFilterTabs = useMemo<Array<{ key: ResultFilter; label: string }>>(() => [
-    { key: 'pending', label: t('monitoring.account_inspection_filter_pending') },
-    { key: 'accountInvalid', label: t('monitoring.account_inspection_account_invalid') },
-    { key: 'requestError', label: t('monitoring.account_inspection_account_request_error') },
-    { key: 'quotaExhausted', label: t('monitoring.account_inspection_health_quota_exhausted') },
-    { key: 'recoverable', label: t('monitoring.account_inspection_health_recoverable') },
-    { key: 'highAvailable', label: t('monitoring.account_inspection_high_available') },
+  const resultFilterCounts = useMemo<Record<ResultFilter, number>>(() => ({
+    pending: pendingActionCount || filterRowCounts.pending,
+    accountInvalid: displayedHealthCounts.authInvalid,
+    requestError: displayedHealthCounts.inspectionError,
+    quotaExhausted: displayedHealthCounts.quotaExhausted,
+    recoverable: displayedHealthCounts.recoverable,
+    highAvailable: displayedHealthCounts.healthy,
+  }), [displayedHealthCounts, filterRowCounts.pending, pendingActionCount]);
+  const resultFilterTabs = useMemo<Array<{ key: ResultFilter; label: string; count: number }>>(() => [
+    { key: 'pending', label: t('monitoring.account_inspection_filter_pending'), count: resultFilterCounts.pending },
+    { key: 'accountInvalid', label: t('monitoring.account_inspection_account_invalid'), count: resultFilterCounts.accountInvalid },
+    { key: 'requestError', label: t('monitoring.account_inspection_account_request_error'), count: resultFilterCounts.requestError },
+    { key: 'quotaExhausted', label: t('monitoring.account_inspection_health_quota_exhausted'), count: resultFilterCounts.quotaExhausted },
+    { key: 'recoverable', label: t('monitoring.account_inspection_health_recoverable'), count: resultFilterCounts.recoverable },
+    { key: 'highAvailable', label: t('monitoring.account_inspection_high_available'), count: resultFilterCounts.highAvailable },
+  ], [resultFilterCounts, t]);
+  const resultBulkActionOptions = useMemo(() => [
+    { value: 'suggested', label: t('monitoring.account_inspection_bulk_action_suggested') },
+    { value: 'recheck', label: t('monitoring.account_inspection_bulk_action_recheck') },
+    { value: 'disable', label: t('monitoring.account_inspection_action_disable') },
+    { value: 'enable', label: t('monitoring.account_inspection_action_enable') },
+    { value: 'delete', label: t('monitoring.account_inspection_action_delete') },
   ], [t]);
   const resultProviderOptions = useMemo(
     () => {
@@ -1578,29 +1731,41 @@ export function AccountInspectionPage() {
             <p>{t('monitoring.account_inspection_results_desc')}</p>
           </div>
           {result ? (
+            <div className={styles.resultMeta}>
+              <strong>{t('monitoring.account_inspection_results_count', { count: resultPagination.total })}</strong>
+              <span>{t('monitoring.account_inspection_results_updated_at', { time: formatTimestamp(result.finishedAt, i18n.language) })}</span>
+            </div>
+          ) : null}
+        </div>
+        <Card className={styles.panel}>
+
+        {result ? (
+          <>
             <div className={styles.resultToolbar}>
-              <div className={styles.resultSearchField}>
-                <Input
-                  type="search"
-                  value={resultSearchInput}
-                  onChange={(event) => setResultSearchInput(event.target.value)}
-                  placeholder={t('monitoring.account_inspection_search_placeholder')}
-                  aria-label={t('monitoring.account_inspection_search_label')}
-                  className={styles.resultSearchInput}
-                  rightElement={<IconSearch size={16} />}
+              <div className={styles.resultToolbarPrimary}>
+                <div className={styles.resultSearchField}>
+                  <Input
+                    type="search"
+                    value={resultSearchInput}
+                    onChange={(event) => setResultSearchInput(event.target.value)}
+                    placeholder={t('monitoring.account_inspection_search_placeholder')}
+                    aria-label={t('monitoring.account_inspection_search_label')}
+                    className={styles.resultSearchInput}
+                    rightElement={<IconSearch size={16} />}
+                  />
+                </div>
+                <Select
+                  value={selectedResultProvider}
+                  options={resultProviderOptions}
+                  onChange={setSelectedResultProvider}
+                  ariaLabel={t('monitoring.account_inspection_filter_provider')}
+                  className={styles.resultProviderSelect}
+                  triggerClassName={styles.resultProviderSelectTrigger}
+                  dropdownClassName={styles.resultProviderSelectDropdown}
+                  fullWidth={false}
+                  size="sm"
                 />
               </div>
-              <Select
-                value={selectedResultProvider}
-                options={resultProviderOptions}
-                onChange={setSelectedResultProvider}
-                ariaLabel={t('monitoring.account_inspection_filter_provider')}
-                className={styles.resultProviderSelect}
-                triggerClassName={styles.resultProviderSelectTrigger}
-                dropdownClassName={styles.resultProviderSelectDropdown}
-                fullWidth={false}
-                size="sm"
-              />
               <div className={styles.resultFilterControl}>
                 {resultFilterTabs.map((tab) => (
                   <button
@@ -1612,37 +1777,68 @@ export function AccountInspectionPage() {
                     onClick={() => setResultFilter(tab.key)}
                   >
                     <span>{tab.label}</span>
+                    <span className={styles.resultFilterCount}>{tab.count}</span>
                   </button>
                 ))}
               </div>
             </div>
-          ) : null}
-        </div>
-        <Card className={styles.panel}>
-
-        {result ? (
-          <>
+            {selectedVisibleResultRows.length > 0 ? (
+              <div className={styles.resultSelectionBar}>
+                <strong>{t('monitoring.account_inspection_selected_count', { count: selectedVisibleResultRows.length })}</strong>
+                <div className={styles.resultSelectionActions}>
+                  <Select
+                    value={resultBulkAction}
+                    options={resultBulkActionOptions}
+                    onChange={(value) => setResultBulkAction(value as ResultBulkAction)}
+                    ariaLabel={t('monitoring.account_inspection_bulk_action_label')}
+                    className={styles.resultBulkActionSelect}
+                    triggerClassName={styles.resultBulkActionTrigger}
+                    fullWidth={false}
+                    size="sm"
+                  />
+                  <Button
+                    size="sm"
+                    variant={resultBulkAction === 'delete' ? 'danger' : 'primary'}
+                    onClick={handleExecuteSelectedResults}
+                    loading={bulkActionLoading || executing}
+                    disabled={restoredSnapshot || runStatus === 'running' || executing || bulkActionLoading || recheckingKey !== null}
+                  >
+                    {t('monitoring.account_inspection_apply_selected_action')}
+                  </Button>
+                  <button type="button" className={styles.clearSelectionButton} onClick={() => setSelectedResultKeys(new Set())}>
+                    {t('monitoring.account_inspection_clear_selection')}
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <colgroup>
                   <col className={styles.accountColumn} />
                   <col className={styles.planColumn} />
                   <col className={styles.healthColumn} />
-                  <col className={styles.enabledColumn} />
                   <col className={styles.quotaColumn} />
                   <col className={styles.tokenColumn} />
-                  <col className={styles.verdictColumn} />
                   <col className={styles.operationColumn} />
                 </colgroup>
                 <thead>
                   <tr>
-                    <th>{t('monitoring.account_label')}</th>
+                    <th>
+                      <div className={styles.accountHeaderCell}>
+                        <input
+                          ref={selectAllResultsRef}
+                          type="checkbox"
+                          checked={allVisibleResultsSelected}
+                          onChange={(event) => toggleVisibleResultSelection(event.target.checked)}
+                          aria-label={t('monitoring.account_inspection_select_visible_results')}
+                        />
+                        <span>{t('monitoring.account_label')}</span>
+                      </div>
+                    </th>
                     <th>{t('monitoring.account_inspection_account_plan')}</th>
-                    <th>{t('monitoring.account_inspection_health_status')}</th>
-                    <th>{t('monitoring.account_inspection_enabled_status')}</th>
+                    <th>{t('monitoring.account_inspection_result')}</th>
                     <th>{t('monitoring.account_inspection_remaining_quota')}</th>
                     <th>{t('monitoring.account_inspection_token_status')}</th>
-                    <th>{t('monitoring.account_inspection_verdict')}</th>
                     <th>{t('common.action')}</th>
                   </tr>
                 </thead>
@@ -1651,67 +1847,121 @@ export function AccountInspectionPage() {
                     visibleResultRows.map(({ item, healthStatus, manualActions }) => {
                       const tokenRefreshDetail = formatTokenRefreshDetail(item, i18n.language, t);
                       const healthStatusLabel = buildHealthStatusLabel(item, healthStatus, t);
+                      const accountLabel = item.displayAccount?.trim() || item.email?.trim() || item.name?.trim() || item.fileName;
                       const planLabel = resolveAccountInspectionPlanLabel(
                         item,
                         authFilesByName.get(item.fileName),
                         quotaStore,
                         t
                       );
-                      const showErrorDetails = hasInspectionErrorDetails(item);
+                      const suggestedAction = isSuggestedAction(item) && !item.executed
+                        ? item.action as ManualAccountInspectionAction
+                        : null;
+                      const additionalActions = manualActions.filter((action) => action !== suggestedAction);
                       return (
                         <tr key={item.key}>
-                          <td><div className={styles.primaryCell}><span>{item.fileName}</span><small>{item.provider}</small></div></td>
-                          <td><span className={styles.planCell} title={planLabel}>{planLabel}</span></td>
-                          <td>
-                            <div className={styles.healthCell}>
-                              {showErrorDetails ? (
-                                <button
-                                  type="button"
-                                  className={styles.healthErrorButton}
-                                  onClick={() => setSelectedErrorResult(item)}
-                                  title={t('monitoring.account_inspection_error_details_click_hint')}
-                                  aria-label={t('monitoring.account_inspection_error_details_click_hint')}
-                                >
-                                  <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{healthStatusLabel}</span>
-                                </button>
-                              ) : (
-                                <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{healthStatusLabel}</span>
-                              )}
+                          <td className={styles.accountTableCell} data-label={t('monitoring.account_label')}>
+                            <div className={styles.accountCellLayout}>
+                              <input
+                                type="checkbox"
+                                checked={selectedResultKeys.has(item.key)}
+                                onChange={(event) => toggleResultSelection(item.key, event.target.checked)}
+                                aria-label={t('monitoring.account_inspection_select_account', { account: accountLabel })}
+                              />
+                              <div className={styles.primaryCell}>
+                                <strong title={item.fileName}>{accountLabel}</strong>
+                                <small>
+                                  <span>{resolveProviderDisplayLabel(item.provider)}</span>
+                                  <span aria-hidden="true"> · </span>
+                                  <span className={item.disabled ? styles.stateTextMuted : styles.stateTextGood}>{formatCurrentStateLabel(item, t)}</span>
+                                </small>
+                              </div>
                             </div>
                           </td>
-                          <td><span className={item.disabled ? styles.stateTextMuted : styles.stateTextGood}>{formatCurrentStateLabel(item, t)}</span></td>
-                          <td>
+                          <td className={styles.planTableCell} data-label={t('monitoring.account_inspection_account_plan')}><span className={styles.planCell} title={planLabel}>{planLabel}</span></td>
+                          <td className={styles.resultTableCell} data-label={t('monitoring.account_inspection_result')}>
+                            <button
+                              type="button"
+                              className={styles.resultDetailButton}
+                              onClick={() => setSelectedDetailResult(item)}
+                              title={t('monitoring.account_inspection_result_details')}
+                              aria-label={t('monitoring.account_inspection_result_details')}
+                            >
+                              <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{healthStatusLabel}</span>
+                              <small>{formatInspectionVerdictPrimary(item, healthStatus, t)}</small>
+                            </button>
+                          </td>
+                          <td className={styles.quotaTableCell} data-label={t('monitoring.account_inspection_remaining_quota')}>
                             <div className={styles.quotaCell}>
                               <span>{formatQuotaRemainingLabel(item.usedPercent)}</span>
                             </div>
                           </td>
-                          <td>
+                          <td className={styles.tokenTableCell} data-label={t('monitoring.account_inspection_token_status')}>
                             <div className={styles.tokenRefreshCell}>
                               <span className={tokenRefreshToneClass(item)} title={tokenRefreshDetail || undefined}>{formatTokenRefreshLabel(item, t)}</span>
                             </div>
                           </td>
-                          <td>
-                            <div className={styles.verdictCell}>
-                              <strong>{formatInspectionVerdictPrimary(item, healthStatus, t)}</strong>
-                            </div>
-                          </td>
-                          <td className={styles.operationCell}>
+                          <td className={styles.operationCell} data-label={t('common.action')}>
                             <div className={styles.operationActions}>
-                              <Button size="sm" variant="secondary" onClick={() => void handleRecheckSingle(item)} loading={recheckingKey === item.key} disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null}>
-                                {t('monitoring.account_inspection_recheck_account')}
-                              </Button>
-                              {manualActions.map((action) => (
-                                <Button key={action} size="sm" variant={action === 'delete' ? 'danger' : 'secondary'} onClick={() => handleExecuteSingle(item, action)} disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null}>
-                                  {formatActionLabel(action, t)}
+                              <button
+                                type="button"
+                                className={styles.iconActionButton}
+                                onClick={() => void handleRecheckSingle(item)}
+                                disabled={restoredSnapshot || runStatus === 'running' || executing || bulkActionLoading || recheckingKey !== null}
+                                title={t('monitoring.account_inspection_recheck_account')}
+                                aria-label={t('monitoring.account_inspection_recheck_account')}
+                              >
+                                <IconRefreshCw size={15} className={recheckingKey === item.key ? styles.spinningIcon : undefined} />
+                              </button>
+                              {suggestedAction ? (
+                                <Button
+                                  size="sm"
+                                  variant={suggestedAction === 'delete' ? 'danger' : 'primary'}
+                                  onClick={() => handleExecuteSingle(item, suggestedAction)}
+                                  disabled={restoredSnapshot || runStatus === 'running' || executing || bulkActionLoading || recheckingKey !== null}
+                                >
+                                  {formatActionLabel(suggestedAction, t)}
                                 </Button>
-                              ))}
+                              ) : null}
+                              {additionalActions.length > 0 ? (
+                                <div className={styles.resultActionMenuWrap} data-result-action-menu>
+                                  <button
+                                    type="button"
+                                    className={styles.iconActionButton}
+                                    onClick={() => setOpenResultActionMenuKey((key) => key === item.key ? null : item.key)}
+                                    aria-expanded={openResultActionMenuKey === item.key}
+                                    title={t('monitoring.account_inspection_more_actions')}
+                                    aria-label={t('monitoring.account_inspection_more_actions')}
+                                  >
+                                    <IconChevronDown size={15} />
+                                  </button>
+                                  {openResultActionMenuKey === item.key ? (
+                                    <div className={styles.resultActionMenu}>
+                                      {additionalActions.map((action) => (
+                                        <button
+                                          key={action}
+                                          type="button"
+                                          className={action === 'delete' ? styles.resultActionDanger : undefined}
+                                          onClick={() => {
+                                            setOpenResultActionMenuKey(null);
+                                            handleExecuteSingle(item, action);
+                                          }}
+                                          disabled={restoredSnapshot || runStatus === 'running' || executing || bulkActionLoading || recheckingKey !== null}
+                                        >
+                                          {formatActionLabel(action, t)}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </div>
                           </td>
                         </tr>
                       );
                     })
                   ) : (
-                    <tr><td colSpan={8}><div className={styles.emptyBlockSmall}>{t('monitoring.account_inspection_no_filtered_results')}</div></td></tr>
+                    <tr><td colSpan={6}><div className={styles.emptyBlockSmall}>{t('monitoring.account_inspection_no_filtered_results')}</div></td></tr>
                   )}
                 </tbody>
               </table>
@@ -1828,21 +2078,21 @@ export function AccountInspectionPage() {
       </div>
 
       <Modal
-        open={Boolean(selectedErrorResult)}
-        onClose={() => setSelectedErrorResult(null)}
-        title={t('monitoring.account_inspection_error')}
+        open={Boolean(selectedDetailResult)}
+        onClose={() => setSelectedDetailResult(null)}
+        title={t('monitoring.account_inspection_result_details')}
         width={720}
         className={styles.errorModal}
         footer={(
           <div className={styles.errorModalActions}>
-            <Button variant="primary" size="sm" onClick={() => setSelectedErrorResult(null)}>
+            <Button variant="primary" size="sm" onClick={() => setSelectedDetailResult(null)}>
               {t('common.close')}
             </Button>
           </div>
         )}
       >
-        {selectedErrorResult ? (
-          <InspectionErrorDetailsPanel item={selectedErrorResult} t={t} />
+        {selectedDetailResult ? (
+          <InspectionErrorDetailsPanel item={selectedDetailResult} t={t} />
         ) : null}
       </Modal>
 
