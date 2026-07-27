@@ -634,6 +634,9 @@ func decodeAccountInspectionResultSnapshot(raw []byte) (accountInspectionResultS
 	}
 	snapshot.State = normalizeAccountInspectionSnapshotState(snapshot.State)
 	snapshot.Settings = normalizeAccountInspectionSchedule(accountInspectionSchedule{Settings: snapshot.Settings}).Settings
+	for index := range snapshot.Results {
+		snapshot.Results[index] = normalizeAccountInspectionResultSemantics(snapshot.Results[index])
+	}
 	snapshot.Results = sortAccountInspectionResults(snapshot.Results)
 	snapshot.HealthCounts = accountInspectionResultHealthCounts(snapshot.Results)
 	return snapshot, nil
@@ -872,7 +875,7 @@ func (s *accountInspectionScheduler) healthCountsLocked() accountInspectionHealt
 
 func accountInspectionResultHealthBucketOf(result accountInspectionResult) accountInspectionHealthBucket {
 	switch {
-	case result.IsQuota:
+	case isAccountInspectionQuotaResult(result):
 		return accountInspectionHealthQuotaExhausted
 	case isAccountInspectionAccountInvalidResult(result):
 		return accountInspectionHealthAuthInvalid
@@ -885,6 +888,29 @@ func accountInspectionResultHealthBucketOf(result accountInspectionResult) accou
 	default:
 		return accountInspectionHealthHealthy
 	}
+}
+
+func isAccountInspectionQuotaResult(result accountInspectionResult) bool {
+	if result.IsQuota {
+		return true
+	}
+	message := strings.Join([]string{result.Error, result.ErrorDetail, result.DeepProbeError}, "\n")
+	switch strings.ToLower(strings.TrimSpace(result.Provider)) {
+	case "antigravity":
+		return isAntigravityQuotaFailure(message)
+	case "xai":
+		return isXAIQuotaFailure(message)
+	default:
+		return false
+	}
+}
+
+func normalizeAccountInspectionResultSemantics(result accountInspectionResult) accountInspectionResult {
+	if !result.IsQuota && isAccountInspectionQuotaResult(result) {
+		result.IsQuota = true
+		result.ErrorCode = ""
+	}
+	return result
 }
 
 func accountInspectionResultMatchesFilter(result accountInspectionResult, filter string) bool {
@@ -3977,7 +4003,7 @@ func accountInspectionAutoActionForError(result accountInspectionResult, action 
 }
 
 func isAccountInspectionAccountInvalidResult(result accountInspectionResult) bool {
-	if result.IsQuota {
+	if isAccountInspectionQuotaResult(result) {
 		return false
 	}
 	status := 0
@@ -3995,7 +4021,7 @@ func isAccountInspectionAccountInvalidResult(result accountInspectionResult) boo
 }
 
 func isAccountInspectionRequestErrorResult(result accountInspectionResult) bool {
-	if result.IsQuota || isAccountInspectionAccountInvalidResult(result) {
+	if isAccountInspectionQuotaResult(result) || isAccountInspectionAccountInvalidResult(result) {
 		return false
 	}
 	return strings.TrimSpace(result.ErrorCode) != "" ||

@@ -547,6 +547,46 @@ func TestDecodeAccountInspectionSnapshotRebuildsHealthCountsWithSemanticClassifi
 	}
 }
 
+func TestDecodeAccountInspectionSnapshotMigratesLegacyXAIQuotaEvidence(t *testing.T) {
+	result := testInspectionProviderResult(
+		"xai-legacy-quota",
+		"xai",
+		accountInspectionActionKeep,
+		true,
+		testStatusCode(http.StatusForbidden),
+		false,
+		"",
+	)
+	result.ErrorCode = "inspection_http_error"
+	result.DeepProbeStatus = string(accountInspectionDeepProbeAuthError)
+	result.DeepProbeError = "You have run out of credits or need a Grok subscription."
+	raw, err := json.Marshal(accountInspectionResultSnapshot{
+		Version:        accountInspectionResultSnapshotVersion,
+		State:          accountInspectionStateCompleted,
+		LastStartedAt:  1000,
+		LastFinishedAt: 2000,
+		HealthCounts: accountInspectionHealthCounts{
+			Total:       1,
+			AuthInvalid: 1,
+		},
+		Results: []accountInspectionResult{result},
+	})
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+
+	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
+	if err != nil {
+		t.Fatalf("decodeAccountInspectionResultSnapshot() error = %v", err)
+	}
+	if !snapshot.Results[0].IsQuota || snapshot.Results[0].ErrorCode != "" {
+		t.Fatalf("migrated result = %+v, want quota result without auth error code", snapshot.Results[0])
+	}
+	if snapshot.HealthCounts.QuotaExhausted != 1 || snapshot.HealthCounts.AuthInvalid != 0 {
+		t.Fatalf("migrated HealthCounts = %+v, want quotaExhausted=1", snapshot.HealthCounts)
+	}
+}
+
 func TestAccountInspectionSnapshotExportKeepsLastFinishedSnapshotDuringRun(t *testing.T) {
 	snapshotPath := filepath.Join(t.TempDir(), "account-inspection-snapshot.json")
 	scheduler := &accountInspectionScheduler{
