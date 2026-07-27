@@ -119,6 +119,16 @@ func testStatusCode(value int) *int {
 	return &value
 }
 
+func testInspectionAuthInvalidResult(key string, provider string, action accountInspectionAction) accountInspectionResult {
+	result := testInspectionProviderResult(key, provider, action, false, testStatusCode(http.StatusUnauthorized), false, "")
+	result.ErrorCode = "inspection_http_error"
+	return result
+}
+
+func testInspectionQuotaResult(key string, provider string, action accountInspectionAction) accountInspectionResult {
+	return testInspectionProviderResult(key, provider, action, false, nil, true, "")
+}
+
 func TestManagementHandlerShutdownReleasesBackgroundOwners(t *testing.T) {
 	t.Setenv("ACCOUNT_INSPECTION_SCHEDULE_PATH", filepath.Join(t.TempDir(), "schedule.json"))
 	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, nil)
@@ -169,8 +179,8 @@ func TestPaginateAccountInspectionResultsReturnsRequestedPage(t *testing.T) {
 func TestPaginateAccountInspectionResultsFiltersHealthBuckets(t *testing.T) {
 	results := []accountInspectionResult{
 		testInspectionResult("healthy", accountInspectionActionKeep, false, nil, false, ""),
-		testInspectionResult("auth", accountInspectionActionDelete, false, nil, false, ""),
-		testInspectionResult("quota", accountInspectionActionDisable, false, nil, false, ""),
+		testInspectionAuthInvalidResult("auth", "test", accountInspectionActionDelete),
+		testInspectionQuotaResult("quota", "test", accountInspectionActionDisable),
 		testInspectionResult("error", accountInspectionActionKeep, false, nil, false, "network error"),
 		testInspectionResult("recoverable", accountInspectionActionEnable, true, nil, false, ""),
 		testInspectionResult("disabled", accountInspectionActionKeep, true, nil, false, ""),
@@ -193,12 +203,96 @@ func TestPaginateAccountInspectionResultsFiltersHealthBuckets(t *testing.T) {
 	}
 }
 
+func TestAccountInspectionHealthClassificationUsesSemanticEvidenceAcrossProviders(t *testing.T) {
+	providers := []string{"antigravity", "claude", "codex", "gemini-cli", "kimi", "xai"}
+	for _, provider := range providers {
+		provider := provider
+		t.Run(provider+"/auth-invalid", func(t *testing.T) {
+			result := testInspectionAuthInvalidResult(provider+"-auth", provider, accountInspectionActionDisable)
+			if provider == "codex" {
+				result.Action = accountInspectionActionDelete
+			}
+			if got := accountInspectionResultHealthBucketOf(result); got != accountInspectionHealthAuthInvalid {
+				t.Fatalf("health bucket = %q, want %q", got, accountInspectionHealthAuthInvalid)
+			}
+		})
+
+		t.Run(provider+"/quota", func(t *testing.T) {
+			result := testInspectionQuotaResult(provider+"-quota", provider, accountInspectionActionDisable)
+			if provider == "codex" || provider == "xai" {
+				result.StatusCode = testStatusCode(http.StatusPaymentRequired)
+			}
+			if got := accountInspectionResultHealthBucketOf(result); got != accountInspectionHealthQuotaExhausted {
+				t.Fatalf("health bucket = %q, want %q", got, accountInspectionHealthQuotaExhausted)
+			}
+		})
+	}
+
+	requestErrors := []struct {
+		name            string
+		provider        string
+		errorCode       string
+		status          *int
+		deepProbeStatus string
+	}{
+		{name: "antigravity-deep-probe", provider: "antigravity", errorCode: "antigravity_deep_probe_error", status: testStatusCode(http.StatusBadRequest), deepProbeStatus: string(accountInspectionDeepProbeTransientError)},
+		{name: "claude-probe", provider: "claude", errorCode: "inspection_probe_error", status: testStatusCode(http.StatusBadGateway)},
+		{name: "codex-missing-auth-index", provider: "codex", errorCode: "missing_auth_index"},
+		{name: "gemini-cli-probe", provider: "gemini-cli", errorCode: "inspection_probe_error", status: testStatusCode(http.StatusServiceUnavailable)},
+		{name: "kimi-token-refresh", provider: "kimi", errorCode: "token_refresh_error"},
+		{name: "xai-deep-probe", provider: "xai", errorCode: "xai_deep_probe_error", status: testStatusCode(http.StatusBadRequest), deepProbeStatus: string(accountInspectionDeepProbeTransientError)},
+	}
+	for _, tt := range requestErrors {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testInspectionProviderResult(tt.name, tt.provider, accountInspectionActionDelete, false, tt.status, false, "probe failed")
+			result.ErrorCode = tt.errorCode
+			result.DeepProbeStatus = tt.deepProbeStatus
+			if got := accountInspectionResultHealthBucketOf(result); got != accountInspectionHealthInspectionError {
+				t.Fatalf("health bucket = %q, want %q", got, accountInspectionHealthInspectionError)
+			}
+			if isAccountInspectionAccountInvalidResult(result) {
+				t.Fatal("request error was classified as account invalid")
+			}
+		})
+	}
+}
+
+func TestAccountInspectionHealthClassificationDoesNotInferFactsFromActions(t *testing.T) {
+	deleteOnly := testInspectionResult("delete-only", accountInspectionActionDelete, false, nil, false, "")
+	if got := accountInspectionResultHealthBucketOf(deleteOnly); got != accountInspectionHealthHealthy {
+		t.Fatalf("delete-only health bucket = %q, want %q", got, accountInspectionHealthHealthy)
+	}
+
+	disableOnly := testInspectionResult("disable-only", accountInspectionActionDisable, false, nil, false, "")
+	if got := accountInspectionResultHealthBucketOf(disableOnly); got != accountInspectionHealthHealthy {
+		t.Fatalf("disable-only health bucket = %q, want %q", got, accountInspectionHealthHealthy)
+	}
+}
+
+func TestAutoErrorActionsUseSemanticErrorCategory(t *testing.T) {
+	settings := defaultAccountInspectionSettings()
+	settings.AutoExecuteAccountInvalidAction = accountInspectionActionDelete
+	settings.AutoExecuteRequestErrorAction = accountInspectionActionDisable
+
+	authInvalid := testInspectionAuthInvalidResult("auth-invalid", "claude", accountInspectionActionKeep)
+	if got := autoActionForResult(authInvalid, settings); got != accountInspectionActionDelete {
+		t.Fatalf("auth-invalid auto action = %q, want %q", got, accountInspectionActionDelete)
+	}
+
+	requestError := testInspectionProviderResult("request-error", "xai", accountInspectionActionKeep, false, testStatusCode(http.StatusBadRequest), false, "temporary deep-probe failure")
+	requestError.ErrorCode = "xai_deep_probe_error"
+	requestError.DeepProbeStatus = string(accountInspectionDeepProbeTransientError)
+	if got := autoActionForResult(requestError, settings); got != accountInspectionActionDisable {
+		t.Fatalf("request-error auto action = %q, want %q", got, accountInspectionActionDisable)
+	}
+}
+
 func TestPaginateAccountInspectionResultsFiltersProvider(t *testing.T) {
 	results := []accountInspectionResult{
 		testInspectionProviderResult("codex-healthy", "codex", accountInspectionActionKeep, false, nil, false, ""),
 		testInspectionProviderResult("claude-healthy", "claude", accountInspectionActionKeep, false, nil, false, ""),
-		testInspectionProviderResult("codex-auth", "codex", accountInspectionActionDelete, false, nil, false, ""),
-		testInspectionProviderResult("claude-auth", "claude", accountInspectionActionDelete, false, nil, false, ""),
+		testInspectionAuthInvalidResult("codex-auth", "codex", accountInspectionActionDelete),
+		testInspectionAuthInvalidResult("claude-auth", "claude", accountInspectionActionDelete),
 	}
 
 	page, info := paginateAccountInspectionResults(results, 1, 10, "pending", "codex", "")
@@ -266,7 +360,7 @@ func TestStreamStatusLockedReturnsPagedDetailsWithFullHealthCounts(t *testing.T)
 			Results: []accountInspectionResult{
 				testInspectionResult("healthy-1", accountInspectionActionKeep, false, nil, false, ""),
 				testInspectionResult("healthy-2", accountInspectionActionKeep, false, nil, false, ""),
-				testInspectionResult("auth-1", accountInspectionActionDelete, false, nil, false, ""),
+				testInspectionAuthInvalidResult("auth-1", "test", accountInspectionActionDelete),
 				testInspectionResult("auth-2", accountInspectionActionKeep, false, testStatusCode(401), false, ""),
 			},
 			Logs: []accountInspectionLogEntry{
@@ -339,7 +433,7 @@ func TestHealthCountsLockedRebuildsStaleCache(t *testing.T) {
 		status: accountInspectionStatus{
 			Results: []accountInspectionResult{
 				testInspectionResult("healthy", accountInspectionActionKeep, false, nil, false, ""),
-				testInspectionResult("auth", accountInspectionActionDelete, false, nil, false, ""),
+				testInspectionAuthInvalidResult("auth", "test", accountInspectionActionDelete),
 			},
 		},
 	}
@@ -413,6 +507,42 @@ func TestAccountInspectionResultSnapshotPersistsAndRestoresReadOnly(t *testing.T
 	}
 }
 
+func TestDecodeAccountInspectionSnapshotRebuildsHealthCountsWithSemanticClassification(t *testing.T) {
+	result := testInspectionProviderResult(
+		"xai-transient",
+		"xai",
+		accountInspectionActionDelete,
+		false,
+		testStatusCode(http.StatusBadRequest),
+		false,
+		"temporary deep-probe failure",
+	)
+	result.ErrorCode = "xai_deep_probe_error"
+	result.DeepProbeStatus = string(accountInspectionDeepProbeTransientError)
+	raw, err := json.Marshal(accountInspectionResultSnapshot{
+		Version:        accountInspectionResultSnapshotVersion,
+		State:          accountInspectionStateCompleted,
+		LastStartedAt:  1000,
+		LastFinishedAt: 2000,
+		HealthCounts: accountInspectionHealthCounts{
+			Total:       1,
+			AuthInvalid: 1,
+		},
+		Results: []accountInspectionResult{result},
+	})
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+
+	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
+	if err != nil {
+		t.Fatalf("decodeAccountInspectionResultSnapshot() error = %v", err)
+	}
+	if snapshot.HealthCounts.Total != 1 || snapshot.HealthCounts.AuthInvalid != 0 || snapshot.HealthCounts.InspectionError != 1 {
+		t.Fatalf("rebuilt HealthCounts = %+v, want total=1 inspectionError=1", snapshot.HealthCounts)
+	}
+}
+
 func TestAccountInspectionSnapshotExportKeepsLastFinishedSnapshotDuringRun(t *testing.T) {
 	snapshotPath := filepath.Join(t.TempDir(), "account-inspection-snapshot.json")
 	scheduler := &accountInspectionScheduler{
@@ -460,6 +590,8 @@ func TestHealthCountsCacheTracksResultUpdates(t *testing.T) {
 
 	authInvalid := healthy
 	authInvalid.Action = accountInspectionActionDelete
+	authInvalid.StatusCode = testStatusCode(http.StatusUnauthorized)
+	authInvalid.ErrorCode = "inspection_http_error"
 	if !scheduler.updateInspectionResultLocked(authInvalid, true, func(current accountInspectionResult) (accountInspectionResult, bool) {
 		return authInvalid, true
 	}) {
@@ -1836,12 +1968,22 @@ func TestWithInspectionHTTPErrorDetailPreservesCompleteResponse(t *testing.T) {
 	}
 }
 
-func TestXAIDeepProbeErrorCodeCanBeCleared(t *testing.T) {
+func TestTransientDeepProbeErrorCodeTakesPriorityOverHTTPStatus(t *testing.T) {
 	decision := accountInspectionDecision{DeepProbeStatus: accountInspectionDeepProbeTransientError}
-	if got := accountInspectionDecisionErrorCode("xai", decision, nil); got != "xai_deep_probe_error" {
-		t.Fatalf("xAI deep probe error code = %q", got)
+	status := testStatusCode(http.StatusBadRequest)
+	tests := []struct {
+		provider string
+		want     string
+	}{
+		{provider: "antigravity", want: "antigravity_deep_probe_error"},
+		{provider: "xai", want: "xai_deep_probe_error"},
 	}
-	if !isInspectionAuthErrorCode("xai_deep_probe_error") {
-		t.Fatal("xAI deep probe error code should be clearable after recovery")
+	for _, tt := range tests {
+		if got := accountInspectionDecisionErrorCode(tt.provider, decision, status); got != tt.want {
+			t.Fatalf("%s deep probe error code = %q, want %q", tt.provider, got, tt.want)
+		}
+		if !isInspectionAuthErrorCode(tt.want) {
+			t.Fatalf("%s deep probe error code should be clearable after recovery", tt.provider)
+		}
 	}
 }

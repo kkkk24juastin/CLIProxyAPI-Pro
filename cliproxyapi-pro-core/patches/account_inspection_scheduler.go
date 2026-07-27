@@ -859,12 +859,12 @@ func (s *accountInspectionScheduler) healthCountsLocked() accountInspectionHealt
 
 func accountInspectionResultHealthBucketOf(result accountInspectionResult) accountInspectionHealthBucket {
 	switch {
-	case result.Action == accountInspectionActionDelete || isAccountErrorStatusPtr(result.StatusCode):
-		return accountInspectionHealthAuthInvalid
-	case result.Error != "":
-		return accountInspectionHealthInspectionError
-	case result.IsQuota || result.Action == accountInspectionActionDisable:
+	case result.IsQuota:
 		return accountInspectionHealthQuotaExhausted
+	case isAccountInspectionAccountInvalidResult(result):
+		return accountInspectionHealthAuthInvalid
+	case isAccountInspectionRequestErrorResult(result):
+		return accountInspectionHealthInspectionError
 	case result.Action == accountInspectionActionEnable:
 		return accountInspectionHealthRecoverable
 	case result.Disabled:
@@ -872,10 +872,6 @@ func accountInspectionResultHealthBucketOf(result accountInspectionResult) accou
 	default:
 		return accountInspectionHealthHealthy
 	}
-}
-
-func isAccountErrorStatusPtr(status *int) bool {
-	return status != nil && isAccountErrorStatus(*status)
 }
 
 func accountInspectionResultMatchesFilter(result accountInspectionResult, filter string) bool {
@@ -3544,11 +3540,17 @@ func accountInspectionErrorCode(status *int, fallback string) string {
 }
 
 func accountInspectionDecisionErrorCode(provider string, decision accountInspectionDecision, status *int) string {
+	if decision.DeepProbeStatus == accountInspectionDeepProbeTransientError {
+		if strings.EqualFold(strings.TrimSpace(provider), "xai") {
+			return "xai_deep_probe_error"
+		}
+		return "antigravity_deep_probe_error"
+	}
 	if status != nil && isAccountErrorStatus(*status) {
 		return "inspection_http_error"
 	}
 	switch decision.DeepProbeStatus {
-	case accountInspectionDeepProbeAuthError, accountInspectionDeepProbeTransientError:
+	case accountInspectionDeepProbeAuthError:
 		if strings.EqualFold(strings.TrimSpace(provider), "xai") {
 			return "xai_deep_probe_error"
 		}
@@ -3917,18 +3919,31 @@ func accountInspectionAutoActionForError(result accountInspectionResult, action 
 }
 
 func isAccountInspectionAccountInvalidResult(result accountInspectionResult) bool {
+	if result.IsQuota {
+		return false
+	}
 	status := 0
 	if result.StatusCode != nil {
 		status = *result.StatusCode
 	}
-	return !result.IsQuota && isAccountErrorStatus(status)
+	code := strings.TrimSpace(result.ErrorCode)
+	if code != "" {
+		return code == "inspection_http_error" && isAccountErrorStatus(status)
+	}
+	if result.DeepProbeStatus == string(accountInspectionDeepProbeTransientError) {
+		return false
+	}
+	return isAccountErrorStatus(status)
 }
 
 func isAccountInspectionRequestErrorResult(result accountInspectionResult) bool {
-	if result.IsQuota || result.Error == "" || isAccountInspectionAccountInvalidResult(result) {
+	if result.IsQuota || isAccountInspectionAccountInvalidResult(result) {
 		return false
 	}
-	return true
+	return strings.TrimSpace(result.ErrorCode) != "" ||
+		result.DeepProbeStatus == string(accountInspectionDeepProbeTransientError) ||
+		result.TokenRefreshStatus == "failed" ||
+		result.Error != ""
 }
 
 func autoActionForResult(result accountInspectionResult, settings accountInspectionSettings) accountInspectionAction {

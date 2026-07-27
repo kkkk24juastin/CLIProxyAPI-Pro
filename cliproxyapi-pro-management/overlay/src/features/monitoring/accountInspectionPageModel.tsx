@@ -314,12 +314,29 @@ export const buildInspectionErrorPresentation = (item: AccountInspectionResultIt
   };
 };
 
+export const isResultAccountInvalid = (item: AccountInspectionResultItem) => {
+  if (item.isQuota) return false;
+  const errorCode = item.errorCode?.trim() || '';
+  const hasAccountErrorStatus = item.statusCode !== null && ACCOUNT_INVALID_ERROR_STATUSES.has(item.statusCode);
+  if (errorCode) return errorCode === 'inspection_http_error' && hasAccountErrorStatus;
+  if (item.deepProbeStatus === 'transient_error') return false;
+  return hasAccountErrorStatus;
+};
+
+export const isResultRequestError = (item: AccountInspectionResultItem) => {
+  if (item.isQuota || isResultAccountInvalid(item)) return false;
+  return Boolean(
+    item.errorCode?.trim()
+    || item.deepProbeStatus === 'transient_error'
+    || item.tokenRefreshStatus === 'failed'
+    || item.error
+  );
+};
+
 export const resolveResultHealthStatus = (item: AccountInspectionResultItem): ResultHealthStatus => {
-  if (item.action === 'delete' || (item.statusCode !== null && ACCOUNT_INVALID_ERROR_STATUSES.has(item.statusCode))) {
-    return 'authInvalid';
-  }
-  if (item.error) return 'inspectionError';
-  if (item.isQuota || item.action === 'disable') return 'quotaExhausted';
+  if (item.isQuota) return 'quotaExhausted';
+  if (isResultAccountInvalid(item)) return 'authInvalid';
+  if (isResultRequestError(item)) return 'inspectionError';
   if (item.action === 'enable') return 'recoverable';
   if (item.disabled) return 'disabled';
   return 'healthy';
