@@ -15,6 +15,7 @@ This project does not maintain a full fork of either upstream project. Instead, 
 - Optional automatic enable, disable, delete, and token-refresh actions.
 - Optional deep probes for Antigravity soft bans and xAI availability anomalies.
 - A routing-policy page for upstream routing behavior and provider-scoped request-state protection.
+- A bundled dynamic proxy-pool plugin that aggregates HTTP/SOCKS nodes behind one fixed loopback SOCKS5 endpoint with rotation, health isolation, and failover.
 
 ## Repository layout
 
@@ -33,6 +34,9 @@ This project does not maintain a full fork of either upstream project. Instead, 
 │   ├── apply_customizations.py
 │   ├── monitoring-locales.json
 │   └── overlay/
+│
+├── cliproxyapi-pro-plugins/
+│   └── proxy-pool/
 │
 ├── scripts/validation/
 └── .github/workflows/
@@ -62,6 +66,7 @@ Main capabilities:
 - Adds a backend account-inspection scheduler and executor with token refresh before probing.
 - Adds unified routing-policy and request-state-protection APIs.
 - Optionally starts the Komari agent.
+- Prebundles the `proxy-pool` dynamic library in standard macOS, Windows, and Linux releases plus Docker images; FreeBSD and `_no-plugin` assets do not currently bundle it.
 - Redirects `/` to `/management.html`.
 - Enhances the `/healthz` response.
 
@@ -79,6 +84,7 @@ Main capabilities:
 - Adds the `/monitoring` request monitoring page.
 - Adds the `/account-inspection` account inspection page.
 - Adds the `/routing` routing-policy page.
+- Adds the `/proxy-pool` page for node configuration, connectivity tests, runtime statistics, and global-proxy takeover/restoration.
 - Shows request count, success rate, latency, token, and cost metrics.
 - Persists model prices through SQLite.
 - Persists quota cache through SQLite.
@@ -232,7 +238,7 @@ docker pull sfun/cliproxyapi-pro:latest
 Build locally:
 
 ```bash
-docker build -t cliproxyapi-pro ./cliproxyapi-pro-core
+docker build -t cliproxyapi-pro -f cliproxyapi-pro-core/Dockerfile .
 ```
 
 Build a specific upstream release:

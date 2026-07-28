@@ -15,6 +15,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 账号巡检支持自动化启用、禁用、删除、主动刷新令牌
 - 账号巡检针对 Antigravity 软封禁和 xAI 可用性异常提供可选深度检测
 - 路由策略页面统一管理 upstream 路由行为与按 provider 配置的请求状态保护
+- 内置动态代理池插件，把多个 HTTP/SOCKS 节点汇聚为固定的本地 SOCKS5 地址，支持轮询、加权、健康隔离与故障转移
 
 ## 项目结构
 
@@ -33,6 +34,9 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 │   ├── apply_customizations.py
 │   ├── monitoring-locales.json
 │   └── overlay/
+│
+├── cliproxyapi-pro-plugins/
+│   └── proxy-pool/
 │
 ├── scripts/validation/
 └── .github/workflows/
@@ -62,6 +66,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 支持后端账号巡检调度器和执行器，巡检探测前可刷新 token。
 - 支持统一路由策略与请求状态保护 API。
 - 支持 Komari agent 可选启动。
+- 标准 macOS、Windows、Linux Release 和 Docker 镜像预打包 `proxy-pool` 动态插件；FreeBSD 与 `_no-plugin` 产物暂不内置代理池。
 - 将 `/` 跳转到 `/management.html`。
 - 增强 `/healthz` 返回信息。
 
@@ -79,6 +84,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 新增 `/monitoring` 请求监控页面。
 - 新增 `/account-inspection` 账号巡检页面。
 - 新增 `/routing` 路由策略页面。
+- 新增 `/proxy-pool` 代理池页面，负责节点配置、连通性测试、运行统计和全局代理接管/恢复。
 - 请求量、成功率、延迟、token 和成本统计。
 - 模型价格 SQLite 持久化。
 - quota cache SQLite 持久化。
@@ -238,7 +244,7 @@ docker pull sfun/cliproxyapi-pro:latest
 本地构建：
 
 ```bash
-docker build -t cliproxyapi-pro ./cliproxyapi-pro-core
+docker build -t cliproxyapi-pro -f cliproxyapi-pro-core/Dockerfile .
 ```
 
 指定 upstream release：

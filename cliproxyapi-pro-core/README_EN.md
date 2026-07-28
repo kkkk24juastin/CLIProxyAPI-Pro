@@ -4,6 +4,8 @@ Customized Docker build layer for upstream `router-for-me/CLIProxyAPI`.
 
 This directory does not maintain a full fork of upstream. During Docker build it downloads an upstream release, copies in the local `embeddedusage/` package, applies the patch script in `patches/`, and builds a multi-arch image for the Pro deployment.
 
+Standard macOS, Windows, and Linux Pro releases plus Docker images prebundle the `cliproxyapi-pro-plugins/proxy-pool` dynamic plugin. It exposes a fixed loopback SOCKS5 endpoint while rotation, health isolation, and failover stay inside the plugin, so upstream's proxy execution path is unchanged. FreeBSD and `_no-plugin` assets do not currently bundle this feature.
+
 ## What this customization adds
 
 ### Embedded usage service
@@ -244,7 +246,7 @@ docker pull sfun/cliproxyapi-pro:latest
 Build latest upstream release:
 
 ```bash
-docker build -t cliproxyapi-pro ./cliproxyapi-pro-core
+docker build -t cliproxyapi-pro -f cliproxyapi-pro-core/Dockerfile .
 ```
 
 Build a specific upstream release while writing the Pro runtime version:

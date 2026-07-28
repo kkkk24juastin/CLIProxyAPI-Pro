@@ -31,6 +31,14 @@ python3 -m json.tool \
 python3 "${repo_root}/scripts/validation/check_workflow_actions.py" \
   "${repo_root}/.github/workflows"
 
+plugin_root="${repo_root}/cliproxyapi-pro-plugins/proxy-pool"
+plugin_build_dir="$(mktemp -d "${TMPDIR:-/tmp}/cliproxyapi-pro-plugin.XXXXXX")"
+trap 'rm -rf "${plugin_build_dir}"' EXIT
+go -C "${plugin_root}" test -count=1 ./...
+CGO_ENABLED=1 go -C "${plugin_root}" build \
+  -buildvcs=false -trimpath -buildmode=c-shared \
+  -o "${plugin_build_dir}/proxy-pool.so" .
+
 sh -n "${repo_root}/cliproxyapi-pro-core/entrypoint.sh"
 bash -n \
   "${repo_root}/cliproxyapi-pro-management/apply.sh" \

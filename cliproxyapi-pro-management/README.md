@@ -6,6 +6,12 @@
 
 ## 定制内容
 
+### 代理池页面
+
+新增 `/proxy-pool` 顶级页面，管理预打包的 `proxy-pool` 动态插件。页面可配置 HTTP/HTTPS/SOCKS5/SOCKS5H 节点、轮询策略、权重、健康检查、隔离和故障转移，并负责在插件监听就绪后把 Core 的全局 `proxy-url` 切换到固定回环 SOCKS5 地址。停止接管时恢复此前的全局代理；带独立 `proxy-url` 的凭证会作为绕过项明确列出。
+
+轮换粒度是 SOCKS5 TCP tunnel，不保证每个复用的 HTTP 请求都切换节点。默认 `fail-open=false`，避免所有代理失效时静默直连。
+
 ### 请求监控页面
 
 新增顶级监控路由：

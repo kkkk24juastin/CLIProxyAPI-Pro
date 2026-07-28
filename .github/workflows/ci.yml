@@ -144,7 +144,8 @@ jobs:
             --build-arg "CLIPROXY_BUILD_VERSION=${CORE_TAG}-pro-review" \
             --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}" \
             --tag cli-proxy-api-pro:review \
-            cliproxyapi-pro-core
+            --file cliproxyapi-pro-core/Dockerfile \
+            .
 
   management-baseline:
     needs: resolve-upstream

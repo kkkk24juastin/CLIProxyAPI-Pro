@@ -6,6 +6,12 @@ This directory does not vendor the upstream application. It keeps overlay files 
 
 ## What this customization adds
 
+### Proxy pool page
+
+Adds a top-level `/proxy-pool` page for the prebundled `proxy-pool` dynamic plugin. It manages HTTP/HTTPS/SOCKS5/SOCKS5H nodes, selection strategy, weights, health checks, isolation, and failover. After the listener is ready, the page points Core's global `proxy-url` at the fixed loopback SOCKS5 endpoint; stopping takeover restores the previous global proxy. Credentials with their own `proxy-url` are listed explicitly as bypasses.
+
+Rotation is per SOCKS5 TCP tunnel, not necessarily per multiplexed HTTP request. `fail-open=false` is the default to prevent silent direct traffic leakage.
+
 ### Request monitoring page
 
 Adds a top-level monitoring route:

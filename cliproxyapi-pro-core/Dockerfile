@@ -34,10 +34,18 @@ RUN set -eux; \
     rm /tmp/cliproxy.tar.gz; \
     echo "$CLIPROXY_VERSION" > /tmp/cliproxy-version
 
-COPY embeddedusage /tmp/embeddedusage
-COPY patches /tmp/patches
+COPY cliproxyapi-pro-core/embeddedusage /tmp/embeddedusage
+COPY cliproxyapi-pro-core/patches /tmp/patches
+COPY cliproxyapi-pro-plugins/proxy-pool /tmp/proxy-pool
 
 RUN python3 /tmp/patches/apply_upstream_patches.py
+
+RUN set -eux; \
+    cd /tmp/proxy-pool; \
+    go mod edit -replace github.com/router-for-me/CLIProxyAPI/v7=/src/CLIProxyAPI; \
+    go mod tidy; \
+    CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+      go build -buildvcs=false -trimpath -buildmode=c-shared -o /out/proxy-pool.so .
 
 RUN set -eux; \
     go mod tidy; \
@@ -54,6 +62,8 @@ RUN set -eux; \
 
 FROM debian:bookworm@sha256:9344f8b8992482f80cba753f323adeaf17690076c095ccff6cc9536be98185dc
 
+ARG TARGETARCH
+
 RUN mkdir -p /CLIProxyAPI/usage
 
 COPY --from=ghcr.io/komari-monitor/komari-agent:latest /app/komari-agent /CLIProxyAPI/komari-agent
@@ -66,8 +76,9 @@ RUN set -eux; \
 WORKDIR /CLIProxyAPI
 
 COPY --from=builder /out/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
+COPY --from=builder /out/proxy-pool.so /CLIProxyAPI/plugins/linux/${TARGETARCH}/proxy-pool.so
 COPY --from=builder /src/CLIProxyAPI/config.example.yaml /CLIProxyAPI/config.example.yaml
-COPY entrypoint.sh /CLIProxyAPI/entrypoint.sh
+COPY cliproxyapi-pro-core/entrypoint.sh /CLIProxyAPI/entrypoint.sh
 
 ENV TZ=Asia/Shanghai
 ENV USAGE_DATA_DIR=/CLIProxyAPI/usage

@@ -216,6 +216,13 @@ AUTH_FILES_SELECTED_COUNT_LABEL_KEYS = {
     'zh-TW.json': '調度',
 }
 
+PROXY_POOL_NAV_LOCALE_KEYS = {
+    'en.json': {'label': 'Proxy Pool', 'meta': 'Rotating upstream proxy gateway'},
+    'ru.json': {'label': 'Пул прокси', 'meta': 'Шлюз ротации внешних прокси'},
+    'zh-CN.json': {'label': '代理池', 'meta': '多节点轮询与故障转移'},
+    'zh-TW.json': {'label': '代理池', 'meta': '多節點輪詢與故障轉移'},
+}
+
 def load_overlay_replacement_manifest(path: Path) -> dict[str, set[str]]:
     payload = json.loads(path.read_text())
     if payload.get('schemaVersion') != 1 or not isinstance(payload.get('replacements'), list):
@@ -659,12 +666,12 @@ def patch_routes(target: Path) -> None:
     replace_once(
         path,
         "import { QuotaPage } from '@/pages/QuotaPage';\n",
-        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\n",
+        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\nimport { ProxyPoolPage } from '@/pages/ProxyPoolPage';\n",
     )
     replace_once(
         path,
         "  { path: '/quota', element: <QuotaPage /> },\n",
-        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n",
+        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n  { path: '/proxy-pool', element: <ProxyPoolPage /> },\n",
     )
 
 
@@ -679,13 +686,26 @@ def patch_layout(target: Path) -> None:
     insert_once(
         path,
         "  IconSidebarProviders,\n",
-        "  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
+        "  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarProxyPool,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
         "  IconSidebarAccountInspection,\n",
     )
     replace_once(
         path,
         "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n",
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n",
+        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n  proxyPool: <IconSidebarProxyPool size={18} />,\n",
+    )
+    insert_once(
+        path,
+        "              {\n                path: '/plugins',\n",
+        "              {\n"
+        "                path: '/proxy-pool',\n"
+        "                labelKey: 'nav.proxy_pool',\n"
+        "                metaKey: 'nav_meta.proxy_pool',\n"
+        "                icon: sidebarIcons.proxyPool,\n"
+        "              },\n"
+        "              {\n"
+        "                path: '/plugins',\n",
+        "path: '/proxy-pool',",
     )
     text = read(path)
     if "path: '/monitoring'" not in text:
@@ -846,6 +866,21 @@ def patch_icons(target: Path) -> None:
         "  );\n"
         "}\n\n"
     )
+    proxy_pool_icon = (
+        "export function IconSidebarProxyPool({ size = 20, ...props }: IconProps) {\n"
+        "  return (\n"
+        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
+        "      <circle cx=\"6\" cy=\"7\" r=\"2.5\" />\n"
+        "      <circle cx=\"18\" cy=\"7\" r=\"2.5\" />\n"
+        "      <circle cx=\"12\" cy=\"18\" r=\"2.5\" />\n"
+        "      <path d=\"M8.5 7h7\" />\n"
+        "      <path d=\"m7.4 9 3.2 6.6\" />\n"
+        "      <path d=\"m16.6 9-3.2 6.6\" />\n"
+        "      <path d=\"m12.5 4.5 2 2.5-2 2.5\" />\n"
+        "    </svg>\n"
+        "  );\n"
+        "}\n\n"
+    )
     icons_to_insert = ""
     if "export function IconSidebarMonitor" not in text:
         icons_to_insert += monitor_icon
@@ -853,6 +888,8 @@ def patch_icons(target: Path) -> None:
         icons_to_insert += account_inspection_icon
     if "export function IconSidebarRouting" not in text:
         icons_to_insert += routing_icon
+    if "export function IconSidebarProxyPool" not in text:
+        icons_to_insert += proxy_pool_icon
     if not icons_to_insert:
         return
     for marker in (
@@ -2649,6 +2686,11 @@ def patch_locales(target: Path) -> None:
         data = json.loads(read(locale_path))
         additions = monitoring.get(locale_path.name, {})
         data.setdefault('nav', {}).update(additions.get('nav', {}))
+        proxy_pool_nav = PROXY_POOL_NAV_LOCALE_KEYS.get(
+            locale_path.name,
+            PROXY_POOL_NAV_LOCALE_KEYS['en.json'],
+        )
+        data.setdefault('nav', {})['proxy_pool'] = proxy_pool_nav['label']
         nav_additions = additions.get('nav', {})
         data.setdefault('nav_meta', {}).update(
             additions.get(
@@ -2660,6 +2702,7 @@ def patch_locales(target: Path) -> None:
                 },
             )
         )
+        data.setdefault('nav_meta', {})['proxy_pool'] = proxy_pool_nav['meta']
         data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
         data['account_usage'] = additions.get('account_usage', data.get('account_usage', {}))
         data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
