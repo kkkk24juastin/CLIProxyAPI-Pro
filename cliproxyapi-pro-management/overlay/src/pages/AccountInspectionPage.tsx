@@ -200,6 +200,7 @@ export function AccountInspectionPage() {
   const paginationCopy = resolveMonitoringPaginationCopy(i18n.resolvedLanguage ?? i18n.language);
   const logListRef = useRef<HTMLDivElement | null>(null);
   const resultsPanelRef = useRef<HTMLDivElement | null>(null);
+  const resultsTableViewportRef = useRef<HTMLDivElement | null>(null);
   const selectAllResultsRef = useRef<HTMLInputElement | null>(null);
   const settingsMainRef = useRef<HTMLDivElement | null>(null);
   const settingsSectionRefs = useRef<Record<SettingsSectionKey, HTMLElement | null>>({
@@ -773,6 +774,12 @@ export function AccountInspectionPage() {
   useEffect(() => {
     setSelectedResultKeys(new Set());
     setOpenResultActionMenuKey(null);
+  }, [activeResultFilter, resultPage, resultPageSize, resultPendingOnly, resultSearch, selectedResultProvider]);
+
+  useEffect(() => {
+    if (resultsTableViewportRef.current) {
+      resultsTableViewportRef.current.scrollTop = 0;
+    }
   }, [activeResultFilter, resultPage, resultPageSize, resultPendingOnly, resultSearch, selectedResultProvider]);
 
   useEffect(() => {
@@ -1867,7 +1874,10 @@ export function AccountInspectionPage() {
                 </div>
               </div>
             ) : null}
-            <div className={styles.tableWrap}>
+            <div
+              ref={resultsTableViewportRef}
+              className={`${styles.tableWrap} ${styles.resultsTableViewport}`}
+            >
               <table className={styles.table}>
                 <colgroup>
                   <col className={styles.accountColumn} />

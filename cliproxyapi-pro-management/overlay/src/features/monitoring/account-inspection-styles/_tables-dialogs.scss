@@ -10,6 +10,13 @@
   background: var(--inspect-surface);
 }
 
+.resultsTableViewport {
+  max-height: min(620px, 68vh);
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
 .tableWrap::-webkit-scrollbar {
   width: 10px;
   height: 10px;
