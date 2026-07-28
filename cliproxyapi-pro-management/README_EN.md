@@ -8,7 +8,9 @@ This directory does not vendor the upstream application. It keeps overlay files 
 
 ### Proxy pool page
 
-Adds a top-level `/proxy-pool` page for the prebundled `proxy-pool` dynamic plugin. It manages HTTP/HTTPS/SOCKS5/SOCKS5H nodes, selection strategy, weights, health checks, isolation, and failover. After the listener is ready, the page points Core's global `proxy-url` at the fixed loopback SOCKS5 endpoint; stopping takeover restores the previous global proxy. Credentials with their own `proxy-url` are listed explicitly as bypasses.
+Adds a top-level `/proxy-pool` page for the prebundled `proxy-pool` dynamic plugin. It manages HTTP/HTTPS/SOCKS5/SOCKS5H nodes, selection strategy, weights, health checks, isolation, and failover. It also supports batch paste, node search, filtered enable/disable, quick duplication, unsaved-draft tests, and manual isolation recovery. Runtime details include success rate, failures, active tunnels, last success/failure, config generation, and health-cycle timestamps, with explicit diagnostics for registration, listener, and hot-reload failures.
+
+After the listener is ready, the page can point Core's global `proxy-url` at the fixed loopback SOCKS5 endpoint; stopping takeover restores the previous global proxy. Credentials with their own `proxy-url` are listed explicitly as bypasses. Plugin configuration persists with the normal Core configuration, while health state and connection counters remain process-local runtime data and are not mixed into usage backups.
 
 Rotation is per SOCKS5 TCP tunnel, not necessarily per multiplexed HTTP request. `fail-open=false` is the default to prevent silent direct traffic leakage.
 

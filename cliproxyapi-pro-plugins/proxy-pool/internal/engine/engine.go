@@ -32,6 +32,9 @@ type Status struct {
 	HealthyNodes  int                 `json:"healthy_nodes"`
 	IsolatedNodes int                 `json:"isolated_nodes"`
 	LastError     string              `json:"last_error,omitempty"`
+	StartedAt     time.Time           `json:"started_at,omitempty"`
+	LastAppliedAt time.Time           `json:"last_applied_at,omitempty"`
+	LastHealthAt  time.Time           `json:"last_health_at,omitempty"`
 	Nodes         []pool.NodeSnapshot `json:"nodes"`
 }
 
@@ -50,12 +53,15 @@ type ProbeResult struct {
 }
 
 type Engine struct {
-	mu         sync.RWMutex
-	cfg        pluginconfig.Config
-	pool       *pool.Pool
-	server     *socks5.Server
-	lastError  string
-	generation atomic.Uint64
+	mu            sync.RWMutex
+	cfg           pluginconfig.Config
+	pool          *pool.Pool
+	server        *socks5.Server
+	lastError     string
+	startedAt     time.Time
+	lastAppliedAt time.Time
+	lastHealthAt  time.Time
+	generation    atomic.Uint64
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -64,7 +70,7 @@ type Engine struct {
 
 func New() *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Engine{ctx: ctx, cancel: cancel}
+	return &Engine{ctx: ctx, cancel: cancel, startedAt: time.Now().UTC()}
 }
 
 func (e *Engine) ApplyConfig(cfg pluginconfig.Config) error {
@@ -101,6 +107,7 @@ func (e *Engine) ApplyConfig(cfg pluginconfig.Config) error {
 		e.pool = replacementPool
 		e.cfg = cfg
 		e.lastError = ""
+		e.lastAppliedAt = time.Now().UTC()
 		e.mu.Unlock()
 		if oldServer != nil {
 			oldServer.Close()
@@ -111,6 +118,7 @@ func (e *Engine) ApplyConfig(cfg pluginconfig.Config) error {
 		e.pool = currentPool
 		e.cfg = cfg
 		e.lastError = ""
+		e.lastAppliedAt = time.Now().UTC()
 		e.mu.Unlock()
 	}
 
@@ -142,15 +150,21 @@ func (e *Engine) Status() Status {
 	server := e.server
 	poolRef := e.pool
 	lastError := e.lastError
+	startedAt := e.startedAt
+	lastAppliedAt := e.lastAppliedAt
+	lastHealthAt := e.lastHealthAt
 	e.mu.RUnlock()
 	status := Status{
-		Ready:      server != nil,
-		Listen:     cfg.Listen,
-		ProxyURL:   "socks5://" + cfg.Listen,
-		Strategy:   cfg.Strategy,
-		Generation: e.generation.Load(),
-		LastError:  lastError,
-		Nodes:      []pool.NodeSnapshot{},
+		Ready:         server != nil,
+		Listen:        cfg.Listen,
+		ProxyURL:      "socks5://" + cfg.Listen,
+		Strategy:      cfg.Strategy,
+		Generation:    e.generation.Load(),
+		LastError:     lastError,
+		StartedAt:     startedAt,
+		LastAppliedAt: lastAppliedAt,
+		LastHealthAt:  lastHealthAt,
+		Nodes:         []pool.NodeSnapshot{},
 	}
 	if poolRef == nil {
 		return status
@@ -178,13 +192,25 @@ func (e *Engine) ResetStats() {
 	}
 }
 
+func (e *Engine) Recover(nodeID string) error {
+	e.mu.RLock()
+	poolRef := e.pool
+	e.mu.RUnlock()
+	if poolRef == nil {
+		return fmt.Errorf("proxy pool is not initialized")
+	}
+	if !poolRef.Recover(nodeID) {
+		return fmt.Errorf("proxy node not found")
+	}
+	return nil
+}
+
 func (e *Engine) Probe(ctx context.Context, nodeID, rawURL string) ProbeResult {
-	checkedAt := time.Now().UTC()
-	result := ProbeResult{NodeID: strings.TrimSpace(nodeID), CheckedAt: checkedAt.Format(time.RFC3339)}
 	e.mu.RLock()
 	poolRef := e.pool
 	cfg := e.cfg
 	e.mu.RUnlock()
+	result := ProbeResult{NodeID: strings.TrimSpace(nodeID), CheckedAt: time.Now().UTC().Format(time.RFC3339)}
 	if poolRef == nil {
 		result.Error = "proxy pool is not initialized"
 		return result
@@ -197,6 +223,31 @@ func (e *Engine) Probe(ctx context.Context, nodeID, rawURL string) ProbeResult {
 	if strings.TrimSpace(rawURL) == "" {
 		rawURL = cfg.HealthCheck.TestURL
 	}
+	return probeProxyURL(ctx, result, node.URL(), rawURL, cfg.HealthCheck.Timeout.Duration, node, cfg)
+}
+
+// ProbeDraft validates and tests a proxy URL without first persisting it in the
+// plugin configuration. Draft probes do not mutate the health state or runtime
+// counters of an existing node with the same ID.
+func (e *Engine) ProbeDraft(ctx context.Context, nodeID, rawProxyURL, rawTestURL string) ProbeResult {
+	e.mu.RLock()
+	cfg := e.cfg
+	e.mu.RUnlock()
+	result := ProbeResult{NodeID: strings.TrimSpace(nodeID), CheckedAt: time.Now().UTC().Format(time.RFC3339)}
+	validationConfig := cfg
+	validationConfig.Nodes = []pluginconfig.NodeConfig{{ID: "draft", URL: strings.TrimSpace(rawProxyURL), Enabled: true, Weight: 1}}
+	if errValidate := validationConfig.NormalizeAndValidate(); errValidate != nil {
+		result.Error = errValidate.Error()
+		return result
+	}
+	if strings.TrimSpace(rawTestURL) == "" {
+		rawTestURL = cfg.HealthCheck.TestURL
+	}
+	return probeProxyURL(ctx, result, validationConfig.Nodes[0].URL, rawTestURL, cfg.HealthCheck.Timeout.Duration, nil, cfg)
+}
+
+func probeProxyURL(ctx context.Context, result ProbeResult, rawProxyURL, rawTestURL string, timeout time.Duration, node *pool.Node, cfg pluginconfig.Config) ProbeResult {
+	rawURL := rawTestURL
 	parsedURL, errURL := url.Parse(rawURL)
 	if errURL != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
 		result.Error = "invalid probe URL"
@@ -207,11 +258,11 @@ func (e *Engine) Probe(ctx context.Context, nodeID, rawURL string) ProbeResult {
 	transport.Proxy = nil
 	transport.DisableKeepAlives = true
 	transport.DialContext = func(dialCtx context.Context, network, address string) (net.Conn, error) {
-		return dialNode(dialCtx, node.URL(), address)
+		return dialNode(dialCtx, rawProxyURL, address)
 	}
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   cfg.HealthCheck.Timeout.Duration,
+		Timeout:   timeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -226,26 +277,34 @@ func (e *Engine) Probe(ctx context.Context, nodeID, rawURL string) ProbeResult {
 	result.LatencyMS = time.Since(started).Milliseconds()
 	if errDo != nil {
 		result.Error = errDo.Error()
-		node.MarkFailure(errDo, cfg.HealthCheck.IsolationThreshold, cfg.HealthCheck.IsolationDuration.Duration)
+		if node != nil {
+			node.MarkFailure(errDo, cfg.HealthCheck.IsolationThreshold, cfg.HealthCheck.IsolationDuration.Duration)
+		}
 		return result
 	}
 	defer response.Body.Close()
 	body, errRead := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if errRead != nil {
 		result.Error = errRead.Error()
-		node.MarkFailure(errRead, cfg.HealthCheck.IsolationThreshold, cfg.HealthCheck.IsolationDuration.Duration)
+		if node != nil {
+			node.MarkFailure(errRead, cfg.HealthCheck.IsolationThreshold, cfg.HealthCheck.IsolationDuration.Duration)
+		}
 		return result
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 400 {
 		errStatus := fmt.Errorf("probe returned HTTP %d", response.StatusCode)
 		result.Error = errStatus.Error()
-		node.MarkFailure(errStatus, cfg.HealthCheck.IsolationThreshold, cfg.HealthCheck.IsolationDuration.Duration)
+		if node != nil {
+			node.MarkFailure(errStatus, cfg.HealthCheck.IsolationThreshold, cfg.HealthCheck.IsolationDuration.Duration)
+		}
 		return result
 	}
 	decodeProbeBody(body, &result)
 	result.Success = true
-	node.MarkSuccess(time.Duration(result.LatencyMS) * time.Millisecond)
-	node.SetProbeResult(result.ExitIP, result.Location, time.Duration(result.LatencyMS)*time.Millisecond)
+	if node != nil {
+		node.MarkSuccess(time.Duration(result.LatencyMS) * time.Millisecond)
+		node.SetProbeResult(result.ExitIP, result.Location, time.Duration(result.LatencyMS)*time.Millisecond)
+	}
 	return result
 }
 
@@ -397,6 +456,9 @@ func (e *Engine) runHealthChecks(ctx context.Context) {
 		}(node)
 	}
 	wg.Wait()
+	e.mu.Lock()
+	e.lastHealthAt = time.Now().UTC()
+	e.mu.Unlock()
 }
 
 func (e *Engine) setLastError(err error) {

@@ -8,6 +8,7 @@ import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconRefreshCw } from '@/components/ui/icons';
 import {
   defaultProxyPoolConfig,
+  parseProxyPoolImport,
   proxyPoolApi,
   type ProxyPoolConfig,
   type ProxyPoolNodeConfig,
@@ -59,6 +60,9 @@ const formatTime = (value: string, language: string): string => {
     second: '2-digit',
   }).format(date);
 };
+
+const formatSuccessRate = (success: number, total: number): string =>
+  total > 0 ? `${Math.round((success / total) * 1000) / 10}%` : '-';
 
 interface ValidationError {
   key: string;
@@ -179,9 +183,13 @@ export function ProxyPoolPage() {
   const [saving, setSaving] = useState(false);
   const [testingAll, setTestingAll] = useState(false);
   const [testingNode, setTestingNode] = useState('');
+  const [recoveringNode, setRecoveringNode] = useState('');
   const [dirty, setDirty] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [probeResults, setProbeResults] = useState<Record<string, ProxyPoolProbeResult>>({});
+  const [nodeQuery, setNodeQuery] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState('');
 
   const load = useCallback(async (silent = false, replaceDraft = false) => {
     if (connectionStatus !== 'connected' || !supportsPlugin) {
@@ -215,6 +223,15 @@ export function ProxyPoolPage() {
     () => new Map((snapshot?.status?.nodes ?? []).map((node) => [node.id, node])),
     [snapshot?.status?.nodes]
   );
+
+  const visibleNodeIndexes = useMemo(() => {
+    const query = nodeQuery.trim().toLowerCase();
+    return draft.nodes
+      .map((node, index) => ({ node, index }))
+      .filter(({ node }) =>
+        !query || [node.id, node.label, node.url].some((value) => value.toLowerCase().includes(query))
+      );
+  }, [draft.nodes, nodeQuery]);
 
   const updateDraft = useCallback((updater: (current: ProxyPoolConfig) => ProxyPoolConfig) => {
     setDraft((current) => updater(current));
@@ -304,14 +321,19 @@ export function ProxyPoolPage() {
     }
   };
 
-  const testNode = async (nodeId: string) => {
-    setTestingNode(nodeId);
+  const testNode = async (node: ProxyPoolNodeConfig, index: number) => {
+    const testKey = node.id.trim() || `draft-${index + 1}`;
+    setTestingNode(testKey);
     try {
-      const result = await proxyPoolApi.testNode(nodeId);
-      setProbeResults((current) => ({ ...current, [nodeId]: result }));
+      const result = await proxyPoolApi.testNode(
+        testKey,
+        dirty || !statusByID.has(node.id) ? node.url : '',
+        dirty ? draft.healthCheck.testUrl : ''
+      );
+      setProbeResults((current) => ({ ...current, [testKey]: result }));
       showNotification(
         result.success
-          ? `${result.exitIp || nodeId} · ${result.latencyMs} ms`
+          ? `${result.exitIp || testKey} · ${result.latencyMs} ms`
           : result.error || 'Proxy test failed',
         result.success ? 'success' : 'error'
       );
@@ -326,7 +348,29 @@ export function ProxyPoolPage() {
   const testAll = async () => {
     setTestingAll(true);
     try {
-      const results = await proxyPoolApi.testAll();
+      let results: ProxyPoolProbeResult[];
+      if (dirty) {
+        const enabledNodes = draft.nodes
+          .map((node, index) => ({ node, index }))
+          .filter(({ node }) => node.enabled && node.url.trim());
+        results = [];
+        for (let offset = 0; offset < enabledNodes.length; offset += 4) {
+          const batch = enabledNodes.slice(offset, offset + 4);
+          results.push(
+            ...(await Promise.all(
+              batch.map(({ node, index }) =>
+                proxyPoolApi.testNode(
+                  node.id.trim() || `draft-${index + 1}`,
+                  node.url,
+                  draft.healthCheck.testUrl
+                )
+              )
+            ))
+          );
+        }
+      } else {
+        results = await proxyPoolApi.testAll();
+      }
       setProbeResults(Object.fromEntries(results.map((result) => [result.nodeId, result])));
       if (results.length === 0) {
         showNotification(
@@ -349,6 +393,58 @@ export function ProxyPoolPage() {
       showNotification(errorMessage(error), 'error');
     } finally {
       setTestingAll(false);
+    }
+  };
+
+  const recoverNode = async (nodeId: string) => {
+    setRecoveringNode(nodeId);
+    try {
+      await proxyPoolApi.recoverNode(nodeId);
+      await load(true);
+      showNotification(
+        t('proxy_pool.recover_success', { defaultValue: 'Node isolation cleared' }),
+        'success'
+      );
+    } catch (error) {
+      showNotification(errorMessage(error), 'error');
+    } finally {
+      setRecoveringNode('');
+    }
+  };
+
+  const importNodes = () => {
+    const result = parseProxyPoolImport(importText, draft.nodes);
+    if (result.nodes.length > 0) {
+      updateDraft((current) => ({ ...current, nodes: [...current.nodes, ...result.nodes] }));
+    }
+    if (result.errors.length > 0) {
+      const preview = result.errors
+        .slice(0, 3)
+        .map((item) => `${item.line}: ${item.message}`)
+        .join('; ');
+      showNotification(
+        t('proxy_pool.import_partial', {
+          defaultValue: 'Imported {{added}} nodes; skipped {{duplicates}} duplicates; {{errors}} invalid lines ({{detail}})',
+          added: result.nodes.length,
+          duplicates: result.duplicateCount,
+          errors: result.errors.length,
+          detail: preview,
+        }),
+        result.nodes.length > 0 ? 'warning' : 'error'
+      );
+      return;
+    }
+    showNotification(
+      t('proxy_pool.import_success', {
+        defaultValue: 'Imported {{added}} nodes; skipped {{duplicates}} duplicates',
+        added: result.nodes.length,
+        duplicates: result.duplicateCount,
+      }),
+      result.nodes.length > 0 ? 'success' : 'warning'
+    );
+    if (result.nodes.length > 0) {
+      setImportText('');
+      setImportOpen(false);
     }
   };
 
@@ -398,7 +494,7 @@ export function ProxyPoolPage() {
           {t('proxy_pool.discard_changes', { defaultValue: 'Discard changes' })}
         </Button>
         <Button variant="ghost" onClick={() => void resetStats()} disabled={!snapshot.status?.ready || saving}>{t('proxy_pool.reset_stats', { defaultValue: 'Reset stats' })}</Button>
-        <Button variant="secondary" onClick={() => void testAll()} loading={testingAll} disabled={dirty || !snapshot.status?.ready}>{t('proxy_pool.test_all', { defaultValue: 'Test all' })}</Button>
+        <Button variant="secondary" onClick={() => void testAll()} loading={testingAll} disabled={!snapshot.status?.ready}>{t('proxy_pool.test_all', { defaultValue: 'Test all' })}</Button>
         <Button onClick={() => void save()} loading={saving} disabled={!dirty}>{t('common.save')}</Button>
       </div>
     </footer>
@@ -434,6 +530,19 @@ export function ProxyPoolPage() {
       {!loading && snapshot && !snapshot.pluginDiscovered && (
         <div className={styles.errorBanner}>
           {t('proxy_pool.plugin_missing', { defaultValue: 'Bundled proxy-pool plugin was not found. Check release packaging.' })}
+        </div>
+      )}
+      {!loading && snapshot?.pluginDiscovered && !snapshot.pluginRegistered && (
+        <div className={styles.errorBanner}>
+          {t('proxy_pool.plugin_not_registered', {
+            defaultValue: 'The proxy-pool plugin was discovered but did not start. Check its configuration, listener port, and Core logs.',
+          })}
+        </div>
+      )}
+      {snapshot?.status?.lastError && (
+        <div className={styles.errorBanner}>
+          <strong>{t('proxy_pool.runtime_error', { defaultValue: 'Last runtime error' })}</strong>
+          <code>{snapshot.status.lastError}</code>
         </div>
       )}
 
@@ -529,6 +638,13 @@ export function ProxyPoolPage() {
           <ToggleSwitch checked={draft.healthCheck.enabled} onChange={(enabled) => updateDraft((current) => ({ ...current, healthCheck: { ...current.healthCheck, enabled } }))} label={t('proxy_pool.health_checks', { defaultValue: 'Background health checks' })} />
           <ToggleSwitch checked={draft.failOpen} onChange={(failOpen) => updateDraft((current) => ({ ...current, failOpen }))} label={t('proxy_pool.fail_open', { defaultValue: 'Allow direct fallback (traffic leak risk)' })} />
         </div>
+        {snapshot?.status && (
+          <div className={styles.runtimeMeta}>
+            <span>{t('proxy_pool.generation', { defaultValue: 'Generation' })}: <strong>{snapshot.status.generation}</strong></span>
+            <span>{t('proxy_pool.last_applied', { defaultValue: 'Last applied' })}: <strong>{formatTime(snapshot.status.lastAppliedAt, i18n.language)}</strong></span>
+            <span>{t('proxy_pool.last_health_cycle', { defaultValue: 'Last health cycle' })}: <strong>{formatTime(snapshot.status.lastHealthAt, i18n.language)}</strong></span>
+          </div>
+        )}
       </section>
 
       <section className={styles.panel}>
@@ -537,16 +653,62 @@ export function ProxyPoolPage() {
             <h2>{t('proxy_pool.nodes', { defaultValue: 'Proxy nodes' })}</h2>
             <p>{t('proxy_pool.nodes_hint', { defaultValue: 'Supports HTTP, HTTPS, SOCKS5, and SOCKS5H proxy URLs.' })}</p>
           </div>
-          <Button variant="secondary" size="sm" onClick={() => updateDraft((current) => ({ ...current, nodes: [...current.nodes, createNode(current.nodes.length)] }))}>
-            {t('proxy_pool.add_node', { defaultValue: 'Add node' })}
+          <div className={styles.nodeToolbarActions}>
+            <Button variant="ghost" size="sm" onClick={() => setImportOpen((current) => !current)}>
+              {t('proxy_pool.batch_import', { defaultValue: 'Batch import' })}
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => updateDraft((current) => ({ ...current, nodes: [...current.nodes, createNode(current.nodes.length)] }))}>
+              {t('proxy_pool.add_node', { defaultValue: 'Add node' })}
+            </Button>
+          </div>
+        </div>
+
+        {importOpen && (
+          <div className={styles.importPanel}>
+            <label htmlFor="proxy-pool-import">
+              {t('proxy_pool.import_label', { defaultValue: 'Paste proxy nodes' })}
+            </label>
+            <p>{t('proxy_pool.import_hint', { defaultValue: 'One URL per line, or: label | URL | weight. Blank lines, comments, and duplicates are ignored.' })}</p>
+            <textarea
+              id="proxy-pool-import"
+              value={importText}
+              onChange={(event) => setImportText(event.target.value)}
+              placeholder={'socks5://user:pass@host:1080\nPrimary | http://host:8080 | 3'}
+              rows={7}
+            />
+            <div>
+              <Button variant="ghost" size="sm" onClick={() => { setImportOpen(false); setImportText(''); }}>
+                {t('common.cancel')}
+              </Button>
+              <Button size="sm" onClick={importNodes} disabled={!importText.trim()}>
+                {t('proxy_pool.import_nodes', { defaultValue: 'Import nodes' })}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <div className={styles.nodeToolbar}>
+          <Input
+            value={nodeQuery}
+            onChange={(event) => setNodeQuery(event.target.value)}
+            placeholder={t('proxy_pool.search_nodes', { defaultValue: 'Search ID, label, or proxy URL' })}
+          />
+          <span>{t('proxy_pool.visible_nodes', { defaultValue: '{{visible}} of {{total}} nodes', visible: visibleNodeIndexes.length, total: draft.nodes.length })}</span>
+          <Button variant="ghost" size="sm" disabled={visibleNodeIndexes.length === 0} onClick={() => updateDraft((current) => ({ ...current, nodes: current.nodes.map((node, index) => visibleNodeIndexes.some((item) => item.index === index) ? { ...node, enabled: true } : node) }))}>
+            {t('proxy_pool.enable_visible', { defaultValue: 'Enable visible' })}
+          </Button>
+          <Button variant="ghost" size="sm" disabled={visibleNodeIndexes.length === 0} onClick={() => updateDraft((current) => ({ ...current, nodes: current.nodes.map((node, index) => visibleNodeIndexes.some((item) => item.index === index) ? { ...node, enabled: false } : node) }))}>
+            {t('proxy_pool.disable_visible', { defaultValue: 'Disable visible' })}
           </Button>
         </div>
 
         <div className={styles.nodeList}>
           {draft.nodes.length === 0 && <div className={styles.emptyState}>{t('proxy_pool.no_nodes', { defaultValue: 'No proxy nodes configured yet.' })}</div>}
-          {draft.nodes.map((node, index) => {
+          {draft.nodes.length > 0 && visibleNodeIndexes.length === 0 && <div className={styles.emptyState}>{t('proxy_pool.no_matching_nodes', { defaultValue: 'No proxy nodes match the current search.' })}</div>}
+          {visibleNodeIndexes.map(({ node, index }) => {
             const runtime = statusByID.get(node.id);
-            const probe = probeResults[node.id];
+            const testKey = node.id.trim() || `draft-${index + 1}`;
+            const probe = probeResults[testKey];
             const runtimeState = runtime?.state ?? 'unknown';
             return (
               <article key={index} className={styles.nodeCard}>
@@ -557,7 +719,9 @@ export function ProxyPoolPage() {
                   </span>
                   <strong>{node.label || node.id}</strong>
                   <div className={styles.nodeActions}>
-                    <Button variant="ghost" size="sm" disabled={dirty || !runtime || testingNode === node.id} loading={testingNode === node.id} onClick={() => void testNode(node.id)}>{t('proxy_pool.test', { defaultValue: 'Test' })}</Button>
+                    {runtimeState === 'isolated' && <Button variant="ghost" size="sm" disabled={dirty || recoveringNode === node.id} loading={recoveringNode === node.id} onClick={() => void recoverNode(node.id)}>{t('proxy_pool.recover', { defaultValue: 'Recover' })}</Button>}
+                    <Button variant="ghost" size="sm" disabled={!node.url.trim() || testingNode === testKey} loading={testingNode === testKey} onClick={() => void testNode(node, index)}>{t('proxy_pool.test', { defaultValue: 'Test' })}</Button>
+                    <Button variant="ghost" size="sm" onClick={() => updateDraft((current) => { const copy = { ...node, id: createNode(current.nodes.length).id, label: node.label ? `${node.label} copy` : '', order: (current.nodes.length + 1) * 10 }; return { ...current, nodes: [...current.nodes.slice(0, index + 1), copy, ...current.nodes.slice(index + 1)] }; })}>{t('proxy_pool.duplicate', { defaultValue: 'Duplicate' })}</Button>
                     <Button variant="danger" size="sm" onClick={() => updateDraft((current) => ({ ...current, nodes: current.nodes.filter((_, nodeIndex) => nodeIndex !== index) }))}>{t('common.delete')}</Button>
                   </div>
                 </div>
@@ -573,7 +737,12 @@ export function ProxyPoolPage() {
                   <span>{t('proxy_pool.exit_ip', { defaultValue: 'Exit IP' })}: <strong>{probe?.exitIp || runtime?.exitIp || '-'}</strong></span>
                   <span>{t('proxy_pool.location', { defaultValue: 'Location' })}: <strong>{probe?.location || runtime?.location || '-'}</strong></span>
                   <span>{t('proxy_pool.connections', { defaultValue: 'Connections' })}: <strong>{runtime?.successConnects ?? 0}/{runtime?.totalConnects ?? 0}</strong></span>
+                  <span>{t('proxy_pool.success_rate', { defaultValue: 'Success rate' })}: <strong>{formatSuccessRate(runtime?.successConnects ?? 0, runtime?.totalConnects ?? 0)}</strong></span>
+                  <span>{t('proxy_pool.failed_connections', { defaultValue: 'Failures' })}: <strong>{runtime?.failedConnects ?? 0}</strong></span>
+                  <span>{t('proxy_pool.node_active_tunnels', { defaultValue: 'Active' })}: <strong>{runtime?.activeTunnels ?? 0}</strong></span>
                   <span>{t('proxy_pool.last_check', { defaultValue: 'Last check' })}: <strong>{formatTime(runtime?.lastCheck ?? probe?.checkedAt ?? '', i18n.language)}</strong></span>
+                  <span>{t('proxy_pool.last_success', { defaultValue: 'Last success' })}: <strong>{formatTime(runtime?.lastSuccess ?? '', i18n.language)}</strong></span>
+                  <span>{t('proxy_pool.last_failure', { defaultValue: 'Last failure' })}: <strong>{formatTime(runtime?.lastFailure ?? '', i18n.language)}</strong></span>
                 </div>
                 {(probe?.error || runtime?.lastError) && <div className={styles.nodeError}>{probe?.error || runtime?.lastError}</div>}
               </article>

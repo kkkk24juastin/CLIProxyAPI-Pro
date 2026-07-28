@@ -226,6 +226,23 @@ func (n *Node) ResetStats() {
 	n.mu.Unlock()
 }
 
+// Recover clears the transient health penalty for a node without discarding
+// its connection counters. This is intentionally separate from ResetStats so
+// an operator can put a repaired proxy back into rotation while preserving the
+// evidence that led to its isolation.
+func (n *Node) Recover() {
+	n.mu.Lock()
+	n.consecutiveFailures = 0
+	n.isolationUntil = time.Time{}
+	n.lastError = ""
+	if n.config.Enabled {
+		n.state = HealthUnknown
+	} else {
+		n.state = HealthDisabled
+	}
+	n.mu.Unlock()
+}
+
 func (n *Node) Snapshot() NodeSnapshot {
 	n.mu.RLock()
 	snapshot := NodeSnapshot{
@@ -407,6 +424,15 @@ func (p *Pool) ResetStats() {
 		node.ResetStats()
 	}
 	p.rr.Store(0)
+}
+
+func (p *Pool) Recover(id string) bool {
+	node := p.Node(id)
+	if node == nil {
+		return false
+	}
+	node.Recover()
+	return true
 }
 
 func RedactURL(raw string) string {

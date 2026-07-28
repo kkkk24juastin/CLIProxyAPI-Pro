@@ -17,6 +17,9 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('proxyPoolApi.deactivate', source)
         self.assertIn('snapshot?.bypassCredentials', source)
         self.assertIn('proxyPoolApi.testAll', source)
+        self.assertIn('parseProxyPoolImport', source)
+        self.assertIn('proxyPoolApi.recoverNode', source)
+        self.assertIn("t('proxy_pool.success_rate'", source)
         self.assertIn('Rotation occurs per TCP tunnel', source)
 
     def test_page_guards_unknown_state_and_escapes_transition_transform(self) -> None:
@@ -47,6 +50,11 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
             'health_timeout',
             'test_url',
             'order',
+            'batch_import',
+            'search_nodes',
+            'recover',
+            'success_rate',
+            'plugin_not_registered',
             'state_isolated',
             'validation_listener',
             'validation_recursive_url',

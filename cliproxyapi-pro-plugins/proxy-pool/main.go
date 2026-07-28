@@ -52,7 +52,7 @@ import (
 	"github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/proxy-pool/internal/engine"
 )
 
-const pluginVersion = "0.1.0"
+const pluginVersion = "0.2.0"
 
 var pluginState = struct {
 	sync.Mutex
@@ -168,6 +168,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			{Method: http.MethodPost, Path: "/pro/proxy-pool/test", Description: "Test one configured proxy node."},
 			{Method: http.MethodPost, Path: "/pro/proxy-pool/test-all", Description: "Test all configured proxy nodes."},
 			{Method: http.MethodPost, Path: "/pro/proxy-pool/reset-stats", Description: "Reset proxy pool runtime statistics."},
+			{Method: http.MethodPost, Path: "/pro/proxy-pool/recover", Description: "Clear transient isolation for one proxy node."},
 		}})
 	case pluginabi.MethodManagementHandle:
 		return handleManagement(request)
@@ -239,8 +240,9 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return okEnvelope(jsonResponse(http.StatusOK, current.Status()))
 	case request.Method == http.MethodPost && strings.HasSuffix(path, "/pro/proxy-pool/test"):
 		var body struct {
-			NodeID string `json:"node_id"`
-			URL    string `json:"url"`
+			NodeID   string `json:"node_id"`
+			URL      string `json:"url"`
+			ProxyURL string `json:"proxy_url"`
 		}
 		if errBody := json.Unmarshal(request.Body, &body); errBody != nil || strings.TrimSpace(body.NodeID) == "" {
 			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]any{"error": "invalid_request", "message": "node_id is required"}))
@@ -248,6 +250,9 @@ func handleManagement(raw []byte) ([]byte, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		result := current.Probe(ctx, body.NodeID, body.URL)
+		if strings.TrimSpace(body.ProxyURL) != "" {
+			result = current.ProbeDraft(ctx, body.NodeID, body.ProxyURL, body.URL)
+		}
 		status := http.StatusOK
 		if !result.Success {
 			status = http.StatusBadGateway
@@ -264,6 +269,17 @@ func handleManagement(raw []byte) ([]byte, error) {
 	case request.Method == http.MethodPost && strings.HasSuffix(path, "/pro/proxy-pool/reset-stats"):
 		current.ResetStats()
 		return okEnvelope(jsonResponse(http.StatusOK, map[string]any{"status": "ok"}))
+	case request.Method == http.MethodPost && strings.HasSuffix(path, "/pro/proxy-pool/recover"):
+		var body struct {
+			NodeID string `json:"node_id"`
+		}
+		if errBody := json.Unmarshal(request.Body, &body); errBody != nil || strings.TrimSpace(body.NodeID) == "" {
+			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]any{"error": "invalid_request", "message": "node_id is required"}))
+		}
+		if errRecover := current.Recover(body.NodeID); errRecover != nil {
+			return okEnvelope(jsonResponse(http.StatusNotFound, map[string]any{"error": "not_found", "message": errRecover.Error()}))
+		}
+		return okEnvelope(jsonResponse(http.StatusOK, map[string]any{"status": "ok", "node_id": strings.TrimSpace(body.NodeID)}))
 	default:
 		return okEnvelope(jsonResponse(http.StatusNotFound, map[string]any{"error": "not_found"}))
 	}

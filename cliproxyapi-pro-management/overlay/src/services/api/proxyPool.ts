@@ -69,7 +69,16 @@ export interface ProxyPoolStatus {
   healthyNodes: number;
   isolatedNodes: number;
   lastError: string;
+  startedAt: string;
+  lastAppliedAt: string;
+  lastHealthAt: string;
   nodes: ProxyPoolNodeStatus[];
+}
+
+export interface ProxyPoolImportResult {
+  nodes: ProxyPoolNodeConfig[];
+  duplicateCount: number;
+  errors: Array<{ line: number; message: string }>;
 }
 
 export interface ProxyPoolProbeResult {
@@ -222,6 +231,94 @@ export const serializeProxyPoolConfig = (config: ProxyPoolConfig): Record<string
   })),
 });
 
+const proxyUrlPattern = /^(?:https?|socks5h?):\/\//i;
+
+const proxyUrlKey = (value: string): string => {
+  try {
+    return new URL(value.trim()).toString();
+  } catch {
+    return value.trim();
+  }
+};
+
+const proxyIDPart = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 28);
+
+// Accept one URL per line, or "label | URL | weight". Comma, tab, and
+// whitespace-separated label/URL pairs are accepted as a convenience, while
+// the pipe form remains unambiguous for labels containing spaces.
+export const parseProxyPoolImport = (
+  input: string,
+  existing: ProxyPoolNodeConfig[] = []
+): ProxyPoolImportResult => {
+  const result: ProxyPoolImportResult = { nodes: [], duplicateCount: 0, errors: [] };
+  const seenURLs = new Set(existing.map((node) => proxyUrlKey(node.url)));
+  const seenIDs = new Set(existing.map((node) => node.id.trim()));
+  let nextOrder = existing.reduce((maximum, node) => Math.max(maximum, node.order), 0) + 10;
+
+  input.split(/\r?\n/).forEach((rawLine, index) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) return;
+    const parts = line.includes('|')
+      ? line.split('|').map((part) => part.trim()).filter(Boolean)
+      : line.includes(',')
+        ? line.split(',').map((part) => part.trim()).filter(Boolean)
+        : line.split(/\s+/).filter(Boolean);
+    const urlIndex = parts.findIndex((part) => proxyUrlPattern.test(part));
+    if (urlIndex < 0) {
+      result.errors.push({ line: index + 1, message: 'missing supported proxy URL' });
+      return;
+    }
+    const url = parts[urlIndex];
+    try {
+      const parsed = new URL(url);
+      if (!parsed.hostname || !proxyUrlPattern.test(url)) throw new Error('invalid proxy URL');
+    } catch {
+      result.errors.push({ line: index + 1, message: 'invalid proxy URL' });
+      return;
+    }
+    const key = proxyUrlKey(url);
+    if (seenURLs.has(key)) {
+      result.duplicateCount += 1;
+      return;
+    }
+    const label = urlIndex > 0 ? parts.slice(0, urlIndex).join(' ') : '';
+    const rawWeight = parts[urlIndex + 1];
+    const parsedWeight = rawWeight && /^\d+$/.test(rawWeight) ? Number(rawWeight) : 1;
+    let base = proxyIDPart(label);
+    if (!base) {
+      try {
+        base = proxyIDPart(new URL(url).hostname);
+      } catch {
+        base = 'node';
+      }
+    }
+    let id = `proxy-${base || 'node'}`;
+    let suffix = 2;
+    while (seenIDs.has(id)) {
+      id = `proxy-${base || 'node'}-${suffix}`;
+      suffix += 1;
+    }
+    result.nodes.push({
+      id,
+      label,
+      url,
+      enabled: true,
+      weight: Math.max(1, Math.trunc(parsedWeight)),
+      order: nextOrder,
+    });
+    nextOrder += 10;
+    seenIDs.add(id);
+    seenURLs.add(key);
+  });
+  return result;
+};
+
 const normalizeNodeStatus = (value: unknown): ProxyPoolNodeStatus => {
   const source = asRecord(value);
   return {
@@ -261,6 +358,9 @@ const normalizeStatus = (value: unknown): ProxyPoolStatus => {
     healthyNodes: asNumber(source.healthy_nodes),
     isolatedNodes: asNumber(source.isolated_nodes),
     lastError: asString(source.last_error),
+    startedAt: asString(source.started_at),
+    lastAppliedAt: asString(source.last_applied_at),
+    lastHealthAt: asString(source.last_health_at),
     nodes: Array.isArray(source.nodes) ? source.nodes.map(normalizeNodeStatus) : [],
   };
 };
@@ -466,10 +566,18 @@ export const proxyPoolApi = {
     return normalizeStatus(await apiClient.get('/pro/proxy-pool/status'));
   },
 
-  async testNode(nodeId: string): Promise<ProxyPoolProbeResult> {
+  async testNode(
+    nodeId: string,
+    proxyUrl = '',
+    testUrl = ''
+  ): Promise<ProxyPoolProbeResult> {
     try {
       return normalizeProbeResult(
-        await apiClient.post('/pro/proxy-pool/test', { node_id: nodeId })
+        await apiClient.post('/pro/proxy-pool/test', {
+          node_id: nodeId,
+          proxy_url: proxyUrl.trim(),
+          url: testUrl.trim(),
+        })
       );
     } catch (error) {
       const details = asRecord((error as { details?: unknown })?.details);
@@ -486,4 +594,7 @@ export const proxyPoolApi = {
   },
 
   resetStats: () => apiClient.post('/pro/proxy-pool/reset-stats'),
+
+  recoverNode: (nodeId: string) =>
+    apiClient.post('/pro/proxy-pool/recover', { node_id: nodeId }),
 };

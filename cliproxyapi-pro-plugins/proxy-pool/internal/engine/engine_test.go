@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -208,5 +209,39 @@ func TestEngineFailsOverToNextProxy(t *testing.T) {
 	}
 	if working.count.Load() != 1 {
 		t.Fatalf("working proxy count = %d", working.count.Load())
+	}
+}
+
+func TestProbeDraftDoesNotMutateSavedNodeRuntime(t *testing.T) {
+	working := startConnectProxy(t)
+	target := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"ip":"203.0.113.8","country":"Testland"}`)
+	}))
+	t.Cleanup(target.Close)
+	cfg := pluginconfig.Default()
+	cfg.Listen = freeAddress(t)
+	cfg.HealthCheck.Enabled = false
+	cfg.Nodes = []pluginconfig.NodeConfig{
+		{ID: "saved", URL: "http://127.0.0.1:1", Enabled: true, Weight: 1, Order: 10},
+	}
+	engine := New()
+	if errApply := engine.ApplyConfig(cfg); errApply != nil {
+		t.Fatal(errApply)
+	}
+	t.Cleanup(engine.Close)
+
+	result := engine.ProbeDraft(
+		context.Background(),
+		"saved",
+		"http://"+working.listener.Addr().String(),
+		target.URL,
+	)
+	if !result.Success || result.ExitIP != "203.0.113.8" {
+		t.Fatalf("ProbeDraft() = %+v", result)
+	}
+	snapshot := engine.Status().Nodes[0]
+	if snapshot.State != "unknown" || snapshot.TotalConnects != 0 || snapshot.SuccessConnects != 0 {
+		t.Fatalf("draft probe mutated saved runtime: %+v", snapshot)
 	}
 }

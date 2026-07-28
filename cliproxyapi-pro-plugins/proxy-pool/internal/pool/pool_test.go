@@ -60,6 +60,26 @@ func TestIsolationRemovesNodeUntilExpiry(t *testing.T) {
 	}
 }
 
+func TestRecoverClearsIsolationAndPreservesStats(t *testing.T) {
+	p := New(testConfig("round-robin"))
+	node := p.Node("a")
+	node.MarkAttempt()
+	node.MarkFailure(errors.New("dial failed"), 1, time.Hour)
+	if !p.Recover("a") {
+		t.Fatal("Recover() = false, want true")
+	}
+	snapshot := node.Snapshot()
+	if snapshot.State != HealthUnknown || snapshot.ConsecutiveFailures != 0 || !snapshot.IsolationUntil.IsZero() {
+		t.Fatalf("snapshot after recovery = %+v", snapshot)
+	}
+	if snapshot.TotalConnects != 1 || snapshot.FailedConnects != 1 {
+		t.Fatalf("recovery discarded counters: %+v", snapshot)
+	}
+	if p.Recover("missing") {
+		t.Fatal("Recover(missing) = true, want false")
+	}
+}
+
 func TestRedactURL(t *testing.T) {
 	got := RedactURL("socks5://alice:secret@proxy.example:1080")
 	if got != "socks5://alice:***@proxy.example:1080" {

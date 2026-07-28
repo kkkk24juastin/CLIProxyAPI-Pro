@@ -8,11 +8,24 @@
 - Upstream nodes: HTTP, HTTPS, SOCKS5, or SOCKS5H URLs, including authenticated URLs.
 - Strategies: round robin, smooth weighted round robin, or least active connections.
 - Failure handling: try additional eligible nodes, isolate repeatedly failing nodes, and run direct per-node health probes that do not use the host HTTP client.
+- Operations: test saved or unsaved node URLs, inspect success/failure and tunnel counters, and manually clear a node's transient isolation without resetting its counters.
 - Leak protection: `fail-open` defaults to `false`; direct fallback must be explicitly enabled.
 - Scope: rotation happens per SOCKS5 TCP tunnel. HTTP keep-alive or multiplexed connections can carry multiple HTTP requests through one selected node.
 - Overrides: credential-level `proxy-url` values still take precedence over Core's global proxy and therefore bypass this pool.
 
-The plugin and Pro management page never rewrite Core's global `proxy-url`. Configure Core manually to use the fixed endpoint shown by the page, for example `socks5://127.0.0.1:8318`.
+The plugin itself never rewrites Core's global `proxy-url`. The Pro management page can either leave the endpoint for manual configuration or, after an explicit **Start takeover** action, save the previous value and point Core at the fixed endpoint (for example `socks5://127.0.0.1:8318`). **Stop takeover** restores the saved value.
+
+The management page also supports batch paste (`URL` or `label | URL | weight`), node search, filtered enable/disable, quick duplication, draft testing, manual recovery, and runtime diagnostics. Runtime health and counters are intentionally ephemeral; plugin configuration is persisted with the normal Core configuration.
+
+## Management routes
+
+- `GET /v0/management/pro/proxy-pool/status`
+- `POST /v0/management/pro/proxy-pool/test`
+- `POST /v0/management/pro/proxy-pool/test-all`
+- `POST /v0/management/pro/proxy-pool/recover`
+- `POST /v0/management/pro/proxy-pool/reset-stats`
+
+`test` accepts a configured `node_id`. Supplying `proxy_url` tests an unsaved draft without changing the saved node's health state or counters. Proxy credentials remain request-only and are never returned by the status route.
 
 ## Plugin configuration
 
