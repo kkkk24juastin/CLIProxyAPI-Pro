@@ -116,5 +116,5 @@
   .nodeActions { width: 100%; margin-left: 0; }
   .bypassList > div { grid-template-columns: 1fr; }
   .actionBar { left: 12px; right: 12px; bottom: 10px; align-items: stretch; }
-  .actionBar > div:last-child { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .actionBar > div:last-child { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

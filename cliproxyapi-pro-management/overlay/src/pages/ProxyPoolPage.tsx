@@ -20,6 +20,13 @@ import styles from './ProxyPoolPage.module.scss';
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error || 'Unknown error');
 
+const maskProxyCredentials = (value: string): string => {
+  const schemeEnd = value.indexOf('//');
+  const credentialsEnd = value.lastIndexOf('@');
+  if (schemeEnd < 0 || credentialsEnd <= schemeEnd + 2) return value;
+  return `${value.slice(0, schemeEnd + 2)}***@${value.slice(credentialsEnd + 1)}`;
+};
+
 const createNode = (index: number): ProxyPoolNodeConfig => ({
   id:
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -237,7 +244,7 @@ export function ProxyPoolPage() {
     }
     setSaving(true);
     try {
-      await proxyPoolApi.save(draft);
+      await proxyPoolApi.save(draft, snapshot?.takeoverActive === true);
       setDirty(false);
       showNotification(t('proxy_pool.save_success', { defaultValue: 'Proxy pool saved' }), 'success');
       await load(true, true);
@@ -321,6 +328,13 @@ export function ProxyPoolPage() {
     try {
       const results = await proxyPoolApi.testAll();
       setProbeResults(Object.fromEntries(results.map((result) => [result.nodeId, result])));
+      if (results.length === 0) {
+        showNotification(
+          t('proxy_pool.no_nodes_to_test', { defaultValue: 'No enabled proxy nodes to test' }),
+          'warning'
+        );
+        return;
+      }
       const successCount = results.filter((result) => result.success).length;
       showNotification(
         t('proxy_pool.test_summary', {
@@ -349,6 +363,17 @@ export function ProxyPoolPage() {
     }
   };
 
+  const discardChanges = () => {
+    if (!snapshot) return;
+    setDraft(snapshot.config);
+    setDirty(false);
+    setProbeResults({});
+    showNotification(
+      t('proxy_pool.changes_discarded', { defaultValue: 'Unsaved changes discarded' }),
+      'success'
+    );
+  };
+
   if (!supportsPlugin) {
     return (
       <div className={styles.page}>
@@ -369,6 +394,9 @@ export function ProxyPoolPage() {
         <span>{t('proxy_pool.fixed_endpoint_hint', { defaultValue: 'Core only sees this fixed proxy endpoint.' })}</span>
       </div>
       <div>
+        <Button variant="ghost" onClick={discardChanges} disabled={!dirty || saving}>
+          {t('proxy_pool.discard_changes', { defaultValue: 'Discard changes' })}
+        </Button>
         <Button variant="ghost" onClick={() => void resetStats()} disabled={!snapshot.status?.ready || saving}>{t('proxy_pool.reset_stats', { defaultValue: 'Reset stats' })}</Button>
         <Button variant="secondary" onClick={() => void testAll()} loading={testingAll} disabled={dirty || !snapshot.status?.ready}>{t('proxy_pool.test_all', { defaultValue: 'Test all' })}</Button>
         <Button onClick={() => void save()} loading={saving} disabled={!dirty}>{t('common.save')}</Button>
@@ -454,10 +482,10 @@ export function ProxyPoolPage() {
           </summary>
           <div className={styles.bypassList}>
             {snapshot?.bypassCredentials.map((item) => (
-              <div key={item.name}>
+              <div key={`${item.name}-${item.proxyUrl}`}>
                 <strong>{item.name}</strong>
                 <span>{item.provider || '-'}</span>
-                <code>{item.proxyUrl}</code>
+                <code>{maskProxyCredentials(item.proxyUrl)}</code>
               </div>
             ))}
           </div>
@@ -521,9 +549,9 @@ export function ProxyPoolPage() {
             const probe = probeResults[node.id];
             const runtimeState = runtime?.state ?? 'unknown';
             return (
-              <article key={`${node.id}-${index}`} className={styles.nodeCard}>
+              <article key={index} className={styles.nodeCard}>
                 <div className={styles.nodeTopline}>
-                  <ToggleSwitch checked={node.enabled} onChange={(enabled) => updateNode(index, { enabled })} ariaLabel={`${node.id} enabled`} />
+                  <ToggleSwitch checked={node.enabled} onChange={(enabled) => updateNode(index, { enabled })} ariaLabel={t('proxy_pool.node_enabled_aria', { defaultValue: 'Enable node {{id}}', id: node.id })} />
                   <span className={`${styles.stateBadge} ${stateTone(runtimeState)}`}>
                     {t(`proxy_pool.state_${runtimeState}`, { defaultValue: runtimeState })}
                   </span>

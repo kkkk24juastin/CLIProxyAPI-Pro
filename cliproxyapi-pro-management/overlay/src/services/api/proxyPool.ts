@@ -285,6 +285,19 @@ const readGlobalProxyUrl = async (): Promise<string> => {
 
 const localProxyUrl = (listen: string): string => `socks5://${listen.trim()}`;
 
+export const isProxyPoolListenerUrl = (proxyUrl: string, listen: string): boolean => {
+  try {
+    const parsed = new URL(proxyUrl.trim());
+    const protocol = parsed.protocol.toLowerCase();
+    return (
+      (protocol === 'socks5:' || protocol === 'socks5h:') &&
+      parsed.host.toLowerCase() === listen.trim().toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+};
+
 const ensureGlobalPluginSwitch = async (): Promise<void> => {
   const raw = await configFileApi.fetchConfigYaml();
   const document = parseDocument(raw || '{}');
@@ -389,6 +402,9 @@ export const proxyPoolApi = {
       }
     }
     const config = normalizeProxyPoolConfig(rawConfig);
+    const effectiveBypassCredentials = bypassCredentials.filter(
+      (item) => !isProxyPoolListenerUrl(item.proxyUrl, config.listen)
+    );
     return {
       pluginsEnabled: pluginList.pluginsEnabled,
       pluginDiscovered: Boolean(plugin),
@@ -398,11 +414,11 @@ export const proxyPoolApi = {
       status,
       globalProxyUrl,
       takeoverActive: globalProxyUrl === localProxyUrl(config.listen),
-      bypassCredentials,
+      bypassCredentials: effectiveBypassCredentials,
     };
   },
 
-  async save(config: ProxyPoolConfig): Promise<ProxyPoolStatus> {
+  async save(config: ProxyPoolConfig, preserveTakeover = false): Promise<ProxyPoolStatus> {
     const pluginList = await pluginsApi.list();
     const plugin = pluginList.plugins.find((entry) => entry.id === PROXY_POOL_PLUGIN_ID);
     if (!plugin) throw new Error('Bundled proxy-pool plugin was not found');
@@ -417,7 +433,11 @@ export const proxyPoolApi = {
     await pluginsApi.patchConfig(PROXY_POOL_PLUGIN_ID, serializeProxyPoolConfig(config));
     if (!plugin.enabled) await pluginsApi.updateEnabled(PROXY_POOL_PLUGIN_ID, true);
     if (!pluginList.pluginsEnabled) await ensureGlobalPluginSwitch();
-    return waitForStatus(config.listen, minimumGeneration);
+    const status = await waitForStatus(config.listen, minimumGeneration);
+    if (preserveTakeover) {
+      await apiClient.put('/proxy-url', { value: status.proxyUrl });
+    }
+    return status;
   },
 
   async activate(config: ProxyPoolConfig): Promise<ProxyPoolStatus> {

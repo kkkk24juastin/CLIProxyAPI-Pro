@@ -26,6 +26,8 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn("t('proxy_pool.load_unavailable'", source)
         self.assertIn('disabled={loading || !snapshot?.pluginDiscovered}', source)
         self.assertIn('await load(true, true)', source)
+        self.assertIn('key={index}', source)
+        self.assertIn("t('proxy_pool.discard_changes'", source)
 
     def test_page_exposes_complete_runtime_configuration(self) -> None:
         source = PAGE.read_text()
@@ -34,6 +36,7 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn("t('proxy_pool.order'", source)
         self.assertIn('parseLoopbackListener', source)
         self.assertIn("key: 'proxy_pool.validation_recursive_url'", source)
+        self.assertIn('maskProxyCredentials(item.proxyUrl)', source)
 
     def test_proxy_pool_locales_cover_page_keys(self) -> None:
         locales = json.loads(LOCALES.read_text())
@@ -53,7 +56,7 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
 
     def test_service_enables_plugin_before_global_proxy_takeover(self) -> None:
         source = SERVICE.read_text()
-        save_start = source.index('async save(config: ProxyPoolConfig)')
+        save_start = source.index('async save(config: ProxyPoolConfig, preserveTakeover = false)')
         activate_start = source.index('async activate(config: ProxyPoolConfig)')
         activate_end = source.index('async deactivate(config: ProxyPoolConfig)')
         save_block = source[save_start:activate_start]
@@ -61,6 +64,9 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
 
         self.assertIn("document.setIn(['plugins', 'enabled'], true)", source)
         self.assertIn('pluginsApi.updateEnabled(PROXY_POOL_PLUGIN_ID, true)', save_block)
+        self.assertIn("if (preserveTakeover)", save_block)
+        self.assertIn("apiClient.put('/proxy-url', { value: status.proxyUrl })", save_block)
+        self.assertIn('isProxyPoolListenerUrl(item.proxyUrl, config.listen)', source)
         self.assertLess(activate_block.index('this.save(nextConfig)'), activate_block.index("apiClient.put('/proxy-url'"))
         self.assertIn("apiClient.put('/proxy-url', { value: config.restoreProxyUrl.trim() })", source)
 
