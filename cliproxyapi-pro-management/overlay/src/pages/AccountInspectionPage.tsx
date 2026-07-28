@@ -100,6 +100,7 @@ import {
   DEFAULT_MONITORING_PAGE_SIZE,
   MONITORING_PAGE_SIZE_OPTIONS,
   normalizeMonitoringPageSize,
+  resolveMonitoringPaginationCopy,
 } from '@/features/monitoring/pagination';
 import {
   buildZipArchive,
@@ -196,6 +197,7 @@ export function AccountInspectionPage() {
   const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
   const activeResultFilter = resultReasonFilter ?? resultStatusFilter;
+  const paginationCopy = resolveMonitoringPaginationCopy(i18n.resolvedLanguage ?? i18n.language);
   const logListRef = useRef<HTMLDivElement | null>(null);
   const resultsPanelRef = useRef<HTMLDivElement | null>(null);
   const selectAllResultsRef = useRef<HTMLInputElement | null>(null);
@@ -2022,13 +2024,18 @@ export function AccountInspectionPage() {
             {resultPagination.total > 0 ? (
               <div className={monitoringStyles.paginationBar}>
                 <div className={monitoringStyles.paginationPageSizeControl}>
-                  <span id="account-inspection-result-page-size-label">{t('monitoring.pagination_page_size')}</span>
+                  <span id="account-inspection-result-page-size-label">
+                    {t('monitoring.pagination_page_size', { defaultValue: paginationCopy.pageSizeLabel })}
+                  </span>
                   <Select
                     id="account-inspection-result-page-size"
                     value={String(resultPageSize)}
                     options={MONITORING_PAGE_SIZE_OPTIONS.map((pageSize) => ({
                       value: String(pageSize),
-                      label: t('monitoring.pagination_page_size_value', { count: pageSize }),
+                      label: t('monitoring.pagination_page_size_value', {
+                        count: pageSize,
+                        defaultValue: paginationCopy.pageSizeValue(pageSize),
+                      }),
                     }))}
                     onChange={(value) => {
                       const nextPageSize = normalizeMonitoringPageSize(value);

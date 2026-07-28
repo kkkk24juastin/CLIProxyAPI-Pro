@@ -114,8 +114,8 @@
 }
 
 .paginationPageSizeControl {
-  grid-column: 1;
-  justify-self: start;
+  grid-column: 3;
+  justify-self: end;
   gap: 10px;
   color: var(--text-secondary);
   font-size: 13px;

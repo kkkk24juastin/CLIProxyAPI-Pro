@@ -90,10 +90,16 @@
     grid-template-columns: 1fr;
   }
 
-  .paginationPageSizeControl,
   .paginationNavigation {
     grid-column: 1;
+    grid-row: 1;
     justify-self: center;
+  }
+
+  .paginationPageSizeControl {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: end;
   }
 
   .paginationNavigation {

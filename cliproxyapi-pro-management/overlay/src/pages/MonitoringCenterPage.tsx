@@ -96,6 +96,7 @@ import {
   DEFAULT_MONITORING_PAGE_SIZE,
   MONITORING_PAGE_SIZE_OPTIONS,
   normalizeMonitoringPageSize,
+  resolveMonitoringPaginationCopy,
 } from '@/features/monitoring/pagination';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { apiClient } from '@/services/api/client';
@@ -287,6 +288,7 @@ export function MonitoringCenterPage() {
   const realtimeColumnsMenuRef = useRef<HTMLDivElement | null>(null);
   const deferredSearchInput = useDeferredValue(searchInput);
   const [deferredSearch, setDeferredSearch] = useState(searchInput);
+  const paginationCopy = resolveMonitoringPaginationCopy(i18n.resolvedLanguage ?? i18n.language);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -1803,13 +1805,18 @@ export function MonitoringCenterPage() {
         {realtimeLogPagination.total > 0 ? (
           <div className={styles.paginationBar}>
             <div className={styles.paginationPageSizeControl}>
-              <span id="realtime-log-page-size-label">{t('monitoring.pagination_page_size')}</span>
+              <span id="realtime-log-page-size-label">
+                {t('monitoring.pagination_page_size', { defaultValue: paginationCopy.pageSizeLabel })}
+              </span>
               <Select
                 id="realtime-log-page-size"
                 value={String(realtimeLogPageSize)}
                 options={MONITORING_PAGE_SIZE_OPTIONS.map((pageSize) => ({
                   value: String(pageSize),
-                  label: t('monitoring.pagination_page_size_value', { count: pageSize }),
+                  label: t('monitoring.pagination_page_size_value', {
+                    count: pageSize,
+                    defaultValue: paginationCopy.pageSizeValue(pageSize),
+                  }),
                 }))}
                 onChange={(value) => {
                   const nextPageSize = normalizeMonitoringPageSize(value);
