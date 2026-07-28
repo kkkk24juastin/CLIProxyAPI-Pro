@@ -258,15 +258,16 @@ type accountInspectionPageInfo struct {
 }
 
 type accountInspectionSnapshotOptions struct {
-	IncludeDetails bool
-	ResultPage     int
-	ResultPageSize int
-	ResultFilter   string
-	ResultProvider string
-	ResultSearch   string
-	LogPage        int
-	LogPageSize    int
-	LogLevel       string
+	IncludeDetails    bool
+	ResultPage        int
+	ResultPageSize    int
+	ResultFilter      string
+	ResultPendingOnly bool
+	ResultProvider    string
+	ResultSearch      string
+	LogPage           int
+	LogPageSize       int
+	LogLevel          string
 }
 
 type accountInspectionHealthBucket string
@@ -785,16 +786,26 @@ func accountInspectionRequestSnapshotOptions(c *gin.Context) accountInspectionSn
 		logPageSize = parseAccountInspectionQueryInt(c, "log_limit", logPageSize)
 	}
 	return accountInspectionSnapshotOptions{
-		IncludeDetails: value != "0" && value != "false" && value != "summary",
-		ResultPage:     parseAccountInspectionQueryInt(c, "result_page", 1),
-		ResultPageSize: resultPageSize,
-		ResultFilter:   strings.ToLower(strings.TrimSpace(c.Query("result_filter"))),
-		ResultProvider: strings.ToLower(strings.TrimSpace(c.Query("result_provider"))),
-		ResultSearch:   strings.TrimSpace(c.Query("result_search")),
-		LogPage:        parseAccountInspectionQueryInt(c, "log_page", 1),
-		LogPageSize:    logPageSize,
-		LogLevel:       strings.ToLower(strings.TrimSpace(c.Query("log_level"))),
+		IncludeDetails:    value != "0" && value != "false" && value != "summary",
+		ResultPage:        parseAccountInspectionQueryInt(c, "result_page", 1),
+		ResultPageSize:    resultPageSize,
+		ResultFilter:      strings.ToLower(strings.TrimSpace(c.Query("result_filter"))),
+		ResultPendingOnly: parseAccountInspectionQueryBool(c, "result_pending_only"),
+		ResultProvider:    strings.ToLower(strings.TrimSpace(c.Query("result_provider"))),
+		ResultSearch:      strings.TrimSpace(c.Query("result_search")),
+		LogPage:           parseAccountInspectionQueryInt(c, "log_page", 1),
+		LogPageSize:       logPageSize,
+		LogLevel:          strings.ToLower(strings.TrimSpace(c.Query("log_level"))),
 	}
+}
+
+func parseAccountInspectionQueryBool(c *gin.Context, key string) bool {
+	value := strings.TrimSpace(c.Query(key))
+	if value == "" {
+		return false
+	}
+	parsed, err := strconv.ParseBool(value)
+	return err == nil && parsed
 }
 
 func parseAccountInspectionQueryInt(c *gin.Context, key string, fallback int) int {
@@ -918,6 +929,8 @@ func accountInspectionResultMatchesFilter(result accountInspectionResult, filter
 	switch filter {
 	case "", "all":
 		return true
+	case "attention", "needs-attention", "needs_attention":
+		return accountInspectionResultHealthBucketOf(result) != accountInspectionHealthHealthy
 	case "pending":
 		return result.Action != accountInspectionActionKeep && !result.Executed
 	case "accountinvalid", "account-invalid", "account_invalid", "authinvalid", "auth-invalid", "auth_invalid":
@@ -1032,12 +1045,13 @@ func paginateAccountInspectionLogs(logs []accountInspectionLogEntry, page int, p
 	return append([]accountInspectionLogEntry(nil), filtered[start:end]...), info
 }
 
-func paginateAccountInspectionResults(results []accountInspectionResult, page int, pageSize int, filter string, provider string, search string) ([]accountInspectionResult, accountInspectionPageInfo) {
+func paginateAccountInspectionResults(results []accountInspectionResult, page int, pageSize int, filter string, pendingOnly bool, provider string, search string) ([]accountInspectionResult, accountInspectionPageInfo) {
 	page = normalizeAccountInspectionPage(page)
 	pageSize = normalizeAccountInspectionPageSize(pageSize, 100, accountInspectionMaxResultPageSize)
 	filtered := make([]accountInspectionResult, 0, len(results))
 	for _, result := range results {
 		if accountInspectionResultMatchesFilter(result, filter) &&
+			(!pendingOnly || accountInspectionResultMatchesFilter(result, "pending")) &&
 			accountInspectionResultMatchesProvider(result, provider) &&
 			accountInspectionResultMatchesSearch(result, search) {
 			filtered = append(filtered, result)
@@ -1058,7 +1072,7 @@ func (s *accountInspectionScheduler) streamStatusLocked(options accountInspectio
 	if options.IncludeDetails {
 		healthCounts := s.healthCountsLocked()
 		logs, logsPage := paginateAccountInspectionLogs(s.status.Logs, options.LogPage, options.LogPageSize, options.LogLevel)
-		results, resultsPage := paginateAccountInspectionResults(s.status.Results, options.ResultPage, options.ResultPageSize, options.ResultFilter, options.ResultProvider, options.ResultSearch)
+		results, resultsPage := paginateAccountInspectionResults(s.status.Results, options.ResultPage, options.ResultPageSize, options.ResultFilter, options.ResultPendingOnly, options.ResultProvider, options.ResultSearch)
 		status.HealthCounts = &healthCounts
 		status.ProviderHealthCounts = accountInspectionResultProviderHealthCounts(s.status.Results)
 		status.Logs = logs

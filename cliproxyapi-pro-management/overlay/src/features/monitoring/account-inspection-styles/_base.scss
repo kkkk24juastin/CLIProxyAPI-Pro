@@ -415,6 +415,61 @@
   margin-bottom: 12px;
 }
 
+.resultToolbarWithPending.resultToolbarWithPending {
+  grid-template-columns: minmax(240px, 1.4fr) repeat(2, minmax(160px, 1fr)) auto;
+}
+
+.resultPendingToggle {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--inspect-line);
+  border-radius: 8px;
+  background: var(--inspect-surface);
+  white-space: nowrap;
+}
+
+.resultActiveFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 12px;
+}
+
+.resultReasonChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 5px 0 10px;
+  border: 1px solid color-mix(in srgb, var(--inspect-accent) 28%, var(--inspect-line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--inspect-accent) 7%, var(--inspect-surface));
+  color: var(--inspect-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.resultReasonChip button {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--inspect-muted);
+  cursor: pointer;
+}
+
+.resultReasonChip button:hover,
+.resultReasonChip button:focus-visible {
+  background: var(--inspect-surface-muted);
+  color: var(--inspect-ink);
+}
+
 .operationModuleHeader h2 {
   margin: 0;
   color: var(--inspect-ink);

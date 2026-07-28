@@ -12,6 +12,7 @@ import {
   IconDownload,
   IconRefreshCw,
   IconSearch,
+  IconX,
 } from '@/components/ui/icons';
 import { getAuthFileIcon } from '@/features/authFiles/constants';
 import {
@@ -91,7 +92,8 @@ import {
   type ManualAccountInspectionAction,
   type ProviderAccountStats,
   type ResolvedTheme,
-  type ResultFilter,
+  type ResultReasonFilter,
+  type ResultStatusFilter,
   type SettingsSectionKey,
   type SummaryCard,
 } from '@/features/monitoring/accountInspectionPageModel';
@@ -136,6 +138,9 @@ export function AccountInspectionPage() {
   const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);
   const kimiQuota = useQuotaStore((state) => state.kimiQuota);
   const xaiQuota = useQuotaStore((state) => state.xaiQuota);
+  const initialAutoExecutionPolicy = useRef(
+    hasAccountInspectionAutoExecutePolicies(loadAccountInspectionConfigurableSettings(config))
+  ).current;
 
   const [backendState, dispatchBackendState] = useReducer(
     inspectionBackendReducer,
@@ -159,7 +164,11 @@ export function AccountInspectionPage() {
   const [selectedDetailResult, setSelectedDetailResult] = useState<AccountInspectionResultItem | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
-  const [resultFilter, setResultFilter] = useState<ResultFilter>('pending');
+  const [resultStatusFilter, setResultStatusFilter] = useState<ResultStatusFilter>(
+    initialAutoExecutionPolicy ? 'attention' : 'all'
+  );
+  const [resultReasonFilter, setResultReasonFilter] = useState<ResultReasonFilter | null>(null);
+  const [resultPendingOnly, setResultPendingOnly] = useState(!initialAutoExecutionPolicy);
   const [selectedResultProvider, setSelectedResultProvider] = useState<string>(ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE);
   const [resultSearchInput, setResultSearchInput] = useState('');
   const deferredResultSearchInput = useDeferredValue(resultSearchInput);
@@ -181,6 +190,7 @@ export function AccountInspectionPage() {
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
   const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
+  const activeResultFilter = resultReasonFilter ?? resultStatusFilter;
   const logListRef = useRef<HTMLDivElement | null>(null);
   const resultsPanelRef = useRef<HTMLDivElement | null>(null);
   const selectAllResultsRef = useRef<HTMLInputElement | null>(null);
@@ -298,7 +308,8 @@ export function AccountInspectionPage() {
       includeDetails: true,
       resultPage,
       resultPageSize: ACCOUNT_INSPECTION_RESULT_PAGE_SIZE,
-      resultFilter,
+      resultFilter: activeResultFilter,
+      resultPendingOnly,
       resultProvider: selectedResultProvider,
       resultSearch,
       logPage,
@@ -307,7 +318,7 @@ export function AccountInspectionPage() {
     });
     applyBackendResponse(response, true);
     return response;
-  }, [applyBackendResponse, logLevelFilter, logPage, resultFilter, resultPage, resultSearch, selectedResultProvider]);
+  }, [activeResultFilter, applyBackendResponse, logLevelFilter, logPage, resultPage, resultPendingOnly, resultSearch, selectedResultProvider]);
   const inspectionDetailsLoaderRef = useRef(loadInspectionDetailsPage);
 
   useEffect(() => {
@@ -318,13 +329,14 @@ export function AccountInspectionPage() {
     includeDetails: true,
     resultPage,
     resultPageSize: ACCOUNT_INSPECTION_RESULT_PAGE_SIZE,
-    resultFilter,
+    resultFilter: activeResultFilter,
+    resultPendingOnly,
     resultProvider: selectedResultProvider,
     resultSearch,
     logPage,
     logPageSize: ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
     logLevel: logLevelFilter,
-  }), [logLevelFilter, logPage, resultFilter, resultPage, resultSearch, selectedResultProvider]);
+  }), [activeResultFilter, logLevelFilter, logPage, resultPage, resultPendingOnly, resultSearch, selectedResultProvider]);
 
   const loadBackendSchedule = useCallback(async () => {
     const requestId = backendScheduleRequestIdRef.current + 1;
@@ -444,7 +456,8 @@ export function AccountInspectionPage() {
     if (progress.startedAt <= 0 || (progress.total <= 0 && progress.summary.totalFiles <= 0)) return;
     const detailKey = [
       progress.startedAt,
-      resultFilter,
+      activeResultFilter,
+      resultPendingOnly,
       selectedResultProvider,
       resultSearch,
       resultPage,
@@ -490,15 +503,16 @@ export function AccountInspectionPage() {
     progress.status,
     progress.summary.totalFiles,
     progress.total,
-    resultFilter,
+    activeResultFilter,
     resultPage,
+    resultPendingOnly,
     resultSearch,
     selectedResultProvider,
   ]);
 
   useEffect(() => {
     setResultPage(1);
-  }, [resultFilter, resultSearch, selectedResultProvider]);
+  }, [activeResultFilter, resultPendingOnly, resultSearch, selectedResultProvider]);
 
   useEffect(() => {
     setLogPage(1);
@@ -705,15 +719,26 @@ export function AccountInspectionPage() {
     healthCounts,
     actionableActionCounts,
     filterRows,
-    filterRowCounts,
   } = resultsViewState;
   const displayedHealthCounts = result?.healthCounts ?? healthCounts;
 
   const hasAutoExecutionPolicy = hasAccountInspectionAutoExecutePolicies(inspectionSettings);
+  const previousAutoExecutionPolicyRef = useRef(hasAutoExecutionPolicy);
+
+  useEffect(() => {
+    if (previousAutoExecutionPolicyRef.current === hasAutoExecutionPolicy) return;
+    previousAutoExecutionPolicyRef.current = hasAutoExecutionPolicy;
+    setResultReasonFilter(null);
+    setResultStatusFilter(hasAutoExecutionPolicy ? 'attention' : 'all');
+    setResultPendingOnly(!hasAutoExecutionPolicy);
+  }, [hasAutoExecutionPolicy]);
 
   const filteredResultRows = useMemo(() => {
-    return filterRows[resultFilter];
-  }, [filterRows, resultFilter]);
+    const rows = filterRows[activeResultFilter];
+    return resultPendingOnly
+      ? rows.filter(({ item }) => isSuggestedAction(item) && !item.executed)
+      : rows;
+  }, [activeResultFilter, filterRows, resultPendingOnly]);
   const resultPageInfo = result?.resultsPage ?? null;
   const visibleResultRows = filteredResultRows;
   const selectedVisibleResultRows = useMemo(
@@ -739,7 +764,7 @@ export function AccountInspectionPage() {
   useEffect(() => {
     setSelectedResultKeys(new Set());
     setOpenResultActionMenuKey(null);
-  }, [resultFilter, resultPage, resultSearch, selectedResultProvider]);
+  }, [activeResultFilter, resultPage, resultPendingOnly, resultSearch, selectedResultProvider]);
 
   useEffect(() => {
     if (!openResultActionMenuKey) return undefined;
@@ -1126,8 +1151,15 @@ export function AccountInspectionPage() {
           `${t('monitoring.account_inspection_action_delete')}: ${actionStats.autoDelete}`,
         ].join(' · ')
       : t('monitoring.account_inspection_auto_execute_no_actions');
-  const showInspectionResults = useCallback((filter: ResultFilter) => {
-    setResultFilter(filter);
+  const showInspectionResults = useCallback((filter: ResultStatusFilter | ResultReasonFilter) => {
+    if (filter === 'all' || filter === 'attention' || filter === 'highAvailable') {
+      setResultStatusFilter(filter);
+      setResultReasonFilter(null);
+    } else {
+      setResultStatusFilter('attention');
+      setResultReasonFilter(filter);
+    }
+    setResultPendingOnly(false);
     requestAnimationFrame(() => resultsPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }, []);
 
@@ -1151,28 +1183,18 @@ export function AccountInspectionPage() {
     : runStatus === 'error'
       ? t('monitoring.account_inspection_results_error_empty')
       : t('monitoring.account_inspection_empty');
-  const resultFilterCounts = useMemo<Record<ResultFilter, number>>(() => ({
-    pending: pendingActionCount || filterRowCounts.pending,
-    accountInvalid: displayedHealthCounts.authInvalid,
-    requestError: displayedHealthCounts.inspectionError,
-    quotaExhausted: displayedHealthCounts.quotaExhausted,
-    recoverable: displayedHealthCounts.recoverable,
-    highAvailable: displayedHealthCounts.healthy,
-  }), [displayedHealthCounts, filterRowCounts.pending, pendingActionCount]);
-  const resultFilterOptions = useMemo(() => {
-    const option = (value: ResultFilter, label: string, count: number, hideCount = false) => ({
-      value,
-      label: hideCount ? label : `${label} · ${count}`,
-    });
-    return [
-      option('pending', t('monitoring.account_inspection_filter_pending'), resultFilterCounts.pending, hasAutoExecutionPolicy),
-      option('accountInvalid', t('monitoring.account_inspection_account_invalid'), resultFilterCounts.accountInvalid),
-      option('requestError', t('monitoring.account_inspection_account_request_error'), resultFilterCounts.requestError),
-      option('quotaExhausted', t('monitoring.account_inspection_health_quota_exhausted'), resultFilterCounts.quotaExhausted),
-      option('recoverable', t('monitoring.account_inspection_health_recoverable'), resultFilterCounts.recoverable),
-      option('highAvailable', t('monitoring.account_inspection_high_available'), resultFilterCounts.highAvailable),
-    ];
-  }, [hasAutoExecutionPolicy, resultFilterCounts, t]);
+  const attentionResultCount = Math.max(0, displayedHealthCounts.total - displayedHealthCounts.healthy);
+  const resultStatusFilterOptions = useMemo(() => [
+    { value: 'all', label: `${t('monitoring.account_inspection_filter_all')} · ${displayedHealthCounts.total}` },
+    { value: 'attention', label: `${t('monitoring.account_inspection_filter_attention')} · ${attentionResultCount}` },
+    { value: 'highAvailable', label: `${t('monitoring.account_inspection_high_available')} · ${displayedHealthCounts.healthy}` },
+  ], [attentionResultCount, displayedHealthCounts.healthy, displayedHealthCounts.total, t]);
+  const resultReasonLabels = useMemo<Record<ResultReasonFilter, string>>(() => ({
+    accountInvalid: t('monitoring.account_inspection_account_invalid'),
+    requestError: t('monitoring.account_inspection_account_request_error'),
+    quotaExhausted: t('monitoring.account_inspection_health_quota_exhausted'),
+    recoverable: t('monitoring.account_inspection_health_recoverable'),
+  }), [t]);
   const resultBulkActionOptions = useMemo(() => [
     { value: 'suggested', label: t('monitoring.account_inspection_bulk_action_suggested') },
     { value: 'recheck', label: t('monitoring.account_inspection_bulk_action_recheck') },
@@ -1642,30 +1664,30 @@ export function AccountInspectionPage() {
             <div className={styles.resultOverviewSection}>
               <h3>{t('monitoring.account_inspection_inspection_summary_title')}</h3>
               <div className={styles.resultOverviewGrid}>
-                <span>
+                <button type="button" className={styles.resultOverviewItem} onClick={() => showInspectionResults('all')} disabled={!result}>
                   <small>{t('monitoring.account_inspection_result_total')}</small>
                   <strong>{displayedHealthCounts.total}</strong>
-                </span>
-                <span className={styles.resultOverviewGood}>
+                </button>
+                <button type="button" className={`${styles.resultOverviewItem} ${styles.resultOverviewGood}`} onClick={() => showInspectionResults('highAvailable')} disabled={!result}>
                   <small>{t('monitoring.account_inspection_high_available')}</small>
                   <strong>{displayedHealthCounts.healthy}</strong>
-                </span>
-                <span>
+                </button>
+                <button type="button" className={styles.resultOverviewItem} onClick={() => showInspectionResults('recoverable')} disabled={!result}>
                   <small>{t('monitoring.account_inspection_health_recoverable')}</small>
                   <strong>{displayedHealthCounts.recoverable}</strong>
-                </span>
-                <span className={styles.resultOverviewWarn}>
+                </button>
+                <button type="button" className={`${styles.resultOverviewItem} ${styles.resultOverviewWarn}`} onClick={() => showInspectionResults('quotaExhausted')} disabled={!result}>
                   <small>{t('monitoring.account_inspection_health_quota_exhausted')}</small>
                   <strong>{displayedHealthCounts.quotaExhausted}</strong>
-                </span>
-                <span className={styles.resultOverviewBad}>
+                </button>
+                <button type="button" className={`${styles.resultOverviewItem} ${styles.resultOverviewBad}`} onClick={() => showInspectionResults('accountInvalid')} disabled={!result}>
                   <small>{t('monitoring.account_inspection_account_invalid')}</small>
                   <strong>{displayedHealthCounts.authInvalid}</strong>
-                </span>
-                <span className={styles.resultOverviewBad}>
+                </button>
+                <button type="button" className={`${styles.resultOverviewItem} ${styles.resultOverviewBad}`} onClick={() => showInspectionResults('requestError')} disabled={!result}>
                   <small>{t('monitoring.account_inspection_account_request_error')}</small>
                   <strong>{displayedHealthCounts.inspectionError}</strong>
-                </span>
+                </button>
               </div>
             </div>
 
@@ -1747,7 +1769,11 @@ export function AccountInspectionPage() {
 
         {result ? (
           <>
-            <div className={`${monitoringStyles.filterGrid} ${styles.resultToolbar}`}>
+            <div className={[
+              monitoringStyles.filterGrid,
+              styles.resultToolbar,
+              !hasAutoExecutionPolicy ? styles.resultToolbarWithPending : '',
+            ].filter(Boolean).join(' ')}>
               <Input
                 type="search"
                 value={resultSearchInput}
@@ -1764,12 +1790,43 @@ export function AccountInspectionPage() {
                 ariaLabel={t('monitoring.account_inspection_filter_provider')}
               />
               <Select
-                value={resultFilter}
-                options={resultFilterOptions}
-                onChange={(value) => setResultFilter(value as ResultFilter)}
+                value={resultStatusFilter}
+                options={resultStatusFilterOptions}
+                onChange={(value) => {
+                  const nextFilter = value as ResultStatusFilter;
+                  setResultStatusFilter(nextFilter);
+                  setResultReasonFilter(null);
+                  if (nextFilter === 'highAvailable') setResultPendingOnly(false);
+                }}
                 ariaLabel={t('monitoring.account_inspection_result')}
               />
+              {!hasAutoExecutionPolicy ? (
+                <div className={styles.resultPendingToggle}>
+                  <ToggleSwitch
+                    checked={resultPendingOnly}
+                    onChange={setResultPendingOnly}
+                    label={t('monitoring.account_inspection_filter_pending_only')}
+                    ariaLabel={t('monitoring.account_inspection_filter_pending_only')}
+                    disabled={resultStatusFilter === 'highAvailable'}
+                  />
+                </div>
+              ) : null}
             </div>
+            {resultReasonFilter ? (
+              <div className={styles.resultActiveFilters}>
+                <span className={styles.resultReasonChip}>
+                  {resultReasonLabels[resultReasonFilter]}
+                  <button
+                    type="button"
+                    onClick={() => setResultReasonFilter(null)}
+                    title={t('common.close')}
+                    aria-label={t('common.close')}
+                  >
+                    <IconX size={13} />
+                  </button>
+                </span>
+              </div>
+            ) : null}
             {selectedVisibleResultRows.length > 0 ? (
               <div className={styles.resultSelectionBar}>
                 <strong>{t('monitoring.account_inspection_selected_count', { count: selectedVisibleResultRows.length })}</strong>

@@ -67,6 +67,7 @@ export type AccountInspectionDetailsOptions = {
   resultPage?: number;
   resultPageSize?: number;
   resultFilter?: string;
+  resultPendingOnly?: boolean;
   resultProvider?: string;
   resultSearch?: string;
   logPage?: number;
@@ -82,6 +83,7 @@ const buildAccountInspectionDetailParams = (options: boolean | AccountInspection
   if (normalized.resultPage !== undefined) params.result_page = normalized.resultPage;
   if (normalized.resultPageSize !== undefined) params.result_page_size = normalized.resultPageSize;
   if (normalized.resultFilter) params.result_filter = normalized.resultFilter;
+  if (normalized.resultPendingOnly) params.result_pending_only = 1;
   if (normalized.resultProvider) params.result_provider = normalized.resultProvider;
   if (normalized.resultSearch) params.result_search = normalized.resultSearch;
   if (normalized.logPage !== undefined) params.log_page = normalized.logPage;

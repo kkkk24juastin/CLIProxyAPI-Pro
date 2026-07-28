@@ -42,7 +42,11 @@ export type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
 
 export type ResultHealthStatus = 'healthy' | 'disabled' | 'authInvalid' | 'quotaExhausted' | 'inspectionError' | 'recoverable';
 
-export type ResultFilter = 'pending' | 'accountInvalid' | 'requestError' | 'quotaExhausted' | 'recoverable' | 'highAvailable';
+export type ResultStatusFilter = 'all' | 'attention' | 'highAvailable';
+
+export type ResultReasonFilter = 'accountInvalid' | 'requestError' | 'quotaExhausted' | 'recoverable';
+
+export type ResultFilter = ResultStatusFilter | ResultReasonFilter | 'pending';
 
 export type SettingsSectionKey = 'plan' | 'scope' | 'runtime' | 'antigravity' | 'auto';
 
@@ -209,6 +213,8 @@ export const emptyAutoExecutionCounts = (): AutoExecutionCounts => ({
 });
 
 export const createEmptyFilterRows = (): Record<ResultFilter, InspectionResultViewRow[]> => ({
+  all: [],
+  attention: [],
   pending: [],
   accountInvalid: [],
   requestError: [],
@@ -734,6 +740,8 @@ export const buildInspectionResultsViewState = (items: AccountInspectionResultIt
   const actionableActionCounts = emptyAutoExecutionCounts();
   const filterRows = createEmptyFilterRows();
   const filterRowCounts: Record<ResultFilter, number> = {
+    all: 0,
+    attention: 0,
     highAvailable: 0,
     accountInvalid: 0,
     quotaExhausted: 0,
@@ -767,6 +775,12 @@ export const buildInspectionResultsViewState = (items: AccountInspectionResultIt
     const healthStatus = resolveResultHealthStatus(item);
     let row: InspectionResultViewRow | null = null;
     row = pushResultRow(rows, item, healthStatus, row);
+    filterRowCounts.all += 1;
+    row = pushResultRow(filterRows.all, item, healthStatus, row);
+    if (healthStatus !== 'healthy') {
+      filterRowCounts.attention += 1;
+      row = pushResultRow(filterRows.attention, item, healthStatus, row);
+    }
 
     switch (healthStatus) {
       case 'healthy':

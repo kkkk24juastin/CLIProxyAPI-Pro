@@ -627,7 +627,7 @@
   gap: 8px;
 }
 
-.resultOverviewGrid span {
+.resultOverviewItem {
   position: relative;
   display: grid;
   gap: 6px;
@@ -639,15 +639,33 @@
   border-radius: 10px;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--inspect-accent) 4%, var(--inspect-surface)), var(--inspect-surface));
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.resultOverviewGrid span::before {
+.resultOverviewItem::before {
   content: '';
   position: absolute;
   inset: 0 auto 0 0;
   width: 3px;
   background: var(--inspect-accent);
   opacity: 0.58;
+}
+
+.resultOverviewItem:hover:not(:disabled),
+.resultOverviewItem:focus-visible:not(:disabled) {
+  border-color: color-mix(in srgb, var(--inspect-accent) 34%, var(--inspect-line-strong));
+}
+
+.resultOverviewItem:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--inspect-accent) 36%, transparent);
+  outline-offset: 2px;
+}
+
+.resultOverviewItem:disabled {
+  cursor: default;
 }
 
 .resultOverviewGrid small {
