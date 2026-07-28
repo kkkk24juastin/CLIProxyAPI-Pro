@@ -38,7 +38,6 @@ import {
   ACCOUNT_INSPECTION_DETAILS_IDLE_DELAY_MS,
   ACCOUNT_INSPECTION_EXPORT_DOWNLOAD_CONCURRENCY,
   ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
-  ACCOUNT_INSPECTION_RESULT_PAGE_SIZE,
   ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET,
   ANTIGRAVITY_QUOTA_MODE_OPTIONS,
   AUTO_ERROR_ACTION_OPTIONS,
@@ -97,6 +96,11 @@ import {
   type SettingsSectionKey,
   type SummaryCard,
 } from '@/features/monitoring/accountInspectionPageModel';
+import {
+  DEFAULT_MONITORING_PAGE_SIZE,
+  MONITORING_PAGE_SIZE_OPTIONS,
+  normalizeMonitoringPageSize,
+} from '@/features/monitoring/pagination';
 import {
   buildZipArchive,
   downloadBlobFile,
@@ -174,6 +178,7 @@ export function AccountInspectionPage() {
   const deferredResultSearchInput = useDeferredValue(resultSearchInput);
   const [resultSearch, setResultSearch] = useState('');
   const [resultPage, setResultPage] = useState(1);
+  const [resultPageSize, setResultPageSize] = useState(DEFAULT_MONITORING_PAGE_SIZE);
   const [logLevelFilter, setLogLevelFilter] = useState<AccountInspectionLogLevel | 'all'>('all');
   const [logPage, setLogPage] = useState(1);
   const [authFiles, setAuthFiles] = useState<AuthFileItem[]>([]);
@@ -307,7 +312,7 @@ export function AccountInspectionPage() {
     const response = await accountInspectionApi.getStatus({
       includeDetails: true,
       resultPage,
-      resultPageSize: ACCOUNT_INSPECTION_RESULT_PAGE_SIZE,
+      resultPageSize,
       resultFilter: activeResultFilter,
       resultPendingOnly,
       resultProvider: selectedResultProvider,
@@ -318,7 +323,7 @@ export function AccountInspectionPage() {
     });
     applyBackendResponse(response, true);
     return response;
-  }, [activeResultFilter, applyBackendResponse, logLevelFilter, logPage, resultPage, resultPendingOnly, resultSearch, selectedResultProvider]);
+  }, [activeResultFilter, applyBackendResponse, logLevelFilter, logPage, resultPage, resultPageSize, resultPendingOnly, resultSearch, selectedResultProvider]);
   const inspectionDetailsLoaderRef = useRef(loadInspectionDetailsPage);
 
   useEffect(() => {
@@ -328,7 +333,7 @@ export function AccountInspectionPage() {
   const currentInspectionDetailOptions = useMemo(() => ({
     includeDetails: true,
     resultPage,
-    resultPageSize: ACCOUNT_INSPECTION_RESULT_PAGE_SIZE,
+    resultPageSize,
     resultFilter: activeResultFilter,
     resultPendingOnly,
     resultProvider: selectedResultProvider,
@@ -336,7 +341,7 @@ export function AccountInspectionPage() {
     logPage,
     logPageSize: ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
     logLevel: logLevelFilter,
-  }), [activeResultFilter, logLevelFilter, logPage, resultPage, resultPendingOnly, resultSearch, selectedResultProvider]);
+  }), [activeResultFilter, logLevelFilter, logPage, resultPage, resultPageSize, resultPendingOnly, resultSearch, selectedResultProvider]);
 
   const loadBackendSchedule = useCallback(async () => {
     const requestId = backendScheduleRequestIdRef.current + 1;
@@ -461,6 +466,7 @@ export function AccountInspectionPage() {
       selectedResultProvider,
       resultSearch,
       resultPage,
+      resultPageSize,
       logLevelFilter,
       logPage,
     ].join(':');
@@ -505,6 +511,7 @@ export function AccountInspectionPage() {
     progress.total,
     activeResultFilter,
     resultPage,
+    resultPageSize,
     resultPendingOnly,
     resultSearch,
     selectedResultProvider,
@@ -764,7 +771,7 @@ export function AccountInspectionPage() {
   useEffect(() => {
     setSelectedResultKeys(new Set());
     setOpenResultActionMenuKey(null);
-  }, [activeResultFilter, resultPage, resultPendingOnly, resultSearch, selectedResultProvider]);
+  }, [activeResultFilter, resultPage, resultPageSize, resultPendingOnly, resultSearch, selectedResultProvider]);
 
   useEffect(() => {
     if (!openResultActionMenuKey) return undefined;
@@ -2012,36 +2019,59 @@ export function AccountInspectionPage() {
                 </tbody>
               </table>
             </div>
-            {resultPagination.totalPages > 1 ? (
-              <div className={quotaStyles.pagination}>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setResultPage((page) => Math.max(1, page - 1))}
-                  disabled={!resultPagination.hasPrevious}
-                  aria-label={t('monitoring.previous_page')}
-                >
-                  {t('monitoring.previous_page')}
-                </Button>
-                <div className={quotaStyles.pageInfo}>
-                  {t('monitoring.pagination_info', {
-                    from: resultPagination.from,
-                    to: resultPagination.to,
-                    total: resultPagination.total,
-                    page: resultPagination.page,
-                    totalPages: resultPagination.totalPages,
-                    defaultValue: `${resultPagination.from}-${resultPagination.to} / ${resultPagination.total}`,
-                  })}
+            {resultPagination.total > 0 ? (
+              <div className={monitoringStyles.paginationBar}>
+                <div className={monitoringStyles.paginationPageSizeControl}>
+                  <span id="account-inspection-result-page-size-label">{t('monitoring.pagination_page_size')}</span>
+                  <Select
+                    id="account-inspection-result-page-size"
+                    value={String(resultPageSize)}
+                    options={MONITORING_PAGE_SIZE_OPTIONS.map((pageSize) => ({
+                      value: String(pageSize),
+                      label: t('monitoring.pagination_page_size_value', { count: pageSize }),
+                    }))}
+                    onChange={(value) => {
+                      const nextPageSize = normalizeMonitoringPageSize(value);
+                      if (nextPageSize === resultPageSize) return;
+                      setResultPageSize(nextPageSize);
+                      setResultPage(1);
+                    }}
+                    ariaLabelledBy="account-inspection-result-page-size-label"
+                    className={monitoringStyles.paginationPageSizeSelect}
+                  />
                 </div>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setResultPage((page) => page + 1)}
-                  disabled={!resultPagination.hasNext}
-                  aria-label={t('monitoring.next_page')}
-                >
-                  {t('monitoring.next_page')}
-                </Button>
+                {resultPagination.totalPages > 1 ? (
+                  <div className={monitoringStyles.paginationNavigation}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setResultPage((page) => Math.max(1, page - 1))}
+                      disabled={!resultPagination.hasPrevious}
+                      aria-label={t('monitoring.previous_page')}
+                    >
+                      {t('monitoring.previous_page')}
+                    </Button>
+                    <div className={quotaStyles.pageInfo}>
+                      {t('monitoring.pagination_info', {
+                        from: resultPagination.from,
+                        to: resultPagination.to,
+                        total: resultPagination.total,
+                        page: resultPagination.page,
+                        totalPages: resultPagination.totalPages,
+                        defaultValue: `${resultPagination.from}-${resultPagination.to} / ${resultPagination.total}`,
+                      })}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setResultPage((page) => page + 1)}
+                      disabled={!resultPagination.hasNext}
+                      aria-label={t('monitoring.next_page')}
+                    >
+                      {t('monitoring.next_page')}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </>

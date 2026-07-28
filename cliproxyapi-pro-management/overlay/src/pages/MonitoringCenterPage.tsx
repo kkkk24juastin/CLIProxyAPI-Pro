@@ -17,7 +17,7 @@ import {
   type MonitoringEventRow,
   type MonitoringTimeRange,
 } from '@/features/monitoring/hooks/useMonitoringData';
-import { REALTIME_LOG_PAGE_SIZE, useRealtimeLogData } from '@/features/monitoring/hooks/useRealtimeLogData';
+import { useRealtimeLogData } from '@/features/monitoring/hooks/useRealtimeLogData';
 import { useUsageData, type UsageEventPageFilters, type UsagePayload } from '@/features/monitoring/hooks/useUsageData';
 import { useUsageAggregates, type UsageAggregateBucket } from '@/features/monitoring/hooks/useUsageAggregates';
 import { findMonitoringAuthIndexes } from '@/features/monitoring/monitoringAuthSearch';
@@ -92,6 +92,11 @@ import {
   type RealtimeLogRow,
 } from '@/features/monitoring/realtimeLogPresentation';
 import { hasUsageBackupManifest } from '@/features/monitoring/usageBackup';
+import {
+  DEFAULT_MONITORING_PAGE_SIZE,
+  MONITORING_PAGE_SIZE_OPTIONS,
+  normalizeMonitoringPageSize,
+} from '@/features/monitoring/pagination';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { apiClient } from '@/services/api/client';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
@@ -274,6 +279,7 @@ export function MonitoringCenterPage() {
   const [apiKeyRankingMetric, setApiKeyRankingMetric] = useState<RankingMetric>('requests');
   const [usageTrendApiKey, setUsageTrendApiKey] = useState('all');
   const [realtimeLogUsage, setRealtimeLogUsage] = useState<UsagePayload | null>(null);
+  const [realtimeLogPageSize, setRealtimeLogPageSize] = useState(DEFAULT_MONITORING_PAGE_SIZE);
   const [realtimeLogColumns, setRealtimeLogColumns] = useState<RealtimeLogColumnPreference[]>(loadRealtimeLogColumns);
   const [realtimeLogFollowEnabled, setRealtimeLogFollowEnabled] = useState(loadRealtimeLogFollowEnabled);
   const [draggedRealtimeLogColumnKey, setDraggedRealtimeLogColumnKey] = useState<RealtimeLogColumnKey | null>(null);
@@ -357,9 +363,9 @@ export function MonitoringCenterPage() {
       apiKeyHash: selectedApiKey === 'all' ? undefined : selectedApiKey,
       status: selectedStatus,
       search: linkedRequestLogScope ? undefined : deferredSearch,
-      limit: REALTIME_LOG_PAGE_SIZE,
+      limit: realtimeLogPageSize,
     };
-  }, [deferredSearch, linkedRequestLogScope, searchMatchedAuthIndexFilter, selectedApiKey, selectedModel, selectedProvider, selectedStatus, timeRange]);
+  }, [deferredSearch, linkedRequestLogScope, realtimeLogPageSize, searchMatchedAuthIndexFilter, selectedApiKey, selectedModel, selectedProvider, selectedStatus, timeRange]);
 
   const handleRealtimeLogGenerationChange = useCallback(() => {
     setSelectedRealtimeErrorRow(null);
@@ -820,15 +826,15 @@ export function MonitoringCenterPage() {
   const effectiveTodayCost = effectiveTodaySummary.totalCost;
   const effectiveYesterdayCost = recentDailySummaries?.yesterday.totalCost ?? yesterdayCost;
   const realtimeLogTotalCount = realtimeLogMatchedTotal;
-  const realtimeLogTotalPages = realtimeLogTotalCount > 0 ? Math.ceil(realtimeLogTotalCount / REALTIME_LOG_PAGE_SIZE) : 0;
+  const realtimeLogTotalPages = realtimeLogTotalCount > 0 ? Math.ceil(realtimeLogTotalCount / realtimeLogPageSize) : 0;
   const normalizedRealtimeLogPage = Math.min(Math.max(1, realtimeLogPage), Math.max(1, realtimeLogTotalPages));
   const realtimeLogPageRows = useMemo(
-    () => buildRealtimeLogPageRows(scopedRows, 1, REALTIME_LOG_PAGE_SIZE).rows,
-    [scopedRows]
+    () => buildRealtimeLogPageRows(scopedRows, 1, realtimeLogPageSize).rows,
+    [realtimeLogPageSize, scopedRows]
   );
   const realtimeLogPagination = getClientPaginationRange(
     normalizedRealtimeLogPage,
-    REALTIME_LOG_PAGE_SIZE,
+    realtimeLogPageSize,
     realtimeLogTotalCount,
     realtimeLogPageRows.length
   );
@@ -1794,36 +1800,59 @@ export function MonitoringCenterPage() {
             </table>
           </div>
         </div>
-        {realtimeLogPagination.totalPages > 1 ? (
-          <div className={quotaStyles.pagination}>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => void showPreviousRealtimeLogPage()}
-              disabled={realtimeLogLoading || !realtimeLogPagination.hasPrevious}
-              aria-label={t('monitoring.previous_page')}
-            >
-              {t('monitoring.previous_page')}
-            </Button>
-            <div className={quotaStyles.pageInfo}>
-              {t('monitoring.pagination_info', {
-                from: realtimeLogPagination.from,
-                to: realtimeLogPagination.to,
-                total: realtimeLogPagination.total,
-                page: realtimeLogPagination.page,
-                totalPages: realtimeLogPagination.totalPages,
-                defaultValue: `${realtimeLogPagination.from}-${realtimeLogPagination.to} / ${realtimeLogPagination.total}`,
-              })}
+        {realtimeLogPagination.total > 0 ? (
+          <div className={styles.paginationBar}>
+            <div className={styles.paginationPageSizeControl}>
+              <span id="realtime-log-page-size-label">{t('monitoring.pagination_page_size')}</span>
+              <Select
+                id="realtime-log-page-size"
+                value={String(realtimeLogPageSize)}
+                options={MONITORING_PAGE_SIZE_OPTIONS.map((pageSize) => ({
+                  value: String(pageSize),
+                  label: t('monitoring.pagination_page_size_value', { count: pageSize }),
+                }))}
+                onChange={(value) => {
+                  const nextPageSize = normalizeMonitoringPageSize(value);
+                  if (nextPageSize === realtimeLogPageSize) return;
+                  resetRealtimeLogs();
+                  setRealtimeLogPageSize(nextPageSize);
+                }}
+                ariaLabelledBy="realtime-log-page-size-label"
+                className={styles.paginationPageSizeSelect}
+              />
             </div>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => void showNextRealtimeLogPage()}
-              disabled={realtimeLogLoading || !realtimeLogNextCursor || !realtimeLogPagination.hasNext}
-              aria-label={t('monitoring.next_page')}
-            >
-              {t('monitoring.next_page')}
-            </Button>
+            {realtimeLogPagination.totalPages > 1 ? (
+              <div className={styles.paginationNavigation}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void showPreviousRealtimeLogPage()}
+                  disabled={realtimeLogLoading || !realtimeLogPagination.hasPrevious}
+                  aria-label={t('monitoring.previous_page')}
+                >
+                  {t('monitoring.previous_page')}
+                </Button>
+                <div className={quotaStyles.pageInfo}>
+                  {t('monitoring.pagination_info', {
+                    from: realtimeLogPagination.from,
+                    to: realtimeLogPagination.to,
+                    total: realtimeLogPagination.total,
+                    page: realtimeLogPagination.page,
+                    totalPages: realtimeLogPagination.totalPages,
+                    defaultValue: `${realtimeLogPagination.from}-${realtimeLogPagination.to} / ${realtimeLogPagination.total}`,
+                  })}
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void showNextRealtimeLogPage()}
+                  disabled={realtimeLogLoading || !realtimeLogNextCursor || !realtimeLogPagination.hasNext}
+                  aria-label={t('monitoring.next_page')}
+                >
+                  {t('monitoring.next_page')}
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : null}
         </Card>

@@ -14,7 +14,6 @@ import type {
   UsagePayload,
 } from '@/features/monitoring/hooks/useUsageData';
 
-export const REALTIME_LOG_PAGE_SIZE = 100;
 const REALTIME_LOG_TOP_THRESHOLD_PX = 8;
 const REALTIME_LOG_AUTO_REFRESH_DELAY_MS = 1000;
 

@@ -85,6 +85,22 @@
   }
 }
 
+@media (max-width: 760px) {
+  .paginationBar {
+    grid-template-columns: 1fr;
+  }
+
+  .paginationPageSizeControl,
+  .paginationNavigation {
+    grid-column: 1;
+    justify-self: center;
+  }
+
+  .paginationNavigation {
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 680px) {
   .priceManagerModal :global(.modal-body) {
     max-height: min(72vh, calc(100dvh - 150px));

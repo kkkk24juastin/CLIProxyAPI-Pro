@@ -1,6 +1,5 @@
 import type { TFunction } from 'i18next';
 import { maskSensitiveText } from '@/utils/format';
-import { REALTIME_LOG_PAGE_SIZE } from './hooks/useRealtimeLogData';
 import type { MonitoringEventRow } from './hooks/useMonitoringData';
 
 export type RealtimeLogRow = MonitoringEventRow & {
@@ -262,9 +261,7 @@ export const buildRealtimeLogPageRows = (
   page: number,
   pageSize: number
 ): { total: number; rows: RealtimeLogRow[] } => {
-  const candidateRows = rows.length > REALTIME_LOG_PAGE_SIZE
-    ? rows.slice(0, REALTIME_LOG_PAGE_SIZE)
-    : rows;
+  const candidateRows = rows;
   const metricsByStream = new Map<string, { total: number; success: number; pattern: boolean[] }>();
   const normalizedPage = Math.max(1, page);
   const pageStart = (normalizedPage - 1) * pageSize;
