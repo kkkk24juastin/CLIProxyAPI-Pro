@@ -35,4 +35,18 @@ describe('monitoring pagination', () => {
     expect(styles).toContain('overflow-y: auto');
     expect(styles).toContain('scrollbar-gutter: stable');
   });
+
+  test('keeps page navigation and page-size controls on the same row', async () => {
+    const baseStyles = await Bun.file(
+      new URL('../src/features/monitoring/styles/_base.scss', import.meta.url)
+    ).text();
+    const responsiveStyles = await Bun.file(
+      new URL('../src/features/monitoring/styles/_responsive.scss', import.meta.url)
+    ).text();
+
+    expect(baseStyles).toMatch(/\.paginationPageSizeControl\s*\{[^}]*grid-row: 1;/s);
+    expect(baseStyles).toMatch(/\.paginationNavigation\s*\{[^}]*grid-row: 1;/s);
+    expect(responsiveStyles).toContain('flex-wrap: nowrap');
+    expect(responsiveStyles).not.toContain('grid-row: 2');
+  });
 });

@@ -87,23 +87,22 @@
 
 @media (max-width: 760px) {
   .paginationBar {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
 
   .paginationNavigation {
-    grid-column: 1;
-    grid-row: 1;
-    justify-self: center;
+    flex: 0 0 auto;
+    order: 1;
+    flex-wrap: nowrap;
   }
 
   .paginationPageSizeControl {
-    grid-column: 1;
-    grid-row: 2;
-    justify-self: end;
-  }
-
-  .paginationNavigation {
-    flex-wrap: wrap;
+    flex: 0 0 auto;
+    order: 2;
   }
 }
 

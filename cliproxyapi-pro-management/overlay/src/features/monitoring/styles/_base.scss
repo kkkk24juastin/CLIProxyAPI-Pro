@@ -115,6 +115,7 @@
 
 .paginationPageSizeControl {
   grid-column: 3;
+  grid-row: 1;
   justify-self: end;
   gap: 10px;
   color: var(--text-secondary);
@@ -129,6 +130,7 @@
 
 .paginationNavigation {
   grid-column: 2;
+  grid-row: 1;
   justify-content: center;
   gap: 16px;
 }
