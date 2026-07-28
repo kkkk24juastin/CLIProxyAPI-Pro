@@ -35,6 +35,9 @@ func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Eve
 		Endpoint:          "POST /v1/test",
 		Method:            "POST",
 		Path:              "/v1/test",
+		ClientIP:          "192.0.2.10",
+		XForwardedFor:     "203.0.113.5, 198.51.100.8",
+		UserAgent:         "test-client/1.0",
 		TotalTokens:       totalTokens,
 		InputTokens:       totalTokens / 2,
 		OutputTokens:      totalTokens - totalTokens/2,
@@ -534,6 +537,9 @@ func TestUsageDiagnosticsRoundTripAndAggregates(t *testing.T) {
 	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || !got.Stream || got.ReasoningEffort != "medium" || got.ServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
 		t.Fatalf("diagnostic strings = %+v", got)
 	}
+	if got.ClientIP != "192.0.2.10" || got.XForwardedFor != "203.0.113.5, 198.51.100.8" || got.UserAgent != "test-client/1.0" {
+		t.Fatalf("client metadata = %q/%q/%q", got.ClientIP, got.XForwardedFor, got.UserAgent)
+	}
 
 	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{Interval: "hour", GroupBy: []string{"provider", "model"}, Limit: 10})
 	if err != nil {
@@ -548,6 +554,33 @@ func TestUsageDiagnosticsRoundTripAndAggregates(t *testing.T) {
 	}
 	if bucket.AvgLatencyMS == nil || *bucket.AvgLatencyMS != 100 || bucket.AvgTTFTMS == nil || *bucket.AvgTTFTMS != 20 {
 		t.Fatalf("aggregate latency = %+v/%+v, want 100/20", bucket.AvgLatencyMS, bucket.AvgTTFTMS)
+	}
+}
+
+func TestClientRequestMetadataSearchAndExport(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	event := testUsageEvent(0, false, 1)
+	insertTestUsageEvents(t, store, event)
+
+	for _, search := range []string{event.ClientIP, "198.51.100.8", "test-client/1.0"} {
+		page, err := store.QueryEvents(ctx, UsageEventQueryOptions{Search: search, Limit: 10})
+		if err != nil {
+			t.Fatalf("QueryEvents(%q) error = %v", search, err)
+		}
+		if len(page.Events) != 1 || page.Events[0].EventHash != event.EventHash {
+			t.Fatalf("QueryEvents(%q) = %+v", search, page.Events)
+		}
+	}
+
+	exported, err := store.ExportJSONL(ctx)
+	if err != nil {
+		t.Fatalf("ExportJSONL() error = %v", err)
+	}
+	for _, value := range []string{`"client_ip":"192.0.2.10"`, `"x_forwarded_for":"203.0.113.5, 198.51.100.8"`, `"user_agent":"test-client/1.0"`} {
+		if !strings.Contains(string(exported), value) {
+			t.Fatalf("export missing %s: %s", value, exported)
+		}
 	}
 }
 

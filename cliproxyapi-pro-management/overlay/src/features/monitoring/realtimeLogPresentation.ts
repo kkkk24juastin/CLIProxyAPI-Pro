@@ -80,6 +80,8 @@ export const resolveRealtimeErrorCategoryKey = (row: MonitoringEventRow) => {
 
 const REALTIME_ERROR_TEXT_FALLBACKS = {
   en: {
+    request_details: 'Request Details',
+    request_details_click_hint: 'Click to view request details',
     error_details: 'Error Details',
     error_details_click_hint: 'Click to view error details',
     error_details_modal_desc: 'Only fields directly related to the failed request are shown here.',
@@ -103,8 +105,13 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     request_status: 'Request Status',
     filter_provider: 'Provider',
     column_model: 'Model',
+    client_ip: 'Direct Client IP',
+    x_forwarded_for: 'Forwarded-For Chain',
+    user_agent: 'User Agent',
   },
   ru: {
+    request_details: 'Детали запроса',
+    request_details_click_hint: 'Нажмите, чтобы посмотреть детали запроса',
     error_details: 'Детали ошибки',
     error_details_click_hint: 'Нажмите, чтобы посмотреть детали ошибки',
     error_details_modal_desc: 'Здесь показаны только поля, напрямую связанные с ошибкой запроса.',
@@ -128,8 +135,13 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     request_status: 'Статус запроса',
     filter_provider: 'Провайдер',
     column_model: 'Модель',
+    client_ip: 'Прямой IP клиента',
+    x_forwarded_for: 'Цепочка Forwarded-For',
+    user_agent: 'User Agent',
   },
   zhCN: {
+    request_details: '请求详情',
+    request_details_click_hint: '点击查看请求详情',
     error_details: '错误详情',
     error_details_click_hint: '点击查看错误详情',
     error_details_modal_desc: '这里只显示和本次请求失败直接相关的字段。',
@@ -153,8 +165,13 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     request_status: '请求状态',
     filter_provider: '提供商',
     column_model: '模型',
+    client_ip: '直连客户端 IP',
+    x_forwarded_for: '转发 IP 链',
+    user_agent: '用户代理',
   },
   zhTW: {
+    request_details: '請求詳情',
+    request_details_click_hint: '點擊查看請求詳情',
     error_details: '錯誤詳情',
     error_details_click_hint: '點擊查看錯誤詳情',
     error_details_modal_desc: '這裡只顯示與本次請求失敗直接相關的欄位。',
@@ -178,6 +195,9 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     request_status: '請求狀態',
     filter_provider: '提供商',
     column_model: '模型',
+    client_ip: '直連用戶端 IP',
+    x_forwarded_for: '轉發 IP 鏈',
+    user_agent: '使用者代理',
   },
 } as const;
 
@@ -252,6 +272,9 @@ export const buildRealtimeDiagnosticClipboardText = (
     [translateRealtimeErrorText('retry_after', t, language), row.retryAfter || '-'],
     [translateRealtimeErrorText('filter_provider', t, language), row.provider || '-'],
     [translateRealtimeErrorText('column_model', t, language), row.model || '-'],
+    [translateRealtimeErrorText('client_ip', t, language), row.clientIP || '-'],
+    [translateRealtimeErrorText('x_forwarded_for', t, language), row.xForwardedFor || '-'],
+    [translateRealtimeErrorText('user_agent', t, language), row.userAgent || '-'],
   ];
   return fields.map(([label, value]) => `${label}: ${maskSensitiveText(String(value ?? '-'))}`).join('\n');
 };

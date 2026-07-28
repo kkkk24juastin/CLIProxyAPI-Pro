@@ -181,6 +181,9 @@ export type MonitoringEventRow = {
   errorMessage: string;
   upstreamRequestId: string;
   retryAfter: string;
+  clientIP: string;
+  xForwardedFor: string;
+  userAgent: string;
   stream: boolean;
   reasoningEffort: string;
   serviceTier: string;
@@ -926,6 +929,9 @@ const buildEventRows = (
       errorMessage: detail.error_message || '',
       upstreamRequestId: detail.upstream_request_id || '',
       retryAfter: detail.retry_after || '',
+      clientIP: detail.client_ip || '',
+      xForwardedFor: detail.x_forwarded_for || '',
+      userAgent: detail.user_agent || '',
       stream: detail.stream === true,
       reasoningEffort: detail.reasoning_effort || '',
       serviceTier: detail.service_tier || '',
@@ -953,6 +959,9 @@ const buildEventRows = (
         executorType,
         detail.upstream_request_id,
         detail.retry_after,
+        detail.client_ip,
+        detail.x_forwarded_for,
+        detail.user_agent,
         detail.reasoning_effort,
         authMeta?.planType,
         clientApiKeyIdentity.masked

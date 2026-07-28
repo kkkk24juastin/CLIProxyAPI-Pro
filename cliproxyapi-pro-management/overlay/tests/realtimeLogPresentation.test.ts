@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildRealtimeDiagnosticClipboardText,
   buildRealtimeLogPageRows,
   getClientPaginationRange,
   resolveRealtimeErrorCategoryKey,
@@ -20,6 +21,9 @@ const event = (overrides: Partial<MonitoringEventRow> = {}): MonitoringEventRow 
   errorMessage: '',
   retryAfter: '',
   upstreamRequestId: '',
+  clientIP: '',
+  xForwardedFor: '',
+  userAgent: '',
   endpointMethod: 'POST',
   endpointPath: '/v1/responses',
   ...overrides,
@@ -56,6 +60,19 @@ describe('realtime log presentation', () => {
       hasPrevious: true,
       hasNext: true,
     });
+  });
+
+  test('includes client request metadata in copied diagnostics', () => {
+    const t = ((key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key) as never;
+    const text = buildRealtimeDiagnosticClipboardText(event({
+      clientIP: '192.0.2.10',
+      xForwardedFor: '203.0.113.5, 198.51.100.8',
+      userAgent: 'test-client/1.0',
+    }), t, 'en');
+
+    expect(text).toContain('Direct Client IP: 192.0.2.10');
+    expect(text).toContain('Forwarded-For Chain: 203.0.113.5, 198.51.100.8');
+    expect(text).toContain('User Agent: test-client/1.0');
   });
 
   test('keeps realtime badges and recent status bars styled', async () => {

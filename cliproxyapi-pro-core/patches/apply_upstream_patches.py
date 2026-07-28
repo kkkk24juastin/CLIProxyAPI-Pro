@@ -203,6 +203,8 @@ new_customization_paths = (
     'internal/pluginhost/quota_provider_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
+    'internal/requestmeta/client.go',
+    'internal/requestmeta/client_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
     'internal/runtime/executor/xai_quota_observer.go',
@@ -320,7 +322,7 @@ require_source_hash(
 )
 require_source_hash(
     ROOT / 'internal/logging/requestmeta.go',
-    {'aa13ac5136573dba6a4feb9243cad2663b300053288c3b0f6eeaaee26ca09c28'},
+    {'276db8481b85d9909073ed823062a2c83fcbf38b68952486fb86712cfb99ce9d'},
 )
 
 # Add the optional QuotaProvider capability without changing ABI/schema v1.
@@ -1372,10 +1374,10 @@ replace_once(
 )
 replace_once(
     redisqueue_plugin,
-    '''\t\tAuthIndex:       record.AuthIndex,
+    '''\t\tUserAgent:       clientRequestMetadata.UserAgent,
 \t\tTokens:          tokens,
 ''',
-    '''\t\tAuthIndex:       record.AuthIndex,
+    '''\t\tUserAgent:       clientRequestMetadata.UserAgent,
 \t\tAttemptIndex:    record.AttemptIndex,
 \t\tTokens:          tokens,
 ''',
@@ -1416,6 +1418,10 @@ if redisqueue_plugin_test.exists():
     )
     text = text.replace('internallogging.', 'requestmeta.')
     write(redisqueue_plugin_test, text)
+
+queue_go_source('internal/requestmeta/client.go')
+
+queue_go_source('internal/requestmeta/client_test.go')
 
 queue_go_source('internal/requestmeta/requestid.go')
 
@@ -1726,18 +1732,16 @@ replace_once(
 )
 replace_once(
     auth_conductor,
-    '''\t\treturn authCopy, executor, nil
-\t}
+    '''\treturn authCopy, executor, nil
 }
 
 func (m *Manager) pickNextMixedLegacy''',
-    '''\t\tm.recordAuthSelected(authCopy.ID)
-\t\treturn authCopy, executor, nil
-\t}
+    '''\tm.recordAuthSelected(authCopy.ID)
+\treturn authCopy, executor, nil
 }
 
 func (m *Manager) pickNextMixedLegacy''',
-    'm.recordAuthSelected(authCopy.ID)\n\t\treturn authCopy, executor, nil',
+    'm.recordAuthSelected(authCopy.ID)\n\treturn authCopy, executor, nil',
 )
 replace_once(
     auth_conductor,
@@ -1887,11 +1891,13 @@ add_go_import(auth_scheduler, '"context"\n', '\t"fmt"\n')
 add_go_import(auth_scheduler, '"time"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
 replace_once(
     auth_scheduler,
-    '''\tmixedCursors  map[string]int
+    '''\tmixedCursors        map[string]int
+\tmixedWeightedStates map[string]*smoothWeightedState
 }''',
-    '''\tmixedCursors     map[string]int
-\tmixedRestored    map[string]bool
-\tpersistedCursors map[string]string
+    '''\tmixedCursors        map[string]int
+\tmixedWeightedStates map[string]*smoothWeightedState
+\tmixedRestored       map[string]bool
+\tpersistedCursors    map[string]string
 }''',
     'persistedCursors map[string]string',
 )
@@ -1917,15 +1923,17 @@ replace_once(
 replace_once(
     auth_scheduler,
     '''type readyView struct {
-\tflat   []*scheduledAuth
-\tcursor int
+\tflat          []*scheduledAuth
+\tcursor        int
+\tweightedState smoothWeightedState
 }''',
     '''type readyView struct {
-\tflat       []*scheduledAuth
-\tcursor     int
-\tcursorKey  string
-\tlastAuthID string
-\tpersisted  map[string]string
+\tflat          []*scheduledAuth
+\tcursor        int
+\tweightedState smoothWeightedState
+\tcursorKey     string
+\tlastAuthID    string
+\tpersisted     map[string]string
 }''',
     'cursorKey  string',
 )
@@ -1933,10 +1941,11 @@ replace_once(
     auth_scheduler,
     '''func newAuthScheduler(selector Selector) *authScheduler {
 \treturn &authScheduler{
-\t\tstrategy:      selectorStrategy(selector),
-\t\tproviders:     make(map[string]*providerScheduler),
-\t\tauthProviders: make(map[string]string),
-\t\tmixedCursors:  make(map[string]int),
+\t\tstrategy:            selectorStrategy(selector),
+\t\tproviders:           make(map[string]*providerScheduler),
+\t\tauthProviders:       make(map[string]string),
+\t\tmixedCursors:        make(map[string]int),
+\t\tmixedWeightedStates: make(map[string]*smoothWeightedState),
 \t}
 }''',
     '''func newAuthScheduler(selector Selector) *authScheduler {
@@ -1947,12 +1956,13 @@ replace_once(
 \t\t}
 \t}
 \treturn &authScheduler{
-\t\tstrategy:         selectorStrategy(selector),
-\t\tproviders:        make(map[string]*providerScheduler),
-\t\tauthProviders:    make(map[string]string),
-\t\tmixedCursors:     make(map[string]int),
-\t\tmixedRestored:    make(map[string]bool),
-\t\tpersistedCursors: persistedCursors,
+\t\tstrategy:            selectorStrategy(selector),
+\t\tproviders:           make(map[string]*providerScheduler),
+\t\tauthProviders:       make(map[string]string),
+\t\tmixedCursors:        make(map[string]int),
+\t\tmixedWeightedStates: make(map[string]*smoothWeightedState),
+\t\tmixedRestored:       make(map[string]bool),
+\t\tpersistedCursors:    persistedCursors,
 \t}
 }''',
     'persistedCursors := make(map[string]string)',
@@ -1976,6 +1986,7 @@ insert_before(
 \ts.providers = make(map[string]*providerScheduler)
 \ts.authProviders = make(map[string]string)
 \ts.mixedCursors = make(map[string]int)
+\ts.mixedWeightedStates = make(map[string]*smoothWeightedState)
 \ts.mixedRestored = make(map[string]bool)
 \tnow := time.Now()
 \tfor _, auth := range auths {
@@ -1989,19 +2000,23 @@ insert_before(
 replace_once(
     auth_scheduler,
     '''\ts.mixedCursors = make(map[string]int)
+\ts.mixedWeightedStates = make(map[string]*smoothWeightedState)
 \tnow := time.Now()''',
     '''\ts.mixedCursors = make(map[string]int)
+\ts.mixedWeightedStates = make(map[string]*smoothWeightedState)
 \ts.mixedRestored = make(map[string]bool)
 \tnow := time.Now()''',
-    's.mixedRestored = make(map[string]bool)',
+    's.mixedWeightedStates = make(map[string]*smoothWeightedState)\n\ts.mixedRestored = make(map[string]bool)\n\tnow := time.Now()',
 )
 replace_once(
     auth_scheduler,
     '''\ts.strategy = selectorStrategy(selector)
 \tclear(s.mixedCursors)
+\tclear(s.mixedWeightedStates)
 ''',
     '''\ts.strategy = selectorStrategy(selector)
 \tclear(s.mixedCursors)
+\tclear(s.mixedWeightedStates)
 \tclear(s.mixedRestored)
 ''',
     'clear(s.mixedRestored)',
@@ -2190,6 +2205,8 @@ subprocess.run([
     'internal/pluginstore/autoinstall_test.go',
     'internal/redisqueue/plugin.go',
     'internal/redisqueue/plugin_test.go',
+    'internal/requestmeta/client.go',
+    'internal/requestmeta/client_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
     'internal/runtime/executor/xai_executor.go',

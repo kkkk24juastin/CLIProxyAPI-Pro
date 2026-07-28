@@ -24,7 +24,7 @@ import { findMonitoringAuthIndexes } from '@/features/monitoring/monitoringAuthS
 import { ModelPriceManagerModal } from '@/features/monitoring/components/ModelPriceManagerModal';
 import { MonitoringSettingsModal } from '@/features/monitoring/components/MonitoringSettingsModal';
 import {
-  RealtimeErrorDetailsPanel,
+  RealtimeRequestDetailsPanel,
   RecentPattern,
   StatusBadge,
 } from '@/features/monitoring/components/RealtimeLogDetails';
@@ -943,19 +943,19 @@ export function MonitoringCenterPage() {
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.status,
       render: (row) => (
         <div className={styles.primaryCell}>
-          {row.failed ? (
-            <button
-              type="button"
-              className={styles.realtimeStatusErrorButton}
-              onClick={() => setSelectedRealtimeErrorRow(row)}
-              title={translateRealtimeErrorText('error_details_click_hint', t, i18n.language)}
-              aria-label={translateRealtimeErrorText('error_details_click_hint', t, i18n.language)}
-            >
+          <button
+            type="button"
+            className={styles.realtimeStatusDetailsButton}
+            onClick={() => setSelectedRealtimeErrorRow(row)}
+            title={translateRealtimeErrorText('request_details_click_hint', t, i18n.language)}
+            aria-label={translateRealtimeErrorText('request_details_click_hint', t, i18n.language)}
+          >
+            {row.failed ? (
               <StatusBadge tone="bad">{buildRealtimeStatusLabel(row, t('monitoring.result_failed'))}</StatusBadge>
-            </button>
-          ) : (
-            <StatusBadge tone="good">{t('monitoring.result_success')}</StatusBadge>
-          )}
+            ) : (
+              <StatusBadge tone="good">{t('monitoring.result_success')}</StatusBadge>
+            )}
+          </button>
         </div>
       ),
     },
@@ -1871,7 +1871,7 @@ export function MonitoringCenterPage() {
       <Modal
         open={Boolean(selectedRealtimeErrorRow)}
         onClose={() => setSelectedRealtimeErrorRow(null)}
-        title={translateRealtimeErrorText('error_details', t, i18n.language)}
+        title={translateRealtimeErrorText('request_details', t, i18n.language)}
         width={720}
         className={styles.monitorModal}
         footer={selectedRealtimeErrorRow ? (
@@ -1886,7 +1886,7 @@ export function MonitoringCenterPage() {
         ) : null}
       >
         {selectedRealtimeErrorRow ? (
-          <RealtimeErrorDetailsPanel row={selectedRealtimeErrorRow} t={t} language={i18n.language} />
+          <RealtimeRequestDetailsPanel row={selectedRealtimeErrorRow} t={t} language={i18n.language} />
         ) : null}
       </Modal>
 

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { TFunction } from 'i18next';
 import type { MonitoringStatusTone } from '../hooks/useMonitoringData';
 import {
+  buildRealtimeMetaText,
   buildRealtimeStatusLabel,
   compactRealtimeErrorMessage,
   translateRealtimeErrorCategory,
@@ -15,7 +16,7 @@ export function StatusBadge({ tone, children }: { tone: MonitoringStatusTone; ch
   return <span className={`${styles.statusBadge} ${styles[`tone${tone}`]}`}>{children}</span>;
 }
 
-export function RealtimeErrorDetailsPanel({
+export function RealtimeRequestDetailsPanel({
   row,
   t,
   language,
@@ -25,11 +26,18 @@ export function RealtimeErrorDetailsPanel({
   language?: string;
 }) {
   const categoryText = translateRealtimeErrorCategory(row.errorCategoryKey, t, language);
-  const statusText = buildRealtimeStatusLabel(row, t('monitoring.result_failed'));
-  const summaryText = row.errorMessage
-    ? compactRealtimeErrorMessage(row.errorMessage, 220)
-    : row.errorSummary || row.diagnosticText || categoryText;
+  const statusText = row.failed
+    ? buildRealtimeStatusLabel(row, t('monitoring.result_failed'))
+    : t('monitoring.result_success');
+  const summaryText = row.failed
+    ? row.errorMessage
+      ? compactRealtimeErrorMessage(row.errorMessage, 220)
+      : row.errorSummary || row.diagnosticText || categoryText
+    : buildRealtimeMetaText(row);
   const detailItems = [
+    { label: translateRealtimeErrorText('client_ip', t, language), value: row.clientIP || '-' },
+    { label: translateRealtimeErrorText('x_forwarded_for', t, language), value: row.xForwardedFor || '-' },
+    { label: translateRealtimeErrorText('user_agent', t, language), value: row.userAgent || '-' },
     { label: translateRealtimeErrorText('http_status', t, language), value: row.statusCode !== null ? String(row.statusCode) : '-' },
     { label: translateRealtimeErrorText('error_code', t, language), value: row.errorCode || '-' },
     { label: translateRealtimeErrorText('upstream_request_id', t, language), value: row.upstreamRequestId || '-' },
@@ -40,12 +48,12 @@ export function RealtimeErrorDetailsPanel({
     <div className={styles.realtimeErrorDetailsPanel}>
       <div className={styles.realtimeErrorOverview}>
         <div className={styles.realtimeErrorOverviewTop}>
-          <StatusBadge tone="bad">{statusText}</StatusBadge>
-          <span>{categoryText}</span>
+          <StatusBadge tone={row.failed ? 'bad' : 'good'}>{statusText}</StatusBadge>
+          {row.failed ? <span>{categoryText}</span> : null}
         </div>
         <strong>{summaryText}</strong>
       </div>
-      {row.errorMessage ? (
+      {row.failed && row.errorMessage ? (
         <div className={styles.realtimeErrorMessageBlock}>
           <span>{translateRealtimeErrorText('error_message', t, language)}</span>
           <pre className={styles.realtimeErrorMessage}>{compactRealtimeErrorMessage(row.errorMessage, 1200)}</pre>

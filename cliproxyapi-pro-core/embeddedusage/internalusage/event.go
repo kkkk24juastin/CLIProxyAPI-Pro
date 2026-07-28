@@ -31,6 +31,9 @@ type Event struct {
 	Source              string                   `json:"source,omitempty"`
 	SourceHash          string                   `json:"source_hash,omitempty"`
 	APIKeyHash          string                   `json:"api_key_hash,omitempty"`
+	ClientIP            string                   `json:"client_ip,omitempty"`
+	XForwardedFor       string                   `json:"x_forwarded_for,omitempty"`
+	UserAgent           string                   `json:"user_agent,omitempty"`
 	InputTokens         int64                    `json:"input_tokens"`
 	OutputTokens        int64                    `json:"output_tokens"`
 	ReasoningTokens     int64                    `json:"reasoning_tokens"`
@@ -82,6 +85,9 @@ type Detail struct {
 	Source            string                   `json:"source"`
 	AuthIndex         string                   `json:"auth_index,omitempty"`
 	APIKeyHash        string                   `json:"api_key_hash,omitempty"`
+	ClientIP          string                   `json:"client_ip,omitempty"`
+	XForwardedFor     string                   `json:"x_forwarded_for,omitempty"`
+	UserAgent         string                   `json:"user_agent,omitempty"`
 	Provider          string                   `json:"provider,omitempty"`
 	ExecutorType      string                   `json:"executor_type,omitempty"`
 	Alias             string                   `json:"alias,omitempty"`
@@ -145,6 +151,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	if !ok {
 		return Event{}, fmt.Errorf("usage payload is not a JSON object")
 	}
+	normalizeClientRequestMetadata(record)
 
 	rawJSON := ""
 	if _, exported := record["event_hash"]; !exported {
@@ -233,6 +240,9 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		Source:            source,
 		SourceHash:        sourceHash,
 		APIKeyHash:        apiKeyHash,
+		ClientIP:          readString(record, "client_ip", "clientIp"),
+		XForwardedFor:     readString(record, "x_forwarded_for", "xForwardedFor"),
+		UserAgent:         readString(record, "user_agent", "userAgent"),
 		InputTokens:       inputTokens,
 		OutputTokens:      outputTokens,
 		ReasoningTokens:   reasoningTokens,
@@ -317,6 +327,9 @@ func BuildPayload(events []Event) Payload {
 			Source:            event.Source,
 			AuthIndex:         event.AuthIndex,
 			APIKeyHash:        event.APIKeyHash,
+			ClientIP:          event.ClientIP,
+			XForwardedFor:     event.XForwardedFor,
+			UserAgent:         event.UserAgent,
 			Provider:          event.Provider,
 			ExecutorType:      event.ExecutorType,
 			Alias:             event.Alias,
@@ -575,6 +588,36 @@ func readString(record map[string]any, keys ...string) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(value))
 	}
+}
+
+const (
+	clientIPMaxRunes      = 256
+	xForwardedForMaxRunes = 2048
+	userAgentMaxRunes     = 1024
+)
+
+func normalizeClientRequestMetadata(record map[string]any) {
+	if record == nil {
+		return
+	}
+	setNormalizedString(record, "client_ip", "clientIp", clientIPMaxRunes)
+	setNormalizedString(record, "x_forwarded_for", "xForwardedFor", xForwardedForMaxRunes)
+	setNormalizedString(record, "user_agent", "userAgent", userAgentMaxRunes)
+}
+
+func setNormalizedString(record map[string]any, canonicalKey, fallbackKey string, maxRunes int) {
+	value := readString(record, canonicalKey, fallbackKey)
+	if value == "" {
+		delete(record, canonicalKey)
+		delete(record, fallbackKey)
+		return
+	}
+	runes := []rune(value)
+	if len(runes) > maxRunes {
+		value = string(runes[:maxRunes])
+	}
+	record[canonicalKey] = value
+	delete(record, fallbackKey)
 }
 
 func readHeaderValue(record map[string]any, names ...string) string {

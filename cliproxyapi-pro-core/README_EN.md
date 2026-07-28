@@ -62,6 +62,8 @@ The embedded service exposes these management routes:
 
 Details returned by `/usage/events` and `/usage/stream` include a stable event `id`, which the management UI uses for incremental deduplication and cursor catch-up. Usage responses also include a persistent `generation`; manual resets and retention cleanup advance it, and SSE emits a `reset` event so open pages replace their complete snapshot. SSE connections are awakened by an in-process notification after SQLite commits, with only a low-frequency keepalive instead of one database poll per connection per second.
 
+Details also preserve `client_ip`, `x_forwarded_for`, and `user_agent` from upstream `ClientRequestMetadata`. `client_ip` is the direct peer address, while `x_forwarded_for` is the raw forwarding chain without trusted-proxy validation. These fields are for diagnostics and search only and never participate in access control, routing, or request protection. They follow the usage retention policy and are included in usage JSONL/WebDAV backups.
+
 Historical `/usage/events` paging accepts `from_ms`, `to_ms`, `provider`, `model`, `auth_index`, `api_key_hash`, `status`, and `search`. The optional comma-separated `search_auth_indexes` is ORed with raw event-text `search`, while the other structured filters remain AND conditions. The first response returns a stable snapshot cursor that carries the complete filter scope across later pages.
 
 `/usage/aggregates` supports `from_ms`, `to_ms`, `interval=minute|hour|day|all`, `group_by=provider,model,endpoint,api_key_hash`, `api_key_hash`, and `timezone_offset_minutes`. Responses include `latest_id`, `snapshot_at_ms`, and event-level `estimatedCost` sums so context tiers are never selected from aggregated token totals.

@@ -15,6 +15,9 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 		"model":"gpt-test",
 		"alias":"client-gpt",
 		"api_key":"sk-secret",
+		"client_ip":"192.0.2.10",
+		"x_forwarded_for":"203.0.113.5, 198.51.100.8",
+		"user_agent":"test-client/1.0",
 		"tokens":{"input_tokens":10,"output_tokens":20,"cache_read_tokens":7,"cache_creation_tokens":3},
 		"latency_ms":1234,
 		"ttft_ms":321,
@@ -46,6 +49,9 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 	}
 	if event.UpstreamRequestID != "upstream-req-1" || event.RetryAfter != "30" {
 		t.Fatalf("upstream diagnostics = %q/%q, want upstream-req-1/30", event.UpstreamRequestID, event.RetryAfter)
+	}
+	if event.ClientIP != "192.0.2.10" || event.XForwardedFor != "203.0.113.5, 198.51.100.8" || event.UserAgent != "test-client/1.0" {
+		t.Fatalf("client metadata = %q/%q/%q", event.ClientIP, event.XForwardedFor, event.UserAgent)
 	}
 	if event.CacheTokens != 10 || event.TotalTokens != 30 || event.InputTokens != 10 || event.UncachedInputTokens != 0 {
 		t.Fatalf("normalized tokens = input:%d uncached:%d cache:%d total:%d, want 10/0/10/30", event.InputTokens, event.UncachedInputTokens, event.CacheTokens, event.TotalTokens)
@@ -105,6 +111,24 @@ func TestNormalizeRawUsesCanonicalTokenBreakdownAcrossProviderSemantics(t *testi
 				t.Fatalf("tokens = %+v", event)
 			}
 		})
+	}
+}
+
+func TestNormalizeRawLimitsClientRequestMetadata(t *testing.T) {
+	clientIP := strings.Repeat("i", clientIPMaxRunes+1)
+	xForwardedFor := strings.Repeat("f", xForwardedForMaxRunes+1)
+	userAgent := strings.Repeat("u", userAgentMaxRunes+1)
+	raw := `{"timestamp":"2026-07-28T00:00:00Z","model":"gpt-test","clientIp":"` + clientIP +
+		`","xForwardedFor":"` + xForwardedFor + `","userAgent":"` + userAgent + `"}`
+	event, err := NormalizeRaw([]byte(raw))
+	if err != nil {
+		t.Fatalf("NormalizeRaw() error = %v", err)
+	}
+	if len([]rune(event.ClientIP)) != clientIPMaxRunes || len([]rune(event.XForwardedFor)) != xForwardedForMaxRunes || len([]rune(event.UserAgent)) != userAgentMaxRunes {
+		t.Fatalf("client metadata lengths = %d/%d/%d", len([]rune(event.ClientIP)), len([]rune(event.XForwardedFor)), len([]rune(event.UserAgent)))
+	}
+	if strings.Contains(event.RawJSON, "clientIp") || strings.Contains(event.RawJSON, "xForwardedFor") || strings.Contains(event.RawJSON, "userAgent") {
+		t.Fatalf("RawJSON did not canonicalize client metadata: %s", event.RawJSON)
 	}
 }
 
@@ -204,6 +228,9 @@ func TestBuildPayloadIncludesUpstreamUsageMetadata(t *testing.T) {
 		Alias:             "claude-opus-4-5",
 		Endpoint:          "POST /v1/chat/completions",
 		AuthType:          "oauth",
+		ClientIP:          "192.0.2.10",
+		XForwardedFor:     "203.0.113.5, 198.51.100.8",
+		UserAgent:         "test-client/1.0",
 		UpstreamRequestID: "upstream-req-1",
 		RetryAfter:        "30",
 		Stream:            true,
@@ -217,5 +244,8 @@ func TestBuildPayloadIncludesUpstreamUsageMetadata(t *testing.T) {
 	detail := details[0]
 	if detail.Provider != "antigravity" || detail.ExecutorType != "AntigravityExecutor" || detail.Alias != "claude-opus-4-5" || detail.AuthType != "oauth" || detail.UpstreamRequestID != "upstream-req-1" || detail.RetryAfter != "30" || !detail.Stream {
 		t.Fatalf("detail metadata = provider:%q executor:%q alias:%q auth:%q upstream:%q retry:%q stream:%t", detail.Provider, detail.ExecutorType, detail.Alias, detail.AuthType, detail.UpstreamRequestID, detail.RetryAfter, detail.Stream)
+	}
+	if detail.ClientIP != "192.0.2.10" || detail.XForwardedFor != "203.0.113.5, 198.51.100.8" || detail.UserAgent != "test-client/1.0" {
+		t.Fatalf("detail client metadata = %q/%q/%q", detail.ClientIP, detail.XForwardedFor, detail.UserAgent)
 	}
 }

@@ -135,6 +135,9 @@ export interface UsageDetail {
   executor_type?: string;
   alias?: string;
   auth_type?: string;
+  client_ip?: string;
+  x_forwarded_for?: string;
+  user_agent?: string;
   latency_ms?: number;
   ttft_ms?: number;
   status_code?: number;
@@ -439,6 +442,21 @@ const buildUsageDetail = (
     executor_type: executorType || undefined,
     alias: alias || undefined,
     auth_type: authType || undefined,
+    client_ip: typeof detailRaw.client_ip === 'string'
+      ? detailRaw.client_ip.trim()
+      : typeof detailRaw.clientIp === 'string'
+        ? detailRaw.clientIp.trim()
+        : undefined,
+    x_forwarded_for: typeof detailRaw.x_forwarded_for === 'string'
+      ? detailRaw.x_forwarded_for.trim()
+      : typeof detailRaw.xForwardedFor === 'string'
+        ? detailRaw.xForwardedFor.trim()
+        : undefined,
+    user_agent: typeof detailRaw.user_agent === 'string'
+      ? detailRaw.user_agent.trim()
+      : typeof detailRaw.userAgent === 'string'
+        ? detailRaw.userAgent.trim()
+        : undefined,
     latency_ms: latencyMs ?? undefined,
     ttft_ms: ttftMs ?? undefined,
     status_code: statusCode ?? undefined,
