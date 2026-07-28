@@ -349,9 +349,10 @@ export function RoutingPolicyPage() {
     const requestId = runtimeRequestIdRef.current + 1;
     runtimeRequestIdRef.current = requestId;
     try {
-      const response = await routingPolicyApi.update({
-        global: globalSettings,
-        requestProtection: { ...requestProtection, providers },
+      await routingPolicyApi.updateUpstream(globalSettings);
+      const response = await routingPolicyApi.updateRequestProtection({
+        ...requestProtection,
+        providers,
       });
       if (runtimeRequestIdRef.current !== requestId) return;
       applyConfigResponse(response);

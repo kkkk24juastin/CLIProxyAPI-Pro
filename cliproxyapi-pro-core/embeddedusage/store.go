@@ -289,11 +289,19 @@ type authRuntimeStatsExportRecord struct {
 	ExportedAt int64              `json:"exported_at_ms"`
 }
 
+type proSettingsExportRecord struct {
+	RecordType string       `json:"record_type"`
+	Version    int          `json:"version"`
+	Items      []ProSetting `json:"items"`
+	ExportedAt int64        `json:"exported_at_ms"`
+}
+
 const modelPricesExportRecordType = "model_prices"
 const quotaCacheExportRecordType = "quota_cache"
 const monitoringSettingsExportRecordType = "monitoring_settings"
 const routingCursorExportRecordType = "routing_cursor_state"
 const authRuntimeStatsExportRecordType = "auth_runtime_stats"
+const proSettingsExportRecordType = "pro_settings"
 
 type sqlQueryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
@@ -307,6 +315,7 @@ type usageExportSnapshot struct {
 	QuotaEntries     []QuotaCacheEntry
 	RoutingCursors   []RoutingCursorState
 	AuthRuntimeStats []AuthRuntimeStats
+	ProSettings      []ProSetting
 	Settings         MonitoringSettings
 	ExportedAt       int64
 }
@@ -521,6 +530,12 @@ func (s *Store) init() error {
 		)`,
 		`create table if not exists monitoring_settings (
 			id integer primary key check (id = 1),
+			settings_json text not null,
+			updated_at_ms integer not null
+		)`,
+		`create table if not exists pro_settings (
+			namespace text primary key,
+			schema_version integer not null,
 			settings_json text not null,
 			updated_at_ms integer not null
 		)`,
@@ -1786,6 +1801,10 @@ func (s *Store) readUsageExportSnapshot(ctx context.Context, afterEventsRead fun
 	if err != nil {
 		return usageExportSnapshot{}, err
 	}
+	snapshot.ProSettings, err = listProSettingsFrom(ctx, tx)
+	if err != nil {
+		return usageExportSnapshot{}, err
+	}
 	snapshot.Settings, err = getMonitoringSettingsFrom(ctx, tx)
 	if err != nil {
 		return usageExportSnapshot{}, err
@@ -1859,6 +1878,19 @@ func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
 			RecordType: authRuntimeStatsExportRecordType,
 			Version:    1,
 			Items:      snapshot.AuthRuntimeStats,
+			ExportedAt: snapshot.ExportedAt,
+		})
+		if err != nil {
+			return nil, err
+		}
+		output = append(output, line...)
+		output = append(output, '\n')
+	}
+	if len(snapshot.ProSettings) > 0 {
+		line, err := json.Marshal(proSettingsExportRecord{
+			RecordType: proSettingsExportRecordType,
+			Version:    1,
+			Items:      snapshot.ProSettings,
 			ExportedAt: snapshot.ExportedAt,
 		})
 		if err != nil {

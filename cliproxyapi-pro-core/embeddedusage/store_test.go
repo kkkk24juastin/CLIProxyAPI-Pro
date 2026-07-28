@@ -1129,3 +1129,47 @@ func TestRuntimeStateImportRollsBackCursorWhenStatsFail(t *testing.T) {
 		t.Fatalf("GetRoutingCursorState() after rollback = _, %v, %v; want missing", ok, err)
 	}
 }
+
+func TestProSettingsRoundTripAndExport(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	want := ProSetting{
+		Namespace:     ProSettingNamespaceRoutingRequestProtection,
+		SchemaVersion: 1,
+		Settings:      json.RawMessage(`{"enabled":true,"mode":"observe"}`),
+		UpdatedAtMS:   123,
+	}
+	if err := store.SetProSetting(ctx, want); err != nil {
+		t.Fatalf("SetProSetting() error = %v", err)
+	}
+	got, ok, err := store.GetProSetting(ctx, want.Namespace)
+	if err != nil || !ok {
+		t.Fatalf("GetProSetting() = %+v, %v, %v", got, ok, err)
+	}
+	if got.SchemaVersion != want.SchemaVersion || string(got.Settings) != string(want.Settings) || got.UpdatedAtMS != want.UpdatedAtMS {
+		t.Fatalf("GetProSetting() = %+v, want %+v", got, want)
+	}
+	exported, err := store.ExportJSONL(ctx)
+	if err != nil {
+		t.Fatalf("ExportJSONL() error = %v", err)
+	}
+	if !strings.Contains(string(exported), `"record_type":"pro_settings"`) ||
+		!strings.Contains(string(exported), `"namespace":"routing.request-protection"`) {
+		t.Fatalf("export missing pro settings: %s", exported)
+	}
+}
+
+func TestImportProSettingsIsAtomic(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	items := []ProSetting{
+		{Namespace: "valid", SchemaVersion: 1, Settings: json.RawMessage(`{"value":1}`)},
+		{Namespace: "invalid", SchemaVersion: 0, Settings: json.RawMessage(`{"value":2}`)},
+	}
+	if _, err := store.ImportProSettings(ctx, items); err == nil {
+		t.Fatal("ImportProSettings() error = nil, want validation failure")
+	}
+	if _, ok, err := store.GetProSetting(ctx, "valid"); err != nil || ok {
+		t.Fatalf("GetProSetting(valid) after failed import = _, %v, %v; want missing", ok, err)
+	}
+}

@@ -33,7 +33,7 @@ At service startup the patch layer forces the upstream config values required by
 - `usage-statistics-enabled: true`
 - `remote-management.panel-github-repository: https://github.com/ssfun/CLIProxyAPI-Pro`
 
-The loaded in-memory config is always corrected. `config.yaml` is updated only when the loaded values differ, preserving normal startup behavior when the file is already correct.
+The loaded in-memory config is always corrected. Runtime writes may only update keys that already exist in `config.yaml`; Pro never adds a missing key.
 
 ### Usage API
 
@@ -77,6 +77,7 @@ The export contains usage events and may also include metadata records:
 - `model_prices` — legacy base prices plus complete global per-model pricing rules.
 - `quota_cache` — SQLite-backed quota snapshots used by quota cards and account-scoped refresh.
 - `monitoring_settings` — retention, WebDAV backup, and scheduled models.dev synchronization settings.
+- `pro_settings` — Pro-owned settings, currently including request-state protection.
 - `routing_cursor_state` — account-routing rotation cursors.
 - `auth_runtime_stats` — account selection, success/failure, and recent-request-bucket statistics.
 - `account_inspection_schedule` — persisted backend account-inspection schedule.
@@ -179,10 +180,12 @@ The latest finished inspection result is persisted separately at `/CLIProxyAPI/u
 The patch layer exposes a unified routing-policy API under the management prefix:
 
 - `GET /v0/management/routing-policy`
-- `PUT|PATCH /v0/management/routing-policy`
+- `PATCH /v0/management/routing-policy/upstream`
+- `PUT /v0/management/routing-policy/request-protection`
+- `PUT|PATCH /v0/management/routing-policy` (legacy management-client compatibility)
 - `POST /v0/management/routing-policy/release`
 
-The API combines upstream routing mode, session stickiness, request retry, account switching, cooldown, quota fallback, and Codex identity-cloaking settings with Pro's `routing.request-protection` policy. Built-in protection supports Antigravity, xAI, Codex, Gemini CLI, Gemini, Gemini Interactions, Vertex AI, AI Studio, Claude, and Kimi.
+The API combines upstream routing mode, session stickiness, request retry, account switching, cooldown, quota fallback, and Codex identity-cloaking settings with Pro request protection. Upstream values can only update keys already present in `config.yaml`; request protection is stored in the `pro_settings` table in `usage.sqlite`. A legacy `routing.request-protection` node is migrated to SQLite and removed from YAML on first startup. Built-in protection supports Antigravity, xAI, Codex, Gemini CLI, Gemini, Gemini Interactions, Vertex AI, AI Studio, Claude, and Kimi.
 
 Protection is disabled by default and starts in `observe` mode. Per-provider settings cover HTTP statuses, consecutive-confirmation thresholds, confirmation windows, 429 quota evidence, automatic release, and fallback disable duration. `enforce` can disable matching auth records and records `request_protection` ownership; automatic or manual release affects only records owned by this policy, never user-disabled or differently owned accounts.
 
@@ -225,7 +228,7 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
 - The generated API Server shuts down its management Handler from `Stop`; embedders that create a Handler directly through the SDK must also call `Shutdown()` to release inspection, routing-protection, login-cleanup, and global callback ownership.
 - `patches/routing_policy.go` — unified routing configuration, request-state-protection handlers, usage plugin, and automatic release task.
-- `patches/routing_protection_config.go` — injected `routing.request-protection` configuration types.
+- `patches/config_existing_updates.go` — existing-scalar-only YAML updates that never create missing keys.
 - `.github/workflows/release-core.yml` — image publish, Pro binary assets, `management.html` publish, usage backup, Render deployment trigger, Telegram notification, and run cleanup.
 
 ## Docker build

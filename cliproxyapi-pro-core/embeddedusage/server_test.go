@@ -208,6 +208,54 @@ func TestUsageImportRejectsTamperedManifestBackupBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestUsageBackupRestoresProSettingsAndAppliesImportHandler(t *testing.T) {
+	ctx := context.Background()
+	sourceStore := openTestStore(t)
+	want := ProSetting{
+		Namespace:     ProSettingNamespaceRoutingRequestProtection,
+		SchemaVersion: 1,
+		Settings:      json.RawMessage(`{"enabled":true,"mode":"enforce"}`),
+		UpdatedAtMS:   123,
+	}
+	if err := sourceStore.SetProSetting(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+	exportRecorder := httptest.NewRecorder()
+	testUsageRouter(sourceStore).ServeHTTP(exportRecorder, httptest.NewRequest(http.MethodGet, "/usage/export", nil))
+	if exportRecorder.Code != http.StatusOK {
+		t.Fatalf("export status = %d; body=%s", exportRecorder.Code, exportRecorder.Body.String())
+	}
+
+	targetStore := openTestStore(t)
+	applied := make(chan ProSetting, 1)
+	SetProSettingsImportHandler(func(items []ProSetting) error {
+		for _, item := range items {
+			if item.Namespace == want.Namespace {
+				applied <- item
+			}
+		}
+		return nil
+	})
+	defer SetProSettingsImportHandler(nil)
+	importRecorder := httptest.NewRecorder()
+	testUsageRouter(targetStore).ServeHTTP(importRecorder, httptest.NewRequest(http.MethodPost, "/usage/import", bytes.NewReader(exportRecorder.Body.Bytes())))
+	if importRecorder.Code != http.StatusOK {
+		t.Fatalf("import status = %d; body=%s", importRecorder.Code, importRecorder.Body.String())
+	}
+	got, ok, err := targetStore.GetProSetting(ctx, want.Namespace)
+	if err != nil || !ok || string(got.Settings) != string(want.Settings) {
+		t.Fatalf("restored pro setting = %+v, %v, %v", got, ok, err)
+	}
+	select {
+	case item := <-applied:
+		if string(item.Settings) != string(want.Settings) {
+			t.Fatalf("applied pro setting = %+v", item)
+		}
+	default:
+		t.Fatal("Pro settings import handler was not called")
+	}
+}
+
 func TestUsageImportRestoresModelPriceRuleWhenOnlyNewerHistoryRemains(t *testing.T) {
 	ctx := context.Background()
 	sourceStore := openTestStore(t)

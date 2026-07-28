@@ -33,7 +33,7 @@ internal/embeddedusage
 - `usage-statistics-enabled: true`
 - `remote-management.panel-github-repository: https://github.com/ssfun/CLIProxyAPI-Pro`
 
-加载后的内存配置始终会被修正。只有当加载到的值不一致时才会更新 `config.yaml`，文件已经正确时不会重复落盘。
+加载后的内存配置始终会被修正。运行时只允许修改 `config.yaml` 中已经存在的键；缺失键不会被 Pro 自动新增。
 
 ### Usage API
 
@@ -77,6 +77,7 @@ internal/embeddedusage
 - `model_prices` — 基础价格兼容数据和完整的全局 model 价格规则。
 - `quota_cache` — 配额卡片和账号级刷新使用的 SQLite-backed quota snapshots。
 - `monitoring_settings` — 监控日志保留时间、WebDAV 备份配置和 models.dev 定期同步配置。
+- `pro_settings` — Pro 私有设置；当前包含请求状态保护策略。
 - `routing_cursor_state` — 账号路由轮转游标。
 - `auth_runtime_stats` — 账号选择、成功/失败和近期请求桶统计。
 - `account_inspection_schedule` — 后端账号巡检调度设置。
@@ -178,10 +179,12 @@ internal/embeddedusage
 补丁层在 management API 下增加统一路由策略接口：
 
 - `GET /v0/management/routing-policy`
-- `PUT|PATCH /v0/management/routing-policy`
+- `PATCH /v0/management/routing-policy/upstream`
+- `PUT /v0/management/routing-policy/request-protection`
+- `PUT|PATCH /v0/management/routing-policy`（旧管理端兼容入口）
 - `POST /v0/management/routing-policy/release`
 
-接口聚合 upstream 的路由策略、会话粘性、请求重试、账号切换、冷却、配额回退和 Codex 身份混淆配置，并增加 `routing.request-protection` 请求状态保护配置。内置 provider 支持 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi。
+接口聚合 upstream 的路由策略、会话粘性、请求重试、账号切换、冷却、配额回退和 Codex 身份混淆配置，并增加请求状态保护配置。上游字段只修改 `config.yaml` 中已经存在的键；请求保护保存在 `usage.sqlite` 的 `pro_settings`，不会写入上游配置。旧版 `routing.request-protection` 会在首次启动时迁移到 SQLite 并从 YAML 删除。内置 provider 支持 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi。
 
 请求状态保护默认关闭，模式默认为 `observe`。接口通过 `availableProviders` 返回当前已有 API 配置或凭据的受支持 provider。启用后可按 provider 配置 HTTP 状态码、连续确认次数、确认窗口、429 配额证据、自动解除和兜底禁用时长。`enforce` 模式达到门槛后会禁用对应认证记录，并写入 `request_protection` 归属元数据；自动解除和管理端手动解除只处理由该策略禁用的账号，不会重新启用用户手动禁用或由其他模块禁用的账号。
 
@@ -224,7 +227,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
 - 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放巡检、路由保护、登录清理及全局回调。
 - `patches/routing_policy.go` — 注入统一路由配置和请求状态保护 handlers、usage plugin 与自动解除任务。
-- `patches/routing_protection_config.go` — 注入 `routing.request-protection` 配置类型。
+- `patches/config_existing_updates.go` — 只修改已存在 YAML 标量、禁止补键的配置写入辅助层。
 - `.github/workflows/release-core.yml` — 镜像发布、Pro 二进制资产、management.html 发布、usage 备份、Render 部署触发、Telegram 通知和 workflow 清理。
 
 ## Docker 构建

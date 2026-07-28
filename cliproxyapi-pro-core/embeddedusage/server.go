@@ -786,6 +786,8 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 	routingCursorRecords := 0
 	var authRuntimeStats []AuthRuntimeStats
 	authRuntimeStatsRecords := 0
+	var proSettings []ProSetting
+	proSettingsRecords := 0
 	var accountInspectionSchedule json.RawMessage
 	accountInspectionScheduleRecords := 0
 	var accountInspectionSnapshot json.RawMessage
@@ -898,6 +900,15 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			}
 			authRuntimeStats = append(authRuntimeStats, items...)
 			authRuntimeStatsRecords++
+			continue
+		case proSettingsExportRecordType:
+			items, err := parseProSettingsImportRecord(raw)
+			if err != nil {
+				failed++
+				continue
+			}
+			proSettings = append(proSettings, items...)
+			proSettingsRecords++
 			continue
 		}
 		if recordType != "" {
@@ -1038,6 +1049,17 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return
 		}
 	}
+	importedProSettings, err := s.store.ImportProSettings(c.Request.Context(), proSettings)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if proSettingsImporter != nil && importedProSettings > 0 {
+		if err := proSettingsImporter(proSettings); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	if accountInspectionSchedule != nil && accountInspectionScheduleImporter != nil {
 		if err := accountInspectionScheduleImporter(accountInspectionSchedule); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1064,6 +1086,8 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		"routingCursorRecords":             routingCursorRecords,
 		"authRuntimeStats":                 importedAuthRuntimeStats,
 		"authRuntimeStatsRecords":          authRuntimeStatsRecords,
+		"proSettings":                      importedProSettings,
+		"proSettingsRecords":               proSettingsRecords,
 		"accountInspectionSchedule":        accountInspectionSchedule != nil,
 		"accountInspectionScheduleRecords": accountInspectionScheduleRecords,
 		"accountInspectionSnapshot":        accountInspectionSnapshot != nil,
@@ -1196,6 +1220,25 @@ func parseAuthRuntimeStatsImportRecord(raw []byte) ([]AuthRuntimeStats, error) {
 		}
 	}
 	return record.Items, nil
+}
+
+func parseProSettingsImportRecord(raw []byte) ([]ProSetting, error) {
+	var record proSettingsExportRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, err
+	}
+	if record.Version != 1 {
+		return nil, fmt.Errorf("unsupported pro settings export version %d", record.Version)
+	}
+	items := make([]ProSetting, 0, len(record.Items))
+	for _, item := range record.Items {
+		normalized, err := normalizeProSetting(item)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, normalized)
+	}
+	return items, nil
 }
 
 func parseMonitoringSettingsImportRecord(raw []byte) (MonitoringSettings, error) {

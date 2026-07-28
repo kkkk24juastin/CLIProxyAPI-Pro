@@ -3,6 +3,7 @@ package management
 import (
 	"context"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -76,9 +77,9 @@ func TestRoutingPolicyControllerStopWaitsForInFlightUsage(t *testing.T) {
 }
 
 func TestNormalizeRoutingRequestProtectionConfig(t *testing.T) {
-	got := normalizeRoutingRequestProtectionConfig(config.RequestProtectionConfig{
+	got := normalizeRoutingRequestProtectionConfig(routingRequestProtectionConfig{
 		Mode: "ENFORCE",
-		Providers: map[string]config.RequestProtectionProviderPolicy{
+		Providers: map[string]routingProtectionProviderPolicy{
 			"codex": {
 				StatusCodes:               []int{429, 429, 99, 600},
 				Confirmations:             9,
@@ -107,6 +108,43 @@ func TestNormalizeRoutingRequestProtectionConfig(t *testing.T) {
 		if _, ok := got.Providers[provider]; !ok {
 			t.Fatalf("provider %s missing", provider)
 		}
+	}
+}
+
+func TestLegacyRoutingRequestProtectionMigrationRemovesOnlyProNode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	original := "# keep\nrouting:\n  strategy: fill-first\n  request-protection:\n    enabled: true\n    mode: enforce\n    providers:\n      codex:\n        enabled: true\n        status-codes: [429]\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value, found, err := readLegacyRoutingRequestProtectionConfig(path)
+	if err != nil || !found || !value.Enabled || value.Mode != "enforce" || !value.Providers["codex"].Enabled {
+		t.Fatalf("legacy config = %+v, %v, %v", value, found, err)
+	}
+	removed, err := removeLegacyRoutingRequestProtectionConfig(path)
+	if err != nil || !removed {
+		t.Fatalf("remove legacy config = %v, %v", removed, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	if strings.Contains(text, "request-protection") || !strings.Contains(text, "strategy: fill-first") || !strings.Contains(text, "# keep") {
+		t.Fatalf("unexpected migrated config:\n%s", text)
+	}
+}
+
+func TestRoutingPolicyExistingScalarUpdatesNeverIncludesUnchangedDefaults(t *testing.T) {
+	cfg := &config.Config{}
+	desired := routingPolicyGlobalSettingsFromConfig(cfg)
+	if updates := routingPolicyExistingScalarUpdates(cfg, desired); len(updates) != 0 {
+		t.Fatalf("default updates = %#v, want none", updates)
+	}
+	desired.Strategy = "fill-first"
+	updates := routingPolicyExistingScalarUpdates(cfg, desired)
+	if len(updates) != 1 || strings.Join(updates[0].Path, ".") != "routing.strategy" {
+		t.Fatalf("strategy updates = %#v", updates)
 	}
 }
 
@@ -240,7 +278,7 @@ func TestRoutingProtectionReleaseAtPrefersLatestSignal(t *testing.T) {
 		},
 		Fail: coreusage.Failure{Body: `{"error":{"resets_in_seconds":180}}`},
 	}
-	got := routingProtectionReleaseAt(record, config.RequestProtectionProviderPolicy{AutoEnable: true}, now)
+	got := routingProtectionReleaseAt(record, routingProtectionProviderPolicy{AutoEnable: true}, now)
 	want := now.Add(5 * time.Minute)
 	if !got.Equal(want) {
 		t.Fatalf("release at = %v want %v", got, want)
@@ -249,7 +287,7 @@ func TestRoutingProtectionReleaseAtPrefersLatestSignal(t *testing.T) {
 
 func TestRoutingProtectionReleaseAtFallback(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	got := routingProtectionReleaseAt(coreusage.Record{}, config.RequestProtectionProviderPolicy{
+	got := routingProtectionReleaseAt(coreusage.Record{}, routingProtectionProviderPolicy{
 		AutoEnable:             true,
 		FallbackDisableMinutes: 45,
 	}, now)

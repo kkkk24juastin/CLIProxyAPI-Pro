@@ -14,6 +14,7 @@ var accountInspectionScheduleImporter func(jsonBytes []byte) error
 var accountInspectionSnapshotExporter func() (jsonBytes []byte, ok bool, err error)
 var accountInspectionSnapshotImporter func(jsonBytes []byte) error
 var authRuntimeStateImporter func(cursors []RoutingCursorState, stats []AuthRuntimeStats) error
+var proSettingsImporter func(settings []ProSetting) error
 var globalStateMu sync.RWMutex
 var globalStateWriterCancel context.CancelFunc
 var globalStateWriterDone chan struct{}
@@ -294,6 +295,10 @@ func SetAuthRuntimeStateImportHandler(importer func([]RoutingCursorState, []Auth
 	authRuntimeStateImporter = importer
 }
 
+func SetProSettingsImportHandler(importer func([]ProSetting) error) {
+	proSettingsImporter = importer
+}
+
 func defaultServer() *Server {
 	globalStateMu.RLock()
 	defer globalStateMu.RUnlock()
@@ -319,6 +324,24 @@ func GetQuotaCache(ctx context.Context, provider, fileName string) ([]QuotaCache
 		return nil, fmt.Errorf("usage service is not available")
 	}
 	return globalService.store.GetQuotaCache(ctx, provider, fileName)
+}
+
+func GetProSetting(ctx context.Context, namespace string) (ProSetting, bool, error) {
+	globalStateMu.RLock()
+	defer globalStateMu.RUnlock()
+	if globalService == nil || globalService.store == nil {
+		return ProSetting{}, false, nil
+	}
+	return globalService.store.GetProSetting(ctx, namespace)
+}
+
+func SetProSetting(ctx context.Context, item ProSetting) error {
+	globalStateMu.RLock()
+	defer globalStateMu.RUnlock()
+	if globalService == nil || globalService.store == nil {
+		return fmt.Errorf("usage service is not available")
+	}
+	return globalService.store.SetProSetting(ctx, item)
 }
 
 func QueueRoutingCursorState(state RoutingCursorState) {

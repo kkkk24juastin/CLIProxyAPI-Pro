@@ -83,11 +83,6 @@ export interface RoutingPolicyResponse {
   recentEvents: RoutingProtectionEvent[];
 }
 
-export interface RoutingPolicyUpdate {
-  global: RoutingPolicyGlobalSettings;
-  requestProtection: RoutingRequestProtectionConfig;
-}
-
 type RoutingPolicyRawResponse = Omit<
   RoutingPolicyResponse,
   'availableProviders' | 'active' | 'recentEvents'
@@ -117,9 +112,18 @@ export const routingPolicyApi = {
       await apiClient.get<RoutingPolicyRawResponse>('/routing-policy')
     );
   },
-  async update(payload: RoutingPolicyUpdate): Promise<RoutingPolicyResponse> {
+  async updateUpstream(global: RoutingPolicyGlobalSettings): Promise<RoutingPolicyResponse> {
     return normalizeRoutingPolicyResponse(
-      await apiClient.put<RoutingPolicyRawResponse>('/routing-policy', payload)
+      await apiClient.patch<RoutingPolicyRawResponse>('/routing-policy/upstream', { global })
+    );
+  },
+  async updateRequestProtection(
+    requestProtection: RoutingRequestProtectionConfig
+  ): Promise<RoutingPolicyResponse> {
+    return normalizeRoutingPolicyResponse(
+      await apiClient.put<RoutingPolicyRawResponse>('/routing-policy/request-protection', {
+        requestProtection,
+      })
     );
   },
   async release(authIndex: string): Promise<RoutingPolicyResponse> {

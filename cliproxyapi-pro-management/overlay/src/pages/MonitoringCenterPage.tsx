@@ -224,6 +224,8 @@ type UsageImportResult = {
   routingCursorRecords?: number;
   authRuntimeStats?: number;
   authRuntimeStatsRecords?: number;
+  proSettings?: number;
+  proSettingsRecords?: number;
   accountInspectionSchedule?: boolean;
   accountInspectionScheduleRecords?: number;
   accountInspectionSnapshot?: boolean;
@@ -523,6 +525,7 @@ export function MonitoringCenterPage() {
         (result.quotaCacheRecords ?? 0) > 0 ? t('usage_stats.import_quota_cache_restored', { count: result.quotaCache ?? 0 }) : '',
         (result.routingCursorRecords ?? 0) > 0 ? t('usage_stats.import_routing_cursors_restored', { count: result.routingCursors ?? 0 }) : '',
         (result.authRuntimeStatsRecords ?? 0) > 0 ? t('usage_stats.import_auth_runtime_stats_restored', { count: result.authRuntimeStats ?? 0 }) : '',
+        (result.proSettingsRecords ?? 0) > 0 ? t('usage_stats.import_pro_settings_restored', { count: result.proSettings ?? 0 }) : '',
         result.accountInspectionSchedule ? t('usage_stats.import_account_inspection_schedule_restored') : '',
         result.accountInspectionSnapshot ? t('usage_stats.import_account_inspection_snapshot_restored') : '',
         result.monitoringSettings ? t('usage_stats.import_monitoring_settings_restored') : '',
