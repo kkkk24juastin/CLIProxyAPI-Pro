@@ -66,7 +66,7 @@ Main capabilities:
 - Adds a backend account-inspection scheduler and executor with token refresh before probing.
 - Adds unified routing-policy and request-state-protection APIs.
 - Optionally starts the Komari agent.
-- Prebundles the `proxy-pool` dynamic library in standard macOS, Windows, and Linux releases plus Docker images; FreeBSD and `_no-plugin` assets do not currently bundle it.
+- Prebundles the `proxy-pool` dynamic library in standard macOS, Windows amd64, and Linux releases plus Docker images; Windows ARM64, FreeBSD, and `_no-plugin` assets do not currently bundle it.
 - Redirects `/` to `/management.html`.
 - Enhances the `/healthz` response.
 

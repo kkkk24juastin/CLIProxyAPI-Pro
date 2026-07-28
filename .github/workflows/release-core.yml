@@ -359,14 +359,14 @@ jobs:
             asset_arch: amd64
             archive_format: zip
             asset_suffix: ""
-          - target: windows-arm64
-            kind: hosted-plugin
+          - target: windows-arm64-no-plugin
+            kind: no-plugin
             runner: windows-11-arm
             goos: windows
             goarch: arm64
             asset_arch: aarch64
             archive_format: zip
-            asset_suffix: ""
+            asset_suffix: _no-plugin
           - target: linux-amd64
             kind: linux-glibc-plugin
             runner: ubuntu-latest
@@ -687,6 +687,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           ASSET_ARCH: ${{ matrix.asset_arch }}
+          ARCHIVE_FORMAT: ${{ matrix.archive_format }}
           ASSET_SUFFIX: ${{ matrix.asset_suffix }}
           BUILD_DATE: ${{ steps.prepare-core.outputs.build_date }}
           SOURCE_DATE_EPOCH: ${{ steps.prepare-core.outputs.source_date_epoch }}
@@ -694,28 +695,33 @@ jobs:
           set -euo pipefail
           cd upstream-core
 
+          binary_name="cli-proxy-api"
+          if [ "${GOOS}" = "windows" ]; then
+            binary_name="cli-proxy-api.exe"
+          fi
+
           archive_dir="dist/${GOOS}-${GOARCH}${ASSET_SUFFIX}/archive"
-          archive_name="CLIProxyAPI_${RELEASE_TAG#v}_${GOOS}_${ASSET_ARCH}${ASSET_SUFFIX}.tar.gz"
+          archive_name="CLIProxyAPI_${RELEASE_TAG#v}_${GOOS}_${ASSET_ARCH}${ASSET_SUFFIX}.${ARCHIVE_FORMAT}"
           rm -rf "dist/${GOOS}-${GOARCH}${ASSET_SUFFIX}"
           mkdir -p "${archive_dir}"
 
           CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -buildvcs=false -trimpath \
             -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
-            -o "${archive_dir}/cli-proxy-api" ./cmd/server/
+            -o "${archive_dir}/${binary_name}" ./cmd/server/
 
-          if [ "${GOOS}" = "linux" ] && readelf -l "${archive_dir}/cli-proxy-api" | grep -q 'Requesting program interpreter'; then
-            readelf -l "${archive_dir}/cli-proxy-api" >&2
+          if [ "${GOOS}" = "linux" ] && readelf -l "${archive_dir}/${binary_name}" | grep -q 'Requesting program interpreter'; then
+            readelf -l "${archive_dir}/${binary_name}" >&2
             echo "no-plugin linux binary must not require a dynamic interpreter" >&2
             exit 1
           fi
 
           cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
           python ../customizations-repo/scripts/build/create_reproducible_archive.py \
-            --format tar.gz \
+            --format "${ARCHIVE_FORMAT}" \
             --output "dist/${archive_name}" \
             --root "${archive_dir}" \
             --source-date-epoch "${SOURCE_DATE_EPOCH}" \
-            cli-proxy-api LICENSE README.md README_EN.md config.example.yaml
+            "${binary_name}" LICENSE README.md README_EN.md config.example.yaml
 
       - name: Upload core binary assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

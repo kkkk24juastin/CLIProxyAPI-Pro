@@ -4,7 +4,7 @@
 
 本目录不维护 upstream 的完整 fork。Docker 构建时会下载指定 upstream release，复制本地 `embeddedusage/` 包，执行 `patches/` 中的补丁脚本，然后构建 Pro 部署使用的多架构镜像。
 
-标准 macOS、Windows、Linux Pro Release 与 Docker 镜像还会预打包 `cliproxyapi-pro-plugins/proxy-pool` 动态插件。插件在回环地址提供固定 SOCKS5 入口，Core 继续使用单一 `proxy-url`，节点轮询、健康隔离和故障转移由插件完成，不修改 upstream 的代理执行路径。FreeBSD 与 `_no-plugin` 资产暂不内置该功能。
+标准 macOS、Windows amd64、Linux Pro Release 与 Docker 镜像还会预打包 `cliproxyapi-pro-plugins/proxy-pool` 动态插件。插件在回环地址提供固定 SOCKS5 入口，Core 继续使用单一 `proxy-url`，节点轮询、健康隔离和故障转移由插件完成，不修改 upstream 的代理执行路径。Windows ARM64、FreeBSD 与 `_no-plugin` 资产暂不内置该功能。
 
 ## 定制内容
 

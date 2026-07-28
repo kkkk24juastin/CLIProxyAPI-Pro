@@ -49,4 +49,4 @@ Only numeric loopback listener addresses are accepted. A node URL pointing back 
 
 ## Packaging
 
-Standard Pro macOS, Windows, and Linux archives bundle the library under `plugins/<goos>/<goarch>/proxy-pool.<extension>`. Docker images bundle Linux amd64/arm64 libraries. FreeBSD and `_no-plugin` archives do not currently bundle this feature.
+Standard Pro macOS, Windows amd64, and Linux archives bundle the library under `plugins/<goos>/<goarch>/proxy-pool.<extension>`. Docker images bundle Linux amd64/arm64 libraries. Windows ARM64, FreeBSD, and `_no-plugin` archives do not currently bundle this feature.

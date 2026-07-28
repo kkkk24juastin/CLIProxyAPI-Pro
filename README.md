@@ -66,7 +66,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 支持后端账号巡检调度器和执行器，巡检探测前可刷新 token。
 - 支持统一路由策略与请求状态保护 API。
 - 支持 Komari agent 可选启动。
-- 标准 macOS、Windows、Linux Release 和 Docker 镜像预打包 `proxy-pool` 动态插件；FreeBSD 与 `_no-plugin` 产物暂不内置代理池。
+- 标准 macOS、Windows amd64、Linux Release 和 Docker 镜像预打包 `proxy-pool` 动态插件；Windows ARM64、FreeBSD 与 `_no-plugin` 产物暂不内置代理池。
 - 将 `/` 跳转到 `/management.html`。
 - 增强 `/healthz` 返回信息。
 
