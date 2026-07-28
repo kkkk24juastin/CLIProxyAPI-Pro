@@ -118,6 +118,7 @@ import { resolveAuthProvider } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/utils/sourceResolver';
 import quotaStyles from '@/pages/QuotaPage.module.scss';
 import styles from '@/features/monitoring/accountInspection.module.scss';
+import monitoringStyles from '@/features/monitoring/monitoring.module.scss';
 
 type ResultBulkAction = 'suggested' | 'recheck' | ManualAccountInspectionAction;
 
@@ -1158,14 +1159,20 @@ export function AccountInspectionPage() {
     recoverable: displayedHealthCounts.recoverable,
     highAvailable: displayedHealthCounts.healthy,
   }), [displayedHealthCounts, filterRowCounts.pending, pendingActionCount]);
-  const resultFilterTabs = useMemo<Array<{ key: ResultFilter; label: string; count: number }>>(() => [
-    { key: 'pending', label: t('monitoring.account_inspection_filter_pending'), count: resultFilterCounts.pending },
-    { key: 'accountInvalid', label: t('monitoring.account_inspection_account_invalid'), count: resultFilterCounts.accountInvalid },
-    { key: 'requestError', label: t('monitoring.account_inspection_account_request_error'), count: resultFilterCounts.requestError },
-    { key: 'quotaExhausted', label: t('monitoring.account_inspection_health_quota_exhausted'), count: resultFilterCounts.quotaExhausted },
-    { key: 'recoverable', label: t('monitoring.account_inspection_health_recoverable'), count: resultFilterCounts.recoverable },
-    { key: 'highAvailable', label: t('monitoring.account_inspection_high_available'), count: resultFilterCounts.highAvailable },
-  ], [resultFilterCounts, t]);
+  const resultFilterOptions = useMemo(() => {
+    const option = (value: ResultFilter, label: string, count: number, hideCount = false) => ({
+      value,
+      label: hideCount ? label : `${label} · ${count}`,
+    });
+    return [
+      option('pending', t('monitoring.account_inspection_filter_pending'), resultFilterCounts.pending, hasAutoExecutionPolicy),
+      option('accountInvalid', t('monitoring.account_inspection_account_invalid'), resultFilterCounts.accountInvalid),
+      option('requestError', t('monitoring.account_inspection_account_request_error'), resultFilterCounts.requestError),
+      option('quotaExhausted', t('monitoring.account_inspection_health_quota_exhausted'), resultFilterCounts.quotaExhausted),
+      option('recoverable', t('monitoring.account_inspection_health_recoverable'), resultFilterCounts.recoverable),
+      option('highAvailable', t('monitoring.account_inspection_high_available'), resultFilterCounts.highAvailable),
+    ];
+  }, [hasAutoExecutionPolicy, resultFilterCounts, t]);
   const resultBulkActionOptions = useMemo(() => [
     { value: 'suggested', label: t('monitoring.account_inspection_bulk_action_suggested') },
     { value: 'recheck', label: t('monitoring.account_inspection_bulk_action_recheck') },
@@ -1740,48 +1747,28 @@ export function AccountInspectionPage() {
 
         {result ? (
           <>
-            <div className={styles.resultToolbar}>
-              <div className={styles.resultToolbarPrimary}>
-                <div className={styles.resultSearchField}>
-                  <Input
-                    type="search"
-                    value={resultSearchInput}
-                    onChange={(event) => setResultSearchInput(event.target.value)}
-                    placeholder={t('monitoring.account_inspection_search_placeholder')}
-                    aria-label={t('monitoring.account_inspection_search_label')}
-                    className={styles.resultSearchInput}
-                    rightElement={<IconSearch size={16} />}
-                  />
-                </div>
-                <Select
-                  value={selectedResultProvider}
-                  options={resultProviderOptions}
-                  onChange={setSelectedResultProvider}
-                  ariaLabel={t('monitoring.account_inspection_filter_provider')}
-                  className={styles.resultProviderSelect}
-                  triggerClassName={styles.resultProviderSelectTrigger}
-                  dropdownClassName={styles.resultProviderSelectDropdown}
-                  fullWidth={false}
-                  size="sm"
-                />
-              </div>
-              <div className={styles.resultFilterControl}>
-                {resultFilterTabs.map((tab) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    className={[styles.resultFilterButton, resultFilter === tab.key ? styles.resultFilterButtonActive : '']
-                      .filter(Boolean)
-                      .join(' ')}
-                    onClick={() => setResultFilter(tab.key)}
-                  >
-                    <span>{tab.label}</span>
-                    {hasAutoExecutionPolicy && tab.key === 'pending' ? null : (
-                      <span className={styles.resultFilterCount}>{tab.count}</span>
-                    )}
-                  </button>
-                ))}
-              </div>
+            <div className={`${monitoringStyles.filterGrid} ${styles.resultToolbar}`}>
+              <Input
+                type="search"
+                value={resultSearchInput}
+                onChange={(event) => setResultSearchInput(event.target.value)}
+                placeholder={t('monitoring.account_inspection_search_placeholder')}
+                aria-label={t('monitoring.account_inspection_search_label')}
+                className={monitoringStyles.toolbarHeaderSearchInput}
+                rightElement={<IconSearch size={16} />}
+              />
+              <Select
+                value={selectedResultProvider}
+                options={resultProviderOptions}
+                onChange={setSelectedResultProvider}
+                ariaLabel={t('monitoring.account_inspection_filter_provider')}
+              />
+              <Select
+                value={resultFilter}
+                options={resultFilterOptions}
+                onChange={(value) => setResultFilter(value as ResultFilter)}
+                ariaLabel={t('monitoring.account_inspection_result')}
+              />
             </div>
             {selectedVisibleResultRows.length > 0 ? (
               <div className={styles.resultSelectionBar}>

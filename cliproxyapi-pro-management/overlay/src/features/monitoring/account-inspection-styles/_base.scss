@@ -409,63 +409,10 @@
   font-size: 13px;
 }
 
-.resultToolbar {
-  display: grid;
-  grid-template-columns: minmax(240px, 320px) 180px minmax(0, 1fr);
-  align-items: stretch;
+.resultToolbar.resultToolbar {
+  grid-template-columns: minmax(260px, 1.4fr) repeat(2, minmax(180px, 1fr));
   gap: 10px;
-  min-width: 0;
   margin-bottom: 12px;
-}
-
-.resultToolbarPrimary {
-  display: contents;
-}
-
-.resultSearchField {
-  width: 100%;
-  min-width: 0;
-}
-
-.resultSearchInput {
-  width: 100%;
-  min-width: 0;
-  height: 36px;
-  min-height: 36px;
-  padding-block: 0;
-  padding-right: 34px;
-  border-radius: 8px;
-  font-size: 12px;
-  line-height: 1;
-}
-
-.resultProviderSelect {
-  width: 100%;
-  min-width: 0;
-}
-
-.resultProviderSelectTrigger {
-  height: 36px;
-  min-height: 36px;
-  padding: 0 12px;
-  border-color: color-mix(in srgb, var(--inspect-line) 80%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--inspect-surface-muted) 78%, var(--inspect-surface));
-  color: var(--inspect-ink);
-  font-size: 12px;
-  font-weight: 700;
-  box-shadow: none;
-}
-
-.resultProviderSelectTrigger:hover:not(:disabled),
-.resultProviderSelectTrigger[aria-expanded='true'] {
-  border-color: color-mix(in srgb, var(--inspect-accent) 36%, var(--inspect-line));
-  background: color-mix(in srgb, var(--inspect-accent) 7%, var(--inspect-surface));
-  box-shadow: none;
-}
-
-.resultProviderSelectDropdown {
-  border-radius: 12px;
 }
 
 .operationModuleHeader h2 {
@@ -487,10 +434,7 @@
 
 .resultFilterControl {
   display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  min-width: 0;
+  flex: 0 0 auto;
   max-width: 100%;
   gap: 3px;
   overflow-x: auto;
@@ -501,23 +445,6 @@
   scrollbar-width: none;
 }
 
-.resultFilterCount {
-  display: inline-grid;
-  place-items: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--inspect-line) 72%, transparent);
-  color: inherit;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.resultFilterButtonActive .resultFilterCount {
-  background: color-mix(in srgb, var(--inspect-surface) 82%, transparent);
-}
 
 .resultSelectionBar {
   display: flex;
