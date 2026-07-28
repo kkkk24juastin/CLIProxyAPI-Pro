@@ -1192,14 +1192,13 @@ export const toAccountInspectionApiItem = (item: AccountInspectionResultItem): A
   disabled: item.disabled,
 });
 
-export const buildActionRiskPreview = (items: AccountInspectionResultItem[], t: TFunction) =>
+export const buildActionPreview = (items: AccountInspectionResultItem[], t: TFunction) =>
   items
-    .filter((item) => item.action === 'delete' || item.action === 'disable')
     .slice(0, 5)
     .map((item) => ({
       key: item.key,
       account: item.fileName,
-      provider: item.provider,
+      provider: resolveProviderDisplayLabel(item.provider),
       action: formatActionLabel(item.action, t),
       reason: item.actionReason || item.error || '-',
       dangerous: item.action === 'delete',
@@ -1207,50 +1206,72 @@ export const buildActionRiskPreview = (items: AccountInspectionResultItem[], t: 
 
 export const buildExecuteConfirmationMessage = (
   items: AccountInspectionResultItem[],
-  t: TFunction,
-  hasAutoExecutePolicy: boolean
+  t: TFunction
 ) => {
   const counts = countActions(items);
-  const preview = buildActionRiskPreview(items, t);
+  const preview = buildActionPreview(items, t);
   const hasDelete = counts.delete > 0;
+  const isBatch = items.length > 1;
 
   return (
-    <div className={styles.confirmationBody}>
-      <p>
-        {t('monitoring.account_inspection_execute_confirm_body', {
-          total: items.length,
-          delete: counts.delete,
-          disable: counts.disable,
-          enable: counts.enable,
-        })}
-      </p>
+    <div className={`${styles.confirmationBody} ${isBatch ? styles.confirmationBatchBody : ''}`}>
+      <div className={styles.confirmationBatchLead}>
+        <strong>{t('monitoring.account_inspection_execute_confirm_summary', { total: items.length })}</strong>
+        <span>
+          {t('monitoring.account_inspection_execute_confirm_body', {
+            total: items.length,
+            delete: counts.delete,
+            disable: counts.disable,
+            enable: counts.enable,
+          })}
+        </span>
+      </div>
       <div className={styles.confirmationStats}>
-        <span className={hasDelete ? styles.confirmationDangerStat : ''}>{`${t('monitoring.account_inspection_action_delete')}: ${counts.delete}`}</span>
-        <span>{`${t('monitoring.account_inspection_action_disable')}: ${counts.disable}`}</span>
-        <span>{`${t('monitoring.account_inspection_action_enable')}: ${counts.enable}`}</span>
+        <div className={hasDelete ? styles.confirmationDangerStat : ''}>
+          <span>{t('monitoring.account_inspection_action_delete')}</span>
+          <strong>{counts.delete}</strong>
+        </div>
+        <div>
+          <span>{t('monitoring.account_inspection_action_disable')}</span>
+          <strong>{counts.disable}</strong>
+        </div>
+        <div>
+          <span>{t('monitoring.account_inspection_action_enable')}</span>
+          <strong>{counts.enable}</strong>
+        </div>
       </div>
       {preview.length > 0 ? (
         <div className={styles.confirmationPreview}>
-          <strong>{t('monitoring.account_inspection_preview_title')}</strong>
-          {preview.map((item) => (
-            <div key={item.key} className={styles.confirmationPreviewRow}>
-              <span>{item.account}</span>
-              <small>{item.provider}</small>
-              <strong className={item.dangerous ? styles.errorText : undefined}>{item.action}</strong>
-              <em>{item.reason}</em>
-            </div>
-          ))}
+          <div className={styles.confirmationPreviewHeading}>
+            <strong>{t('monitoring.account_inspection_preview_title')}</strong>
+            <span>{t('monitoring.account_inspection_preview_count', { shown: preview.length, total: items.length })}</span>
+          </div>
+          <div className={styles.confirmationPreviewHeader} aria-hidden="true">
+            <span>{t('monitoring.account_label')}</span>
+            <span>{t('monitoring.account_inspection_preview_provider')}</span>
+            <span>{t('monitoring.account_inspection_next_action')}</span>
+            <span>{t('monitoring.account_inspection_reason')}</span>
+          </div>
+          <div className={styles.confirmationPreviewList}>
+            {preview.map((item) => (
+              <div key={item.key} className={styles.confirmationPreviewRow}>
+                <span className={styles.confirmationPreviewAccount} title={item.account}>{item.account}</span>
+                <small>{item.provider}</small>
+                <strong className={item.dangerous ? styles.errorText : undefined}>{item.action}</strong>
+                <em title={item.reason}>{item.reason}</em>
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
-      {hasAutoExecutePolicy ? (
-        <p className={styles.warningText}>
-          {t('monitoring.account_inspection_settings_auto_section_desc')}
-        </p>
-      ) : null}
       {hasDelete ? (
-        <p className={styles.dangerText}>
-          {t('monitoring.account_inspection_delete_irreversible_warning')}
-        </p>
+        <div className={`${styles.confirmationNotice} ${styles.confirmationNoticeDanger} ${styles.confirmationBatchNotice}`}>
+          <span className={styles.confirmationNoticeIcon} aria-hidden="true">!</span>
+          <div>
+            <strong>{`${t('monitoring.account_inspection_action_delete')}: ${counts.delete}`}</strong>
+            <span>{t('monitoring.account_inspection_delete_irreversible_warning')}</span>
+          </div>
+        </div>
       ) : null}
     </div>
   );

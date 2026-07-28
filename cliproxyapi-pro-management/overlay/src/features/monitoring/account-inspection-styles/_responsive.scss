@@ -313,14 +313,91 @@
     justify-self: start;
   }
 
-  .confirmationStats,
-  .confirmationPreviewRow {
-    grid-template-columns: 1fr;
+  :global(.modal):has(.confirmationBatchBody) {
+    width: calc(100vw - 24px) !important;
+    max-height: calc(100vh - 24px);
   }
 
-  .confirmationStats span,
+  @supports (height: 100dvh) {
+    :global(.modal):has(.confirmationBatchBody) {
+      max-height: calc(100dvh - 24px);
+    }
+  }
+
+  :global(.modal-body):has(.confirmationBatchBody) {
+    max-height: calc(100vh - 116px);
+  }
+
+  @supports (height: 100dvh) {
+    :global(.modal-body):has(.confirmationBatchBody) {
+      max-height: calc(100dvh - 116px);
+    }
+  }
+
+  :global(.modal-body):has(.confirmationBatchBody) > div:first-child {
+    padding: 16px 16px 10px;
+  }
+
+  :global(.modal-body):has(.confirmationBatchBody) > div:last-child {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 8px !important;
+    padding: 12px 16px 16px;
+  }
+
+  :global(.modal-body):has(.confirmationBatchBody) > div:last-child :global(.btn) {
+    width: 100%;
+  }
+
+  .confirmationStats {
+    gap: 6px;
+  }
+
+  .confirmationStats > div {
+    display: grid;
+    justify-items: start;
+    gap: 5px;
+    padding: 9px 10px;
+  }
+
+  .confirmationStats strong {
+    font-size: 17px;
+  }
+
+  .confirmationPreviewHeading {
+    align-items: flex-start;
+  }
+
+  .confirmationPreviewHeader {
+    display: none;
+  }
+
+  .confirmationPreviewRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px 10px;
+    align-items: start;
+    padding: 10px 12px;
+  }
+
+  .confirmationPreviewRow small {
+    grid-column: 1;
+  }
+
   .confirmationPreviewRow strong {
-    text-align: left;
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    text-align: right;
+  }
+
+  .confirmationPreviewRow em {
+    grid-column: 1 / -1;
+    display: -webkit-box;
+    padding-top: 6px;
+    border-top: 1px dashed color-mix(in srgb, var(--inspect-line) 72%, transparent);
+    overflow: hidden;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .emptyState {

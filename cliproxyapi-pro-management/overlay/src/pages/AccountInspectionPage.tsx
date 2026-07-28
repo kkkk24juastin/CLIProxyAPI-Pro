@@ -789,8 +789,7 @@ export function AccountInspectionPage() {
         title: t('monitoring.account_inspection_execute_confirm_title'),
         message: buildExecuteConfirmationMessage(
           targets,
-          t,
-          hasAccountInspectionAutoExecutePolicies(inspectionSettings)
+          t
         ),
         confirmText: t('monitoring.account_inspection_execute_confirm_button', {
           count: targets.length,
@@ -835,7 +834,7 @@ export function AccountInspectionPage() {
       })
       .catch((error) => handleAccountInspectionControlError(error, appendLog, showNotification, t('common.unknown_error')))
       .finally(() => setLoadingFullInspectionDetails(false));
-  }, [appendLog, executeItems, inspectionSettings, result, selectedResultProvider, showConfirmation, showNotification, t]);
+  }, [appendLog, executeItems, result, selectedResultProvider, showConfirmation, showNotification, t]);
 
   const handleExecuteSingle = useCallback(
     (item: AccountInspectionResultItem, manualAction?: ManualAccountInspectionAction) => {
@@ -850,8 +849,7 @@ export function AccountInspectionPage() {
           ? buildDeleteConfirmationMessage(target, t)
           : buildExecuteConfirmationMessage(
             [target],
-            t,
-            hasAccountInspectionAutoExecutePolicies(inspectionSettings)
+            t
           ),
         confirmText: actionLabel,
         cancelText: t('common.cancel'),
@@ -859,7 +857,7 @@ export function AccountInspectionPage() {
         onConfirm: () => executeItems([target]),
       });
     },
-    [executeItems, inspectionSettings, showConfirmation, t]
+    [executeItems, showConfirmation, t]
   );
 
   const handleRecheckSingle = useCallback(
@@ -978,8 +976,7 @@ export function AccountInspectionPage() {
       title: t('monitoring.account_inspection_execute_confirm_title'),
       message: buildExecuteConfirmationMessage(
         targets,
-        t,
-        hasAccountInspectionAutoExecutePolicies(inspectionSettings)
+        t
       ),
       confirmText: t('monitoring.account_inspection_execute_confirm_button', { count: targets.length }),
       cancelText: t('common.cancel'),
@@ -989,7 +986,7 @@ export function AccountInspectionPage() {
         void executeItems(targets);
       },
     });
-  }, [executeItems, inspectionSettings, recheckSelectedResults, resultBulkAction, selectedVisibleResultRows, showConfirmation, showNotification, t]);
+  }, [executeItems, recheckSelectedResults, resultBulkAction, selectedVisibleResultRows, showConfirmation, showNotification, t]);
 
   const quotaStore = useMemo(
     () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),

@@ -520,11 +520,61 @@
   gap: 12px;
 }
 
+.confirmationBatchBody {
+  min-width: 0;
+}
+
+:global(.modal):has(.confirmationBatchBody) {
+  width: min(720px, calc(100vw - 32px)) !important;
+  max-height: min(88vh, 820px);
+}
+
+:global(.modal-body):has(.confirmationBatchBody) {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  max-height: min(74vh, 680px);
+  padding: 0;
+  overflow: hidden;
+}
+
+:global(.modal-body):has(.confirmationBatchBody) > div:first-child {
+  min-height: 0;
+  margin: 0 !important;
+  padding: 20px 24px 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+:global(.modal-body):has(.confirmationBatchBody) > div:last-child {
+  margin: 0 !important;
+  padding: 14px 24px 18px;
+  border-top: 1px solid var(--inspect-line);
+  background: var(--inspect-surface);
+}
+
 .confirmationBody p {
   margin: 0;
   color: var(--inspect-muted);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.confirmationBatchLead {
+  display: grid;
+  gap: 5px;
+}
+
+.confirmationBatchLead strong {
+  color: var(--inspect-ink);
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.confirmationBatchLead span {
+  color: var(--inspect-muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .confirmationLead {
@@ -616,47 +666,147 @@
   color: var(--inspect-red);
 }
 
+.confirmationBatchNotice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.confirmationNoticeIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--inspect-red) 14%, var(--inspect-surface));
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.confirmationBatchNotice > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.confirmationBatchNotice strong {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.confirmationBatchNotice > div > span {
+  color: color-mix(in srgb, var(--inspect-red) 82%, var(--inspect-ink));
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
 .confirmationStats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
-.confirmationStats span {
+.confirmationStats > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--inspect-line) 84%, transparent);
   border-radius: 10px;
   background: var(--inspect-surface-muted);
   color: var(--inspect-ink);
+}
+
+.confirmationStats span {
   font-size: 13px;
-  font-weight: 700;
-  text-align: center;
+  font-weight: 650;
+}
+
+.confirmationStats strong {
+  font-size: 18px;
+  font-weight: 780;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 .confirmationDangerStat {
+  border-color: color-mix(in srgb, var(--inspect-red) 24%, var(--inspect-line)) !important;
   background: color-mix(in srgb, var(--inspect-red) 12%, var(--inspect-surface)) !important;
   color: var(--inspect-red) !important;
 }
 
 .confirmationPreview {
   display: grid;
-  gap: 8px;
-  padding: 12px;
+  gap: 0;
   border: 1px solid var(--inspect-line);
   border-radius: 12px;
+  background: var(--inspect-surface);
+  overflow: hidden;
+}
+
+.confirmationPreviewHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--inspect-line);
   background: var(--inspect-surface-muted);
 }
 
-.confirmationPreview > strong {
+.confirmationPreviewHeading strong {
+  color: var(--inspect-ink);
   font-size: 13px;
+  font-weight: 720;
+}
+
+.confirmationPreviewHeading span {
+  color: var(--inspect-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.confirmationPreviewHeader,
+.confirmationPreviewRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) 90px 76px minmax(0, 1.5fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.confirmationPreviewHeader {
+  padding: 7px 13px;
+  border-bottom: 1px solid color-mix(in srgb, var(--inspect-line) 78%, transparent);
+  color: var(--inspect-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.confirmationPreviewList {
+  display: grid;
+  max-height: 240px;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .confirmationPreviewRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(76px, 0.5fr) minmax(76px, 0.5fr) minmax(0, 1.6fr);
-  gap: 8px;
-  align-items: start;
+  min-height: 40px;
+  padding: 7px 13px;
+  border-bottom: 1px solid color-mix(in srgb, var(--inspect-line) 62%, transparent);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.35;
+}
+
+.confirmationPreviewRow:last-child {
+  border-bottom: 0;
+}
+
+.confirmationPreviewRow:nth-child(2n) {
+  background: color-mix(in srgb, var(--inspect-surface-muted) 52%, var(--inspect-surface));
 }
 
 .confirmationCompactRow {
@@ -675,25 +825,32 @@
 .confirmationPreviewRow span,
 .confirmationPreviewRow em,
 .confirmationCompactRow span {
-  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .confirmationPreviewRow small {
   color: var(--inspect-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .confirmationPreviewRow em {
+  min-width: 0;
+  overflow: hidden;
   color: var(--inspect-muted);
   font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.warningText {
-  color: var(--inspect-amber);
-}
-
-.dangerText {
-  color: var(--inspect-red);
-  font-weight: 700;
+.confirmationPreviewAccount {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--inspect-ink);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .errorText {
