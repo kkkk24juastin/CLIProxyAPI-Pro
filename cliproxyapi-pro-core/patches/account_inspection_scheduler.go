@@ -931,6 +931,12 @@ func accountInspectionResultMatchesFilter(result accountInspectionResult, filter
 		return true
 	case "attention", "needs-attention", "needs_attention":
 		return accountInspectionResultHealthBucketOf(result) != accountInspectionHealthHealthy
+	case "accountissues", "account-issues", "account_issues":
+		bucket := accountInspectionResultHealthBucketOf(result)
+		return bucket == accountInspectionHealthAuthInvalid || bucket == accountInspectionHealthInspectionError
+	case "quotachanges", "quota-changes", "quota_changes":
+		bucket := accountInspectionResultHealthBucketOf(result)
+		return bucket == accountInspectionHealthQuotaExhausted || bucket == accountInspectionHealthRecoverable
 	case "pending":
 		return result.Action != accountInspectionActionKeep && !result.Executed
 	case "accountinvalid", "account-invalid", "account_invalid", "authinvalid", "auth-invalid", "auth_invalid":

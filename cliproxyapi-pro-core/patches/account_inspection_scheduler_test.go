@@ -211,6 +211,16 @@ func TestPaginateAccountInspectionResultsFiltersHealthBuckets(t *testing.T) {
 	if info.Total != 3 || len(page) != 3 || page[0].Key != "auth" || page[1].Key != "quota" || page[2].Key != "recoverable" {
 		t.Fatalf("pending attention page = %+v info=%+v, want auth/quota/recoverable", page, info)
 	}
+
+	page, info = paginateAccountInspectionResults(results, 1, 10, "accountIssues", false, "", "")
+	if info.Total != 2 || len(page) != 2 || page[0].Key != "auth" || page[1].Key != "error" {
+		t.Fatalf("account issues page = %+v info=%+v, want auth/error", page, info)
+	}
+
+	page, info = paginateAccountInspectionResults(results, 1, 10, "quotaChanges", false, "", "")
+	if info.Total != 2 || len(page) != 2 || page[0].Key != "quota" || page[1].Key != "recoverable" {
+		t.Fatalf("quota changes page = %+v info=%+v, want quota/recoverable", page, info)
+	}
 }
 
 func TestAccountInspectionHealthClassificationUsesSemanticEvidenceAcrossProviders(t *testing.T) {

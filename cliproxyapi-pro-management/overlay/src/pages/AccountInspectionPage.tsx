@@ -165,7 +165,7 @@ export function AccountInspectionPage() {
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
   const [resultStatusFilter, setResultStatusFilter] = useState<ResultStatusFilter>(
-    initialAutoExecutionPolicy ? 'attention' : 'all'
+    initialAutoExecutionPolicy ? 'accountIssues' : 'all'
   );
   const [resultReasonFilter, setResultReasonFilter] = useState<ResultReasonFilter | null>(null);
   const [resultPendingOnly, setResultPendingOnly] = useState(!initialAutoExecutionPolicy);
@@ -729,7 +729,7 @@ export function AccountInspectionPage() {
     if (previousAutoExecutionPolicyRef.current === hasAutoExecutionPolicy) return;
     previousAutoExecutionPolicyRef.current = hasAutoExecutionPolicy;
     setResultReasonFilter(null);
-    setResultStatusFilter(hasAutoExecutionPolicy ? 'attention' : 'all');
+    setResultStatusFilter(hasAutoExecutionPolicy ? 'accountIssues' : 'all');
     setResultPendingOnly(!hasAutoExecutionPolicy);
   }, [hasAutoExecutionPolicy]);
 
@@ -1152,11 +1152,11 @@ export function AccountInspectionPage() {
         ].join(' · ')
       : t('monitoring.account_inspection_auto_execute_no_actions');
   const showInspectionResults = useCallback((filter: ResultStatusFilter | ResultReasonFilter) => {
-    if (filter === 'all' || filter === 'attention' || filter === 'highAvailable') {
+    if (filter === 'all' || filter === 'accountIssues' || filter === 'quotaChanges' || filter === 'highAvailable') {
       setResultStatusFilter(filter);
       setResultReasonFilter(null);
     } else {
-      setResultStatusFilter('attention');
+      setResultStatusFilter(filter === 'accountInvalid' || filter === 'requestError' ? 'accountIssues' : 'quotaChanges');
       setResultReasonFilter(filter);
     }
     setResultPendingOnly(false);
@@ -1183,12 +1183,14 @@ export function AccountInspectionPage() {
     : runStatus === 'error'
       ? t('monitoring.account_inspection_results_error_empty')
       : t('monitoring.account_inspection_empty');
-  const attentionResultCount = Math.max(0, displayedHealthCounts.total - displayedHealthCounts.healthy);
+  const accountIssueResultCount = displayedHealthCounts.authInvalid + displayedHealthCounts.inspectionError;
+  const quotaChangeResultCount = displayedHealthCounts.quotaExhausted + displayedHealthCounts.recoverable;
   const resultStatusFilterOptions = useMemo(() => [
     { value: 'all', label: `${t('monitoring.account_inspection_filter_all')} · ${displayedHealthCounts.total}` },
-    { value: 'attention', label: `${t('monitoring.account_inspection_filter_attention')} · ${attentionResultCount}` },
+    { value: 'accountIssues', label: `${t('monitoring.account_inspection_filter_account_issues')} · ${accountIssueResultCount}` },
+    { value: 'quotaChanges', label: `${t('monitoring.account_inspection_filter_quota_changes')} · ${quotaChangeResultCount}` },
     { value: 'highAvailable', label: `${t('monitoring.account_inspection_high_available')} · ${displayedHealthCounts.healthy}` },
-  ], [attentionResultCount, displayedHealthCounts.healthy, displayedHealthCounts.total, t]);
+  ], [accountIssueResultCount, displayedHealthCounts.healthy, displayedHealthCounts.total, quotaChangeResultCount, t]);
   const resultReasonLabels = useMemo<Record<ResultReasonFilter, string>>(() => ({
     accountInvalid: t('monitoring.account_inspection_account_invalid'),
     requestError: t('monitoring.account_inspection_account_request_error'),

@@ -78,7 +78,8 @@ describe('account inspection page model', () => {
     expect(view.healthCounts.authInvalid).toBe(1);
     expect(view.healthCounts.quotaExhausted).toBe(1);
     expect(view.filterRowCounts.all).toBe(3);
-    expect(view.filterRowCounts.attention).toBe(2);
+    expect(view.filterRowCounts.accountIssues).toBe(1);
+    expect(view.filterRowCounts.quotaChanges).toBe(1);
     expect(view.filterRowCounts.pending).toBe(2);
     expect(view.actionableActionCounts).toMatchObject({ delete: 1, disable: 1 });
   });

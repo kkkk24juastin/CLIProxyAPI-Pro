@@ -42,7 +42,7 @@ export type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
 
 export type ResultHealthStatus = 'healthy' | 'disabled' | 'authInvalid' | 'quotaExhausted' | 'inspectionError' | 'recoverable';
 
-export type ResultStatusFilter = 'all' | 'attention' | 'highAvailable';
+export type ResultStatusFilter = 'all' | 'accountIssues' | 'quotaChanges' | 'highAvailable';
 
 export type ResultReasonFilter = 'accountInvalid' | 'requestError' | 'quotaExhausted' | 'recoverable';
 
@@ -214,7 +214,8 @@ export const emptyAutoExecutionCounts = (): AutoExecutionCounts => ({
 
 export const createEmptyFilterRows = (): Record<ResultFilter, InspectionResultViewRow[]> => ({
   all: [],
-  attention: [],
+  accountIssues: [],
+  quotaChanges: [],
   pending: [],
   accountInvalid: [],
   requestError: [],
@@ -741,7 +742,8 @@ export const buildInspectionResultsViewState = (items: AccountInspectionResultIt
   const filterRows = createEmptyFilterRows();
   const filterRowCounts: Record<ResultFilter, number> = {
     all: 0,
-    attention: 0,
+    accountIssues: 0,
+    quotaChanges: 0,
     highAvailable: 0,
     accountInvalid: 0,
     quotaExhausted: 0,
@@ -777,11 +779,6 @@ export const buildInspectionResultsViewState = (items: AccountInspectionResultIt
     row = pushResultRow(rows, item, healthStatus, row);
     filterRowCounts.all += 1;
     row = pushResultRow(filterRows.all, item, healthStatus, row);
-    if (healthStatus !== 'healthy') {
-      filterRowCounts.attention += 1;
-      row = pushResultRow(filterRows.attention, item, healthStatus, row);
-    }
-
     switch (healthStatus) {
       case 'healthy':
         healthCounts.healthy += 1;
@@ -793,21 +790,29 @@ export const buildInspectionResultsViewState = (items: AccountInspectionResultIt
         break;
       case 'authInvalid':
         healthCounts.authInvalid += 1;
+        filterRowCounts.accountIssues += 1;
+        row = pushResultRow(filterRows.accountIssues, item, healthStatus, row);
         filterRowCounts.accountInvalid += 1;
         row = pushResultRow(filterRows.accountInvalid, item, healthStatus, row);
         break;
       case 'quotaExhausted':
         healthCounts.quotaExhausted += 1;
+        filterRowCounts.quotaChanges += 1;
+        row = pushResultRow(filterRows.quotaChanges, item, healthStatus, row);
         filterRowCounts.quotaExhausted += 1;
         row = pushResultRow(filterRows.quotaExhausted, item, healthStatus, row);
         break;
       case 'inspectionError':
         healthCounts.inspectionError += 1;
+        filterRowCounts.accountIssues += 1;
+        row = pushResultRow(filterRows.accountIssues, item, healthStatus, row);
         filterRowCounts.requestError += 1;
         row = pushResultRow(filterRows.requestError, item, healthStatus, row);
         break;
       case 'recoverable':
         healthCounts.recoverable += 1;
+        filterRowCounts.quotaChanges += 1;
+        row = pushResultRow(filterRows.quotaChanges, item, healthStatus, row);
         filterRowCounts.recoverable += 1;
         row = pushResultRow(filterRows.recoverable, item, healthStatus, row);
         break;
