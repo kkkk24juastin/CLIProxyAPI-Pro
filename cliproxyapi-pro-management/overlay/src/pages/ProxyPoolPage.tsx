@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -52,23 +53,102 @@ const formatTime = (value: string, language: string): string => {
   }).format(date);
 };
 
-const validateConfig = (config: ProxyPoolConfig): string => {
-  if (!/^(127(?:\.\d{1,3}){3}|\[?::1\]?):\d{1,5}$/.test(config.listen.trim())) {
-    return 'Listener must be a numeric loopback address with a port';
+interface ValidationError {
+  key: string;
+  defaultValue: string;
+  values?: Record<string, string>;
+}
+
+const parseLoopbackListener = (value: string): { host: string; port: string } | null => {
+  const listen = value.trim();
+  const ipv6Match = listen.match(/^\[::1\]:(\d{1,5})$/);
+  if (ipv6Match) {
+    const port = Number(ipv6Match[1]);
+    return port >= 1 && port <= 65535 ? { host: '::1', port: String(port) } : null;
+  }
+  const separator = listen.lastIndexOf(':');
+  if (separator <= 0) return null;
+  const host = listen.slice(0, separator);
+  const portText = listen.slice(separator + 1);
+  const octets = host.split('.');
+  const port = Number(portText);
+  if (
+    octets.length !== 4 ||
+    octets[0] !== '127' ||
+    octets.some((octet) => !/^\d{1,3}$/.test(octet) || Number(octet) > 255) ||
+    !/^\d{1,5}$/.test(portText) ||
+    port < 1 ||
+    port > 65535
+  ) {
+    return null;
+  }
+  return { host, port: String(port) };
+};
+
+const validateProxyPoolConfig = (config: ProxyPoolConfig): ValidationError | null => {
+  const listener = parseLoopbackListener(config.listen);
+  if (!listener) {
+    return {
+      key: 'proxy_pool.validation_listener',
+      defaultValue: 'Listener must be a numeric loopback address with a port from 1 to 65535',
+    };
   }
   const ids = new Set<string>();
   const urls = new Set<string>();
   for (const node of config.nodes) {
     const id = node.id.trim();
     const url = node.url.trim();
-    if (!id || !url) return 'Every node requires an ID and proxy URL';
-    if (ids.has(id)) return `Duplicate node ID: ${id}`;
-    if (urls.has(url)) return `Duplicate proxy URL: ${url}`;
+    if (!id || !url) {
+      return {
+        key: 'proxy_pool.validation_required',
+        defaultValue: 'Every node requires an ID and proxy URL',
+      };
+    }
+    if (ids.has(id)) {
+      return {
+        key: 'proxy_pool.validation_duplicate_id',
+        defaultValue: 'Duplicate node ID: {{value}}',
+        values: { value: id },
+      };
+    }
+    if (urls.has(url)) {
+      return {
+        key: 'proxy_pool.validation_duplicate_url',
+        defaultValue: 'Duplicate proxy URL: {{value}}',
+        values: { value: url },
+      };
+    }
     ids.add(id);
     urls.add(url);
-    if (!/^(https?|socks5h?):\/\//i.test(url)) return `Unsupported proxy URL: ${url}`;
+    if (!/^(https?|socks5h?):\/\//i.test(url)) {
+      return {
+        key: 'proxy_pool.validation_unsupported_url',
+        defaultValue: 'Unsupported proxy URL: {{value}}',
+        values: { value: url },
+      };
+    }
+    try {
+      const parsed = new URL(url);
+      if (!parsed.hostname) throw new Error('missing host');
+      const normalizedHost = parsed.hostname.replace(/^\[|\]$/g, '');
+      const normalizedPort =
+        parsed.port || (parsed.protocol === 'http:' ? '80' : parsed.protocol === 'https:' ? '443' : '');
+      if (normalizedHost === listener.host && normalizedPort === listener.port) {
+        return {
+          key: 'proxy_pool.validation_recursive_url',
+          defaultValue: 'A proxy node cannot point back to the internal listener: {{value}}',
+          values: { value: url },
+        };
+      }
+    } catch {
+      return {
+        key: 'proxy_pool.validation_invalid_url',
+        defaultValue: 'Invalid proxy URL: {{value}}',
+        values: { value: url },
+      };
+    }
   }
-  return '';
+  return null;
 };
 
 function MetricCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
@@ -96,7 +176,7 @@ export function ProxyPoolPage() {
   const [loadError, setLoadError] = useState('');
   const [probeResults, setProbeResults] = useState<Record<string, ProxyPoolProbeResult>>({});
 
-  const load = useCallback(async (silent = false) => {
+  const load = useCallback(async (silent = false, replaceDraft = false) => {
     if (connectionStatus !== 'connected' || !supportsPlugin) {
       setLoading(false);
       return;
@@ -105,7 +185,7 @@ export function ProxyPoolPage() {
     try {
       const next = await proxyPoolApi.load();
       setSnapshot(next);
-      if (!dirty) setDraft(next.config);
+      if (!dirty || replaceDraft) setDraft(next.config);
       setLoadError('');
     } catch (error) {
       setLoadError(errorMessage(error));
@@ -144,9 +224,15 @@ export function ProxyPoolPage() {
   };
 
   const save = async (): Promise<boolean> => {
-    const validationError = validateConfig(draft);
+    const validationError = validateProxyPoolConfig(draft);
     if (validationError) {
-      showNotification(validationError, 'error');
+      showNotification(
+        t(validationError.key, {
+          defaultValue: validationError.defaultValue,
+          ...validationError.values,
+        }),
+        'error'
+      );
       return false;
     }
     setSaving(true);
@@ -154,7 +240,7 @@ export function ProxyPoolPage() {
       await proxyPoolApi.save(draft);
       setDirty(false);
       showNotification(t('proxy_pool.save_success', { defaultValue: 'Proxy pool saved' }), 'success');
-      await load(true);
+      await load(true, true);
       return true;
     } catch (error) {
       showNotification(
@@ -169,9 +255,15 @@ export function ProxyPoolPage() {
 
   const toggleTakeover = async () => {
     const activating = !snapshot?.takeoverActive;
-    const validationError = validateConfig(draft);
+    const validationError = validateProxyPoolConfig(draft);
     if (activating && validationError) {
-      showNotification(validationError, 'error');
+      showNotification(
+        t(validationError.key, {
+          defaultValue: validationError.defaultValue,
+          ...validationError.values,
+        }),
+        'error'
+      );
       return;
     }
     setSaving(true);
@@ -191,7 +283,7 @@ export function ProxyPoolPage() {
         await proxyPoolApi.deactivate(draft);
       }
       setDirty(false);
-      await load(true);
+      await load(true, true);
       showNotification(
         activating
           ? t('proxy_pool.takeover_enabled', { defaultValue: 'Global proxy takeover enabled' })
@@ -268,6 +360,22 @@ export function ProxyPoolPage() {
     );
   }
 
+  const actionBarTarget =
+    typeof document !== 'undefined' ? document.querySelector('.main-body') : null;
+  const actionBar = snapshot?.pluginDiscovered ? (
+    <footer className={styles.actionBar}>
+      <div>
+        <code>{snapshot.status?.proxyUrl || `socks5://${draft.listen}`}</code>
+        <span>{t('proxy_pool.fixed_endpoint_hint', { defaultValue: 'Core only sees this fixed proxy endpoint.' })}</span>
+      </div>
+      <div>
+        <Button variant="ghost" onClick={() => void resetStats()} disabled={!snapshot.status?.ready || saving}>{t('proxy_pool.reset_stats', { defaultValue: 'Reset stats' })}</Button>
+        <Button variant="secondary" onClick={() => void testAll()} loading={testingAll} disabled={dirty || !snapshot.status?.ready}>{t('proxy_pool.test_all', { defaultValue: 'Test all' })}</Button>
+        <Button onClick={() => void save()} loading={saving} disabled={!dirty}>{t('common.save')}</Button>
+      </div>
+    </footer>
+  ) : null;
+
   return (
     <div className={styles.page}>
       <header className={styles.hero}>
@@ -285,6 +393,7 @@ export function ProxyPoolPage() {
             variant={snapshot?.takeoverActive ? 'danger' : 'primary'}
             onClick={() => void toggleTakeover()}
             loading={saving}
+            disabled={loading || !snapshot?.pluginDiscovered}
           >
             {snapshot?.takeoverActive
               ? t('proxy_pool.stop_takeover', { defaultValue: 'Stop takeover' })
@@ -300,10 +409,30 @@ export function ProxyPoolPage() {
         </div>
       )}
 
-      <section className={styles.metrics}>
+      {!snapshot && (
+        <div className={styles.noticeCard}>
+          <strong>
+            {loading
+              ? t('proxy_pool.loading', { defaultValue: 'Loading proxy pool...' })
+              : t('proxy_pool.load_unavailable', { defaultValue: 'Proxy pool data is unavailable' })}
+          </strong>
+          <p>
+            {loading
+              ? t('proxy_pool.loading_hint', { defaultValue: 'Reading plugin configuration and runtime status.' })
+              : t('proxy_pool.load_unavailable_hint', { defaultValue: 'Fix the connection error above, then retry. No configuration can be changed while the current state is unknown.' })}
+          </p>
+          {!loading && (
+            <Button variant="secondary" onClick={() => void load()}>
+              {t('proxy_pool.retry_load', { defaultValue: 'Retry loading' })}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {snapshot?.pluginDiscovered && <><section className={styles.metrics}>
         <MetricCard
           label={t('proxy_pool.takeover', { defaultValue: 'Global takeover' })}
-          value={snapshot?.takeoverActive ? t('common.enabled', { defaultValue: 'Enabled' }) : t('common.disabled', { defaultValue: 'Disabled' })}
+          value={snapshot?.takeoverActive ? t('proxy_pool.enabled', { defaultValue: 'Enabled' }) : t('proxy_pool.disabled', { defaultValue: 'Disabled' })}
           hint={snapshot?.globalProxyUrl || t('proxy_pool.no_global_proxy', { defaultValue: 'No global proxy' })}
         />
         <MetricCard
@@ -342,7 +471,7 @@ export function ProxyPoolPage() {
             <p>{t('proxy_pool.settings_hint', { defaultValue: 'The listener is loopback-only. Fail-open stays off by default to prevent direct traffic leakage.' })}</p>
           </div>
           <span className={dirty ? styles.dirtyBadge : styles.savedBadge}>
-            {dirty ? t('common.unsaved_changes', { defaultValue: 'Unsaved' }) : t('common.saved', { defaultValue: 'Saved' })}
+            {dirty ? t('proxy_pool.unsaved', { defaultValue: 'Unsaved' }) : t('proxy_pool.saved', { defaultValue: 'Saved' })}
           </span>
         </div>
         <div className={styles.formGrid}>
@@ -362,9 +491,11 @@ export function ProxyPoolPage() {
           <Input label={t('proxy_pool.dial_timeout', { defaultValue: 'Dial timeout' })} value={draft.dialTimeout} onChange={(event) => updateDraft((current) => ({ ...current, dialTimeout: event.target.value }))} placeholder="8s" />
           <Input type="number" min={1} label={t('proxy_pool.failover_attempts', { defaultValue: 'Max failover attempts' })} value={draft.maxFailoverAttempts} onChange={(event) => updateDraft((current) => ({ ...current, maxFailoverAttempts: Math.max(1, Number(event.target.value) || 1) }))} />
           <Input label={t('proxy_pool.health_interval', { defaultValue: 'Health-check interval' })} value={draft.healthCheck.interval} onChange={(event) => updateDraft((current) => ({ ...current, healthCheck: { ...current.healthCheck, interval: event.target.value } }))} placeholder="30s" />
+          <Input label={t('proxy_pool.health_timeout', { defaultValue: 'Health-check timeout' })} value={draft.healthCheck.timeout} onChange={(event) => updateDraft((current) => ({ ...current, healthCheck: { ...current.healthCheck, timeout: event.target.value } }))} placeholder="8s" />
           <Input type="number" min={1} label={t('proxy_pool.isolation_threshold', { defaultValue: 'Failures before isolation' })} value={draft.healthCheck.isolationThreshold} onChange={(event) => updateDraft((current) => ({ ...current, healthCheck: { ...current.healthCheck, isolationThreshold: Math.max(1, Number(event.target.value) || 1) } }))} />
           <Input label={t('proxy_pool.isolation_duration', { defaultValue: 'Isolation duration' })} value={draft.healthCheck.isolationDuration} onChange={(event) => updateDraft((current) => ({ ...current, healthCheck: { ...current.healthCheck, isolationDuration: event.target.value } }))} placeholder="5m" />
           <Input label={t('proxy_pool.probe_target', { defaultValue: 'TCP probe target' })} value={draft.healthCheck.probeAddress} onChange={(event) => updateDraft((current) => ({ ...current, healthCheck: { ...current.healthCheck, probeAddress: event.target.value } }))} placeholder="www.gstatic.com:443" />
+          <Input label={t('proxy_pool.test_url', { defaultValue: 'Exit-IP test URL' })} value={draft.healthCheck.testUrl} onChange={(event) => updateDraft((current) => ({ ...current, healthCheck: { ...current.healthCheck, testUrl: event.target.value } }))} placeholder="https://ipwho.is/" />
         </div>
         <div className={styles.switchRow}>
           <ToggleSwitch checked={draft.healthCheck.enabled} onChange={(enabled) => updateDraft((current) => ({ ...current, healthCheck: { ...current.healthCheck, enabled } }))} label={t('proxy_pool.health_checks', { defaultValue: 'Background health checks' })} />
@@ -388,11 +519,14 @@ export function ProxyPoolPage() {
           {draft.nodes.map((node, index) => {
             const runtime = statusByID.get(node.id);
             const probe = probeResults[node.id];
+            const runtimeState = runtime?.state ?? 'unknown';
             return (
               <article key={`${node.id}-${index}`} className={styles.nodeCard}>
                 <div className={styles.nodeTopline}>
                   <ToggleSwitch checked={node.enabled} onChange={(enabled) => updateNode(index, { enabled })} ariaLabel={`${node.id} enabled`} />
-                  <span className={`${styles.stateBadge} ${stateTone(runtime?.state ?? 'unknown')}`}>{runtime?.state ?? 'unknown'}</span>
+                  <span className={`${styles.stateBadge} ${stateTone(runtimeState)}`}>
+                    {t(`proxy_pool.state_${runtimeState}`, { defaultValue: runtimeState })}
+                  </span>
                   <strong>{node.label || node.id}</strong>
                   <div className={styles.nodeActions}>
                     <Button variant="ghost" size="sm" disabled={dirty || !runtime || testingNode === node.id} loading={testingNode === node.id} onClick={() => void testNode(node.id)}>{t('proxy_pool.test', { defaultValue: 'Test' })}</Button>
@@ -404,6 +538,7 @@ export function ProxyPoolPage() {
                   <Input label={t('proxy_pool.node_label', { defaultValue: 'Label' })} value={node.label} onChange={(event) => updateNode(index, { label: event.target.value })} />
                   <Input className={styles.urlInput} label={t('proxy_pool.proxy_url', { defaultValue: 'Proxy URL' })} value={node.url} onChange={(event) => updateNode(index, { url: event.target.value })} placeholder="socks5://user:pass@host:1080" />
                   <Input type="number" min={1} label={t('proxy_pool.weight', { defaultValue: 'Weight' })} value={node.weight} onChange={(event) => updateNode(index, { weight: Math.max(1, Number(event.target.value) || 1) })} />
+                  <Input type="number" label={t('proxy_pool.order', { defaultValue: 'Order' })} value={node.order} onChange={(event) => updateNode(index, { order: Number(event.target.value) || (index + 1) * 10 })} />
                 </div>
                 <div className={styles.nodeRuntime}>
                   <span>{t('proxy_pool.latency', { defaultValue: 'Latency' })}: <strong>{runtime?.latencyMs ? `${runtime.latencyMs} ms` : '-'}</strong></span>
@@ -419,17 +554,7 @@ export function ProxyPoolPage() {
         </div>
       </section>
 
-      <footer className={styles.actionBar}>
-        <div>
-          <code>{snapshot?.status?.proxyUrl || `socks5://${draft.listen}`}</code>
-          <span>{t('proxy_pool.fixed_endpoint_hint', { defaultValue: 'Core only sees this fixed proxy endpoint.' })}</span>
-        </div>
-        <div>
-          <Button variant="ghost" onClick={() => void resetStats()} disabled={!snapshot?.status?.ready || saving}>{t('proxy_pool.reset_stats', { defaultValue: 'Reset stats' })}</Button>
-          <Button variant="secondary" onClick={() => void testAll()} loading={testingAll} disabled={dirty || !snapshot?.status?.ready}>{t('proxy_pool.test_all', { defaultValue: 'Test all' })}</Button>
-          <Button onClick={() => void save()} loading={saving} disabled={!dirty}>{t('common.save')}</Button>
-        </div>
-      </footer>
+      {actionBarTarget && actionBar ? createPortal(actionBar, actionBarTarget) : actionBar}</>}
     </div>
   );
 }

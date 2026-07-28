@@ -2707,6 +2707,10 @@ def patch_locales(target: Path) -> None:
         data['account_usage'] = additions.get('account_usage', data.get('account_usage', {}))
         data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
         data['routing_policy'] = additions.get('routing_policy', data.get('routing_policy', {}))
+        data['proxy_pool'] = additions.get(
+            'proxy_pool',
+            monitoring.get('en.json', {}).get('proxy_pool', data.get('proxy_pool', {})),
+        )
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
         gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(locale_path.name, GEMINI_CLI_LOCALE_KEYS['en.json'])
         data.setdefault('auth_files', {})['filter_gemini-cli'] = gemini_cli_locale['auth_filter']

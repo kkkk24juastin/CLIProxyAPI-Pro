@@ -57,7 +57,7 @@
 .nodeTopline { display: flex; align-items: center; gap: 10px; margin-bottom: 13px; }
 .nodeTopline > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nodeActions { display: flex; gap: 6px; margin-left: auto; }
-.nodeForm { display: grid; grid-template-columns: 1fr 1.2fr minmax(280px, 3fr) 90px; gap: 12px; }
+.nodeForm { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(150px, 1.2fr) minmax(260px, 2.4fr) 90px 90px; gap: 12px; }
 .urlInput { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .nodeRuntime { display: flex; flex-wrap: wrap; gap: 8px 18px; padding-top: 10px; border-top: 1px dashed var(--border-color); color: var(--text-secondary); font-size: 12px; }
 .nodeRuntime strong { color: var(--text-primary); }
