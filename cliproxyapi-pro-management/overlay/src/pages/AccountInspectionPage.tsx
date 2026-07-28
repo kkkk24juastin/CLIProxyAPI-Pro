@@ -192,7 +192,6 @@ export function AccountInspectionPage() {
   const [selectedResultKeys, setSelectedResultKeys] = useState<Set<string>>(() => new Set());
   const [resultBulkAction, setResultBulkAction] = useState<ResultBulkAction>('suggested');
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
-  const [openResultActionMenuKey, setOpenResultActionMenuKey] = useState<string | null>(null);
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
   const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
@@ -773,7 +772,6 @@ export function AccountInspectionPage() {
 
   useEffect(() => {
     setSelectedResultKeys(new Set());
-    setOpenResultActionMenuKey(null);
   }, [activeResultFilter, resultPage, resultPageSize, resultPendingOnly, resultSearch, selectedResultProvider]);
 
   useEffect(() => {
@@ -781,23 +779,6 @@ export function AccountInspectionPage() {
       resultsTableViewportRef.current.scrollTop = 0;
     }
   }, [activeResultFilter, resultPage, resultPageSize, resultPendingOnly, resultSearch, selectedResultProvider]);
-
-  useEffect(() => {
-    if (!openResultActionMenuKey) return undefined;
-    const closeMenu = (event: MouseEvent) => {
-      if (event.target instanceof Element && event.target.closest('[data-result-action-menu]')) return;
-      setOpenResultActionMenuKey(null);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpenResultActionMenuKey(null);
-    };
-    document.addEventListener('click', closeMenu);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('click', closeMenu);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [openResultActionMenuKey]);
 
   const handleExecutePlanned = useCallback(() => {
     if (!result) return;
@@ -1988,38 +1969,17 @@ export function AccountInspectionPage() {
                                   {formatActionLabel(suggestedAction, t)}
                                 </Button>
                               ) : null}
-                              {additionalActions.length > 0 ? (
-                                <div className={styles.resultActionMenuWrap} data-result-action-menu>
-                                  <button
-                                    type="button"
-                                    className={styles.iconActionButton}
-                                    onClick={() => setOpenResultActionMenuKey((key) => key === item.key ? null : item.key)}
-                                    aria-expanded={openResultActionMenuKey === item.key}
-                                    title={t('monitoring.account_inspection_more_actions')}
-                                    aria-label={t('monitoring.account_inspection_more_actions')}
-                                  >
-                                    <IconChevronDown size={15} />
-                                  </button>
-                                  {openResultActionMenuKey === item.key ? (
-                                    <div className={styles.resultActionMenu}>
-                                      {additionalActions.map((action) => (
-                                        <button
-                                          key={action}
-                                          type="button"
-                                          className={action === 'delete' ? styles.resultActionDanger : undefined}
-                                          onClick={() => {
-                                            setOpenResultActionMenuKey(null);
-                                            handleExecuteSingle(item, action);
-                                          }}
-                                          disabled={restoredSnapshot || runStatus === 'running' || executing || bulkActionLoading || recheckingKey !== null}
-                                        >
-                                          {formatActionLabel(action, t)}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ) : null}
+                              {additionalActions.map((action) => (
+                                <Button
+                                  key={action}
+                                  size="sm"
+                                  variant={action === 'delete' ? 'danger' : 'secondary'}
+                                  onClick={() => handleExecuteSingle(item, action)}
+                                  disabled={restoredSnapshot || runStatus === 'running' || executing || bulkActionLoading || recheckingKey !== null}
+                                >
+                                  {formatActionLabel(action, t)}
+                                </Button>
+                              ))}
                             </div>
                           </td>
                         </tr>

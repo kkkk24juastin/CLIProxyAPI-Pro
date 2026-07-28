@@ -470,58 +470,6 @@
   }
 }
 
-.resultActionMenuWrap {
-  position: relative;
-  flex: 0 0 30px;
-}
-
-.resultActionMenu {
-  position: absolute;
-  top: calc(100% + 5px);
-  right: 0;
-  z-index: 6;
-  display: grid;
-  gap: 4px;
-  min-width: 112px;
-  padding: 5px;
-  border: 1px solid color-mix(in srgb, var(--inspect-line) 88%, transparent);
-  border-radius: 8px;
-  background: var(--inspect-surface-elevated, var(--inspect-surface));
-  box-shadow: 0 10px 26px color-mix(in srgb, var(--inspect-ink) 14%, transparent);
-}
-
-.table tbody tr:last-child .resultActionMenu {
-  top: auto;
-  bottom: calc(100% + 5px);
-}
-
-.resultActionMenu button {
-  width: 100%;
-  min-height: 26px;
-  padding: 0 8px;
-  border: 1px solid color-mix(in srgb, var(--inspect-line) 86%, transparent);
-  border-radius: 6px;
-  background: var(--inspect-surface);
-  color: var(--inspect-ink);
-  font-size: 12px;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.resultActionMenu button:hover:not(:disabled) {
-  background: var(--inspect-surface-muted);
-}
-
-.resultActionMenu button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.resultActionMenu .resultActionDanger {
-  border-color: color-mix(in srgb, var(--inspect-red) 28%, var(--inspect-line));
-  color: var(--inspect-red);
-}
-
 .monoCell {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   word-break: break-all;
