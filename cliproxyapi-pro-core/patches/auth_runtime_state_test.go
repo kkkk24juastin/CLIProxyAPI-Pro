@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 )
 
 type runtimeStateTestStore struct {
@@ -51,6 +52,51 @@ func TestReadyViewRestoresNextSortedAuthWhenSavedAuthIsMissing(t *testing.T) {
 	picked := view.pickRoundRobin(nil)
 	if picked == nil || picked.auth == nil || picked.auth.ID != "auth-c" {
 		t.Fatalf("restored missing-auth pick = %#v, want auth-c", picked)
+	}
+}
+
+func TestModelSchedulerRebuildKeepsImportedCursorAuthoritative(t *testing.T) {
+	const key = "single|codex|gpt-5|0|all"
+	persisted := map[string]string{key: "auth-b"}
+	model := &modelScheduler{
+		providerKey:      "codex",
+		modelKey:         "gpt-5",
+		persistedCursors: persisted,
+		entries:          make(map[string]*scheduledAuth),
+		readyByPriority:  make(map[int]*readyBucket),
+	}
+	for _, id := range []string{"auth-a", "auth-b", "auth-c"} {
+		auth := &Auth{ID: id, Provider: "codex"}
+		model.upsertEntryLocked(&scheduledAuthMeta{auth: auth, providerKey: "codex"}, time.Now())
+	}
+	picked := model.pickReadyAtPriorityLocked(false, 0, schedulerStrategyRoundRobin, nil)
+	if picked == nil || picked.ID != "auth-c" {
+		t.Fatalf("restored pick after incremental rebuild = %#v, want auth-c", picked)
+	}
+}
+
+func TestImportedCursorRestoresLegacyRoundRobinSelector(t *testing.T) {
+	selector := &RoundRobinSelector{}
+	manager := NewManager(nil, selector, nil)
+	key := legacyRoundRobinCursorKey("codex", "")
+	if err := manager.ApplyImportedRuntimeState([]embeddedusage.RoutingCursorState{{
+		CursorKey: key, LastAuthID: "auth-b", UpdatedAtMS: time.Now().UnixMilli(),
+	}}, nil); err != nil {
+		t.Fatalf("ApplyImportedRuntimeState() error = %v", err)
+	}
+	picked, err := selector.Pick(context.Background(), "codex", "", cliproxyexecutor.Options{}, []*Auth{
+		{ID: "auth-a", Provider: "codex"},
+		{ID: "auth-b", Provider: "codex"},
+		{ID: "auth-c", Provider: "codex"},
+	})
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if picked == nil || picked.ID != "auth-c" {
+		t.Fatalf("legacy restored pick = %#v, want auth-c", picked)
+	}
+	if got := selector.persistedRoutingCursors[key]; got != "auth-c" {
+		t.Fatalf("persisted legacy cursor = %q, want auth-c", got)
 	}
 }
 

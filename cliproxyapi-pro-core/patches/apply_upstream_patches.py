@@ -1799,6 +1799,62 @@ replace_once(
     'Selected int64',
 )
 
+auth_selector = ROOT / 'sdk/cliproxy/auth/selector.go'
+replace_once(
+    auth_selector,
+    '''type RoundRobinSelector struct {
+\tmu      sync.Mutex
+\tcursors map[string]int
+\tmaxKeys int
+}''',
+    '''type RoundRobinSelector struct {
+\tmu                      sync.Mutex
+\tcursors                 map[string]int
+\tmaxKeys                  int
+\troutingCursorRestored    map[string]bool
+\tpersistedRoutingCursors map[string]string
+}''',
+    'persistedRoutingCursors map[string]string',
+)
+replace_once(
+    auth_selector,
+    '''\ts.ensureCursorKey(key, limit)
+\tindex := s.cursors[key]
+\tif index >= 2_147_483_640 {
+\t\tindex = 0
+\t}
+\ts.cursors[key] = index + 1
+\ts.mu.Unlock()
+\treturn available[index%len(available)], nil
+}''',
+    '''\ts.ensureCursorKey(key, limit)
+\ts.restoreRoutingCursorLocked(provider, model, key, available)
+\tindex := s.cursors[key]
+\tif index >= 2_147_483_640 {
+\t\tindex = 0
+\t}
+\ts.cursors[key] = index + 1
+\tpicked := available[index%len(available)]
+\ts.persistRoutingCursorLocked(provider, model, picked)
+\ts.mu.Unlock()
+\treturn picked, nil
+}''',
+    's.restoreRoutingCursorLocked(provider, model, key, available)',
+)
+replace_once(
+    auth_selector,
+    '''\tif _, ok := s.cursors[key]; !ok && len(s.cursors) >= limit {
+\t\ts.cursors = make(map[string]int)
+\t}
+}''',
+    '''\tif _, ok := s.cursors[key]; !ok && len(s.cursors) >= limit {
+\t\ts.cursors = make(map[string]int)
+\t\ts.routingCursorRestored = make(map[string]bool)
+\t}
+}''',
+    's.routingCursorRestored = make(map[string]bool)',
+)
+
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_lifecycle.go'
 replace_once(
     auth_conductor,
@@ -2207,6 +2263,26 @@ replace_once(
 \t\tbucket := buildReadyBucket(entries, cursorPrefix, m.persistedCursors)
 ''',
     'cursorPrefix := fmt.Sprintf("single|%s|%s|%d"',
+)
+replace_once(
+    auth_scheduler,
+    '''\t\tif cursorState, ok := cursorStates[priority]; ok && bucket != nil {
+\t\t\trestoreReadyViewCursors(&bucket.all, cursorState.all)
+\t\t\trestoreReadyViewCursors(&bucket.ws, cursorState.ws)
+\t\t}
+\t\tm.readyByPriority[priority] = bucket
+''',
+    '''\t\tif cursorState, ok := cursorStates[priority]; ok && bucket != nil {
+\t\t\trestoreReadyViewCursors(&bucket.all, cursorState.all)
+\t\t\trestoreReadyViewCursors(&bucket.ws, cursorState.ws)
+\t\t}
+\t\tif bucket != nil {
+\t\t\tbucket.all.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|all"])
+\t\t\tbucket.ws.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|ws"])
+\t\t}
+\t\tm.readyByPriority[priority] = bucket
+''',
+    'bucket.all.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|all"])',
 )
 replace_once(
     auth_scheduler,

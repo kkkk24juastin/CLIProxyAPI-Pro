@@ -116,6 +116,91 @@ func queueAuthRuntimeStats(auth *Auth) {
 	embeddedusage.QueueAuthRuntimeStats(authRuntimeStatsSnapshot(auth, time.Now()))
 }
 
+const legacyRoundRobinCursorPrefix = "legacy|single|"
+
+func legacyRoundRobinCursorKey(provider, model string) string {
+	return legacyRoundRobinCursorPrefix + strings.ToLower(strings.TrimSpace(provider)) + "|" + canonicalModelKey(model)
+}
+
+func routingCursorAfterAuthID(auths []*Auth, lastAuthID string) int {
+	lastAuthID = strings.TrimSpace(lastAuthID)
+	if lastAuthID == "" || len(auths) == 0 {
+		return 0
+	}
+	for index, auth := range auths {
+		if auth == nil {
+			continue
+		}
+		if auth.ID == lastAuthID {
+			return index + 1
+		}
+		if auth.ID > lastAuthID {
+			return index
+		}
+	}
+	return 0
+}
+
+// restoreRoutingCursorLocked restores the legacy built-in round-robin selector.
+// The caller must hold s.mu and pass the already sorted available auth slice.
+func (s *RoundRobinSelector) restoreRoutingCursorLocked(provider, model, selectorKey string, auths []*Auth) {
+	if s == nil {
+		return
+	}
+	if s.routingCursorRestored == nil {
+		s.routingCursorRestored = make(map[string]bool)
+	}
+	if s.routingCursorRestored[selectorKey] {
+		return
+	}
+	if s.persistedRoutingCursors == nil {
+		s.persistedRoutingCursors = make(map[string]string)
+	}
+	stateKey := legacyRoundRobinCursorKey(provider, model)
+	lastAuthID := s.persistedRoutingCursors[stateKey]
+	if lastAuthID == "" {
+		if state, ok, err := embeddedusage.GetRoutingCursorState(context.Background(), stateKey); err == nil && ok {
+			lastAuthID = state.LastAuthID
+			s.persistedRoutingCursors[stateKey] = lastAuthID
+		}
+	}
+	s.cursors[selectorKey] = routingCursorAfterAuthID(auths, lastAuthID)
+	s.routingCursorRestored[selectorKey] = true
+}
+
+// persistRoutingCursorLocked records the legacy built-in round-robin selection.
+// The caller must hold s.mu.
+func (s *RoundRobinSelector) persistRoutingCursorLocked(provider, model string, picked *Auth) {
+	if s == nil || picked == nil || strings.TrimSpace(picked.ID) == "" {
+		return
+	}
+	if s.persistedRoutingCursors == nil {
+		s.persistedRoutingCursors = make(map[string]string)
+	}
+	stateKey := legacyRoundRobinCursorKey(provider, model)
+	s.persistedRoutingCursors[stateKey] = picked.ID
+	embeddedusage.QueueRoutingCursorState(embeddedusage.RoutingCursorState{
+		CursorKey: stateKey, LastAuthID: picked.ID, UpdatedAtMS: time.Now().UnixMilli(),
+	})
+}
+
+func (s *RoundRobinSelector) applyImportedRoutingCursors(cursors []embeddedusage.RoutingCursorState) {
+	if s == nil {
+		return
+	}
+	persisted := make(map[string]string)
+	for _, state := range cursors {
+		if strings.HasPrefix(state.CursorKey, legacyRoundRobinCursorPrefix) && strings.TrimSpace(state.LastAuthID) != "" {
+			persisted[state.CursorKey] = state.LastAuthID
+		}
+	}
+	s.mu.Lock()
+	s.cursors = make(map[string]int)
+	s.routingCursorRestored = make(map[string]bool)
+	s.persistedRoutingCursors = persisted
+	s.mu.Unlock()
+}
+
 func (m *Manager) recordAuthSelected(authID string) {
 	if m == nil || strings.TrimSpace(authID) == "" {
 		return
@@ -148,6 +233,7 @@ func (m *Manager) ApplyImportedRuntimeState(cursors []embeddedusage.RoutingCurso
 	}
 
 	snapshots := make([]*Auth, 0)
+	var selector Selector
 	m.mu.Lock()
 	for _, auth := range m.auths {
 		if auth == nil {
@@ -162,8 +248,12 @@ func (m *Manager) ApplyImportedRuntimeState(cursors []embeddedusage.RoutingCurso
 		}
 		snapshots = append(snapshots, auth.Clone())
 	}
+	selector = m.selector
 	m.mu.Unlock()
 
+	if roundRobin, ok := selector.(*RoundRobinSelector); ok {
+		roundRobin.applyImportedRoutingCursors(cursors)
+	}
 	if m.scheduler != nil {
 		m.scheduler.applyImportedRuntimeState(cursors, snapshots)
 	}
