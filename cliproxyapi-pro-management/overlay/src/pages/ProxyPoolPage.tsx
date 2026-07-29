@@ -145,6 +145,7 @@ export function ProxyPoolPage() {
   const [statusFilter, setStatusFilter] = useState<ProxyPoolStatusFilter>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [pendingNode, setPendingNode] = useState<ProxyPoolNodeConfig | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [takeoverOpen, setTakeoverOpen] = useState(false);
 
@@ -182,9 +183,28 @@ export function ProxyPoolPage() {
     () => new Map((snapshot?.status?.nodes ?? []).map((node) => [node.id, node])),
     [snapshot?.status?.nodes]
   );
-  const editingNode = editingIndex === null ? null : (draft.nodes[editingIndex] ?? null);
+  const editingNode =
+    pendingNode ?? (editingIndex === null ? null : (draft.nodes[editingIndex] ?? null));
+  const editingNodeIndex = pendingNode ? draft.nodes.length : editingIndex;
   const editingKey =
-    editingNode && editingIndex !== null ? proxyNodeKey(editingNode, editingIndex) : '';
+    editingNode && editingNodeIndex !== null
+      ? proxyNodeKey(editingNode, editingNodeIndex)
+      : '';
+
+  const closeNodeSheet = () => {
+    setEditingIndex(null);
+    setPendingNode(null);
+  };
+
+  const editNode = (index: number) => {
+    setPendingNode(null);
+    setEditingIndex(index);
+  };
+
+  const beginAddNode = () => {
+    setEditingIndex(null);
+    setPendingNode(createProxyPoolNode(draft.nodes.length));
+  };
 
   const updateDraft = useCallback(
     (next: ProxyPoolConfig | ((current: ProxyPoolConfig) => ProxyPoolConfig)) => {
@@ -622,16 +642,9 @@ export function ProxyPoolPage() {
                   onQueryChange={setQuery}
                   onStatusFilterChange={setStatusFilter}
                   onSelectionChange={setSelected}
-                  onEdit={setEditingIndex}
+                  onEdit={editNode}
                   onMove={moveNode}
-                  onAdd={() => {
-                    const index = draft.nodes.length;
-                    updateDraft((current) => ({
-                      ...current,
-                      nodes: [...current.nodes, createProxyPoolNode(index)],
-                    }));
-                    setEditingIndex(index);
-                  }}
+                  onAdd={beginAddNode}
                   onImport={() => setImportOpen(true)}
                   onBulkEnable={enableSelected}
                   onBulkTest={() => void testSelected()}
@@ -675,26 +688,29 @@ export function ProxyPoolPage() {
             )}
 
             <ProxyPoolNodeSheet
-              open={editingIndex !== null}
+              open={editingNode !== null}
               node={editingNode}
               strategy={draft.strategy}
-              runtime={editingNode ? statusByID.get(editingNode.id) : undefined}
+              runtime={!pendingNode && editingNode ? statusByID.get(editingNode.id) : undefined}
               probe={probeResults[editingKey]}
               language={i18n.language}
               testing={testingNode === editingKey}
               recovering={recoveringNode === editingNode?.id}
-              onClose={() => setEditingIndex(null)}
+              onClose={closeNodeSheet}
               onApply={(node) => {
-                if (editingIndex !== null)
+                if (pendingNode) {
+                  updateDraft((current) => ({ ...current, nodes: [...current.nodes, node] }));
+                } else if (editingIndex !== null) {
                   updateDraft((current) => ({
                     ...current,
                     nodes: current.nodes.map((item, index) =>
                       index === editingIndex ? node : item
                     ),
                   }));
+                }
               }}
               onTest={(node) => {
-                if (editingIndex !== null) void runNodeTest(node, editingIndex);
+                if (editingNodeIndex !== null) void runNodeTest(node, editingNodeIndex);
               }}
               onRecover={(nodeId) => void recoverNode(nodeId)}
             />

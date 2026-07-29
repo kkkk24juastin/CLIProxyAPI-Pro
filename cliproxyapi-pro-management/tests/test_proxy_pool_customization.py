@@ -68,6 +68,21 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('DurationInput', features)
         self.assertIn('formatProxyPoolSuccessRate', features)
 
+    def test_new_node_is_only_added_after_sheet_confirmation(self) -> None:
+        source = PAGE.read_text()
+        begin_start = source.index('const beginAddNode = () => {')
+        begin_end = source.index('\n  };', begin_start)
+        begin_block = source[begin_start:begin_end]
+        apply_start = source.index('onApply={(node) => {')
+        apply_end = source.index('\n              }}', apply_start)
+        apply_block = source[apply_start:apply_end]
+
+        self.assertIn('setPendingNode(createProxyPoolNode(draft.nodes.length))', begin_block)
+        self.assertNotIn('updateDraft', begin_block)
+        self.assertIn('if (pendingNode)', apply_block)
+        self.assertIn('nodes: [...current.nodes, node]', apply_block)
+        self.assertIn('onClose={closeNodeSheet}', source)
+
     def test_proxy_pool_locales_cover_page_keys(self) -> None:
         locales = json.loads(LOCALES.read_text())
         source = PAGE.read_text() + self.feature_source()
@@ -76,6 +91,18 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         expected.update({'state_unknown', 'state_healthy', 'state_degraded', 'state_isolated', 'state_disabled'})
         for locale in ('en.json', 'zh-CN.json', 'zh-TW.json'):
             self.assertTrue(expected.issubset(locales[locale]['proxy_pool']))
+
+    def test_proxy_management_title_is_consistent_with_navigation(self) -> None:
+        locales = json.loads(LOCALES.read_text())
+        source = CUSTOMIZER.read_text()
+        expected = {
+            'en.json': 'Proxy Management',
+            'zh-CN.json': '代理管理',
+            'zh-TW.json': '代理管理',
+        }
+        for locale, title in expected.items():
+            self.assertEqual(locales[locale]['proxy_pool']['title'], title)
+            self.assertIn(f"'{locale}': {{'label': '{title}'", source)
 
     def test_service_enables_plugin_before_global_proxy_takeover(self) -> None:
         source = SERVICE.read_text()

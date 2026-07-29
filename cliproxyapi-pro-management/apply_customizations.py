@@ -244,10 +244,10 @@ AUTH_FILES_SELECTED_COUNT_LABEL_KEYS = {
 }
 
 PROXY_POOL_NAV_LOCALE_KEYS = {
-    'en.json': {'label': 'Proxy Pool', 'meta': 'Rotating upstream proxy gateway'},
-    'ru.json': {'label': 'Пул прокси', 'meta': 'Шлюз ротации внешних прокси'},
-    'zh-CN.json': {'label': '代理池', 'meta': '多节点轮询与故障转移'},
-    'zh-TW.json': {'label': '代理池', 'meta': '多節點輪詢與故障轉移'},
+    'en.json': {'label': 'Proxy Management', 'meta': 'Rotating upstream proxy gateway'},
+    'ru.json': {'label': 'Управление прокси', 'meta': 'Шлюз ротации внешних прокси'},
+    'zh-CN.json': {'label': '代理管理', 'meta': '多节点轮询与故障转移'},
+    'zh-TW.json': {'label': '代理管理', 'meta': '多節點輪詢與故障轉移'},
 }
 
 def load_overlay_replacement_manifest(path: Path) -> dict[str, set[str]]:

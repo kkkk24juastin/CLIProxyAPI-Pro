@@ -6,7 +6,7 @@
       "routing_policy": "Routing Policy"
     },
     "proxy_pool": {
-      "title": "Proxy Pool",
+      "title": "Proxy Management",
       "subtitle": "Aggregate multiple upstream proxies behind one local SOCKS5 endpoint with rotation, health isolation, and failover.",
       "takeover": "Global takeover",
       "enabled": "Enabled",
@@ -2369,7 +2369,7 @@
       "routing_policy": "路由策略"
     },
     "proxy_pool": {
-      "title": "代理池",
+      "title": "代理管理",
       "subtitle": "将多个上游代理汇聚到一个固定的本地 SOCKS5 入口，支持轮询、健康隔离与故障转移。",
       "takeover": "全局代理接管",
       "enabled": "已启用",
@@ -3658,7 +3658,7 @@
       "routing_policy": "路由策略"
     },
     "proxy_pool": {
-      "title": "代理池",
+      "title": "代理管理",
       "subtitle": "將多個上游代理匯聚到一個固定的本機 SOCKS5 入口，支援輪詢、健康隔離與故障轉移。",
       "takeover": "全域代理接管",
       "enabled": "已啟用",
