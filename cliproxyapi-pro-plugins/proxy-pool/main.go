@@ -205,7 +205,7 @@ func pluginRegistration() registration {
 	return registration{
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
-			Name:             "CLIProxyAPI Pro Proxy Pool",
+			Name:             "Pro Proxy Pool",
 			Version:          pluginVersion,
 			Author:           "ssfun",
 			GitHubRepository: "https://github.com/ssfun/CLIProxyAPI-Pro",

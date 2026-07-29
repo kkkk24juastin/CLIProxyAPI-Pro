@@ -1,4 +1,4 @@
-# CLIProxyAPI Pro Proxy Pool
+# Pro Proxy Pool
 
 `proxy-pool` is a prebundled CLIProxyAPI dynamic plugin. It exposes a loopback-only SOCKS5 listener and selects one configured upstream proxy for each TCP `CONNECT` tunnel. Core keeps using a single fixed `proxy-url`; node rotation and failover remain inside the plugin.
 
