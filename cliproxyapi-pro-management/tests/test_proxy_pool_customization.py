@@ -32,8 +32,9 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
     def test_page_guards_unknown_state_and_escapes_transition_transform(self) -> None:
         source = PAGE.read_text()
         features = self.feature_source()
-        self.assertIn("document.querySelector('.main-body')", features)
-        self.assertIn('createPortal(content, target)', features)
+        self.assertIn("useActionBarHeightVar(actionBarRef, '--proxy-pool-action-bar-height', visible)", features)
+        self.assertIn('createPortal(content, document.body)', features)
+        self.assertIn("import configStyles from '@/pages/ConfigPage.module.scss'", features)
         self.assertIn("t('proxy_pool.load_unavailable'", source)
         self.assertIn('disabled={loading || !snapshot?.pluginDiscovered}', features)
         self.assertIn('await load(true, true)', source)
@@ -62,7 +63,10 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('confirm_import_count', features)
         self.assertIn('@media (max-width: 780px)', styles)
         self.assertIn('.mobileCards', styles)
-        self.assertIn('min-height: 58px', styles)
+        self.assertIn('.quickToggleControl', styles)
+        self.assertIn('.durationControl', styles)
+        self.assertIn('DurationInput', features)
+        self.assertIn('formatProxyPoolSuccessRate', features)
 
     def test_proxy_pool_locales_cover_page_keys(self) -> None:
         locales = json.loads(LOCALES.read_text())

@@ -546,12 +546,13 @@ export function ProxyPoolPage() {
             {activeView === 'nodes' && (
               <>
                 <section className={styles.quickSettings}>
-                  <div className="form-group">
-                    <label>
+                  <div className={styles.quickSettingField}>
+                    <span className={styles.quickSettingLabel}>
                       {t('proxy_pool.strategy', { defaultValue: 'Selection strategy' })}
-                    </label>
+                    </span>
                     <Select
                       size="sm"
+                      triggerClassName={styles.quickSelectTrigger}
                       value={draft.strategy}
                       onChange={(strategy) =>
                         updateDraft({ ...draft, strategy: strategy as ProxyPoolConfig['strategy'] })
@@ -576,15 +577,29 @@ export function ProxyPoolPage() {
                       ]}
                     />
                   </div>
-                  <ToggleSwitch
-                    checked={draft.healthCheck.enabled}
-                    onChange={(enabled) =>
-                      updateDraft({ ...draft, healthCheck: { ...draft.healthCheck, enabled } })
-                    }
-                    label={t('proxy_pool.background_health_checks', {
-                      defaultValue: 'Background health checks',
-                    })}
-                  />
+                  <div className={styles.quickSettingField}>
+                    <span className={styles.quickSettingLabel}>
+                      {t('proxy_pool.background_health_checks', {
+                        defaultValue: 'Background health checks',
+                      })}
+                    </span>
+                    <div className={styles.quickToggleControl}>
+                      <ToggleSwitch
+                        checked={draft.healthCheck.enabled}
+                        onChange={(enabled) =>
+                          updateDraft({ ...draft, healthCheck: { ...draft.healthCheck, enabled } })
+                        }
+                        ariaLabel={t('proxy_pool.background_health_checks', {
+                          defaultValue: 'Background health checks',
+                        })}
+                      />
+                      <span>
+                        {draft.healthCheck.enabled
+                          ? t('proxy_pool.enabled', { defaultValue: 'Enabled' })
+                          : t('proxy_pool.disabled', { defaultValue: 'Disabled' })}
+                      </span>
+                    </div>
+                  </div>
                   <button
                     type="button"
                     className={styles.settingsLink}

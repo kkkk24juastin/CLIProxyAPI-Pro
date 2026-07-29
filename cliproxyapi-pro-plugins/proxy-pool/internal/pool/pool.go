@@ -245,6 +245,15 @@ func (n *Node) Recover() {
 
 func (n *Node) Snapshot() NodeSnapshot {
 	n.mu.RLock()
+	totalConnects := n.totalConnects.Load()
+	successConnects := n.successConnects.Load()
+	failedConnects := n.failedConnects.Load()
+	// A connection that started before ResetStats can finish after the counters
+	// were cleared. Keep the exported snapshot internally consistent so
+	// operators never see more completed connections than total attempts.
+	if completedConnects := successConnects + failedConnects; completedConnects > totalConnects {
+		totalConnects = completedConnects
+	}
 	snapshot := NodeSnapshot{
 		ID:                  n.config.ID,
 		Label:               n.config.Label,
@@ -263,9 +272,9 @@ func (n *Node) Snapshot() NodeSnapshot {
 		Location:            n.lastLocation,
 		ConsecutiveFailures: n.consecutiveFailures,
 		ActiveTunnels:       n.activeTunnels.Load(),
-		TotalConnects:       n.totalConnects.Load(),
-		SuccessConnects:     n.successConnects.Load(),
-		FailedConnects:      n.failedConnects.Load(),
+		TotalConnects:       totalConnects,
+		SuccessConnects:     successConnects,
+		FailedConnects:      failedConnects,
 	}
 	n.mu.RUnlock()
 	return snapshot

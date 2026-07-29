@@ -7,7 +7,7 @@
 }
 
 .pageWithSave {
-  padding-bottom: 88px;
+  padding-bottom: calc(var(--proxy-pool-action-bar-height, 46px) + 38px);
 }
 
 .header {
@@ -202,20 +202,38 @@
 }
 
 .quickSettings {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 11px 14px;
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) minmax(190px, 240px) minmax(0, 1fr);
+  align-items: end;
+  gap: 16px;
+  padding: 13px 14px;
   border: 1px solid var(--border-color);
   border-radius: 12px;
   background: var(--bg-secondary);
 }
-.quickSettings > :first-child {
-  width: 210px;
-  margin: 0;
+.quickSettingField {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
 }
-.quickSettings label {
+.quickSettingLabel {
+  color: var(--text-primary);
   font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.quickSelectTrigger {
+  height: 34px !important;
+}
+.quickToggleControl {
+  display: flex;
+  height: 34px;
+  align-items: center;
+  gap: 8px;
+}
+.quickToggleControl > span {
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 .settingsLink,
 .textButton {
@@ -228,6 +246,13 @@
   font: inherit;
   font-size: 12px;
   font-weight: 600;
+}
+.quickSettings .settingsLink {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  align-self: end;
+  justify-self: end;
 }
 
 .nodePanel,
@@ -329,6 +354,9 @@
 .desktopTable table {
   table-layout: fixed;
 }
+.desktopTable th {
+  white-space: nowrap;
+}
 .desktopTable th:nth-child(1),
 .desktopTable td:nth-child(1) {
   width: 38px;
@@ -355,7 +383,7 @@
 }
 .desktopTable th:nth-child(7),
 .desktopTable td:nth-child(7) {
-  width: 58px;
+  width: 76px;
 }
 .desktopTable th:nth-child(8),
 .desktopTable td:nth-child(8) {
@@ -836,6 +864,31 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 13px;
 }
+.durationControl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.durationControl input {
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.durationControl > span {
+  display: inline-flex;
+  min-width: 58px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 11px;
+  border: 1px solid var(--border-color);
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  color: var(--text-secondary);
+  background: var(--muted-bg, rgba(148, 163, 184, 0.1));
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 .dangerZone {
   display: flex;
   align-items: center;
@@ -966,47 +1019,6 @@
   margin-top: 12px;
 }
 
-.saveBar {
-  position: fixed;
-  z-index: 50;
-  right: max(24px, env(safe-area-inset-right));
-  bottom: max(16px, env(safe-area-inset-bottom));
-  left: calc(var(--sidebar-active-width, 216px) + 24px);
-  display: flex;
-  min-height: 58px;
-  box-sizing: border-box;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 8px 11px 8px 14px;
-  border: 1px solid color-mix(in srgb, var(--primary-color) 25%, var(--border-color));
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
-  box-shadow: 0 10px 32px rgba(15, 23, 42, 0.17);
-  backdrop-filter: blur(16px);
-}
-.saveBar > div:first-child {
-  min-width: 0;
-}
-.saveBar strong,
-.saveBar span {
-  display: block;
-}
-.saveBar strong {
-  font-size: 13px;
-}
-.saveBar span {
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.saveBar > div:last-child {
-  display: flex;
-  gap: 7px;
-}
-
 .noticeCard {
   padding: 24px;
 }
@@ -1056,7 +1068,7 @@
     padding: 0 0 18px;
   }
   .pageWithSave {
-    padding-bottom: 78px;
+    padding-bottom: calc(var(--proxy-pool-action-bar-height, 46px) + 28px);
   }
   .header {
     align-items: flex-start;
@@ -1107,12 +1119,8 @@
     white-space: nowrap;
   }
   .quickSettings {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 11px;
-  }
-  .quickSettings > :first-child {
-    width: auto;
   }
   .settingsLink {
     grid-column: 1 / -1;
@@ -1220,19 +1228,6 @@
   .bypassPanel > div > div {
     grid-template-columns: 1fr;
   }
-  .saveBar {
-    right: 10px;
-    bottom: max(8px, env(safe-area-inset-bottom));
-    left: 10px;
-    min-height: 58px;
-    padding: 7px 8px 7px 11px;
-  }
-  .saveBar > div:first-child span {
-    display: none;
-  }
-  .saveBar > div:last-child > :first-child {
-    display: none;
-  }
 }
 
 @media (max-width: 480px) {
@@ -1267,7 +1262,8 @@
   .quickSettings {
     grid-template-columns: 1fr;
   }
-  .quickSettings > :nth-child(2) {
+  .quickSettings .settingsLink {
+    grid-column: auto;
     justify-self: start;
   }
   .nodeFilters {

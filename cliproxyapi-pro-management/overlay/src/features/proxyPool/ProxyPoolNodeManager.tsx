@@ -269,7 +269,7 @@ export function ProxyPoolNodeManager({
                     {t('proxy_pool.last_check', { defaultValue: 'Last check' })}
                   </TableHead>
                   <TableHead alignRight>
-                    {t('common.actions', { defaultValue: 'Actions' })}
+                    {t('proxy_pool.actions', { defaultValue: 'Actions' })}
                   </TableHead>
                 </TableRow>
               </TableHeader>

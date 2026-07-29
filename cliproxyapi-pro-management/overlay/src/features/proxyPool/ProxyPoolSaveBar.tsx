@@ -1,7 +1,9 @@
+import { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Button } from '@/components/ui/Button';
-import styles from './ProxyPool.module.scss';
+import { IconCheck, IconRefreshCw } from '@/components/ui/icons';
+import { useActionBarHeightVar } from '@/hooks/useActionBarHeightVar';
+import configStyles from '@/pages/ConfigPage.module.scss';
 
 interface ProxyPoolSaveBarProps {
   visible: boolean;
@@ -12,27 +14,41 @@ interface ProxyPoolSaveBarProps {
 
 export function ProxyPoolSaveBar({ visible, saving, onDiscard, onSave }: ProxyPoolSaveBarProps) {
   const { t } = useTranslation();
+  const actionBarRef = useRef<HTMLDivElement>(null);
+  useActionBarHeightVar(actionBarRef, '--proxy-pool-action-bar-height', visible);
+
   if (!visible) return null;
   const content = (
-    <footer className={styles.saveBar}>
-      <div>
-        <strong>{t('proxy_pool.unsaved_changes', { defaultValue: 'Unsaved changes' })}</strong>
-        <span>
-          {t('proxy_pool.save_bar_hint', {
-            defaultValue: 'Review and save to apply them to the running pool.',
-          })}
-        </span>
+    <div className={configStyles.floatingActionContainer} ref={actionBarRef}>
+      <div className={configStyles.floatingActionList}>
+        <div className={`${configStyles.floatingStatus} ${configStyles.modified}`}>
+          {saving
+            ? t('config_management.status_saving_short', { defaultValue: 'Saving' })
+            : t('config_management.status_dirty_short', { defaultValue: 'Unsaved' })}
+        </div>
+        <button
+          type="button"
+          className={configStyles.floatingActionButton}
+          onClick={onDiscard}
+          disabled={saving}
+          title={t('proxy_pool.discard_changes', { defaultValue: 'Discard changes' })}
+          aria-label={t('proxy_pool.discard_changes', { defaultValue: 'Discard changes' })}
+        >
+          <IconRefreshCw size={16} />
+        </button>
+        <button
+          type="button"
+          className={configStyles.floatingActionButton}
+          onClick={onSave}
+          disabled={saving}
+          title={t('common.save')}
+          aria-label={t('common.save')}
+        >
+          <IconCheck size={16} />
+          {!saving && <span className={configStyles.dirtyDot} aria-hidden="true" />}
+        </button>
       </div>
-      <div>
-        <Button variant="ghost" size="sm" onClick={onDiscard} disabled={saving}>
-          {t('proxy_pool.discard_changes', { defaultValue: 'Discard' })}
-        </Button>
-        <Button size="sm" onClick={onSave} loading={saving}>
-          {t('common.save')}
-        </Button>
-      </div>
-    </footer>
+    </div>
   );
-  const target = typeof document !== 'undefined' ? document.querySelector('.main-body') : null;
-  return target ? createPortal(content, target) : content;
+  return typeof document === 'undefined' ? content : createPortal(content, document.body);
 }

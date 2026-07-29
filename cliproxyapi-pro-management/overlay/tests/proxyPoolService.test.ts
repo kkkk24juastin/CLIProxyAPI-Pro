@@ -5,6 +5,11 @@ import {
   parseProxyPoolImport,
   serializeProxyPoolConfig,
 } from '../src/services/api/proxyPool';
+import {
+  formatProxyPoolSuccessRate,
+  proxyPoolDurationValue,
+  serializeProxyPoolDuration,
+} from '../src/features/proxyPool/proxyPoolUi';
 
 describe('proxy pool service model', () => {
   test('recognizes credential routes that already point at the pool listener', () => {
@@ -47,7 +52,16 @@ describe('proxy pool service model', () => {
         'duplicate | http://127.0.0.1:8080',
         'broken line',
       ].join('\n'),
-      [{ id: 'proxy-primary', label: '', url: 'http://existing.example:80', enabled: true, weight: 1, order: 20 }]
+      [
+        {
+          id: 'proxy-primary',
+          label: '',
+          url: 'http://existing.example:80',
+          enabled: true,
+          weight: 1,
+          order: 20,
+        },
+      ]
     );
 
     expect(result.nodes).toEqual([
@@ -70,5 +84,18 @@ describe('proxy pool service model', () => {
     ]);
     expect(result.duplicateCount).toBe(1);
     expect(result.errors).toEqual([{ line: 5, message: 'missing supported proxy URL' }]);
+  });
+
+  test('clamps inconsistent runtime success counters at 100 percent', () => {
+    expect(formatProxyPoolSuccessRate(10, 9)).toBe('100%');
+    expect(formatProxyPoolSuccessRate(8, 10)).toBe('80%');
+    expect(formatProxyPoolSuccessRate(0, 0)).toBe('-');
+  });
+
+  test('converts configured durations to fixed UI units', () => {
+    expect(proxyPoolDurationValue('1m30s', 's')).toBe(90);
+    expect(proxyPoolDurationValue('90s', 'm')).toBe(1.5);
+    expect(proxyPoolDurationValue('invalid', 's')).toBeNull();
+    expect(serializeProxyPoolDuration(1.5, 'm')).toBe('1.5m');
   });
 });

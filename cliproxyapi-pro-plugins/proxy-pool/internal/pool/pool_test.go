@@ -80,6 +80,21 @@ func TestRecoverClearsIsolationAndPreservesStats(t *testing.T) {
 	}
 }
 
+func TestSnapshotKeepsConnectionCountersConsistentAfterResetRace(t *testing.T) {
+	node := New(testConfig("round-robin")).Node("a")
+	node.totalConnects.Store(2)
+	node.successConnects.Store(3)
+	node.failedConnects.Store(1)
+
+	snapshot := node.Snapshot()
+	if snapshot.TotalConnects != 4 {
+		t.Fatalf("TotalConnects = %d, want completed connection floor 4", snapshot.TotalConnects)
+	}
+	if snapshot.SuccessConnects > snapshot.TotalConnects {
+		t.Fatalf("inconsistent snapshot: %+v", snapshot)
+	}
+}
+
 func TestRedactURL(t *testing.T) {
 	got := RedactURL("socks5://alice:secret@proxy.example:1080")
 	if got != "socks5://alice:***@proxy.example:1080" {
