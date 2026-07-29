@@ -201,6 +201,8 @@ new_customization_paths = (
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
     'internal/pluginhost/quota_provider.go',
     'internal/pluginhost/quota_provider_test.go',
+    'internal/pluginhost/auth_model_filter.go',
+    'internal/pluginhost/auth_model_filter_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
     'internal/requestmeta/client.go',
@@ -339,12 +341,24 @@ insert_before(
     read_text(Path(__file__).resolve().parent / 'plugin_quota_api.go'),
     'type QuotaProvider interface',
 )
+replace_once(
+    pluginapi_types,
+    '\t// ModelRegistrar contributes development-time model metadata to the host registry.\n',
+    '\t// AuthModelFilter subtracts models from one concrete auth registration.\n\tAuthModelFilter AuthModelFilter\n\t// ModelRegistrar contributes development-time model metadata to the host registry.\n',
+    'AuthModelFilter AuthModelFilter',
+)
+insert_before(
+    pluginapi_types,
+    '// ModelRegistrar registers plugin-provided models with the host.\n',
+    read_text(Path(__file__).resolve().parent / 'plugin_auth_model_filter_api.go'),
+    'type AuthModelFilter interface',
+)
 
 pluginabi_types = ROOT / 'sdk/pluginabi/types.go'
 replace_once(
     pluginabi_types,
     '\tMethodAuthRefresh    = "auth.refresh"\n',
-    '\tMethodAuthRefresh    = "auth.refresh"\n\n\tMethodQuotaIdentifier = "quota.identifier"\n\tMethodQuotaFetch      = "quota.fetch"\n',
+    '\tMethodAuthRefresh    = "auth.refresh"\n\n\tMethodQuotaIdentifier = "quota.identifier"\n\tMethodQuotaFetch      = "quota.fetch"\n\n\tMethodAuthModelFilter = "model.filter_for_auth"\n',
     'MethodQuotaIdentifier',
 )
 
@@ -352,7 +366,7 @@ rpc_schema = ROOT / 'internal/pluginhost/rpc_schema.go'
 replace_once(
     rpc_schema,
     '\tAuthProvider                  bool                         `json:"auth_provider"`\n',
-    '\tAuthProvider                  bool                         `json:"auth_provider"`\n\tQuotaProvider                 bool                         `json:"quota_provider"`\n',
+    '\tAuthProvider                  bool                         `json:"auth_provider"`\n\tQuotaProvider                 bool                         `json:"quota_provider"`\n\tAuthModelFilter               bool                         `json:"auth_model_filter"`\n',
     'QuotaProvider                 bool',
 )
 insert_before(
@@ -366,10 +380,21 @@ insert_before(
 ''',
     'type rpcQuotaFetchRequest struct',
 )
+insert_before(
+    rpc_schema,
+    'type rpcAuthModelRequest struct {\n',
+    '''type rpcAuthModelFilterRequest struct {
+\tpluginapi.AuthModelFilterRequest
+\tHostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
+''',
+    'type rpcAuthModelFilterRequest struct',
+)
 replace_once(
     rpc_schema,
     '\t\tAuthProvider:                  caps.AuthProvider != nil,\n',
-    '\t\tAuthProvider:                  caps.AuthProvider != nil,\n\t\tQuotaProvider:                 caps.QuotaProvider != nil,\n',
+    '\t\tAuthProvider:                  caps.AuthProvider != nil,\n\t\tQuotaProvider:                 caps.QuotaProvider != nil,\n\t\tAuthModelFilter:               caps.AuthModelFilter != nil,\n',
     'QuotaProvider:                 caps.QuotaProvider != nil',
 )
 
@@ -384,20 +409,33 @@ insert_before(
 ''',
     'type rpcQuotaProvider struct',
 )
+insert_before(
+    rpc_client,
+    'type rpcFrontendAuthProvider struct {\n',
+    '''type rpcAuthModelFilter struct {
+\t*rpcPluginAdapter
+}
+
+''',
+    'type rpcAuthModelFilter struct',
+)
 replace_once(
     rpc_client,
     '''\tif resp.Capabilities.FrontendAuthProvider {
 \t\tplugin.Capabilities.FrontendAuthProvider = rpcFrontendAuthProvider{rpcPluginAdapter: adapter}
 \t}
 ''',
-    '''\tif resp.Capabilities.QuotaProvider {
+    '''\tif resp.Capabilities.AuthModelFilter {
+\t\tplugin.Capabilities.AuthModelFilter = rpcAuthModelFilter{rpcPluginAdapter: adapter}
+\t}
+\tif resp.Capabilities.QuotaProvider {
 \t\tplugin.Capabilities.QuotaProvider = rpcQuotaProvider{rpcPluginAdapter: adapter}
 \t}
 \tif resp.Capabilities.FrontendAuthProvider {
 \t\tplugin.Capabilities.FrontendAuthProvider = rpcFrontendAuthProvider{rpcPluginAdapter: adapter}
 \t}
 ''',
-    'plugin.Capabilities.QuotaProvider = rpcQuotaProvider',
+    'plugin.Capabilities.AuthModelFilter = rpcAuthModelFilter',
 )
 replace_once(
     rpc_client,
@@ -412,6 +450,12 @@ replace_once(
 \t\treq.HTTPClient = nil
 \t\treturn req
 \tcase rpcQuotaFetchRequest:
+\t\treq.HTTPClient = nil
+\t\treturn req
+\tcase pluginapi.AuthModelFilterRequest:
+\t\treq.HTTPClient = nil
+\t\treturn req
+\tcase rpcAuthModelFilterRequest:
 \t\treq.HTTPClient = nil
 \t\treturn req
 ''',
@@ -436,13 +480,28 @@ func (p rpcQuotaProvider) FetchQuota(ctx context.Context, req pluginapi.QuotaFet
 ''',
     'func (p rpcQuotaProvider) FetchQuota',
 )
+insert_before(
+    rpc_client,
+    'func sanitizePluginMetadata(src map[string]any) map[string]any {\n',
+    '''func (p rpcAuthModelFilter) FilterAuthModels(ctx context.Context, req pluginapi.AuthModelFilterRequest) (pluginapi.AuthModelFilterResponse, error) {
+\tcallbackID, closeCallback := p.openHostCallbackContext(ctx)
+\tdefer closeCallback()
+\treturn callPlugin[pluginapi.AuthModelFilterResponse](ctx, p.client, pluginabi.MethodAuthModelFilter, rpcAuthModelFilterRequest{
+\t\tAuthModelFilterRequest: req,
+\t\tHostCallbackID:         callbackID,
+\t})
+}
+
+''',
+    'func (p rpcAuthModelFilter) FilterAuthModels',
+)
 
 plugin_host = ROOT / 'internal/pluginhost/host.go'
 replace_once(
     plugin_host,
     '\t\tcaps.AuthProvider != nil ||\n',
-    '\t\tcaps.AuthProvider != nil ||\n\t\tcaps.QuotaProvider != nil ||\n',
-    'caps.QuotaProvider != nil',
+    '\t\tcaps.AuthProvider != nil ||\n\t\tcaps.QuotaProvider != nil ||\n\t\tcaps.AuthModelFilter != nil ||\n',
+    'caps.AuthModelFilter != nil',
 )
 
 plugin_snapshot = ROOT / 'internal/pluginhost/snapshot.go'
@@ -501,6 +560,59 @@ write(quota_provider_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+
 quota_provider_test_source = Path(__file__).resolve().parent / 'plugin_quota_provider_test.go'
 quota_provider_test_target = ROOT / 'internal/pluginhost/quota_provider_test.go'
 write(quota_provider_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(quota_provider_test_source)))
+
+auth_model_filter_source = Path(__file__).resolve().parent / 'plugin_auth_model_filter.go'
+auth_model_filter_target = ROOT / 'internal/pluginhost/auth_model_filter.go'
+write(auth_model_filter_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(auth_model_filter_source)))
+auth_model_filter_test_source = Path(__file__).resolve().parent / 'plugin_auth_model_filter_test.go'
+auth_model_filter_test_target = ROOT / 'internal/pluginhost/auth_model_filter_test.go'
+write(auth_model_filter_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(auth_model_filter_test_source)))
+auth_model_filter_service_test_source = Path(__file__).resolve().parent / 'plugin_auth_model_filter_service_test.go'
+auth_model_filter_service_test_target = ROOT / 'sdk/cliproxy/service_auth_model_filter_test.go'
+write(auth_model_filter_service_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(auth_model_filter_service_test_source)))
+
+service_models = ROOT / 'sdk/cliproxy/service_models.go'
+replace_once(
+    service_models,
+    '''\tif ctx.Err() != nil {
+\t\treturn
+\t}
+\tmodels = applyOAuthModelAliasForAuth(s.cfg, provider, authKind, a.Attributes, models)
+''',
+    '''\tif ctx.Err() != nil {
+\t\treturn
+\t}
+\tmodels = s.applyAuthModelFilters(ctx, a, models)
+\tmodels = applyOAuthModelAliasForAuth(s.cfg, provider, authKind, a.Attributes, models)
+''',
+    'models = s.applyAuthModelFilters(ctx, a, models)',
+)
+insert_before(
+    service_models,
+    'func (s *Service) oauthExcludedModels(provider, authKind string) []string {\n',
+    '''func (s *Service) applyAuthModelFilters(ctx context.Context, auth *coreauth.Auth, models []*ModelInfo) []*ModelInfo {
+\tif s == nil || s.pluginHost == nil || auth == nil || len(models) == 0 {
+\t\treturn models
+\t}
+\treturn s.pluginHost.FilterModelsForAuth(ctx, auth, models).Models
+}
+
+''',
+    'func (s *Service) applyAuthModelFilters',
+)
+
+service_executors = ROOT / 'sdk/cliproxy/service_executors.go'
+replace_once(
+    service_executors,
+    '''\tmodels := applyExcludedModels(result.Models, activeExcluded)
+\tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
+''',
+    '''\tmodels := applyExcludedModels(result.Models, activeExcluded)
+\tmodels = s.applyAuthModelFilters(ctx, activeAuth, models)
+\tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
+''',
+    'models = s.applyAuthModelFilters(ctx, activeAuth, models)',
+)
 
 legacy_gemini_quota_source = Path(__file__).resolve().parent / 'plugin_gemini_cli_quota_legacy.go'
 legacy_gemini_quota_target = ROOT / 'internal/pluginhost/gemini_cli_quota_legacy.go'
@@ -894,6 +1006,34 @@ replace_once(
     config_example,
     '  panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"',
     f'  panel-github-repository: "{PRO_PANEL_REPOSITORY}"',
+)
+replace_once(
+    config_example,
+    '''      mode: "safe" # enum example: safe, fast
+
+# When true, disable high-overhead request logging and HTTP middleware features to reduce per-request memory usage under high concurrency.
+''',
+    '''      mode: "safe" # enum example: safe, fast
+
+    # Optional Pro plugin: subtract xAI OAuth models by detected account plan.
+    # oauth-model-policy:
+    #   enabled: true
+    #   priority: 10
+    #   cache-ttl: 30m
+    #   resolve-timeout: 15s
+    #   providers:
+    #     xai:
+    #       plans:
+    #         free:
+    #           excluded-models: ["grok-pro-*"]
+    #         supergrok:
+    #           excluded-models: ["grok-4.5-*"]
+    #         _unknown:
+    #           excluded-models: ["grok-pro-*"]
+
+# When true, disable high-overhead request logging and HTTP middleware features to reduce per-request memory usage under high concurrency.
+''',
+    'Optional Pro plugin: subtract xAI OAuth models by detected account plan.',
 )
 config_yaml = ROOT / 'internal/config/config_yaml.go'
 insert_before(
@@ -2207,6 +2347,8 @@ subprocess.run([
     'internal/pluginhost/gemini_cli_quota_legacy_test.go',
     'internal/pluginhost/quota_provider.go',
     'internal/pluginhost/quota_provider_test.go',
+    'internal/pluginhost/auth_model_filter.go',
+    'internal/pluginhost/auth_model_filter_test.go',
     'internal/pluginhost/rpc_client.go',
     'internal/pluginhost/rpc_schema.go',
     'internal/pluginhost/snapshot.go',
@@ -2228,6 +2370,9 @@ subprocess.run([
     'sdk/cliproxy/auth/conductor.go',
     'sdk/cliproxy/auth/scheduler.go',
     'sdk/cliproxy/auth/types.go',
+    'sdk/cliproxy/service_executors.go',
+    'sdk/cliproxy/service_auth_model_filter_test.go',
+    'sdk/cliproxy/service_models.go',
     'sdk/cliproxy/usage/manager.go',
     'sdk/cliproxy/usage/manager_test.go',
     'sdk/pluginabi/types.go',

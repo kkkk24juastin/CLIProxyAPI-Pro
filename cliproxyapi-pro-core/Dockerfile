@@ -37,6 +37,7 @@ RUN set -eux; \
 COPY cliproxyapi-pro-core/embeddedusage /tmp/embeddedusage
 COPY cliproxyapi-pro-core/patches /tmp/patches
 COPY cliproxyapi-pro-plugins/proxy-pool /tmp/proxy-pool
+COPY cliproxyapi-pro-plugins/oauth-model-policy /tmp/oauth-model-policy
 
 RUN python3 /tmp/patches/apply_upstream_patches.py
 
@@ -46,6 +47,13 @@ RUN set -eux; \
     go mod tidy; \
     CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
       go build -buildvcs=false -trimpath -buildmode=c-shared -o /out/proxy-pool.so .
+
+RUN set -eux; \
+    cd /tmp/oauth-model-policy; \
+    go mod edit -replace github.com/router-for-me/CLIProxyAPI/v7=/src/CLIProxyAPI; \
+    go mod tidy; \
+    CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+      go build -buildvcs=false -trimpath -buildmode=c-shared -o /out/oauth-model-policy.so .
 
 RUN set -eux; \
     go mod tidy; \
@@ -77,6 +85,7 @@ WORKDIR /CLIProxyAPI
 
 COPY --from=builder /out/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
 COPY --from=builder /out/proxy-pool.so /CLIProxyAPI/plugins/linux/${TARGETARCH}/proxy-pool.so
+COPY --from=builder /out/oauth-model-policy.so /CLIProxyAPI/plugins/linux/${TARGETARCH}/oauth-model-policy.so
 COPY --from=builder /src/CLIProxyAPI/config.example.yaml /CLIProxyAPI/config.example.yaml
 COPY cliproxyapi-pro-core/entrypoint.sh /CLIProxyAPI/entrypoint.sh
 

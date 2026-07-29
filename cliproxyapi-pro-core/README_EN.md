@@ -4,7 +4,7 @@ Customized Docker build layer for upstream `router-for-me/CLIProxyAPI`.
 
 This directory does not maintain a full fork of upstream. During Docker build it downloads an upstream release, copies in the local `embeddedusage/` package, applies the patch script in `patches/`, and builds a multi-arch image for the Pro deployment.
 
-Standard macOS, Windows amd64, and Linux Pro releases plus Docker images prebundle the `cliproxyapi-pro-plugins/proxy-pool` dynamic plugin. It exposes a fixed loopback SOCKS5 endpoint while rotation, health isolation, and failover stay inside the plugin, so upstream's proxy execution path is unchanged. Windows ARM64, FreeBSD, and `_no-plugin` assets do not currently bundle this feature.
+Standard macOS, Windows amd64, and Linux Pro releases plus Docker images prebundle the `proxy-pool` and `oauth-model-policy` dynamic plugins. The former exposes a fixed loopback SOCKS5 endpoint; the latter initially removes models unavailable to each xAI OAuth plan. Windows ARM64, FreeBSD, and `_no-plugin` assets do not currently bundle dynamic plugins.
 
 ## What this customization adds
 
@@ -138,6 +138,12 @@ changes: Core adapts its existing `Executor.HttpRequest`; a future native implem
 priority automatically. See [QUOTA_PROVIDER.md](QUOTA_PROVIDER.md) for the schema and compatibility
 rules.
 
+### OAuth plan model policy plugin
+
+The patch layer adds a generic `AuthModelFilter` capability to the upstream plugin SDK/ABI. Core provides the current auth, its native model set, and a controlled HTTP callback, while enforcing that a plugin may only subtract existing models. Plan discovery and policy rules stay in the bundled `oauth-model-policy` plugin.
+
+The first version supports xAI OAuth with `free`, `supergrok`, `x-premium-plus`, `supergrok-heavy`, `paid-unknown`, and `_unknown` fallback rules. Processing order is upstream `excluded_models`, plugin plan filtering, OAuth alias/prefix, then model registration. The final registration constrains both `/v1/models` aggregation and scheduler candidates. See `cliproxyapi-pro-plugins/oauth-model-policy/README.md` for configuration and discovery details.
+
 ### Backend account inspection scheduler
 
 The patch layer adds backend account-inspection routes under the management API:
@@ -228,6 +234,7 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `Dockerfile` — downloads upstream CLIProxyAPI, applies this customization layer, and builds the final image.
 - `Dockerfile.runtime` — assembles the Actions runtime image from prebuilt Linux binaries.
 - `QUOTA_PROVIDER.md` — QuotaProvider plugin protocol and compatibility rules.
+- `../cliproxyapi-pro-plugins/oauth-model-policy/` — dynamic plugin for filtering auth models by OAuth plan.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
 - `embeddedusage/` — embedded SQLite usage service and management routes.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.

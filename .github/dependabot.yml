@@ -16,3 +16,7 @@ updates:
     directory: /cliproxyapi-pro-plugins/proxy-pool
     schedule:
       interval: weekly
+  - package-ecosystem: gomod
+    directory: /cliproxyapi-pro-plugins/oauth-model-policy
+    schedule:
+      interval: weekly
