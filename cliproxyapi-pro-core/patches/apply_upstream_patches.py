@@ -938,6 +938,8 @@ insert_before(
 ''',
     'func isGitHubReleaseURL(releaseURL string) bool',
 )
+queue_go_source('internal/api/handlers/management/management_panel.go')
+queue_go_source('internal/api/handlers/management/management_panel_test.go')
 
 server_main = ROOT / 'cmd/server/main.go'
 add_go_import(server_main, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/pluginstore') + '"\n')
@@ -1056,6 +1058,11 @@ management_scheduler = ROOT / 'internal/api/handlers/management/account_inspecti
 management_scheduler_test = ROOT / 'internal/api/handlers/management/account_inspection_scheduler_test.go'
 routing_policy = ROOT / 'internal/api/handlers/management/routing_policy.go'
 routing_policy_test = ROOT / 'internal/api/handlers/management/routing_policy_test.go'
+replace_once(
+    server_management,
+    '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n',
+    '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n\t\tmgmt.POST("/management-panel/check-update", s.mgmt.PostCheckManagementPanelUpdate)\n',
+)
 scheduler_source = Path(__file__).resolve().parent / 'account_inspection_scheduler.go'
 write(management_scheduler, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(scheduler_source)))
 scheduler_test_source = Path(__file__).resolve().parent / 'account_inspection_scheduler_test.go'
@@ -2178,6 +2185,8 @@ subprocess.run([
     'internal/api/handlers/management/account_inspection_scheduler_test.go',
     'internal/api/handlers/management/auth_files.go',
     'internal/api/handlers/management/handler.go',
+    'internal/api/handlers/management/management_panel.go',
+    'internal/api/handlers/management/management_panel_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
     'internal/client/claude/models/models.go',

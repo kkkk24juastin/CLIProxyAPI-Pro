@@ -9,6 +9,33 @@ OVERLAY_DIR = CUSTOMIZATION_DIR / 'overlay'
 LOCALES_FILE = CUSTOMIZATION_DIR / 'monitoring-locales.json'
 OVERLAY_REPLACEMENTS_FILE = CUSTOMIZATION_DIR / 'overlay-replacements.json'
 
+MANAGEMENT_UPDATE_LOCALE_KEYS = {
+    'en.json': {
+        'management_check_update_button': 'Check for updates',
+        'management_check_update_updated': 'Management Center updated. Reloading...',
+        'management_check_update_unchanged': 'Update check completed; no update was applied.',
+        'management_check_update_error': 'Failed to check Management Center update',
+    },
+    'ru.json': {
+        'management_check_update_button': 'Проверить обновления',
+        'management_check_update_updated': 'Центр управления обновлён. Перезагрузка...',
+        'management_check_update_unchanged': 'Проверка завершена; обновление не применялось.',
+        'management_check_update_error': 'Не удалось проверить обновление Центра управления',
+    },
+    'zh-CN.json': {
+        'management_check_update_button': '检查更新',
+        'management_check_update_updated': '管理中心已更新，正在重新加载...',
+        'management_check_update_unchanged': '检查完成，本次未进行更新。',
+        'management_check_update_error': '管理中心更新检查失败',
+    },
+    'zh-TW.json': {
+        'management_check_update_button': '檢查更新',
+        'management_check_update_updated': '管理中心已更新，正在重新載入...',
+        'management_check_update_unchanged': '檢查完成，本次未進行更新。',
+        'management_check_update_error': '管理中心更新檢查失敗',
+    },
+}
+
 QUOTA_LOCALE_KEYS = {
     'en.json': {
         'cached_at': 'Updated',
@@ -2532,6 +2559,97 @@ def patch_runtime_detection(target: Path) -> None:
     )
 
 
+def patch_management_update_check(target: Path) -> None:
+    version_path = target / 'src/services/api/version.ts'
+    insert_once(
+        version_path,
+        "  checkLatest: () => apiClient.get<Record<string, unknown>>('/latest-version'),\n",
+        "  checkLatest: () => apiClient.get<Record<string, unknown>>('/latest-version'),\n"
+        "  checkManagementPanelUpdate: () =>\n"
+        "    apiClient.post<{ status: string; updated: boolean; sha256: string }>(\n"
+        "      '/management-panel/check-update'\n"
+        "    ),\n",
+        'checkManagementPanelUpdate:',
+    )
+
+    page_path = target / 'src/pages/SystemPage.tsx'
+    insert_once(
+        page_path,
+        "  const [checkingVersion, setCheckingVersion] = useState(false);\n",
+        "  const [checkingVersion, setCheckingVersion] = useState(false);\n"
+        "  const [checkingManagementUpdate, setCheckingManagementUpdate] = useState(false);\n",
+        'const [checkingManagementUpdate, setCheckingManagementUpdate]',
+    )
+    insert_once(
+        page_path,
+        "  useEffect(() => {\n    fetchConfig().catch(() => {\n",
+        "  const handleManagementUpdateCheck = useCallback(async () => {\n"
+        "    setCheckingManagementUpdate(true);\n"
+        "    try {\n"
+        "      const result = await versionApi.checkManagementPanelUpdate();\n"
+        "      if (result.updated) {\n"
+        "        showNotification(t('system_info.management_check_update_updated'), 'success');\n"
+        "        window.setTimeout(() => {\n"
+        "          const nextUrl = new URL(window.location.href);\n"
+        "          nextUrl.searchParams.set('_management_updated', Date.now().toString());\n"
+        "          window.location.replace(nextUrl.toString());\n"
+        "        }, 500);\n"
+        "      } else {\n"
+        "        showNotification(t('system_info.management_check_update_unchanged'), 'success');\n"
+        "      }\n"
+        "    } catch (error: unknown) {\n"
+        "      const message =\n"
+        "        error instanceof Error ? error.message : typeof error === 'string' ? error : '';\n"
+        "      showNotification(\n"
+        "        `${t('system_info.management_check_update_error')}${message ? `: ${message}` : ''}`,\n"
+        "        'error'\n"
+        "      );\n"
+        "    } finally {\n"
+        "      setCheckingManagementUpdate(false);\n"
+        "    }\n"
+        "  }, [showNotification, t]);\n\n"
+        "  useEffect(() => {\n    fetchConfig().catch(() => {\n",
+        'const handleManagementUpdateCheck = useCallback',
+    )
+    replace_once(
+        page_path,
+        "            <button\n"
+        "              type=\"button\"\n"
+        "              className={`${styles.infoTile} ${styles.tapTile}`}\n"
+        "              onClick={handleInfoVersionTap}\n"
+        "            >\n"
+        "              <div className={styles.tileHeader}>\n"
+        "                <div className={styles.tileLabel}>{t('footer.version')}</div>\n"
+        "              </div>\n"
+        "              <div className={styles.tileValue}>{appVersion}</div>\n"
+        "            </button>\n",
+        "            <div\n"
+        "              className={`${styles.infoTile} ${styles.tapTile}`}\n"
+        "              onClick={handleInfoVersionTap}\n"
+        "            >\n"
+        "              <div className={styles.tileHeader}>\n"
+        "                <div className={styles.tileLabel}>{t('footer.version')}</div>\n"
+        "                <Button\n"
+        "                  type=\"button\"\n"
+        "                  variant=\"ghost\"\n"
+        "                  size=\"sm\"\n"
+        "                  className={styles.tileAction}\n"
+        "                  onClick={(event) => {\n"
+        "                    event.stopPropagation();\n"
+        "                    void handleManagementUpdateCheck();\n"
+        "                  }}\n"
+        "                  loading={checkingManagementUpdate}\n"
+        "                  title={t('system_info.management_check_update_button')}\n"
+        "                  aria-label={t('system_info.management_check_update_button')}\n"
+        "                >\n"
+        "                  {t('system_info.management_check_update_button')}\n"
+        "                </Button>\n"
+        "              </div>\n"
+        "              <div className={styles.tileValue}>{appVersion}</div>\n"
+        "            </div>\n",
+    )
+
+
 def patch_supporting_api_and_types(target: Path) -> None:
     config_path = target / 'src/types/config.ts'
     replace_once(
@@ -2734,6 +2852,12 @@ def patch_locales(target: Path) -> None:
         data.setdefault('xai_quota', {}).update(
             XAI_QUOTA_LOCALE_KEYS.get(locale_path.name, XAI_QUOTA_LOCALE_KEYS['en.json'])
         )
+        data.setdefault('system_info', {}).update(
+            MANAGEMENT_UPDATE_LOCALE_KEYS.get(
+                locale_path.name,
+                MANAGEMENT_UPDATE_LOCALE_KEYS['en.json'],
+            )
+        )
         write(locale_path, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
 
@@ -2769,6 +2893,7 @@ def main() -> None:
     patch_auth_files_runtime_state(target)
     patch_account_usage_feature(target)
     patch_runtime_detection(target)
+    patch_management_update_check(target)
     patch_api_client_connection_isolation(target)
     patch_supporting_api_and_types(target)
     patch_locales(target)

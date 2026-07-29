@@ -212,6 +212,8 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 
 This affects the built-in default config, `config.example.yaml`, and the management asset updater's default latest-release API URL.
 
+The Management Center's “Check for updates” action calls `POST /v0/management/management-panel/check-update`. The endpoint keeps the updater's 30-second throttle, remote digest verification, and local SHA-256 comparison; it atomically replaces `management.html` only when the latest-release asset differs. This covers both a new release and a same-release asset replacement without re-downloading identical content.
+
 ### Runtime helper process
 
 `entrypoint.sh` can start the bundled Komari agent before the main API process when both variables are configured:

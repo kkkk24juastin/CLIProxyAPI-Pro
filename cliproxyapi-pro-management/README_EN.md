@@ -158,6 +158,7 @@ Protection is disabled by default. `observe` records matches; only `enforce` dis
 - `Select` `triggerClassName` and `dropdownClassName` props.
 - `maskSensitiveText` utility.
 - `cachedAt` fields for quota state types and success states.
+- a “Check for updates” action on the Management Center version tile; it calls `POST /management-panel/check-update`, replaces the panel only when the latest-release asset hash changes, and reloads only after an actual update.
 
 Request Monitoring uses an initial snapshot plus SSE increments and cursor catch-up, with event-ID deduplication. Trends, model rankings, and API-key rankings prefer server-side `/usage/aggregates` data and automatically fall back to local detail calculations when unavailable. Hidden tabs pause SSE and React incremental updates, then catch up by cursor when visible again; the page header shows live, reconnecting, background-paused, error, and latest-event states.
 

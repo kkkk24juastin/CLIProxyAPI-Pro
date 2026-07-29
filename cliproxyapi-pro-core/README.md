@@ -211,6 +211,8 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 
 该修改会同时影响内置默认配置、`config.example.yaml`，以及 management asset updater 的默认 latest-release API 地址。
 
+管理中心的“检查更新”按钮调用 `POST /v0/management/management-panel/check-update`。该接口复用 updater 的 30 秒节流、远端摘要校验和本地 SHA-256 比较；只有 latest release 的 `management.html` 与本地文件哈希不同才原子替换。因此既能处理新版本，也能处理同一 release 下重新上传但内容不同的面板文件；哈希相同不会重复下载。
+
 ### 运行时辅助进程
 
 当以下变量同时配置时，`entrypoint.sh` 会在主 API 进程前启动内置 Komari agent：
