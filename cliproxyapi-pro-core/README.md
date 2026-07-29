@@ -4,7 +4,7 @@
 
 本目录不维护 upstream 的完整 fork。Docker 构建时会下载指定 upstream release，复制本地 `embeddedusage/` 包，执行 `patches/` 中的补丁脚本，然后构建 Pro 部署使用的多架构镜像。
 
-标准 macOS、Windows amd64、Linux Pro Release 与 Docker 镜像会预打包 `proxy-pool` 和 `oauth-model-policy` 动态插件。前者在回环地址提供固定 SOCKS5 入口；后者首期按 xAI OAuth 套餐排除账号不可用的模型。Windows ARM64、FreeBSD 与 `_no-plugin` 资产暂不内置动态插件。
+标准 macOS、Windows amd64、Linux Pro Release 与 Docker 镜像会预打包 `proxy-pool` 和 `oauth-model-policy` 动态插件。前者在回环地址提供固定 SOCKS5 入口；后者按多个提供商的 OAuth 套餐排除账号不可用的模型。Windows ARM64、FreeBSD 与 `_no-plugin` 资产暂不内置动态插件。
 
 ## 定制内容
 
@@ -141,7 +141,7 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 
 补丁层为 upstream 插件 SDK/ABI 增加通用 `AuthModelFilter` 能力。Core 只提供当前 auth、原始模型集合和受控 HTTP callback，并强制插件只能减去已有模型；套餐识别与规则均位于预打包的 `oauth-model-policy` 插件中。
 
-首期仅支持 xAI OAuth，规则键包括 `free`、`supergrok`、`x-premium-plus`、`supergrok-heavy`、`paid-unknown` 以及 `_unknown` 回退。处理顺序为 upstream `excluded_models`、插件套餐过滤、OAuth alias/prefix、模型注册。最终注册结果同时约束 `/v1/models` 聚合和请求调度候选账号。配置与探测细节见 `cliproxyapi-pro-plugins/oauth-model-policy/README.md`。
+插件支持 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi OAuth，并为所有提供商提供 `_unknown`、`_default` 与自定义套餐规则。处理顺序为 upstream `excluded_models`、插件套餐过滤、OAuth alias/prefix、模型注册。最终注册结果同时约束 `/v1/models` 聚合和请求调度候选账号。配置与探测细节见 `cliproxyapi-pro-plugins/oauth-model-policy/README.md`。
 
 ### 后端账号巡检调度器
 

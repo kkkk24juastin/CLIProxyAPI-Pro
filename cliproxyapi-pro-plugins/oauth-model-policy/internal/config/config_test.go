@@ -37,3 +37,28 @@ providers:
 		t.Fatal("Parse() error = nil, want invalid pattern error")
 	}
 }
+
+func TestParseCanonicalizesProviderPlanAliases(t *testing.T) {
+	cfg, errParse := Parse([]byte(`
+providers:
+  claude:
+    plans:
+      plan_max: {excluded-models: [claude-opus-*]}
+  gemini-cli:
+    plans:
+      g1-ultra-tier: {excluded-models: [gemini-pro-*]}
+  antigravity:
+    plans:
+      g1-ultra-lite-tier: {excluded-models: [claude-*]}
+`))
+	if errParse != nil {
+		t.Fatalf("Parse() error = %v", errParse)
+	}
+	for provider, plan := range map[string]string{
+		"claude": "max", "gemini-cli": "ultra", "antigravity": "ultra-lite",
+	} {
+		if _, ok := cfg.Providers[provider].Plans[plan]; !ok {
+			t.Fatalf("providers.%s.plans.%s was not canonicalized", provider, plan)
+		}
+	}
+}

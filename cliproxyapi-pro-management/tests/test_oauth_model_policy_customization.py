@@ -15,16 +15,23 @@ LOCALES = ROOT / 'monitoring-locales.json'
 class OAuthModelPolicyCustomizationTest(unittest.TestCase):
     def test_page_exposes_plan_settings_rules_and_fallbacks(self) -> None:
         source = PAGE.read_text()
-        self.assertIn('XAI_PLAN_DEFINITIONS.map', source)
+        self.assertIn('OAUTH_MODEL_PROVIDER_DEFINITIONS.map', source)
+        self.assertIn('activePlanDefinitions.map', source)
+        self.assertIn('normalizeOAuthModelPlanKey', source)
         self.assertIn('PatternEditor', source)
         self.assertIn('key === "_unknown"', source)
         self.assertIn("plans._default.configured", source)
         self.assertIn('isPositiveDuration', source)
         self.assertIn('oauthModelPolicyApi.save', source)
         self.assertIn('save_enables_plugin', source)
+        self.assertIn('createPortal(', source)
+        self.assertIn('document.body', source)
 
     def test_service_preserves_explicit_empty_rules_and_enables_runtime(self) -> None:
         source = SERVICE.read_text()
+        for provider in ('xai', 'codex', 'claude', 'gemini-cli', 'antigravity', 'kimi'):
+            self.assertIn(f'"{provider}"', source)
+        self.assertIn('planDefinitionsForProvider', source)
         self.assertIn('plans[key] = {', source)
         self.assertIn('"excluded-models": normalizeModelPatterns', source)
         self.assertIn('if (!rule.configured) return', source)
@@ -46,10 +53,13 @@ class OAuthModelPolicyCustomizationTest(unittest.TestCase):
         locales = json.loads(LOCALES.read_text())
         expected = set(re.findall(r"oauth_model_policy\.([a-z0-9_]+)", source))
         expected.discard('plan_')
+        expected.discard('provider_')
         for locale in ('en.json', 'zh-CN.json', 'zh-TW.json'):
             self.assertTrue(expected.issubset(locales[locale]['oauth_model_policy']))
         self.assertIn('@media (max-width: 720px)', styles)
         self.assertIn('.ruleGrid', styles)
+        self.assertIn('.providerTabs', styles)
+        self.assertIn('.customPlanRow', styles)
         self.assertIn('.saveBar', styles)
 
 

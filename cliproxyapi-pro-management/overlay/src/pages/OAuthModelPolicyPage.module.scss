@@ -252,6 +252,64 @@
   padding: 16px;
 }
 
+.providerTabs {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--muted-bg, rgba(148, 163, 184, 0.08));
+}
+
+.providerTabs button {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.providerTabs button:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-primary) 72%, transparent);
+}
+
+.providerTabs button.providerTabActive {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+.providerTabs button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.providerTabs button small {
+  display: grid;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+  font-size: 9px;
+}
+
 .policyHeader {
   align-items: flex-start;
   justify-content: space-between;
@@ -269,6 +327,66 @@
   white-space: normal;
 }
 
+.customPlanRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+}
+
+.customPlanRow > div:first-child {
+  min-width: 0;
+}
+
+.customPlanRow strong,
+.customPlanRow span {
+  display: block;
+}
+
+.customPlanRow strong {
+  font-size: 12px;
+}
+
+.customPlanRow span {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.customPlanRow > div:last-child {
+  display: flex;
+  width: min(100%, 360px);
+  flex: 0 1 360px;
+  align-items: stretch;
+  gap: 7px;
+}
+
+.customPlanRow input {
+  min-width: 0;
+  min-height: 34px;
+  flex: 1 1 auto;
+  padding: 7px 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  outline: none;
+  color: var(--text-primary);
+  background: var(--input-bg, var(--bg-primary));
+  font: inherit;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}
+
+.customPlanRow input:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--primary-color) 14%, transparent);
+}
+
 .ruleGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -279,7 +397,7 @@
   min-width: 0;
   padding: 14px;
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--bg-primary);
   transition:
     border-color 0.16s ease,
@@ -320,6 +438,24 @@
 .ruleTitleLine code {
   padding: 2px 6px;
   font-size: 10px;
+}
+
+.removeCustomPlan {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  place-items: center;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.removeCustomPlan:hover:not(:disabled) {
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.1);
 }
 
 .ruleHeader small {
@@ -518,6 +654,10 @@
   .saveBar {
     left: 22px;
   }
+
+  .providerTabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -567,6 +707,21 @@
 
   .policyHeader {
     flex-direction: column;
+  }
+
+  .providerTabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .customPlanRow {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .customPlanRow > div:last-child {
+    width: 100%;
+    flex-basis: auto;
   }
 
   .flowBadge {

@@ -53,7 +53,7 @@ import (
 )
 
 const (
-	pluginVersion         = "0.1.0"
+	pluginVersion         = "0.2.0"
 	methodAuthModelFilter = "model.filter_for_auth"
 )
 

@@ -16,7 +16,7 @@ This project does not maintain a full fork of either upstream project. Instead, 
 - Optional deep probes for Antigravity soft bans and xAI availability anomalies.
 - A routing-policy page for upstream routing behavior and provider-scoped request-state protection.
 - A bundled dynamic proxy-pool plugin that aggregates HTTP/SOCKS nodes behind one fixed loopback SOCKS5 endpoint with rotation, health isolation, and failover.
-- A bundled OAuth model-policy plugin that initially removes unavailable models per xAI account plan and constrains both model listing and auth scheduling.
+- A bundled OAuth model-policy plugin that removes unavailable models per provider and account plan, constraining both model listing and auth scheduling.
 
 ## Repository layout
 
@@ -64,7 +64,7 @@ Main capabilities:
 - Supports SQLite-backed quota cache.
 - Supports model price persistence.
 - Supports the QuotaProvider plugin protocol and a Gemini CLI legacy adapter.
-- Supports a generic `AuthModelFilter` plugin protocol; the bundled `oauth-model-policy` initially filters xAI OAuth models by account plan.
+- Supports a generic `AuthModelFilter` plugin protocol; the bundled `oauth-model-policy` filters OAuth models by account plan for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi.
 - Forces required upstream startup config: `usage-statistics-enabled=true` and the Pro management panel repository.
 - Adds a backend account-inspection scheduler and executor with token refresh before probing.
 - Adds unified routing-policy and request-state-protection APIs.
@@ -88,7 +88,7 @@ Main capabilities:
 - Adds the `/account-inspection` account inspection page.
 - Adds the `/routing` routing-policy page.
 - Adds the `/proxy-pool` page for node configuration, connectivity tests, runtime statistics, and global-proxy takeover/restoration.
-- Adds the `/oauth-model-policy` visual editor for xAI OAuth plan rules, fallback policies, and plan-discovery caching.
+- Adds the `/oauth-model-policy` visual editor for provider-specific OAuth plan rules, custom plans, fallback policies, and plan-discovery caching.
 - Shows request count, success rate, latency, token, and cost metrics.
 - Persists model prices through SQLite.
 - Persists quota cache through SQLite.

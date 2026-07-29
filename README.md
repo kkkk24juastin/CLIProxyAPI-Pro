@@ -16,7 +16,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 账号巡检针对 Antigravity 软封禁和 xAI 可用性异常提供可选深度检测
 - 路由策略页面统一管理 upstream 路由行为与按 provider 配置的请求状态保护
 - 内置动态代理池插件，把多个 HTTP/SOCKS 节点汇聚为固定的本地 SOCKS5 地址，支持轮询、加权、健康隔离与故障转移
-- 内置 OAuth 模型策略插件，首期可按 xAI 账号套餐分别排除不可用模型，并同步约束模型列表和账号调度
+- 内置 OAuth 模型策略插件，可按多个提供商的账号套餐分别排除不可用模型，并同步约束模型列表和账号调度
 
 ## 项目结构
 
@@ -64,7 +64,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 支持 SQLite-backed quota cache。
 - 支持模型价格持久化。
 - 支持 QuotaProvider 插件协议和 Gemini CLI legacy adapter。
-- 支持通用 `AuthModelFilter` 插件协议；预打包的 `oauth-model-policy` 首期可按 xAI OAuth 套餐排除模型。
+- 支持通用 `AuthModelFilter` 插件协议；预打包的 `oauth-model-policy` 可按 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi OAuth 套餐排除模型。
 - 启动时在内存中强制必要 upstream 配置；仅修改 YAML 中已存在的键，禁止自动新增键。
 - 支持后端账号巡检调度器和执行器，巡检探测前可刷新 token。
 - 支持统一路由策略与请求状态保护 API。
@@ -88,7 +88,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 新增 `/account-inspection` 账号巡检页面。
 - 新增 `/routing` 路由策略页面。
 - 新增 `/proxy-pool` 代理池页面，负责节点配置、连通性测试、运行统计和全局代理接管/恢复。
-- 新增 `/oauth-model-policy` 可视化配置页，按 xAI OAuth 套餐编辑模型排除规则、回退策略和套餐探测缓存。
+- 新增 `/oauth-model-policy` 可视化配置页，按提供商和 OAuth 套餐编辑模型排除规则、自定义套餐、回退策略和套餐探测缓存。
 - 请求量、成功率、延迟、token 和成本统计。
 - 模型价格 SQLite 持久化。
 - quota cache SQLite 持久化。

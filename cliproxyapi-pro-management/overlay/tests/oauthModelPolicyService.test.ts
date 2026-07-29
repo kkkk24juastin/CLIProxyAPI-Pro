@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   isPositiveDuration,
   normalizeOAuthModelPolicyConfig,
+  OAUTH_MODEL_PROVIDER_DEFINITIONS,
+  planDefinitionsForProvider,
   serializeOAuthModelPolicyConfig,
 } from "@/services/api/oauthModelPolicy";
 
@@ -71,5 +73,55 @@ describe("oauth model policy service", () => {
     expect(isPositiveDuration("1.5s")).toBe(true);
     expect(isPositiveDuration("0s")).toBe(false);
     expect(isPositiveDuration("30")).toBe(false);
+  });
+
+  it("normalizes every provider and preserves custom plan keys", () => {
+    const config = normalizeOAuthModelPolicyConfig({
+      providers: {
+        codex: { plans: { plus: { "excluded-models": ["gpt-5-pro"] } } },
+        claude: {
+          plans: { plan_max: { "excluded-models": ["claude-opus-*"] } },
+        },
+        "gemini-cli": { plans: { ultra: { "excluded-models": [] } } },
+        antigravity: { plans: { "ultra-lite": { "excluded-models": [] } } },
+        kimi: { plans: { enterprise: { "excluded-models": ["kimi-k2-*"] } } },
+        "future-provider": {
+          plans: { premium: { "excluded-models": ["future-pro-*"] } },
+        },
+      },
+    });
+
+    expect(config.providers.codex.plans.plus.configured).toBe(true);
+    expect(config.providers.claude.plans.max).toEqual({
+      configured: true,
+      excludedModels: ["claude-opus-*"],
+    });
+    expect(config.providers["gemini-cli"].plans.ultra.configured).toBe(true);
+    expect(config.providers.antigravity.plans["ultra-lite"].configured).toBe(
+      true,
+    );
+    expect(config.providers.kimi.plans.enterprise.configured).toBe(true);
+    expect(config.providers["future-provider"].plans.premium.configured).toBe(
+      true,
+    );
+
+    const kimi = OAUTH_MODEL_PROVIDER_DEFINITIONS.find(
+      ({ key }) => key === "kimi",
+    )!;
+    expect(
+      planDefinitionsForProvider(kimi, config.providers.kimi.plans).map(
+        ({ key }) => key,
+      ),
+    ).toEqual(["enterprise", "_unknown", "_default"]);
+
+    const serialized = serializeOAuthModelPolicyConfig(config) as {
+      providers: Record<string, { plans: Record<string, unknown> }>;
+    };
+    expect(serialized.providers.kimi.plans.enterprise).toEqual({
+      "excluded-models": ["kimi-k2-*"],
+    });
+    expect(serialized.providers["future-provider"].plans.premium).toEqual({
+      "excluded-models": ["future-pro-*"],
+    });
   });
 });

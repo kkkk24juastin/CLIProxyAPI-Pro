@@ -62,7 +62,7 @@ func Parse(raw []byte) (Config, error) {
 		}
 		clean := Provider{Plans: map[string]Plan{}}
 		for rawPlan, plan := range provider.Plans {
-			planKey := normalizeKey(rawPlan)
+			planKey := normalizePlanKey(providerKey, rawPlan)
 			if planKey == "" {
 				continue
 			}
@@ -95,4 +95,51 @@ func normalizeKey(value string) string {
 		return "_" + strings.ReplaceAll(strings.TrimPrefix(value, "_"), "_", "-")
 	}
 	return strings.ReplaceAll(value, "_", "-")
+}
+
+func normalizePlanKey(provider, value string) string {
+	key := normalizeKey(value)
+	if strings.HasPrefix(key, "plan-") {
+		key = strings.TrimPrefix(key, "plan-")
+	}
+	switch provider {
+	case "xai":
+		switch key {
+		case "premium-plus", "x-premium+":
+			return "x-premium-plus"
+		case "super-grok":
+			return "supergrok"
+		case "super-grok-heavy":
+			return "supergrok-heavy"
+		}
+	case "codex":
+		if key == "prolite" {
+			return "pro-lite"
+		}
+	case "gemini-cli":
+		switch key {
+		case "free-tier":
+			return "free"
+		case "legacy-tier":
+			return "legacy"
+		case "standard-tier":
+			return "standard"
+		case "g1-pro-tier", "pro-tier":
+			return "pro"
+		case "g1-ultra-tier", "ultra-tier":
+			return "ultra"
+		}
+	case "antigravity":
+		switch key {
+		case "free-tier":
+			return "free"
+		case "g1-pro-tier":
+			return "pro"
+		case "g1-ultra-tier":
+			return "ultra"
+		case "g1-ultra-lite-tier":
+			return "ultra-lite"
+		}
+	}
+	return key
 }

@@ -6,6 +6,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
@@ -22,28 +23,21 @@ import {
 import {
   defaultOAuthModelPolicyConfig,
   isPositiveDuration,
+  normalizeOAuthModelPlanKey,
   oauthModelPolicyApi,
-  XAI_PLAN_DEFINITIONS,
+  OAUTH_MODEL_PROVIDER_DEFINITIONS,
+  planDefinitionsForProvider,
   type OAuthModelPlanKey,
   type OAuthModelPlanRule,
   type OAuthModelPolicyConfig,
   type OAuthModelPolicySnapshot,
+  type OAuthModelProviderKey,
 } from "@/services/api/oauthModelPolicy";
 import { useAuthStore, useNotificationStore } from "@/stores";
 import styles from "./OAuthModelPolicyPage.module.scss";
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error || "Unknown error");
-
-const planLocaleSuffix: Record<OAuthModelPlanKey, string> = {
-  free: "free",
-  supergrok: "supergrok",
-  "x-premium-plus": "x_premium_plus",
-  "supergrok-heavy": "supergrok_heavy",
-  "paid-unknown": "paid_unknown",
-  _unknown: "unknown",
-  _default: "default",
-};
 
 const isLikelyValidGlob = (value: string): boolean => {
   let escaped = false;
@@ -185,6 +179,9 @@ export function OAuthModelPolicyPage() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [activeProvider, setActiveProvider] =
+    useState<OAuthModelProviderKey>("xai");
+  const [customPlan, setCustomPlan] = useState("");
 
   const load = useCallback(
     async (replaceDraft = false) => {
@@ -226,6 +223,7 @@ export function OAuthModelPolicyPage() {
   );
 
   const patchPlan = (
+    provider: OAuthModelProviderKey,
     key: OAuthModelPlanKey,
     patch: Partial<OAuthModelPlanRule>,
   ) => {
@@ -233,46 +231,93 @@ export function OAuthModelPolicyPage() {
       ...current,
       providers: {
         ...current.providers,
-        xai: {
+        [provider]: {
           plans: {
-            ...current.providers.xai.plans,
-            [key]: { ...current.providers.xai.plans[key], ...patch },
+            ...current.providers[provider].plans,
+            [key]: { ...current.providers[provider].plans[key], ...patch },
           },
         },
       },
     }));
   };
 
+  const addCustomPlan = () => {
+    const key = normalizeOAuthModelPlanKey(customPlan, activeProvider);
+    if (!key || key.startsWith("_")) return;
+    const plans = draft.providers[activeProvider].plans;
+    if (plans[key]) {
+      showNotification(
+        t("oauth_model_policy.plan_exists", {
+          defaultValue: "Plan key already exists: {{plan}}",
+          plan: key,
+        }),
+        "warning",
+      );
+      return;
+    }
+    patchPlan(activeProvider, key, {
+      configured: true,
+      excludedModels: [],
+    });
+    setCustomPlan("");
+  };
+
+  const removeCustomPlan = (key: OAuthModelPlanKey) => {
+    updateDraft((current) => {
+      const plans = { ...current.providers[activeProvider].plans };
+      delete plans[key];
+      return {
+        ...current,
+        providers: {
+          ...current.providers,
+          [activeProvider]: { plans },
+        },
+      };
+    });
+  };
+
+  const activeProviderDefinition = OAUTH_MODEL_PROVIDER_DEFINITIONS.find(
+    ({ key }) => key === activeProvider,
+  )!;
+  const activePlans = draft.providers[activeProvider].plans;
+  const activePlanDefinitions = planDefinitionsForProvider(
+    activeProviderDefinition,
+    activePlans,
+  );
+
   const configuredCount = useMemo(
     () =>
-      XAI_PLAN_DEFINITIONS.filter(
-        ({ key }) => draft.providers.xai.plans[key].configured,
-      ).length,
-    [draft.providers.xai.plans],
+      Object.values(draft.providers).reduce(
+        (total, provider) =>
+          total +
+          Object.values(provider.plans).filter(({ configured }) => configured)
+            .length,
+        0,
+      ),
+    [draft.providers],
   );
   const excludedCount = useMemo(
     () =>
-      XAI_PLAN_DEFINITIONS.reduce(
-        (total, { key }) =>
+      Object.values(draft.providers).reduce(
+        (total, provider) =>
           total +
-          (draft.providers.xai.plans[key].configured
-            ? draft.providers.xai.plans[key].excludedModels.length
-            : 0),
+          Object.values(provider.plans).reduce(
+            (providerTotal, rule) =>
+              providerTotal +
+              (rule.configured ? rule.excludedModels.length : 0),
+            0,
+          ),
         0,
       ),
-    [draft.providers.xai.plans],
+    [draft.providers],
   );
 
   const inheritedRule = (key: OAuthModelPlanKey): string => {
-    const plans = draft.providers.xai.plans;
+    const plans = activePlans;
     if (plans[key].configured) return "";
     if (key === "_default")
       return t("oauth_model_policy.no_rule", { defaultValue: "No rule" });
     if (key === "_unknown" && plans._unknown.configured) return "";
-    if (key === "_unknown" && plans._default.configured)
-      return t("oauth_model_policy.inherits_default", {
-        defaultValue: "Uses _default",
-      });
     if (!key.startsWith("_") && plans._default.configured)
       return t("oauth_model_policy.inherits_default", {
         defaultValue: "Uses _default",
@@ -290,15 +335,17 @@ export function OAuthModelPolicyPage() {
         defaultValue:
           "Resolve timeout must be a positive Go duration, such as 15s.",
       });
-    for (const { key } of XAI_PLAN_DEFINITIONS) {
-      const invalid = draft.providers.xai.plans[key].excludedModels.find(
-        (pattern) => !isLikelyValidGlob(pattern),
-      );
-      if (invalid)
-        return t("oauth_model_policy.invalid_pattern", {
-          defaultValue: "Invalid model pattern: {{pattern}}",
-          pattern: invalid,
-        });
+    for (const provider of Object.values(draft.providers)) {
+      for (const rule of Object.values(provider.plans)) {
+        const invalid = rule.excludedModels.find(
+          (pattern) => !isLikelyValidGlob(pattern),
+        );
+        if (invalid)
+          return t("oauth_model_policy.invalid_pattern", {
+            defaultValue: "Invalid model pattern: {{pattern}}",
+            pattern: invalid,
+          });
+      }
     }
     return "";
   };
@@ -388,7 +435,7 @@ export function OAuthModelPolicyPage() {
             <p>
               {t("oauth_model_policy.subtitle", {
                 defaultValue:
-                  "Filter each xAI OAuth account model set by its detected plan.",
+                  "Filter each OAuth account model set by provider and detected plan.",
               })}
             </p>
           </div>
@@ -502,13 +549,19 @@ export function OAuthModelPolicyPage() {
                 </strong>
               </div>
               <div>
-                <span className={styles.statusMuted}>xAI</span>
+                <span className={styles.statusMuted}>
+                  {OAUTH_MODEL_PROVIDER_DEFINITIONS.length}
+                </span>
                 <small>
-                  {t("oauth_model_policy.provider", {
-                    defaultValue: "Provider",
+                  {t("oauth_model_policy.providers", {
+                    defaultValue: "Providers",
                   })}
                 </small>
-                <strong>OAuth</strong>
+                <strong>
+                  {t("oauth_model_policy.oauth_accounts", {
+                    defaultValue: "OAuth accounts",
+                  })}
+                </strong>
               </div>
             </section>
 
@@ -526,7 +579,7 @@ export function OAuthModelPolicyPage() {
                   <p>
                     {t("oauth_model_policy.discovery_hint", {
                       defaultValue:
-                        "Auth metadata is preferred; billing is queried only when the plan is missing.",
+                        "Auth metadata is preferred; supported provider APIs are queried only when the plan is missing.",
                     })}
                   </p>
                 </div>
@@ -544,7 +597,7 @@ export function OAuthModelPolicyPage() {
                 />
                 <Input
                   label={t("oauth_model_policy.resolve_timeout", {
-                    defaultValue: "Billing timeout",
+                    defaultValue: "Provider resolve timeout",
                   })}
                   value={draft.resolveTimeout}
                   onChange={(event) =>
@@ -572,18 +625,63 @@ export function OAuthModelPolicyPage() {
             </section>
 
             <section className={styles.policyPanel}>
+              <div
+                className={styles.providerTabs}
+                role="tablist"
+                aria-label={t("oauth_model_policy.providers", {
+                  defaultValue: "Providers",
+                })}
+              >
+                {OAUTH_MODEL_PROVIDER_DEFINITIONS.map((provider) => {
+                  const count = Object.values(
+                    draft.providers[provider.key].plans,
+                  ).filter(({ configured }) => configured).length;
+                  return (
+                    <button
+                      key={provider.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={provider.key === activeProvider}
+                      className={
+                        provider.key === activeProvider
+                          ? styles.providerTabActive
+                          : ""
+                      }
+                      onClick={() => {
+                        setActiveProvider(provider.key);
+                        setCustomPlan("");
+                      }}
+                    >
+                      <span>
+                        {t(
+                          `oauth_model_policy.provider_${provider.key.replace(/-/g, "_")}`,
+                          { defaultValue: provider.key },
+                        )}
+                      </span>
+                      {count > 0 && <small>{count}</small>}
+                    </button>
+                  );
+                })}
+              </div>
               <div className={styles.policyHeader}>
                 <div>
                   <h2>
-                    {t("oauth_model_policy.xai_rules", {
-                      defaultValue: "xAI plan rules",
+                    {t("oauth_model_policy.provider_rules", {
+                      defaultValue: "{{provider}} plan rules",
+                      provider: t(
+                        `oauth_model_policy.provider_${activeProvider.replace(/-/g, "_")}`,
+                        { defaultValue: activeProvider },
+                      ),
                     })}
                   </h2>
                   <p>
-                    {t("oauth_model_policy.xai_rules_hint", {
-                      defaultValue:
-                        "Each enabled rule subtracts matching model IDs from that account only.",
-                    })}
+                    {t(
+                      `oauth_model_policy.provider_${activeProvider.replace(/-/g, "_")}_hint`,
+                      {
+                        defaultValue:
+                          "Each enabled rule subtracts matching model IDs from that account only.",
+                      },
+                    )}
                   </p>
                 </div>
                 <span className={styles.flowBadge}>
@@ -593,10 +691,54 @@ export function OAuthModelPolicyPage() {
                   })}
                 </span>
               </div>
+              <div className={styles.customPlanRow}>
+                <div>
+                  <strong>
+                    {t("oauth_model_policy.custom_plan", {
+                      defaultValue: "Custom plan key",
+                    })}
+                  </strong>
+                  <span>
+                    {t("oauth_model_policy.custom_plan_hint", {
+                      defaultValue:
+                        "Add a provider plan value observed in auth metadata or a provider API.",
+                    })}
+                  </span>
+                </div>
+                <div>
+                  <input
+                    value={customPlan}
+                    disabled={saving}
+                    onChange={(event) => setCustomPlan(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      addCustomPlan();
+                    }}
+                    placeholder={t(
+                      "oauth_model_policy.custom_plan_placeholder",
+                      {
+                        defaultValue: "e.g. enterprise",
+                      },
+                    )}
+                    aria-label={t("oauth_model_policy.custom_plan", {
+                      defaultValue: "Custom plan key",
+                    })}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={saving || !customPlan.trim()}
+                    onClick={addCustomPlan}
+                  >
+                    <IconPlus size={14} />
+                    {t("common.add", { defaultValue: "Add" })}
+                  </Button>
+                </div>
+              </div>
               <div className={styles.ruleGrid}>
-                {XAI_PLAN_DEFINITIONS.map((definition) => {
-                  const rule = draft.providers.xai.plans[definition.key];
-                  const suffix = planLocaleSuffix[definition.key];
+                {activePlanDefinitions.map((definition) => {
+                  const rule = activePlans[definition.key];
                   const inherited = inheritedRule(definition.key);
                   return (
                     <article
@@ -609,19 +751,52 @@ export function OAuthModelPolicyPage() {
                         <div>
                           <div className={styles.ruleTitleLine}>
                             <h3>
-                              {t(`oauth_model_policy.plan_${suffix}`, {
-                                defaultValue: definition.key,
-                              })}
+                              {definition.kind === "custom"
+                                ? t("oauth_model_policy.plan_custom", {
+                                    defaultValue: "Custom plan",
+                                  })
+                                : t(
+                                    `oauth_model_policy.plan_${definition.localeSuffix}`,
+                                    { defaultValue: definition.key },
+                                  )}
                             </h3>
                             <code>{definition.key}</code>
+                            {definition.kind === "custom" && (
+                              <button
+                                type="button"
+                                className={styles.removeCustomPlan}
+                                disabled={saving}
+                                onClick={() => removeCustomPlan(definition.key)}
+                                title={t(
+                                  "oauth_model_policy.remove_custom_plan",
+                                  {
+                                    defaultValue: "Remove custom plan",
+                                  },
+                                )}
+                                aria-label={t(
+                                  "oauth_model_policy.remove_custom_plan_label",
+                                  {
+                                    defaultValue: "Remove {{plan}}",
+                                    plan: definition.key,
+                                  },
+                                )}
+                              >
+                                <IconX size={13} />
+                              </button>
+                            )}
                           </div>
                           <p>
-                            {t(`oauth_model_policy.plan_${suffix}_hint`, {
-                              defaultValue:
-                                definition.kind === "fallback"
-                                  ? "Fallback policy"
-                                  : "Detected xAI subscription plan",
-                            })}
+                            {t(
+                              `oauth_model_policy.plan_${definition.localeSuffix}_hint`,
+                              {
+                                defaultValue:
+                                  definition.kind === "fallback"
+                                    ? "Fallback policy"
+                                    : definition.kind === "custom"
+                                      ? "Provider-specific custom plan"
+                                      : "Detected OAuth subscription plan",
+                              },
+                            )}
                           </p>
                           {definition.monthlyLimitCents !== undefined && (
                             <small>
@@ -640,7 +815,9 @@ export function OAuthModelPolicyPage() {
                         <ToggleSwitch
                           checked={rule.configured}
                           onChange={(configured) =>
-                            patchPlan(definition.key, { configured })
+                            patchPlan(activeProvider, definition.key, {
+                              configured,
+                            })
                           }
                           ariaLabel={t("oauth_model_policy.configure_plan", {
                             defaultValue: "Configure {{plan}} rule",
@@ -654,7 +831,9 @@ export function OAuthModelPolicyPage() {
                           disabled={saving}
                           patterns={rule.excludedModels}
                           onChange={(excludedModels) =>
-                            patchPlan(definition.key, { excludedModels })
+                            patchPlan(activeProvider, definition.key, {
+                              excludedModels,
+                            })
                           }
                         />
                       ) : (
@@ -681,34 +860,39 @@ export function OAuthModelPolicyPage() {
         )
       )}
 
-      {dirty && (
-        <div
-          className={styles.saveBar}
-          role="region"
-          aria-label={t("common.save")}
-        >
-          <div>
-            <strong>
-              {t("oauth_model_policy.unsaved", {
-                defaultValue: "Unsaved policy changes",
-              })}
-            </strong>
-            <span>
-              {t("oauth_model_policy.save_enables_plugin", {
-                defaultValue: "Saving also enables the bundled plugin runtime.",
-              })}
-            </span>
-          </div>
-          <div className={styles.saveActions}>
-            <Button variant="ghost" disabled={saving} onClick={discard}>
-              {t("oauth_model_policy.discard", { defaultValue: "Discard" })}
-            </Button>
-            <Button loading={saving} onClick={() => void save()}>
-              {t("common.save")}
-            </Button>
-          </div>
-        </div>
-      )}
+      {dirty &&
+        createPortal(
+          <div
+            className={styles.saveBar}
+            role="region"
+            aria-label={t("common.save")}
+          >
+            <div>
+              <strong>
+                {t("oauth_model_policy.unsaved", {
+                  defaultValue: "Unsaved policy changes",
+                })}
+              </strong>
+              <span>
+                {t("oauth_model_policy.save_enables_plugin", {
+                  defaultValue:
+                    "Saving also enables the bundled plugin runtime.",
+                })}
+              </span>
+            </div>
+            <div className={styles.saveActions}>
+              <Button variant="ghost" disabled={saving} onClick={discard}>
+                {t("oauth_model_policy.discard", {
+                  defaultValue: "Discard",
+                })}
+              </Button>
+              <Button loading={saving} onClick={() => void save()}>
+                {t("common.save")}
+              </Button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

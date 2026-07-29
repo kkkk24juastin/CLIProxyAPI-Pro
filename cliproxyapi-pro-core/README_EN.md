@@ -4,7 +4,7 @@ Customized Docker build layer for upstream `router-for-me/CLIProxyAPI`.
 
 This directory does not maintain a full fork of upstream. During Docker build it downloads an upstream release, copies in the local `embeddedusage/` package, applies the patch script in `patches/`, and builds a multi-arch image for the Pro deployment.
 
-Standard macOS, Windows amd64, and Linux Pro releases plus Docker images prebundle the `proxy-pool` and `oauth-model-policy` dynamic plugins. The former exposes a fixed loopback SOCKS5 endpoint; the latter initially removes models unavailable to each xAI OAuth plan. Windows ARM64, FreeBSD, and `_no-plugin` assets do not currently bundle dynamic plugins.
+Standard macOS, Windows amd64, and Linux Pro releases plus Docker images prebundle the `proxy-pool` and `oauth-model-policy` dynamic plugins. The former exposes a fixed loopback SOCKS5 endpoint; the latter removes models unavailable to OAuth plans across supported providers. Windows ARM64, FreeBSD, and `_no-plugin` assets do not currently bundle dynamic plugins.
 
 ## What this customization adds
 
@@ -142,7 +142,7 @@ rules.
 
 The patch layer adds a generic `AuthModelFilter` capability to the upstream plugin SDK/ABI. Core provides the current auth, its native model set, and a controlled HTTP callback, while enforcing that a plugin may only subtract existing models. Plan discovery and policy rules stay in the bundled `oauth-model-policy` plugin.
 
-The first version supports xAI OAuth with `free`, `supergrok`, `x-premium-plus`, `supergrok-heavy`, `paid-unknown`, and `_unknown` fallback rules. Processing order is upstream `excluded_models`, plugin plan filtering, OAuth alias/prefix, then model registration. The final registration constrains both `/v1/models` aggregation and scheduler candidates. See `cliproxyapi-pro-plugins/oauth-model-policy/README.md` for configuration and discovery details.
+The plugin supports xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi OAuth, with `_unknown`, `_default`, and custom plan rules for every provider. Processing order is upstream `excluded_models`, plugin plan filtering, OAuth alias/prefix, then model registration. The final registration constrains both `/v1/models` aggregation and scheduler candidates. See `cliproxyapi-pro-plugins/oauth-model-policy/README.md` for configuration and discovery details.
 
 ### Backend account inspection scheduler
 
