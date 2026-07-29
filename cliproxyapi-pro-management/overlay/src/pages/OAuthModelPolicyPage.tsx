@@ -111,7 +111,7 @@ function DurationInput({
       setText(formatDurationNumber(numericValue));
       return;
     }
-    const normalized = Math.round(next * 1000) / 1000;
+    const normalized = Math.max(1, Math.round(next));
     setText(formatDurationNumber(normalized));
     if (Math.abs(normalized - numericValue) < 0.000001) return;
     onChange(serializeOAuthModelPolicyDuration(normalized, unit));
@@ -125,9 +125,9 @@ function DurationInput({
           id={inputId}
           className="input"
           type="number"
-          min="0.001"
-          step="0.1"
-          inputMode="decimal"
+          min="1"
+          step="1"
+          inputMode="numeric"
           value={text}
           disabled={disabled}
           onChange={(event) => setText(event.target.value)}
