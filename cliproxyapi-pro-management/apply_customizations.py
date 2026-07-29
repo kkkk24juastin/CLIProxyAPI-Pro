@@ -243,20 +243,6 @@ AUTH_FILES_SELECTED_COUNT_LABEL_KEYS = {
     'zh-TW.json': '調度',
 }
 
-PROXY_POOL_NAV_LOCALE_KEYS = {
-    'en.json': {'label': 'Proxy Management', 'meta': 'Rotating upstream proxy gateway'},
-    'ru.json': {'label': 'Управление прокси', 'meta': 'Шлюз ротации внешних прокси'},
-    'zh-CN.json': {'label': '代理管理', 'meta': '多节点轮询与故障转移'},
-    'zh-TW.json': {'label': '代理管理', 'meta': '多節點輪詢與故障轉移'},
-}
-
-OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS = {
-    'en.json': {'label': 'Model Policy', 'meta': 'Per-plan model availability rules'},
-    'ru.json': {'label': 'Политика моделей', 'meta': 'Правила доступности моделей по тарифам'},
-    'zh-CN.json': {'label': '模型策略', 'meta': '按账号套餐配置模型可用范围'},
-    'zh-TW.json': {'label': '模型策略', 'meta': '依帳號套餐設定模型可用範圍'},
-}
-
 def load_overlay_replacement_manifest(path: Path) -> dict[str, set[str]]:
     payload = json.loads(path.read_text())
     if payload.get('schemaVersion') != 1 or not isinstance(payload.get('replacements'), list):
@@ -388,6 +374,22 @@ def ensure_cached_at_in_quota_success_state(path: Path, store_setter: str) -> No
         updated = f'{block[:inline_end_start].rstrip()}, cachedAt: Date.now() {block[inline_end_start:]}'
 
     write(path, f'{text[:success_start]}{updated}{text[error_start:]}')
+
+
+def auth_files_page_path(target: Path) -> Path:
+    for relative in ('src/features/authFiles/AuthFilesPage.tsx', 'src/pages/AuthFilesPage.tsx'):
+        path = target / relative
+        if path.is_file():
+            return path
+    raise RuntimeError(f'AuthFilesPage.tsx not found under {target}')
+
+
+def auth_files_styles_path(target: Path) -> Path:
+    for relative in ('src/features/authFiles/AuthFilesPage.module.scss', 'src/pages/AuthFilesPage.module.scss'):
+        path = target / relative
+        if path.is_file():
+            return path
+    raise RuntimeError(f'AuthFilesPage.module.scss not found under {target}')
 
 
 def insert_once(path: Path, marker: str, insertion: str, present: str) -> None:
@@ -700,12 +702,12 @@ def patch_routes(target: Path) -> None:
     replace_once(
         path,
         "import { QuotaPage } from '@/pages/QuotaPage';\n",
-        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\nimport { ProxyPoolPage } from '@/pages/ProxyPoolPage';\nimport { OAuthModelPolicyPage } from '@/pages/OAuthModelPolicyPage';\n",
+        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\n",
     )
     replace_once(
         path,
         "  { path: '/quota', element: <QuotaPage /> },\n",
-        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n  { path: '/proxy-pool', element: <ProxyPoolPage /> },\n  { path: '/oauth-model-policy', element: <OAuthModelPolicyPage /> },\n",
+        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n",
     )
 
 
@@ -746,32 +748,13 @@ def patch_layout(target: Path) -> None:
     insert_once(
         path,
         "  IconSidebarProviders,\n",
-        "  IconModelCluster,\n  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarProxyPool,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
+        "  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
         "  IconSidebarAccountInspection,\n",
     )
     replace_once(
         path,
         "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n",
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n  proxyPool: <IconSidebarProxyPool size={18} />,\n  oauthModelPolicy: <IconModelCluster size={18} />,\n",
-    )
-    insert_once(
-        path,
-        "              {\n                path: '/plugins',\n",
-        "              {\n"
-        "                path: '/proxy-pool',\n"
-        "                labelKey: 'nav.proxy_pool',\n"
-        "                metaKey: 'nav_meta.proxy_pool',\n"
-        "                icon: sidebarIcons.proxyPool,\n"
-        "              },\n"
-        "              {\n"
-        "                path: '/oauth-model-policy',\n"
-        "                labelKey: 'nav.oauth_model_policy',\n"
-        "                metaKey: 'nav_meta.oauth_model_policy',\n"
-        "                icon: sidebarIcons.oauthModelPolicy,\n"
-        "              },\n"
-        "              {\n"
-        "                path: '/plugins',\n",
-        "path: '/proxy-pool',",
+        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n",
     )
     text = read(path)
     if "path: '/monitoring'" not in text:
@@ -932,21 +915,6 @@ def patch_icons(target: Path) -> None:
         "  );\n"
         "}\n\n"
     )
-    proxy_pool_icon = (
-        "export function IconSidebarProxyPool({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <circle cx=\"6\" cy=\"7\" r=\"2.5\" />\n"
-        "      <circle cx=\"18\" cy=\"7\" r=\"2.5\" />\n"
-        "      <circle cx=\"12\" cy=\"18\" r=\"2.5\" />\n"
-        "      <path d=\"M8.5 7h7\" />\n"
-        "      <path d=\"m7.4 9 3.2 6.6\" />\n"
-        "      <path d=\"m16.6 9-3.2 6.6\" />\n"
-        "      <path d=\"m12.5 4.5 2 2.5-2 2.5\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
     icons_to_insert = ""
     if "export function IconSidebarMonitor" not in text:
         icons_to_insert += monitor_icon
@@ -954,8 +922,6 @@ def patch_icons(target: Path) -> None:
         icons_to_insert += account_inspection_icon
     if "export function IconSidebarRouting" not in text:
         icons_to_insert += routing_icon
-    if "export function IconSidebarProxyPool" not in text:
-        icons_to_insert += proxy_pool_icon
     if not icons_to_insert:
         return
     for marker in (
@@ -1733,17 +1699,39 @@ def patch_quota_page_search(target: Path) -> None:
 
 def patch_quota_card(target: Path) -> None:
     path = target / 'src/components/quota/QuotaCard.tsx'
-    replace_once(
-        path,
-        "import { TYPE_COLORS } from '@/utils/quota';\n",
-        "import { QuotaCachedTime } from '@/extensions/quota/QuotaCardExtras';\nimport { TYPE_COLORS } from '@/utils/quota';\n",
-    )
+    text = read(path)
+    extras_import = "import { QuotaCachedTime } from '@/extensions/quota/QuotaCardExtras';\n"
+    if extras_import not in text:
+        quota_imports = (
+            "import { TYPE_COLORS } from '@/utils/quota';\n",
+            "import { TYPE_COLORS, resolveQuotaErrorMessage } from '@/utils/quota';\n",
+        )
+        for quota_import in quota_imports:
+            if quota_import in text:
+                write(path, text.replace(quota_import, extras_import + quota_import, 1))
+                break
+        else:
+            raise RuntimeError(f'Pattern not found in {path}: quota utils import')
     replace_once(path, "  errorStatus?: number;\n}", "  errorStatus?: number;\n  cachedAt?: number;\n}")
-    replace_once(
-        path,
-        "        ) : quota ? (\n          renderQuotaItems(quota, t, { styles, QuotaProgressBar })\n        ) : (",
-        "        ) : quota ? (\n          <>\n            {renderQuotaItems(quota, t, { styles, QuotaProgressBar })}\n            <QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />\n          </>\n        ) : (",
-    )
+    text = read(path)
+    cached_time = "<QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />"
+    if cached_time not in text:
+        render_variants = (
+            (
+                "        ) : quota ? (\n          renderQuotaItems(quota, t, { styles, QuotaProgressBar })\n        ) : (",
+                "        ) : quota ? (\n          <>\n            {renderQuotaItems(quota, t, { styles, QuotaProgressBar })}\n            <QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />\n          </>\n        ) : (",
+            ),
+            (
+                "        ) : quota ? (\n          renderQuotaItems(quota, t, { styles, QuotaProgressBar: BoundQuotaProgressBar })\n        ) : (",
+                "        ) : quota ? (\n          <>\n            {renderQuotaItems(quota, t, { styles, QuotaProgressBar: BoundQuotaProgressBar })}\n            <QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />\n          </>\n        ) : (",
+            ),
+        )
+        for old, new in render_variants:
+            if old in text:
+                write(path, text.replace(old, new, 1))
+                break
+        else:
+            raise RuntimeError(f'Pattern not found in {path}: quota render block')
 
 
 def patch_quota_store(target: Path) -> None:
@@ -1855,7 +1843,7 @@ def patch_account_inspection_page(target: Path) -> None:
 
 
 def patch_auth_files_page_search(target: Path) -> None:
-    path = target / 'src/pages/AuthFilesPage.tsx'
+    path = auth_files_page_path(target)
     replace_once(
         path,
         "import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';\n",
@@ -2099,7 +2087,7 @@ def patch_auth_files_page_search(target: Path) -> None:
 
 
 def patch_auth_files_page_sorting(target: Path) -> None:
-    page_path = target / 'src/pages/AuthFilesPage.tsx'
+    page_path = auth_files_page_path(target)
     ui_state_path = target / 'src/features/authFiles/uiState.ts'
 
     replace_once(
@@ -2175,6 +2163,17 @@ def patch_auth_files_page_sorting(target: Path) -> None:
         "    return options;\n"
         "  }, [planSortAvailable, quotaSortAvailable, t]);\n",
     )
+    text = read(page_path)
+    direct_priority = (
+        "        const pa = typeof a.priority === 'number' ? a.priority : 0;\n"
+        "        const pb = typeof b.priority === 'number' ? b.priority : 0;\n"
+    )
+    parsed_priority = (
+        "        const pa = parsePriorityValue(a.priority) ?? 0;\n"
+        "        const pb = parsePriorityValue(b.priority) ?? 0;\n"
+    )
+    if direct_priority in text and parsed_priority not in text:
+        write(page_path, text.replace(direct_priority, parsed_priority, 1))
     replace_once(
         page_path,
         "  const sorted = useMemo(() => {\n"
@@ -2212,8 +2211,8 @@ def patch_auth_files_page_sorting(target: Path) -> None:
         "      copy.sort((a, b) => a.name.localeCompare(b.name));\n"
         "    } else if (effectiveSortMode === 'priority') {\n"
         "      copy.sort((a, b) => {\n"
-        "        const pa = parsePriorityValue(a.priority) ?? 0;\n"
-        "        const pb = parsePriorityValue(b.priority) ?? 0;\n"
+        "        const pa = Number.isFinite(Number(a.priority)) ? Number(a.priority) : 0;\n"
+        "        const pb = Number.isFinite(Number(b.priority)) ? Number(b.priority) : 0;\n"
         "        return pb - pa; // 高优先级排前面\n"
         "      });\n"
         "    } else if (effectiveSortMode === 'plan') {\n"
@@ -2225,22 +2224,27 @@ def patch_auth_files_page_sorting(target: Path) -> None:
         "  }, [effectiveSortMode, filtered, quotaSearchStore]);\n",
     )
 
-    replace_once(
-        page_path,
-        "                value={sortMode}\n"
-        "                options={sortOptions}\n"
-        "                onChange={handleSortModeChange}\n",
-        "                value={effectiveSortMode}\n"
-        "                options={sortOptions}\n"
-        "                onChange={handleSortModeChange}\n",
-    )
+    text = read(page_path)
+    if 'sortMode={effectiveSortMode}' not in text and 'value={effectiveSortMode}' not in text:
+        inline_select = (
+            "                value={sortMode}\n"
+            "                options={sortOptions}\n"
+            "                onChange={handleSortModeChange}\n"
+        )
+        toolbar_prop = "          sortMode={sortMode}\n"
+        if inline_select in text:
+            write(page_path, text.replace(inline_select, inline_select.replace('sortMode', 'effectiveSortMode'), 1))
+        elif toolbar_prop in text:
+            write(page_path, text.replace(toolbar_prop, "          sortMode={effectiveSortMode}\n", 1))
+        else:
+            raise RuntimeError(f'Pattern not found in {page_path}: auth files sort control')
 
 
 def patch_auth_files_gemini_quota(target: Path) -> None:
     constants_path = target / 'src/features/authFiles/constants.ts'
     quota_section_path = target / 'src/features/authFiles/components/AuthFileQuotaSection.tsx'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
-    styles_path = target / 'src/pages/AuthFilesPage.module.scss'
+    styles_path = auth_files_styles_path(target)
 
     replace_once(
         constants_path,
@@ -2298,32 +2302,44 @@ def patch_auth_files_gemini_quota(target: Path) -> None:
         "    if (quotaType === 'kimi') return state.setKimiQuota as unknown as (updater: unknown) => void;",
     )
 
-    replace_once(
-        card_path,
+    card_text = read(card_path)
+    legacy_card_class = (
         "        : quotaType === 'codex'\n"
         "          ? styles.codexCard\n"
-        "          : quotaType === 'kimi'",
-        "        : quotaType === 'codex'\n"
-        "          ? styles.codexCard\n"
-        "          : quotaType === 'gemini-cli'\n"
-        "            ? styles.geminiCliCard\n"
-        "            : quotaType === 'kimi'",
+        "          : quotaType === 'kimi'"
     )
-    insert_once(
-        styles_path,
-        ".kimiCard {\n",
-        ".geminiCliCard {\n"
-        "  background-image: linear-gradient(180deg, rgba(224, 232, 255, 0.08), transparent);\n"
-        "}\n\n"
-        ".kimiCard {\n",
-        '.geminiCliCard {',
-    )
+    if legacy_card_class in card_text:
+        write(
+            card_path,
+            card_text.replace(
+                legacy_card_class,
+                "        : quotaType === 'codex'\n"
+                "          ? styles.codexCard\n"
+                "          : quotaType === 'gemini-cli'\n"
+                "            ? styles.geminiCliCard\n"
+                "            : quotaType === 'kimi'",
+                1,
+            ),
+        )
+        insert_once(
+            styles_path,
+            ".kimiCard {\n",
+            ".geminiCliCard {\n"
+            "  background-image: linear-gradient(180deg, rgba(224, 232, 255, 0.08), transparent);\n"
+            "}\n\n"
+            ".kimiCard {\n",
+            '.geminiCliCard {',
+        )
+    elif "quotaType === 'gemini-cli'" in card_text:
+        pass
+    elif 'AuthFileQuotaSection' not in card_text:
+        raise RuntimeError(f'Pattern not found in {card_path}: quota card layout')
 
 
 def patch_auth_files_runtime_state(target: Path) -> None:
     type_path = target / 'src/types/authFile.ts'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
-    page_path = target / 'src/pages/AuthFilesPage.tsx'
+    page_path = auth_files_page_path(target)
 
     insert_once(
         type_path,
@@ -2331,21 +2347,53 @@ def patch_auth_files_runtime_state(target: Path) -> None:
         "  selected?: unknown;\n  success?: unknown;\n",
         "selected?: unknown;",
     )
-    replace_once(
-        card_path,
-        "  const fileStats = {\n    success: normalizeUsageTotal(file.success),\n    failure: normalizeUsageTotal(file.failed),\n  };\n",
-        "  const fileStats = {\n    selected: normalizeUsageTotal(file.selected),\n    success: normalizeUsageTotal(file.success),\n    failure: normalizeUsageTotal(file.failed),\n  };\n",
+    card_text = read(card_path)
+    legacy_stats = (
+        "  const fileStats = {\n    success: normalizeUsageTotal(file.success),\n"
+        "    failure: normalizeUsageTotal(file.failed),\n  };\n"
     )
-    insert_once(
-        card_path,
-        "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n",
-        "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n"
-        "              <div className={styles.statPill}>\n"
-        "                <span className={styles.statLabel}>{t('auth_files.selected_count')}</span>\n"
-        "                <span className={styles.statValue}>{fileStats.selected}</span>\n"
-        "              </div>\n",
-        "t('auth_files.selected_count')",
-    )
+    if legacy_stats in card_text:
+        write(
+            card_path,
+            card_text.replace(
+                legacy_stats,
+                "  const fileStats = {\n    selected: normalizeUsageTotal(file.selected),\n"
+                "    success: normalizeUsageTotal(file.success),\n"
+                "    failure: normalizeUsageTotal(file.failed),\n  };\n",
+                1,
+            ),
+        )
+        insert_once(
+            card_path,
+            "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n",
+            "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n"
+            "              <div className={styles.statPill}>\n"
+            "                <span className={styles.statLabel}>{t('auth_files.selected_count')}</span>\n"
+            "                <span className={styles.statValue}>{fileStats.selected}</span>\n"
+            "              </div>\n",
+            "t('auth_files.selected_count')",
+        )
+    elif 'const selectedCount =' not in card_text and 'const successCount = file.successCount ?? 0;' in card_text:
+        write(
+            card_path,
+            card_text.replace(
+                '  const successCount = file.successCount ?? 0;\n',
+                "  const selectedCount = Math.max(0, Number(file.selected) || 0);\n"
+                "  const successCount = file.successCount ?? 0;\n",
+                1,
+            ),
+        )
+        insert_once(
+            card_path,
+            "          <span className={styles.healthCounts}>\n",
+            "          <span className={styles.healthCounts}>\n"
+            "            <span className={styles.countOk} title={t('auth_files.selected_count')}>\n"
+            "              {t('auth_files.selected_count')} {selectedCount}\n"
+            "            </span>\n",
+            "{t('auth_files.selected_count')} {selectedCount}",
+        )
+    elif "t('auth_files.selected_count')" not in card_text:
+        raise RuntimeError(f'Pattern not found in {card_path}: auth runtime counters')
 
     insert_once(
         page_path,
@@ -2354,27 +2402,26 @@ def patch_auth_files_runtime_state(target: Path) -> None:
         "import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n",
         "quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware'",
     )
-    replace_once(
-        page_path,
-        "  const handleHeaderRefresh = useCallback(async () => {\n"
-        "    await Promise.all([loadFiles(), loadExcluded(), loadModelAlias()]);\n"
-        "  }, [loadFiles, loadExcluded, loadModelAlias]);\n",
-        "  const handleHeaderRefresh = useCallback(async () => {\n"
-        "    await Promise.all([\n"
-        "      loadFiles(),\n"
-        "      loadExcluded(),\n"
-        "      loadModelAlias(),\n"
-        "      quotaPersistenceMiddleware.ensureFresh(),\n"
-        "    ]);\n"
-        "  }, [loadFiles, loadExcluded, loadModelAlias]);\n",
-    )
+    text = read(page_path)
+    if 'quotaPersistenceMiddleware.ensureFresh()' not in text:
+        refresh_variants = (
+            "    await Promise.all([loadFiles(), loadExcluded(), loadModelAlias()]);\n",
+            "    await Promise.all([loadFiles({ background: true }), loadExcluded(), loadModelAlias()]);\n",
+        )
+        for refresh in refresh_variants:
+            if refresh in text:
+                replacement = refresh.replace(']);\n', ', quotaPersistenceMiddleware.ensureFresh()]);\n')
+                write(page_path, text.replace(refresh, replacement, 1))
+                break
+        else:
+            raise RuntimeError(f'Pattern not found in {page_path}: header refresh')
 
 
 def patch_account_usage_feature(target: Path) -> None:
     icons_path = target / 'src/components/ui/icons.tsx'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
-    page_path = target / 'src/pages/AuthFilesPage.tsx'
-    styles_path = target / 'src/pages/AuthFilesPage.module.scss'
+    page_path = auth_files_page_path(target)
+    styles_path = auth_files_styles_path(target)
 
     insert_once(
         icons_path,
@@ -2411,10 +2458,10 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
         '    onShowModels,\n    onDownload,\n',
         '    onShowModels,\n    onShowUsage,\n    onDownload,\n',
     )
-    insert_once(
-        card_path,
-        '            </div>\n          </div>\n\n          <div className={`${styles.cardMeta}',
-        '''            </div>
+    card_text = read(card_path)
+    legacy_usage_marker = '            </div>\n          </div>\n\n          <div className={`${styles.cardMeta}'
+    if "onClick={() => onShowUsage(file)}" not in card_text and legacy_usage_marker in card_text:
+        write(card_path, card_text.replace(legacy_usage_marker, '''            </div>
             {authIndexKey && (
               <Button
                 variant="secondary"
@@ -2431,12 +2478,11 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
           </div>
 
           <div className={`${styles.cardMeta}''',
-        "onClick={() => onShowUsage(file)}",
-    )
-    insert_once(
-        styles_path,
-        '.modelsActionButton:global(.btn.btn-sm) {\n',
-        '''.usageCornerButton:global(.btn.btn-sm) {
+        1))
+        insert_once(
+            styles_path,
+            '.modelsActionButton:global(.btn.btn-sm) {\n',
+            '''.usageCornerButton:global(.btn.btn-sm) {
   flex: 0 0 auto;
   align-self: flex-start;
   width: 34px;
@@ -2467,8 +2513,27 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
 
 .modelsActionButton:global(.btn.btn-sm) {
 ''',
-        '.usageCornerButton:global(.btn.btn-sm)',
-    )
+            '.usageCornerButton:global(.btn.btn-sm)',
+        )
+    elif "onClick={() => onShowUsage(file)}" not in card_text:
+        actions_marker = '        <div className={styles.actionsMain}>\n'
+        if actions_marker not in card_text:
+            raise RuntimeError(f'Pattern not found in {card_path}: auth file actions')
+        write(
+            card_path,
+            card_text.replace(
+                actions_marker,
+                actions_marker
+                + "          {authIndexKey && (\n"
+                + "            <Button variant=\"secondary\" size=\"sm\" onClick={() => onShowUsage(file)}\n"
+                + "              title={t('account_usage.card_action')} disabled={disableControls}>\n"
+                + "              <IconChartColumnIncreasing size={14} />\n"
+                + "              {t('account_usage.card_action')}\n"
+                + "            </Button>\n"
+                + "          )}\n",
+                1,
+            ),
+        )
 
     insert_once(
         page_path,
@@ -2484,20 +2549,43 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
         "import type { AuthFileItem } from '@/types';\n",
         "import type { AuthFileItem } from '@/types';",
     )
-    insert_once(
-        page_path,
-        "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n",
-        "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n"
-        "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n",
-        'const [accountUsageFile, setAccountUsageFile]',
-    )
-    replace_once(
-        page_path,
-        "                  onShowModels={showModels}\n                  onDownload={handleDownload}\n",
-        "                  onShowModels={showModels}\n"
-        "                  onShowUsage={setAccountUsageFile}\n"
-        "                  onDownload={handleDownload}\n",
-    )
+    page_text = read(page_path)
+    if 'const [accountUsageFile, setAccountUsageFile]' not in page_text:
+        state_markers = (
+            "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n",
+            "  const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');\n",
+        )
+        for marker in state_markers:
+            if marker in page_text:
+                write(
+                    page_path,
+                    page_text.replace(
+                        marker,
+                        marker + "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n",
+                        1,
+                    ),
+                )
+                break
+        else:
+            raise RuntimeError(f'Pattern not found in {page_path}: account usage state')
+    page_text = read(page_path)
+    if 'onShowUsage={setAccountUsageFile}' not in page_text:
+        for indent in ('                  ', '                '):
+            marker = f'{indent}onShowModels={{showModels}}\n{indent}onDownload={{handleDownload}}\n'
+            if marker in page_text:
+                write(
+                    page_path,
+                    page_text.replace(
+                        marker,
+                        f'{indent}onShowModels={{showModels}}\n'
+                        f'{indent}onShowUsage={{setAccountUsageFile}}\n'
+                        f'{indent}onDownload={{handleDownload}}\n',
+                        1,
+                    ),
+                )
+                break
+        else:
+            raise RuntimeError(f'Pattern not found in {page_path}: auth card usage callback')
     insert_once(
         page_path,
         "      <AuthFileModelsModal\n",
@@ -2843,16 +2931,6 @@ def patch_locales(target: Path) -> None:
         data = json.loads(read(locale_path))
         additions = monitoring.get(locale_path.name, {})
         data.setdefault('nav', {}).update(additions.get('nav', {}))
-        proxy_pool_nav = PROXY_POOL_NAV_LOCALE_KEYS.get(
-            locale_path.name,
-            PROXY_POOL_NAV_LOCALE_KEYS['en.json'],
-        )
-        data.setdefault('nav', {})['proxy_pool'] = proxy_pool_nav['label']
-        oauth_model_policy_nav = OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS.get(
-            locale_path.name,
-            OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS['en.json'],
-        )
-        data.setdefault('nav', {})['oauth_model_policy'] = oauth_model_policy_nav['label']
         nav_additions = additions.get('nav', {})
         data.setdefault('nav_meta', {}).update(
             additions.get(
@@ -2864,23 +2942,10 @@ def patch_locales(target: Path) -> None:
                 },
             )
         )
-        data.setdefault('nav_meta', {})['proxy_pool'] = proxy_pool_nav['meta']
-        data.setdefault('nav_meta', {})['oauth_model_policy'] = oauth_model_policy_nav['meta']
         data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
         data['account_usage'] = additions.get('account_usage', data.get('account_usage', {}))
         data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
         data['routing_policy'] = additions.get('routing_policy', data.get('routing_policy', {}))
-        data['proxy_pool'] = additions.get(
-            'proxy_pool',
-            monitoring.get('en.json', {}).get('proxy_pool', data.get('proxy_pool', {})),
-        )
-        data['oauth_model_policy'] = additions.get(
-            'oauth_model_policy',
-            monitoring.get('en.json', {}).get(
-                'oauth_model_policy',
-                data.get('oauth_model_policy', {}),
-            ),
-        )
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
         gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(locale_path.name, GEMINI_CLI_LOCALE_KEYS['en.json'])
         data.setdefault('auth_files', {})['filter_gemini-cli'] = gemini_cli_locale['auth_filter']

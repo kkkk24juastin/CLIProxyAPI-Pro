@@ -88,8 +88,8 @@ Main capabilities:
 - Adds the `/monitoring` request monitoring page.
 - Adds the `/account-inspection` account inspection page.
 - Adds the `/routing` routing-policy page.
-- Adds the `/proxy-pool` page for node configuration, connectivity tests, runtime statistics, and global-proxy takeover/restoration.
-- Adds the `/oauth-model-policy` visual editor for provider-specific OAuth plan rules, custom plans, fallback policies, and plan-discovery caching.
+- The `proxy-pool` plugin resource owns node configuration, connectivity tests, runtime statistics, and global-proxy takeover/restoration; Management no longer carries a duplicate page.
+- The `oauth-model-policy` plugin resource edits provider-specific OAuth plan rules, custom plans, fallback policies, and plan-discovery caching.
 - Shows request count, success rate, latency, token, and cost metrics.
 - Persists model prices through SQLite.
 - Persists quota cache through SQLite.

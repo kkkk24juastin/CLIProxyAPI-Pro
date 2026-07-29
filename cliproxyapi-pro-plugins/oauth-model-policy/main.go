@@ -41,8 +41,11 @@ import "C"
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -53,7 +56,7 @@ import (
 )
 
 const (
-	pluginVersion         = "0.2.0"
+	pluginVersion         = "0.3.0"
 	methodAuthModelFilter = "model.filter_for_auth"
 )
 
@@ -85,6 +88,25 @@ type registration struct {
 
 type registrationCapabilities struct {
 	AuthModelFilter bool `json:"auth_model_filter"`
+	ManagementAPI   bool `json:"management_api"`
+}
+
+type managementRegistration struct {
+	Resources []resourceRoute `json:"resources"`
+}
+
+type resourceRoute struct {
+	Path        string `json:"path"`
+	Menu        string `json:"menu"`
+	Description string `json:"description"`
+}
+
+//go:embed web/index.html
+var oauthModelPolicyManagementPage []byte
+
+type managementRequest struct {
+	Method string `json:"Method"`
+	Path   string `json:"Path"`
 }
 
 type authModelFilterRequest struct {
@@ -168,6 +190,14 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	switch method {
 	case pluginabi.MethodPluginRegister, pluginabi.MethodPluginReconfigure:
 		return configurePlugin(request)
+	case pluginabi.MethodManagementRegister:
+		return okEnvelope(managementRegistration{Resources: []resourceRoute{{
+			Path:        "/ui",
+			Menu:        "模型策略",
+			Description: "OAuth account plan model availability rules",
+		}}})
+	case pluginabi.MethodManagementHandle:
+		return handleManagement(request)
 	case methodAuthModelFilter:
 		return filterAuthModels(request)
 	default:
@@ -206,8 +236,35 @@ func pluginRegistration() registration {
 				{Name: "providers", Type: pluginapi.ConfigFieldTypeObject, Description: "Provider plan to excluded-model policy map."},
 			},
 		},
-		Capabilities: registrationCapabilities{AuthModelFilter: true},
+		Capabilities: registrationCapabilities{AuthModelFilter: true, ManagementAPI: true},
 	}
+}
+
+func handleManagement(raw []byte) ([]byte, error) {
+	request := managementRequest{}
+	if errUnmarshal := json.Unmarshal(raw, &request); errUnmarshal != nil {
+		return okEnvelope(pluginapi.ManagementResponse{
+			StatusCode: http.StatusBadRequest,
+			Headers:    http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+			Body:       []byte(`{"error":"invalid_request"}`),
+		})
+	}
+	if request.Method != http.MethodGet || !strings.HasSuffix(strings.TrimSpace(request.Path), "/ui") {
+		return okEnvelope(pluginapi.ManagementResponse{
+			StatusCode: http.StatusNotFound,
+			Headers:    http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+			Body:       []byte(`{"error":"not_found"}`),
+		})
+	}
+	return okEnvelope(pluginapi.ManagementResponse{
+		StatusCode: http.StatusOK,
+		Headers: http.Header{
+			"Content-Type":            []string{"text/html; charset=utf-8"},
+			"Content-Security-Policy": []string{"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors *"},
+			"Cache-Control":           []string{"no-store"},
+		},
+		Body: append([]byte(nil), oauthModelPolicyManagementPage...),
+	})
 }
 
 func filterAuthModels(raw []byte) ([]byte, error) {

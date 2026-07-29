@@ -89,8 +89,8 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 新增 `/monitoring` 请求监控页面。
 - 新增 `/account-inspection` 账号巡检页面。
 - 新增 `/routing` 路由策略页面。
-- 新增 `/proxy-pool` 代理池页面，负责节点配置、连通性测试、运行统计和全局代理接管/恢复。
-- 新增 `/oauth-model-policy` 可视化配置页，按提供商和 OAuth 套餐编辑模型排除规则、自定义套餐、回退策略和套餐探测缓存。
+- `proxy-pool` 插件资源页负责节点配置、连通性测试、运行统计和全局代理接管/恢复；Management 不再维护重复页面。
+- `oauth-model-policy` 插件资源页按提供商和 OAuth 套餐编辑模型排除规则、自定义套餐、回退策略和套餐探测缓存。
 - 请求量、成功率、延迟、token 和成本统计。
 - 模型价格 SQLite 持久化。
 - quota cache SQLite 持久化。

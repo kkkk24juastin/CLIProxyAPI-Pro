@@ -6,13 +6,13 @@
 
 ## 定制内容
 
-### 代理池页面
+### 插件资源页面
 
-新增 `/proxy-pool` 顶级页面，管理预打包的 `proxy-pool` 动态插件。页面可配置 HTTP/HTTPS/SOCKS5/SOCKS5H 节点、轮询策略、权重、健康检查、隔离和故障转移，并提供批量粘贴导入、节点搜索、筛选结果批量启停、快速复制、未保存草稿测试和手动解除隔离。运行区展示成功率、失败数、活动连接、最近成功/失败、配置代次和健康检查时间，并在插件未注册、端口占用或热重载失败时给出诊断。
+`proxy-pool` 通过 upstream 插件资源协议注册唯一的代理池管理页，可配置 HTTP/HTTPS/SOCKS5/SOCKS5H 节点、轮询策略、权重、健康检查、隔离和故障转移，并提供批量导入、草稿测试、手动解除隔离和运行诊断。Management 不再编译或注册第二套 `/proxy-pool` 页面。
 
-`proxy-pool` 通过 upstream 插件资源协议注册自有管理页；`pro-observability` 注册“可观测性”资源页，展示唯一插件存储、自动迁移、usage contract、备份、quota cache 和路由运行态。Management 的插件 iframe 使用受控消息桥复用当前连接和 management key，因此远程 Core 连接不需要在 iframe 中重复登录。监控页面继续使用 `/usage*` 契约，实际数据由插件提供；Core 仅保留 SSE transport bridge。
+`oauth-model-policy` 同样注册唯一的插件资源页，按 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi 标签页编辑套餐模型排除规则，支持自定义套餐，并区分 `_unknown` 与 `_default` 回退。缓存时间、提供商探测超时和插件优先级也直接写入插件配置；Management 不再持有该业务页面、service 或样式。
 
-新增 `/oauth-model-policy` 顶级页面，管理预打包的 `oauth-model-policy` 动态插件。页面按 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi 标签页编辑套餐模型排除规则，支持自定义套餐，并区分套餐识别失败使用的 `_unknown` 与已识别套餐缺少专属规则时使用的 `_default`。同时可配置缓存时间、提供商探测超时和插件优先级；保存时自动启用插件运行时。
+`pro-observability` 注册“可观测性”资源页，展示唯一插件存储、自动迁移、usage contract、备份、quota cache 和路由运行态。Management 的插件 iframe 使用受控消息桥复用当前连接和 management key，因此远程 Core 连接不需要在 iframe 中重复登录。监控页面继续使用 `/usage*` 契约，实际数据由插件提供；Core 仅保留 SSE transport bridge。
 
 页面负责在插件监听就绪后把 Core 的全局 `proxy-url` 切换到固定回环 SOCKS5 地址。停止接管时恢复此前的全局代理；带独立 `proxy-url` 的凭证会作为绕过项明确列出。插件配置随 Core 配置持久化，健康状态和连接统计属于进程级运行数据，不写入 usage 业务备份。
 
