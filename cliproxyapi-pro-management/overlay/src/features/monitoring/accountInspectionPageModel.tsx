@@ -24,8 +24,6 @@ import type {
   AccountInspectionInspectOneItem,
   AccountInspectionScheduleResponse,
 } from '@/services/api';
-import { resolveXaiPlanType } from '@/extensions/quota/xaiQuota';
-import { useQuotaStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import {
   isDisabledAuthFile,
@@ -36,6 +34,7 @@ import {
   resolveAuthProvider,
 } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/utils/sourceResolver';
+import { resolveAccountPlanLabel, type AccountPlanQuotaStore } from './accountPlan';
 import styles from './accountInspection.module.scss';
 
 export type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
@@ -52,10 +51,7 @@ export type SettingsSectionKey = 'plan' | 'scope' | 'runtime' | 'antigravity' | 
 
 export type ManualAccountInspectionAction = Exclude<AccountInspectionAction, 'keep'>;
 
-export type QuotaAccountStatsState = Pick<
-  ReturnType<typeof useQuotaStore.getState>,
-  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'kimiQuota' | 'xaiQuota'
->;
+export type QuotaAccountStatsState = AccountPlanQuotaStore;
 
 export type HealthCounts = {
   total: number;
@@ -939,94 +935,6 @@ export const formatQuotaRemainingLabel = (value: number | null) => {
   return `${Math.max(0, 100 - value).toFixed(1)}%`;
 };
 
-const toPlanRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-
-const readPlanValue = (value: unknown): string =>
-  typeof value === 'string' ? value.trim() : '';
-
-const readNestedPlanValue = (file: AuthFileItem, ...keys: string[]): string => {
-  const record = file as Record<string, unknown>;
-  const containers = [
-    record,
-    toPlanRecord(record.metadata),
-    toPlanRecord(record.attributes),
-    toPlanRecord(record.id_token),
-  ];
-  for (const container of containers) {
-    if (!container) continue;
-    for (const key of keys) {
-      const value = readPlanValue(container[key]);
-      if (value) return value;
-    }
-  }
-  return '';
-};
-
-const translatedPlanLabel = (t: TFunction, key: string, fallback: string) => {
-  const translated = String(t(key));
-  return translated && translated !== key ? translated : fallback;
-};
-
-const formatRawPlanLabel = (value: unknown): string => {
-  const raw = readPlanValue(value);
-  if (!raw) return '';
-  return raw
-    .replace(/^plan[_-]/i, '')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, (character) => character.toUpperCase());
-};
-
-const formatCodexPlanLabel = (value: unknown, t: TFunction): string => {
-  const normalized = readPlanValue(value).toLowerCase().replace(/_/g, '-');
-  const labels: Record<string, string> = {
-    pro: translatedPlanLabel(t, 'codex_quota.plan_pro', 'Pro'),
-    prolite: translatedPlanLabel(t, 'codex_quota.plan_prolite', 'Pro Lite'),
-    'pro-lite': translatedPlanLabel(t, 'codex_quota.plan_prolite', 'Pro Lite'),
-    plus: translatedPlanLabel(t, 'codex_quota.plan_plus', 'Plus'),
-    team: translatedPlanLabel(t, 'codex_quota.plan_team', 'Team'),
-    free: translatedPlanLabel(t, 'codex_quota.plan_free', 'Free'),
-  };
-  return labels[normalized] ?? formatRawPlanLabel(value);
-};
-
-const formatAntigravityPlanLabel = (value: unknown, t: TFunction): string => {
-  const subscription = toPlanRecord(value);
-  const raw = subscription?.plan ?? subscription?.tierName ?? subscription?.tierId ?? value;
-  const normalized = readPlanValue(raw).toLowerCase().replace(/_/g, '-');
-  const labels: Record<string, string> = {
-    free: translatedPlanLabel(t, 'antigravity_subscription.plan_free', 'Free'),
-    pro: translatedPlanLabel(t, 'antigravity_subscription.plan_pro', 'Pro'),
-    ultra: translatedPlanLabel(t, 'antigravity_subscription.plan_ultra', 'Ultra'),
-    'ultra-lite': translatedPlanLabel(t, 'antigravity_subscription.plan_ultra_lite', 'Ultra Lite'),
-  };
-  return labels[normalized] ?? formatRawPlanLabel(raw);
-};
-
-const formatClaudePlanLabel = (value: unknown, t: TFunction): string => {
-  const raw = readPlanValue(value);
-  if (!raw) return '';
-  return translatedPlanLabel(t, `claude_quota.${raw}`, formatRawPlanLabel(raw));
-};
-
-const formatXaiPlanLabel = (billingValue: unknown, fallbackValue: unknown, t: TFunction): string => {
-  const billing = toPlanRecord(billingValue);
-  const monthlyLimitCents = normalizeNumberValue(billing?.monthlyLimitCents ?? billing?.monthly_limit_cents);
-  const storedPlan = readPlanValue(billing?.planType ?? billing?.plan_type);
-  const planType = storedPlan || resolveXaiPlanType(monthlyLimitCents, monthlyLimitCents !== null) || readPlanValue(fallbackValue);
-  const labels: Record<string, string> = {
-    free: 'Free',
-    supergrok: translatedPlanLabel(t, 'xai_quota.plan_supergrok', 'SuperGrok'),
-    'x-premium-plus': translatedPlanLabel(t, 'xai_quota.plan_x_premium_plus', 'X Premium+'),
-    'supergrok-heavy': translatedPlanLabel(t, 'xai_quota.plan_supergrok_heavy', 'SuperGrok Heavy'),
-    paid: translatedPlanLabel(t, 'xai_quota.plan_paid', 'Paid'),
-    'paid-unknown': translatedPlanLabel(t, 'xai_quota.plan_paid_unknown', 'Paid'),
-  };
-  return labels[planType] ?? formatRawPlanLabel(planType);
-};
-
 export const resolveAccountInspectionPlanLabel = (
   item: AccountInspectionResultItem,
   authFile: AuthFileItem | undefined,
@@ -1034,47 +942,13 @@ export const resolveAccountInspectionPlanLabel = (
   t: TFunction
 ): string => {
   const file = authFile ?? item.raw;
-  const fileName = item.fileName;
-  const provider = item.provider.trim().toLowerCase() || resolveAuthProvider(file);
-  const fallbackPlan = readNestedPlanValue(
-    file,
-    'planType',
-    'plan_type',
-    'plan',
-    'package',
-    'tierLabel',
-    'tier_label',
-    'tierId',
-    'tier_id',
-    'tier'
-  );
-
-  if (provider === 'antigravity') {
-    return formatAntigravityPlanLabel(
-      quotaStore.antigravityQuota[fileName]?.subscription ??
-        (file as Record<string, unknown>).subscription ??
-        fallbackPlan,
-      t
-    ) || '--';
-  }
-  if (provider === 'claude') {
-    return formatClaudePlanLabel(quotaStore.claudeQuota[fileName]?.planType ?? fallbackPlan, t) || '--';
-  }
-  if (provider === 'codex') {
-    return formatCodexPlanLabel(quotaStore.codexQuota[fileName]?.planType ?? fallbackPlan, t) || '--';
-  }
-  if (provider === 'gemini-cli') {
-    const quota = quotaStore.geminiCliQuota[fileName];
-    return readPlanValue(quota?.tierLabel) || formatRawPlanLabel(quota?.tierId ?? fallbackPlan) || '--';
-  }
-  if (provider === 'kimi') {
-    const quota = toPlanRecord(quotaStore.kimiQuota[fileName]);
-    return formatRawPlanLabel(quota?.planType ?? quota?.tierLabel ?? fallbackPlan) || '--';
-  }
-  if (provider === 'xai') {
-    return formatXaiPlanLabel(quotaStore.xaiQuota[fileName]?.billing, fallbackPlan, t) || '--';
-  }
-  return formatRawPlanLabel(fallbackPlan) || '--';
+  return resolveAccountPlanLabel({
+    authFile: file,
+    fileName: item.fileName,
+    provider: item.provider,
+    quotaStore,
+    t,
+  });
 };
 
 export const formatTokenRefreshLabel = (

@@ -15,6 +15,15 @@ REALTIME_HOOK_PATH = (
     Path(__file__).resolve().parents[1]
     / 'overlay/src/features/monitoring/hooks/useRealtimeLogData.ts'
 )
+REALTIME_PREFERENCES_PATH = (
+    Path(__file__).resolve().parents[1]
+    / 'overlay/src/features/monitoring/realtimeLogPreferences.ts'
+)
+ACCOUNT_PLAN_PATH = (
+    Path(__file__).resolve().parents[1]
+    / 'overlay/src/features/monitoring/accountPlan.ts'
+)
+LOCALES_PATH = Path(__file__).resolve().parents[1] / 'monitoring-locales.json'
 
 
 def read_monitoring_styles() -> str:
@@ -74,6 +83,26 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
         self.assertIn("height: min(620px, 68vh);", styles)
         self.assertIn(".realtimeUpdateBar {\n  position: absolute;", styles)
         self.assertIn("flex-wrap: nowrap;", styles)
+
+    def test_realtime_logs_show_account_plan_from_shared_quota_sources(self) -> None:
+        source = PAGE_PATH.read_text()
+        preferences = REALTIME_PREFERENCES_PATH.read_text()
+        account_plan = ACCOUNT_PLAN_PATH.read_text()
+        locales = LOCALES_PATH.read_text()
+
+        self.assertIn("'accountPlan'", preferences)
+        self.assertIn("shouldMigrateAccountPlan", preferences)
+        self.assertIn("label: t('monitoring.column_account_plan')", source)
+        self.assertIn("authFileByAuthIndex.get(row.authIndex)", source)
+        self.assertIn("accountPlan: resolveAccountPlanLabel({", source)
+        self.assertIn("quotaStore.antigravityQuota[fileName]", account_plan)
+        self.assertIn("quotaStore.claudeQuota[fileName]", account_plan)
+        self.assertIn("quotaStore.codexQuota[fileName]", account_plan)
+        self.assertIn("quotaStore.geminiCliQuota[fileName]", account_plan)
+        self.assertIn("quotaStore.kimiQuota[fileName]", account_plan)
+        self.assertIn("quotaStore.xaiQuota[fileName]", account_plan)
+        self.assertIn('"column_account_plan": "Account Plan"', locales)
+        self.assertIn('"column_account_plan": "账号套餐"', locales)
 
 
 if __name__ == '__main__':

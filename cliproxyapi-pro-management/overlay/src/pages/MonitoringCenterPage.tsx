@@ -41,6 +41,7 @@ import {
   type UsageMetricCard,
 } from '@/features/monitoring/components/UsageAnalyticsPanels';
 import { buildAggregateSummary } from '@/features/monitoring/monitoringAggregates';
+import { resolveAccountPlanLabel, type AccountPlanQuotaStore } from '@/features/monitoring/accountPlan';
 import {
   addMonitoringSummaryRow,
   buildServerUsageTrendAnalytics,
@@ -100,7 +101,8 @@ import {
 } from '@/features/monitoring/pagination';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { apiClient } from '@/services/api/client';
-import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
+import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
+import type { AuthFileItem } from '@/types';
 import { maskSensitiveText } from '@/utils/format';
 import {
   deleteModelPriceRule,
@@ -117,6 +119,7 @@ import {
   type ModelPriceSyncResult,
   type ModelPriceSyncState,
   type ObservedModelPriceTarget,
+  normalizeAuthIndex,
 } from '@/utils/usage';
 import quotaStyles from '@/pages/QuotaPage.module.scss';
 import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';
@@ -125,13 +128,15 @@ import styles from '@/features/monitoring/monitoring.module.scss';
 type StatusFilter = 'all' | 'success' | 'failed';
 type LinkedRequestLogScope = { authIndex: string; fromMs: number; toMs: number };
 
+type RealtimeLogDisplayRow = RealtimeLogRow & { accountPlan: string };
+
 type RealtimeLogColumnDefinition = {
   key: RealtimeLogColumnKey;
   label: string;
   colClassName: string;
   headerClassName?: string;
-  cellClassName?: (row: RealtimeLogRow) => string | undefined;
-  render: (row: RealtimeLogRow) => ReactNode;
+  cellClassName?: (row: RealtimeLogDisplayRow) => string | undefined;
+  render: (row: RealtimeLogDisplayRow) => ReactNode;
   width: number;
 };
 const formatTokenCount = (value: number) => Math.max(0, Math.round(Number(value) || 0)).toLocaleString();
@@ -144,10 +149,12 @@ const getSuccessRateClassName = (rate: number) => (
   rate >= 0.95 ? styles.goodText : rate >= 0.85 ? styles.warnText : styles.badText
 );
 
-const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: RealtimeLogRow) => {
+const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: RealtimeLogDisplayRow) => {
   switch (key) {
     case 'type':
       return [row.provider, row.account || row.authLabel || row.accountMasked || '-'];
+    case 'accountPlan':
+      return [row.accountPlan];
     case 'model':
       return [row.model, row.modelAlias && row.modelAlias !== row.model ? row.modelAlias : buildRealtimeMetaText(row)];
     case 'reasoningEffort':
@@ -191,7 +198,7 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
 const estimateRealtimeLogColumnWidth = (
   key: RealtimeLogColumnKey,
   label: string,
-  rows: RealtimeLogRow[]
+  rows: RealtimeLogDisplayRow[]
 ) => {
   const maxTextLength = rows.reduce((maxLength, row) => {
     const rowMaxLength = getRealtimeLogColumnContentTexts(key, row)
@@ -248,6 +255,12 @@ export function MonitoringCenterPage() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
+  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
+  const claudeQuota = useQuotaStore((state) => state.claudeQuota);
+  const codexQuota = useQuotaStore((state) => state.codexQuota);
+  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);
+  const kimiQuota = useQuotaStore((state) => state.kimiQuota);
+  const xaiQuota = useQuotaStore((state) => state.xaiQuota);
   const [timeRange, setTimeRange] = useState<MonitoringTimeRange>('today');
   const [searchInput, setSearchInput] = useState('');
   const [selectedProvider, setSelectedProvider] = useState('all');
@@ -833,9 +846,38 @@ export function MonitoringCenterPage() {
   const realtimeLogTotalCount = realtimeLogMatchedTotal;
   const realtimeLogTotalPages = realtimeLogTotalCount > 0 ? Math.ceil(realtimeLogTotalCount / realtimeLogPageSize) : 0;
   const normalizedRealtimeLogPage = Math.min(Math.max(1, realtimeLogPage), Math.max(1, realtimeLogTotalPages));
+  const authFileByAuthIndex = useMemo(() => {
+    const filesByAuthIndex = new Map<string, AuthFileItem>();
+    authFiles.forEach((file) => {
+      const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
+      if (authIndex) filesByAuthIndex.set(authIndex, file);
+    });
+    return filesByAuthIndex;
+  }, [authFiles]);
+  const accountPlanQuotaStore = useMemo<AccountPlanQuotaStore>(() => ({
+    antigravityQuota,
+    claudeQuota,
+    codexQuota,
+    geminiCliQuota,
+    kimiQuota,
+    xaiQuota,
+  }), [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]);
   const realtimeLogPageRows = useMemo(
-    () => buildRealtimeLogPageRows(scopedRows, 1, realtimeLogPageSize).rows,
-    [realtimeLogPageSize, scopedRows]
+    () => buildRealtimeLogPageRows(scopedRows, 1, realtimeLogPageSize).rows.map((row) => {
+      const authFile = authFileByAuthIndex.get(row.authIndex);
+      return {
+        ...row,
+        accountPlan: resolveAccountPlanLabel({
+          authFile,
+          provider: row.provider,
+          fallbackPlan: row.planType,
+          quotaStore: accountPlanQuotaStore,
+          t,
+          emptyLabel: '-',
+        }),
+      };
+    }),
+    [accountPlanQuotaStore, authFileByAuthIndex, realtimeLogPageSize, scopedRows, t]
   );
   const realtimeLogPagination = getClientPaginationRange(
     normalizedRealtimeLogPage,
@@ -854,6 +896,18 @@ export function MonitoringCenterPage() {
           <span>{row.provider}</span>
           <small>{row.account || row.authLabel || row.accountMasked || '-'}</small>
         </div>
+      ),
+    },
+    accountPlan: {
+      key: 'accountPlan',
+      label: t('monitoring.column_account_plan'),
+      colClassName: styles.realtimePlanCol,
+      cellClassName: () => styles.realtimeNowrapCell,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.accountPlan,
+      render: (row) => row.accountPlan === '-' ? (
+        <span className={styles.mutedText}>-</span>
+      ) : (
+        <span title={row.accountPlan}>{row.accountPlan}</span>
       ),
     },
     model: {
