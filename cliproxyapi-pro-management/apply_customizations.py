@@ -250,6 +250,13 @@ PROXY_POOL_NAV_LOCALE_KEYS = {
     'zh-TW.json': {'label': '代理管理', 'meta': '多節點輪詢與故障轉移'},
 }
 
+OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS = {
+    'en.json': {'label': 'OAuth Model Policy', 'meta': 'Per-plan model availability rules'},
+    'ru.json': {'label': 'Политика OAuth-моделей', 'meta': 'Правила доступности моделей по тарифам'},
+    'zh-CN.json': {'label': 'OAuth 模型策略', 'meta': '按账号套餐配置模型可用范围'},
+    'zh-TW.json': {'label': 'OAuth 模型策略', 'meta': '依帳號套餐設定模型可用範圍'},
+}
+
 def load_overlay_replacement_manifest(path: Path) -> dict[str, set[str]]:
     payload = json.loads(path.read_text())
     if payload.get('schemaVersion') != 1 or not isinstance(payload.get('replacements'), list):
@@ -693,12 +700,12 @@ def patch_routes(target: Path) -> None:
     replace_once(
         path,
         "import { QuotaPage } from '@/pages/QuotaPage';\n",
-        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\nimport { ProxyPoolPage } from '@/pages/ProxyPoolPage';\n",
+        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\nimport { ProxyPoolPage } from '@/pages/ProxyPoolPage';\nimport { OAuthModelPolicyPage } from '@/pages/OAuthModelPolicyPage';\n",
     )
     replace_once(
         path,
         "  { path: '/quota', element: <QuotaPage /> },\n",
-        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n  { path: '/proxy-pool', element: <ProxyPoolPage /> },\n",
+        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n  { path: '/proxy-pool', element: <ProxyPoolPage /> },\n  { path: '/oauth-model-policy', element: <OAuthModelPolicyPage /> },\n",
     )
 
 
@@ -713,13 +720,13 @@ def patch_layout(target: Path) -> None:
     insert_once(
         path,
         "  IconSidebarProviders,\n",
-        "  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarProxyPool,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
+        "  IconModelCluster,\n  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarProxyPool,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
         "  IconSidebarAccountInspection,\n",
     )
     replace_once(
         path,
         "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n",
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n  proxyPool: <IconSidebarProxyPool size={18} />,\n",
+        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n  proxyPool: <IconSidebarProxyPool size={18} />,\n  oauthModelPolicy: <IconModelCluster size={18} />,\n",
     )
     insert_once(
         path,
@@ -729,6 +736,12 @@ def patch_layout(target: Path) -> None:
         "                labelKey: 'nav.proxy_pool',\n"
         "                metaKey: 'nav_meta.proxy_pool',\n"
         "                icon: sidebarIcons.proxyPool,\n"
+        "              },\n"
+        "              {\n"
+        "                path: '/oauth-model-policy',\n"
+        "                labelKey: 'nav.oauth_model_policy',\n"
+        "                metaKey: 'nav_meta.oauth_model_policy',\n"
+        "                icon: sidebarIcons.oauthModelPolicy,\n"
         "              },\n"
         "              {\n"
         "                path: '/plugins',\n",
@@ -2809,6 +2822,11 @@ def patch_locales(target: Path) -> None:
             PROXY_POOL_NAV_LOCALE_KEYS['en.json'],
         )
         data.setdefault('nav', {})['proxy_pool'] = proxy_pool_nav['label']
+        oauth_model_policy_nav = OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS.get(
+            locale_path.name,
+            OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS['en.json'],
+        )
+        data.setdefault('nav', {})['oauth_model_policy'] = oauth_model_policy_nav['label']
         nav_additions = additions.get('nav', {})
         data.setdefault('nav_meta', {}).update(
             additions.get(
@@ -2821,6 +2839,7 @@ def patch_locales(target: Path) -> None:
             )
         )
         data.setdefault('nav_meta', {})['proxy_pool'] = proxy_pool_nav['meta']
+        data.setdefault('nav_meta', {})['oauth_model_policy'] = oauth_model_policy_nav['meta']
         data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
         data['account_usage'] = additions.get('account_usage', data.get('account_usage', {}))
         data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
@@ -2828,6 +2847,13 @@ def patch_locales(target: Path) -> None:
         data['proxy_pool'] = additions.get(
             'proxy_pool',
             monitoring.get('en.json', {}).get('proxy_pool', data.get('proxy_pool', {})),
+        )
+        data['oauth_model_policy'] = additions.get(
+            'oauth_model_policy',
+            monitoring.get('en.json', {}).get(
+                'oauth_model_policy',
+                data.get('oauth_model_policy', {}),
+            ),
         )
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
         gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(locale_path.name, GEMINI_CLI_LOCALE_KEYS['en.json'])

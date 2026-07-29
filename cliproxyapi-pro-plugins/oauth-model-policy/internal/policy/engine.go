@@ -229,7 +229,12 @@ func xaiPlanFromLimit(limit float64) string {
 
 func ruleForPlan(provider pluginconfig.Provider, plan string) (pluginconfig.Plan, string, bool) {
 	plan = normalizePlan(plan)
-	for _, key := range []string{plan, "_unknown", "_default"} {
+	keys := []string{plan}
+	if plan == "" || plan == "unknown" {
+		keys = append(keys, "_unknown")
+	}
+	keys = append(keys, "_default")
+	for _, key := range keys {
 		key = normalizePlan(key)
 		if rule, ok := provider.Plans[key]; ok {
 			return rule, key, true

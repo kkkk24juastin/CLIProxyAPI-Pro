@@ -10,6 +10,8 @@
 
 新增 `/proxy-pool` 顶级页面，管理预打包的 `proxy-pool` 动态插件。页面可配置 HTTP/HTTPS/SOCKS5/SOCKS5H 节点、轮询策略、权重、健康检查、隔离和故障转移，并提供批量粘贴导入、节点搜索、筛选结果批量启停、快速复制、未保存草稿测试和手动解除隔离。运行区展示成功率、失败数、活动连接、最近成功/失败、配置代次和健康检查时间，并在插件未注册、端口占用或热重载失败时给出诊断。
 
+新增 `/oauth-model-policy` 顶级页面，管理预打包的 `oauth-model-policy` 动态插件。页面以套餐卡片分别编辑 xAI `free`、`supergrok`、`x-premium-plus`、`supergrok-heavy`、`paid-unknown` 模型排除规则，并区分套餐识别失败使用的 `_unknown` 与已识别套餐缺少专属规则时使用的 `_default`。同时可配置缓存时间、billing 探测超时和插件优先级；保存时自动启用插件运行时。
+
 页面负责在插件监听就绪后把 Core 的全局 `proxy-url` 切换到固定回环 SOCKS5 地址。停止接管时恢复此前的全局代理；带独立 `proxy-url` 的凭证会作为绕过项明确列出。插件配置随 Core 配置持久化，健康状态和连接统计属于进程级运行数据，不写入 usage 业务备份。
 
 轮换粒度是 SOCKS5 TCP tunnel，不保证每个复用的 HTTP 请求都切换节点。默认 `fail-open=false`，避免所有代理失效时静默直连。

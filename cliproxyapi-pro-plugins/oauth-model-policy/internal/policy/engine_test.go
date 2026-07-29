@@ -102,3 +102,18 @@ providers:
 		t.Fatalf("annotations = %#v", result.Annotations)
 	}
 }
+
+func TestRuleForPlanSeparatesUnknownAndDefaultFallbacks(t *testing.T) {
+	provider := pluginconfig.Provider{Plans: map[string]pluginconfig.Plan{
+		"_unknown": {ExcludedModels: []string{"unknown-*"}},
+		"_default": {ExcludedModels: []string{"default-*"}},
+	}}
+	unknownRule, unknownKey, unknownMatched := ruleForPlan(provider, "unknown")
+	if !unknownMatched || unknownKey != "_unknown" || unknownRule.ExcludedModels[0] != "unknown-*" {
+		t.Fatalf("unknown fallback = %#v, %q, %t", unknownRule, unknownKey, unknownMatched)
+	}
+	knownRule, knownKey, knownMatched := ruleForPlan(provider, "supergrok")
+	if !knownMatched || knownKey != "_default" || knownRule.ExcludedModels[0] != "default-*" {
+		t.Fatalf("known fallback = %#v, %q, %t", knownRule, knownKey, knownMatched)
+	}
+}

@@ -23,7 +23,7 @@
 - `supergrok-heavy`：月限额 150000 cents
 - `paid-unknown`：已付费但限额未识别
 - `_unknown`：套餐无法解析时的回退规则
-- `_default`：没有更具体规则时的最终回退规则
+- `_default`：套餐已识别但没有更具体规则时的回退规则
 
 插件先从 auth metadata、attributes 和 storage 中读取 `plan_type`、`planType`、`plan` 或 `package`。若没有本地套餐信息，会通过 Core 的受控 HTTP callback 请求 xAI billing API。解析成功的结果按账号缓存；临时探测失败时优先使用过期缓存，最后匹配 `_unknown`。正常的 billing 探测失败不会中断模型注册。
 

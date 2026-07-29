@@ -88,6 +88,7 @@ Main capabilities:
 - Adds the `/account-inspection` account inspection page.
 - Adds the `/routing` routing-policy page.
 - Adds the `/proxy-pool` page for node configuration, connectivity tests, runtime statistics, and global-proxy takeover/restoration.
+- Adds the `/oauth-model-policy` visual editor for xAI OAuth plan rules, fallback policies, and plan-discovery caching.
 - Shows request count, success rate, latency, token, and cost metrics.
 - Persists model prices through SQLite.
 - Persists quota cache through SQLite.
