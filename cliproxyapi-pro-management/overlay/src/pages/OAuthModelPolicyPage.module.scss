@@ -7,7 +7,9 @@
 }
 
 .pageWithSave {
-  padding-bottom: 106px;
+  padding-bottom: calc(
+    var(--oauth-model-policy-action-bar-height, 46px) + 38px
+  );
 }
 
 .header,
@@ -20,8 +22,6 @@
 .patternInputRow,
 .inheritedRule,
 .behaviorNote,
-.saveBar,
-.saveActions,
 .noticeCard {
   display: flex;
   align-items: center;
@@ -246,6 +246,34 @@
 
 .settingsGrid :global(.form-group) {
   margin: 0;
+}
+
+.durationControl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.durationControl input {
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.durationControl > span {
+  display: inline-flex;
+  min-width: 64px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 11px;
+  border: 1px solid var(--border-color);
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  color: var(--text-secondary);
+  background: var(--muted-bg, rgba(148, 163, 184, 0.1));
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .policyPanel {
@@ -557,6 +585,8 @@
     color-mix(in srgb, var(--primary-color) 14%, transparent);
 }
 
+.header > button > span,
+.customPlanRow button > span,
 .patternInputRow button > span {
   display: inline-flex;
   align-items: center;
@@ -596,47 +626,6 @@
   color: var(--primary-color);
 }
 
-.saveBar {
-  position: fixed;
-  z-index: 50;
-  right: max(22px, env(safe-area-inset-right));
-  bottom: max(18px, env(safe-area-inset-bottom));
-  left: max(calc(var(--sidebar-width, 260px) + 22px), 22px);
-  justify-content: space-between;
-  gap: 18px;
-  padding: 11px 14px;
-  border: 1px solid
-    color-mix(in srgb, var(--primary-color) 32%, var(--border-color));
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
-  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.18);
-  backdrop-filter: blur(18px);
-}
-
-.saveBar > div:first-child {
-  min-width: 0;
-}
-
-.saveBar strong,
-.saveBar span {
-  display: block;
-}
-
-.saveBar strong {
-  font-size: 12px;
-}
-
-.saveBar span {
-  margin-top: 2px;
-  color: var(--text-secondary);
-  font-size: 10px;
-}
-
-.saveActions {
-  flex: 0 0 auto;
-  gap: 7px;
-}
-
 @media (max-width: 980px) {
   .statusGrid,
   .settingsGrid {
@@ -651,10 +640,6 @@
     border-bottom: 1px solid var(--border-color);
   }
 
-  .saveBar {
-    left: 22px;
-  }
-
   .providerTabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -664,6 +649,12 @@
   .page {
     gap: 11px;
     padding: 0 0 20px;
+  }
+
+  .pageWithSave {
+    padding-bottom: calc(
+      var(--oauth-model-policy-action-bar-height, 46px) + 28px
+    );
   }
 
   .header {
@@ -737,20 +728,4 @@
     width: 100%;
   }
 
-  .saveBar {
-    right: 10px;
-    bottom: max(10px, env(safe-area-inset-bottom));
-    left: 10px;
-    align-items: stretch;
-    flex-direction: column;
-    gap: 9px;
-  }
-
-  .saveActions {
-    width: 100%;
-  }
-
-  .saveActions button {
-    flex: 1 1 0;
-  }
 }

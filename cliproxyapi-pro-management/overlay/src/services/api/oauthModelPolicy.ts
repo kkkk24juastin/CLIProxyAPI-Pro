@@ -15,6 +15,7 @@ export const OAUTH_MODEL_PROVIDER_KEYS = [
 
 export type OAuthModelProviderKey = (typeof OAUTH_MODEL_PROVIDER_KEYS)[number];
 export type OAuthModelPlanKey = string;
+export type OAuthModelPolicyDurationUnit = "s" | "m";
 
 export interface OAuthModelPlanDefinition {
   key: OAuthModelPlanKey;
@@ -320,9 +321,51 @@ export const serializeOAuthModelPolicyConfig = (
   };
 };
 
+const durationUnitMilliseconds: Record<string, number> = {
+  ns: 0.000001,
+  us: 0.001,
+  µs: 0.001,
+  μs: 0.001,
+  ms: 1,
+  s: 1000,
+  m: 60_000,
+  h: 3_600_000,
+};
+
+export const oauthModelPolicyDurationValue = (
+  value: string,
+  targetUnit: OAuthModelPolicyDurationUnit,
+): number | null => {
+  const source = value.trim();
+  if (!source) return null;
+  const pattern = /(-?\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/g;
+  let milliseconds = 0;
+  let cursor = 0;
+  let matched = false;
+  for (const match of source.matchAll(pattern)) {
+    if (match.index !== cursor) return null;
+    milliseconds += Number(match[1]) * durationUnitMilliseconds[match[2]];
+    cursor = match.index + match[0].length;
+    matched = true;
+  }
+  if (
+    !matched ||
+    cursor !== source.length ||
+    !Number.isFinite(milliseconds) ||
+    milliseconds <= 0
+  ) {
+    return null;
+  }
+  return milliseconds / durationUnitMilliseconds[targetUnit];
+};
+
+export const serializeOAuthModelPolicyDuration = (
+  value: number,
+  unit: OAuthModelPolicyDurationUnit,
+): string => `${Math.round(value * 1000) / 1000}${unit}`;
+
 export const isPositiveDuration = (value: string): boolean =>
-  /^(?:\d+(?:\.\d+)?)(?:ns|us|µs|ms|s|m|h)$/.test(value.trim()) &&
-  Number.parseFloat(value) > 0;
+  oauthModelPolicyDurationValue(value, "s") !== null;
 
 const ensureGlobalPluginSwitch = async (): Promise<void> => {
   const raw = await configFileApi.fetchConfigYaml();

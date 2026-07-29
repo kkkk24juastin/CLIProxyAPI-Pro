@@ -22,8 +22,12 @@ class OAuthModelPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('key === "_unknown"', source)
         self.assertIn("plans._default.configured", source)
         self.assertIn('isPositiveDuration', source)
+        self.assertIn('DurationInput', source)
+        self.assertIn('unit="m"', source)
+        self.assertIn('unit="s"', source)
         self.assertIn('oauthModelPolicyApi.save', source)
-        self.assertIn('save_enables_plugin', source)
+        self.assertIn('configStyles.floatingActionContainer', source)
+        self.assertIn('useActionBarHeightVar', source)
         self.assertIn('createPortal(', source)
         self.assertIn('document.body', source)
 
@@ -46,6 +50,7 @@ class OAuthModelPolicyCustomizationTest(unittest.TestCase):
         self.assertIn("path: '/oauth-model-policy'", source)
         self.assertIn('oauthModelPolicy: <IconModelCluster', source)
         self.assertIn('OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS', source)
+        self.assertIn("'zh-CN.json': {'label': '模型策略'", source)
 
     def test_page_is_responsive_and_localized(self) -> None:
         source = PAGE.read_text()
@@ -60,7 +65,8 @@ class OAuthModelPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('.ruleGrid', styles)
         self.assertIn('.providerTabs', styles)
         self.assertIn('.customPlanRow', styles)
-        self.assertIn('.saveBar', styles)
+        self.assertIn('.durationControl', styles)
+        self.assertIn('--oauth-model-policy-action-bar-height', styles)
 
 
 if __name__ == '__main__':

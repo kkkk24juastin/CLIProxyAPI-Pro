@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   isPositiveDuration,
   normalizeOAuthModelPolicyConfig,
+  oauthModelPolicyDurationValue,
   OAUTH_MODEL_PROVIDER_DEFINITIONS,
   planDefinitionsForProvider,
+  serializeOAuthModelPolicyDuration,
   serializeOAuthModelPolicyConfig,
 } from "@/services/api/oauthModelPolicy";
 
@@ -71,8 +73,16 @@ describe("oauth model policy service", () => {
   it("validates positive Go duration fields", () => {
     expect(isPositiveDuration("30m")).toBe(true);
     expect(isPositiveDuration("1.5s")).toBe(true);
+    expect(isPositiveDuration("1h30m")).toBe(true);
     expect(isPositiveDuration("0s")).toBe(false);
     expect(isPositiveDuration("30")).toBe(false);
+  });
+
+  it("converts duration values for fixed-unit controls", () => {
+    expect(oauthModelPolicyDurationValue("1h30m", "m")).toBe(90);
+    expect(oauthModelPolicyDurationValue("1500ms", "s")).toBe(1.5);
+    expect(oauthModelPolicyDurationValue("invalid", "s")).toBeNull();
+    expect(serializeOAuthModelPolicyDuration(12.3456, "s")).toBe("12.346s");
   });
 
   it("normalizes every provider and preserves custom plan keys", () => {

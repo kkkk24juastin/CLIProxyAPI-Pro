@@ -251,10 +251,10 @@ PROXY_POOL_NAV_LOCALE_KEYS = {
 }
 
 OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS = {
-    'en.json': {'label': 'OAuth Model Policy', 'meta': 'Per-plan model availability rules'},
-    'ru.json': {'label': 'Политика OAuth-моделей', 'meta': 'Правила доступности моделей по тарифам'},
-    'zh-CN.json': {'label': 'OAuth 模型策略', 'meta': '按账号套餐配置模型可用范围'},
-    'zh-TW.json': {'label': 'OAuth 模型策略', 'meta': '依帳號套餐設定模型可用範圍'},
+    'en.json': {'label': 'Model Policy', 'meta': 'Per-plan model availability rules'},
+    'ru.json': {'label': 'Политика моделей', 'meta': 'Правила доступности моделей по тарифам'},
+    'zh-CN.json': {'label': '模型策略', 'meta': '按账号套餐配置模型可用范围'},
+    'zh-TW.json': {'label': '模型策略', 'meta': '依帳號套餐設定模型可用範圍'},
 }
 
 def load_overlay_replacement_manifest(path: Path) -> dict[str, set[str]]:

@@ -1,7 +1,9 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent,
 } from "react";
@@ -12,6 +14,7 @@ import { Input } from "@/components/ui/Input";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   IconAlertTriangle,
+  IconCheck,
   IconCheckCircle2,
   IconInfo,
   IconModelCluster,
@@ -24,16 +27,21 @@ import {
   defaultOAuthModelPolicyConfig,
   isPositiveDuration,
   normalizeOAuthModelPlanKey,
+  oauthModelPolicyDurationValue,
   oauthModelPolicyApi,
   OAUTH_MODEL_PROVIDER_DEFINITIONS,
   planDefinitionsForProvider,
+  serializeOAuthModelPolicyDuration,
   type OAuthModelPlanKey,
   type OAuthModelPlanRule,
   type OAuthModelPolicyConfig,
+  type OAuthModelPolicyDurationUnit,
   type OAuthModelPolicySnapshot,
   type OAuthModelProviderKey,
 } from "@/services/api/oauthModelPolicy";
+import { useActionBarHeightVar } from "@/hooks/useActionBarHeightVar";
 import { useAuthStore, useNotificationStore } from "@/stores";
+import configStyles from "@/pages/ConfigPage.module.scss";
 import styles from "./OAuthModelPolicyPage.module.scss";
 
 const errorMessage = (error: unknown): string =>
@@ -65,6 +73,73 @@ interface PatternEditorProps {
   disabled: boolean;
   patterns: string[];
   onChange: (patterns: string[]) => void;
+}
+
+interface DurationInputProps {
+  label: string;
+  value: string;
+  unit: OAuthModelPolicyDurationUnit;
+  unitLabel: string;
+  fallback: number;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}
+
+const formatDurationNumber = (value: number): string =>
+  String(Math.round(value * 1000) / 1000);
+
+function DurationInput({
+  label,
+  value,
+  unit,
+  unitLabel,
+  fallback,
+  disabled = false,
+  onChange,
+}: DurationInputProps) {
+  const inputId = useId();
+  const numericValue = oauthModelPolicyDurationValue(value, unit) ?? fallback;
+  const [text, setText] = useState(() => formatDurationNumber(numericValue));
+
+  useEffect(() => {
+    setText(formatDurationNumber(numericValue));
+  }, [numericValue]);
+
+  const commit = () => {
+    const next = Number(text);
+    if (!Number.isFinite(next) || next <= 0) {
+      setText(formatDurationNumber(numericValue));
+      return;
+    }
+    const normalized = Math.round(next * 1000) / 1000;
+    setText(formatDurationNumber(normalized));
+    if (Math.abs(normalized - numericValue) < 0.000001) return;
+    onChange(serializeOAuthModelPolicyDuration(normalized, unit));
+  };
+
+  return (
+    <div className="form-group">
+      <label htmlFor={inputId}>{label}</label>
+      <div className={styles.durationControl}>
+        <input
+          id={inputId}
+          className="input"
+          type="number"
+          min="0.001"
+          step="0.1"
+          inputMode="decimal"
+          value={text}
+          disabled={disabled}
+          onChange={(event) => setText(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+        />
+        <span aria-hidden="true">{unitLabel}</span>
+      </div>
+    </div>
+  );
 }
 
 function PatternEditor({
@@ -182,6 +257,12 @@ export function OAuthModelPolicyPage() {
   const [activeProvider, setActiveProvider] =
     useState<OAuthModelProviderKey>("xai");
   const [customPlan, setCustomPlan] = useState("");
+  const actionBarRef = useRef<HTMLDivElement>(null);
+  useActionBarHeightVar(
+    actionBarRef,
+    "--oauth-model-policy-action-bar-height",
+    dirty,
+  );
 
   const load = useCallback(
     async (replaceDraft = false) => {
@@ -585,28 +666,33 @@ export function OAuthModelPolicyPage() {
                 </div>
               </div>
               <div className={styles.settingsGrid}>
-                <Input
+                <DurationInput
                   label={t("oauth_model_policy.cache_ttl", {
                     defaultValue: "Plan cache TTL",
                   })}
                   value={draft.cacheTTL}
-                  onChange={(event) =>
-                    updateDraft({ ...draft, cacheTTL: event.target.value })
-                  }
-                  placeholder="30m"
+                  unit="m"
+                  unitLabel={t("oauth_model_policy.unit_minutes", {
+                    defaultValue: "minutes",
+                  })}
+                  fallback={30}
+                  disabled={saving}
+                  onChange={(cacheTTL) => updateDraft({ ...draft, cacheTTL })}
                 />
-                <Input
+                <DurationInput
                   label={t("oauth_model_policy.resolve_timeout", {
                     defaultValue: "Provider resolve timeout",
                   })}
                   value={draft.resolveTimeout}
-                  onChange={(event) =>
-                    updateDraft({
-                      ...draft,
-                      resolveTimeout: event.target.value,
-                    })
+                  unit="s"
+                  unitLabel={t("oauth_model_policy.unit_seconds", {
+                    defaultValue: "seconds",
+                  })}
+                  fallback={15}
+                  disabled={saving}
+                  onChange={(resolveTimeout) =>
+                    updateDraft({ ...draft, resolveTimeout })
                   }
-                  placeholder="15s"
                 />
                 <Input
                   type="number"
@@ -863,32 +949,48 @@ export function OAuthModelPolicyPage() {
       {dirty &&
         createPortal(
           <div
-            className={styles.saveBar}
-            role="region"
-            aria-label={t("common.save")}
+            className={configStyles.floatingActionContainer}
+            ref={actionBarRef}
           >
-            <div>
-              <strong>
-                {t("oauth_model_policy.unsaved", {
-                  defaultValue: "Unsaved policy changes",
+            <div className={configStyles.floatingActionList}>
+              <div
+                className={`${configStyles.floatingStatus} ${configStyles.modified}`}
+              >
+                {saving
+                  ? t("config_management.status_saving_short", {
+                      defaultValue: "Saving",
+                    })
+                  : t("config_management.status_dirty_short", {
+                      defaultValue: "Unsaved",
+                    })}
+              </div>
+              <button
+                type="button"
+                className={configStyles.floatingActionButton}
+                onClick={discard}
+                disabled={saving}
+                title={t("oauth_model_policy.discard", {
+                  defaultValue: "Discard changes",
                 })}
-              </strong>
-              <span>
-                {t("oauth_model_policy.save_enables_plugin", {
-                  defaultValue:
-                    "Saving also enables the bundled plugin runtime.",
+                aria-label={t("oauth_model_policy.discard", {
+                  defaultValue: "Discard changes",
                 })}
-              </span>
-            </div>
-            <div className={styles.saveActions}>
-              <Button variant="ghost" disabled={saving} onClick={discard}>
-                {t("oauth_model_policy.discard", {
-                  defaultValue: "Discard",
-                })}
-              </Button>
-              <Button loading={saving} onClick={() => void save()}>
-                {t("common.save")}
-              </Button>
+              >
+                <IconRefreshCw size={16} />
+              </button>
+              <button
+                type="button"
+                className={configStyles.floatingActionButton}
+                onClick={() => void save()}
+                disabled={saving}
+                title={t("common.save")}
+                aria-label={t("common.save")}
+              >
+                <IconCheck size={16} />
+                {!saving && (
+                  <span className={configStyles.dirtyDot} aria-hidden="true" />
+                )}
+              </button>
             </div>
           </div>,
           document.body,
