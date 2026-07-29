@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / 'overlay/src/pages/ProxyPoolPage.tsx'
 FEATURE_DIR = ROOT / 'overlay/src/features/proxyPool'
 SERVICE = ROOT / 'overlay/src/services/api/proxyPool.ts'
+PLUGIN_BRIDGE = ROOT / 'overlay/src/features/plugins/usePluginResourceBridge.ts'
 CUSTOMIZER = ROOT / 'apply_customizations.py'
 LOCALES = ROOT / 'monitoring-locales.json'
 
@@ -126,6 +127,16 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn("path: '/proxy-pool'", source)
         self.assertIn('IconSidebarProxyPool', source)
         self.assertIn('PROXY_POOL_NAV_LOCALE_KEYS', source)
+
+    def test_plugin_resource_bridge_proxies_authenticated_management_requests(self) -> None:
+        bridge = PLUGIN_BRIDGE.read_text()
+        customizer = CUSTOMIZER.read_text()
+        self.assertIn("REQUEST_SOURCE = 'cliproxy-plugin-resource'", bridge)
+        self.assertIn('event.source !== frameWindow', bridge)
+        self.assertIn("path.startsWith('//')", bridge)
+        self.assertIn('apiClient.patch(path, request.body)', bridge)
+        self.assertIn('patch_plugin_resource_bridge(target)', customizer)
+        self.assertIn('ref={frameRef}', customizer)
 
 
 if __name__ == '__main__':

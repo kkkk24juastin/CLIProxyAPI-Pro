@@ -17,6 +17,7 @@ This project does not maintain a full fork of either upstream project. Instead, 
 - A routing-policy page for upstream routing behavior and provider-scoped request-state protection.
 - A bundled dynamic proxy-pool plugin that aggregates HTTP/SOCKS nodes behind one fixed loopback SOCKS5 endpoint with rotation, health isolation, and failover.
 - A bundled OAuth model-policy plugin that removes unavailable models per provider and account plan, constraining both model listing and auth scheduling.
+- A required Pro Observability plugin that exclusively owns usage, pricing, backups, quota cache, routing cursors, and runtime statistics, with automatic legacy SQLite migration before service startup.
 
 ## Repository layout
 
@@ -69,7 +70,7 @@ Main capabilities:
 - Adds a backend account-inspection scheduler and executor with token refresh before probing.
 - Adds unified routing-policy and request-state-protection APIs.
 - Optionally starts the Komari agent.
-- Prebundles the `proxy-pool` and `oauth-model-policy` dynamic libraries in standard macOS, Windows amd64, and Linux releases plus Docker images; Windows ARM64, FreeBSD, and `_no-plugin` assets do not currently bundle dynamic plugins.
+- Prebundles and enables `pro-observability` in standard macOS, Windows amd64, and Linux releases plus Docker images, alongside `proxy-pool` and `oauth-model-policy`. It is the only persistence implementation; a missing plugin or failed legacy-usage migration blocks proxy service startup.
 - Redirects `/` to `/management.html`.
 - Enhances the `/healthz` response.
 
@@ -179,7 +180,7 @@ Overview:
 1. Checks the latest upstream `router-for-me/CLIProxyAPI` release.
 2. Computes the Pro release tag, for example `v<core-version>-pro`.
 3. Checks out the latest upstream core and upstream management releases.
-4. Applies core patches and builds Pro binary assets: default desktop/Linux archives enable CGO for dynamic-library plugin support, while `_no-plugin` archives remain CGO-free portable builds.
+4. Applies core patches and builds Pro binary assets with CGO and required dynamic-plugin support.
 5. Reuses the built Linux assets to assemble and push the multi-architecture image through `Dockerfile.runtime`.
 6. Applies the management customization layer and builds the single-file `management.html`.
 7. Creates or updates the current repository GitHub Release, then uploads binaries, `checksums.txt`, and `management.html`.
@@ -195,11 +196,10 @@ v<core-version>-pro
 
 During Docker builds, `CLIPROXY_VERSION` selects the upstream core tag, while `CLIPROXY_BUILD_VERSION` sets the Pro runtime version.
 
-Binary asset platforms and archive formats match upstream CLIProxyAPI. The version already carries the Pro release tag, so the asset prefix remains `CLIProxyAPI`. Default desktop/Linux archives support dynamic-library plugins; `_no-plugin` archives are for static or constrained environments. Docker images follow upstream with CGO-enabled Debian builds and dynamic-library plugin support:
+Binary assets use the Pro release tag and keep the `CLIProxyAPI` prefix. Current releases target macOS amd64/arm64, Windows amd64, and Linux amd64/arm64; every asset supports and bundles the required dynamic plugins. Docker images use CGO-enabled Debian builds:
 
 ```text
 CLIProxyAPI_<core-version>-pro_<os>_<arch>.<archive>
-CLIProxyAPI_<core-version>-pro_<os>_<arch>_no-plugin.<archive>
 checksums.txt
 management.html
 ```
@@ -315,9 +315,9 @@ Configure a persistent volume for this directory in production.
 ### Usage service
 
 ```text
-USAGE_SERVICE_ENABLED
 USAGE_DATA_DIR
 USAGE_DB_PATH
+PRO_OBSERVABILITY_DB_PATH
 USAGE_BATCH_SIZE
 USAGE_POLL_INTERVAL_MS
 USAGE_QUERY_LIMIT

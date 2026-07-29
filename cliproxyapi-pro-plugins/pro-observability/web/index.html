@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>可观测性</title>
+  <style>
+    :root{color-scheme:light dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--bg:#f5f7f8;--panel:#fff;--text:#20252d;--muted:#687383;--line:#dfe4e8;--accent:#13765b;--good:#13765b;--warn:#a36608;--bad:#bd3434;--elevation:0 1px 3px rgba(16,24,40,.08)}
+    @media(prefers-color-scheme:dark){:root{--bg:#10151a;--panel:#191f25;--text:#eef2f5;--muted:#9ca8b7;--line:#343d46;--accent:#47bd97;--good:#47bd97;--warn:#e7ad4c;--bad:#f07171;--elevation:none}}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}main{max-width:1080px;margin:auto;padding:24px}header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}h1{font-size:24px;margin:0 0 5px}.muted{color:var(--muted);font-size:13px}.badge{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:12px;background:var(--panel)}.badge.good{color:var(--good)}.badge.warn{color:var(--warn)}.badge.bad{color:var(--bad)}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px}.card,.panel{border:1px solid var(--line);border-radius:9px;background:var(--panel);box-shadow:var(--elevation)}.card{padding:15px}.card span{display:block;color:var(--muted);font-size:12px;margin-bottom:8px}.card strong{font-size:20px}.panel{padding:18px;margin-top:12px}.panel h2{font-size:15px;margin:0 0 14px}.rows{display:grid;grid-template-columns:180px 1fr;gap:0}.rows div{padding:10px 0;border-top:1px solid var(--line);font-size:13px}.rows div:nth-child(odd){color:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}button{border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);padding:8px 12px;cursor:pointer}button:hover{border-color:var(--accent)}.notice{margin-top:12px;font-size:13px;color:var(--muted)}@media(max-width:760px){main{padding:16px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.rows{grid-template-columns:1fr}.rows div:nth-child(even){padding-top:0;border-top:0}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>可观测性</h1><div class="muted">Usage、价格、备份、quota cache 与运行统计统一由 pro-observability 持有</div></div>
+    <div><span id="health" class="badge">检查中</span> <button id="refresh" type="button">刷新</button></div>
+  </header>
+  <section class="cards">
+    <div class="card"><span>Usage 事件</span><strong id="events">-</strong></div>
+    <div class="card"><span>死信</span><strong id="dead-letters">-</strong></div>
+    <div class="card"><span>迁移状态</span><strong id="migration-mode">-</strong></div>
+    <div class="card"><span>Usage contract</span><strong id="contract">-</strong></div>
+  </section>
+  <section class="panel">
+    <h2>插件单栈</h2>
+    <div class="rows">
+      <div>数据库</div><div id="db-path" class="mono">-</div>
+      <div>存储所有者</div><div id="storage-owner">-</div>
+      <div>迁移来源</div><div id="migration-source" class="mono">-</div>
+      <div>迁移完成时间</div><div id="migration-time">-</div>
+      <div>路由策略</div><div id="routing-strategy">-</div>
+      <div>持久化游标</div><div id="cursor-count">-</div>
+      <div>运行统计</div><div id="runtime-count">-</div>
+      <div>Quota cache backend</div><div id="quota-backend">-</div>
+      <div>Runtime state backend</div><div id="runtime-backend">-</div>
+      <div>SSE transport</div><div id="stream-ready">-</div>
+    </div>
+    <div id="notice" class="notice">正在读取插件状态…</div>
+  </section>
+</main>
+<script>
+(()=>{
+  const pending=new Map();let sequence=0;
+  const $=(id)=>document.getElementById(id),fmt=(value)=>new Intl.NumberFormat('zh-CN').format(Number(value)||0);
+  const request=(method,path,body)=>new Promise((resolve,reject)=>{const id='observability-'+(++sequence)+'-'+Date.now();pending.set(id,{resolve,reject});window.parent.postMessage({source:'cliproxy-plugin-resource',id,method,path,body},'*');setTimeout(()=>{if(pending.delete(id))reject(new Error('请求超时: '+path));},30000);});
+  window.addEventListener('message',(event)=>{const message=event.data;if(!message||message.source!=='cliproxy-plugin-host'||!pending.has(message.id))return;const task=pending.get(message.id);pending.delete(message.id);message.ok?task.resolve(message.data):task.reject(new Error(message.error&&message.error.message||'请求失败'));});
+  const badge=(state,text)=>{$('health').className='badge '+state;$('health').textContent=text;};
+  const load=async()=>{try{$('refresh').disabled=true;const [status,runtime,migration]=await Promise.all([request('GET','/usage/status'),request('GET','/pro/observability/runtime'),request('GET','/pro/observability/migration/status')]);$('events').textContent=fmt(status.events);$('dead-letters').textContent=fmt(status.deadLetters);$('db-path').textContent=status.dbPath||runtime.storageMigration&&runtime.storageMigration.targetPath||'-';$('migration-mode').textContent=migration.mode||'-';$('contract').textContent=String(runtime.usageRecordContract||0);$('storage-owner').textContent=runtime.storageOwner||'-';$('migration-source').textContent=migration.sourcePath||'原地接管或新建';$('migration-time').textContent=migration.completedAtMs?new Date(migration.completedAtMs).toLocaleString():'-';$('routing-strategy').textContent=runtime.routingStrategy||'-';$('cursor-count').textContent=fmt(runtime.persistedCursors);$('runtime-count').textContent=fmt(runtime.runtimeStats);$('quota-backend').textContent=runtime.quotaCacheBackend||'-';$('runtime-backend').textContent=runtime.runtimeStateBackend||'-';$('stream-ready').textContent=runtime.streamTransportReady?'就绪':'不可用';const ready=runtime.usageServiceReady&&runtime.managementAPIReady&&runtime.storageOwner==='plugin'&&runtime.quotaCacheBackend==='plugin'&&runtime.runtimeStateBackend==='plugin';badge(ready?'good':'bad',ready?'插件单栈正常':'插件未完全就绪');$('notice').textContent='状态更新时间：'+new Date().toLocaleString();}catch(error){badge('bad','读取失败');$('notice').textContent=error.message;}finally{$('refresh').disabled=false;}};
+  $('refresh').onclick=load;load();
+})();
+</script>
+</body>
+</html>

@@ -482,7 +482,7 @@ export function OAuthModelPolicyPage() {
             <p>
               {t("oauth_model_policy.unsupported_body", {
                 defaultValue:
-                  "Use a standard Pro release instead of a _no-plugin build.",
+                  "Install a standard Pro release with required dynamic plugin support.",
               })}
             </p>
           </div>

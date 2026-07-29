@@ -4,11 +4,13 @@
 
 本目录不维护 upstream 的完整 fork。Docker 构建时会下载指定 upstream release，复制本地 `embeddedusage/` 包，执行 `patches/` 中的补丁脚本，然后构建 Pro 部署使用的多架构镜像。
 
-标准 macOS、Windows amd64、Linux Pro Release 与 Docker 镜像会预打包 `proxy-pool` 和 `oauth-model-policy` 动态插件。前者在回环地址提供固定 SOCKS5 入口；后者按多个提供商的 OAuth 套餐排除账号不可用的模型。Windows ARM64、FreeBSD 与 `_no-plugin` 资产暂不内置动态插件。
+标准 macOS、Windows amd64、Linux Pro Release 与 Docker 镜像会预打包并默认启用 `pro-observability`，同时预打包 `proxy-pool` 与 `oauth-model-policy`。`pro-observability` 唯一持有 usage、价格、备份、quota cache、路由游标和运行统计；插件缺失或迁移失败时服务不会启动。
+
+启动时 Core 会强制开启动态插件和 `pro-observability`，插件在注册阶段原地认领旧 `usage.sqlite`，或在目标路径不同时先完整性检查并原子复制旧库。所有迁移完成并写入 `observability.storage_owner` 标记后才构建代理服务。Core 不再启动 SQLite writer 或 redisqueue usage consumer，仅保留当前插件 ABI 尚不能实现的 `/usage/stream` SSE transport bridge。
 
 ## 定制内容
 
-### 内嵌 usage service
+### 插件 usage 兼容桥
 
 `embeddedusage/` 会复制到 upstream 源码中的：
 
@@ -16,7 +18,7 @@
 internal/embeddedusage
 ```
 
-补丁层会随主 API 进程启动该服务，启用 upstream usage statistics，并把服务挂载到 management API 前缀下：
+补丁层使用该包桥接 quota/runtime plugin capability，并强制启用 upstream usage statistics；实际 SQLite service 和 management routes 由 `pro-observability` 注册：
 
 ```text
 /v0/management/usage
@@ -34,12 +36,14 @@ internal/embeddedusage
 
 - `usage-statistics-enabled: true`
 - `remote-management.panel-github-repository: https://github.com/ssfun/CLIProxyAPI-Pro`
+- `plugins.enabled: true`
+- `plugins.configs.pro-observability.enabled: true`
 
 加载后的内存配置始终会被修正。运行时只允许修改 `config.yaml` 中已经存在的键；缺失键不会被 Pro 自动新增。
 
 ### Usage API
 
-内嵌服务提供这些 management routes：
+`pro-observability` 提供这些 management routes：
 
 - `GET /v0/management/usage` — 管理页面使用的聚合 usage 数据。
 - `GET /v0/management/usage/events` — cursor 之后的增量 usage events。
@@ -118,7 +122,7 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 
 ### SQLite 配额缓存
 
-内嵌服务会为以下 provider 保存配额快照：
+`pro-observability` 会为以下 provider 保存配额快照：
 
 - Antigravity
 - Claude
@@ -234,8 +238,9 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `Dockerfile.runtime` — GitHub Actions 使用预构建 Linux 二进制组装运行时镜像。
 - `QUOTA_PROVIDER.md` — QuotaProvider 插件协议和兼容策略。
 - `../cliproxyapi-pro-plugins/oauth-model-policy/` — 按 OAuth 套餐过滤账号模型的动态插件。
+- `../cliproxyapi-pro-plugins/pro-observability/` — 唯一持有 SQLite usage、备份、quota cache 和路由运行态的必需动态插件。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
-- `embeddedusage/` — 内嵌 SQLite usage service 和 management routes。
+- `embeddedusage/` — Core 到插件的 quota、runtime 与 `pro_settings` 能力桥，并负责在插件卸载前排空运行统计；legacy service 入口会 fail-closed，不参与运行时持久化。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。
 - `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
 - 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放巡检、路由保护、登录清理及全局回调。
@@ -284,9 +289,9 @@ Release workflow 会从 Core、models 和定制层三个不可变提交中取最
 
 ### Usage service
 
-- `USAGE_SERVICE_ENABLED` — 默认 `true`；设为 `false`/`0`/`no`/`off` 可禁用内嵌服务。
 - `USAGE_DATA_DIR` — 默认 `/CLIProxyAPI/usage`。
 - `USAGE_DB_PATH` — 默认 `/CLIProxyAPI/usage/usage.sqlite`。
+- `PRO_OBSERVABILITY_DB_PATH` — 可选插件目标库；未设置时直接使用 `USAGE_DB_PATH`。目标与旧库不同时会在启动阶段自动迁移。
 - `USAGE_BATCH_SIZE` — 默认 `100`。
 - `USAGE_POLL_INTERVAL_MS` — 默认 `500`。
 - `USAGE_QUERY_LIMIT` — 默认 `50000`。
@@ -337,7 +342,7 @@ Workflow：
 
 1. 检查 upstream CLIProxyAPI 最新 release，并计算当前 Pro release tag，例如 `v<core-version>-pro`。
 2. 检查 upstream management 最新 release。
-3. 构建与 upstream 平台和压缩格式一致的 Pro 二进制资产，资产名前缀保持为 `CLIProxyAPI`；默认桌面/Linux 包启用 CGO 以支持动态库插件，`_no-plugin` 包保留 CGO-free 静态便携构建。
+3. 构建启用 CGO 和必需动态插件的 macOS、Windows amd64 与 Linux Pro 二进制资产，资产名前缀保持为 `CLIProxyAPI`。
 4. 复用 Linux amd64/arm64 二进制资产，通过 `Dockerfile.runtime` 组装并推送带 `latest` 和 Pro release tag 的多架构镜像。
 5. 应用 management 定制层并构建 `management.html`。
 6. 创建或更新当前仓库 GitHub Release，上传二进制资产、`checksums.txt` 和 `management.html`。

@@ -696,43 +696,35 @@ func (s *Server) exportJSONL(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if accountInspectionScheduleExporter != nil {
-		schedule, ok, err := accountInspectionScheduleExporter()
+	if schedule, ok, err := ExportAccountInspectionSchedule(); err != nil {
+		return nil, err
+	} else if ok {
+		line, err := json.Marshal(accountInspectionScheduleExportRecord{
+			RecordType: accountInspectionScheduleExportRecordType,
+			Version:    1,
+			Schedule:   schedule,
+			ExportedAt: time.Now().UnixMilli(),
+		})
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			line, err := json.Marshal(accountInspectionScheduleExportRecord{
-				RecordType: accountInspectionScheduleExportRecordType,
-				Version:    1,
-				Schedule:   schedule,
-				ExportedAt: time.Now().UnixMilli(),
-			})
-			if err != nil {
-				return nil, err
-			}
-			data = append(data, line...)
-			data = append(data, '\n')
-		}
+		data = append(data, line...)
+		data = append(data, '\n')
 	}
-	if accountInspectionSnapshotExporter != nil {
-		snapshot, ok, err := accountInspectionSnapshotExporter()
+	if snapshot, ok, err := ExportAccountInspectionSnapshot(); err != nil {
+		return nil, err
+	} else if ok {
+		line, err := json.Marshal(accountInspectionSnapshotExportRecord{
+			RecordType: accountInspectionSnapshotExportRecordType,
+			Version:    1,
+			Snapshot:   snapshot,
+			ExportedAt: time.Now().UnixMilli(),
+		})
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			line, err := json.Marshal(accountInspectionSnapshotExportRecord{
-				RecordType: accountInspectionSnapshotExportRecordType,
-				Version:    1,
-				Snapshot:   snapshot,
-				ExportedAt: time.Now().UnixMilli(),
-			})
-			if err != nil {
-				return nil, err
-			}
-			data = append(data, line...)
-			data = append(data, '\n')
-		}
+		data = append(data, line...)
+		data = append(data, '\n')
 	}
 	digest := sha256.Sum256(data)
 	manifest, err := json.Marshal(backupManifestRecord{
@@ -1027,7 +1019,7 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if authRuntimeStateImporter != nil && (importedRoutingCursors > 0 || importedAuthRuntimeStats > 0) {
+	if importedRoutingCursors > 0 || importedAuthRuntimeStats > 0 {
 		currentRoutingCursors, errLoad := s.store.ListRoutingCursorStates(c.Request.Context())
 		if errLoad != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": errLoad.Error()})
@@ -1038,7 +1030,7 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": errLoad.Error()})
 			return
 		}
-		if errApply := authRuntimeStateImporter(currentRoutingCursors, currentAuthRuntimeStats); errApply != nil {
+		if errApply := ApplyImportedAuthRuntimeState(currentRoutingCursors, currentAuthRuntimeStats); errApply != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": errApply.Error()})
 			return
 		}
@@ -1054,20 +1046,20 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if proSettingsImporter != nil && importedProSettings > 0 {
-		if err := proSettingsImporter(proSettings); err != nil {
+	if importedProSettings > 0 {
+		if err := ApplyImportedProSettings(proSettings); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 	}
-	if accountInspectionSchedule != nil && accountInspectionScheduleImporter != nil {
-		if err := accountInspectionScheduleImporter(accountInspectionSchedule); err != nil {
+	if accountInspectionSchedule != nil {
+		if err := ApplyImportedAccountInspectionSchedule(accountInspectionSchedule); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 	}
-	if accountInspectionSnapshot != nil && accountInspectionSnapshotImporter != nil {
-		if err := accountInspectionSnapshotImporter(accountInspectionSnapshot); err != nil {
+	if accountInspectionSnapshot != nil {
+		if err := ApplyImportedAccountInspectionSnapshot(accountInspectionSnapshot); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

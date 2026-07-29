@@ -475,7 +475,7 @@ export function ProxyPoolPage() {
           <p>
             {t('proxy_pool.unsupported_body', {
               defaultValue:
-                'This build does not support dynamic plugins. Use a standard Pro release instead of a _no-plugin build.',
+                'This build does not support the required dynamic plugins. Install a standard Pro release.',
             })}
           </p>
         </div>

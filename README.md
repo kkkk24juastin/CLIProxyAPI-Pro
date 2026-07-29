@@ -17,6 +17,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 路由策略页面统一管理 upstream 路由行为与按 provider 配置的请求状态保护
 - 内置动态代理池插件，把多个 HTTP/SOCKS 节点汇聚为固定的本地 SOCKS5 地址，支持轮询、加权、健康隔离与故障转移
 - 内置 OAuth 模型策略插件，可按多个提供商的账号套餐分别排除不可用模型，并同步约束模型列表和账号调度
+- Pro Observability 插件统一持有 usage、价格、备份、quota cache、路由游标和运行统计，并在启动服务前自动迁移旧 SQLite
 
 ## 项目结构
 
@@ -38,7 +39,8 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 │
 ├── cliproxyapi-pro-plugins/
 │   ├── proxy-pool/
-│   └── oauth-model-policy/
+│   ├── oauth-model-policy/
+│   └── pro-observability/
 │
 ├── scripts/validation/
 └── .github/workflows/
@@ -69,7 +71,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 支持后端账号巡检调度器和执行器，巡检探测前可刷新 token。
 - 支持统一路由策略与请求状态保护 API。
 - 支持 Komari agent 可选启动。
-- 标准 macOS、Windows amd64、Linux Release 和 Docker 镜像预打包 `proxy-pool` 与 `oauth-model-policy` 动态插件；Windows ARM64、FreeBSD 与 `_no-plugin` 产物暂不内置动态插件。
+- 标准 macOS、Windows amd64、Linux Release 和 Docker 镜像预打包并默认启用 `pro-observability`，同时预打包 `proxy-pool` 与 `oauth-model-policy`。`pro-observability` 是唯一的持久化实现；插件缺失或旧 usage 迁移失败时，Core 会阻止代理服务启动。
 - 将 `/` 跳转到 `/management.html`。
 - 增强 `/healthz` 返回信息。
 
@@ -185,7 +187,7 @@ v<core-version>-pro
 1. 检查 upstream `router-for-me/CLIProxyAPI` 最新 release。
 2. 计算 Pro release tag，例如 `v<core-version>-pro`。
 3. checkout upstream core 和 upstream management 最新 release。
-4. 应用 core patch 并构建 Pro 二进制资产：默认桌面/Linux 包启用 CGO 并支持动态库插件，`_no-plugin` 包保留 CGO-free 静态便携构建。
+4. 应用 core patch 并构建启用 CGO 和必需动态插件的 Pro 二进制资产。
 5. 复用已构建的 Linux 资产，通过 `Dockerfile.runtime` 组装并推送多架构 Docker 镜像。
 6. 应用 management 定制层，构建单文件 `management.html`。
 7. 创建或更新当前仓库的 GitHub Release，并上传二进制、`checksums.txt` 和 `management.html`。
@@ -201,11 +203,10 @@ v<core-version>-pro
 
 Docker 构建参数中 `CLIPROXY_VERSION` 用于选择 upstream core tag，`CLIPROXY_BUILD_VERSION` 用于写入 Pro runtime 版本号。
 
-二进制资产平台和压缩格式与 upstream CLIProxyAPI 保持一致，版本号使用 Pro release tag，因此资产名前缀保持为 `CLIProxyAPI`。默认桌面/Linux 包支持动态库插件；`_no-plugin` 包用于静态或受限环境。Docker 镜像对齐 upstream，使用 CGO-enabled Debian 构建并支持动态库插件：
+二进制资产使用 Pro release tag，资产名前缀保持为 `CLIProxyAPI`。当前发布 macOS amd64/arm64、Windows amd64、Linux amd64/arm64；所有资产都支持并预打包必需的动态插件。Docker 镜像使用 CGO-enabled Debian 构建：
 
 ```text
 CLIProxyAPI_<core-version>-pro_<os>_<arch>.<archive>
-CLIProxyAPI_<core-version>-pro_<os>_<arch>_no-plugin.<archive>
 checksums.txt
 management.html
 ```
@@ -321,9 +322,9 @@ Usage 导入导出会使用 NDJSON 元数据记录保存模型价格、quota cac
 ### Usage service
 
 ```text
-USAGE_SERVICE_ENABLED
 USAGE_DATA_DIR
 USAGE_DB_PATH
+PRO_OBSERVABILITY_DB_PATH
 USAGE_BATCH_SIZE
 USAGE_POLL_INTERVAL_MS
 USAGE_QUERY_LIMIT

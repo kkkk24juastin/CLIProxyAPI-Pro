@@ -34,7 +34,7 @@ var (
 	xaiFreeQuotaModelPattern = regexp.MustCompile(`(?i)for\s+model\s+([a-z0-9._-]+)`)
 )
 
-func ObserveXAIQuotaResponse(ctx context.Context, observation XAIQuotaObservation) error {
+func observeLegacyXAIQuotaResponse(ctx context.Context, observation XAIQuotaObservation) error {
 	fileName := strings.TrimSpace(observation.FileName)
 	if fileName == "" {
 		return nil
@@ -76,7 +76,7 @@ func ObserveXAIQuotaResponse(ctx context.Context, observation XAIQuotaObservatio
 		strings.ToLower(strings.TrimSpace(observation.Label)),
 	}, "|")
 	fingerprint := sha256.Sum256([]byte(fingerprintSource))
-	return MergeXAIQuotaCache(ctx, QuotaCacheEntry{
+	return mergeLegacyXAIQuotaCache(ctx, QuotaCacheEntry{
 		ID:                  "xai:" + fileName,
 		Provider:            "xai",
 		FileName:            fileName,
@@ -96,9 +96,9 @@ func xaiQuotaHeadersStatus(status int) bool {
 
 // MergeXAIQuotaCache merges billing refreshes and request-path free quota observations.
 // Neither writer is allowed to discard the other writer's latest fields.
-func MergeXAIQuotaCache(ctx context.Context, entry QuotaCacheEntry) error {
+func mergeLegacyXAIQuotaCache(ctx context.Context, entry QuotaCacheEntry) error {
 	if !strings.EqualFold(strings.TrimSpace(entry.Provider), "xai") || strings.TrimSpace(entry.FileName) == "" {
-		return SetQuotaCache(ctx, entry)
+		return setLegacyQuotaCache(ctx, entry)
 	}
 	globalStateMu.RLock()
 	defer globalStateMu.RUnlock()

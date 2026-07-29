@@ -4,11 +4,13 @@ Customized Docker build layer for upstream `router-for-me/CLIProxyAPI`.
 
 This directory does not maintain a full fork of upstream. During Docker build it downloads an upstream release, copies in the local `embeddedusage/` package, applies the patch script in `patches/`, and builds a multi-arch image for the Pro deployment.
 
-Standard macOS, Windows amd64, and Linux Pro releases plus Docker images prebundle the `proxy-pool` and `oauth-model-policy` dynamic plugins. The former exposes a fixed loopback SOCKS5 endpoint; the latter removes models unavailable to OAuth plans across supported providers. Windows ARM64, FreeBSD, and `_no-plugin` assets do not currently bundle dynamic plugins.
+Standard macOS, Windows amd64, and Linux Pro releases plus Docker images prebundle and enable `pro-observability`, alongside `proxy-pool` and `oauth-model-policy`. The observability plugin exclusively owns usage, pricing, backups, quota cache, routing cursors, and runtime statistics; startup stops if the plugin is missing or migration fails.
+
+At startup Core forces the dynamic plugin system and `pro-observability` on. Plugin registration adopts the legacy `usage.sqlite` in place, or integrity-checks and atomically copies it when a distinct target is configured. The proxy service is constructed only after the plugin writes the `observability.storage_owner` marker. Core no longer starts its SQLite writer or redisqueue usage consumer and retains only the `/usage/stream` SSE transport bridge required by the current buffered plugin ABI.
 
 ## What this customization adds
 
-### Embedded usage service
+### Plugin usage compatibility bridge
 
 `embeddedusage/` is copied into upstream as:
 
@@ -16,7 +18,7 @@ Standard macOS, Windows amd64, and Linux Pro releases plus Docker images prebund
 internal/embeddedusage
 ```
 
-The patch layer starts the service with the main API process, enables upstream usage statistics, and exposes the service under the management API prefix:
+The patch package bridges quota/runtime plugin capabilities and forces upstream usage statistics on; `pro-observability` owns the actual SQLite service and registers the management API prefix:
 
 ```text
 /v0/management/usage
@@ -34,12 +36,14 @@ At service startup the patch layer forces the upstream config values required by
 
 - `usage-statistics-enabled: true`
 - `remote-management.panel-github-repository: https://github.com/ssfun/CLIProxyAPI-Pro`
+- `plugins.enabled: true`
+- `plugins.configs.pro-observability.enabled: true`
 
 The loaded in-memory config is always corrected. Runtime writes may only update keys that already exist in `config.yaml`; Pro never adds a missing key.
 
 ### Usage API
 
-The embedded service exposes these management routes:
+`pro-observability` exposes these management routes:
 
 - `GET /v0/management/usage` — aggregated usage payload for the management UI.
 - `GET /v0/management/usage/events` — incremental usage events after a cursor.
@@ -118,7 +122,7 @@ Example import response fields:
 
 ### SQLite-backed quota cache
 
-The embedded service stores quota snapshots in SQLite for these providers:
+`pro-observability` stores quota snapshots in SQLite for these providers:
 
 - Antigravity
 - Claude
@@ -235,8 +239,9 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `Dockerfile.runtime` — assembles the Actions runtime image from prebuilt Linux binaries.
 - `QUOTA_PROVIDER.md` — QuotaProvider plugin protocol and compatibility rules.
 - `../cliproxyapi-pro-plugins/oauth-model-policy/` — dynamic plugin for filtering auth models by OAuth plan.
+- `../cliproxyapi-pro-plugins/pro-observability/` — required dynamic plugin and sole owner of SQLite usage, backups, quota cache, and routing runtime.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
-- `embeddedusage/` — embedded SQLite usage service and management routes.
+- `embeddedusage/` — Core-to-plugin quota, runtime, and `pro_settings` capability bridge, including runtime-stat flushing before plugin unload; the legacy service entrypoint fails closed and does not persist runtime data.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.
 - `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
 - The generated API Server shuts down its management Handler from `Stop`; embedders that create a Handler directly through the SDK must also call `Shutdown()` to release inspection, routing-protection, login-cleanup, and global callback ownership.
@@ -285,9 +290,9 @@ Release workflows derive `SOURCE_DATE_EPOCH` from the newest immutable Core, mod
 
 ### Usage service
 
-- `USAGE_SERVICE_ENABLED` — default `true`; set to `false`/`0`/`no`/`off` to disable the embedded service.
 - `USAGE_DATA_DIR` — default `/CLIProxyAPI/usage`.
 - `USAGE_DB_PATH` — default `/CLIProxyAPI/usage/usage.sqlite`.
+- `PRO_OBSERVABILITY_DB_PATH` — optional plugin target database; defaults to `USAGE_DB_PATH`. A distinct target triggers automatic startup migration.
 - `USAGE_BATCH_SIZE` — default `100`.
 - `USAGE_POLL_INTERVAL_MS` — default `500`.
 - `USAGE_QUERY_LIMIT` — default `50000`.
@@ -338,7 +343,7 @@ The workflow:
 
 1. Checks the latest upstream CLIProxyAPI release and computes the Pro release tag, for example `v<core-version>-pro`.
 2. Checks the latest upstream management release.
-3. Builds Pro binary assets with the same platform matrix and archive formats as upstream, with the `CLIProxyAPI` asset prefix; default desktop/Linux archives enable CGO for dynamic-library plugin support, while `_no-plugin` archives remain CGO-free portable builds.
+3. Builds macOS, Windows amd64, and Linux Pro binary assets with CGO and required dynamic plugins, keeping the `CLIProxyAPI` asset prefix.
 4. Reuses the Linux amd64/arm64 assets to assemble and push a multi-architecture image through `Dockerfile.runtime`, tagged with `latest` and the Pro release tag.
 5. Applies the management customization layer and builds `management.html`.
 6. Creates or updates the current repository GitHub Release, then uploads binary assets, `checksums.txt`, and `management.html`.

@@ -709,6 +709,32 @@ def patch_routes(target: Path) -> None:
     )
 
 
+def patch_plugin_resource_bridge(target: Path) -> None:
+    path = target / 'src/features/plugins/PluginResourcePage.tsx'
+    insert_once(
+        path,
+        "import { useCallback, useEffect, useMemo, useState } from 'react';\n",
+        "import { useCallback, useEffect, useMemo, useRef, useState } from 'react';\n",
+        'useRef, useState',
+    )
+    insert_once(
+        path,
+        "import styles from './PluginResourcePage.module.scss';\n",
+        "import styles from './PluginResourcePage.module.scss';\nimport { usePluginResourceBridge } from './usePluginResourceBridge';\n",
+        "from './usePluginResourceBridge'",
+    )
+    insert_once(
+        path,
+        "  const [error, setError] = useState('');\n",
+        "  const [error, setError] = useState('');\n  const frameRef = useRef<HTMLIFrameElement>(null);\n  usePluginResourceBridge(frameRef);\n",
+        'usePluginResourceBridge(frameRef)',
+    )
+    insert_once(
+        path,
+        '        <iframe\n',
+        '        <iframe\n          ref={frameRef}\n',
+        'ref={frameRef}',
+    )
 def patch_layout(target: Path) -> None:
     path = target / 'src/components/layout/MainLayout.tsx'
     insert_once(
@@ -2901,6 +2927,7 @@ def main() -> None:
     patch_modal_scroll_lock(target)
     patch_modal_content_scrollbar_layout(target)
     patch_routes(target)
+    patch_plugin_resource_bridge(target)
     patch_layout(target)
     patch_icons(target)
     patch_quota_types(target)

@@ -193,8 +193,14 @@ new_customization_paths = (
     'internal/api/handlers/management/plugin_quota_test.go',
     'internal/api/handlers/management/routing_policy.go',
     'internal/api/handlers/management/routing_policy_test.go',
+    'internal/api/embeddedusage_cutover_test.go',
+    'internal/api/usage_stream_bridge.go',
+    'internal/api/usage_stream_bridge_test.go',
+    'internal/cmd/pro_plugin_startup_test.go',
     'internal/config/config_existing_updates.go',
     'internal/config/config_existing_updates_test.go',
+    'internal/config/pro_plugin_defaults.go',
+    'internal/config/pro_plugin_defaults_test.go',
     'internal/pluginhost/gemini_cli_quota_legacy.go',
     'internal/pluginhost/gemini_cli_quota_legacy_test.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',
@@ -203,6 +209,20 @@ new_customization_paths = (
     'internal/pluginhost/quota_provider_test.go',
     'internal/pluginhost/auth_model_filter.go',
     'internal/pluginhost/auth_model_filter_test.go',
+    'internal/pluginhost/management_call.go',
+    'internal/pluginhost/management_call_test.go',
+    'internal/pluginhost/pro_backup_callbacks.go',
+    'internal/pluginhost/pro_backup_callbacks_test.go',
+    'internal/pluginhost/pro_observability_integration_test.go',
+    'internal/pluginhost/pro_observability_ready.go',
+    'internal/pluginhost/pro_observability_ready_test.go',
+    'internal/pluginhost/pro_settings_store.go',
+    'internal/pluginhost/pro_settings_store_test.go',
+    'internal/pluginhost/quota_cache_store.go',
+    'internal/pluginhost/quota_cache_store_test.go',
+    'internal/pluginhost/runtime_state_store.go',
+    'internal/pluginhost/runtime_state_store_test.go',
+    'internal/pluginhost/usage_metadata_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
     'internal/requestmeta/client.go',
@@ -329,10 +349,49 @@ require_source_hash(
 
 # Add the optional QuotaProvider capability without changing ABI/schema v1.
 pluginapi_types = ROOT / 'sdk/pluginapi/types.go'
+insert_before(
+    pluginapi_types,
+    '// UsageRecord describes request usage and billing metadata.\n',
+    '''// UsageRecordContractVersion identifies the extended observability wire contract.
+const UsageRecordContractVersion = 2
+
+''',
+    'const UsageRecordContractVersion = 2',
+)
+replace_once(
+    pluginapi_types,
+    '\t// Provider identifies the upstream provider.\n',
+    '''\t// ContractVersion identifies the populated usage wire contract.\n\tContractVersion int\n\t// Provider identifies the upstream provider.\n''',
+    'ContractVersion identifies the populated usage wire contract',
+)
+replace_once(
+    pluginapi_types,
+    '\t// ReasoningEffort records the requested reasoning effort.\n',
+    '''\t// RequestID identifies the downstream request.\n\tRequestID string\n\t// Endpoint is the normalized downstream method and route.\n\tEndpoint string\n\t// ClientIP is the direct downstream client address.\n\tClientIP string\n\t// XForwardedFor is the downstream forwarding chain.\n\tXForwardedFor string\n\t// UserAgent is the downstream client user agent.\n\tUserAgent string\n\t// ReasoningEffort records the requested reasoning effort.\n''',
+    'RequestID identifies the downstream request',
+)
+replace_once(
+    pluginapi_types,
+    '\t// Generate reports whether the client requested actual generation.\n',
+    '''\t// ResponseServiceTier records the tier reported by the upstream response.\n\tResponseServiceTier string\n\t// Stream reports whether the downstream request used streaming semantics.\n\tStream bool\n\t// AttemptIndex is the zero-based upstream attempt number when instrumented.\n\tAttemptIndex *int64\n\t// Generate reports whether the client requested actual generation.\n''',
+    'ResponseServiceTier records the tier reported',
+)
+replace_once(
+    pluginapi_types,
+    '\t// TotalTokens is the total token count.\n\tTotalTokens int64\n',
+    '''\t// TotalTokens is the total token count.\n\tTotalTokens int64\n\t// TokenBreakdown is the canonical non-overlapping accounting contract.\n\tTokenBreakdown UsageTokenBreakdown\n''',
+    'TokenBreakdown UsageTokenBreakdown',
+)
+insert_before(
+    pluginapi_types,
+    '// UsageDetail contains token accounting counters.\n',
+    '''// UsageTokenInputBreakdown contains mutually exclusive input buckets.\ntype UsageTokenInputBreakdown struct {\n\tTotalTokens      int64 `json:"total_tokens"`\n\tUncachedTokens   int64 `json:"uncached_tokens"`\n\tCacheReadTokens  int64 `json:"cache_read_tokens"`\n\tCacheWriteTokens int64 `json:"cache_write_tokens"`\n}\n\n// UsageTokenOutputBreakdown contains mutually exclusive output buckets.\ntype UsageTokenOutputBreakdown struct {\n\tTotalTokens        int64 `json:"total_tokens"`\n\tNonReasoningTokens int64 `json:"non_reasoning_tokens"`\n\tReasoningTokens    int64 `json:"reasoning_tokens"`\n}\n\n// UsageTokenBreakdown is a stable plugin-facing token accounting snapshot.\ntype UsageTokenBreakdown struct {\n\tSchemaVersion      int                       `json:"schema_version"`\n\tQuality            string                    `json:"quality"`\n\tTotalTokens        int64                     `json:"total_tokens"`\n\tInput              UsageTokenInputBreakdown  `json:"input"`\n\tOutput             UsageTokenOutputBreakdown `json:"output"`\n\tUnclassifiedTokens int64                     `json:"unclassified_tokens"`\n}\n\n''',
+    'type UsageTokenBreakdown struct',
+)
 replace_once(
     pluginapi_types,
     '\t// FrontendAuthProvider authenticates frontend requests before proxy handling.\n',
-    '\t// QuotaProvider fetches normalized per-auth quota and subscription snapshots.\n\tQuotaProvider QuotaProvider\n\t// FrontendAuthProvider authenticates frontend requests before proxy handling.\n',
+    '\t// QuotaProvider fetches normalized per-auth quota and subscription snapshots.\n\tQuotaProvider QuotaProvider\n\t// QuotaCacheStore owns persisted quota snapshots and response observations.\n\tQuotaCacheStore QuotaCacheStore\n\t// RuntimeStateStore owns persisted per-auth scheduler statistics.\n\tRuntimeStateStore RuntimeStateStore\n\t// ProSettingsStore owns versioned Pro settings persisted outside config.yaml.\n\tProSettingsStore ProSettingsStore\n\t// FrontendAuthProvider authenticates frontend requests before proxy handling.\n',
     'QuotaProvider QuotaProvider',
 )
 insert_before(
@@ -340,6 +399,119 @@ insert_before(
     '// ModelRegistrar registers plugin-provided models with the host.\n',
     read_text(Path(__file__).resolve().parent / 'plugin_quota_api.go'),
     'type QuotaProvider interface',
+)
+insert_before(
+    pluginapi_types,
+    '// ModelRegistrar registers plugin-provided models with the host.\n',
+    read_text(Path(__file__).resolve().parent / 'plugin_quota_cache_api.go'),
+    'type QuotaCacheStore interface',
+)
+insert_before(
+    pluginapi_types,
+    '// ModelRegistrar registers plugin-provided models with the host.\n',
+    read_text(Path(__file__).resolve().parent / 'plugin_runtime_state_api.go'),
+    'type RuntimeStateStore interface',
+)
+insert_before(
+    pluginapi_types,
+    '// ModelRegistrar registers plugin-provided models with the host.\n',
+    read_text(Path(__file__).resolve().parent / 'plugin_pro_settings_api.go'),
+    'type ProSettingsStore interface',
+)
+
+usage_translation = ROOT / 'internal/pluginhost/adapters_usage_translation.go'
+add_go_import(
+    usage_translation,
+    f'\t"{import_path("internal/registry")}"\n',
+    f'\t"{import_path("internal/requestmeta")}"\n',
+)
+replace_go_function(
+    usage_translation,
+    'func (a *usageAdapter) HandleUsage(ctx context.Context, record coreusage.Record)',
+    '''func (a *usageAdapter) HandleUsage(ctx context.Context, record coreusage.Record) {
+\tif a == nil {
+\t\treturn
+\t}
+\tplugin := a.host.currentUsagePlugin(a.pluginID)
+\tif plugin == nil {
+\t\treturn
+\t}
+\tdefer func() {
+\t\tif recovered := recover(); recovered != nil {
+\t\t\ta.host.fusePlugin(a.pluginID, "UsagePlugin.HandleUsage", recovered)
+\t\t}
+\t}()
+\tclient := requestmeta.GetClientRequestMetadata(ctx)
+\tdetail := coreusage.EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
+\tserviceTier := strings.TrimSpace(record.ServiceTier)
+\tif serviceTier == "" {
+\t\tserviceTier = strings.TrimSpace(record.RequestServiceTier)
+\t}
+\tif serviceTier == "" {
+\t\tserviceTier = coreusage.ServiceTierFromContext(ctx)
+\t}
+\treasoningEffort := strings.TrimSpace(record.ReasoningEffort)
+\tif reasoningEffort == "" {
+\t\treasoningEffort = coreusage.ReasoningEffortFromContext(ctx)
+\t}
+\tresponseServiceTier := strings.TrimSpace(record.ResponseServiceTier)
+\tif responseServiceTier == "" {
+\t\tresponseServiceTier = strings.TrimSpace(detail.ResponseServiceTier)
+\t}
+\tfailed := record.Failed
+\tstatusCode := record.Fail.StatusCode
+\tif responseStatus := requestmeta.GetResponseStatus(ctx); responseStatus >= 400 {
+\t\tfailed = true
+\t\tif statusCode <= 0 {
+\t\t\tstatusCode = responseStatus
+\t\t}
+\t}
+\tresponseHeaders := cloneHeader(record.ResponseHeaders)
+\tif len(responseHeaders) == 0 {
+\t\tresponseHeaders = cloneHeader(requestmeta.GetResponseHeaders(ctx))
+\t}
+\tplugin.HandleUsage(ctx, pluginapi.UsageRecord{
+\t\tContractVersion: pluginapi.UsageRecordContractVersion,
+\t\tProvider: record.Provider, ExecutorType: record.ExecutorType, Model: record.Model,
+\t\tAlias: record.Alias, APIKey: record.APIKey, AuthID: record.AuthID,
+\t\tAuthIndex: record.AuthIndex, AuthType: record.AuthType, Source: record.Source,
+\t\tRequestID: requestmeta.GetRequestID(ctx), Endpoint: requestmeta.GetEndpoint(ctx),
+\t\tClientIP: client.ClientIP, XForwardedFor: client.XForwardedFor, UserAgent: client.UserAgent,
+\t\tReasoningEffort: reasoningEffort, ServiceTier: serviceTier,
+\t\tResponseServiceTier: responseServiceTier, Stream: coreusage.StreamFromContext(ctx),
+\t\tAttemptIndex: record.AttemptIndex, Generate: coreusage.GenerateEnabled(record.Generate),
+\t\tRequestedAt: record.RequestedAt, Latency: record.Latency, TTFT: record.TTFT,
+\t\tFailed: failed,
+\t\tFailure: pluginapi.UsageFailure{StatusCode: statusCode, Body: record.Fail.Body},
+\t\tDetail: pluginapi.UsageDetail{
+\t\t\tInputTokens: detail.InputTokens, OutputTokens: detail.OutputTokens,
+\t\t\tReasoningTokens: detail.ReasoningTokens, CachedTokens: detail.CachedTokens,
+\t\t\tCacheReadTokens: detail.CacheReadTokens, CacheCreationTokens: detail.CacheCreationTokens,
+\t\t\tTotalTokens: detail.TotalTokens,
+\t\t\tTokenBreakdown: pluginapi.UsageTokenBreakdown{
+\t\t\t\tSchemaVersion: detail.TokenBreakdown.SchemaVersion,
+\t\t\t\tQuality: string(detail.TokenBreakdown.Quality),
+\t\t\t\tTotalTokens: detail.TokenBreakdown.TotalTokens,
+\t\t\t\tInput: pluginapi.UsageTokenInputBreakdown{
+\t\t\t\t\tTotalTokens: detail.TokenBreakdown.Input.TotalTokens,
+\t\t\t\t\tUncachedTokens: detail.TokenBreakdown.Input.UncachedTokens,
+\t\t\t\t\tCacheReadTokens: detail.TokenBreakdown.Input.CacheReadTokens,
+\t\t\t\t\tCacheWriteTokens: detail.TokenBreakdown.Input.CacheWriteTokens,
+\t\t\t\t},
+\t\t\t\tOutput: pluginapi.UsageTokenOutputBreakdown{
+\t\t\t\t\tTotalTokens: detail.TokenBreakdown.Output.TotalTokens,
+\t\t\t\t\tNonReasoningTokens: detail.TokenBreakdown.Output.NonReasoningTokens,
+\t\t\t\t\tReasoningTokens: detail.TokenBreakdown.Output.ReasoningTokens,
+\t\t\t\t},
+\t\t\t\tUnclassifiedTokens: detail.TokenBreakdown.UnclassifiedTokens,
+\t\t\t},
+\t\t},
+\t\tResponseHeaders: responseHeaders,
+\t})
+}
+
+''',
+    'RequestID: requestmeta.GetRequestID(ctx)',
 )
 replace_once(
     pluginapi_types,
@@ -358,15 +530,33 @@ pluginabi_types = ROOT / 'sdk/pluginabi/types.go'
 replace_once(
     pluginabi_types,
     '\tMethodAuthRefresh    = "auth.refresh"\n',
-    '\tMethodAuthRefresh    = "auth.refresh"\n\n\tMethodQuotaIdentifier = "quota.identifier"\n\tMethodQuotaFetch      = "quota.fetch"\n\n\tMethodAuthModelFilter = "model.filter_for_auth"\n',
+    '\tMethodAuthRefresh    = "auth.refresh"\n\n\tMethodQuotaIdentifier   = "quota.identifier"\n\tMethodQuotaFetch        = "quota.fetch"\n\tMethodQuotaCacheGet     = "quota_cache.get"\n\tMethodQuotaCachePut     = "quota_cache.put"\n\tMethodQuotaCacheDelete  = "quota_cache.delete"\n\tMethodQuotaCacheObserve = "quota_cache.observe"\n\tMethodRuntimeStatsGet    = "runtime_state.auth_stats.get"\n\tMethodRuntimeStatsPut    = "runtime_state.auth_stats.put"\n\tMethodRuntimeStateDelete = "runtime_state.auth.delete"\n\tMethodProSettingGet      = "pro_settings.get"\n\tMethodProSettingPut      = "pro_settings.put"\n\tMethodHostProBackupExport = "host.pro_backup.export"\n\tMethodHostProBackupImport = "host.pro_backup.import"\n\n\tMethodAuthModelFilter = "model.filter_for_auth"\n',
     'MethodQuotaIdentifier',
+)
+
+host_callbacks = ROOT / 'internal/pluginhost/host_callbacks.go'
+replace_once(
+    host_callbacks,
+    '''\tcase pluginabi.MethodHostAuthSave:
+\t\treturn h.callHostAuthSave(ctx, request)
+\tdefault:
+''',
+    '''\tcase pluginabi.MethodHostAuthSave:
+\t\treturn h.callHostAuthSave(ctx, request)
+\tcase pluginabi.MethodHostProBackupExport:
+\t\treturn h.callHostProBackupExport(ctx, request)
+\tcase pluginabi.MethodHostProBackupImport:
+\t\treturn h.callHostProBackupImport(ctx, request)
+\tdefault:
+''',
+    'case pluginabi.MethodHostProBackupExport:',
 )
 
 rpc_schema = ROOT / 'internal/pluginhost/rpc_schema.go'
 replace_once(
     rpc_schema,
     '\tAuthProvider                  bool                         `json:"auth_provider"`\n',
-    '\tAuthProvider                  bool                         `json:"auth_provider"`\n\tQuotaProvider                 bool                         `json:"quota_provider"`\n\tAuthModelFilter               bool                         `json:"auth_model_filter"`\n',
+    '\tAuthProvider                  bool                         `json:"auth_provider"`\n\tQuotaProvider                 bool                         `json:"quota_provider"`\n\tQuotaCacheStore               bool                         `json:"quota_cache_store"`\n\tRuntimeStateStore             bool                         `json:"runtime_state_store"`\n\tProSettingsStore              bool                         `json:"pro_settings_store"`\n\tAuthModelFilter               bool                         `json:"auth_model_filter"`\n',
     'QuotaProvider                 bool',
 )
 insert_before(
@@ -394,7 +584,7 @@ insert_before(
 replace_once(
     rpc_schema,
     '\t\tAuthProvider:                  caps.AuthProvider != nil,\n',
-    '\t\tAuthProvider:                  caps.AuthProvider != nil,\n\t\tQuotaProvider:                 caps.QuotaProvider != nil,\n\t\tAuthModelFilter:               caps.AuthModelFilter != nil,\n',
+    '\t\tAuthProvider:                  caps.AuthProvider != nil,\n\t\tQuotaProvider:                 caps.QuotaProvider != nil,\n\t\tQuotaCacheStore:               caps.QuotaCacheStore != nil,\n\t\tRuntimeStateStore:             caps.RuntimeStateStore != nil,\n\t\tProSettingsStore:              caps.ProSettingsStore != nil,\n\t\tAuthModelFilter:               caps.AuthModelFilter != nil,\n',
     'QuotaProvider:                 caps.QuotaProvider != nil',
 )
 
@@ -408,6 +598,36 @@ insert_before(
 
 ''',
     'type rpcQuotaProvider struct',
+)
+insert_before(
+    rpc_client,
+    'type rpcFrontendAuthProvider struct {\n',
+    '''type rpcQuotaCacheStore struct {
+\t*rpcPluginAdapter
+}
+
+''',
+    'type rpcQuotaCacheStore struct',
+)
+insert_before(
+    rpc_client,
+    'type rpcFrontendAuthProvider struct {\n',
+    '''type rpcRuntimeStateStore struct {
+\t*rpcPluginAdapter
+}
+
+''',
+    'type rpcRuntimeStateStore struct',
+)
+insert_before(
+    rpc_client,
+    'type rpcFrontendAuthProvider struct {\n',
+    '''type rpcProSettingsStore struct {
+\t*rpcPluginAdapter
+}
+
+''',
+    'type rpcProSettingsStore struct',
 )
 insert_before(
     rpc_client,
@@ -430,6 +650,15 @@ replace_once(
 \t}
 \tif resp.Capabilities.QuotaProvider {
 \t\tplugin.Capabilities.QuotaProvider = rpcQuotaProvider{rpcPluginAdapter: adapter}
+\t}
+\tif resp.Capabilities.QuotaCacheStore {
+\t\tplugin.Capabilities.QuotaCacheStore = rpcQuotaCacheStore{rpcPluginAdapter: adapter}
+\t}
+\tif resp.Capabilities.RuntimeStateStore {
+\t\tplugin.Capabilities.RuntimeStateStore = rpcRuntimeStateStore{rpcPluginAdapter: adapter}
+\t}
+\tif resp.Capabilities.ProSettingsStore {
+\t\tplugin.Capabilities.ProSettingsStore = rpcProSettingsStore{rpcPluginAdapter: adapter}
 \t}
 \tif resp.Capabilities.FrontendAuthProvider {
 \t\tplugin.Capabilities.FrontendAuthProvider = rpcFrontendAuthProvider{rpcPluginAdapter: adapter}
@@ -483,6 +712,60 @@ func (p rpcQuotaProvider) FetchQuota(ctx context.Context, req pluginapi.QuotaFet
 insert_before(
     rpc_client,
     'func sanitizePluginMetadata(src map[string]any) map[string]any {\n',
+    '''func (p rpcQuotaCacheStore) GetQuotaCache(ctx context.Context, req pluginapi.QuotaCacheGetRequest) (pluginapi.QuotaCacheGetResponse, error) {
+\treturn callPlugin[pluginapi.QuotaCacheGetResponse](ctx, p.client, pluginabi.MethodQuotaCacheGet, req)
+}
+
+func (p rpcQuotaCacheStore) PutQuotaCache(ctx context.Context, req pluginapi.QuotaCachePutRequest) (pluginapi.QuotaCachePutResponse, error) {
+\treturn callPlugin[pluginapi.QuotaCachePutResponse](ctx, p.client, pluginabi.MethodQuotaCachePut, req)
+}
+
+func (p rpcQuotaCacheStore) DeleteQuotaCache(ctx context.Context, req pluginapi.QuotaCacheDeleteRequest) (pluginapi.QuotaCacheDeleteResponse, error) {
+\treturn callPlugin[pluginapi.QuotaCacheDeleteResponse](ctx, p.client, pluginabi.MethodQuotaCacheDelete, req)
+}
+
+func (p rpcQuotaCacheStore) ObserveQuota(ctx context.Context, req pluginapi.QuotaObservationRequest) (pluginapi.QuotaObservationResponse, error) {
+\treturn callPlugin[pluginapi.QuotaObservationResponse](ctx, p.client, pluginabi.MethodQuotaCacheObserve, req)
+}
+
+''',
+    'func (p rpcQuotaCacheStore) GetQuotaCache',
+)
+insert_before(
+    rpc_client,
+    'func sanitizePluginMetadata(src map[string]any) map[string]any {\n',
+    '''func (p rpcRuntimeStateStore) GetAuthRuntimeStats(ctx context.Context, req pluginapi.AuthRuntimeStatsGetRequest) (pluginapi.AuthRuntimeStatsGetResponse, error) {
+\treturn callPlugin[pluginapi.AuthRuntimeStatsGetResponse](ctx, p.client, pluginabi.MethodRuntimeStatsGet, req)
+}
+
+func (p rpcRuntimeStateStore) PutAuthRuntimeStats(ctx context.Context, req pluginapi.AuthRuntimeStatsPutRequest) (pluginapi.AuthRuntimeStatsPutResponse, error) {
+\treturn callPlugin[pluginapi.AuthRuntimeStatsPutResponse](ctx, p.client, pluginabi.MethodRuntimeStatsPut, req)
+}
+
+func (p rpcRuntimeStateStore) DeleteAuthRuntimeState(ctx context.Context, req pluginapi.AuthRuntimeStateDeleteRequest) (pluginapi.AuthRuntimeStateDeleteResponse, error) {
+\treturn callPlugin[pluginapi.AuthRuntimeStateDeleteResponse](ctx, p.client, pluginabi.MethodRuntimeStateDelete, req)
+}
+
+''',
+    'func (p rpcRuntimeStateStore) GetAuthRuntimeStats',
+)
+insert_before(
+    rpc_client,
+    'func sanitizePluginMetadata(src map[string]any) map[string]any {\n',
+    '''func (p rpcProSettingsStore) GetProSetting(ctx context.Context, req pluginapi.ProSettingGetRequest) (pluginapi.ProSettingGetResponse, error) {
+\treturn callPlugin[pluginapi.ProSettingGetResponse](ctx, p.client, pluginabi.MethodProSettingGet, req)
+}
+
+func (p rpcProSettingsStore) PutProSetting(ctx context.Context, req pluginapi.ProSettingPutRequest) (pluginapi.ProSettingPutResponse, error) {
+\treturn callPlugin[pluginapi.ProSettingPutResponse](ctx, p.client, pluginabi.MethodProSettingPut, req)
+}
+
+''',
+    'func (p rpcProSettingsStore) GetProSetting',
+)
+insert_before(
+    rpc_client,
+    'func sanitizePluginMetadata(src map[string]any) map[string]any {\n',
     '''func (p rpcAuthModelFilter) FilterAuthModels(ctx context.Context, req pluginapi.AuthModelFilterRequest) (pluginapi.AuthModelFilterResponse, error) {
 \tcallbackID, closeCallback := p.openHostCallbackContext(ctx)
 \tdefer closeCallback()
@@ -500,8 +783,23 @@ plugin_host = ROOT / 'internal/pluginhost/host.go'
 replace_once(
     plugin_host,
     '\t\tcaps.AuthProvider != nil ||\n',
-    '\t\tcaps.AuthProvider != nil ||\n\t\tcaps.QuotaProvider != nil ||\n\t\tcaps.AuthModelFilter != nil ||\n',
-    'caps.AuthModelFilter != nil',
+    '\t\tcaps.AuthProvider != nil ||\n\t\tcaps.QuotaProvider != nil ||\n\t\tcaps.QuotaCacheStore != nil ||\n\t\tcaps.RuntimeStateStore != nil ||\n\t\tcaps.ProSettingsStore != nil ||\n\t\tcaps.AuthModelFilter != nil ||\n',
+    'caps.ProSettingsStore != nil',
+)
+replace_once(
+    plugin_host,
+    '''\tdefer h.unlockApply()
+
+\ttargets := make([]pluginUnloadTarget, 0)
+\tvar loading map[string]*pluginLoadRequest
+''',
+    '''\tdefer h.unlockApply()
+
+\tdetachProObservabilityBackends(h)
+\ttargets := make([]pluginUnloadTarget, 0)
+\tvar loading map[string]*pluginLoadRequest
+''',
+    'detachProObservabilityBackends(h)',
 )
 
 plugin_snapshot = ROOT / 'internal/pluginhost/snapshot.go'
@@ -560,6 +858,27 @@ write(quota_provider_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+
 quota_provider_test_source = Path(__file__).resolve().parent / 'plugin_quota_provider_test.go'
 quota_provider_test_target = ROOT / 'internal/pluginhost/quota_provider_test.go'
 write(quota_provider_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(quota_provider_test_source)))
+
+quota_cache_store_source = Path(__file__).resolve().parent / 'plugin_quota_cache_store.go'
+quota_cache_store_target = ROOT / 'internal/pluginhost/quota_cache_store.go'
+write(quota_cache_store_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(quota_cache_store_source)))
+quota_cache_store_test_source = Path(__file__).resolve().parent / 'plugin_quota_cache_store_test.go'
+quota_cache_store_test_target = ROOT / 'internal/pluginhost/quota_cache_store_test.go'
+write(quota_cache_store_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(quota_cache_store_test_source)))
+
+runtime_state_store_source = Path(__file__).resolve().parent / 'plugin_runtime_state_store.go'
+runtime_state_store_target = ROOT / 'internal/pluginhost/runtime_state_store.go'
+write(runtime_state_store_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(runtime_state_store_source)))
+runtime_state_store_test_source = Path(__file__).resolve().parent / 'plugin_runtime_state_store_test.go'
+runtime_state_store_test_target = ROOT / 'internal/pluginhost/runtime_state_store_test.go'
+write(runtime_state_store_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(runtime_state_store_test_source)))
+
+pro_settings_store_source = Path(__file__).resolve().parent / 'plugin_pro_settings_store.go'
+pro_settings_store_target = ROOT / 'internal/pluginhost/pro_settings_store.go'
+write(pro_settings_store_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(pro_settings_store_source)))
+pro_settings_store_test_source = Path(__file__).resolve().parent / 'plugin_pro_settings_store_test.go'
+pro_settings_store_test_target = ROOT / 'internal/pluginhost/pro_settings_store_test.go'
+write(pro_settings_store_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(pro_settings_store_test_source)))
 
 auth_model_filter_source = Path(__file__).resolve().parent / 'plugin_auth_model_filter.go'
 auth_model_filter_target = ROOT / 'internal/pluginhost/auth_model_filter.go'
@@ -1009,11 +1328,34 @@ replace_once(
 )
 replace_once(
     config_example,
+    'plugins:\n  enabled: false\n',
+    'plugins:\n  enabled: true\n',
+    'plugins:\n  enabled: true',
+)
+replace_once(
+    config_example,
+    '    example:\n      enabled: true\n',
+    '    example:\n      enabled: false\n',
+    '    example:\n      enabled: false\n',
+)
+replace_once(
+    config_example,
+    '# Standard dynamic library plugins are trusted in-process code. They are disabled by default.',
+    '# Standard dynamic library plugins are trusted in-process code. Pro builds enable them because observability persistence is plugin-owned.',
+)
+replace_once(
+    config_example,
     '''      mode: "safe" # enum example: safe, fast
 
 # When true, disable high-overhead request logging and HTTP middleware features to reduce per-request memory usage under high concurrency.
 ''',
     '''      mode: "safe" # enum example: safe, fast
+
+    # Required Pro persistence plugin. It adopts or migrates the legacy usage.sqlite
+    # before the proxy service starts, then exclusively owns usage and runtime state.
+    pro-observability:
+      enabled: true
+      routing-strategy: "round-robin"
 
     # Optional Pro plugin: subtract xAI OAuth models by detected account plan.
     # oauth-model-policy:
@@ -1089,6 +1431,7 @@ replace_once(
 \tpluginHost.ApplyConfig(context.Background(), cfg)
 ''',
     '''\tconfigaccess.Register(&cfg.SDKConfig)
+\tcfg.EnsureProObservabilityPluginDefaults()
 \tpluginstore.EnsureConfiguredPluginsInstalled(context.Background(), cfg)
 \tpluginHost.ApplyConfig(context.Background(), cfg)
 ''',
@@ -1097,6 +1440,31 @@ replace_once(
 queue_go_source('internal/pluginstore/autoinstall.go')
 
 queue_go_source('internal/pluginstore/autoinstall_test.go')
+
+queue_go_source('internal/config/pro_plugin_defaults.go')
+queue_go_source('internal/config/pro_plugin_defaults_test.go')
+queue_go_source('internal/cmd/pro_plugin_startup_test.go')
+queue_go_source('internal/pluginhost/pro_observability_ready.go')
+queue_go_source('internal/pluginhost/pro_observability_ready_test.go')
+queue_go_source('internal/pluginhost/pro_backup_callbacks.go')
+queue_go_source('internal/pluginhost/pro_backup_callbacks_test.go')
+
+service_plugins = ROOT / 'sdk/cliproxy/service_plugins.go'
+replace_once(
+    service_plugins,
+    '''\tif s.pluginHost != nil {
+\t\ts.pluginHost.ApplyConfig(ctx, cfg)
+\t}
+''',
+    '''\tif cfg != nil {
+\t\tcfg.EnsureProObservabilityPluginDefaults()
+\t}
+\tif s.pluginHost != nil {
+\t\ts.pluginHost.ApplyConfig(ctx, cfg)
+\t}
+''',
+    'cfg.EnsureProObservabilityPluginDefaults()',
+)
 
 replace_once(
     ROOT / 'internal/pluginhost/auth_provider.go',
@@ -1187,6 +1555,14 @@ replace_once(
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat.go')
 
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat_test.go')
+
+queue_go_source('internal/pluginhost/management_call.go')
+
+queue_go_source('internal/pluginhost/management_call_test.go')
+
+queue_go_source('internal/pluginhost/pro_observability_integration_test.go')
+
+queue_go_source('internal/pluginhost/usage_metadata_test.go')
 
 server = ROOT / 'internal/api/server.go'
 server_routes = ROOT / 'internal/api/server_routes.go'
@@ -1496,6 +1872,15 @@ write(
 )
 
 redisqueue_plugin = ROOT / 'internal/redisqueue/plugin.go'
+queue_go_source('internal/api/embeddedusage_cutover_test.go')
+queue_go_source('internal/api/usage_stream_bridge.go')
+queue_go_source('internal/api/usage_stream_bridge_test.go')
+replace_once(
+    redisqueue_plugin,
+	'func init() {\n\tcoreusage.RegisterPlugin(&usageQueuePlugin{})\n}\n',
+	'func init() {}\n',
+	'func init() {}',
+)
 replace_once(
     redisqueue_plugin,
     f'\tinternallogging "{import_path("internal/logging")}"\n',
@@ -1580,8 +1965,6 @@ queue_go_source('internal/logging/requestid.go')
 logging_request_meta = ROOT / 'internal/logging/requestmeta.go'
 queue_go_source('internal/logging/requestmeta.go')
 
-add_go_import(server_management, '"github.com/gin-gonic/gin"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
-
 replace_go_call_block(
     server_routes,
     '\ts.engine.GET("/", func(c *gin.Context) {',
@@ -1597,7 +1980,7 @@ replace_once(
 \t\tmgmt.GET("/config", s.mgmt.GetConfig)
 ''',
     '''\t{
-\t\tembeddedusage.RegisterGinRoutes(mgmt.Group("/usage"))
+\t\tmgmt.GET("/usage/stream", s.servePluginUsageStream)
 
 \t\tmgmt.GET("/config", s.mgmt.GetConfig)
 ''',
@@ -1743,45 +2126,48 @@ replace_once(
 )
 
 run = ROOT / 'internal/cmd/run.go'
+add_go_import(run, '"errors"\n', '\t"fmt"\n')
 add_go_import(run, '"' + import_path('internal/config') + '"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
 insert_before(
     run,
     '// StartService builds and runs the proxy service using the exported SDK.\n',
-    'func applyProRequiredStartupConfig(cfg *config.Config, configPath string) {\n\tif cfg == nil {\n\t\treturn\n\t}\n\tshouldPersistUsageStatistics := !cfg.UsageStatisticsEnabled\n\tshouldPersistPanelRepository := cfg.RemoteManagement.PanelGitHubRepository != config.DefaultPanelGitHubRepository\n\tcfg.UsageStatisticsEnabled = true\n\tcfg.RemoteManagement.PanelGitHubRepository = config.DefaultPanelGitHubRepository\n\tif configPath == "" {\n\t\treturn\n\t}\n\tif shouldPersistUsageStatistics {\n\t\tif _, err := config.SaveConfigPreserveCommentsUpdateExistingScalars(configPath, []config.ExistingScalarUpdate{{Path: []string{"usage-statistics-enabled"}, Value: true}}); err != nil {\n\t\t\tlog.Warnf("failed to update existing usage statistics config: %v", err)\n\t\t}\n\t}\n\tif shouldPersistPanelRepository {\n\t\tif _, err := config.SaveConfigPreserveCommentsUpdateExistingScalars(configPath, []config.ExistingScalarUpdate{{Path: []string{"remote-management", "panel-github-repository"}, Value: config.DefaultPanelGitHubRepository}}); err != nil {\n\t\t\tlog.Warnf("failed to update existing panel repository config: %v", err)\n\t\t}\n\t}\n}\n\n',
+    'func applyProRequiredStartupConfig(cfg *config.Config, configPath string) {\n\tif cfg == nil {\n\t\treturn\n\t}\n\tshouldPersistUsageStatistics := !cfg.UsageStatisticsEnabled\n\tshouldPersistPanelRepository := cfg.RemoteManagement.PanelGitHubRepository != config.DefaultPanelGitHubRepository\n\tcfg.UsageStatisticsEnabled = true\n\tcfg.RemoteManagement.PanelGitHubRepository = config.DefaultPanelGitHubRepository\n\tcfg.EnsureProObservabilityPluginDefaults()\n\tif configPath == "" {\n\t\treturn\n\t}\n\tif shouldPersistUsageStatistics {\n\t\tif _, err := config.SaveConfigPreserveCommentsUpdateExistingScalars(configPath, []config.ExistingScalarUpdate{{Path: []string{"usage-statistics-enabled"}, Value: true}}); err != nil {\n\t\t\tlog.Warnf("failed to update existing usage statistics config: %v", err)\n\t\t}\n\t}\n\tif shouldPersistPanelRepository {\n\t\tif _, err := config.SaveConfigPreserveCommentsUpdateExistingScalars(configPath, []config.ExistingScalarUpdate{{Path: []string{"remote-management", "panel-github-repository"}, Value: config.DefaultPanelGitHubRepository}}); err != nil {\n\t\t\tlog.Warnf("failed to update existing panel repository config: %v", err)\n\t\t}\n\t}\n}\n\nfunc requireProObservabilityPlugin(ctx context.Context, cfg *config.Config, host *pluginhost.Host) (*pluginhost.Host, error) {\n\tif host == nil {\n\t\thost = pluginhost.New()\n\t}\n\thost.ApplyConfig(ctx, cfg)\n\tif !host.ProObservabilityReady(config.ProObservabilityPluginID) {\n\t\treturn host, fmt.Errorf("required plugin %s failed to load, migrate usage storage, or expose its complete persistence capability set", config.ProObservabilityPluginID)\n\t}\n\tembeddedusage.SetQuotaCachePluginBackend(host)\n\tembeddedusage.SetRuntimeStatePluginBackend(host)\n\tembeddedusage.SetProSettingsPluginBackend(host)\n\treturn host, nil\n}\n\n',
     'func applyProRequiredStartupConfig',
 )
 insert_before_nth(
     run,
     '''\tservice, err := builder.Build()
 ''',
-    '''\tusageService, err := embeddedusage.Start(ctx)
-\tif err != nil {
-\t\tlog.Errorf("failed to start embedded usage service: %v", err)
+    '''\tapplyProRequiredStartupConfig(cfg, configPath)
+\tpreparedHost, errPrepare := requireProObservabilityPlugin(ctx, cfg, host)
+\tif errPrepare != nil {
+\t\tlog.Errorf("failed to prepare plugin-owned usage service: %v", errPrepare)
 \t\tclose(doneCh)
 \t\treturn cancelFn, doneCh
 \t}
-\tembeddedusage.SetDefaultService(usageService)
-\tapplyProRequiredStartupConfig(cfg, configPath)
+\thost = preparedHost
+\tbuilder = builder.WithPluginHost(preparedHost)
 
 ''',
     2,
-    'embeddedusage.Start(ctx)',
+    'preparedHost, errPrepare := requireProObservabilityPlugin(ctx, cfg, host)',
 )
 insert_before_nth(
     run,
     '''\tservice, err := builder.Build()
 ''',
-    '''\tusageService, err := embeddedusage.Start(runCtx)
-\tif err != nil {
-\t\tlog.Errorf("failed to start embedded usage service: %v", err)
+    '''\tapplyProRequiredStartupConfig(cfg, configPath)
+\tpreparedHost, errPrepare := requireProObservabilityPlugin(runCtx, cfg, host)
+\tif errPrepare != nil {
+\t\tlog.Errorf("failed to prepare plugin-owned usage service: %v", errPrepare)
 \t\treturn
 \t}
-\tembeddedusage.SetDefaultService(usageService)
-\tapplyProRequiredStartupConfig(cfg, configPath)
+\thost = preparedHost
+\tbuilder = builder.WithPluginHost(preparedHost)
 
 ''',
     1,
-    'embeddedusage.Start(runCtx)',
+    'requireProObservabilityPlugin(runCtx',
 )
 
 queue_go_source('sdk/cliproxy/auth/inspection_refresh.go')
@@ -2415,16 +2801,38 @@ subprocess.run([
     'internal/watcher/diff/config_diff.go',
     'internal/api/handlers/management/routing_policy.go',
     'internal/api/handlers/management/routing_policy_test.go',
+    'internal/api/embeddedusage_cutover_test.go',
+    'internal/api/usage_stream_bridge.go',
+    'internal/api/usage_stream_bridge_test.go',
+    'internal/cmd/pro_plugin_startup_test.go',
     'internal/config/config_existing_updates.go',
     'internal/config/config_existing_updates_test.go',
+    'internal/config/pro_plugin_defaults.go',
+    'internal/config/pro_plugin_defaults_test.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
     'internal/pluginhost/gemini_cli_quota_legacy.go',
     'internal/pluginhost/gemini_cli_quota_legacy_test.go',
+    'internal/pluginhost/host.go',
+    'internal/pluginhost/management_call.go',
+    'internal/pluginhost/management_call_test.go',
+    'internal/pluginhost/host_callbacks.go',
+    'internal/pluginhost/pro_backup_callbacks.go',
+    'internal/pluginhost/pro_backup_callbacks_test.go',
+    'internal/pluginhost/pro_observability_integration_test.go',
+    'internal/pluginhost/pro_observability_ready.go',
+    'internal/pluginhost/pro_observability_ready_test.go',
+    'internal/pluginhost/pro_settings_store.go',
+    'internal/pluginhost/pro_settings_store_test.go',
+    'internal/pluginhost/quota_cache_store.go',
+    'internal/pluginhost/quota_cache_store_test.go',
+    'internal/pluginhost/runtime_state_store.go',
+    'internal/pluginhost/runtime_state_store_test.go',
     'internal/pluginhost/quota_provider.go',
     'internal/pluginhost/quota_provider_test.go',
     'internal/pluginhost/auth_model_filter.go',
     'internal/pluginhost/auth_model_filter_test.go',
+    'internal/pluginhost/usage_metadata_test.go',
     'internal/pluginhost/rpc_client.go',
     'internal/pluginhost/rpc_schema.go',
     'internal/pluginhost/snapshot.go',
@@ -2447,6 +2855,7 @@ subprocess.run([
     'sdk/cliproxy/auth/scheduler.go',
     'sdk/cliproxy/auth/types.go',
     'sdk/cliproxy/service_executors.go',
+    'sdk/cliproxy/service_plugins.go',
     'sdk/cliproxy/service_auth_model_filter_test.go',
     'sdk/cliproxy/service_models.go',
     'sdk/cliproxy/usage/manager.go',
