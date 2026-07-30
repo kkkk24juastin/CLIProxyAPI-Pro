@@ -15,7 +15,7 @@
 
 ## 管理页面
 
-插件通过 `ManagementAPI` 注册 `/ui` resource，Management 会把它显示为动态插件菜单。页面直接编辑插件配置，支持六个提供商、内置和自定义套餐、`_unknown`/`_default` 回退、明确空排除列表、缓存时间、探测超时和优先级。Management overlay 不再保存第二套页面实现。
+插件通过 `ManagementAPI` 注册 `/ui` resource，Management 会把它显示为动态插件菜单。页面由共享的 `pro-observability/webapp` 源码构建到本插件的 `web/index.html`，直接编辑插件配置，支持六个提供商、内置和自定义套餐、`_unknown`/`_default` 回退、明确空排除列表、缓存时间、探测超时和优先级。Management overlay 不再保存第二套页面实现。
 
 ## 提供商与套餐
 

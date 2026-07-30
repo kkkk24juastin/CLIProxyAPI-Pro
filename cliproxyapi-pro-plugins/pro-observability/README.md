@@ -2,7 +2,7 @@
 
 `pro-observability` is the only persistence owner for Pro usage events, aggregates, model prices, quota cache, JSONL import/export, retention, WebDAV backups, routing cursors, auth runtime statistics, and account-inspection state.
 
-It also owns the complete request-monitoring and account-inspection UIs. Both production pages are built from `webapp/` into `web/index.html` and exposed as separate upstream plugin resources. Management discovers them dynamically as “可观测性” and “账号巡检”; there are no separately compiled legacy or shadow pages.
+It also owns the shared plugin-management webapp source used by request monitoring, account inspection, proxy pool, and OAuth model policy. The build emits page-specific single-file resources into each owning plugin's `web/index.html`; Management discovers them dynamically and does not compile legacy or shadow pages.
 
 The Pro Core patch enables the dynamic plugin system and this plugin by default. Startup is fail-closed: the proxy service does not start unless the plugin loads successfully and completes storage preparation.
 
@@ -56,7 +56,7 @@ bun run type-check
 bun run build
 ```
 
-The Vite build is intentionally single-file and writes `../web/index.html`, which is embedded by the Go plugin build.
+The Vite build is intentionally single-file and emits three page-specific bundles: `pro-observability/web/index.html`, `proxy-pool/web/index.html`, and `oauth-model-policy/web/index.html`. Each bundle is embedded by its owning Go plugin.
 
 Minimal configuration is generated automatically:
 

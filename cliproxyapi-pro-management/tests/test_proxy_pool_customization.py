@@ -8,6 +8,7 @@ CUSTOMIZER = ROOT / 'apply_customizations.py'
 PLUGIN_BRIDGE = ROOT / 'overlay/src/features/plugins/usePluginResourceBridge.ts'
 PLUGIN_MAIN = REPO_ROOT / 'cliproxyapi-pro-plugins/proxy-pool/main.go'
 PLUGIN_PAGE = REPO_ROOT / 'cliproxyapi-pro-plugins/proxy-pool/web/index.html'
+WEBAPP = REPO_ROOT / 'cliproxyapi-pro-plugins/pro-observability/webapp'
 
 
 class ProxyPoolCustomizationTest(unittest.TestCase):
@@ -23,11 +24,16 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
 
         plugin = PLUGIN_MAIN.read_text()
         page = PLUGIN_PAGE.read_text()
+        source = (WEBAPP / 'src/pages/ProxyPoolPage.tsx').read_text()
+        service = (WEBAPP / 'src/services/api/proxyPool.ts').read_text()
         self.assertIn('pluginabi.MethodManagementRegister', plugin)
         self.assertIn('proxyPoolManagementPage', plugin)
         self.assertIn('cliproxy-plugin-resource', page)
-        self.assertIn("/plugins/'+PLUGIN_ID+'/config", page)
-        self.assertIn('/pro/proxy-pool/status', page)
+        self.assertIn('ProxyPoolNodeSheet', source)
+        self.assertIn('ProxyPoolImportModal', source)
+        self.assertIn('ProxyPoolTakeoverDialog', source)
+        self.assertIn(f'/plugins/${{PROXY_POOL_PLUGIN_ID}}/config', service)
+        self.assertIn('/pro/proxy-pool/status', service)
 
     def test_plugin_resource_bridge_proxies_authenticated_management_requests(self) -> None:
         bridge = PLUGIN_BRIDGE.read_text()

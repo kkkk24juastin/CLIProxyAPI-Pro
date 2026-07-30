@@ -7,6 +7,7 @@ REPO_ROOT = ROOT.parent
 CUSTOMIZER = ROOT / 'apply_customizations.py'
 PLUGIN_MAIN = REPO_ROOT / 'cliproxyapi-pro-plugins/oauth-model-policy/main.go'
 PLUGIN_PAGE = REPO_ROOT / 'cliproxyapi-pro-plugins/oauth-model-policy/web/index.html'
+WEBAPP = REPO_ROOT / 'cliproxyapi-pro-plugins/pro-observability/webapp'
 
 
 class OAuthModelPolicyCustomizationTest(unittest.TestCase):
@@ -26,22 +27,26 @@ class OAuthModelPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('oauthModelPolicyManagementPage', plugin)
 
     def test_plugin_page_preserves_complete_policy_editor_contract(self) -> None:
-        page = PLUGIN_PAGE.read_text()
+        page = (WEBAPP / 'src/pages/OAuthModelPolicyPage.tsx').read_text()
+        service = (WEBAPP / 'src/services/api/oauthModelPolicy.ts').read_text()
+        styles = (WEBAPP / 'src/pages/OAuthModelPolicyPage.module.scss').read_text()
+        bundle = PLUGIN_PAGE.read_text()
         for provider in ('xai', 'codex', 'claude', 'gemini-cli', 'antigravity', 'kimi'):
-            self.assertIn(provider, page)
+            self.assertIn(provider, service)
         for marker in (
-            "'_unknown'",
-            "'_default'",
-            "'excluded-models'",
-            "'cache-ttl'",
-            "'resolve-timeout'",
-            'cliproxy-plugin-resource',
-            "request('PATCH','/plugins/'+PLUGIN_ID+'/config',config)",
-            '添加自定义套餐',
-            '空列表表示明确不排除',
+            '"_unknown"',
+            '"_default"',
+            '"excluded-models"',
+            '"cache-ttl"',
+            '"resolve-timeout"',
+            'requestManagement(',
+            'serializeOAuthModelPolicyConfig(config)',
         ):
+            self.assertIn(marker, service)
+        for marker in ('PatternEditor', 'floatingActionContainer', 'customPlanRow', 'ruleGrid'):
             self.assertIn(marker, page)
-        self.assertIn('@media(max-width:520px)', page)
+        self.assertIn('@media (max-width: 720px)', styles)
+        self.assertIn('<div id="root"></div>', bundle)
 
 
 if __name__ == '__main__':

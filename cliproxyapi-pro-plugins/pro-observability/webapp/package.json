@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build --mode observability && vite build --mode proxy-pool && vite build --mode oauth-model-policy",
     "type-check": "tsc --noEmit",
     "test": "bun test"
   },

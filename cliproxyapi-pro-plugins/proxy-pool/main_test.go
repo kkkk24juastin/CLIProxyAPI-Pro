@@ -55,7 +55,7 @@ func TestManagementResourcePageUsesAuthenticatedParentBridge(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(response.Headers.Get("Content-Type"), "text/html") {
 		t.Fatalf("response = %#v", response)
 	}
-	for _, marker := range []string{"cliproxy-plugin-resource", "/plugins/'+PLUGIN_ID+'/config", "/pro/proxy-pool/status"} {
+	for _, marker := range []string{"cliproxy-plugin-resource", "proxy_pool.title", "/pro/proxy-pool/status"} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("resource page missing marker %q", marker)
 		}

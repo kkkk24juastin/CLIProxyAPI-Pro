@@ -22,7 +22,11 @@ fi
 
 observability_webapp="${repo_root}/cliproxyapi-pro-plugins/pro-observability/webapp"
 observability_page="${repo_root}/cliproxyapi-pro-plugins/pro-observability/web/index.html"
+proxy_pool_page="${repo_root}/cliproxyapi-pro-plugins/proxy-pool/web/index.html"
+oauth_model_policy_page="${repo_root}/cliproxyapi-pro-plugins/oauth-model-policy/web/index.html"
 observability_page_hash="$(git -C "${repo_root}" hash-object "${observability_page}")"
+proxy_pool_page_hash="$(git -C "${repo_root}" hash-object "${proxy_pool_page}")"
+oauth_model_policy_page_hash="$(git -C "${repo_root}" hash-object "${oauth_model_policy_page}")"
 (
   cd "${observability_webapp}"
   bun install --frozen-lockfile
@@ -30,8 +34,12 @@ observability_page_hash="$(git -C "${repo_root}" hash-object "${observability_pa
   bun run build
 )
 rebuilt_observability_page_hash="$(git -C "${repo_root}" hash-object "${observability_page}")"
-if [[ "${observability_page_hash}" != "${rebuilt_observability_page_hash}" ]]; then
-  echo "pro-observability web/index.html is stale; run bun run build in ${observability_webapp}" >&2
+rebuilt_proxy_pool_page_hash="$(git -C "${repo_root}" hash-object "${proxy_pool_page}")"
+rebuilt_oauth_model_policy_page_hash="$(git -C "${repo_root}" hash-object "${oauth_model_policy_page}")"
+if [[ "${observability_page_hash}" != "${rebuilt_observability_page_hash}" ]] ||
+   [[ "${proxy_pool_page_hash}" != "${rebuilt_proxy_pool_page_hash}" ]] ||
+   [[ "${oauth_model_policy_page_hash}" != "${rebuilt_oauth_model_policy_page_hash}" ]]; then
+  echo "plugin management web/index.html resources are stale; run bun run build in ${observability_webapp}" >&2
   exit 1
 fi
 

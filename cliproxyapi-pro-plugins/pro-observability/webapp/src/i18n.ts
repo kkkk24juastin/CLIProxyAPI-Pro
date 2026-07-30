@@ -5,6 +5,7 @@ import ru from './i18n/locales/ru.json';
 import zhCN from './i18n/locales/zh-CN.json';
 import zhTW from './i18n/locales/zh-TW.json';
 import additions from './i18n/monitoring-locales.json';
+import managementAdditions from './i18n/plugin-management-locales.json';
 
 type Dictionary = Record<string, any>;
 const merge = (base: Dictionary, extra: Dictionary): Dictionary => {
@@ -18,10 +19,10 @@ const merge = (base: Dictionary, extra: Dictionary): Dictionary => {
 };
 
 const resources = {
-  en: { translation: merge(en, additions['en.json']) },
-  ru: { translation: merge(ru, additions['ru.json']) },
-  'zh-CN': { translation: merge(zhCN, additions['zh-CN.json']) },
-  'zh-TW': { translation: merge(zhTW, additions['zh-TW.json']) },
+  en: { translation: merge(merge(en, additions['en.json']), managementAdditions['en.json']) },
+  ru: { translation: merge(merge(ru, additions['ru.json']), managementAdditions['ru.json']) },
+  'zh-CN': { translation: merge(merge(zhCN, additions['zh-CN.json']), managementAdditions['zh-CN.json']) },
+  'zh-TW': { translation: merge(merge(zhTW, additions['zh-TW.json']), managementAdditions['zh-TW.json']) },
 };
 
 void i18n.use(initReactI18next).init({
