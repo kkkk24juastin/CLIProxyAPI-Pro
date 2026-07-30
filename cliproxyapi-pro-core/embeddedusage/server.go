@@ -18,8 +18,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
 )
 
-const accountInspectionScheduleExportRecordType = "account_inspection_schedule"
-const accountInspectionSnapshotExportRecordType = "account_inspection_snapshot"
 const backupManifestRecordType = "backup_manifest"
 const usageHistoryStartCursorValue = int64(1<<63 - 1)
 
@@ -39,20 +37,6 @@ type usageHistoryCursor struct {
 	APIKeyHash        string `json:"api_key_hash,omitempty"`
 	Status            string `json:"status,omitempty"`
 	Search            string `json:"search,omitempty"`
-}
-
-type accountInspectionScheduleExportRecord struct {
-	RecordType string          `json:"record_type"`
-	Version    int             `json:"version"`
-	Schedule   json.RawMessage `json:"schedule"`
-	ExportedAt int64           `json:"exported_at_ms"`
-}
-
-type accountInspectionSnapshotExportRecord struct {
-	RecordType string          `json:"record_type"`
-	Version    int             `json:"version"`
-	Snapshot   json.RawMessage `json:"snapshot"`
-	ExportedAt int64           `json:"exported_at_ms"`
 }
 
 type backupManifestRecord struct {
@@ -696,36 +680,6 @@ func (s *Server) exportJSONL(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if schedule, ok, err := ExportAccountInspectionSchedule(); err != nil {
-		return nil, err
-	} else if ok {
-		line, err := json.Marshal(accountInspectionScheduleExportRecord{
-			RecordType: accountInspectionScheduleExportRecordType,
-			Version:    1,
-			Schedule:   schedule,
-			ExportedAt: time.Now().UnixMilli(),
-		})
-		if err != nil {
-			return nil, err
-		}
-		data = append(data, line...)
-		data = append(data, '\n')
-	}
-	if snapshot, ok, err := ExportAccountInspectionSnapshot(); err != nil {
-		return nil, err
-	} else if ok {
-		line, err := json.Marshal(accountInspectionSnapshotExportRecord{
-			RecordType: accountInspectionSnapshotExportRecordType,
-			Version:    1,
-			Snapshot:   snapshot,
-			ExportedAt: time.Now().UnixMilli(),
-		})
-		if err != nil {
-			return nil, err
-		}
-		data = append(data, line...)
-		data = append(data, '\n')
-	}
 	digest := sha256.Sum256(data)
 	manifest, err := json.Marshal(backupManifestRecord{
 		RecordType: backupManifestRecordType,
@@ -780,10 +734,6 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 	authRuntimeStatsRecords := 0
 	var proSettings []ProSetting
 	proSettingsRecords := 0
-	var accountInspectionSchedule json.RawMessage
-	accountInspectionScheduleRecords := 0
-	var accountInspectionSnapshot json.RawMessage
-	accountInspectionSnapshotRecords := 0
 	var monitoringSettings *MonitoringSettings
 	monitoringSettingsRecords := 0
 	failed := 0
@@ -829,24 +779,6 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			hashedRecords++
 		}
 		switch recordType {
-		case accountInspectionScheduleExportRecordType:
-			schedule, err := parseAccountInspectionScheduleImportRecord(raw)
-			if err != nil {
-				failed++
-				continue
-			}
-			accountInspectionSchedule = schedule
-			accountInspectionScheduleRecords++
-			continue
-		case accountInspectionSnapshotExportRecordType:
-			snapshot, err := parseAccountInspectionSnapshotImportRecord(raw)
-			if err != nil {
-				failed++
-				continue
-			}
-			accountInspectionSnapshot = snapshot
-			accountInspectionSnapshotRecords++
-			continue
 		case modelPricesExportRecordType:
 			prices, rules, err := parseModelPricesImportRecord(raw)
 			if err != nil {
@@ -1052,41 +984,25 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return
 		}
 	}
-	if accountInspectionSchedule != nil {
-		if err := ApplyImportedAccountInspectionSchedule(accountInspectionSchedule); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	if accountInspectionSnapshot != nil {
-		if err := ApplyImportedAccountInspectionSnapshot(accountInspectionSnapshot); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
 	c.JSON(http.StatusOK, gin.H{
-		"added":                            result.Inserted,
-		"skipped":                          result.Skipped,
-		"total":                            totalEvents,
-		"failed":                           failed,
-		"modelPrices":                      len(modelPrices),
-		"modelPriceRecords":                modelPriceRecords,
-		"modelPriceRules":                  len(modelPriceRules),
-		"quotaCache":                       importedQuotaEntries,
-		"quotaCacheRecords":                quotaCacheRecords,
-		"routingCursors":                   importedRoutingCursors,
-		"routingCursorRecords":             routingCursorRecords,
-		"authRuntimeStats":                 importedAuthRuntimeStats,
-		"authRuntimeStatsRecords":          authRuntimeStatsRecords,
-		"proSettings":                      importedProSettings,
-		"proSettingsRecords":               proSettingsRecords,
-		"accountInspectionSchedule":        accountInspectionSchedule != nil,
-		"accountInspectionScheduleRecords": accountInspectionScheduleRecords,
-		"accountInspectionSnapshot":        accountInspectionSnapshot != nil,
-		"accountInspectionSnapshotRecords": accountInspectionSnapshotRecords,
-		"monitoringSettings":               monitoringSettings != nil,
-		"monitoringSettingsRecords":        monitoringSettingsRecords,
-		"legacyBackup":                     manifest == nil,
+		"added":                     result.Inserted,
+		"skipped":                   result.Skipped,
+		"total":                     totalEvents,
+		"failed":                    failed,
+		"modelPrices":               len(modelPrices),
+		"modelPriceRecords":         modelPriceRecords,
+		"modelPriceRules":           len(modelPriceRules),
+		"quotaCache":                importedQuotaEntries,
+		"quotaCacheRecords":         quotaCacheRecords,
+		"routingCursors":            importedRoutingCursors,
+		"routingCursorRecords":      routingCursorRecords,
+		"authRuntimeStats":          importedAuthRuntimeStats,
+		"authRuntimeStatsRecords":   authRuntimeStatsRecords,
+		"proSettings":               importedProSettings,
+		"proSettingsRecords":        proSettingsRecords,
+		"monitoringSettings":        monitoringSettings != nil,
+		"monitoringSettingsRecords": monitoringSettingsRecords,
+		"legacyBackup":              manifest == nil,
 	})
 }
 
@@ -1137,28 +1053,6 @@ func parseBackupManifest(raw []byte) (backupManifestRecord, error) {
 		}
 	}
 	return manifest, nil
-}
-
-func parseAccountInspectionScheduleImportRecord(raw []byte) (json.RawMessage, error) {
-	var record accountInspectionScheduleExportRecord
-	if err := json.Unmarshal(raw, &record); err != nil {
-		return nil, err
-	}
-	if len(record.Schedule) == 0 {
-		return nil, nil
-	}
-	return record.Schedule, nil
-}
-
-func parseAccountInspectionSnapshotImportRecord(raw []byte) (json.RawMessage, error) {
-	var record accountInspectionSnapshotExportRecord
-	if err := json.Unmarshal(raw, &record); err != nil {
-		return nil, err
-	}
-	if len(record.Snapshot) == 0 {
-		return nil, nil
-	}
-	return record.Snapshot, nil
 }
 
 func parseQuotaCacheImportRecord(raw []byte) ([]QuotaCacheEntry, error) {

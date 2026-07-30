@@ -15,6 +15,14 @@ class PluginAPIClient {
     return requestManagement<T>('GET', path, options);
   }
 
+  async getRaw(path: string, options: RequestOptions & { responseType?: 'blob' } = {}) {
+    const data = await requestManagement<unknown>('GET', path, options);
+    const normalized = data instanceof Blob
+      ? data
+      : new Blob([typeof data === 'string' ? data : JSON.stringify(data)], { type: 'application/json' });
+    return { data: normalized };
+  }
+
   post<T = unknown>(path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
     return requestManagement<T>('POST', path, { ...options, body });
   }

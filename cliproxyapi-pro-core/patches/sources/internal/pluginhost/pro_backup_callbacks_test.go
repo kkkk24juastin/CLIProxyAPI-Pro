@@ -8,40 +8,24 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
 )
 
-func TestProBackupHostCallbacksBridgeScheduleExportAndImport(t *testing.T) {
-	embeddedusage.SetAccountInspectionScheduleHandlers(func() ([]byte, bool, error) {
-		return []byte(`{"enabled":true}`), true, nil
-	}, nil)
-	t.Cleanup(func() { embeddedusage.SetAccountInspectionScheduleHandlers(nil, nil) })
+func TestProBackupHostCallbacksApplyRuntimeStateImport(t *testing.T) {
 	ctx := withHostCallbackPluginID(context.Background(), proObservabilityPluginID)
-	rawRequest, _ := json.Marshal(proBackupExportRequest{Kind: "account-inspection-schedule"})
-	raw, err := New().callHostProBackupExport(ctx, rawRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var wrapped struct {
-		OK     bool                    `json:"ok"`
-		Result proBackupExportResponse `json:"result"`
-	}
-	if err = json.Unmarshal(raw, &wrapped); err != nil || !wrapped.OK || !wrapped.Result.Found || string(wrapped.Result.Data) != `{"enabled":true}` {
-		t.Fatalf("export response = %#v raw=%s err=%v", wrapped, raw, err)
-	}
-
-	var imported string
-	embeddedusage.SetAccountInspectionScheduleHandlers(nil, func(data []byte) error {
-		imported = string(data)
+	var imported []embeddedusage.AuthRuntimeStats
+	embeddedusage.SetAuthRuntimeStateImportHandler(func(_ []embeddedusage.RoutingCursorState, stats []embeddedusage.AuthRuntimeStats) error {
+		imported = append([]embeddedusage.AuthRuntimeStats(nil), stats...)
 		return nil
 	})
-	rawRequest, _ = json.Marshal(proBackupImportRequest{Kind: "account-inspection-schedule", Data: json.RawMessage(`{"enabled":false}`)})
-	if _, err = New().callHostProBackupImport(ctx, rawRequest); err != nil || imported != `{"enabled":false}` {
-		t.Fatalf("imported=%s err=%v", imported, err)
+	t.Cleanup(func() { embeddedusage.SetAuthRuntimeStateImportHandler(nil) })
+	rawRequest, _ := json.Marshal(proBackupImportRequest{Kind: "runtime-state", RuntimeStats: []embeddedusage.AuthRuntimeStats{{AuthIndex: "auth-1", SuccessCount: 3}}})
+	if _, err := New().callHostProBackupImport(ctx, rawRequest); err != nil || len(imported) != 1 || imported[0].SuccessCount != 3 {
+		t.Fatalf("imported=%#v err=%v", imported, err)
 	}
 }
 
 func TestProBackupHostCallbacksRejectOtherPlugins(t *testing.T) {
 	ctx := withHostCallbackPluginID(context.Background(), "other")
-	raw, _ := json.Marshal(proBackupExportRequest{Kind: "account-inspection-schedule"})
-	if _, err := New().callHostProBackupExport(ctx, raw); err == nil {
+	raw, _ := json.Marshal(proBackupImportRequest{Kind: "runtime-state"})
+	if _, err := New().callHostProBackupImport(ctx, raw); err == nil {
 		t.Fatal("unauthorized plugin unexpectedly accessed Pro backup callback")
 	}
 }

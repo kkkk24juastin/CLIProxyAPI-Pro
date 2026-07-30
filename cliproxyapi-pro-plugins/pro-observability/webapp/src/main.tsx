@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import '@/styles/global.scss';
 import { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';
+import { AccountInspectionPage } from '@/pages/AccountInspectionPage';
 import { loadHostBootstrap } from '@/services/bridge';
 import { initializeStores } from '@/stores';
 import { setPluginLanguage } from '@/i18n';
@@ -21,10 +22,13 @@ async function start() {
   await setPluginLanguage(bootstrap.locale);
   document.documentElement.dataset.theme = bootstrap.theme;
   const route = `${bootstrap.route?.search || ''}${bootstrap.route?.hash || ''}` || '/';
+  const Page = window.location.pathname.includes('/account-inspection')
+    ? AccountInspectionPage
+    : MonitoringCenterPage;
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <MemoryRouter initialEntries={[route]}>
-        <MonitoringCenterPage />
+        <Page />
       </MemoryRouter>
     </StrictMode>
   );

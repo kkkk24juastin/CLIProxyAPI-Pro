@@ -147,9 +147,9 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 
 插件支持 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi OAuth，并为所有提供商提供 `_unknown`、`_default` 与自定义套餐规则。处理顺序为 upstream `excluded_models`、插件套餐过滤、OAuth alias/prefix、模型注册。最终注册结果同时约束 `/v1/models` 聚合和请求调度候选账号。配置与探测细节见 `cliproxyapi-pro-plugins/oauth-model-policy/README.md`。
 
-### 后端账号巡检调度器
+### 插件账号巡检
 
-补丁层在 management API 下增加账号巡检路由：
+`pro-observability` 唯一持有账号巡检业务：provider 探测、调度、状态机、自动动作、SQLite 状态、备份记录和动态资源页面都在插件内运行。Core 不启动 legacy/shadow 调度器，只提供受限 HostAuthGateway（凭据不离开 Core）以及通用 management WebSocket 转发。插件通过 management API 暴露：
 
 请求监控会额外保存 TTFT、HTTP 状态码、结构化错误、reasoning effort 和 service tier；`/usage/status` 会返回最近 dead letter 样本并对敏感字段脱敏。账号巡检自动动作支持连续确认门槛，quota cache 会记录解析器版本和返回结构 hash。
 
@@ -165,7 +165,7 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 - `POST /v0/management/account-inspection/stop`
 - `POST /v0/management/account-inspection/actions`
 
-调度器支持巡检：
+插件支持巡检：
 
 - Antigravity
 - Claude
@@ -176,17 +176,9 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 
 能力包括 provider 过滤、worker 数量限制、重试/超时、抽样、按用量阈值判断、进度/状态/日志/结果快照、暂停/继续/停止控制、手动操作，以及对额度耗尽、额度恢复、账号错误的可选自动操作。Antigravity 和 xAI 还支持可选深度探测。
 
-探测账号前，调度器会在认证记录本来已经进入 upstream 正常刷新窗口时尝试刷新 auth。巡检刷新路径复用 upstream provider 刷新逻辑和持久化逻辑，允许 disabled 账号，跳过 API key 账号、未到刷新窗口的账号，并遵守 `NextRefreshAfter`。刷新成功后使用刷新后的 auth 探测；刷新失败时保留账号，并跳过该账号本次探测。
+探测账号前，插件会在认证记录本来已经进入 upstream 正常刷新窗口时通过 HostAuthGateway 请求 Core 刷新 auth。该受控路径复用 upstream provider 刷新和持久化逻辑，允许 disabled 账号，跳过 API key 账号、未到刷新窗口的账号，并遵守 `NextRefreshAfter`。刷新成功后使用刷新后的账号 revision 探测；刷新失败时保留账号，并跳过该账号本次探测。
 
-调度文件默认位置：
-
-```text
-/CLIProxyAPI/usage/account-inspection-schedule.json
-```
-
-如需自定义，可设置 `ACCOUNT_INSPECTION_SCHEDULE_PATH`。
-
-最近一次已结束的巡检结果会单独持久化到 `/CLIProxyAPI/usage/account-inspection-snapshot.json`，文件权限为 `0600`。进程重启或 usage 导入恢复后，该快照会标记为只读；下一次完整巡检结束时覆盖。可通过 `ACCOUNT_INSPECTION_SNAPSHOT_PATH` 自定义路径。
+调度设置和最近一次已结束结果保存在插件 `usage.sqlite` 的 `account_inspection_state` 表中。插件首次启动且 SQLite 中尚无对应状态时，会从 `ACCOUNT_INSPECTION_SCHEDULE_PATH` / `ACCOUNT_INSPECTION_SNAPSHOT_PATH` 指向的旧 JSON 文件执行一次性导入；成功后只读写 SQLite，不再双写旧文件。usage JSONL 备份继续使用 `account_inspection_schedule` 和 `account_inspection_snapshot` 记录类型，以兼容已有备份。
 
 ### 路由策略与请求状态保护
 
@@ -238,12 +230,12 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `Dockerfile.runtime` — GitHub Actions 使用预构建 Linux 二进制组装运行时镜像。
 - `QUOTA_PROVIDER.md` — QuotaProvider 插件协议和兼容策略。
 - `../cliproxyapi-pro-plugins/oauth-model-policy/` — 按 OAuth 套餐过滤账号模型的动态插件。
-- `../cliproxyapi-pro-plugins/pro-observability/` — 唯一持有 SQLite usage、备份、quota cache 和路由运行态的必需动态插件。
+- `../cliproxyapi-pro-plugins/pro-observability/` — 唯一持有 SQLite usage、备份、quota cache、路由运行态和账号巡检的必需动态插件。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
 - `embeddedusage/` — Core 到插件的 quota、runtime 与 `pro_settings` 能力桥，并负责在插件卸载前排空运行统计；legacy service 入口会 fail-closed，不参与运行时持久化。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。
-- `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
-- 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放巡检、路由保护、登录清理及全局回调。
+- `patches/plugin_account_inspection_host_api.go` — 为插件注入受限 HostAuthGateway 协议与调用能力。
+- 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放路由保护、登录清理及全局回调。账号巡检生命周期由插件负责。
 - `patches/routing_policy.go` — 注入统一路由配置和请求状态保护 handlers、usage plugin 与自动解除任务。
 - `patches/config_existing_updates.go` — 只修改已存在 YAML 标量、禁止补键的配置写入辅助层。
 - `.github/workflows/release-core.yml` — 镜像发布、Pro 二进制资产、management.html 发布、usage 备份、Render 部署触发、Telegram 通知和 workflow 清理。
@@ -296,10 +288,10 @@ Release workflow 会从 Core、models 和定制层三个不可变提交中取最
 - `USAGE_POLL_INTERVAL_MS` — 默认 `500`。
 - `USAGE_QUERY_LIMIT` — 默认 `50000`。
 
-### 账号巡检
+### 账号巡检旧数据导入
 
-- `ACCOUNT_INSPECTION_SCHEDULE_PATH` — 可选调度 JSON 路径。默认 `USAGE_DATA_DIR/account-inspection-schedule.json`。
-- `ACCOUNT_INSPECTION_SNAPSHOT_PATH` — 可选最近一次巡检结果快照 JSON 路径。默认 `USAGE_DATA_DIR/account-inspection-snapshot.json`。
+- `ACCOUNT_INSPECTION_SCHEDULE_PATH` — 可选旧调度 JSON 来源。仅在插件 SQLite 尚无调度状态时读取；默认 `USAGE_DATA_DIR/account-inspection-schedule.json`。
+- `ACCOUNT_INSPECTION_SNAPSHOT_PATH` — 可选旧结果快照 JSON 来源。仅在插件 SQLite 尚无结果状态时读取；默认 `USAGE_DATA_DIR/account-inspection-snapshot.json`。
 
 ### WebDAV usage 恢复
 

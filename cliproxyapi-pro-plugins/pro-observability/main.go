@@ -47,6 +47,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	inspection "github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/pro-observability/internal/inspection"
 	usage "github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/pro-observability/internal/usage"
 	"gopkg.in/yaml.v3"
 )
@@ -63,7 +64,6 @@ const (
 	methodRuntimeStateDelete  = "runtime_state.auth.delete"
 	methodProSettingGet       = "pro_settings.get"
 	methodProSettingPut       = "pro_settings.put"
-	methodHostProBackupExport = "host.pro_backup.export"
 	methodHostProBackupImport = "host.pro_backup.import"
 )
 
@@ -71,6 +71,7 @@ var state = struct {
 	sync.RWMutex
 	cancel         context.CancelFunc
 	service        *usage.Service
+	inspection     *inspection.Service
 	router         http.Handler
 	strategy       string
 	routingEnabled bool
@@ -228,15 +229,6 @@ type proSettingGetResponse struct {
 
 type proSettingPutRequest struct {
 	Setting proSetting `json:"setting"`
-}
-
-type hostBackupExportRequest struct {
-	Kind string `json:"kind"`
-}
-
-type hostBackupExportResponse struct {
-	Found bool            `json:"found"`
-	Data  json.RawMessage `json:"data,omitempty"`
 }
 
 type hostBackupImportRequest struct {
@@ -437,6 +429,10 @@ func handleMethod(method string, raw []byte) ([]byte, error) {
 				Path:        "/ui",
 				Menu:        "可观测性",
 				Description: "插件统一管理 usage、运行统计、价格与备份",
+			}, {
+				Path:        "/account-inspection",
+				Menu:        "账号巡检",
+				Description: "插件统一管理账号巡检、调度与执行结果",
 			}},
 		})
 	case pluginabi.MethodManagementHandle:
@@ -541,7 +537,15 @@ func ensureService() error {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	service.Server().RegisterGinRoutes(router.Group("/usage"))
-	state.cancel, state.service, state.router = cancel, service, router
+	inspectionService, err := inspection.Start(ctx, rpcInspectionGateway{}, inspection.Config{})
+	if err != nil {
+		cancel()
+		service.Wait()
+		usage.SetDefaultService(nil)
+		return fmt.Errorf("start account inspection: %w", err)
+	}
+	inspectionService.RegisterGinRoutes(router.Group(""))
+	state.cancel, state.service, state.inspection, state.router = cancel, service, inspectionService, router
 	if state.cursors == nil {
 		state.cursors = make(map[string]string)
 		state.weighted = make(map[string]map[string]int)
@@ -555,15 +559,19 @@ func stopService() {
 	state.Lock()
 	cancel := state.cancel
 	service := state.service
-	state.cancel, state.service, state.router = nil, nil, nil
+	inspectionService := state.inspection
+	state.cancel, state.service, state.inspection, state.router = nil, nil, nil, nil
 	state.Unlock()
-	usage.SetDefaultService(nil)
+	if inspectionService != nil {
+		inspectionService.Close()
+	}
 	if cancel != nil {
 		cancel()
 	}
 	if service != nil {
 		service.Wait()
 	}
+	usage.SetDefaultService(nil)
 	C.store_host_api(nil)
 }
 
@@ -577,27 +585,6 @@ func installHostBackupBridge() {
 	if C.host_api_available() == 0 {
 		return
 	}
-	exporter := func(kind string) func() ([]byte, bool, error) {
-		return func() ([]byte, bool, error) {
-			raw, err := callHost(methodHostProBackupExport, hostBackupExportRequest{Kind: kind})
-			if err != nil {
-				return nil, false, err
-			}
-			var response hostBackupExportResponse
-			if err = json.Unmarshal(raw, &response); err != nil {
-				return nil, false, fmt.Errorf("decode host backup export response: %w", err)
-			}
-			return append([]byte(nil), response.Data...), response.Found, nil
-		}
-	}
-	usage.SetAccountInspectionScheduleHandlers(exporter("account-inspection-schedule"), func(raw []byte) error {
-		_, err := callHost(methodHostProBackupImport, hostBackupImportRequest{Kind: "account-inspection-schedule", Data: append(json.RawMessage(nil), raw...)})
-		return err
-	})
-	usage.SetAccountInspectionSnapshotHandlers(exporter("account-inspection-snapshot"), func(raw []byte) error {
-		_, err := callHost(methodHostProBackupImport, hostBackupImportRequest{Kind: "account-inspection-snapshot", Data: append(json.RawMessage(nil), raw...)})
-		return err
-	})
 	usage.SetAuthRuntimeStateImportHandler(func(cursors []usage.RoutingCursorState, stats []usage.AuthRuntimeStats) error {
 		_, err := callHost(methodHostProBackupImport, hostBackupImportRequest{Kind: "runtime-state", RoutingCursors: cursors, RuntimeStats: stats})
 		return err
@@ -1134,6 +1121,22 @@ func managementRoutes() []managementRoute {
 			routes = append(routes, managementRoute{Method: method, Path: "/usage" + path, Description: "Plugin-owned observability API"})
 		}
 	}
+	for _, route := range []managementRoute{
+		{Method: http.MethodGet, Path: "/account-inspection/schedule", Description: "Plugin-owned account inspection API"},
+		{Method: http.MethodGet, Path: "/account-inspection/status", Description: "Plugin-owned account inspection API"},
+		{Method: http.MethodGet, Path: "/account-inspection/events", Description: "Plugin-owned account inspection event polling API"},
+		{Method: http.MethodPut, Path: "/account-inspection/schedule", Description: "Plugin-owned account inspection API"},
+		{Method: http.MethodPatch, Path: "/account-inspection/schedule", Description: "Plugin-owned account inspection API"},
+		{Method: http.MethodPost, Path: "/account-inspection/run", Description: "Plugin-owned account inspection API"},
+		{Method: http.MethodPost, Path: "/account-inspection/inspect-one", Description: "Plugin-owned account inspection API"},
+		{Method: http.MethodPost, Path: "/account-inspection/refresh-token", Description: "Plugin-owned account inspection compatibility API"},
+		{Method: http.MethodPost, Path: "/account-inspection/pause", Description: "Plugin-owned account inspection API"},
+		{Method: http.MethodPost, Path: "/account-inspection/resume", Description: "Plugin-owned account inspection API"},
+		{Method: http.MethodPost, Path: "/account-inspection/stop", Description: "Plugin-owned account inspection API"},
+		{Method: http.MethodPost, Path: "/account-inspection/actions", Description: "Plugin-owned account inspection API"},
+	} {
+		routes = append(routes, route)
+	}
 	routes = append(routes, managementRoute{Method: http.MethodGet, Path: "/pro/observability/runtime", Description: "Return the plugin routing and persistence runtime."})
 	routes = append(routes, managementRoute{Method: http.MethodGet, Path: "/pro/observability/migration/status", Description: "Return the automatic storage migration status."})
 	return routes
@@ -1141,7 +1144,7 @@ func managementRoutes() []managementRoute {
 
 func handleManagement(request pluginapi.ManagementRequest) pluginapi.ManagementResponse {
 	path := strings.TrimSpace(request.Path)
-	if request.Method == http.MethodGet && path == "/v0/resource/plugins/pro-observability/ui" {
+	if request.Method == http.MethodGet && (path == "/v0/resource/plugins/pro-observability/ui" || path == "/v0/resource/plugins/pro-observability/account-inspection") {
 		return pluginapi.ManagementResponse{
 			StatusCode: http.StatusOK,
 			Headers: http.Header{
@@ -1170,11 +1173,16 @@ func handleManagement(request pluginapi.ManagementRequest) pluginapi.ManagementR
 	if router == nil {
 		return jsonManagementResponse(http.StatusServiceUnavailable, map[string]any{"error": "usage_service_unavailable"})
 	}
-	managementPrefix := "/v0/management/usage"
-	if path != managementPrefix && !strings.HasPrefix(path, managementPrefix+"/") {
+	usagePrefix := "/v0/management/usage"
+	inspectionPrefix := "/v0/management/account-inspection"
+	if path != usagePrefix && !strings.HasPrefix(path, usagePrefix+"/") && path != inspectionPrefix && !strings.HasPrefix(path, inspectionPrefix+"/") {
 		return jsonManagementResponse(http.StatusNotFound, map[string]any{"error": "not_found"})
 	}
-	path = "/usage" + strings.TrimPrefix(path, managementPrefix)
+	if path == usagePrefix || strings.HasPrefix(path, usagePrefix+"/") {
+		path = "/usage" + strings.TrimPrefix(path, usagePrefix)
+	} else {
+		path = "/account-inspection" + strings.TrimPrefix(path, inspectionPrefix)
+	}
 	requestURL := path
 	if encoded := request.Query.Encode(); encoded != "" {
 		requestURL += "?" + encoded
@@ -1219,6 +1227,9 @@ func routingRuntimeSnapshot() map[string]any {
 		"runtimeStateCapability": true,
 		"runtimeStateBackend":    "plugin",
 		"streamTransportReady":   true,
+		"accountInspectionReady": state.inspection != nil,
+		"accountInspectionOwner": "plugin",
+		"accountInspectionStore": "sqlite",
 	}
 }
 

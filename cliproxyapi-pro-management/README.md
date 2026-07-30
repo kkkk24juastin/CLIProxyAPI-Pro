@@ -155,12 +155,11 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 
 `apply_customizations.py` 还会 patch upstream 文件以增加：
 
-- `/account-inspection` 和 `/routing` 路由；监控入口来自插件动态资源注册。
+- `/routing` 路由；监控中心和账号巡检入口都来自插件动态资源注册。
 - 插件资源 Bridge v2、账号巡检/路由侧边栏文案和图标。
 - 从 `monitoring-locales.json` 合并的多语言文案。
-- monitoring/account inspection 使用的 `usageStatisticsEnabled` 和 `clean` 配置类型。
+- 插件 bootstrap 使用的 `usageStatisticsEnabled` 和 `clean` 配置类型。
 - `authFilesApi.patchFile`、`setStatusWithFallback` helper。
-- `accountInspection` service export。
 - `Select` 的 `triggerClassName` 和 `dropdownClassName` props。
 - `maskSensitiveText` 工具函数。
 - quota state 类型和 success state 中的 `cachedAt` 字段。
@@ -171,13 +170,11 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 ## 目录结构
 
 - `overlay/` — 直接复制到 upstream checkout 的新增/覆盖文件。
-- `overlay/src/pages/AccountInspectionPage.tsx` — 账号巡检页面。
 - `overlay/src/pages/RoutingPolicyPage.tsx` — 路由策略和请求状态保护页面。
 - `overlay/src/features/plugins/usePluginResourceBridge.ts` — 插件页面的受控 Management Bridge v2。
-- `overlay/src/features/monitoring/` — 账号巡检和账号 usage 深链逻辑，不包含监控中心页面。
-- `overlay/src/features/shared/` — 账号巡检复用的分页与筛选样式。
+- `overlay/src/features/monitoring/` — 账号 usage 深链与账号套餐显示逻辑，不包含监控中心或账号巡检页面。
 - `overlay/src/extensions/quota/` — SQLite 配额持久化集成。
-- `overlay/src/services/api/` — 新增 API clients。
+- `overlay/src/services/api/` — 路由策略与账号 usage API clients。
 - `overlay-replacements.json` — 对有意覆盖 upstream 同路径文件的 full-file replacements，记录已审阅的 upstream SHA-256 与替换原因。
 - `monitoring-locales.json` — 合并进 upstream locale 文件的多语言文案。
 - `apply_customizations.py` — 将全部定制应用到目标 upstream checkout。

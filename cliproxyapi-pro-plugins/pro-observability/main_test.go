@@ -145,8 +145,8 @@ func TestManagementRegistrationIncludesCanaryResource(t *testing.T) {
 	if err = json.Unmarshal(response.Result, &registration); err != nil {
 		t.Fatalf("decode registration: %v", err)
 	}
-	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/ui" {
-		t.Fatalf("resources = %#v, want /ui", registration.Resources)
+	if len(registration.Resources) != 2 || registration.Resources[0].Path != "/ui" || registration.Resources[1].Path != "/account-inspection" {
+		t.Fatalf("resources = %#v, want observability and account inspection", registration.Resources)
 	}
 }
 
@@ -163,6 +163,17 @@ func TestManagementResourceUsesAuthenticatedBridge(t *testing.T) {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("resource page missing marker %q", marker)
 		}
+	}
+}
+
+func TestAccountInspectionManagementResourceUsesAuthenticatedBridge(t *testing.T) {
+	response := handleManagement(pluginapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/resource/plugins/pro-observability/account-inspection",
+	})
+	body := string(response.Body)
+	if response.StatusCode != http.StatusOK || !strings.Contains(body, "cliproxy-plugin-resource") || !strings.Contains(body, "account-inspection/events") {
+		t.Fatalf("response = status:%d body markers missing", response.StatusCode)
 	}
 }
 

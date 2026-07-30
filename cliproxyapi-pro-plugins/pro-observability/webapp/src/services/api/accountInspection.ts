@@ -60,6 +60,11 @@ export type AccountInspectionInspectOneResponse = AccountInspectionBackendRespon
 
 export type AccountInspectionScheduleResponse = AccountInspectionBackendResponse;
 
+export type AccountInspectionEventPage = {
+  sequence: number;
+  messages: AccountInspectionLogStreamMessage[];
+};
+
 export type AccountInspectionDetailsOptions = {
   includeDetails?: boolean;
   resultLimit?: number;
@@ -114,6 +119,10 @@ export const refreshAccountInspectionAfterReconnect = async (
 };
 
 export const accountInspectionApi = {
+	getEvents: (afterSequence: number) =>
+		apiClient.get<AccountInspectionEventPage>('/account-inspection/events', {
+			params: { after_sequence: Math.max(0, afterSequence) },
+		}),
   getSchedule: (includeDetails = false) =>
     apiClient.get<AccountInspectionScheduleResponse>('/account-inspection/schedule', {
       params: { details: includeDetails ? 1 : 0 },

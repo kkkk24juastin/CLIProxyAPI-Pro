@@ -9,10 +9,7 @@
 }
 
 .paginationPageSizeControl,
-.paginationNavigation {
-  display: flex;
-  align-items: center;
-}
+.paginationNavigation { display: flex; align-items: center; }
 
 .paginationPageSizeControl {
   grid-column: 3;
@@ -53,10 +50,7 @@
   align-items: center;
 }
 
-.filterGrid :global(.form-group) {
-  min-width: 0;
-  margin: 0;
-}
+.filterGrid :global(.form-group) { min-width: 0; margin: 0; }
 
 @media (max-width: 1180px) {
   .filterGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -112,22 +112,20 @@ func TestProObservabilityDynamicPluginStateCapabilities(t *testing.T) {
 		t.Fatalf("GetProSetting() = %#v handled=%v err=%v", storedSetting, handled, err)
 	}
 
-	embeddedusage.SetAccountInspectionScheduleHandlers(func() ([]byte, bool, error) {
-		return []byte(`{"enabled":true}`), true, nil
-	}, nil)
-	t.Cleanup(func() { embeddedusage.SetAccountInspectionScheduleHandlers(nil, nil) })
+	updatedSchedule, handled, err := host.CallManagement(context.Background(), pluginapi.ManagementRequest{
+		Method: "PUT", Path: "/v0/management/account-inspection/schedule",
+		Body: []byte(`{"enabled":true,"intervalMinutes":90,"settings":{"targetType":"all","workers":2}}`),
+	})
+	if err != nil || !handled || updatedSchedule.StatusCode != 200 {
+		t.Fatalf("update account inspection schedule = %#v handled=%v err=%v", updatedSchedule, handled, err)
+	}
 	exported, handled, err := host.CallManagement(context.Background(), pluginapi.ManagementRequest{
 		Method: "GET", Path: "/v0/management/usage/export",
 	})
 	if err != nil || !handled || exported.StatusCode != 200 || !strings.Contains(string(exported.Body), `"record_type":"account_inspection_schedule"`) {
 		t.Fatalf("usage export = %#v handled=%v err=%v", exported, handled, err)
 	}
-	var importedSchedule string
 	var importedProSettings []embeddedusage.ProSetting
-	embeddedusage.SetAccountInspectionScheduleHandlers(nil, func(raw []byte) error {
-		importedSchedule = string(raw)
-		return nil
-	})
 	embeddedusage.SetProSettingsImportHandler(func(items []embeddedusage.ProSetting) error {
 		importedProSettings = append([]embeddedusage.ProSetting(nil), items...)
 		return nil
@@ -143,8 +141,11 @@ func TestProObservabilityDynamicPluginStateCapabilities(t *testing.T) {
 			break
 		}
 	}
-	if err != nil || !handled || imported.StatusCode != 200 || importedSchedule != `{"enabled":true}` || !foundImportedSetting {
-		t.Fatalf("usage import = %#v handled=%v imported=%s err=%v", imported, handled, importedSchedule, err)
+	restoredSchedule, restoredHandled, restoredErr := host.CallManagement(context.Background(), pluginapi.ManagementRequest{
+		Method: "GET", Path: "/v0/management/account-inspection/schedule",
+	})
+	if err != nil || !handled || imported.StatusCode != 200 || !foundImportedSetting || restoredErr != nil || !restoredHandled || !strings.Contains(string(restoredSchedule.Body), `"enabled":true`) {
+		t.Fatalf("usage import = %#v handled=%v restored=%s err=%v restoredErr=%v", imported, handled, restoredSchedule.Body, err, restoredErr)
 	}
 
 	embeddedusage.SetRuntimeStatePluginBackend(host)

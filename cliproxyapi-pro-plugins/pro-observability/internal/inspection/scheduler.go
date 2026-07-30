@@ -1,4 +1,4 @@
-package management
+package inspection
 
 import (
 	"bytes"
@@ -23,12 +23,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
-	"github.com/router-for-me/CLIProxyAPI/v6/sdk/pluginapi"
 	log "github.com/sirupsen/logrus"
+	embeddedusage "github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/pro-observability/internal/usage"
 )
 
 const (
@@ -45,18 +41,15 @@ const (
 	accountInspectionMaxRefreshConcurrency  = 2
 	accountInspectionXAIMinAttempts         = 2
 	accountInspectionXAIRetryDelay          = 300 * time.Millisecond
-	accountInspectionWebSocketWriteTimeout  = 5 * time.Second
-	accountInspectionWebSocketPongWait      = 60 * time.Second
-	accountInspectionWebSocketPingPeriod    = 54 * time.Second
 	accountInspectionProgressBroadcastGap   = 500 * time.Millisecond
 	accountInspectionMaxResultPageSize      = 500
 	accountInspectionMaxLogPageSize         = 500
 	accountInspectionQuotaParserVersion     = embeddedusage.XAIQuotaParserVersion
+	routingProtectionMetadataKey            = "request_protection"
+	accountInspectionStateSchemaVersion     = 1
+	accountInspectionScheduleStateKey       = "schedule"
+	accountInspectionSnapshotStateKey       = "snapshot"
 )
-
-var accountInspectionWebSocketUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
 
 var accountInspectionSupportedProviders = map[string]struct{}{
 	"antigravity": {},
@@ -66,8 +59,6 @@ var accountInspectionSupportedProviders = map[string]struct{}{
 	"kimi":        {},
 	"xai":         {},
 }
-
-var accountInspectionSchedulers sync.Map
 
 type accountInspectionSettings struct {
 	TargetType                      string                                `json:"targetType"`
@@ -289,7 +280,7 @@ type accountInspectionLogStreamMessage struct {
 }
 
 type accountInspectionScheduler struct {
-	h                       *Handler
+	h                       *compatHandler
 	path                    string
 	snapshotPath            string
 	trigger                 chan struct{}
@@ -302,7 +293,8 @@ type accountInspectionScheduler struct {
 	status                  accountInspectionStatus
 	healthCounts            accountInspectionHealthCounts
 	autoActionConfirmations map[string]int
-	subscribers             map[chan accountInspectionLogStreamMessage]struct{}
+	eventSequence           int64
+	events                  []accountInspectionSequencedEvent
 	lastProgressBroadcastAt int64
 	xaiDeepProbeOnce        sync.Once
 	xaiDeepProbeGate        chan struct{}
@@ -311,7 +303,7 @@ type accountInspectionScheduler struct {
 }
 
 type accountInspectionAccount struct {
-	Auth        *coreauth.Auth
+	Auth        *Auth
 	Key         string
 	Provider    string
 	FileName    string
@@ -375,75 +367,15 @@ type accountInspectionActionOutcome struct {
 	Error       string                  `json:"error"`
 }
 
-func (h *Handler) startAccountInspectionScheduler() {
-	if h == nil {
-		return
-	}
-	if _, loaded := accountInspectionSchedulers.LoadOrStore(h, newAccountInspectionScheduler(h)); loaded {
-		return
-	}
-	scheduler := schedulerForHandler(h)
-	if scheduler != nil {
-		embeddedusage.SetAccountInspectionScheduleHandlers(scheduler.exportSchedule, scheduler.importSchedule)
-		embeddedusage.SetAccountInspectionSnapshotHandlers(scheduler.exportResultSnapshot, scheduler.importResultSnapshot)
-		if h.authManager != nil {
-			embeddedusage.SetAuthRuntimeStateImportHandler(h.authManager.ApplyImportedRuntimeState)
-		}
-		scheduler.cleanupLegacyQuotaCaches(context.Background())
-		if h.lifecycleContext != nil {
-			h.lifecycleWG.Add(1)
-			go func() {
-				defer h.lifecycleWG.Done()
-				scheduler.loop(h.lifecycleContext)
-			}()
-		}
-	}
-	startRoutingPolicyController(h)
-}
-
-// Shutdown stops every background task owned by this management handler.
-// It is safe to call more than once.
-func (h *Handler) Shutdown() {
-	if h == nil {
-		return
-	}
-	h.shutdownOnce.Do(func() {
-		if h.lifecycleCancel != nil {
-			h.lifecycleCancel()
-		}
-		if scheduler := schedulerForHandler(h); scheduler != nil {
-			scheduler.shutdown()
-		}
-		h.lifecycleWG.Wait()
-		accountInspectionSchedulers.Delete(h)
-		stopRoutingPolicyController(h)
-		embeddedusage.SetAccountInspectionScheduleHandlers(nil, nil)
-		embeddedusage.SetAccountInspectionSnapshotHandlers(nil, nil)
-		embeddedusage.SetAuthRuntimeStateImportHandler(nil)
-	})
-}
-
-func schedulerForHandler(h *Handler) *accountInspectionScheduler {
-	if h == nil {
-		return nil
-	}
-	value, ok := accountInspectionSchedulers.Load(h)
-	if !ok {
-		return nil
-	}
-	scheduler, _ := value.(*accountInspectionScheduler)
-	return scheduler
-}
-
-func newAccountInspectionScheduler(h *Handler) *accountInspectionScheduler {
+func newAccountInspectionScheduler(h *compatHandler) *accountInspectionScheduler {
 	schedulePath := accountInspectionSchedulePath()
 	scheduler := &accountInspectionScheduler{
 		h:                       h,
 		path:                    schedulePath,
 		snapshotPath:            accountInspectionResultSnapshotPath(schedulePath),
 		trigger:                 make(chan struct{}, 1),
-		subscribers:             make(map[chan accountInspectionLogStreamMessage]struct{}),
 		autoActionConfirmations: make(map[string]int),
+		eventSequence:           1,
 		schedule: accountInspectionSchedule{
 			Enabled:         false,
 			IntervalMinutes: accountInspectionDefaultIntervalMin,
@@ -585,29 +517,47 @@ func normalizeAccountInspectionAutoAction(action accountInspectionAction) accoun
 }
 
 func (s *accountInspectionScheduler) load() {
-	raw, err := os.ReadFile(s.path)
-	if err == nil {
+	state, found, err := embeddedusage.GetAccountInspectionState(context.Background(), accountInspectionScheduleStateKey)
+	if err == nil && found {
 		var schedule accountInspectionSchedule
-		if err := json.Unmarshal(raw, &schedule); err != nil {
+		if err := json.Unmarshal(state.Payload, &schedule); err != nil {
 			log.WithError(err).Warn("failed to load account inspection schedule")
 		} else {
 			s.schedule = normalizeAccountInspectionSchedule(schedule)
 		}
+	} else if err == nil {
+		s.migrateLegacySchedule()
+	} else {
+		log.WithError(err).Warn("failed to load plugin account inspection schedule")
 	}
 	if err := s.loadResultSnapshot(); err != nil {
 		log.WithError(err).Warn("failed to load account inspection snapshot")
 	}
 }
 
-func (s *accountInspectionScheduler) saveLocked() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
+func (s *accountInspectionScheduler) migrateLegacySchedule() {
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		return
 	}
-	raw, err := json.MarshalIndent(s.schedule, "", "  ")
+	var schedule accountInspectionSchedule
+	if err = json.Unmarshal(raw, &schedule); err != nil {
+		log.WithError(err).Warn("failed to decode legacy account inspection schedule")
+		return
+	}
+	s.schedule = normalizeAccountInspectionSchedule(schedule)
+	if err = s.saveLocked(); err != nil {
+		log.WithError(err).Warn("failed to migrate legacy account inspection schedule to plugin SQLite")
+	}
+}
+
+func (s *accountInspectionScheduler) saveLocked() error {
+	raw, err := json.Marshal(s.schedule)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, append(raw, '\n'), 0o600)
+	_, err = embeddedusage.SetAccountInspectionState(context.Background(), accountInspectionScheduleStateKey, accountInspectionStateSchemaVersion, raw)
+	return err
 }
 
 func normalizeAccountInspectionSnapshotState(state accountInspectionRunState) accountInspectionRunState {
@@ -686,31 +636,38 @@ func (s *accountInspectionScheduler) saveResultSnapshotLocked() error {
 	if !ok {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(s.snapshotPath), 0o755); err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(snapshot, "", "  ")
+	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.snapshotPath, append(raw, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(s.snapshotPath, 0o600)
+	_, err = embeddedusage.SetAccountInspectionState(context.Background(), accountInspectionSnapshotStateKey, accountInspectionStateSchemaVersion, raw)
+	return err
 }
 
 func (s *accountInspectionScheduler) loadResultSnapshot() error {
 	if s == nil {
 		return nil
 	}
-	raw, err := os.ReadFile(s.snapshotPath)
+	state, found, err := embeddedusage.GetAccountInspectionState(context.Background(), accountInspectionSnapshotStateKey)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
 		return err
 	}
-	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
+	if !found {
+		raw, readErr := os.ReadFile(s.snapshotPath)
+		if readErr != nil {
+			if os.IsNotExist(readErr) {
+				return nil
+			}
+			return readErr
+		}
+		snapshot, decodeErr := decodeAccountInspectionResultSnapshot(raw)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		s.applyResultSnapshotLocked(snapshot, true)
+		return s.saveResultSnapshotLocked()
+	}
+	snapshot, err := decodeAccountInspectionResultSnapshot(state.Payload)
 	if err != nil {
 		return err
 	}
@@ -726,14 +683,11 @@ func (s *accountInspectionScheduler) exportResultSnapshot() ([]byte, bool, error
 	snapshot, ok := s.resultSnapshotLocked()
 	s.mu.Unlock()
 	if !ok {
-		raw, err := os.ReadFile(s.snapshotPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil, false, nil
-			}
+		state, found, err := embeddedusage.GetAccountInspectionState(context.Background(), accountInspectionSnapshotStateKey)
+		if err != nil || !found {
 			return nil, false, err
 		}
-		snapshot, err = decodeAccountInspectionResultSnapshot(raw)
+		snapshot, err = decodeAccountInspectionResultSnapshot(state.Payload)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1116,54 +1070,33 @@ func (s *accountInspectionScheduler) logStreamMessageLocked(entry accountInspect
 	return s.streamMessageLocked(accountInspectionStreamLog, accountInspectionSnapshotOptions{}, &entry)
 }
 
-type accountInspectionBroadcast struct {
-	subscribers []chan accountInspectionLogStreamMessage
-	message     accountInspectionLogStreamMessage
+type accountInspectionBroadcast struct{}
+
+type accountInspectionSequencedEvent struct {
+	Sequence int64
+	Message  accountInspectionLogStreamMessage
 }
 
-func (broadcast accountInspectionBroadcast) send() {
-	for _, subscriber := range broadcast.subscribers {
-		select {
-		case subscriber <- broadcast.message:
-		default:
-		}
+func (s *accountInspectionScheduler) recordEventLocked(message accountInspectionLogStreamMessage) {
+	s.eventSequence++
+	s.events = append(s.events, accountInspectionSequencedEvent{Sequence: s.eventSequence, Message: message})
+	if len(s.events) > 256 {
+		s.events = append([]accountInspectionSequencedEvent(nil), s.events[len(s.events)-256:]...)
 	}
 }
 
-func (s *accountInspectionScheduler) subscribersLocked() []chan accountInspectionLogStreamMessage {
-	subscribers := make([]chan accountInspectionLogStreamMessage, 0, len(s.subscribers))
-	for subscriber := range s.subscribers {
-		subscribers = append(subscribers, subscriber)
-	}
-	return subscribers
-}
+func (accountInspectionBroadcast) send() {}
 
 func (s *accountInspectionScheduler) statusBroadcastLocked() accountInspectionBroadcast {
-	return accountInspectionBroadcast{
-		subscribers: s.subscribersLocked(),
-		message:     s.statusStreamMessageLocked(false),
-	}
+	message := s.statusStreamMessageLocked(false)
+	s.recordEventLocked(message)
+	return accountInspectionBroadcast{}
 }
 
 func (s *accountInspectionScheduler) logBroadcastLocked(entry accountInspectionLogEntry) accountInspectionBroadcast {
-	return accountInspectionBroadcast{
-		subscribers: s.subscribersLocked(),
-		message:     s.logStreamMessageLocked(entry),
-	}
-}
-
-func (s *accountInspectionScheduler) subscribeLogs(options accountInspectionSnapshotOptions) (chan accountInspectionLogStreamMessage, accountInspectionLogStreamMessage) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	subscriber := make(chan accountInspectionLogStreamMessage, 16)
-	s.subscribers[subscriber] = struct{}{}
-	return subscriber, s.snapshotStreamMessageLocked(options)
-}
-
-func (s *accountInspectionScheduler) unsubscribeLogs(subscriber chan accountInspectionLogStreamMessage) {
-	s.mu.Lock()
-	delete(s.subscribers, subscriber)
-	s.mu.Unlock()
+	message := s.logStreamMessageLocked(entry)
+	s.recordEventLocked(message)
+	return accountInspectionBroadcast{}
 }
 
 func (s *accountInspectionScheduler) isRunningLocked() bool {
@@ -1667,77 +1600,6 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 	broadcast.send()
 }
 
-func (s *accountInspectionScheduler) streamLogs(c *gin.Context) {
-	responseHeader := http.Header{}
-	for _, protocol := range strings.Split(c.GetHeader("Sec-WebSocket-Protocol"), ",") {
-		protocol = strings.TrimSpace(protocol)
-		if strings.HasPrefix(protocol, "cpa-management.") {
-			responseHeader.Set("Sec-WebSocket-Protocol", protocol)
-			break
-		}
-	}
-	conn, err := accountInspectionWebSocketUpgrader.Upgrade(c.Writer, c.Request, responseHeader)
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-
-	done := make(chan struct{})
-	go readAccountInspectionWebSocket(conn, done)
-
-	subscriber, snapshot := s.subscribeLogs(accountInspectionRequestSnapshotOptions(c))
-	defer s.unsubscribeLogs(subscriber)
-
-	pingTicker := time.NewTicker(accountInspectionWebSocketPingPeriod)
-	defer pingTicker.Stop()
-
-	if err := writeAccountInspectionWebSocketMessage(conn, snapshot); err != nil {
-		return
-	}
-	for {
-		select {
-		case <-c.Request.Context().Done():
-			return
-		case <-done:
-			return
-		case <-pingTicker.C:
-			if err := writeAccountInspectionWebSocketPing(conn); err != nil {
-				return
-			}
-		case message, ok := <-subscriber:
-			if !ok {
-				return
-			}
-			if err := writeAccountInspectionWebSocketMessage(conn, message); err != nil {
-				return
-			}
-		}
-	}
-}
-
-func readAccountInspectionWebSocket(conn *websocket.Conn, done chan<- struct{}) {
-	defer close(done)
-	_ = conn.SetReadDeadline(time.Now().Add(accountInspectionWebSocketPongWait))
-	conn.SetPongHandler(func(string) error {
-		return conn.SetReadDeadline(time.Now().Add(accountInspectionWebSocketPongWait))
-	})
-	for {
-		if _, _, err := conn.NextReader(); err != nil {
-			return
-		}
-	}
-}
-
-func writeAccountInspectionWebSocketPing(conn *websocket.Conn) error {
-	_ = conn.SetWriteDeadline(time.Now().Add(accountInspectionWebSocketWriteTimeout))
-	return conn.WriteMessage(websocket.PingMessage, nil)
-}
-
-func writeAccountInspectionWebSocketMessage(conn *websocket.Conn, message accountInspectionLogStreamMessage) error {
-	_ = conn.SetWriteDeadline(time.Now().Add(accountInspectionWebSocketWriteTimeout))
-	return conn.WriteJSON(message)
-}
-
 func runAccountInspectionWorkers(total int, workers int, beforeNext func() bool, run func(index int) bool) {
 	if workers <= 0 {
 		workers = 1
@@ -1774,7 +1636,7 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 	if err != nil {
 		return nil, accountInspectionSummary{}, err
 	}
-	liveAuths := make([]*coreauth.Auth, 0, len(auths))
+	liveAuths := make([]*Auth, 0, len(auths))
 	accounts := make([]accountInspectionAccount, 0, len(auths))
 	existingPaths := make(map[string]bool)
 	for _, auth := range auths {
@@ -1878,17 +1740,11 @@ func accountInspectionProviderLimiters() map[string]chan struct{} {
 	return limiters
 }
 
-func (s *accountInspectionScheduler) auths() ([]*coreauth.Auth, error) {
-	if s.h == nil {
+func (s *accountInspectionScheduler) auths() ([]*Auth, error) {
+	if s.h == nil || s.h.authManager == nil {
 		return nil, fmt.Errorf("management handler unavailable")
 	}
-	s.h.mu.Lock()
-	manager := s.h.authManager
-	s.h.mu.Unlock()
-	if manager == nil {
-		return nil, fmt.Errorf("core auth manager unavailable")
-	}
-	return manager.List(), nil
+	return s.h.authManager.List(), nil
 }
 
 func (s *accountInspectionScheduler) filterExistingAccounts(accounts []accountInspectionAccount, existingPaths map[string]bool) []accountInspectionAccount {
@@ -1901,37 +1757,15 @@ func (s *accountInspectionScheduler) filterExistingAccounts(accounts []accountIn
 	return out
 }
 
-func (s *accountInspectionScheduler) authFileExists(auth *coreauth.Auth, existingPaths map[string]bool) bool {
-	if auth == nil {
-		return false
-	}
-	if isRuntimeOnlyAuth(auth) {
-		return true
-	}
-	path := strings.TrimSpace(authAttribute(auth, "path"))
-	if path == "" && s.h != nil && s.h.cfg != nil {
-		fileName := strings.TrimSpace(auth.FileName)
-		if fileName != "" {
-			path = filepath.Join(s.h.cfg.AuthDir, filepath.Base(fileName))
-		}
-	}
-	if path == "" {
-		return true
-	}
-	if exists, ok := existingPaths[path]; ok {
-		return exists
-	}
-	_, err := os.Stat(path)
-	exists := err == nil || !os.IsNotExist(err)
-	existingPaths[path] = exists
-	return exists
+func (s *accountInspectionScheduler) authFileExists(auth *Auth, existingPaths map[string]bool) bool {
+	return auth != nil
 }
 
 func accountInspectionKey(fileName string, authIndex string) string {
 	return fileName + "::" + firstNonEmptyStringValue(authIndex, "-")
 }
 
-func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
+func accountFromAuth(auth *Auth) accountInspectionAccount {
 	if auth == nil {
 		return accountInspectionAccount{}
 	}
@@ -1960,11 +1794,11 @@ func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 	}
 }
 
-func accountInspectionProvider(auth *coreauth.Auth) string {
+func accountInspectionProvider(auth *Auth) string {
 	return strings.ToLower(strings.TrimSpace(auth.Provider))
 }
 
-func isAccountInspectionAPIKeyAuth(auth *coreauth.Auth) bool {
+func isAccountInspectionAPIKeyAuth(auth *Auth) bool {
 	if auth == nil {
 		return false
 	}
@@ -1973,10 +1807,10 @@ func isAccountInspectionAPIKeyAuth(auth *coreauth.Auth) bool {
 		return true
 	}
 	source := strings.ToLower(strings.TrimSpace(authAttribute(auth, "source")))
-	if strings.HasPrefix(source, "config:") && strings.TrimSpace(authAttribute(auth, "api_key")) != "" {
+	if strings.HasPrefix(source, "config:") && strings.EqualFold(strings.TrimSpace(authAttribute(auth, "api_key_configured")), "true") {
 		return true
 	}
-	return strings.TrimSpace(authAttribute(auth, "api_key")) != "" && strings.TrimSpace(authAttribute(auth, "path")) == ""
+	return strings.EqualFold(strings.TrimSpace(authAttribute(auth, "api_key_configured")), "true") && strings.TrimSpace(authAttribute(auth, "virtual_source")) == ""
 }
 
 func shouldInspectAccount(account accountInspectionAccount, targetType string) bool {
@@ -2168,7 +2002,7 @@ func (account accountInspectionAccount) identity() string {
 	return formatAccountInspectionIdentity(account.FileName, account.Email, account.Name, account.DisplayName)
 }
 
-func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth.Auth, method string, url string, headers map[string]string, data string, timeoutMS int) (accountInspectionHTTPResult, error) {
+func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *Auth, method string, url string, headers map[string]string, data string, timeoutMS int) (accountInspectionHTTPResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -2185,39 +2019,13 @@ func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth
 	if err != nil {
 		return accountInspectionHTTPResult{}, err
 	}
-	resolvedHeaders := make(map[string]string, len(headers))
-	var token string
-	var tokenResolved bool
 	for key, value := range headers {
-		if strings.Contains(value, "$TOKEN$") {
-			if !tokenResolved {
-				token, err = s.h.resolveTokenForAuth(reqCtx, auth)
-				tokenResolved = true
-				if err != nil {
-					return accountInspectionHTTPResult{}, err
-				}
-			}
-			value = strings.ReplaceAll(value, "$TOKEN$", token)
-		}
-		resolvedHeaders[key] = value
-	}
-	for key, value := range resolvedHeaders {
 		req.Header.Set(key, value)
 	}
-	if accountInspectionShouldUseExecutorHTTPRequest(auth) {
-		if s == nil || s.h == nil || s.h.authManager == nil {
-			return accountInspectionHTTPResult{}, fmt.Errorf("core auth manager unavailable")
-		}
-		resp, err := s.h.authManager.HttpRequest(reqCtx, auth, req)
-		if err != nil {
-			return accountInspectionHTTPResult{}, err
-		}
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
-		return accountInspectionHTTPResult{StatusCode: resp.StatusCode, Body: string(raw), Header: resp.Header.Clone()}, nil
+	if s == nil || s.h == nil || s.h.authManager == nil {
+		return accountInspectionHTTPResult{}, fmt.Errorf("core auth manager unavailable")
 	}
-	client := &http.Client{Timeout: time.Duration(timeoutMS) * time.Millisecond, Transport: s.h.apiCallTransport(auth)}
-	resp, err := client.Do(req)
+	resp, err := s.h.authManager.HttpRequest(reqCtx, auth, req)
 	if err != nil {
 		return accountInspectionHTTPResult{}, err
 	}
@@ -2226,7 +2034,7 @@ func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth
 	return accountInspectionHTTPResult{StatusCode: resp.StatusCode, Body: string(raw), Header: resp.Header.Clone()}, nil
 }
 
-func accountInspectionShouldUseExecutorHTTPRequest(auth *coreauth.Auth) bool {
+func accountInspectionShouldUseExecutorHTTPRequest(auth *Auth) bool {
 	if auth == nil {
 		return false
 	}
@@ -2651,7 +2459,7 @@ func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, accou
 	return quotaDecision(account, used, hasQuota, settings.UsedPercentThreshold), intPtr(http.StatusOK), nil
 }
 
-func quotaSnapshotMaxUsedPercent(snapshot pluginapi.QuotaSnapshot) (*float64, bool) {
+func quotaSnapshotMaxUsedPercent(snapshot QuotaSnapshot) (*float64, bool) {
 	usedValues := make([]float64, 0, len(snapshot.Items))
 	for _, item := range snapshot.Items {
 		if item.UsedPercent != nil {
@@ -2938,7 +2746,7 @@ func shouldRetryXAIDeepProbe(status accountInspectionDeepProbeStatus, message st
 	return !strings.Contains(strings.ToLower(message), "content_filter")
 }
 
-func xaiInspectionBaseURL(auth *coreauth.Auth) string {
+func xaiInspectionBaseURL(auth *Auth) string {
 	baseURL := ""
 	if auth != nil {
 		baseURL = strings.TrimSpace(auth.Attributes["base_url"])
@@ -2954,15 +2762,15 @@ func xaiInspectionBaseURL(auth *coreauth.Auth) string {
 	return strings.TrimRight(baseURL, "/")
 }
 
-func xaiResponsesURL(auth *coreauth.Auth) string {
+func xaiResponsesURL(auth *Auth) string {
 	return xaiInspectionBaseURL(auth) + "/responses"
 }
 
-func xaiOfficialChatURL(auth *coreauth.Auth) string {
+func xaiOfficialChatURL(auth *Auth) string {
 	return xaiInspectionBaseURL(auth) + "/chat/completions"
 }
 
-func xaiInspectionUsingAPI(auth *coreauth.Auth) bool {
+func xaiInspectionUsingAPI(auth *Auth) bool {
 	if auth == nil {
 		return true
 	}
@@ -2987,7 +2795,7 @@ func xaiInspectionUsingAPI(auth *coreauth.Auth) bool {
 	return !strings.EqualFold(strings.TrimSpace(stringFromAny(auth.Metadata["auth_kind"])), "oauth")
 }
 
-func xaiDeepProbeHeaders(auth *coreauth.Auth) map[string]string {
+func xaiDeepProbeHeaders(auth *Auth) map[string]string {
 	headers := map[string]string{"Authorization": "Bearer $TOKEN$"}
 	if !xaiInspectionUsingAPI(auth) && strings.EqualFold(xaiInspectionBaseURL(auth), "https://cli-chat-proxy.grok.com/v1") {
 		headers = xaiRequestHeaders(auth)
@@ -3172,7 +2980,7 @@ func xaiBillingWeeklyURL() string {
 	return "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 }
 
-func xaiRequestHeaders(auth *coreauth.Auth) map[string]string {
+func xaiRequestHeaders(auth *Auth) map[string]string {
 	headers := map[string]string{
 		"Authorization":         "Bearer $TOKEN$",
 		"x-xai-token-auth":      "xai-grok-cli",
@@ -3196,12 +3004,12 @@ func firstInspectionStatus(values ...int) *int {
 }
 
 func (s *accountInspectionScheduler) antigravityUserAgent() string {
-	return misc.AntigravityUserAgent()
+	return "antigravity/1.11.9 windows/amd64"
 }
 
 func (s *accountInspectionScheduler) codexUserAgent() string {
-	if s != nil && s.h != nil && s.h.cfg != nil {
-		if value := strings.TrimSpace(s.h.cfg.CodexHeaderDefaults.UserAgent); value != "" {
+	if s != nil && s.h != nil {
+		if value := strings.TrimSpace(s.h.config.CodexUserAgent); value != "" {
 			return value
 		}
 	}
@@ -3209,8 +3017,8 @@ func (s *accountInspectionScheduler) codexUserAgent() string {
 }
 
 func (s *accountInspectionScheduler) claudeUserAgent() string {
-	if s != nil && s.h != nil && s.h.cfg != nil {
-		return strings.TrimSpace(s.h.cfg.ClaudeHeaderDefaults.UserAgent)
+	if s != nil && s.h != nil {
+		return strings.TrimSpace(s.h.config.ClaudeUserAgent)
 	}
 	return ""
 }
@@ -3239,7 +3047,7 @@ func isInspectionAuthRecoveryStatus(status int) bool {
 	return (status >= 200 && status < 300) || status == 402 || status == 429
 }
 
-func syncAuthInspectionLastError(auth *coreauth.Auth, lastError *coreauth.Error) {
+func syncAuthInspectionLastError(auth *Auth, lastError *AuthError) {
 	if auth == nil {
 		return
 	}
@@ -3263,7 +3071,7 @@ func syncAuthInspectionLastError(auth *coreauth.Auth, lastError *coreauth.Error)
 	}
 }
 
-func setAuthInspectionDisabledState(auth *coreauth.Auth, disabled bool) {
+func setAuthInspectionDisabledState(auth *Auth, disabled bool) {
 	if auth == nil {
 		return
 	}
@@ -3274,12 +3082,12 @@ func setAuthInspectionDisabledState(auth *coreauth.Auth, disabled bool) {
 	clearRoutingProtectionOwnership(auth)
 	auth.Metadata["disabled"] = disabled
 	if disabled {
-		auth.Status = coreauth.StatusDisabled
+		auth.Status = AuthStatusDisabled
 		auth.StatusMessage = "disabled by scheduled account inspection"
 	} else {
 		code := authInspectionLastErrorCode(auth)
 		if code != "" && !isInspectionAuthErrorCode(code) {
-			auth.Status = coreauth.StatusError
+			auth.Status = AuthStatusError
 			auth.Unavailable = true
 			if auth.LastError != nil {
 				auth.StatusMessage = strings.TrimSpace(auth.LastError.Message)
@@ -3287,7 +3095,7 @@ func setAuthInspectionDisabledState(auth *coreauth.Auth, disabled bool) {
 				auth.StatusMessage = strings.TrimSpace(stringFromAny(raw["message"]))
 			}
 		} else {
-			auth.Status = coreauth.StatusActive
+			auth.Status = AuthStatusActive
 			auth.StatusMessage = ""
 			auth.Unavailable = false
 			if isInspectionAuthErrorCode(code) {
@@ -3298,11 +3106,11 @@ func setAuthInspectionDisabledState(auth *coreauth.Auth, disabled bool) {
 	auth.UpdatedAt = time.Now()
 }
 
-func pluginVirtualSourcePath(auth *coreauth.Auth) string {
+func pluginVirtualSourcePath(auth *Auth) string {
 	if auth == nil {
 		return ""
 	}
-	sourcePath := strings.TrimSpace(authAttribute(auth, coreauth.AttributeVirtualSource))
+	sourcePath := strings.TrimSpace(authAttribute(auth, AttributeVirtualSource))
 	if sourcePath == "" {
 		sourcePath = strings.TrimSpace(authAttribute(auth, "path"))
 	}
@@ -3323,7 +3131,7 @@ func sameAuthSourcePath(left string, right string) bool {
 	return leftErr == nil && rightErr == nil && strings.EqualFold(filepath.Clean(leftAbs), filepath.Clean(rightAbs))
 }
 
-func isPluginVirtualRuntimeOnlyAuth(auth *coreauth.Auth) bool {
+func isPluginVirtualRuntimeOnlyAuth(auth *Auth) bool {
 	if auth == nil {
 		return false
 	}
@@ -3341,134 +3149,7 @@ func cloneAnyMapForInspection(in map[string]any) map[string]any {
 	return out
 }
 
-func (s *accountInspectionScheduler) preferredAuthForPluginVirtualWrite(auth *coreauth.Auth) *coreauth.Auth {
-	if auth == nil || !coreauth.IsPluginVirtualAuth(auth) || s == nil || s.h == nil || s.h.authManager == nil {
-		return auth
-	}
-	sourcePath := pluginVirtualSourcePath(auth)
-	if sourcePath == "" {
-		return auth
-	}
-	var firstVirtual *coreauth.Auth
-	for _, candidate := range s.h.authManager.List() {
-		if candidate == nil || !sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
-			continue
-		}
-		if !coreauth.IsPluginVirtualAuth(candidate) {
-			return candidate
-		}
-		if firstVirtual == nil {
-			firstVirtual = candidate
-		}
-		if !isPluginVirtualRuntimeOnlyAuth(candidate) {
-			return candidate
-		}
-	}
-	if firstVirtual != nil {
-		return firstVirtual
-	}
-	return auth
-}
-
-func savePluginVirtualAuthToSourceFile(auth *coreauth.Auth) error {
-	if auth == nil {
-		return fmt.Errorf("auth not found")
-	}
-	sourcePath := pluginVirtualSourcePath(auth)
-	if sourcePath == "" {
-		return fmt.Errorf("plugin virtual auth source path unavailable")
-	}
-	if auth.Metadata == nil {
-		auth.Metadata = make(map[string]any)
-	}
-	auth.Metadata["disabled"] = auth.Disabled
-	if coreauth.IsPluginVirtualAuth(auth) {
-		return savePluginVirtualManagedMetadataToSourceFile(sourcePath, auth)
-	}
-	type metadataSetter interface {
-		SetMetadata(map[string]any)
-	}
-	if setter, ok := auth.Storage.(metadataSetter); ok {
-		setter.SetMetadata(auth.Metadata)
-	}
-	if auth.Storage != nil {
-		return auth.Storage.SaveTokenToFile(sourcePath)
-	}
-	raw, err := json.Marshal(auth.Metadata)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(sourcePath, append(raw, '\n'), 0o600)
-}
-
-func savePluginVirtualManagedMetadataToSourceFile(sourcePath string, auth *coreauth.Auth) error {
-	source, err := readPluginVirtualSourceMetadata(sourcePath)
-	if err != nil {
-		return err
-	}
-	return writePluginVirtualManagedMetadataToSourceFile(sourcePath, auth, source)
-}
-
-func readPluginVirtualSourceMetadata(sourcePath string) (map[string]any, error) {
-	rawSource, err := os.ReadFile(sourcePath)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	source := make(map[string]any)
-	if len(bytes.TrimSpace(rawSource)) > 0 {
-		if err = json.Unmarshal(rawSource, &source); err != nil {
-			return nil, fmt.Errorf("decode plugin virtual auth source: %w", err)
-		}
-		if source == nil {
-			source = make(map[string]any)
-		}
-	}
-	return source, nil
-}
-
-func writePluginVirtualManagedMetadataToSourceFile(sourcePath string, auth *coreauth.Auth, source map[string]any) error {
-	if source == nil {
-		source = make(map[string]any)
-	}
-	source["disabled"] = auth.Disabled
-	if value, ok := auth.Metadata["last_error"]; ok {
-		source["last_error"] = value
-	} else {
-		delete(source, "last_error")
-	}
-	delete(source, "quota_cache")
-	if value, ok := auth.Metadata[routingProtectionMetadataKey]; ok {
-		source[routingProtectionMetadataKey] = value
-	} else {
-		delete(source, routingProtectionMetadataKey)
-	}
-	raw, err := json.Marshal(source)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(sourcePath, append(raw, '\n'), 0o600)
-}
-
-func (s *accountInspectionScheduler) updatePluginVirtualRuntimeAuths(ctx context.Context, sourceAuth *coreauth.Auth, mutate func(*coreauth.Auth)) {
-	if s == nil || s.h == nil || s.h.authManager == nil || sourceAuth == nil || mutate == nil {
-		return
-	}
-	sourcePath := pluginVirtualSourcePath(sourceAuth)
-	if sourcePath == "" {
-		mutate(sourceAuth)
-		_, _ = s.h.authManager.Update(ctx, sourceAuth)
-		return
-	}
-	for _, candidate := range s.h.authManager.List() {
-		if candidate == nil || !sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
-			continue
-		}
-		mutate(candidate)
-		_, _ = s.h.authManager.Update(ctx, candidate)
-	}
-}
-
-func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
+func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, authIndex string, mutate func(*Auth)) error {
 	if s == nil || s.h == nil || s.h.authManager == nil {
 		return fmt.Errorf("core auth manager unavailable")
 	}
@@ -3479,26 +3160,7 @@ func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, a
 	if mutate == nil {
 		return nil
 	}
-	if coreauth.IsPluginVirtualAuth(auth) {
-		sourceAuth := s.preferredAuthForPluginVirtualWrite(auth)
-		var sourceMetadata map[string]any
-		if coreauth.IsPluginVirtualAuth(sourceAuth) {
-			var err error
-			sourceMetadata, err = readPluginVirtualSourceMetadata(pluginVirtualSourcePath(sourceAuth))
-			if err != nil {
-				return err
-			}
-		}
-		mutate(sourceAuth)
-		s.updatePluginVirtualRuntimeAuths(ctx, sourceAuth, mutate)
-		if coreauth.IsPluginVirtualAuth(sourceAuth) {
-			return writePluginVirtualManagedMetadataToSourceFile(pluginVirtualSourcePath(sourceAuth), sourceAuth, sourceMetadata)
-		}
-		if err := savePluginVirtualAuthToSourceFile(sourceAuth); err != nil {
-			return err
-		}
-		return nil
-	}
+	auth = auth.Clone()
 	mutate(auth)
 	updated, err := s.h.authManager.Update(ctx, auth)
 	if err != nil {
@@ -3510,7 +3172,7 @@ func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, a
 	return nil
 }
 
-func (s *accountInspectionScheduler) updateInspectionErrorAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
+func (s *accountInspectionScheduler) updateInspectionErrorAuth(ctx context.Context, authIndex string, mutate func(*Auth)) error {
 	if s == nil || s.h == nil || s.h.authManager == nil {
 		return fmt.Errorf("core auth manager unavailable")
 	}
@@ -3518,7 +3180,7 @@ func (s *accountInspectionScheduler) updateInspectionErrorAuth(ctx context.Conte
 	if auth == nil {
 		return fmt.Errorf("auth not found")
 	}
-	if !coreauth.IsPluginVirtualAuth(auth) {
+	if !isPluginVirtualAuth(auth) {
 		return s.updateInspectionAuth(ctx, authIndex, mutate)
 	}
 	if mutate == nil {
@@ -3539,11 +3201,11 @@ func (s *accountInspectionScheduler) syncInspectionAuthError(ctx context.Context
 	if s == nil || s.h == nil || s.h.authManager == nil || account.AuthIndex == "" {
 		return
 	}
-	err := s.updateInspectionErrorAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
-		auth.Status = coreauth.StatusError
+	err := s.updateInspectionErrorAuth(ctx, account.AuthIndex, func(auth *Auth) {
+		auth.Status = AuthStatusError
 		auth.StatusMessage = message
 		auth.Unavailable = true
-		syncAuthInspectionLastError(auth, &coreauth.Error{Code: code, Message: message, HTTPStatus: status})
+		syncAuthInspectionLastError(auth, &AuthError{Code: code, Message: message, HTTPStatus: status})
 		auth.UpdatedAt = time.Now()
 	})
 	if err != nil {
@@ -3562,11 +3224,11 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 	if !isInspectionAuthErrorCode(authInspectionLastErrorCode(auth)) {
 		return
 	}
-	err := s.updateInspectionErrorAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
+	err := s.updateInspectionErrorAuth(ctx, account.AuthIndex, func(auth *Auth) {
 		if auth.Disabled {
-			auth.Status = coreauth.StatusDisabled
+			auth.Status = AuthStatusDisabled
 		} else {
-			auth.Status = coreauth.StatusActive
+			auth.Status = AuthStatusActive
 		}
 		auth.StatusMessage = ""
 		auth.Unavailable = false
@@ -3578,7 +3240,7 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 	}
 }
 
-func authInspectionLastErrorCode(auth *coreauth.Auth) string {
+func authInspectionLastErrorCode(auth *Auth) string {
 	if auth == nil {
 		return ""
 	}
@@ -4078,21 +3740,18 @@ func (s *accountInspectionScheduler) executeAction(ctx context.Context, result a
 	}
 	switch action {
 	case accountInspectionActionDisable, accountInspectionActionEnable:
-		return s.updateInspectionAuth(ctx, result.AuthIndex, func(auth *coreauth.Auth) {
+		return s.updateInspectionAuth(ctx, result.AuthIndex, func(auth *Auth) {
 			setAuthInspectionDisabledState(auth, action == accountInspectionActionDisable)
 		})
 	case accountInspectionActionDelete:
-		if s.pluginVirtualSourceAuthCount(auth) > 1 {
-			return errAccountInspectionSharedSourceDelete
-		}
-		_, _, err := s.h.deleteAuthFileByName(ctx, accountFromAuth(auth).FileName)
+		_, err := s.h.gateway.Delete(ctx, auth.Index, authRevisionOf(auth))
 		return err
 	default:
 		return fmt.Errorf("unsupported action %s", action)
 	}
 }
 
-func (s *accountInspectionScheduler) actionAuthForResult(result accountInspectionResult) (*coreauth.Auth, error) {
+func (s *accountInspectionScheduler) actionAuthForResult(result accountInspectionResult) (*Auth, error) {
 	if s == nil || s.h == nil || s.h.authManager == nil || strings.TrimSpace(result.AuthIndex) == "" {
 		return nil, errAccountInspectionResultStale
 	}
@@ -4113,8 +3772,8 @@ func (s *accountInspectionScheduler) actionAuthForResult(result accountInspectio
 	return auth, nil
 }
 
-func (s *accountInspectionScheduler) pluginVirtualSourceAuthCount(auth *coreauth.Auth) int {
-	if s == nil || s.h == nil || s.h.authManager == nil || auth == nil || !coreauth.IsPluginVirtualAuth(auth) {
+func (s *accountInspectionScheduler) pluginVirtualSourceAuthCount(auth *Auth) int {
+	if s == nil || s.h == nil || s.h.authManager == nil || auth == nil || !isPluginVirtualAuth(auth) {
 		return 0
 	}
 	sourcePath := pluginVirtualSourcePath(auth)
@@ -4123,7 +3782,7 @@ func (s *accountInspectionScheduler) pluginVirtualSourceAuthCount(auth *coreauth
 	}
 	count := 0
 	for _, candidate := range s.h.authManager.List() {
-		if candidate != nil && coreauth.IsPluginVirtualAuth(candidate) && sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
+		if candidate != nil && isPluginVirtualAuth(candidate) && sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
 			count++
 		}
 	}
@@ -4303,41 +3962,10 @@ func (s *accountInspectionScheduler) persistQuotaState(ctx context.Context, acco
 }
 
 func (s *accountInspectionScheduler) cleanupLegacyQuotaCacheFromAuth(ctx context.Context, account accountInspectionAccount) error {
-	if s == nil || s.h == nil || s.h.authManager == nil || account.AuthIndex == "" {
-		return nil
-	}
-	auth := s.h.authByIndex(account.AuthIndex)
-	if auth == nil || auth.Metadata == nil {
-		return nil
-	}
-	if _, exists := auth.Metadata["quota_cache"]; !exists {
-		return nil
-	}
-	return s.updateInspectionAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
-		if auth.Metadata == nil {
-			return
-		}
-		delete(auth.Metadata, "quota_cache")
-		auth.UpdatedAt = time.Now()
-	})
+	return nil
 }
 
 func (s *accountInspectionScheduler) cleanupLegacyQuotaCaches(ctx context.Context) {
-	if s == nil || s.h == nil || s.h.authManager == nil {
-		return
-	}
-	for _, auth := range s.h.authManager.List() {
-		if auth == nil || auth.Metadata == nil {
-			continue
-		}
-		if _, exists := auth.Metadata["quota_cache"]; !exists {
-			continue
-		}
-		account := accountFromAuth(auth)
-		if err := s.cleanupLegacyQuotaCacheFromAuth(ctx, account); err != nil {
-			s.appendLog("warning", fmt.Sprintf("%s 启动清理旧认证文件配额缓存失败：%s", account.identity(), err.Error()))
-		}
-	}
 }
 
 func persistQuotaState(ctx context.Context, account accountInspectionAccount, state map[string]any) error {
@@ -5538,7 +5166,7 @@ func maxFloatPtr(values []float64) *float64 {
 	return &maxValue
 }
 
-func antigravityProjectID(auth *coreauth.Auth) string {
+func antigravityProjectID(auth *Auth) string {
 	for _, source := range []map[string]any{auth.Metadata, nestedMap(auth.Metadata, "installed"), nestedMap(auth.Metadata, "web")} {
 		if source == nil {
 			continue
@@ -5550,7 +5178,7 @@ func antigravityProjectID(auth *coreauth.Auth) string {
 	return "bamboo-precept-lgxtn"
 }
 
-func codexAccountID(auth *coreauth.Auth) string {
+func codexAccountID(auth *Auth) string {
 	if auth == nil {
 		return ""
 	}
@@ -5574,7 +5202,7 @@ func codexAccountIDFromMap(source map[string]any) string {
 	return idTokenClaim(source["id_token"], "chatgpt_account_id", "chatgptAccountId", "account_id", "accountId")
 }
 
-func xaiUserID(auth *coreauth.Auth) string {
+func xaiUserID(auth *Auth) string {
 	if auth == nil {
 		return ""
 	}
@@ -5651,7 +5279,7 @@ func stringMapToAnyMap(values map[string]string) map[string]any {
 	return result
 }
 
-func codexPlanType(auth *coreauth.Auth, payload map[string]any) any {
+func codexPlanType(auth *Auth, payload map[string]any) any {
 	if value := firstNonEmptyStringValue(stringFromAny(payload["plan_type"]), stringFromAny(payload["planType"])); value != "" {
 		return value
 	}
@@ -5663,7 +5291,7 @@ func codexPlanType(auth *coreauth.Auth, payload map[string]any) any {
 	return nil
 }
 
-func codexQuotaStateValues(auth *coreauth.Auth, payload map[string]any, windows []map[string]any, rawBody string) map[string]any {
+func codexQuotaStateValues(auth *Auth, payload map[string]any, windows []map[string]any, rawBody string) map[string]any {
 	values := map[string]any{
 		"windows":      windows,
 		"planType":     codexPlanType(auth, payload),
@@ -5674,7 +5302,7 @@ func codexQuotaStateValues(auth *coreauth.Auth, payload map[string]any, windows 
 	return values
 }
 
-func codexSubscriptionActiveUntil(auth *coreauth.Auth) any {
+func codexSubscriptionActiveUntil(auth *Auth) any {
 	if auth == nil {
 		return nil
 	}
@@ -5788,7 +5416,7 @@ func idTokenClaimAny(raw any, keys ...string) any {
 	return nil
 }
 
-func accountInspectionAuthEmail(auth *coreauth.Auth) string {
+func accountInspectionAuthEmail(auth *Auth) string {
 	if auth == nil {
 		return ""
 	}
@@ -5798,7 +5426,7 @@ func accountInspectionAuthEmail(auth *coreauth.Auth) string {
 	return idTokenClaim(auth.Metadata["id_token"], "email")
 }
 
-func firstNonEmptyAuthValue(auth *coreauth.Auth, keys ...string) string {
+func firstNonEmptyAuthValue(auth *Auth, keys ...string) string {
 	if auth == nil {
 		return ""
 	}
@@ -5986,7 +5614,7 @@ func escapeJSONString(value string) string {
 }
 
 func (h *Handler) RegisterAccountInspectionRoutes(group *gin.RouterGroup) {
-	group.GET("/account-inspection/logs", h.StreamAccountInspectionLogs)
+	group.GET("/account-inspection/events", h.PollAccountInspectionEvents)
 	group.GET("/account-inspection/schedule", h.GetAccountInspectionSchedule)
 	group.PUT("/account-inspection/schedule", h.PutAccountInspectionSchedule)
 	group.PATCH("/account-inspection/schedule", h.PutAccountInspectionSchedule)
@@ -5998,6 +5626,33 @@ func (h *Handler) RegisterAccountInspectionRoutes(group *gin.RouterGroup) {
 	group.POST("/account-inspection/resume", h.ResumeAccountInspection)
 	group.POST("/account-inspection/stop", h.StopAccountInspection)
 	group.POST("/account-inspection/actions", h.ExecuteAccountInspectionActions)
+}
+
+func (h *Handler) PollAccountInspectionEvents(c *gin.Context) {
+	scheduler := schedulerForHandler(h)
+	if scheduler == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account inspection scheduler unavailable"})
+		return
+	}
+	after, _ := strconv.ParseInt(strings.TrimSpace(c.Query("after_sequence")), 10, 64)
+	scheduler.mu.Lock()
+	sequence := scheduler.eventSequence
+	messages := make([]accountInspectionLogStreamMessage, 0, len(scheduler.events))
+	if after <= 0 {
+		messages = append(messages, scheduler.snapshotStreamMessageLocked(accountInspectionRequestSnapshotOptions(c)))
+	} else if sequence > after {
+		if len(scheduler.events) > 0 && after < scheduler.events[0].Sequence-1 {
+			messages = append(messages, scheduler.snapshotStreamMessageLocked(accountInspectionRequestSnapshotOptions(c)))
+		} else {
+			for _, event := range scheduler.events {
+				if event.Sequence > after {
+					messages = append(messages, event.Message)
+				}
+			}
+		}
+	}
+	scheduler.mu.Unlock()
+	c.JSON(http.StatusOK, gin.H{"sequence": sequence, "messages": messages})
 }
 
 func (h *Handler) GetAccountInspectionSchedule(c *gin.Context) {
@@ -6162,15 +5817,6 @@ func (h *Handler) ExecuteAccountInspectionActions(c *gin.Context) {
 		"schedule": snapshot["schedule"],
 		"status":   snapshot["status"],
 	})
-}
-
-func (h *Handler) StreamAccountInspectionLogs(c *gin.Context) {
-	scheduler := schedulerForHandler(h)
-	if scheduler == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account inspection scheduler unavailable"})
-		return
-	}
-	scheduler.streamLogs(c)
 }
 
 func (h *Handler) GetAccountInspectionStatus(c *gin.Context) {

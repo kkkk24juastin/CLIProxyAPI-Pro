@@ -1,8 +1,8 @@
 # Pro Observability Plugin
 
-`pro-observability` is the only persistence owner for Pro usage events, aggregates, model prices, quota cache, JSONL import/export, retention, WebDAV backups, routing cursors, and auth runtime statistics.
+`pro-observability` is the only persistence owner for Pro usage events, aggregates, model prices, quota cache, JSONL import/export, retention, WebDAV backups, routing cursors, auth runtime statistics, and account-inspection state.
 
-It also owns the complete request-monitoring UI. The production page is built from `webapp/` into the single embedded resource `web/index.html` and is exposed through the upstream plugin resource protocol. Management discovers it dynamically as “可观测性”; there is no separately compiled `/monitoring` route or shadow page.
+It also owns the complete request-monitoring and account-inspection UIs. Both production pages are built from `webapp/` into `web/index.html` and exposed as separate upstream plugin resources. Management discovers them dynamically as “可观测性” and “账号巡检”; there are no separately compiled legacy or shadow pages.
 
 The Pro Core patch enables the dynamic plugin system and this plugin by default. Startup is fail-closed: the proxy service does not start unless the plugin loads successfully and completes storage preparation.
 
@@ -26,7 +26,13 @@ GET /v0/management/pro/observability/migration/status
 
 ## Runtime ownership
 
-The plugin always registers the production `/v0/management/usage*` API, owns routing selection and cursor persistence, and provides quota-cache, runtime-state, and `pro_settings` capabilities. Weighted routing persists its complete smooth-weight snapshot. A restricted host callback carries Core-owned account-inspection schedule/snapshot data into backups and immediately reapplies imported runtime and routing-protection state. Core retains only the authenticated `/usage/stream` SSE transport bridge because the current Management plugin ABI buffers responses and cannot stream directly.
+The plugin always registers the production `/v0/management/usage*` and `/v0/management/account-inspection*` APIs, owns routing selection and cursor persistence, and provides quota-cache, runtime-state, `pro_settings`, inspection scheduling, and inspection backup capabilities. Weighted routing persists its complete smooth-weight snapshot. Core callbacks are limited to importing host-owned runtime and routing-protection state plus the restricted HostAuthGateway used for credential-safe inspection operations. Core retains authenticated streaming bridges because the current Management plugin ABI buffers responses and cannot stream directly.
+
+## Account inspection
+
+The plugin owns the scheduler, all provider probes, pause/resume/stop controls, manual and automatic actions, event buffering, and the latest result snapshot for Antigravity, Claude, Codex, Gemini CLI, Kimi, and xAI. Credentials never enter plugin state: account enumeration returns an explicit non-sensitive allowlist, provider HTTP executes through the selected Core executor, token refresh remains in Core, and health mutations use revision checks plus inspection ownership rules.
+
+Schedule and snapshot payloads live in the `account_inspection_state` SQLite table. When that table has no corresponding state, startup performs a one-time import from the legacy JSON paths selected by `ACCOUNT_INSPECTION_SCHEDULE_PATH` and `ACCOUNT_INSPECTION_SNAPSHOT_PATH`; it never dual-writes those files. JSONL export/import keeps the existing `account_inspection_schedule` and `account_inspection_snapshot` records for backup compatibility.
 
 ## Monitoring center UI
 

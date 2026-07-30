@@ -155,12 +155,11 @@ Protection is disabled by default. `observe` records matches; only `enforce` dis
 
 `apply_customizations.py` also patches upstream files to add:
 
-- `/account-inspection` and `/routing` routes; monitoring is discovered from the plugin resource registry.
+- the `/routing` route; both monitoring and account inspection are discovered from the plugin resource registry.
 - Plugin Resource Bridge v2 plus account-inspection/routing sidebar labels and icons.
 - locale entries from `monitoring-locales.json`.
-- `usageStatisticsEnabled` and `clean` config types used by monitoring/account inspection.
+- `usageStatisticsEnabled` and `clean` config types used by the plugin bootstrap.
 - `authFilesApi.patchFile` and `setStatusWithFallback` helpers.
-- `accountInspection` service export.
 - `Select` `triggerClassName` and `dropdownClassName` props.
 - `maskSensitiveText` utility.
 - `cachedAt` fields for quota state types and success states.
@@ -171,13 +170,11 @@ The plugin monitoring center uses an initial snapshot plus SSE increments and cu
 ## Repository layout
 
 - `overlay/` — files copied directly into the upstream checkout.
-- `overlay/src/pages/AccountInspectionPage.tsx` — account inspection UI.
 - `overlay/src/pages/RoutingPolicyPage.tsx` — routing policy and request-state-protection UI.
 - `overlay/src/features/plugins/usePluginResourceBridge.ts` — controlled Management Bridge v2 for plugin pages.
-- `overlay/src/features/monitoring/` — account-inspection and account-usage deep-link logic; it no longer contains the monitoring center.
-- `overlay/src/features/shared/` — pagination and filter styling shared by account inspection.
+- `overlay/src/features/monitoring/` — account-usage deep links and account-plan display logic; it contains neither the monitoring center nor account inspection.
 - `overlay/src/extensions/quota/` — SQLite quota persistence integration.
-- `overlay/src/services/api/` — added API clients.
+- `overlay/src/services/api/` — routing-policy and account-usage API clients.
 - `overlay-replacements.json` — reviewed upstream SHA-256 values and reasons for full-file replacements that intentionally collide with upstream paths.
 - `monitoring-locales.json` — locale additions merged into upstream locale files.
 - `apply_customizations.py` — applies all customizations to a target upstream checkout.

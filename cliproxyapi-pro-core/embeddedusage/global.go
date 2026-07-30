@@ -9,10 +9,6 @@ import (
 )
 
 var globalService *Service
-var accountInspectionScheduleExporter func() (jsonBytes []byte, ok bool, err error)
-var accountInspectionScheduleImporter func(jsonBytes []byte) error
-var accountInspectionSnapshotExporter func() (jsonBytes []byte, ok bool, err error)
-var accountInspectionSnapshotImporter func(jsonBytes []byte) error
 var authRuntimeStateImporter func(cursors []RoutingCursorState, stats []AuthRuntimeStats) error
 var proSettingsImporter func(settings []ProSetting) error
 var hostBackupHandlersMu sync.RWMutex
@@ -291,20 +287,6 @@ func flushRuntimeStateWrites(ctx context.Context, store *Store) error {
 	}
 }
 
-func SetAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
-	hostBackupHandlersMu.Lock()
-	defer hostBackupHandlersMu.Unlock()
-	accountInspectionScheduleExporter = exporter
-	accountInspectionScheduleImporter = importer
-}
-
-func SetAccountInspectionSnapshotHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
-	hostBackupHandlersMu.Lock()
-	defer hostBackupHandlersMu.Unlock()
-	accountInspectionSnapshotExporter = exporter
-	accountInspectionSnapshotImporter = importer
-}
-
 func SetAuthRuntimeStateImportHandler(importer func([]RoutingCursorState, []AuthRuntimeStats) error) {
 	hostBackupHandlersMu.Lock()
 	defer hostBackupHandlersMu.Unlock()
@@ -315,46 +297,6 @@ func SetProSettingsImportHandler(importer func([]ProSetting) error) {
 	hostBackupHandlersMu.Lock()
 	defer hostBackupHandlersMu.Unlock()
 	proSettingsImporter = importer
-}
-
-func ExportAccountInspectionSchedule() ([]byte, bool, error) {
-	hostBackupHandlersMu.RLock()
-	exporter := accountInspectionScheduleExporter
-	hostBackupHandlersMu.RUnlock()
-	if exporter == nil {
-		return nil, false, nil
-	}
-	return exporter()
-}
-
-func ExportAccountInspectionSnapshot() ([]byte, bool, error) {
-	hostBackupHandlersMu.RLock()
-	exporter := accountInspectionSnapshotExporter
-	hostBackupHandlersMu.RUnlock()
-	if exporter == nil {
-		return nil, false, nil
-	}
-	return exporter()
-}
-
-func ApplyImportedAccountInspectionSchedule(raw []byte) error {
-	hostBackupHandlersMu.RLock()
-	importer := accountInspectionScheduleImporter
-	hostBackupHandlersMu.RUnlock()
-	if importer == nil {
-		return nil
-	}
-	return importer(raw)
-}
-
-func ApplyImportedAccountInspectionSnapshot(raw []byte) error {
-	hostBackupHandlersMu.RLock()
-	importer := accountInspectionSnapshotImporter
-	hostBackupHandlersMu.RUnlock()
-	if importer == nil {
-		return nil
-	}
-	return importer(raw)
 }
 
 func ApplyImportedAuthRuntimeState(cursors []RoutingCursorState, stats []AuthRuntimeStats) error {

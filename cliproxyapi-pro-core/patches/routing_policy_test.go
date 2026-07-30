@@ -320,7 +320,7 @@ func TestManualDisabledStateClearsRoutingProtectionOwnership(t *testing.T) {
 	}
 }
 
-func TestInspectionStateChangeClearsRoutingProtectionOwnership(t *testing.T) {
+func TestRoutingProtectionStateChangeKeepsRoutingOwnership(t *testing.T) {
 	for _, disabled := range []bool{true, false} {
 		t.Run(strconv.FormatBool(disabled), func(t *testing.T) {
 			auth := &coreauth.Auth{
@@ -331,12 +331,12 @@ func TestInspectionStateChangeClearsRoutingProtectionOwnership(t *testing.T) {
 					},
 				},
 			}
-			setAuthInspectionDisabledState(auth, disabled)
+			setRoutingProtectionDisabledState(auth, disabled)
 			if auth.Disabled != disabled {
 				t.Fatalf("disabled = %v want %v", auth.Disabled, disabled)
 			}
-			if routingProtectionOwned(auth) {
-				t.Fatal("account inspection must take ownership from request protection")
+			if !routingProtectionOwned(auth) {
+				t.Fatal("routing policy state change must retain request protection ownership")
 			}
 		})
 	}

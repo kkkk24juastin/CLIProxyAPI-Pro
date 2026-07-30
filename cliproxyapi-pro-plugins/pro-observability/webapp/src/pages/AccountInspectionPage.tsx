@@ -14,7 +14,6 @@ import {
   IconSearch,
   IconX,
 } from '@/components/ui/icons';
-import { getAuthFileIcon } from '@/features/authFiles/constants';
 import {
   ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE,
   accountInspectionBackendResultToItem,
@@ -101,7 +100,7 @@ import {
   MONITORING_PAGE_SIZE_OPTIONS,
   normalizeMonitoringPageSize,
   resolveMonitoringPaginationCopy,
-} from '@/features/shared/pagination';
+} from '@/features/monitoring/pagination';
 import {
   buildZipArchive,
   downloadBlobFile,
@@ -109,11 +108,7 @@ import {
 } from '@/features/monitoring/accountInspectionExport';
 import {
   accountInspectionApi,
-  accountInspectionWebSocketProtocol,
   apiClient,
-  buildAccountInspectionLogsWebSocketUrl,
-  nextAccountInspectionReconnectDelay,
-  refreshAccountInspectionAfterReconnect,
   type AccountInspectionLogStreamMessage,
   type AccountInspectionScheduleResponse,
 } from '@/services/api';
@@ -129,11 +124,11 @@ import monitoringStyles from '@/features/shared/tableControls.module.scss';
 
 type ResultBulkAction = 'suggested' | 'recheck' | ManualAccountInspectionAction;
 
+const getAuthFileIcon = (_provider: string, _theme: ResolvedTheme): string | null => null;
+
 export function AccountInspectionPage() {
   const { t, i18n } = useTranslation();
   const config = useConfigStore((state) => state.config);
-  const apiBase = useAuthStore((state) => state.apiBase);
-  const managementKey = useAuthStore((state) => state.managementKey);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
@@ -366,96 +361,45 @@ export function AccountInspectionPage() {
   }, [loadBackendSchedule]);
 
   useEffect(() => {
-    if (connectionStatus !== 'connected' || !apiBase || !managementKey) return;
+	if (connectionStatus !== 'connected') return;
     let closed = false;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
-    let pollTimer: number | null = null;
-    let reconnectDelay = 1000;
-
-    const stopPolling = () => {
-      if (pollTimer !== null) {
-        window.clearInterval(pollTimer);
-        pollTimer = null;
-      }
-    };
-    const startPolling = () => {
-      if (closed || pollTimer !== null) return;
-      void loadBackendSchedule();
-      pollTimer = window.setInterval(() => void loadBackendSchedule(), 5000);
-    };
-    const scheduleReconnect = () => {
-      if (closed || reconnectTimer !== null) return;
-      const delay = reconnectDelay;
-      reconnectDelay = nextAccountInspectionReconnectDelay(reconnectDelay);
-      reconnectTimer = window.setTimeout(() => {
-        reconnectTimer = null;
-        connect();
-      }, delay);
-    };
-    const connect = () => {
-      if (closed) return;
-      try {
-        socket = new WebSocket(
-          buildAccountInspectionLogsWebSocketUrl(apiBase),
-          accountInspectionWebSocketProtocol(managementKey)
-        );
-      } catch {
-        startPolling();
-        scheduleReconnect();
-        return;
-      }
-
-      socket.onopen = () => {
-        if (closed) return;
-        reconnectDelay = 1000;
-        stopPolling();
-        void refreshAccountInspectionAfterReconnect(
-          loadBackendSchedule,
-          inspectionDetailsLoaderRef.current
-        );
-      };
-      socket.onmessage = (event) => {
-        if (closed || typeof event.data !== 'string') return;
-        try {
-          const message = JSON.parse(event.data) as AccountInspectionLogStreamMessage;
-          if (message.log) {
-            dispatchBackendState({
-              type: 'appendLog',
-              level: message.log.level,
-              message: message.log.message,
-              timestamp: message.log.time,
-            });
-            if (message.type === 'log') {
-              return;
-            }
-          }
-          applyBackendResponse({
-            schedule: message.schedule,
-            status: message.status,
-          });
-        } catch {
-          return;
-        }
-      };
-      socket.onerror = () => socket?.close();
-      socket.onclose = () => {
-        socket = null;
-        if (closed) return;
-        startPolling();
-        scheduleReconnect();
-      };
-    };
-
-    connect();
+	let sequence = 0;
+	let timer: number | null = null;
+	let inFlight = false;
+	const applyMessage = (message: AccountInspectionLogStreamMessage) => {
+		if (message.log) {
+			dispatchBackendState({
+				type: 'appendLog',
+				level: message.log.level,
+				message: message.log.message,
+				timestamp: message.log.time,
+			});
+			if (message.type === 'log') return;
+		}
+		applyBackendResponse({ schedule: message.schedule, status: message.status });
+	};
+	const pollEvents = async () => {
+		if (closed || inFlight) return;
+		inFlight = true;
+		try {
+			const page = await accountInspectionApi.getEvents(sequence);
+			if (closed) return;
+			for (const message of page.messages || []) applyMessage(message);
+			sequence = Math.max(sequence, Number(page.sequence) || 0);
+		} catch {
+			// A summary refresh below remains the transport fallback.
+		} finally {
+			inFlight = false;
+		}
+	};
+	void pollEvents();
+	timer = window.setInterval(() => void pollEvents(), 1000);
 
     return () => {
       closed = true;
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      stopPolling();
-      socket?.close();
+	  if (timer !== null) window.clearInterval(timer);
     };
-  }, [apiBase, applyBackendResponse, connectionStatus, loadBackendSchedule, managementKey]);
+  }, [applyBackendResponse, connectionStatus]);
 
   useEffect(() => {
     if (connectionStatus !== 'connected') return;

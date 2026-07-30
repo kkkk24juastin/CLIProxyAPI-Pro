@@ -702,12 +702,12 @@ def patch_routes(target: Path) -> None:
     replace_once(
         path,
         "import { QuotaPage } from '@/pages/QuotaPage';\n",
-        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\n",
+        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\n",
     )
     replace_once(
         path,
         "  { path: '/quota', element: <QuotaPage /> },\n",
-        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n",
+        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n",
     )
 
 
@@ -748,57 +748,17 @@ def patch_layout(target: Path) -> None:
     insert_once(
         path,
         "  IconSidebarProviders,\n",
-        "  IconSidebarAccountInspection,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
-        "  IconSidebarAccountInspection,\n",
+        "  IconSidebarRouting,\n  IconSidebarProviders,\n",
+        "  IconSidebarRouting,\n",
     )
     replace_once(
         path,
         "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n",
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n",
+        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n",
     )
     text = read(path)
-    if "path: '/account-inspection'" not in text:
-        flat_quota_item = "    { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },\n"
-        grouped_quota_item = (
-            "        {\n"
-            "          path: '/quota',\n"
-            "          labelKey: 'nav.quota_management',\n"
-            "          metaKey: 'nav_meta.quota_management',\n"
-            "          icon: sidebarIcons.quota,\n"
-            "        },\n"
-        )
-        if flat_quota_item in text:
-            write(
-                path,
-                text.replace(
-                    flat_quota_item,
-                    flat_quota_item
-                    + "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
-                    1,
-                ),
-            )
-        elif grouped_quota_item in text:
-            write(
-                path,
-                text.replace(
-                    grouped_quota_item,
-                    grouped_quota_item
-                    + "        {\n"
-                    + "          path: '/account-inspection',\n"
-                    + "          labelKey: 'nav.account_inspection',\n"
-                    + "          metaKey: 'nav_meta.account_inspection',\n"
-                    + "          icon: sidebarIcons.accountInspection,\n"
-                    + "        },\n",
-                    1,
-                ),
-            )
-        else:
-            raise RuntimeError(f'Pattern not found in {path}: quota navigation item')
     flat_routing_item = (
         "    { path: '/routing', label: t('nav.routing_policy'), icon: sidebarIcons.routing },\n"
-    )
-    flat_account_inspection_item = (
-        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n"
     )
     grouped_routing_item = (
         "        {\n"
@@ -808,29 +768,30 @@ def patch_layout(target: Path) -> None:
         "          icon: sidebarIcons.routing,\n"
         "        },\n"
     )
-    grouped_account_inspection_item = (
+    grouped_quota_item = (
         "        {\n"
-        "          path: '/account-inspection',\n"
-        "          labelKey: 'nav.account_inspection',\n"
-        "          metaKey: 'nav_meta.account_inspection',\n"
-        "          icon: sidebarIcons.accountInspection,\n"
+        "          path: '/quota',\n"
+        "          labelKey: 'nav.quota_management',\n"
+        "          metaKey: 'nav_meta.quota_management',\n"
+        "          icon: sidebarIcons.quota,\n"
         "        },\n"
     )
     text = read(path).replace(flat_routing_item, '').replace(grouped_routing_item, '')
-    if flat_account_inspection_item in text:
+    flat_quota_item = "    { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },\n"
+    if flat_quota_item in text:
         text = text.replace(
-            flat_account_inspection_item,
-            flat_account_inspection_item + flat_routing_item,
+            flat_quota_item,
+            flat_quota_item + flat_routing_item,
             1,
         )
-    elif grouped_account_inspection_item in text:
+    elif grouped_quota_item in text:
         text = text.replace(
-            grouped_account_inspection_item,
-            grouped_account_inspection_item + grouped_routing_item,
+            grouped_quota_item,
+            grouped_quota_item + grouped_routing_item,
             1,
         )
     else:
-        raise RuntimeError(f'Pattern not found in {path}: account inspection navigation item')
+        raise RuntimeError(f'Pattern not found in {path}: quota navigation item')
     write(path, text)
     replace_once(
         path,
@@ -860,20 +821,6 @@ def patch_icons(target: Path) -> None:
         "  );\n"
         "}\n\n"
     )
-    account_inspection_icon = (
-        "export function IconSidebarAccountInspection({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <rect x=\"5\" y=\"3\" width=\"11\" height=\"16\" rx=\"2\" />\n"
-        "      <path d=\"M9 7h3\" />\n"
-        "      <path d=\"m8.5 11 1.4 1.4 2.6-2.8\" />\n"
-        "      <circle cx=\"16.5\" cy=\"16.5\" r=\"3\" />\n"
-        "      <path d=\"m19 19 2 2\" />\n"
-        "      <path d=\"M8 3.5h5\" fill=\"currentColor\" fillOpacity=\"0.08\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
     routing_icon = (
         "export function IconSidebarRouting({ size = 20, ...props }: IconProps) {\n"
         "  return (\n"
@@ -891,8 +838,6 @@ def patch_icons(target: Path) -> None:
     icons_to_insert = ""
     if "export function IconSidebarMonitor" not in text:
         icons_to_insert += monitor_icon
-    if "export function IconSidebarAccountInspection" not in text:
-        icons_to_insert += account_inspection_icon
     if "export function IconSidebarRouting" not in text:
         icons_to_insert += routing_icon
     if not icons_to_insert:
@@ -1800,19 +1745,6 @@ def patch_quota_styles(target: Path) -> None:
         ".geminiCliCard",
     )
 
-
-def patch_account_inspection_page(target: Path) -> None:
-    path = target / 'src/pages/AccountInspectionPage.tsx'
-    replace_once_if_present(
-        path,
-        "  const used = normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent);\n"
-        "  return used !== null && used >= usedPercentThreshold;\n",
-        "  const used =\n"
-        "    normalizeNumberValue(quota.billing.usagePercent ?? quota.billing.usage_percent)\n"
-        "    ?? normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent)\n"
-        "    ?? maxAntigravityGroupUsedPercent(Array.isArray(quota.billing.productUsage) ? quota.billing.productUsage : []);\n"
-        "  return used !== null && used >= usedPercentThreshold;\n",
-    )
 
 
 def patch_auth_files_page_search(target: Path) -> None:
@@ -2829,7 +2761,7 @@ def patch_supporting_api_and_types(target: Path) -> None:
     replace_once(
         api_index_path,
         "export * from './apiCall';\n",
-        "export * from './apiCall';\nexport * from './accountInspection';\nexport * from './routingPolicy';\n",
+        "export * from './apiCall';\nexport * from './routingPolicy';\n",
     )
 
     format_path = target / 'src/utils/format.ts'
@@ -2977,7 +2909,6 @@ def main() -> None:
     patch_quota_page_search(target)
     patch_quota_card(target)
     patch_quota_styles(target)
-    patch_account_inspection_page(target)
     patch_auth_files_page_search(target)
     patch_auth_files_page_sorting(target)
     patch_auth_files_gemini_quota(target)

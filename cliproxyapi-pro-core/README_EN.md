@@ -148,9 +148,9 @@ The patch layer adds a generic `AuthModelFilter` capability to the upstream plug
 
 The plugin supports xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi OAuth, with `_unknown`, `_default`, and custom plan rules for every provider. Processing order is upstream `excluded_models`, plugin plan filtering, OAuth alias/prefix, then model registration. The final registration constrains both `/v1/models` aggregation and scheduler candidates. See `cliproxyapi-pro-plugins/oauth-model-policy/README.md` for configuration and discovery details.
 
-### Backend account inspection scheduler
+### Plugin account inspection
 
-The patch layer adds backend account-inspection routes under the management API:
+`pro-observability` is the sole owner of account-inspection business behavior: provider probes, scheduling, the state machine, automatic actions, SQLite state, backup records, and the dynamic resource page all run in the plugin. Core starts no legacy or shadow scheduler; it only exposes a restricted HostAuthGateway (credentials remain in Core) and a generic management WebSocket bridge. The plugin exposes:
 
 Request monitoring also stores TTFT, HTTP status code, structured error, reasoning effort, and service tier. `/usage/status` returns recent dead-letter samples with sensitive fields redacted. Account-inspection automatic actions support consecutive-confirmation gating, and quota cache entries include parser version plus response-shape hashes.
 
@@ -166,7 +166,7 @@ Request monitoring also stores TTFT, HTTP status code, structured error, reasoni
 - `POST /v0/management/account-inspection/stop`
 - `POST /v0/management/account-inspection/actions`
 
-The scheduler can inspect accounts for:
+The plugin can inspect accounts for:
 
 - Antigravity
 - Claude
@@ -177,17 +177,9 @@ The scheduler can inspect accounts for:
 
 It supports provider filtering, worker limits, retry/timeout settings, sampling, usage-threshold decisions, progress/status/log/result snapshots, pause/resume/stop controls, manual actions, and optional automatic actions for quota exhaustion, quota recovery, and account errors. Antigravity and xAI also support optional deep probes.
 
-Before probing an account, the scheduler can refresh its auth record when it is already in the normal upstream refresh window. This inspection refresh path reuses upstream provider refresh logic and persistence, allows disabled accounts, skips API-key accounts, skips accounts not yet due, and respects `NextRefreshAfter`. If refresh succeeds, probing uses the refreshed auth; if refresh fails, the scheduler keeps the account and skips probing it for that run.
+Before probing an account, the plugin can ask Core through HostAuthGateway to refresh an auth record that is already in the normal upstream refresh window. This controlled path reuses upstream provider refresh logic and persistence, allows disabled accounts, skips API-key accounts and accounts not yet due, and respects `NextRefreshAfter`. On success the plugin probes the refreshed account revision; on failure it keeps the account and skips the probe for that run.
 
-The schedule file defaults to:
-
-```text
-/CLIProxyAPI/usage/account-inspection-schedule.json
-```
-
-Override it with `ACCOUNT_INSPECTION_SCHEDULE_PATH` if needed.
-
-The latest finished inspection result is persisted separately at `/CLIProxyAPI/usage/account-inspection-snapshot.json` with mode `0600`. A snapshot restored after process restart or usage import is read-only and is replaced when the next full inspection finishes. Override its path with `ACCOUNT_INSPECTION_SNAPSHOT_PATH` if needed.
+Schedule settings and the latest finished result are stored in the plugin's `account_inspection_state` table in `usage.sqlite`. On the first plugin startup, only when SQLite has no corresponding state, the plugin performs a one-time import from the legacy JSON paths selected by `ACCOUNT_INSPECTION_SCHEDULE_PATH` and `ACCOUNT_INSPECTION_SNAPSHOT_PATH`. After a successful import it reads and writes SQLite only and never dual-writes the old files. Usage JSONL backups retain the `account_inspection_schedule` and `account_inspection_snapshot` record types for compatibility with existing backups.
 
 ### Routing policy and request-state protection
 
@@ -239,12 +231,12 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `Dockerfile.runtime` — assembles the Actions runtime image from prebuilt Linux binaries.
 - `QUOTA_PROVIDER.md` — QuotaProvider plugin protocol and compatibility rules.
 - `../cliproxyapi-pro-plugins/oauth-model-policy/` — dynamic plugin for filtering auth models by OAuth plan.
-- `../cliproxyapi-pro-plugins/pro-observability/` — required dynamic plugin and sole owner of SQLite usage, backups, quota cache, and routing runtime.
+- `../cliproxyapi-pro-plugins/pro-observability/` — required dynamic plugin and sole owner of SQLite usage, backups, quota cache, routing runtime, and account inspection.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
 - `embeddedusage/` — Core-to-plugin quota, runtime, and `pro_settings` capability bridge, including runtime-stat flushing before plugin unload; the legacy service entrypoint fails closed and does not persist runtime data.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.
-- `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
-- The generated API Server shuts down its management Handler from `Stop`; embedders that create a Handler directly through the SDK must also call `Shutdown()` to release inspection, routing-protection, login-cleanup, and global callback ownership.
+- `patches/plugin_account_inspection_host_api.go` — injects the restricted HostAuthGateway protocol and callbacks used by the plugin.
+- The generated API Server shuts down its management Handler from `Stop`; embedders that create a Handler directly through the SDK must also call `Shutdown()` to release routing-protection, login-cleanup, and global callback ownership. Account-inspection lifecycle belongs to the plugin.
 - `patches/routing_policy.go` — unified routing configuration, request-state-protection handlers, usage plugin, and automatic release task.
 - `patches/config_existing_updates.go` — existing-scalar-only YAML updates that never create missing keys.
 - `.github/workflows/release-core.yml` — image publish, Pro binary assets, `management.html` publish, usage backup, Render deployment trigger, Telegram notification, and run cleanup.
@@ -297,10 +289,10 @@ Release workflows derive `SOURCE_DATE_EPOCH` from the newest immutable Core, mod
 - `USAGE_POLL_INTERVAL_MS` — default `500`.
 - `USAGE_QUERY_LIMIT` — default `50000`.
 
-### Account inspection
+### Legacy account-inspection import
 
-- `ACCOUNT_INSPECTION_SCHEDULE_PATH` — optional schedule JSON path. Defaults to `USAGE_DATA_DIR/account-inspection-schedule.json`.
-- `ACCOUNT_INSPECTION_SNAPSHOT_PATH` — optional latest inspection-result snapshot JSON path. Defaults to `USAGE_DATA_DIR/account-inspection-snapshot.json`.
+- `ACCOUNT_INSPECTION_SCHEDULE_PATH` — optional legacy schedule JSON source. It is read only when plugin SQLite has no schedule state; defaults to `USAGE_DATA_DIR/account-inspection-schedule.json`.
+- `ACCOUNT_INSPECTION_SNAPSHOT_PATH` — optional legacy result-snapshot JSON source. It is read only when plugin SQLite has no result state; defaults to `USAGE_DATA_DIR/account-inspection-snapshot.json`.
 
 ### WebDAV usage restore
 

@@ -187,8 +187,7 @@ if customization_sentinel.exists():
     raise SystemExit(f'target already contains CLIProxyAPI Pro customizations: {customization_sentinel}')
 
 new_customization_paths = (
-    'internal/api/handlers/management/account_inspection_scheduler.go',
-    'internal/api/handlers/management/account_inspection_scheduler_test.go',
+    'internal/api/handlers/management/pro_lifecycle.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
     'internal/api/handlers/management/routing_policy.go',
@@ -196,6 +195,8 @@ new_customization_paths = (
     'internal/api/embeddedusage_cutover_test.go',
     'internal/api/usage_stream_bridge.go',
     'internal/api/usage_stream_bridge_test.go',
+    'internal/api/management_stream_bridge.go',
+    'internal/api/management_stream_bridge_test.go',
     'internal/cmd/pro_plugin_startup_test.go',
     'internal/config/config_existing_updates.go',
     'internal/config/config_existing_updates_test.go',
@@ -213,6 +214,8 @@ new_customization_paths = (
     'internal/pluginhost/management_call_test.go',
     'internal/pluginhost/pro_backup_callbacks.go',
     'internal/pluginhost/pro_backup_callbacks_test.go',
+    'internal/pluginhost/account_inspection_callbacks.go',
+    'internal/pluginhost/account_inspection_callbacks_test.go',
     'internal/pluginhost/pro_observability_integration_test.go',
     'internal/pluginhost/pro_observability_ready.go',
     'internal/pluginhost/pro_observability_ready_test.go',
@@ -418,6 +421,18 @@ insert_before(
     read_text(Path(__file__).resolve().parent / 'plugin_pro_settings_api.go'),
     'type ProSettingsStore interface',
 )
+insert_before(
+    pluginapi_types,
+    '// ModelRegistrar registers plugin-provided models with the host.\n',
+    read_text(Path(__file__).resolve().parent / 'plugin_account_inspection_host_api.go'),
+    'type HostAuthRefreshRequest struct',
+)
+replace_once(
+    pluginapi_types,
+    '\t// Email is the credential email when available.\n',
+    '''\t// Revision changes whenever host-managed credential state changes.\n\tRevision int64 `json:"revision,omitempty"`\n\t// NextRefreshAfter is the next provider refresh eligibility time.\n\tNextRefreshAfter time.Time `json:"next_refresh_after,omitempty"`\n\t// DisplayName is a non-secret provider account label.\n\tDisplayName string `json:"display_name,omitempty"`\n\t// AccountID is the non-secret provider account identifier.\n\tAccountID string `json:"account_id,omitempty"`\n\t// UserID is the non-secret provider user identifier.\n\tUserID string `json:"user_id,omitempty"`\n\t// PlanType is the provider account plan identifier when available.\n\tPlanType string `json:"plan_type,omitempty"`\n\t// UsingAPI reports provider-specific official API routing when configured.\n\tUsingAPI *bool `json:"using_api,omitempty"`\n\t// VirtualSource identifies a plugin-expanded auth source without exposing credentials.\n\tVirtualSource string `json:"virtual_source,omitempty"`\n\t// InspectionMetadata contains an explicit non-secret provider metadata allowlist.\n\tInspectionMetadata map[string]any `json:"inspection_metadata,omitempty"`\n\t// InspectionAttributes contains an explicit non-secret attribute allowlist.\n\tInspectionAttributes map[string]string `json:"inspection_attributes,omitempty"`\n\t// Email is the credential email when available.\n''',
+    'Revision changes whenever host-managed credential state changes',
+)
 
 usage_translation = ROOT / 'internal/pluginhost/adapters_usage_translation.go'
 add_go_import(
@@ -530,8 +545,14 @@ pluginabi_types = ROOT / 'sdk/pluginabi/types.go'
 replace_once(
     pluginabi_types,
     '\tMethodAuthRefresh    = "auth.refresh"\n',
-    '\tMethodAuthRefresh    = "auth.refresh"\n\n\tMethodQuotaIdentifier   = "quota.identifier"\n\tMethodQuotaFetch        = "quota.fetch"\n\tMethodQuotaCacheGet     = "quota_cache.get"\n\tMethodQuotaCachePut     = "quota_cache.put"\n\tMethodQuotaCacheDelete  = "quota_cache.delete"\n\tMethodQuotaCacheObserve = "quota_cache.observe"\n\tMethodRuntimeStatsGet    = "runtime_state.auth_stats.get"\n\tMethodRuntimeStatsPut    = "runtime_state.auth_stats.put"\n\tMethodRuntimeStateDelete = "runtime_state.auth.delete"\n\tMethodProSettingGet      = "pro_settings.get"\n\tMethodProSettingPut      = "pro_settings.put"\n\tMethodHostProBackupExport = "host.pro_backup.export"\n\tMethodHostProBackupImport = "host.pro_backup.import"\n\n\tMethodAuthModelFilter = "model.filter_for_auth"\n',
+    '\tMethodAuthRefresh    = "auth.refresh"\n\n\tMethodQuotaIdentifier   = "quota.identifier"\n\tMethodQuotaFetch        = "quota.fetch"\n\tMethodQuotaCacheGet     = "quota_cache.get"\n\tMethodQuotaCachePut     = "quota_cache.put"\n\tMethodQuotaCacheDelete  = "quota_cache.delete"\n\tMethodQuotaCacheObserve = "quota_cache.observe"\n\tMethodRuntimeStatsGet    = "runtime_state.auth_stats.get"\n\tMethodRuntimeStatsPut    = "runtime_state.auth_stats.put"\n\tMethodRuntimeStateDelete = "runtime_state.auth.delete"\n\tMethodProSettingGet      = "pro_settings.get"\n\tMethodProSettingPut      = "pro_settings.put"\n\tMethodHostProBackupImport = "host.pro_backup.import"\n\n\tMethodAuthModelFilter = "model.filter_for_auth"\n',
     'MethodQuotaIdentifier',
+)
+replace_once(
+    pluginabi_types,
+    '\tMethodHostAuthSave           = "host.auth.save"\n',
+    '''\tMethodHostAuthSave           = "host.auth.save"\n\tMethodHostAuthInspectionList = "host.auth.inspection_list"\n\tMethodHostAuthRefresh        = "host.auth.refresh"\n\tMethodHostAuthHTTPDo         = "host.auth.http.do"\n\tMethodHostAuthHealthPatch    = "host.auth.health.patch"\n\tMethodHostAuthDelete         = "host.auth.delete"\n\tMethodHostAuthQuotaFetch     = "host.auth.quota.fetch"\n''',
+    'MethodHostAuthInspectionList',
 )
 
 host_callbacks = ROOT / 'internal/pluginhost/host_callbacks.go'
@@ -543,13 +564,23 @@ replace_once(
 ''',
     '''\tcase pluginabi.MethodHostAuthSave:
 \t\treturn h.callHostAuthSave(ctx, request)
-\tcase pluginabi.MethodHostProBackupExport:
-\t\treturn h.callHostProBackupExport(ctx, request)
+\tcase pluginabi.MethodHostAuthInspectionList:
+\t\treturn h.callHostAuthInspectionList(ctx, request)
+\tcase pluginabi.MethodHostAuthRefresh:
+\t\treturn h.callHostAuthRefresh(ctx, request)
+\tcase pluginabi.MethodHostAuthHTTPDo:
+\t\treturn h.callHostAuthHTTPDo(ctx, request)
+\tcase pluginabi.MethodHostAuthHealthPatch:
+\t\treturn h.callHostAuthHealthPatch(ctx, request)
+\tcase pluginabi.MethodHostAuthDelete:
+\t\treturn h.callHostAuthDelete(ctx, request)
+\tcase pluginabi.MethodHostAuthQuotaFetch:
+\t\treturn h.callHostAuthQuotaFetch(ctx, request)
 \tcase pluginabi.MethodHostProBackupImport:
 \t\treturn h.callHostProBackupImport(ctx, request)
 \tdefault:
 ''',
-    'case pluginabi.MethodHostProBackupExport:',
+    'case pluginabi.MethodHostProBackupImport:',
 )
 
 rpc_schema = ROOT / 'internal/pluginhost/rpc_schema.go'
@@ -1448,6 +1479,8 @@ queue_go_source('internal/pluginhost/pro_observability_ready.go')
 queue_go_source('internal/pluginhost/pro_observability_ready_test.go')
 queue_go_source('internal/pluginhost/pro_backup_callbacks.go')
 queue_go_source('internal/pluginhost/pro_backup_callbacks_test.go')
+queue_go_source('internal/pluginhost/account_inspection_callbacks.go')
+queue_go_source('internal/pluginhost/account_inspection_callbacks_test.go')
 
 service_plugins = ROOT / 'sdk/cliproxy/service_plugins.go'
 replace_once(
@@ -1570,8 +1603,6 @@ server_management = ROOT / 'internal/api/server_management.go'
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 auth_files_fields = ROOT / 'internal/api/handlers/management/auth_files_fields.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
-management_scheduler = ROOT / 'internal/api/handlers/management/account_inspection_scheduler.go'
-management_scheduler_test = ROOT / 'internal/api/handlers/management/account_inspection_scheduler_test.go'
 routing_policy = ROOT / 'internal/api/handlers/management/routing_policy.go'
 routing_policy_test = ROOT / 'internal/api/handlers/management/routing_policy_test.go'
 replace_once(
@@ -1579,11 +1610,6 @@ replace_once(
     '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n',
     '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n\t\tmgmt.POST("/management-panel/check-update", s.mgmt.PostCheckManagementPanelUpdate)\n',
 )
-scheduler_source = Path(__file__).resolve().parent / 'account_inspection_scheduler.go'
-write(management_scheduler, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(scheduler_source)))
-scheduler_test_source = Path(__file__).resolve().parent / 'account_inspection_scheduler_test.go'
-if scheduler_test_source.is_file():
-    write(management_scheduler_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(scheduler_test_source)))
 write(routing_policy, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy.go')))
 write(routing_policy_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy_test.go')))
 
@@ -1875,6 +1901,9 @@ redisqueue_plugin = ROOT / 'internal/redisqueue/plugin.go'
 queue_go_source('internal/api/embeddedusage_cutover_test.go')
 queue_go_source('internal/api/usage_stream_bridge.go')
 queue_go_source('internal/api/usage_stream_bridge_test.go')
+queue_go_source('internal/api/management_stream_bridge.go')
+queue_go_source('internal/api/management_stream_bridge_test.go')
+queue_go_source('internal/api/handlers/management/pro_lifecycle.go')
 replace_once(
     redisqueue_plugin,
 	'func init() {\n\tcoreusage.RegisterPlugin(&usageQueuePlugin{})\n}\n',
@@ -1981,6 +2010,7 @@ replace_once(
 ''',
     '''\t{
 \t\tmgmt.GET("/usage/stream", s.servePluginUsageStream)
+\t\tmgmt.GET("/account-inspection/logs", s.servePluginAccountInspectionStream)
 
 \t\tmgmt.GET("/config", s.mgmt.GetConfig)
 ''',
@@ -1988,7 +2018,7 @@ replace_once(
 replace_once(
     server_management,
     '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n''',
-    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n''',
+    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n''',
 )
 
 handler = ROOT / 'internal/api/handlers/management/handler.go'
@@ -2102,7 +2132,7 @@ replace_once(
     '''\th.startAttemptCleanup()
 \treturn h
 ''',
-    '''\th.startAccountInspectionScheduler()
+    '''\tstartRoutingPolicyController(h)
 \th.startAttemptCleanup()
 \treturn h
 ''',
@@ -2783,8 +2813,7 @@ subprocess.run([
     'cmd/server/main.go',
     'internal/api/server.go',
     'internal/api/server_test.go',
-    'internal/api/handlers/management/account_inspection_scheduler.go',
-    'internal/api/handlers/management/account_inspection_scheduler_test.go',
+    'internal/api/handlers/management/pro_lifecycle.go',
     'internal/api/handlers/management/auth_files.go',
     'internal/api/handlers/management/handler.go',
     'internal/api/handlers/management/management_panel.go',
@@ -2804,6 +2833,8 @@ subprocess.run([
     'internal/api/embeddedusage_cutover_test.go',
     'internal/api/usage_stream_bridge.go',
     'internal/api/usage_stream_bridge_test.go',
+    'internal/api/management_stream_bridge.go',
+    'internal/api/management_stream_bridge_test.go',
     'internal/cmd/pro_plugin_startup_test.go',
     'internal/config/config_existing_updates.go',
     'internal/config/config_existing_updates_test.go',
@@ -2819,6 +2850,8 @@ subprocess.run([
     'internal/pluginhost/host_callbacks.go',
     'internal/pluginhost/pro_backup_callbacks.go',
     'internal/pluginhost/pro_backup_callbacks_test.go',
+    'internal/pluginhost/account_inspection_callbacks.go',
+    'internal/pluginhost/account_inspection_callbacks_test.go',
     'internal/pluginhost/pro_observability_integration_test.go',
     'internal/pluginhost/pro_observability_ready.go',
     'internal/pluginhost/pro_observability_ready_test.go',

@@ -542,6 +542,13 @@ func (s *Store) init() error {
 			settings_json text not null,
 			updated_at_ms integer not null
 		)`,
+		`create table if not exists account_inspection_state (
+			state_key text primary key,
+			schema_version integer not null,
+			generation integer not null default 1,
+			payload_json blob not null,
+			updated_at_ms integer not null
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {

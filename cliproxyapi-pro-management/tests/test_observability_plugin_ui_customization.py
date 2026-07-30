@@ -32,6 +32,22 @@ class ObservabilityPluginUICustomizationTest(unittest.TestCase):
         self.assertIn("'/usage/aggregates'", aggregate_hook)
         self.assertIn("'/usage/ui/settings'", source)
 
+    def test_account_inspection_is_owned_only_by_plugin_resource(self) -> None:
+        self.assertFalse((ROOT / 'overlay/src/pages/AccountInspectionPage.tsx').exists())
+        self.assertFalse((ROOT / 'overlay/src/features/monitoring/accountInspection.ts').exists())
+        self.assertFalse((ROOT / 'overlay/src/services/api/accountInspection.ts').exists())
+
+        customizer = CUSTOMIZER.read_text()
+        self.assertNotIn("path: '/account-inspection', element: <AccountInspectionPage />", customizer)
+        self.assertNotIn('patch_account_inspection_page(target)', customizer)
+
+        plugin = (PLUGIN_ROOT / 'main.go').read_text()
+        source = (WEBAPP / 'src/pages/AccountInspectionPage.tsx').read_text()
+        scheduler = (PLUGIN_ROOT / 'internal/inspection/scheduler.go').read_text()
+        self.assertIn('Path:        "/account-inspection"', plugin)
+        self.assertIn('export function AccountInspectionPage()', source)
+        self.assertIn('accountInspectionScheduleStateKey', scheduler)
+
     def test_bridge_v2_keeps_auth_and_stream_transport_in_host(self) -> None:
         bridge = BRIDGE.read_text()
         self.assertIn('BRIDGE_VERSION = 2', bridge)
