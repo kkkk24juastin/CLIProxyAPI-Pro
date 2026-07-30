@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
@@ -15,23 +16,25 @@ const (
 )
 
 type Config struct {
+	Enabled        bool
 	CacheTTL       time.Duration
 	ResolveTimeout time.Duration
 	Providers      map[string]Provider
 }
 
 type Provider struct {
-	Plans map[string]Plan `yaml:"plans"`
+	Plans map[string]Plan `yaml:"plans" json:"plans"`
 }
 
 type Plan struct {
-	ExcludedModels []string `yaml:"excluded-models"`
+	ExcludedModels []string `yaml:"excluded-models" json:"excluded-models"`
 }
 
 type rawConfig struct {
-	CacheTTL       string              `yaml:"cache-ttl"`
-	ResolveTimeout string              `yaml:"resolve-timeout"`
-	Providers      map[string]Provider `yaml:"providers"`
+	Enabled        *bool               `yaml:"enabled" json:"enabled"`
+	CacheTTL       string              `yaml:"cache-ttl" json:"cache-ttl"`
+	ResolveTimeout string              `yaml:"resolve-timeout" json:"resolve-timeout"`
+	Providers      map[string]Provider `yaml:"providers" json:"providers"`
 }
 
 func Parse(raw []byte) (Config, error) {
@@ -41,7 +44,10 @@ func Parse(raw []byte) (Config, error) {
 			return Config{}, fmt.Errorf("parse oauth model policy config: %w", errUnmarshal)
 		}
 	}
-	cfg := Config{CacheTTL: DefaultCacheTTL, ResolveTimeout: DefaultResolveTimeout, Providers: map[string]Provider{}}
+	cfg := Config{Enabled: len(decoded.Providers) > 0, CacheTTL: DefaultCacheTTL, ResolveTimeout: DefaultResolveTimeout, Providers: map[string]Provider{}}
+	if decoded.Enabled != nil {
+		cfg.Enabled = *decoded.Enabled
+	}
 	var err error
 	if strings.TrimSpace(decoded.CacheTTL) != "" {
 		cfg.CacheTTL, err = time.ParseDuration(strings.TrimSpace(decoded.CacheTTL))
@@ -87,6 +93,34 @@ func Parse(raw []byte) (Config, error) {
 		cfg.Providers[providerKey] = clean
 	}
 	return cfg, nil
+}
+
+func Marshal(cfg Config) ([]byte, error) {
+	normalized, err := normalizeConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	enabled := normalized.Enabled
+	return json.Marshal(rawConfig{
+		Enabled:        &enabled,
+		CacheTTL:       normalized.CacheTTL.String(),
+		ResolveTimeout: normalized.ResolveTimeout.String(),
+		Providers:      normalized.Providers,
+	})
+}
+
+func normalizeConfig(cfg Config) (Config, error) {
+	enabled := cfg.Enabled
+	raw, err := yaml.Marshal(rawConfig{
+		Enabled:        &enabled,
+		CacheTTL:       cfg.CacheTTL.String(),
+		ResolveTimeout: cfg.ResolveTimeout.String(),
+		Providers:      cfg.Providers,
+	})
+	if err != nil {
+		return Config{}, err
+	}
+	return Parse(raw)
 }
 
 func normalizeKey(value string) string {

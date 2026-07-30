@@ -8,12 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
-	pluginconfig "github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/oauth-model-policy/internal/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/oauthmodelpolicy/config"
 )
 
 func TestFilterUsesXAIPlanFromBilling(t *testing.T) {
-	cfg, errParse := pluginconfig.Parse([]byte(`
+	cfg, errParse := modelconfig.Parse([]byte(`
 providers:
   xai:
     plans:
@@ -30,8 +29,8 @@ providers:
 	storage, _ := json.Marshal(map[string]any{"access_token": "token", "subject": "user"})
 	result := engine.Filter(context.Background(), Input{
 		AuthID: "xai-1", AuthProvider: "xai", AuthKind: "oauth", StorageJSON: storage,
-		Models: []pluginapi.ModelInfo{{ID: "grok-4.5-reasoning"}, {ID: "grok-4"}},
-		HTTPDo: func(_ context.Context, request pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		Models: []ModelInfo{{ID: "grok-4.5-reasoning"}, {ID: "grok-4"}},
+		HTTPDo: func(_ context.Context, request HTTPRequest) (HTTPResponse, error) {
 			if request.Method != "GET" || request.URL != xaiBillingURL {
 				t.Fatalf("billing request = %#v", request)
 			}
@@ -41,7 +40,7 @@ providers:
 			if got := request.Headers["x-userid"]; len(got) != 1 || got[0] != "user" {
 				t.Fatalf("x-userid = %#v", got)
 			}
-			return pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"config":{"monthlyLimit":{"val":20000}}}`)}, nil
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"config":{"monthlyLimit":{"val":20000}}}`)}, nil
 		},
 	})
 	if !result.Handled || len(result.ExcludedModelIDs) != 1 || result.ExcludedModelIDs[0] != "grok-4.5-reasoning" {
@@ -53,7 +52,7 @@ providers:
 }
 
 func TestFilterUsesUnknownRuleWhenBillingFails(t *testing.T) {
-	cfg, _ := pluginconfig.Parse([]byte(`
+	cfg, _ := modelconfig.Parse([]byte(`
 providers:
   xai:
     plans:
@@ -64,7 +63,7 @@ providers:
 	engine.ApplyConfig(cfg)
 	result := engine.Filter(context.Background(), Input{
 		AuthID: "xai-2", AuthProvider: "xai", AuthKind: "oauth",
-		Models: []pluginapi.ModelInfo{{ID: "grok-pro-1"}, {ID: "grok-basic"}},
+		Models: []ModelInfo{{ID: "grok-pro-1"}, {ID: "grok-basic"}},
 	})
 	if !result.Handled || len(result.ExcludedModelIDs) != 1 || result.ExcludedModelIDs[0] != "grok-pro-1" {
 		t.Fatalf("Filter() = %#v", result)
@@ -75,7 +74,7 @@ providers:
 }
 
 func TestFilterFallsBackToStalePlanCache(t *testing.T) {
-	cfg, _ := pluginconfig.Parse([]byte(`
+	cfg, _ := modelconfig.Parse([]byte(`
 cache-ttl: 1s
 providers:
   xai:
@@ -91,9 +90,9 @@ providers:
 	storage, _ := json.Marshal(map[string]any{"access_token": "token"})
 	result := engine.Filter(context.Background(), Input{
 		AuthID: "xai-3", AuthProvider: "xai", AuthKind: "oauth", StorageJSON: storage,
-		Models: []pluginapi.ModelInfo{{ID: "grok-imagine-video"}, {ID: "grok-pro-1"}},
-		HTTPDo: func(context.Context, pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
-			return pluginapi.HTTPResponse{}, errors.New("temporary billing failure")
+		Models: []ModelInfo{{ID: "grok-imagine-video"}, {ID: "grok-pro-1"}},
+		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+			return HTTPResponse{}, errors.New("temporary billing failure")
 		},
 	})
 	if !result.Handled || len(result.ExcludedModelIDs) != 1 || result.ExcludedModelIDs[0] != "grok-imagine-video" {
@@ -105,7 +104,7 @@ providers:
 }
 
 func TestRuleForPlanSeparatesUnknownAndDefaultFallbacks(t *testing.T) {
-	provider := pluginconfig.Provider{Plans: map[string]pluginconfig.Plan{
+	provider := modelconfig.Provider{Plans: map[string]modelconfig.Plan{
 		"_unknown": {ExcludedModels: []string{"unknown-*"}},
 		"_default": {ExcludedModels: []string{"default-*"}},
 	}}
@@ -117,7 +116,7 @@ func TestRuleForPlanSeparatesUnknownAndDefaultFallbacks(t *testing.T) {
 	if !knownMatched || knownKey != "_default" || knownRule.ExcludedModels[0] != "default-*" {
 		t.Fatalf("known fallback = %#v, %q, %t", knownRule, knownKey, knownMatched)
 	}
-	defaultOnly := pluginconfig.Provider{Plans: map[string]pluginconfig.Plan{
+	defaultOnly := modelconfig.Provider{Plans: map[string]modelconfig.Plan{
 		"_default": {ExcludedModels: []string{"default-*"}},
 	}}
 	if _, key, matched := ruleForPlan(defaultOnly, "unknown"); matched || key != "" {
@@ -126,7 +125,7 @@ func TestRuleForPlanSeparatesUnknownAndDefaultFallbacks(t *testing.T) {
 }
 
 func TestFilterUsesLocalPlansForEveryProvider(t *testing.T) {
-	cfg, errParse := pluginconfig.Parse([]byte(`
+	cfg, errParse := modelconfig.Parse([]byte(`
 providers:
   codex:
     plans:
@@ -169,7 +168,7 @@ providers:
 			engine.ApplyConfig(cfg)
 			result := engine.Filter(context.Background(), Input{
 				AuthID: test.provider + "-1", AuthProvider: test.provider, AuthKind: "oauth", StorageJSON: storage,
-				Models: []pluginapi.ModelInfo{{ID: "blocked-model"}, {ID: "allowed-model"}},
+				Models: []ModelInfo{{ID: "blocked-model"}, {ID: "allowed-model"}},
 			})
 			if !result.Handled || len(result.ExcludedModelIDs) != 1 || result.ExcludedModelIDs[0] != "blocked-model" {
 				t.Fatalf("Filter() = %#v", result)
@@ -182,7 +181,7 @@ providers:
 }
 
 func TestFilterResolvesClaudePlanFromProfile(t *testing.T) {
-	cfg, _ := pluginconfig.Parse([]byte(`
+	cfg, _ := modelconfig.Parse([]byte(`
 providers:
   claude:
     plans:
@@ -193,12 +192,12 @@ providers:
 	engine.ApplyConfig(cfg)
 	result := engine.Filter(context.Background(), Input{
 		AuthID: "claude-1", AuthProvider: "claude", AuthKind: "oauth", StorageJSON: storage,
-		Models: []pluginapi.ModelInfo{{ID: "claude-opus-4"}, {ID: "claude-sonnet-4"}},
-		HTTPDo: func(_ context.Context, request pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		Models: []ModelInfo{{ID: "claude-opus-4"}, {ID: "claude-sonnet-4"}},
+		HTTPDo: func(_ context.Context, request HTTPRequest) (HTTPResponse, error) {
 			if request.URL != claudeProfileURL || request.Headers.Get("Authorization") != "Bearer claude-token" {
 				t.Fatalf("profile request = %#v", request)
 			}
-			return pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"account":{"has_claude_max":false,"has_claude_pro":true}}`)}, nil
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"account":{"has_claude_max":false,"has_claude_pro":true}}`)}, nil
 		},
 	})
 	if !result.Handled || result.Annotations["plan_key"] != "pro" || result.Annotations["plan_source"] != "provider-api" {
@@ -207,7 +206,7 @@ providers:
 }
 
 func TestFilterResolvesGoogleProviderPlans(t *testing.T) {
-	cfg, _ := pluginconfig.Parse([]byte(`
+	cfg, _ := modelconfig.Parse([]byte(`
 providers:
   gemini-cli:
     plans:
@@ -238,12 +237,12 @@ providers:
 			engine.ApplyConfig(cfg)
 			result := engine.Filter(context.Background(), Input{
 				AuthID: test.provider + "-1", AuthProvider: test.provider, AuthKind: "oauth", StorageJSON: storage,
-				Models: []pluginapi.ModelInfo{{ID: test.model}},
-				HTTPDo: func(_ context.Context, request pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+				Models: []ModelInfo{{ID: test.model}},
+				HTTPDo: func(_ context.Context, request HTTPRequest) (HTTPResponse, error) {
 					if request.URL != test.url || request.Headers.Get("Authorization") != "Bearer google-token" {
 						t.Fatalf("plan request = %#v", request)
 					}
-					return pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(test.response)}, nil
+					return HTTPResponse{StatusCode: 200, Body: []byte(test.response)}, nil
 				},
 			})
 			if !result.Handled || result.Annotations["plan_key"] != test.wantPlan || result.Annotations["plan_source"] != "provider-api" {

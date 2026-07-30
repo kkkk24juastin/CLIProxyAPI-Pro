@@ -1,10 +1,5 @@
-import { parseDocument } from 'yaml';
 import { authFilesApi } from './authFiles';
 import { apiClient } from './client';
-import { configFileApi } from './configFile';
-import { pluginsApi } from './plugins';
-
-export const PROXY_POOL_PLUGIN_ID = 'proxy-pool';
 export const DEFAULT_PROXY_POOL_LISTEN = '127.0.0.1:8318';
 
 export type ProxyPoolStrategy = 'round-robin' | 'weighted' | 'least-connections';
@@ -21,13 +16,12 @@ export interface ProxyPoolNodeConfig {
 
 export interface ProxyPoolConfig {
   enabled: boolean;
-  priority: number;
+  takeoverEnabled: boolean;
   listen: string;
   strategy: ProxyPoolStrategy;
   dialTimeout: string;
   maxFailoverAttempts: number;
   failOpen: boolean;
-  restoreProxyUrl: string;
   healthCheck: {
     enabled: boolean;
     interval: string;
@@ -98,10 +92,6 @@ export interface ProxyPoolBypassCredential {
 }
 
 export interface ProxyPoolSnapshot {
-  pluginsEnabled: boolean;
-  pluginDiscovered: boolean;
-  pluginEnabled: boolean;
-  pluginRegistered: boolean;
   config: ProxyPoolConfig;
   status: ProxyPoolStatus | null;
   globalProxyUrl: string;
@@ -123,14 +113,13 @@ const asNumber = (value: unknown, fallback = 0): number => {
 };
 
 export const defaultProxyPoolConfig = (): ProxyPoolConfig => ({
-  enabled: true,
-  priority: 100,
+  enabled: false,
+  takeoverEnabled: false,
   listen: DEFAULT_PROXY_POOL_LISTEN,
   strategy: 'round-robin',
   dialTimeout: '8s',
   maxFailoverAttempts: 3,
   failOpen: false,
-  restoreProxyUrl: '',
   healthCheck: {
     enabled: true,
     interval: '30s',
@@ -169,7 +158,7 @@ export const normalizeProxyPoolConfig = (value: unknown): ProxyPoolConfig => {
     : [];
   return {
     enabled: asBoolean(source.enabled, true),
-    priority: Math.trunc(asNumber(source.priority, defaults.priority)),
+    takeoverEnabled: asBoolean(source['takeover-enabled'], false),
     listen: asString(source.listen, defaults.listen).trim() || defaults.listen,
     strategy: normalizeStrategy(source.strategy),
     dialTimeout: asString(source['dial-timeout'], defaults.dialTimeout).trim(),
@@ -178,7 +167,6 @@ export const normalizeProxyPoolConfig = (value: unknown): ProxyPoolConfig => {
       Math.trunc(asNumber(source['max-failover-attempts'], defaults.maxFailoverAttempts))
     ),
     failOpen: asBoolean(source['fail-open'], defaults.failOpen),
-    restoreProxyUrl: asString(source['restore-proxy-url']).trim(),
     healthCheck: {
       enabled: asBoolean(health.enabled, defaults.healthCheck.enabled),
       interval: asString(health.interval, defaults.healthCheck.interval).trim(),
@@ -204,14 +192,13 @@ export const normalizeProxyPoolConfig = (value: unknown): ProxyPoolConfig => {
 };
 
 export const serializeProxyPoolConfig = (config: ProxyPoolConfig): Record<string, unknown> => ({
-  enabled: true,
-  priority: config.priority,
+  enabled: config.enabled,
+  'takeover-enabled': config.takeoverEnabled,
   listen: config.listen.trim(),
   strategy: config.strategy,
   'dial-timeout': config.dialTimeout.trim(),
   'max-failover-attempts': config.maxFailoverAttempts,
   'fail-open': config.failOpen,
-  'restore-proxy-url': config.restoreProxyUrl.trim(),
   'health-check': {
     enabled: config.healthCheck.enabled,
     interval: config.healthCheck.interval.trim(),
@@ -383,8 +370,6 @@ const readGlobalProxyUrl = async (): Promise<string> => {
   return asString(response['proxy-url']).trim();
 };
 
-const localProxyUrl = (listen: string): string => `socks5://${listen.trim()}`;
-
 export const isProxyPoolListenerUrl = (proxyUrl: string, listen: string): boolean => {
   try {
     const parsed = new URL(proxyUrl.trim());
@@ -396,14 +381,6 @@ export const isProxyPoolListenerUrl = (proxyUrl: string, listen: string): boolea
   } catch {
     return false;
   }
-};
-
-const ensureGlobalPluginSwitch = async (): Promise<void> => {
-  const raw = await configFileApi.fetchConfigYaml();
-  const document = parseDocument(raw || '{}');
-  if (document.errors.length > 0) throw document.errors[0];
-  document.setIn(['plugins', 'enabled'], true);
-  await configFileApi.saveConfigYaml(document.toString());
 };
 
 const waitForStatus = async (
@@ -429,7 +406,7 @@ const waitForStatus = async (
   }
   throw lastError instanceof Error
     ? lastError
-    : new Error('Proxy pool plugin did not become ready in time');
+    : new Error('Proxy pool runtime did not become ready in time');
 };
 
 const loadBypassCredentials = async (): Promise<ProxyPoolBypassCredential[]> => {
@@ -486,57 +463,36 @@ const loadBypassCredentials = async (): Promise<ProxyPoolBypassCredential[]> => 
 
 export const proxyPoolApi = {
   async load(): Promise<ProxyPoolSnapshot> {
-    const [pluginList, rawConfig, globalProxyUrl, bypassCredentials] = await Promise.all([
-      pluginsApi.list(),
-      pluginsApi.getConfig(PROXY_POOL_PLUGIN_ID),
+    const [rawConfig, statusValue, globalProxyUrl, bypassCredentials] = await Promise.all([
+      apiClient.get('/pro/proxy-pool/config'),
+      apiClient.get('/pro/proxy-pool/status').catch(() => null),
       readGlobalProxyUrl(),
       loadBypassCredentials(),
     ]);
-    const plugin = pluginList.plugins.find((entry) => entry.id === PROXY_POOL_PLUGIN_ID);
-    let status: ProxyPoolStatus | null = null;
-    if (plugin?.registered) {
-      try {
-        status = normalizeStatus(await apiClient.get('/pro/proxy-pool/status'));
-      } catch {
-        status = null;
-      }
-    }
+    const status = statusValue ? normalizeStatus(statusValue) : null;
     const config = normalizeProxyPoolConfig(rawConfig);
     const effectiveBypassCredentials = bypassCredentials.filter(
       (item) => !isProxyPoolListenerUrl(item.proxyUrl, config.listen)
     );
     return {
-      pluginsEnabled: pluginList.pluginsEnabled,
-      pluginDiscovered: Boolean(plugin),
-      pluginEnabled: Boolean(plugin?.enabled),
-      pluginRegistered: Boolean(plugin?.registered),
       config,
       status,
       globalProxyUrl,
-      takeoverActive: globalProxyUrl === localProxyUrl(config.listen),
+      takeoverActive: config.enabled && config.takeoverEnabled && status?.ready === true,
       bypassCredentials: effectiveBypassCredentials,
     };
   },
 
-  async save(config: ProxyPoolConfig, preserveTakeover = false): Promise<ProxyPoolStatus> {
-    const pluginList = await pluginsApi.list();
-    const plugin = pluginList.plugins.find((entry) => entry.id === PROXY_POOL_PLUGIN_ID);
-    if (!plugin) throw new Error('Bundled proxy-pool plugin was not found');
-    let minimumGeneration = 1;
-    if (plugin.registered) {
-      try {
-        minimumGeneration = (await this.status()).generation + 1;
-      } catch {
-        minimumGeneration = 1;
-      }
+  async save(config: ProxyPoolConfig): Promise<ProxyPoolStatus> {
+    const nextConfig = { ...config, enabled: true };
+    let minimumGeneration: number;
+    try {
+      minimumGeneration = (await this.status()).generation + 1;
+    } catch {
+      minimumGeneration = 1;
     }
-    await pluginsApi.patchConfig(PROXY_POOL_PLUGIN_ID, serializeProxyPoolConfig(config));
-    if (!plugin.enabled) await pluginsApi.updateEnabled(PROXY_POOL_PLUGIN_ID, true);
-    if (!pluginList.pluginsEnabled) await ensureGlobalPluginSwitch();
-    const status = await waitForStatus(config.listen, minimumGeneration);
-    if (preserveTakeover) {
-      await apiClient.put('/proxy-url', { value: status.proxyUrl });
-    }
+    await apiClient.patch('/pro/proxy-pool/config', serializeProxyPoolConfig(nextConfig));
+    const status = await waitForStatus(nextConfig.listen, minimumGeneration);
     return status;
   },
 
@@ -544,22 +500,16 @@ export const proxyPoolApi = {
     if (!config.nodes.some((node) => node.enabled && node.url.trim())) {
       throw new Error('At least one enabled proxy node is required');
     }
-    const currentProxyUrl = await readGlobalProxyUrl();
-    const nextLocalProxyUrl = localProxyUrl(config.listen);
     const nextConfig = {
       ...config,
-      restoreProxyUrl:
-        currentProxyUrl && currentProxyUrl !== nextLocalProxyUrl
-          ? currentProxyUrl
-          : config.restoreProxyUrl,
+      enabled: true,
+      takeoverEnabled: true,
     };
-    const status = await this.save(nextConfig);
-    await apiClient.put('/proxy-url', { value: status.proxyUrl });
-    return status;
+    return this.save(nextConfig);
   },
 
   async deactivate(config: ProxyPoolConfig): Promise<void> {
-    await apiClient.put('/proxy-url', { value: config.restoreProxyUrl.trim() });
+    await this.save({ ...config, takeoverEnabled: false });
   },
 
   async status(): Promise<ProxyPoolStatus> {

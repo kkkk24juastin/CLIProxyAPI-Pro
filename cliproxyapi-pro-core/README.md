@@ -4,7 +4,7 @@
 
 本目录不维护 upstream 的完整 fork。Docker 构建时会下载指定 upstream release，复制本地 `embeddedusage/` 包，执行 `patches/` 中的补丁脚本，然后构建 Pro 部署使用的多架构镜像。
 
-标准 macOS、Windows amd64、Linux Pro Release 与 Docker 镜像会预打包 `proxy-pool` 和 `oauth-model-policy` 动态插件。前者在回环地址提供固定 SOCKS5 入口；后者按多个提供商的 OAuth 套餐排除账号不可用的模型。Windows ARM64、FreeBSD 与 `_no-plugin` 资产暂不内置动态插件。
+代理池和 OAuth 模型策略直接编译到 Core 二进制中，所有 Pro 构建（包括 `_no-plugin`）都具备这两项能力。配置保存在 usage SQLite 的 `pro_settings`，不会写入 `config.yaml`。
 
 ## 定制内容
 
@@ -81,7 +81,7 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 - `model_prices` — 基础价格兼容数据和完整的全局 model 价格规则。
 - `quota_cache` — 配额卡片和账号级刷新使用的 SQLite-backed quota snapshots。
 - `monitoring_settings` — 监控日志保留时间、WebDAV 备份配置和 models.dev 定期同步配置。
-- `pro_settings` — Pro 私有设置；当前包含请求状态保护策略。
+- `pro_settings` — Pro 私有设置；当前包含请求状态保护、代理池和 OAuth 模型策略。
 - `routing_cursor_state` — 账号路由轮转游标。
 - `auth_runtime_stats` — 账号选择、成功/失败和近期请求桶统计。
 - `account_inspection_schedule` — 后端账号巡检调度设置。
@@ -137,11 +137,11 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 `Executor.HttpRequest` 提供兼容适配；插件未来原生实现协议后会自动优先使用原生能力。
 协议字段与兼容策略见 [QUOTA_PROVIDER.md](QUOTA_PROVIDER.md)。
 
-### OAuth 套餐模型策略插件
+### 内建代理池与 OAuth 套餐模型策略
 
-补丁层为 upstream 插件 SDK/ABI 增加通用 `AuthModelFilter` 能力。Core 只提供当前 auth、原始模型集合和受控 HTTP callback，并强制插件只能减去已有模型；套餐识别与规则均位于预打包的 `oauth-model-policy` 插件中。
+Core 内建回环 SOCKS5 代理池以及 xAI、Codex、Claude、Gemini CLI、Antigravity、Kimi 的 OAuth 套餐模型策略。代理接管只在运行时替换全局传输路径，不改写 `config.yaml`，凭证级代理和显式 `direct` 不受影响。模型处理顺序为 upstream `excluded_models`、内建套餐过滤、OAuth alias/prefix、模型注册，最终结果同时约束 `/v1/models` 聚合和请求调度候选账号。
 
-插件支持 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi OAuth，并为所有提供商提供 `_unknown`、`_default` 与自定义套餐规则。处理顺序为 upstream `excluded_models`、插件套餐过滤、OAuth alias/prefix、模型注册。最终注册结果同时约束 `/v1/models` 聚合和请求调度候选账号。配置与探测细节见 `cliproxyapi-pro-plugins/oauth-model-policy/README.md`。
+首次启动会读取旧 `plugins.configs.proxy-pool` 和 `plugins.configs.oauth-model-policy`，校验并写入 SQLite，回读确认成功后再原子清除旧 YAML。旧代理接管若处于启用状态，会先把根 `proxy-url` 恢复为旧 `restore-proxy-url`；其他第三方插件配置保持不变。
 
 ### 后端账号巡检调度器
 
@@ -237,7 +237,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `Dockerfile` — 下载 upstream CLIProxyAPI，应用定制层，并构建最终镜像。
 - `Dockerfile.runtime` — GitHub Actions 使用预构建 Linux 二进制组装运行时镜像。
 - `QUOTA_PROVIDER.md` — QuotaProvider 插件协议和兼容策略。
-- `../cliproxyapi-pro-plugins/oauth-model-policy/` — 按 OAuth 套餐过滤账号模型的动态插件。
+- `patches/sources/internal/profeatures/` — 内建代理池、模型策略的 SQLite 迁移与运行时编排。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
 - `embeddedusage/` — 内嵌 SQLite usage service 和 management routes。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。

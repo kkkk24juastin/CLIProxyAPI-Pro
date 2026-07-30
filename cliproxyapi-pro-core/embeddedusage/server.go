@@ -1054,8 +1054,8 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if proSettingsImporter != nil && importedProSettings > 0 {
-		if err := proSettingsImporter(proSettings); err != nil {
+	if importedProSettings > 0 {
+		if err := ApplyImportedProSettings(c.Request.Context(), proSettings); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	pluginconfig "github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/proxy-pool/internal/config"
+	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/config"
 	proxy "golang.org/x/net/proxy"
 )
 
@@ -120,11 +120,11 @@ func TestEngineRoutesSOCKSConnectionsRoundRobin(t *testing.T) {
 	proxyB := startConnectProxy(t)
 	echo := startEchoServer(t)
 	listen := freeAddress(t)
-	cfg := pluginconfig.Default()
+	cfg := proxyconfig.Default()
 	cfg.Listen = listen
 	cfg.HealthCheck.Enabled = false
 	cfg.MaxFailoverAttempts = 2
-	cfg.Nodes = []pluginconfig.NodeConfig{
+	cfg.Nodes = []proxyconfig.NodeConfig{
 		{ID: "a", URL: "http://" + proxyA.listener.Addr().String(), Enabled: true, Weight: 1, Order: 10},
 		{ID: "b", URL: "http://" + proxyB.listener.Addr().String(), Enabled: true, Weight: 1, Order: 20},
 	}
@@ -171,12 +171,12 @@ func TestEngineFailsOverToNextProxy(t *testing.T) {
 	echo := startEchoServer(t)
 	listen := freeAddress(t)
 	closedAddress := freeAddress(t)
-	cfg := pluginconfig.Default()
+	cfg := proxyconfig.Default()
 	cfg.Listen = listen
 	cfg.HealthCheck.Enabled = false
 	cfg.DialTimeout.Duration = 200 * time.Millisecond
 	cfg.MaxFailoverAttempts = 2
-	cfg.Nodes = []pluginconfig.NodeConfig{
+	cfg.Nodes = []proxyconfig.NodeConfig{
 		{ID: "broken", URL: "http://" + closedAddress, Enabled: true, Weight: 1, Order: 10},
 		{ID: "working", URL: "http://" + working.listener.Addr().String(), Enabled: true, Weight: 1, Order: 20},
 	}
@@ -219,10 +219,10 @@ func TestProbeDraftDoesNotMutateSavedNodeRuntime(t *testing.T) {
 		_, _ = io.WriteString(writer, `{"ip":"203.0.113.8","country":"Testland"}`)
 	}))
 	t.Cleanup(target.Close)
-	cfg := pluginconfig.Default()
+	cfg := proxyconfig.Default()
 	cfg.Listen = freeAddress(t)
 	cfg.HealthCheck.Enabled = false
-	cfg.Nodes = []pluginconfig.NodeConfig{
+	cfg.Nodes = []proxyconfig.NodeConfig{
 		{ID: "saved", URL: "http://127.0.0.1:1", Enabled: true, Weight: 1, Order: 10},
 	}
 	engine := New()

@@ -14,10 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/pool"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/socks5"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
-	pluginconfig "github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/proxy-pool/internal/config"
-	"github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/proxy-pool/internal/pool"
-	"github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/proxy-pool/internal/socks5"
 	proxy "golang.org/x/net/proxy"
 )
 
@@ -54,7 +54,7 @@ type ProbeResult struct {
 
 type Engine struct {
 	mu            sync.RWMutex
-	cfg           pluginconfig.Config
+	cfg           proxyconfig.Config
 	pool          *pool.Pool
 	server        *socks5.Server
 	lastError     string
@@ -73,7 +73,7 @@ func New() *Engine {
 	return &Engine{ctx: ctx, cancel: cancel, startedAt: time.Now().UTC()}
 }
 
-func (e *Engine) ApplyConfig(cfg pluginconfig.Config) error {
+func (e *Engine) ApplyConfig(cfg proxyconfig.Config) error {
 	if err := cfg.NormalizeAndValidate(); err != nil {
 		e.setLastError(err)
 		return err
@@ -227,7 +227,7 @@ func (e *Engine) Probe(ctx context.Context, nodeID, rawURL string) ProbeResult {
 }
 
 // ProbeDraft validates and tests a proxy URL without first persisting it in the
-// plugin configuration. Draft probes do not mutate the health state or runtime
+// persisted configuration. Draft probes do not mutate the health state or runtime
 // counters of an existing node with the same ID.
 func (e *Engine) ProbeDraft(ctx context.Context, nodeID, rawProxyURL, rawTestURL string) ProbeResult {
 	e.mu.RLock()
@@ -235,7 +235,7 @@ func (e *Engine) ProbeDraft(ctx context.Context, nodeID, rawProxyURL, rawTestURL
 	e.mu.RUnlock()
 	result := ProbeResult{NodeID: strings.TrimSpace(nodeID), CheckedAt: time.Now().UTC().Format(time.RFC3339)}
 	validationConfig := cfg
-	validationConfig.Nodes = []pluginconfig.NodeConfig{{ID: "draft", URL: strings.TrimSpace(rawProxyURL), Enabled: true, Weight: 1}}
+	validationConfig.Nodes = []proxyconfig.NodeConfig{{ID: "draft", URL: strings.TrimSpace(rawProxyURL), Enabled: true, Weight: 1}}
 	if errValidate := validationConfig.NormalizeAndValidate(); errValidate != nil {
 		result.Error = errValidate.Error()
 		return result
@@ -246,7 +246,7 @@ func (e *Engine) ProbeDraft(ctx context.Context, nodeID, rawProxyURL, rawTestURL
 	return probeProxyURL(ctx, result, validationConfig.Nodes[0].URL, rawTestURL, cfg.HealthCheck.Timeout.Duration, nil, cfg)
 }
 
-func probeProxyURL(ctx context.Context, result ProbeResult, rawProxyURL, rawTestURL string, timeout time.Duration, node *pool.Node, cfg pluginconfig.Config) ProbeResult {
+func probeProxyURL(ctx context.Context, result ProbeResult, rawProxyURL, rawTestURL string, timeout time.Duration, node *pool.Node, cfg proxyconfig.Config) ProbeResult {
 	rawURL := rawTestURL
 	parsedURL, errURL := url.Parse(rawURL)
 	if errURL != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {

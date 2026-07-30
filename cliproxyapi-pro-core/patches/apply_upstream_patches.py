@@ -191,6 +191,7 @@ new_customization_paths = (
     'internal/api/handlers/management/account_inspection_scheduler_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
+    'internal/api/handlers/management/pro_features.go',
     'internal/api/handlers/management/routing_policy.go',
     'internal/api/handlers/management/routing_policy_test.go',
     'internal/config/config_existing_updates.go',
@@ -201,8 +202,6 @@ new_customization_paths = (
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
     'internal/pluginhost/quota_provider.go',
     'internal/pluginhost/quota_provider_test.go',
-    'internal/pluginhost/auth_model_filter.go',
-    'internal/pluginhost/auth_model_filter_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
     'internal/pluginstore/gitstore_auth_test.go',
@@ -215,11 +214,31 @@ new_customization_paths = (
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
     'sdk/cliproxy/auth/inspection_refresh.go',
+    'sdk/cliproxy/pro_features_service_test.go',
 )
 for relative_path in new_customization_paths:
     target_path = ROOT / relative_path
     if target_path.exists():
         raise SystemExit(f'upstream path collides with a Pro customization: {target_path}')
+
+queue_tree(PATCH_SOURCE_DIR / 'internal/proxypool', ROOT / 'internal/proxypool')
+queue_tree(PATCH_SOURCE_DIR / 'internal/oauthmodelpolicy', ROOT / 'internal/oauthmodelpolicy')
+queue_tree(PATCH_SOURCE_DIR / 'internal/profeatures', ROOT / 'internal/profeatures')
+queue_tree(PATCH_SOURCE_DIR / 'sdk/proxyutil', ROOT / 'sdk/proxyutil')
+
+proxyutil_source = ROOT / 'sdk/proxyutil/proxy.go'
+replace_once(
+    proxyutil_source,
+    'func BuildHTTPTransport(raw string) (*http.Transport, Mode, error) {\n\tsetting, errParse := Parse(raw)\n',
+    'func BuildHTTPTransport(raw string) (*http.Transport, Mode, error) {\n\traw = resolveRuntimeProxyOverride(raw)\n\tsetting, errParse := Parse(raw)\n',
+    'raw = resolveRuntimeProxyOverride(raw)',
+)
+replace_once(
+    proxyutil_source,
+    'func BuildDialer(raw string) (proxy.Dialer, Mode, error) {\n\tsetting, errParse := Parse(raw)\n',
+    'func BuildDialer(raw string) (proxy.Dialer, Mode, error) {\n\traw = resolveRuntimeProxyOverride(raw)\n\tsetting, errParse := Parse(raw)\n',
+    'func BuildDialer(raw string) (proxy.Dialer, Mode, error) {\n\traw = resolveRuntimeProxyOverride(raw)',
+)
 
 write(
     ROOT / 'internal/runtime/executor/xai_quota_observer.go',
@@ -343,24 +362,11 @@ insert_before(
     read_text(Path(__file__).resolve().parent / 'plugin_quota_api.go'),
     'type QuotaProvider interface',
 )
-replace_once(
-    pluginapi_types,
-    '\t// ModelRegistrar contributes development-time model metadata to the host registry.\n',
-    '\t// AuthModelFilter subtracts models from one concrete auth registration.\n\tAuthModelFilter AuthModelFilter\n\t// ModelRegistrar contributes development-time model metadata to the host registry.\n',
-    'AuthModelFilter AuthModelFilter',
-)
-insert_before(
-    pluginapi_types,
-    '// ModelRegistrar registers plugin-provided models with the host.\n',
-    read_text(Path(__file__).resolve().parent / 'plugin_auth_model_filter_api.go'),
-    'type AuthModelFilter interface',
-)
-
 pluginabi_types = ROOT / 'sdk/pluginabi/types.go'
 replace_once(
     pluginabi_types,
     '\tMethodAuthRefresh    = "auth.refresh"\n',
-    '\tMethodAuthRefresh    = "auth.refresh"\n\n\tMethodQuotaIdentifier = "quota.identifier"\n\tMethodQuotaFetch      = "quota.fetch"\n\n\tMethodAuthModelFilter = "model.filter_for_auth"\n',
+    '\tMethodAuthRefresh    = "auth.refresh"\n\n\tMethodQuotaIdentifier = "quota.identifier"\n\tMethodQuotaFetch      = "quota.fetch"\n',
     'MethodQuotaIdentifier',
 )
 
@@ -368,7 +374,7 @@ rpc_schema = ROOT / 'internal/pluginhost/rpc_schema.go'
 replace_once(
     rpc_schema,
     '\tAuthProvider                  bool                         `json:"auth_provider"`\n',
-    '\tAuthProvider                  bool                         `json:"auth_provider"`\n\tQuotaProvider                 bool                         `json:"quota_provider"`\n\tAuthModelFilter               bool                         `json:"auth_model_filter"`\n',
+    '\tAuthProvider                  bool                         `json:"auth_provider"`\n\tQuotaProvider                 bool                         `json:"quota_provider"`\n',
     'QuotaProvider                 bool',
 )
 insert_before(
@@ -382,21 +388,10 @@ insert_before(
 ''',
     'type rpcQuotaFetchRequest struct',
 )
-insert_before(
-    rpc_schema,
-    'type rpcAuthModelRequest struct {\n',
-    '''type rpcAuthModelFilterRequest struct {
-\tpluginapi.AuthModelFilterRequest
-\tHostCallbackID string `json:"host_callback_id,omitempty"`
-}
-
-''',
-    'type rpcAuthModelFilterRequest struct',
-)
 replace_once(
     rpc_schema,
     '\t\tAuthProvider:                  caps.AuthProvider != nil,\n',
-    '\t\tAuthProvider:                  caps.AuthProvider != nil,\n\t\tQuotaProvider:                 caps.QuotaProvider != nil,\n\t\tAuthModelFilter:               caps.AuthModelFilter != nil,\n',
+    '\t\tAuthProvider:                  caps.AuthProvider != nil,\n\t\tQuotaProvider:                 caps.QuotaProvider != nil,\n',
     'QuotaProvider:                 caps.QuotaProvider != nil',
 )
 
@@ -411,33 +406,20 @@ insert_before(
 ''',
     'type rpcQuotaProvider struct',
 )
-insert_before(
-    rpc_client,
-    'type rpcFrontendAuthProvider struct {\n',
-    '''type rpcAuthModelFilter struct {
-\t*rpcPluginAdapter
-}
-
-''',
-    'type rpcAuthModelFilter struct',
-)
 replace_once(
     rpc_client,
     '''\tif resp.Capabilities.FrontendAuthProvider {
 \t\tplugin.Capabilities.FrontendAuthProvider = rpcFrontendAuthProvider{rpcPluginAdapter: adapter}
 \t}
 ''',
-    '''\tif resp.Capabilities.AuthModelFilter {
-\t\tplugin.Capabilities.AuthModelFilter = rpcAuthModelFilter{rpcPluginAdapter: adapter}
-\t}
-\tif resp.Capabilities.QuotaProvider {
+    '''\tif resp.Capabilities.QuotaProvider {
 \t\tplugin.Capabilities.QuotaProvider = rpcQuotaProvider{rpcPluginAdapter: adapter}
 \t}
 \tif resp.Capabilities.FrontendAuthProvider {
 \t\tplugin.Capabilities.FrontendAuthProvider = rpcFrontendAuthProvider{rpcPluginAdapter: adapter}
 \t}
 ''',
-    'plugin.Capabilities.AuthModelFilter = rpcAuthModelFilter',
+    'plugin.Capabilities.QuotaProvider = rpcQuotaProvider',
 )
 replace_once(
     rpc_client,
@@ -452,12 +434,6 @@ replace_once(
 \t\treq.HTTPClient = nil
 \t\treturn req
 \tcase rpcQuotaFetchRequest:
-\t\treq.HTTPClient = nil
-\t\treturn req
-\tcase pluginapi.AuthModelFilterRequest:
-\t\treq.HTTPClient = nil
-\t\treturn req
-\tcase rpcAuthModelFilterRequest:
 \t\treq.HTTPClient = nil
 \t\treturn req
 ''',
@@ -482,28 +458,12 @@ func (p rpcQuotaProvider) FetchQuota(ctx context.Context, req pluginapi.QuotaFet
 ''',
     'func (p rpcQuotaProvider) FetchQuota',
 )
-insert_before(
-    rpc_client,
-    'func sanitizePluginMetadata(src map[string]any) map[string]any {\n',
-    '''func (p rpcAuthModelFilter) FilterAuthModels(ctx context.Context, req pluginapi.AuthModelFilterRequest) (pluginapi.AuthModelFilterResponse, error) {
-\tcallbackID, closeCallback := p.openHostCallbackContext(ctx)
-\tdefer closeCallback()
-\treturn callPlugin[pluginapi.AuthModelFilterResponse](ctx, p.client, pluginabi.MethodAuthModelFilter, rpcAuthModelFilterRequest{
-\t\tAuthModelFilterRequest: req,
-\t\tHostCallbackID:         callbackID,
-\t})
-}
-
-''',
-    'func (p rpcAuthModelFilter) FilterAuthModels',
-)
-
 plugin_host = ROOT / 'internal/pluginhost/host.go'
 replace_once(
     plugin_host,
     '\t\tcaps.AuthProvider != nil ||\n',
-    '\t\tcaps.AuthProvider != nil ||\n\t\tcaps.QuotaProvider != nil ||\n\t\tcaps.AuthModelFilter != nil ||\n',
-    'caps.AuthModelFilter != nil',
+    '\t\tcaps.AuthProvider != nil ||\n\t\tcaps.QuotaProvider != nil ||\n',
+    'caps.QuotaProvider != nil',
 )
 
 plugin_snapshot = ROOT / 'internal/pluginhost/snapshot.go'
@@ -563,16 +523,6 @@ quota_provider_test_source = Path(__file__).resolve().parent / 'plugin_quota_pro
 quota_provider_test_target = ROOT / 'internal/pluginhost/quota_provider_test.go'
 write(quota_provider_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(quota_provider_test_source)))
 
-auth_model_filter_source = Path(__file__).resolve().parent / 'plugin_auth_model_filter.go'
-auth_model_filter_target = ROOT / 'internal/pluginhost/auth_model_filter.go'
-write(auth_model_filter_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(auth_model_filter_source)))
-auth_model_filter_test_source = Path(__file__).resolve().parent / 'plugin_auth_model_filter_test.go'
-auth_model_filter_test_target = ROOT / 'internal/pluginhost/auth_model_filter_test.go'
-write(auth_model_filter_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(auth_model_filter_test_source)))
-auth_model_filter_service_test_source = Path(__file__).resolve().parent / 'plugin_auth_model_filter_service_test.go'
-auth_model_filter_service_test_target = ROOT / 'sdk/cliproxy/service_auth_model_filter_test.go'
-write(auth_model_filter_service_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(auth_model_filter_service_test_source)))
-
 service_models = ROOT / 'sdk/cliproxy/service_models.go'
 replace_once(
     service_models,
@@ -584,23 +534,23 @@ replace_once(
     '''\tif ctx.Err() != nil {
 \t\treturn
 \t}
-\tmodels = s.applyAuthModelFilters(ctx, a, models)
+\tmodels = s.applyOAuthModelPolicy(ctx, a, models)
 \tmodels = applyOAuthModelAliasForAuth(s.cfg, provider, authKind, a.Attributes, models)
 ''',
-    'models = s.applyAuthModelFilters(ctx, a, models)',
+    'models = s.applyOAuthModelPolicy(ctx, a, models)',
 )
 insert_before(
     service_models,
     'func (s *Service) oauthExcludedModels(provider, authKind string) []string {\n',
-    '''func (s *Service) applyAuthModelFilters(ctx context.Context, auth *coreauth.Auth, models []*ModelInfo) []*ModelInfo {
-\tif s == nil || s.pluginHost == nil || auth == nil || len(models) == 0 {
+    '''func (s *Service) applyOAuthModelPolicy(ctx context.Context, auth *coreauth.Auth, models []*ModelInfo) []*ModelInfo {
+\tif s == nil || s.proFeatures == nil || auth == nil || len(models) == 0 {
 \t\treturn models
 \t}
-\treturn s.pluginHost.FilterModelsForAuth(ctx, auth, models).Models
+\treturn s.proFeatures.FilterModels(ctx, s.cfg, auth, models)
 }
 
 ''',
-    'func (s *Service) applyAuthModelFilters',
+    'func (s *Service) applyOAuthModelPolicy',
 )
 
 service_executors = ROOT / 'sdk/cliproxy/service_executors.go'
@@ -610,10 +560,19 @@ replace_once(
 \tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
 ''',
     '''\tmodels := applyExcludedModels(result.Models, activeExcluded)
-\tmodels = s.applyAuthModelFilters(ctx, activeAuth, models)
+\tmodels = s.applyOAuthModelPolicy(ctx, activeAuth, models)
 \tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
 ''',
-    'models = s.applyAuthModelFilters(ctx, activeAuth, models)',
+    'models = s.applyOAuthModelPolicy(ctx, activeAuth, models)',
+)
+
+write(
+    ROOT / 'sdk/cliproxy/pro_features_service_test.go',
+    re.sub(
+        r'github\.com/router-for-me/CLIProxyAPI/v\d+',
+        MODULE_PATH,
+        read_text(Path(__file__).resolve().parent / 'pro_features_service_test.go'),
+    ),
 )
 
 legacy_gemini_quota_source = Path(__file__).resolve().parent / 'plugin_gemini_cli_quota_legacy.go'
@@ -627,6 +586,128 @@ plugin_quota_management = ROOT / 'internal/api/handlers/management/plugin_quota.
 write(plugin_quota_management, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'plugin_quota_management.go')))
 plugin_quota_management_test = ROOT / 'internal/api/handlers/management/plugin_quota_test.go'
 write(plugin_quota_management_test, read_text(Path(__file__).resolve().parent / 'plugin_quota_management_test.go'))
+
+pro_features_management = ROOT / 'internal/api/handlers/management/pro_features.go'
+write(pro_features_management, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'pro_features_management.go')))
+
+server_options_source = ROOT / 'internal/api/server_options.go'
+add_go_import(server_options_source, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/profeatures') + '"\n')
+replace_once(
+    server_options_source,
+    '\tpluginHost            *pluginhost.Host\n',
+    '\tpluginHost            *pluginhost.Host\n\tproFeatures           *profeatures.Runtime\n',
+    'proFeatures           *profeatures.Runtime',
+)
+insert_before(
+    server_options_source,
+    '// WithConfigReloadHook registers a callback used after management saves config changes.\n',
+    '''// WithProFeatures registers the statically linked Pro feature runtime.
+func WithProFeatures(runtime *profeatures.Runtime) ServerOption {
+\treturn func(cfg *serverOptionConfig) {
+\t\tcfg.proFeatures = runtime
+\t}
+}
+
+''',
+    'func WithProFeatures(runtime *profeatures.Runtime)',
+)
+
+management_handler_source = ROOT / 'internal/api/handlers/management/handler.go'
+add_go_import(management_handler_source, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/profeatures') + '"\n')
+replace_once(
+    management_handler_source,
+    '\tpluginHost              *pluginhost.Host\n',
+    '\tpluginHost              *pluginhost.Host\n\tproFeatures             *profeatures.Runtime\n',
+    'proFeatures             *profeatures.Runtime',
+)
+
+server_source = ROOT / 'internal/api/server.go'
+replace_once(
+    server_source,
+    '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n',
+    '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n\ts.mgmt.SetProFeatures(optionState.proFeatures)\n',
+    's.mgmt.SetProFeatures(optionState.proFeatures)',
+)
+
+service_source = ROOT / 'sdk/cliproxy/service.go'
+add_go_import(service_source, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/profeatures') + '"\n')
+replace_once(
+    service_source,
+    '\t// pluginHost owns dynamic plugin lifecycle and runtime capability adapters.\n\tpluginHost *pluginhost.Host\n',
+    '\t// pluginHost owns dynamic plugin lifecycle and runtime capability adapters.\n\tpluginHost *pluginhost.Host\n\n\t// proFeatures owns the statically linked Pro proxy pool and OAuth model policy.\n\tproFeatures *profeatures.Runtime\n',
+    'proFeatures *profeatures.Runtime',
+)
+
+builder_source = ROOT / 'sdk/cliproxy/builder.go'
+add_go_import(builder_source, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/profeatures') + '"\n')
+replace_once(
+    builder_source,
+    '''\tconfigaccess.Register(&b.cfg.SDKConfig)
+\tpluginHost := b.pluginHost
+''',
+    '''\tproFeatureRuntime, errProFeatures := profeatures.New(context.Background(), b.configPath, b.cfg.ProxyURL)
+\tif errProFeatures != nil {
+\t\treturn nil, fmt.Errorf("cliproxy: initialize Pro features: %w", errProFeatures)
+\t}
+\tb.cfg.ProxyURL = proFeatureRuntime.BaseProxyURL()
+
+\tconfigaccess.Register(&b.cfg.SDKConfig)
+\tpluginHost := b.pluginHost
+''',
+    'proFeatureRuntime, errProFeatures := profeatures.New',
+)
+replace_once(
+    builder_source,
+    '\t\tpluginHost:          pluginHost,\n',
+    '\t\tpluginHost:          pluginHost,\n\t\tproFeatures:         proFeatureRuntime,\n',
+    'proFeatures:         proFeatureRuntime',
+)
+replace_once(
+    builder_source,
+    '''\tif b.postAuthHook != nil {
+\t\tservice.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
+\t}
+''',
+    '''\tproFeatureRuntime.SetModelPolicyChangeHandler(func(ctx context.Context) {
+\t\tif service.coreManager == nil {
+\t\t\treturn
+\t\t}
+\t\tservice.registerModelsForAuthBatch(coreauth.WithSkipPersist(ctx), service.coreManager.List())
+\t\tservice.coreManager.RefreshSchedulerAll()
+\t})
+\tif b.postAuthHook != nil {
+\t\tservice.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
+\t}
+''',
+    'proFeatureRuntime.SetModelPolicyChangeHandler',
+)
+replace_once(
+    builder_source,
+    '\t\tapi.WithPluginHost(pluginHost),\n',
+    '\t\tapi.WithPluginHost(pluginHost),\n\t\tapi.WithProFeatures(proFeatureRuntime),\n',
+    'api.WithProFeatures(proFeatureRuntime)',
+)
+
+service_config_source = ROOT / 'sdk/cliproxy/service_config.go'
+replace_once(
+    service_config_source,
+    '''\troutingState := normalizedRoutingRuntimeState(commit.cfg)
+''',
+    '''\tif s.proFeatures != nil {
+\t\ts.proFeatures.SetBaseProxyURL(commit.cfg.ProxyURL)
+\t}
+\troutingState := normalizedRoutingRuntimeState(commit.cfg)
+''',
+    's.proFeatures.SetBaseProxyURL(commit.cfg.ProxyURL)',
+)
+
+service_lifecycle_source = ROOT / 'sdk/cliproxy/service_lifecycle.go'
+replace_once(
+    service_lifecycle_source,
+    '\t\tusage.StopDefault()\n',
+    '\t\tif s.proFeatures != nil {\n\t\t\ts.proFeatures.Close()\n\t\t}\n\t\tusage.StopDefault()\n',
+    's.proFeatures.Close()',
+)
 
 usage_manager = ROOT / 'sdk/cliproxy/usage/manager.go'
 add_go_import(usage_manager, '"net/http"\n', '\t"reflect"\n')
@@ -1730,7 +1811,7 @@ replace_once(
 replace_once(
     server_management,
     '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n''',
-    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n''',
+    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n\t\ts.mgmt.RegisterProFeatureRoutes(mgmt)\n''',
 )
 
 handler = ROOT / 'internal/api/handlers/management/handler.go'
@@ -2522,6 +2603,7 @@ subprocess.run([
     'cmd/server/main.go',
     'internal/api/server.go',
     'internal/api/server_test.go',
+    'internal/api/server_options.go',
     'internal/api/handlers/management/account_inspection_scheduler.go',
     'internal/api/handlers/management/account_inspection_scheduler_test.go',
     'internal/api/handlers/management/auth_files.go',
@@ -2532,6 +2614,7 @@ subprocess.run([
     'internal/managementasset/gitstore_token_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
+    'internal/api/handlers/management/pro_features.go',
     'internal/client/claude/models/models.go',
     'internal/client/claude/models/models_test.go',
     'internal/config/sdk_config.go',
@@ -2545,14 +2628,16 @@ subprocess.run([
     'internal/config/config_existing_updates.go',
     'internal/config/config_existing_updates_test.go',
     'internal/config/config_normalization.go',
+    'internal/embeddedusage/global.go',
+    'internal/embeddedusage/pro_settings.go',
+    'internal/embeddedusage/server.go',
+    'internal/embeddedusage/server_test.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
     'internal/pluginhost/gemini_cli_quota_legacy.go',
     'internal/pluginhost/gemini_cli_quota_legacy_test.go',
     'internal/pluginhost/quota_provider.go',
     'internal/pluginhost/quota_provider_test.go',
-    'internal/pluginhost/auth_model_filter.go',
-    'internal/pluginhost/auth_model_filter_test.go',
     'internal/pluginhost/rpc_client.go',
     'internal/pluginhost/rpc_schema.go',
     'internal/pluginhost/snapshot.go',
@@ -2566,6 +2651,20 @@ subprocess.run([
     'internal/requestmeta/client_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
+    'internal/oauthmodelpolicy/config/config.go',
+    'internal/oauthmodelpolicy/config/config_test.go',
+    'internal/oauthmodelpolicy/policy/engine.go',
+    'internal/oauthmodelpolicy/policy/engine_test.go',
+    'internal/profeatures/migration.go',
+    'internal/profeatures/migration_test.go',
+    'internal/profeatures/runtime.go',
+    'internal/proxypool/config/config.go',
+    'internal/proxypool/config/config_test.go',
+    'internal/proxypool/engine/engine.go',
+    'internal/proxypool/engine/engine_test.go',
+    'internal/proxypool/pool/pool.go',
+    'internal/proxypool/pool/pool_test.go',
+    'internal/proxypool/socks5/server.go',
     'internal/runtime/executor/xai_executor.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'internal/runtime/executor/xai_websockets_executor.go',
@@ -2576,12 +2675,18 @@ subprocess.run([
     'sdk/cliproxy/auth/conductor.go',
     'sdk/cliproxy/auth/scheduler.go',
     'sdk/cliproxy/auth/types.go',
+    'sdk/cliproxy/builder.go',
+    'sdk/cliproxy/service.go',
+    'sdk/cliproxy/service_config.go',
     'sdk/cliproxy/service_executors.go',
-    'sdk/cliproxy/service_auth_model_filter_test.go',
+    'sdk/cliproxy/service_lifecycle.go',
     'sdk/cliproxy/service_models.go',
     'sdk/cliproxy/usage/manager.go',
     'sdk/cliproxy/usage/manager_test.go',
     'sdk/pluginabi/types.go',
     'sdk/pluginapi/types.go',
+    'sdk/proxyutil/proxy.go',
+    'sdk/proxyutil/runtime_override.go',
+    'sdk/proxyutil/runtime_override_test.go',
 ], cwd=ROOT, check=True)
 subprocess.run(['go', 'mod', 'tidy'], cwd=ROOT, check=True)

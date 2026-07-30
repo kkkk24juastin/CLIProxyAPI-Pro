@@ -208,17 +208,18 @@ func TestUsageImportRejectsTamperedManifestBackupBeforeWriting(t *testing.T) {
 	}
 }
 
-func TestUsageBackupRestoresProSettingsAndAppliesImportHandler(t *testing.T) {
+func TestUsageBackupRestoresAllNamespacedProSettingsAndConsumers(t *testing.T) {
 	ctx := context.Background()
 	sourceStore := openTestStore(t)
-	want := ProSetting{
-		Namespace:     ProSettingNamespaceRoutingRequestProtection,
-		SchemaVersion: 1,
-		Settings:      json.RawMessage(`{"enabled":true,"mode":"enforce"}`),
-		UpdatedAtMS:   123,
+	wants := []ProSetting{
+		{Namespace: ProSettingNamespaceRoutingRequestProtection, SchemaVersion: 1, Settings: json.RawMessage(`{"enabled":true,"mode":"enforce"}`), UpdatedAtMS: 123},
+		{Namespace: ProSettingNamespaceProxyPool, SchemaVersion: 1, Settings: json.RawMessage(`{"enabled":false}`), UpdatedAtMS: 124},
+		{Namespace: ProSettingNamespaceOAuthModelPolicy, SchemaVersion: 1, Settings: json.RawMessage(`{"enabled":true}`), UpdatedAtMS: 125},
 	}
-	if err := sourceStore.SetProSetting(ctx, want); err != nil {
-		t.Fatal(err)
+	for _, want := range wants {
+		if err := sourceStore.SetProSetting(ctx, want); err != nil {
+			t.Fatal(err)
+		}
 	}
 	exportRecorder := httptest.NewRecorder()
 	testUsageRouter(sourceStore).ServeHTTP(exportRecorder, httptest.NewRequest(http.MethodGet, "/usage/export", nil))
@@ -227,32 +228,38 @@ func TestUsageBackupRestoresProSettingsAndAppliesImportHandler(t *testing.T) {
 	}
 
 	targetStore := openTestStore(t)
-	applied := make(chan ProSetting, 1)
-	SetProSettingsImportHandler(func(items []ProSetting) error {
-		for _, item := range items {
-			if item.Namespace == want.Namespace {
-				applied <- item
-			}
-		}
-		return nil
-	})
-	defer SetProSettingsImportHandler(nil)
+	applied := make(chan ProSetting, len(wants))
+	for _, want := range wants {
+		unregister := RegisterProSettingConsumer(want.Namespace, func(_ context.Context, item ProSetting) error {
+			applied <- item
+			return nil
+		})
+		defer unregister()
+	}
 	importRecorder := httptest.NewRecorder()
 	testUsageRouter(targetStore).ServeHTTP(importRecorder, httptest.NewRequest(http.MethodPost, "/usage/import", bytes.NewReader(exportRecorder.Body.Bytes())))
 	if importRecorder.Code != http.StatusOK {
 		t.Fatalf("import status = %d; body=%s", importRecorder.Code, importRecorder.Body.String())
 	}
-	got, ok, err := targetStore.GetProSetting(ctx, want.Namespace)
-	if err != nil || !ok || string(got.Settings) != string(want.Settings) {
-		t.Fatalf("restored pro setting = %+v, %v, %v", got, ok, err)
-	}
-	select {
-	case item := <-applied:
-		if string(item.Settings) != string(want.Settings) {
-			t.Fatalf("applied pro setting = %+v", item)
+	for _, want := range wants {
+		got, ok, err := targetStore.GetProSetting(ctx, want.Namespace)
+		if err != nil || !ok || string(got.Settings) != string(want.Settings) {
+			t.Fatalf("restored pro setting %q = %+v, %v, %v", want.Namespace, got, ok, err)
 		}
-	default:
-		t.Fatal("Pro settings import handler was not called")
+	}
+	seen := make(map[string]ProSetting, len(wants))
+	for range wants {
+		select {
+		case item := <-applied:
+			seen[item.Namespace] = item
+		default:
+			t.Fatal("a namespaced Pro settings consumer was not called")
+		}
+	}
+	for _, want := range wants {
+		if item, ok := seen[want.Namespace]; !ok || string(item.Settings) != string(want.Settings) {
+			t.Fatalf("applied pro setting %q = %+v, found:%v", want.Namespace, item, ok)
+		}
 	}
 }
 

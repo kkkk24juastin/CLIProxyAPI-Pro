@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	pluginconfig "github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/proxy-pool/internal/config"
+	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/config"
 )
 
-func testConfig(strategy string) pluginconfig.Config {
-	return pluginconfig.Config{
+func testConfig(strategy string) proxyconfig.Config {
+	return proxyconfig.Config{
 		Strategy: strategy,
-		Nodes: []pluginconfig.NodeConfig{
+		Nodes: []proxyconfig.NodeConfig{
 			{ID: "a", URL: "http://user:secret@127.0.0.1:19001", Enabled: true, Weight: 2, Order: 10},
 			{ID: "b", URL: "http://127.0.0.1:19002", Enabled: true, Weight: 1, Order: 20},
 		},

@@ -4,7 +4,7 @@ Customized Docker build layer for upstream `router-for-me/CLIProxyAPI`.
 
 This directory does not maintain a full fork of upstream. During Docker build it downloads an upstream release, copies in the local `embeddedusage/` package, applies the patch script in `patches/`, and builds a multi-arch image for the Pro deployment.
 
-Standard macOS, Windows amd64, and Linux Pro releases plus Docker images prebundle the `proxy-pool` and `oauth-model-policy` dynamic plugins. The former exposes a fixed loopback SOCKS5 endpoint; the latter removes models unavailable to OAuth plans across supported providers. Windows ARM64, FreeBSD, and `_no-plugin` assets do not currently bundle dynamic plugins.
+The proxy pool and OAuth model policy are linked directly into Core. Every Pro build, including `_no-plugin` assets, includes both features. Their settings are stored in the usage SQLite `pro_settings` table and are never written to `config.yaml`.
 
 ## What this customization adds
 
@@ -81,7 +81,7 @@ The export contains usage events and may also include metadata records:
 - `model_prices` — legacy base prices plus complete global per-model pricing rules.
 - `quota_cache` — SQLite-backed quota snapshots used by quota cards and account-scoped refresh.
 - `monitoring_settings` — retention, WebDAV backup, and scheduled models.dev synchronization settings.
-- `pro_settings` — Pro-owned settings, currently including request-state protection.
+- `pro_settings` — Pro-owned settings, currently including request-state protection, proxy-pool settings, and OAuth model policy.
 - `routing_cursor_state` — account-routing rotation cursors.
 - `auth_runtime_stats` — account selection, success/failure, and recent-request-bucket statistics.
 - `account_inspection_schedule` — persisted backend account-inspection schedule.
@@ -138,11 +138,11 @@ changes: Core adapts its existing `Executor.HttpRequest`; a future native implem
 priority automatically. See [QUOTA_PROVIDER.md](QUOTA_PROVIDER.md) for the schema and compatibility
 rules.
 
-### OAuth plan model policy plugin
+### Built-in proxy pool and OAuth plan model policy
 
-The patch layer adds a generic `AuthModelFilter` capability to the upstream plugin SDK/ABI. Core provides the current auth, its native model set, and a controlled HTTP callback, while enforcing that a plugin may only subtract existing models. Plan discovery and policy rules stay in the bundled `oauth-model-policy` plugin.
+Core includes a loopback SOCKS5 proxy pool and OAuth plan policies for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi. Proxy takeover changes only the runtime global transport path; it does not rewrite `config.yaml`, credential-level proxies, or explicit `direct` settings. Model processing order is upstream `excluded_models`, built-in plan filtering, OAuth alias/prefix, then model registration. The result constrains both `/v1/models` aggregation and scheduler candidates.
 
-The plugin supports xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi OAuth, with `_unknown`, `_default`, and custom plan rules for every provider. Processing order is upstream `excluded_models`, plugin plan filtering, OAuth alias/prefix, then model registration. The final registration constrains both `/v1/models` aggregation and scheduler candidates. See `cliproxyapi-pro-plugins/oauth-model-policy/README.md` for configuration and discovery details.
+On first startup, Core reads legacy `plugins.configs.proxy-pool` and `plugins.configs.oauth-model-policy`, validates and stores them in SQLite, verifies the stored bytes, and only then atomically removes the old YAML. If legacy takeover was active, the root `proxy-url` is restored from the old `restore-proxy-url`; unrelated third-party plugin configuration is preserved.
 
 ### Backend account inspection scheduler
 
@@ -238,7 +238,7 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `Dockerfile` — downloads upstream CLIProxyAPI, applies this customization layer, and builds the final image.
 - `Dockerfile.runtime` — assembles the Actions runtime image from prebuilt Linux binaries.
 - `QUOTA_PROVIDER.md` — QuotaProvider plugin protocol and compatibility rules.
-- `../cliproxyapi-pro-plugins/oauth-model-policy/` — dynamic plugin for filtering auth models by OAuth plan.
+- `patches/sources/internal/profeatures/` — SQLite migration and runtime orchestration for the built-in proxy pool and model policy.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
 - `embeddedusage/` — embedded SQLite usage service and management routes.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.

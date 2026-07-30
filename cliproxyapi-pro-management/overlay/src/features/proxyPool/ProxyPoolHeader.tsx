@@ -61,7 +61,7 @@ export function ProxyPoolHeader({
           size="sm"
           onClick={onTakeover}
           loading={busy}
-          disabled={loading || !snapshot?.pluginDiscovered}
+          disabled={loading || !snapshot}
         >
           {active
             ? t('proxy_pool.stop_takeover', { defaultValue: 'Stop takeover' })

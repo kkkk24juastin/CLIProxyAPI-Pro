@@ -270,9 +270,7 @@ jobs:
           rm -rf "${context_dir}"
           mkdir -p \
             "${context_dir}/binaries/linux/amd64" \
-            "${context_dir}/binaries/linux/arm64" \
-            "${context_dir}/plugins/linux/amd64" \
-            "${context_dir}/plugins/linux/arm64"
+            "${context_dir}/binaries/linux/arm64"
 
           amd64_archive="docker-assets/linux-amd64/CLIProxyAPI_${RELEASE_TAG#v}_linux_amd64.tar.gz"
           arm64_archive="docker-assets/linux-arm64/CLIProxyAPI_${RELEASE_TAG#v}_linux_aarch64.tar.gz"
@@ -288,10 +286,6 @@ jobs:
 
           cp "${tmp_dir}/amd64/cli-proxy-api" "${context_dir}/binaries/linux/amd64/CLIProxyAPI"
           cp "${tmp_dir}/arm64/cli-proxy-api" "${context_dir}/binaries/linux/arm64/CLIProxyAPI"
-          cp "${tmp_dir}/amd64/plugins/linux/amd64/proxy-pool.so" "${context_dir}/plugins/linux/amd64/proxy-pool.so"
-          cp "${tmp_dir}/arm64/plugins/linux/arm64/proxy-pool.so" "${context_dir}/plugins/linux/arm64/proxy-pool.so"
-          cp "${tmp_dir}/amd64/plugins/linux/amd64/oauth-model-policy.so" "${context_dir}/plugins/linux/amd64/oauth-model-policy.so"
-          cp "${tmp_dir}/arm64/plugins/linux/arm64/oauth-model-policy.so" "${context_dir}/plugins/linux/arm64/oauth-model-policy.so"
           cp "${tmp_dir}/amd64/config.example.yaml" "${context_dir}/config.example.yaml"
           cp docker-assets/management/management.html "${context_dir}/management.html"
           cp customizations-repo/cliproxyapi-pro-core/entrypoint.sh "${context_dir}/entrypoint.sh"
@@ -303,10 +297,6 @@ jobs:
           ls -lh \
             "${context_dir}/binaries/linux/amd64/CLIProxyAPI" \
             "${context_dir}/binaries/linux/arm64/CLIProxyAPI" \
-            "${context_dir}/plugins/linux/amd64/proxy-pool.so" \
-            "${context_dir}/plugins/linux/arm64/proxy-pool.so" \
-            "${context_dir}/plugins/linux/amd64/oauth-model-policy.so" \
-            "${context_dir}/plugins/linux/arm64/oauth-model-policy.so" \
             "${context_dir}/management.html"
 
       - name: Set up QEMU
@@ -534,30 +524,13 @@ jobs:
             -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
             -o "${archive_dir}/${binary_name}" ./cmd/server/
 
-          plugin_extension="so"
-          if [ "${GOOS}" = "darwin" ]; then plugin_extension="dylib"; fi
-          if [ "${GOOS}" = "windows" ]; then plugin_extension="dll"; fi
-          mkdir -p "${archive_dir}/plugins/${GOOS}/${GOARCH}"
-          plugin_relatives=()
-          for plugin_name in proxy-pool oauth-model-policy; do
-            plugin_relative="plugins/${GOOS}/${GOARCH}/${plugin_name}.${plugin_extension}"
-            plugin_source=".${plugin_name}-build"
-            rm -rf "${plugin_source}"
-            cp -R "../customizations-repo/cliproxyapi-pro-plugins/${plugin_name}" "${plugin_source}"
-            go -C "${plugin_source}" mod edit -replace github.com/router-for-me/CLIProxyAPI/v7=..
-            CGO_ENABLED=1 GOOS="${GOOS}" GOARCH="${GOARCH}" go -C "${plugin_source}" build \
-              -buildvcs=false -trimpath -buildmode=c-shared \
-              -o "${PWD}/${archive_dir}/${plugin_relative}" .
-            plugin_relatives+=("${plugin_relative}")
-          done
-
           cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
           python ../customizations-repo/scripts/build/create_reproducible_archive.py \
             --format "${ARCHIVE_FORMAT}" \
             --output "dist/${archive_name}" \
             --root "${archive_dir}" \
             --source-date-epoch "${SOURCE_DATE_EPOCH}" \
-            "${binary_name}" LICENSE README.md README_EN.md config.example.yaml "${plugin_relatives[@]}"
+            "${binary_name}" LICENSE README.md README_EN.md config.example.yaml
 
       - name: Build Linux glibc plugin-capable archive
         if: matrix.kind == 'linux-glibc-plugin'
@@ -577,10 +550,6 @@ jobs:
           archive_name="CLIProxyAPI_${RELEASE_TAG#v}_linux_${ASSET_ARCH}.tar.gz"
           rm -rf "dist/linux-${GOARCH}"
           mkdir -p "${archive_dir}"
-          for plugin_name in proxy-pool oauth-model-policy; do
-            rm -rf ".${plugin_name}-build"
-            cp -R "../customizations-repo/cliproxyapi-pro-plugins/${plugin_name}" ".${plugin_name}-build"
-          done
 
           go_archive="go${GO_VERSION}.linux-${GOARCH}.tar.gz"
           go_sha256="$(
@@ -614,14 +583,6 @@ jobs:
                 -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
                 -o "'"${archive_dir}"'/cli-proxy-api" ./cmd/server/
 
-              mkdir -p "'"${archive_dir}"'/plugins/linux/${GOARCH}"
-              for plugin_name in proxy-pool oauth-model-policy; do
-                go -C ".${plugin_name}-build" mod edit -replace github.com/router-for-me/CLIProxyAPI/v7=/src
-                CGO_ENABLED=1 GOOS=linux GOARCH="${GOARCH}" go -C ".${plugin_name}-build" build \
-                  -buildvcs=false -trimpath -buildmode=c-shared \
-                  -o "/src/'"${archive_dir}"'/plugins/linux/${GOARCH}/${plugin_name}.so" .
-              done
-
               glibc_versions="$(readelf --version-info "'"${archive_dir}"'/cli-proxy-api" | sed -n "s/.*Name: GLIBC_\([0-9.]*\).*/\1/p" | sort -Vu)"
               if [ -n "${glibc_versions}" ]; then
                 printf "GLIBC versions:\n%s\n" "${glibc_versions}"
@@ -639,9 +600,7 @@ jobs:
             --output "dist/${archive_name}" \
             --root "${archive_dir}" \
             --source-date-epoch "${SOURCE_DATE_EPOCH}" \
-            cli-proxy-api LICENSE README.md README_EN.md config.example.yaml \
-            "plugins/linux/${GOARCH}/proxy-pool.so" \
-            "plugins/linux/${GOARCH}/oauth-model-policy.so"
+            cli-proxy-api LICENSE README.md README_EN.md config.example.yaml
 
       - name: Install FreeBSD plugin build dependencies
         if: matrix.kind == 'freebsd-plugin'

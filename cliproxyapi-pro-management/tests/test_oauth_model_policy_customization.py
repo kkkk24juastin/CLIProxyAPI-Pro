@@ -34,7 +34,7 @@ class OAuthModelPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('createPortal(', source)
         self.assertIn('document.body', source)
 
-    def test_service_preserves_explicit_empty_rules_and_enables_runtime(self) -> None:
+    def test_service_preserves_explicit_empty_rules_and_uses_native_runtime(self) -> None:
         source = SERVICE.read_text()
         for provider in ('xai', 'codex', 'claude', 'gemini-cli', 'antigravity', 'kimi'):
             self.assertIn(f'"{provider}"', source)
@@ -42,10 +42,11 @@ class OAuthModelPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('plans[key] = {', source)
         self.assertIn('"excluded-models": normalizeModelPatterns', source)
         self.assertIn('if (!rule.configured) return', source)
-        self.assertIn('pluginsApi.patchConfig', source)
-        self.assertIn('pluginsApi.updateEnabled(OAUTH_MODEL_POLICY_PLUGIN_ID, true)', source)
-        self.assertIn('document.setIn(["plugins", "enabled"], true)', source)
-        self.assertIn('waitForRegistration', source)
+        self.assertIn('/pro/oauth-model-policy/config', source)
+        self.assertIn('serializeOAuthModelPolicyConfig({ ...config, enabled: true })', source)
+        self.assertNotIn('pluginsApi', source)
+        self.assertNotIn('PLUGIN_ID', source)
+        self.assertNotIn('priority', source)
 
     def test_routes_and_navigation_are_durable(self) -> None:
         source = CUSTOMIZER.read_text()

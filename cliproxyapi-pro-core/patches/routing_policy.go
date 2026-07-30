@@ -49,15 +49,16 @@ var routingProtectionProviders = []string{
 }
 
 type routingPolicyController struct {
-	h                 *Handler
-	mu                sync.Mutex
-	confirmations     map[string]routingProtectionConfirmation
-	events            []routingProtectionEvent
-	lifecycleMu       sync.Mutex
-	usageWG           sync.WaitGroup
-	stopped           bool
-	configMu          sync.RWMutex
-	requestProtection routingRequestProtectionConfig
+	h                     *Handler
+	mu                    sync.Mutex
+	confirmations         map[string]routingProtectionConfirmation
+	events                []routingProtectionEvent
+	lifecycleMu           sync.Mutex
+	usageWG               sync.WaitGroup
+	stopped               bool
+	configMu              sync.RWMutex
+	requestProtection     routingRequestProtectionConfig
+	proSettingsUnregister func()
 }
 
 type routingProtectionConfirmation struct {
@@ -158,7 +159,12 @@ func startRoutingPolicyController(h *Handler) {
 	if controller == nil {
 		return
 	}
-	embeddedusage.SetProSettingsImportHandler(controller.applyImportedProSettings)
+	if !loaded {
+		controller.proSettingsUnregister = embeddedusage.RegisterProSettingConsumer(
+			embeddedusage.ProSettingNamespaceRoutingRequestProtection,
+			controller.applyImportedProSetting,
+		)
+	}
 	coreusage.RegisterNamedPlugin(routingPolicyUsagePluginName, controller)
 	if !loaded {
 		if h.lifecycleContext == nil {
@@ -184,7 +190,9 @@ func stopRoutingPolicyController(h *Handler) {
 	if controller != nil {
 		controller.stop()
 	}
-	embeddedusage.SetProSettingsImportHandler(nil)
+	if controller != nil && controller.proSettingsUnregister != nil {
+		controller.proSettingsUnregister()
+	}
 }
 
 func (c *routingPolicyController) beginUsage() bool {
@@ -314,17 +322,12 @@ func (c *routingPolicyController) setRequestProtectionConfig(value routingReques
 	c.configMu.Unlock()
 }
 
-func (c *routingPolicyController) applyImportedProSettings(items []embeddedusage.ProSetting) error {
-	for _, item := range items {
-		if item.Namespace != embeddedusage.ProSettingNamespaceRoutingRequestProtection {
-			continue
-		}
-		value, err := decodeRoutingRequestProtectionSetting(item)
-		if err != nil {
-			return err
-		}
-		c.setRequestProtectionConfig(value)
+func (c *routingPolicyController) applyImportedProSetting(_ context.Context, item embeddedusage.ProSetting) error {
+	value, err := decodeRoutingRequestProtectionSetting(item)
+	if err != nil {
+		return err
 	}
+	c.setRequestProtectionConfig(value)
 	return nil
 }
 

@@ -127,7 +127,6 @@ const validateProxyPoolConfig = (config: ProxyPoolConfig): ValidationError | nul
 export function ProxyPoolPage() {
   const { t, i18n } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
-  const supportsPlugin = useAuthStore((state) => state.supportsPlugin);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const [snapshot, setSnapshot] = useState<ProxyPoolSnapshot | null>(null);
@@ -151,7 +150,7 @@ export function ProxyPoolPage() {
 
   const load = useCallback(
     async (silent = false, replaceDraft = false) => {
-      if (connectionStatus !== 'connected' || !supportsPlugin) {
+      if (connectionStatus !== 'connected') {
         setLoading(false);
         return;
       }
@@ -167,17 +166,17 @@ export function ProxyPoolPage() {
         if (!silent) setLoading(false);
       }
     },
-    [connectionStatus, dirty, supportsPlugin]
+    [connectionStatus, dirty]
   );
 
   useEffect(() => {
     void load();
   }, [load]);
   useEffect(() => {
-    if (connectionStatus !== 'connected' || !supportsPlugin) return;
+    if (connectionStatus !== 'connected') return;
     const timer = window.setInterval(() => void load(true), 10_000);
     return () => window.clearInterval(timer);
-  }, [connectionStatus, load, supportsPlugin]);
+  }, [connectionStatus, load]);
 
   const statusByID = useMemo(
     () => new Map((snapshot?.status?.nodes ?? []).map((node) => [node.id, node])),
@@ -229,7 +228,7 @@ export function ProxyPoolPage() {
     }
     setSaving(true);
     try {
-      await proxyPoolApi.save(draft, snapshot?.takeoverActive === true);
+      await proxyPoolApi.save(draft);
       setDirty(false);
       showNotification(
         t('proxy_pool.save_success', { defaultValue: 'Proxy pool saved' }),
@@ -260,17 +259,13 @@ export function ProxyPoolPage() {
     setSaving(true);
     try {
       if (activating) {
-        const localProxyUrl = `socks5://${draft.listen.trim()}`;
-        const activationDraft = {
-          ...draft,
-          restoreProxyUrl:
-            snapshot.globalProxyUrl && snapshot.globalProxyUrl !== localProxyUrl
-              ? snapshot.globalProxyUrl
-              : draft.restoreProxyUrl,
-        };
+        const activationDraft = { ...draft, enabled: true, takeoverEnabled: true };
         await proxyPoolApi.activate(activationDraft);
         setDraft(activationDraft);
-      } else await proxyPoolApi.deactivate(draft);
+      } else {
+        await proxyPoolApi.deactivate(draft);
+        setDraft({ ...draft, takeoverEnabled: false });
+      }
       setDirty(false);
       setTakeoverOpen(false);
       await load(true, true);
@@ -465,23 +460,6 @@ export function ProxyPoolPage() {
     );
   };
 
-  if (!supportsPlugin)
-    return (
-      <div className={styles.page}>
-        <div className={styles.noticeCard}>
-          <strong>
-            {t('proxy_pool.unsupported_title', { defaultValue: 'Plugin runtime required' })}
-          </strong>
-          <p>
-            {t('proxy_pool.unsupported_body', {
-              defaultValue:
-                'This build does not support dynamic plugins. Use a standard Pro release instead of a _no-plugin build.',
-            })}
-          </p>
-        </div>
-      </div>
-    );
-
   return (
     <div className={`${styles.page} ${dirty ? styles.pageWithSave : ''}`}>
       <ProxyPoolHeader
@@ -492,22 +470,6 @@ export function ProxyPoolPage() {
         onTakeover={() => setTakeoverOpen(true)}
       />
       {loadError && <div className={styles.errorBanner}>{loadError}</div>}
-      {!loading && snapshot && !snapshot.pluginDiscovered && (
-        <div className={styles.errorBanner}>
-          {t('proxy_pool.plugin_missing', {
-            defaultValue: 'Bundled proxy-pool plugin was not found. Check release packaging.',
-          })}
-        </div>
-      )}
-      {!loading && snapshot?.pluginDiscovered && !snapshot.pluginRegistered && (
-        <div className={styles.errorBanner}>
-          {t('proxy_pool.plugin_not_registered', {
-            defaultValue:
-              'The proxy-pool plugin was discovered but did not start. Check its configuration, listener port, and Core logs.',
-          })}
-        </div>
-      )}
-
       {!snapshot ? (
         <div className={styles.noticeCard}>
           <strong>
@@ -520,7 +482,7 @@ export function ProxyPoolPage() {
           <p>
             {loading
               ? t('proxy_pool.loading_hint', {
-                  defaultValue: 'Reading plugin configuration and runtime status.',
+                  defaultValue: 'Reading proxy pool configuration and runtime status.',
                 })
               : t('proxy_pool.load_unavailable_hint', {
                   defaultValue: 'Fix the connection error above, then refresh.',
@@ -528,7 +490,6 @@ export function ProxyPoolPage() {
           </p>
         </div>
       ) : (
-        snapshot.pluginDiscovered && (
           <>
             <ProxyPoolStatusOverview snapshot={snapshot} draft={draft} />
             <nav
@@ -737,7 +698,6 @@ export function ProxyPoolPage() {
               onSave={() => void save()}
             />
           </>
-        )
       )}
     </div>
   );

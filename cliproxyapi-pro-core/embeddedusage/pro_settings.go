@@ -9,7 +9,11 @@ import (
 	"time"
 )
 
-const ProSettingNamespaceRoutingRequestProtection = "routing.request-protection"
+const (
+	ProSettingNamespaceRoutingRequestProtection = "routing.request-protection"
+	ProSettingNamespaceProxyPool                = "proxy.pool"
+	ProSettingNamespaceOAuthModelPolicy         = "model.oauth-policy"
+)
 
 // ProSetting stores one versioned Pro-owned configuration document outside upstream config.yaml.
 type ProSetting struct {

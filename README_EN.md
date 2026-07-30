@@ -15,8 +15,8 @@ This project does not maintain a full fork of either upstream project. Instead, 
 - Optional automatic enable, disable, delete, and token-refresh actions.
 - Optional deep probes for Antigravity soft bans and xAI availability anomalies.
 - A routing-policy page for upstream routing behavior and provider-scoped request-state protection.
-- A bundled dynamic proxy-pool plugin that aggregates HTTP/SOCKS nodes behind one fixed loopback SOCKS5 endpoint with rotation, health isolation, and failover.
-- A bundled OAuth model-policy plugin that removes unavailable models per provider and account plan, constraining both model listing and auth scheduling.
+- A statically linked proxy pool that aggregates HTTP/SOCKS nodes behind one fixed loopback SOCKS5 endpoint with rotation, health isolation, and failover.
+- A statically linked OAuth model policy that removes unavailable models per provider and account plan, constraining both model listing and auth scheduling.
 
 ## Repository layout
 
@@ -35,10 +35,6 @@ This project does not maintain a full fork of either upstream project. Instead, 
 │   ├── apply_customizations.py
 │   ├── monitoring-locales.json
 │   └── overlay/
-│
-├── cliproxyapi-pro-plugins/
-│   ├── proxy-pool/
-│   └── oauth-model-policy/
 │
 ├── scripts/validation/
 └── .github/workflows/
@@ -64,12 +60,12 @@ Main capabilities:
 - Supports SQLite-backed quota cache.
 - Supports model price persistence.
 - Supports the QuotaProvider plugin protocol and a Gemini CLI legacy adapter.
-- Supports a generic `AuthModelFilter` plugin protocol; the bundled `oauth-model-policy` filters OAuth models by account plan for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi.
+- Includes an OAuth model policy for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi account plans.
 - Forces required upstream startup config: `usage-statistics-enabled=true` and the Pro management panel repository.
 - Adds a backend account-inspection scheduler and executor with token refresh before probing.
 - Adds unified routing-policy and request-state-protection APIs.
 - Optionally starts the Komari agent.
-- Prebundles the `proxy-pool` and `oauth-model-policy` dynamic libraries in standard macOS, Windows amd64, and Linux releases plus Docker images; Windows ARM64, FreeBSD, and `_no-plugin` assets do not currently bundle dynamic plugins.
+- Links the proxy pool and OAuth model policy into every Pro binary, including `_no-plugin` assets; their settings live in the usage SQLite database and are never written to `config.yaml`.
 - Redirects `/` to `/management.html`.
 - Enhances the `/healthz` response.
 

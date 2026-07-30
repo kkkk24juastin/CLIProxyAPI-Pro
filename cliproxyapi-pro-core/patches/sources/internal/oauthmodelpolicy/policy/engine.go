@@ -13,8 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
-	pluginconfig "github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/oauth-model-policy/internal/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/oauthmodelpolicy/config"
 )
 
 const (
@@ -27,7 +26,24 @@ const (
 	xaiSuperGrokHeavyLimitCents = int64(150_000)
 )
 
-type HTTPDo func(context.Context, pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error)
+type ModelInfo struct {
+	ID string
+}
+
+type HTTPRequest struct {
+	Method  string
+	URL     string
+	Headers http.Header
+	Body    []byte
+}
+
+type HTTPResponse struct {
+	StatusCode int
+	Headers    http.Header
+	Body       []byte
+}
+
+type HTTPDo func(context.Context, HTTPRequest) (HTTPResponse, error)
 
 type Input struct {
 	AuthID       string
@@ -36,7 +52,7 @@ type Input struct {
 	StorageJSON  []byte
 	Metadata     map[string]any
 	Attributes   map[string]string
-	Models       []pluginapi.ModelInfo
+	Models       []ModelInfo
 	HTTPDo       HTTPDo
 }
 
@@ -53,16 +69,16 @@ type cacheEntry struct {
 
 type Engine struct {
 	mu    sync.RWMutex
-	cfg   pluginconfig.Config
+	cfg   modelconfig.Config
 	cache map[string]cacheEntry
 }
 
 func New() *Engine {
-	cfg, _ := pluginconfig.Parse(nil)
+	cfg, _ := modelconfig.Parse(nil)
 	return &Engine{cfg: cfg, cache: make(map[string]cacheEntry)}
 }
 
-func (e *Engine) ApplyConfig(cfg pluginconfig.Config) {
+func (e *Engine) ApplyConfig(cfg modelconfig.Config) {
 	e.mu.Lock()
 	e.cfg = cfg
 	e.cache = make(map[string]cacheEntry)
@@ -78,7 +94,7 @@ func (e *Engine) Filter(ctx context.Context, input Input) Result {
 	cfg := e.cfg
 	providerCfg, configured := cfg.Providers[provider]
 	e.mu.RUnlock()
-	if !configured || len(providerCfg.Plans) == 0 {
+	if !cfg.Enabled || !configured || len(providerCfg.Plans) == 0 {
 		return Result{}
 	}
 
@@ -99,7 +115,7 @@ func (e *Engine) Filter(ctx context.Context, input Input) Result {
 	return Result{Handled: true, ExcludedModelIDs: excluded, Annotations: annotations}
 }
 
-func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg pluginconfig.Config, input Input) (string, string, error) {
+func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconfig.Config, input Input) (string, string, error) {
 	if plan := localPlan(provider, input); plan != "" {
 		return plan, "auth", nil
 	}
@@ -275,7 +291,7 @@ func resolveClaudePlan(ctx context.Context, timeout time.Duration, input Input) 
 	if token == "" {
 		return "", fmt.Errorf("claude access token is unavailable")
 	}
-	resp, errDo := doProviderRequest(ctx, timeout, input, pluginapi.HTTPRequest{
+	resp, errDo := doProviderRequest(ctx, timeout, input, HTTPRequest{
 		Method: http.MethodGet,
 		URL:    claudeProfileURL,
 		Headers: http.Header{
@@ -322,7 +338,7 @@ func resolveGooglePlan(ctx context.Context, provider string, timeout time.Durati
 	if errMarshal != nil {
 		return "", fmt.Errorf("encode %s plan request: %w", provider, errMarshal)
 	}
-	resp, errDo := doProviderRequest(ctx, timeout, input, pluginapi.HTTPRequest{
+	resp, errDo := doProviderRequest(ctx, timeout, input, HTTPRequest{
 		Method: http.MethodPost,
 		URL:    url,
 		Headers: http.Header{
@@ -345,9 +361,9 @@ func resolveGooglePlan(ctx context.Context, provider string, timeout time.Durati
 	return "", fmt.Errorf("%s response contains no supported tier", provider)
 }
 
-func doProviderRequest(ctx context.Context, timeout time.Duration, input Input, request pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+func doProviderRequest(ctx context.Context, timeout time.Duration, input Input, request HTTPRequest) (HTTPResponse, error) {
 	if input.HTTPDo == nil {
-		return pluginapi.HTTPResponse{}, fmt.Errorf("host http client is unavailable")
+		return HTTPResponse{}, fmt.Errorf("host http client is unavailable")
 	}
 	requestCtx := ctx
 	var cancel context.CancelFunc
@@ -357,10 +373,10 @@ func doProviderRequest(ctx context.Context, timeout time.Duration, input Input, 
 	}
 	resp, errDo := input.HTTPDo(requestCtx, request)
 	if errDo != nil {
-		return pluginapi.HTTPResponse{}, errDo
+		return HTTPResponse{}, errDo
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return pluginapi.HTTPResponse{}, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return HTTPResponse{}, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return resp, nil
 }
@@ -438,7 +454,7 @@ func resolveXAIPlan(ctx context.Context, timeout time.Duration, input Input) (st
 	if userID != "" {
 		headers["x-userid"] = []string{userID}
 	}
-	resp, errDo := input.HTTPDo(requestCtx, pluginapi.HTTPRequest{Method: http.MethodGet, URL: xaiBillingURL, Headers: headers})
+	resp, errDo := input.HTTPDo(requestCtx, HTTPRequest{Method: http.MethodGet, URL: xaiBillingURL, Headers: headers})
 	if errDo != nil {
 		return "", fmt.Errorf("fetch xai billing: %w", errDo)
 	}
@@ -477,7 +493,7 @@ func xaiPlanFromLimit(limit float64) string {
 	}
 }
 
-func ruleForPlan(provider pluginconfig.Provider, plan string) (pluginconfig.Plan, string, bool) {
+func ruleForPlan(provider modelconfig.Provider, plan string) (modelconfig.Plan, string, bool) {
 	plan = normalizeKey(plan)
 	keys := []string{plan}
 	if plan == "" || plan == "unknown" {
@@ -491,10 +507,10 @@ func ruleForPlan(provider pluginconfig.Provider, plan string) (pluginconfig.Plan
 			return rule, key, true
 		}
 	}
-	return pluginconfig.Plan{}, "", false
+	return modelconfig.Plan{}, "", false
 }
 
-func matchExcludedModels(models []pluginapi.ModelInfo, patterns []string) []string {
+func matchExcludedModels(models []ModelInfo, patterns []string) []string {
 	if len(models) == 0 || len(patterns) == 0 {
 		return nil
 	}

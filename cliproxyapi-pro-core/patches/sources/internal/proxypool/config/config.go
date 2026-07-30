@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -16,6 +17,26 @@ const DefaultListenAddress = "127.0.0.1:8318"
 
 type Duration struct {
 	time.Duration
+}
+
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.Duration.String())
+}
+
+func (d *Duration) UnmarshalJSON(data []byte) error {
+	if d == nil {
+		return fmt.Errorf("duration target is nil")
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	parsed, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", value, err)
+	}
+	d.Duration = parsed
+	return nil
 }
 
 func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
@@ -51,7 +72,7 @@ type NodeConfig struct {
 
 type Config struct {
 	Enabled             bool              `yaml:"enabled" json:"enabled"`
-	Priority            int               `yaml:"priority" json:"priority"`
+	TakeoverEnabled     bool              `yaml:"takeover-enabled" json:"takeover-enabled"`
 	Listen              string            `yaml:"listen" json:"listen"`
 	Strategy            string            `yaml:"strategy" json:"strategy"`
 	DialTimeout         Duration          `yaml:"dial-timeout" json:"dial-timeout"`
@@ -90,6 +111,13 @@ func Parse(data []byte) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func Marshal(cfg Config) ([]byte, error) {
+	if err := cfg.NormalizeAndValidate(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(cfg)
 }
 
 func (cfg *Config) NormalizeAndValidate() error {

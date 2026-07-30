@@ -19,7 +19,7 @@ export function ProxyPoolStatusOverview({ snapshot, draft }: ProxyPoolStatusOver
   const healthy = status?.healthyNodes ?? 0;
   const total = status?.totalNodes ?? draft.nodes.length;
   const endpoint = status?.proxyUrl || `socks5://${draft.listen}`;
-  const registered = snapshot.pluginDiscovered && snapshot.pluginRegistered;
+  const ready = status?.ready === true;
 
   return (
     <section
@@ -27,13 +27,13 @@ export function ProxyPoolStatusOverview({ snapshot, draft }: ProxyPoolStatusOver
       aria-label={t('proxy_pool.health_overview', { defaultValue: 'Proxy pool health overview' })}
     >
       <div className={styles.overviewItem}>
-        <span className={registered ? styles.overviewGood : styles.overviewBad}>
-          {registered ? <IconCheckCircle2 size={18} /> : <IconAlertTriangle size={18} />}
+        <span className={ready ? styles.overviewGood : styles.overviewBad}>
+          {ready ? <IconCheckCircle2 size={18} /> : <IconAlertTriangle size={18} />}
         </span>
         <div>
-          <small>{t('proxy_pool.plugin_status', { defaultValue: 'Plugin' })}</small>
+          <small>{t('proxy_pool.runtime_state', { defaultValue: 'Runtime' })}</small>
           <strong>
-            {registered
+            {ready
               ? t('proxy_pool.ready', { defaultValue: 'Ready' })
               : t('proxy_pool.not_ready', { defaultValue: 'Not ready' })}
           </strong>

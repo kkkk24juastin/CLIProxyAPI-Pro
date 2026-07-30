@@ -10,7 +10,6 @@ import {
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   IconAlertTriangle,
@@ -240,7 +239,6 @@ function PatternEditor({
 export function OAuthModelPolicyPage() {
   const { t } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
-  const supportsPlugin = useAuthStore((state) => state.supportsPlugin);
   const showNotification = useNotificationStore(
     (state) => state.showNotification,
   );
@@ -266,7 +264,7 @@ export function OAuthModelPolicyPage() {
 
   const load = useCallback(
     async (replaceDraft = false) => {
-      if (connectionStatus !== "connected" || !supportsPlugin) {
+      if (connectionStatus !== "connected") {
         setLoading(false);
         return;
       }
@@ -282,7 +280,7 @@ export function OAuthModelPolicyPage() {
         setLoading(false);
       }
     },
-    [connectionStatus, dirty, supportsPlugin],
+    [connectionStatus, dirty],
   );
 
   useEffect(() => {
@@ -403,7 +401,7 @@ export function OAuthModelPolicyPage() {
       return t("oauth_model_policy.inherits_default", {
         defaultValue: "Uses _default",
       });
-    return t("oauth_model_policy.no_rule", { defaultValue: "No plugin rule" });
+    return t("oauth_model_policy.no_rule", { defaultValue: "No policy rule" });
   };
 
   const validate = (): string => {
@@ -468,36 +466,13 @@ export function OAuthModelPolicyPage() {
     setDirty(false);
   };
 
-  if (!supportsPlugin) {
-    return (
-      <div className={styles.page}>
-        <div className={styles.noticeCard}>
-          <IconAlertTriangle size={22} />
-          <div>
-            <strong>
-              {t("oauth_model_policy.unsupported_title", {
-                defaultValue: "Plugin runtime required",
-              })}
-            </strong>
-            <p>
-              {t("oauth_model_policy.unsupported_body", {
-                defaultValue:
-                  "Use a standard Pro release instead of a _no-plugin build.",
-              })}
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className={`${styles.page} ${dirty ? styles.pageWithSave : ""}`}>
       <header className={styles.header}>
         <div className={styles.headerIdentity}>
           <span
             className={`${styles.headerIcon} ${
-              snapshot?.pluginRegistered ? styles.headerIconActive : ""
+              snapshot?.status.enabled ? styles.headerIconActive : ""
             }`}
           >
             <IconModelCluster size={22} />
@@ -509,9 +484,6 @@ export function OAuthModelPolicyPage() {
                   defaultValue: "OAuth Model Policy",
                 })}
               </h1>
-              {snapshot?.pluginVersion && (
-                <code>v{snapshot.pluginVersion}</code>
-              )}
             </div>
             <p>
               {t("oauth_model_policy.subtitle", {
@@ -533,20 +505,8 @@ export function OAuthModelPolicyPage() {
       </header>
 
       {loadError && <div className={styles.errorBanner}>{loadError}</div>}
-      {!loading && snapshot && !snapshot.pluginDiscovered && (
-        <div className={styles.errorBanner}>
-          {t("oauth_model_policy.plugin_missing", {
-            defaultValue: "Bundled oauth-model-policy plugin was not found.",
-          })}
-        </div>
-      )}
-      {!loading && snapshot?.pluginDiscovered && !snapshot.pluginRegistered && (
-        <div className={styles.warningBanner}>
-          {t("oauth_model_policy.plugin_not_registered", {
-            defaultValue:
-              "The plugin is installed but not running. Saving valid settings will enable it.",
-          })}
-        </div>
+      {snapshot?.status.lastError && (
+        <div className={styles.warningBanner}>{snapshot.status.lastError}</div>
       )}
 
       {!snapshot ? (
@@ -565,24 +525,23 @@ export function OAuthModelPolicyPage() {
             <p>
               {t("oauth_model_policy.loading_hint", {
                 defaultValue:
-                  "Reading plugin discovery state and configuration.",
+                  "Reading built-in model policy configuration.",
               })}
             </p>
           </div>
         </div>
       ) : (
-        snapshot.pluginDiscovered && (
           <>
             <section className={styles.statusGrid}>
               <div>
                 <span
                   className={
-                    snapshot.pluginRegistered
+                    snapshot.status.enabled
                       ? styles.statusGood
                       : styles.statusMuted
                   }
                 >
-                  {snapshot.pluginRegistered ? (
+                  {snapshot.status.enabled ? (
                     <IconCheckCircle2 size={18} />
                   ) : (
                     <IconAlertTriangle size={18} />
@@ -592,12 +551,12 @@ export function OAuthModelPolicyPage() {
                   {t("oauth_model_policy.runtime", { defaultValue: "Runtime" })}
                 </small>
                 <strong>
-                  {snapshot.pluginRegistered
+                  {snapshot.status.enabled
                     ? t("oauth_model_policy.running", {
-                        defaultValue: "Running",
+                        defaultValue: "Enabled",
                       })
                     : t("oauth_model_policy.stopped", {
-                        defaultValue: "Not running",
+                        defaultValue: "Disabled",
                       })}
                 </strong>
               </div>
@@ -692,19 +651,6 @@ export function OAuthModelPolicyPage() {
                   disabled={saving}
                   onChange={(resolveTimeout) =>
                     updateDraft({ ...draft, resolveTimeout })
-                  }
-                />
-                <Input
-                  type="number"
-                  label={t("oauth_model_policy.priority", {
-                    defaultValue: "Plugin priority",
-                  })}
-                  value={draft.priority}
-                  onChange={(event) =>
-                    updateDraft({
-                      ...draft,
-                      priority: Number(event.target.value) || 0,
-                    })
                   }
                 />
               </div>
@@ -943,7 +889,6 @@ export function OAuthModelPolicyPage() {
               </div>
             </section>
           </>
-        )
       )}
 
       {dirty &&

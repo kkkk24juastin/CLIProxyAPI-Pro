@@ -57,23 +57,19 @@ export function ProxyPoolTakeoverDialog({
         {activating
           ? t('proxy_pool.takeover_confirm_body', {
               defaultValue:
-                'Core traffic will be routed through the plugin endpoint. Review readiness before applying.',
+                'Core traffic will be routed through the built-in proxy pool at runtime. Review readiness before applying.',
             })
           : t('proxy_pool.stop_confirm_body', {
               defaultValue:
-                'The global proxy setting will be restored to the value recorded before takeover.',
+                'The runtime override will be removed; config.yaml remains unchanged.',
             })}
       </p>
       <dl className={styles.takeoverChecklist}>
         <div>
-          <dt>{t('proxy_pool.plugin_ready', { defaultValue: 'Plugin ready' })}</dt>
-          <dd className={snapshot.pluginRegistered ? styles.checkGood : styles.checkBad}>
-            {snapshot.pluginRegistered ? (
-              <IconCheckCircle2 size={16} />
-            ) : (
-              <IconAlertTriangle size={16} />
-            )}
-            {snapshot.pluginRegistered ? t('common.yes') : t('common.no')}
+          <dt>{t('proxy_pool.listener_ready', { defaultValue: 'Runtime ready' })}</dt>
+          <dd className={snapshot.status?.ready ? styles.checkGood : styles.checkBad}>
+            {snapshot.status?.ready ? <IconCheckCircle2 size={16} /> : <IconAlertTriangle size={16} />}
+            {snapshot.status?.ready ? t('common.yes') : t('common.no')}
           </dd>
         </div>
         <div>
@@ -91,15 +87,6 @@ export function ProxyPoolTakeoverDialog({
           <dd>
             <code>
               {maskProxyCredentials(snapshot.globalProxyUrl) ||
-                t('proxy_pool.none', { defaultValue: 'None' })}
-            </code>
-          </dd>
-        </div>
-        <div>
-          <dt>{t('proxy_pool.restore_value', { defaultValue: 'Value restored on stop' })}</dt>
-          <dd>
-            <code>
-              {maskProxyCredentials(draft.restoreProxyUrl) ||
                 t('proxy_pool.none', { defaultValue: 'None' })}
             </code>
           </dd>

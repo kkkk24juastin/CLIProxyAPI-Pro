@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	pluginconfig "github.com/ssfun/CLIProxyAPI-Pro/cliproxyapi-pro-plugins/proxy-pool/internal/config"
+	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/config"
 )
 
 type HealthState string
@@ -21,7 +21,7 @@ const (
 )
 
 type Node struct {
-	config pluginconfig.NodeConfig
+	config proxyconfig.NodeConfig
 
 	mu                  sync.RWMutex
 	state               HealthState
@@ -65,7 +65,7 @@ type NodeSnapshot struct {
 	FailedConnects      uint64      `json:"failed_connects"`
 }
 
-func newNode(cfg pluginconfig.NodeConfig) *Node {
+func newNode(cfg proxyconfig.NodeConfig) *Node {
 	state := HealthUnknown
 	if !cfg.Enabled {
 		state = HealthDisabled
@@ -289,13 +289,13 @@ type Pool struct {
 	selectMu sync.Mutex
 }
 
-func New(cfg pluginconfig.Config) *Pool {
+func New(cfg proxyconfig.Config) *Pool {
 	p := &Pool{}
 	p.Reconfigure(cfg)
 	return p
 }
 
-func (p *Pool) Reconfigure(cfg pluginconfig.Config) {
+func (p *Pool) Reconfigure(cfg proxyconfig.Config) {
 	p.mu.Lock()
 	oldByID := p.byID
 	nodes := make([]*Node, 0, len(cfg.Nodes))

@@ -14,7 +14,8 @@ var accountInspectionScheduleImporter func(jsonBytes []byte) error
 var accountInspectionSnapshotExporter func() (jsonBytes []byte, ok bool, err error)
 var accountInspectionSnapshotImporter func(jsonBytes []byte) error
 var authRuntimeStateImporter func(cursors []RoutingCursorState, stats []AuthRuntimeStats) error
-var proSettingsImporter func(settings []ProSetting) error
+var proSettingConsumers = make(map[string]proSettingConsumerRegistration)
+var proSettingConsumerGeneration uint64
 var globalStateMu sync.RWMutex
 var globalStateWriterCancel context.CancelFunc
 var globalStateWriterDone chan struct{}
@@ -295,8 +296,47 @@ func SetAuthRuntimeStateImportHandler(importer func([]RoutingCursorState, []Auth
 	authRuntimeStateImporter = importer
 }
 
-func SetProSettingsImportHandler(importer func([]ProSetting) error) {
-	proSettingsImporter = importer
+type proSettingConsumerRegistration struct {
+	generation uint64
+	apply      func(context.Context, ProSetting) error
+}
+
+// RegisterProSettingConsumer installs one lifecycle-bound runtime consumer for a
+// Pro setting namespace. The returned function unregisters only this exact
+// registration, so a stopped owner cannot remove a newer replacement.
+func RegisterProSettingConsumer(namespace string, apply func(context.Context, ProSetting) error) func() {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" || apply == nil {
+		return func() {}
+	}
+	globalStateMu.Lock()
+	proSettingConsumerGeneration++
+	generation := proSettingConsumerGeneration
+	proSettingConsumers[namespace] = proSettingConsumerRegistration{generation: generation, apply: apply}
+	globalStateMu.Unlock()
+	return func() {
+		globalStateMu.Lock()
+		current, ok := proSettingConsumers[namespace]
+		if ok && current.generation == generation {
+			delete(proSettingConsumers, namespace)
+		}
+		globalStateMu.Unlock()
+	}
+}
+
+func ApplyImportedProSettings(ctx context.Context, settings []ProSetting) error {
+	for _, item := range settings {
+		globalStateMu.RLock()
+		consumer := proSettingConsumers[item.Namespace]
+		globalStateMu.RUnlock()
+		if consumer.apply == nil {
+			continue
+		}
+		if err := consumer.apply(ctx, item); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func defaultServer() *Server {

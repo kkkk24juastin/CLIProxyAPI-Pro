@@ -1,8 +1,4 @@
-import { parseDocument } from "yaml";
-import { configFileApi } from "./configFile";
-import { pluginsApi } from "./plugins";
-
-export const OAUTH_MODEL_POLICY_PLUGIN_ID = "oauth-model-policy";
+import { apiClient } from "./client";
 
 export const OAUTH_MODEL_PROVIDER_KEYS = [
   "xai",
@@ -35,7 +31,7 @@ export interface OAuthModelPlanRule {
 }
 
 export interface OAuthModelPolicyConfig {
-  priority: number;
+  enabled: boolean;
   cacheTTL: string;
   resolveTimeout: string;
   providers: Record<
@@ -45,12 +41,14 @@ export interface OAuthModelPolicyConfig {
 }
 
 export interface OAuthModelPolicySnapshot {
-  pluginsEnabled: boolean;
-  pluginDiscovered: boolean;
-  pluginEnabled: boolean;
-  pluginRegistered: boolean;
-  pluginVersion: string;
   config: OAuthModelPolicyConfig;
+  status: {
+    enabled: boolean;
+    cacheTTL: string;
+    resolveTimeout: string;
+    providers: number;
+    lastError?: string;
+  };
 }
 
 const fallbackPlans: OAuthModelPlanDefinition[] = [
@@ -197,11 +195,6 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 const asString = (value: unknown, fallback = ""): string =>
   typeof value === "string" ? value : value == null ? fallback : String(value);
 
-const asNumber = (value: unknown, fallback: number): number => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-
 const hasOwn = (source: Record<string, unknown>, key: string): boolean =>
   Object.prototype.hasOwnProperty.call(source, key);
 
@@ -218,7 +211,7 @@ export const normalizeModelPatterns = (value: unknown): string[] => {
 };
 
 export const defaultOAuthModelPolicyConfig = (): OAuthModelPolicyConfig => ({
-  priority: 10,
+  enabled: false,
   cacheTTL: "30m",
   resolveTimeout: "15s",
   providers: Object.fromEntries(
@@ -286,7 +279,7 @@ export const normalizeOAuthModelPolicyConfig = (
     }),
   ) as OAuthModelPolicyConfig["providers"];
   return {
-    priority: Math.trunc(asNumber(source.priority, defaults.priority)),
+    enabled: source.enabled === true,
     cacheTTL:
       asString(source["cache-ttl"], defaults.cacheTTL).trim() ||
       defaults.cacheTTL,
@@ -313,8 +306,7 @@ export const serializeOAuthModelPolicyConfig = (
     }),
   );
   return {
-    enabled: true,
-    priority: Math.trunc(config.priority),
+    enabled: config.enabled,
     "cache-ttl": config.cacheTTL.trim(),
     "resolve-timeout": config.resolveTimeout.trim(),
     providers,
@@ -367,63 +359,25 @@ export const serializeOAuthModelPolicyDuration = (
 export const isPositiveDuration = (value: string): boolean =>
   oauthModelPolicyDurationValue(value, "s") !== null;
 
-const ensureGlobalPluginSwitch = async (): Promise<void> => {
-  const raw = await configFileApi.fetchConfigYaml();
-  const document = parseDocument(raw || "{}");
-  if (document.errors.length > 0) throw document.errors[0];
-  document.setIn(["plugins", "enabled"], true);
-  await configFileApi.saveConfigYaml(document.toString());
-};
-
-const waitForRegistration = async (attempts = 24): Promise<void> => {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const list = await pluginsApi.list();
-    const plugin = list.plugins.find(
-      (entry) => entry.id === OAUTH_MODEL_POLICY_PLUGIN_ID,
-    );
-    if (plugin?.registered) return;
-    await new Promise((resolve) => globalThis.setTimeout(resolve, 250));
-  }
-  throw new Error("OAuth model policy plugin did not become ready in time");
-};
-
 export const oauthModelPolicyApi = {
   async load(): Promise<OAuthModelPolicySnapshot> {
-    const [pluginList, rawConfig] = await Promise.all([
-      pluginsApi.list(),
-      pluginsApi.getConfig(OAUTH_MODEL_POLICY_PLUGIN_ID),
+    const [rawConfig, status] = await Promise.all([
+      apiClient.get('/pro/oauth-model-policy/config'),
+      apiClient.get('/pro/oauth-model-policy/status'),
     ]);
-    const plugin = pluginList.plugins.find(
-      (entry) => entry.id === OAUTH_MODEL_POLICY_PLUGIN_ID,
-    );
     return {
-      pluginsEnabled: pluginList.pluginsEnabled,
-      pluginDiscovered: Boolean(plugin),
-      pluginEnabled: Boolean(plugin?.enabled),
-      pluginRegistered: Boolean(plugin?.registered),
-      pluginVersion: plugin?.metadata?.version ?? "",
       config: normalizeOAuthModelPolicyConfig(rawConfig),
+      status: status as OAuthModelPolicySnapshot['status'],
     };
   },
 
   async save(
     config: OAuthModelPolicyConfig,
   ): Promise<OAuthModelPolicySnapshot> {
-    const pluginList = await pluginsApi.list();
-    const plugin = pluginList.plugins.find(
-      (entry) => entry.id === OAUTH_MODEL_POLICY_PLUGIN_ID,
+    await apiClient.patch(
+      '/pro/oauth-model-policy/config',
+      serializeOAuthModelPolicyConfig({ ...config, enabled: true }),
     );
-    if (!plugin)
-      throw new Error("Bundled oauth-model-policy plugin was not found");
-    await pluginsApi.patchConfig(
-      OAUTH_MODEL_POLICY_PLUGIN_ID,
-      serializeOAuthModelPolicyConfig(config),
-    );
-    if (!plugin.enabled) {
-      await pluginsApi.updateEnabled(OAUTH_MODEL_POLICY_PLUGIN_ID, true);
-    }
-    if (!pluginList.pluginsEnabled) await ensureGlobalPluginSwitch();
-    await waitForRegistration();
     return this.load();
   },
 };

@@ -32,11 +32,7 @@ export function ProxyPoolDiagnostics({
     () =>
       JSON.stringify(
         {
-          plugin: {
-            discovered: snapshot.pluginDiscovered,
-            enabled: snapshot.pluginEnabled,
-            registered: snapshot.pluginRegistered,
-          },
+          enabled: snapshot.config.enabled,
           takeoverActive: snapshot.takeoverActive,
           globalProxyUrl: maskProxyCredentials(snapshot.globalProxyUrl),
           endpoint,
@@ -54,22 +50,14 @@ export function ProxyPoolDiagnostics({
 
   const checks = [
     {
-      label: t('proxy_pool.plugin_discovered', { defaultValue: 'Bundled plugin discovered' }),
-      good: snapshot.pluginDiscovered,
-    },
-    {
-      label: t('proxy_pool.plugin_registered', { defaultValue: 'Plugin registered' }),
-      good: snapshot.pluginRegistered,
-    },
-    {
       label: t('proxy_pool.listener_ready', { defaultValue: 'Internal listener ready' }),
       good: status?.ready === true,
     },
     {
       label: t('proxy_pool.global_proxy_consistent', {
-        defaultValue: 'Global proxy matches listener',
+        defaultValue: 'Runtime takeover is active',
       }),
-      good: !snapshot.takeoverActive || snapshot.globalProxyUrl === endpoint,
+      good: !snapshot.takeoverActive || status?.ready === true,
     },
   ];
 
@@ -81,7 +69,7 @@ export function ProxyPoolDiagnostics({
           <p>
             {t('proxy_pool.diagnostics_hint', {
               defaultValue:
-                'Live plugin state and troubleshooting details. Runtime values refresh every 10 seconds.',
+                'Live built-in runtime state and troubleshooting details. Values refresh every 10 seconds.',
             })}
           </p>
         </div>
@@ -129,7 +117,7 @@ export function ProxyPoolDiagnostics({
               <dd>{formatProxyPoolTime(status?.lastHealthAt || '', language)}</dd>
             </div>
             <div>
-              <dt>{t('proxy_pool.started_at', { defaultValue: 'Plugin started' })}</dt>
+              <dt>{t('proxy_pool.started_at', { defaultValue: 'Runtime started' })}</dt>
               <dd>{formatProxyPoolTime(status?.startedAt || '', language)}</dd>
             </div>
           </dl>

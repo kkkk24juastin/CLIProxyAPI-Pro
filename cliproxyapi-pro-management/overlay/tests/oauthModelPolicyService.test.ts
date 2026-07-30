@@ -12,7 +12,7 @@ import {
 describe("oauth model policy service", () => {
   it("normalizes known plans and preserves fallback distinction", () => {
     const config = normalizeOAuthModelPolicyConfig({
-      priority: 20,
+      enabled: true,
       "cache-ttl": "45m",
       "resolve-timeout": "8s",
       providers: {
@@ -25,7 +25,7 @@ describe("oauth model policy service", () => {
       },
     });
 
-    expect(config.priority).toBe(20);
+    expect(config.enabled).toBe(true);
     expect(config.cacheTTL).toBe("45m");
     expect(config.providers.xai.plans.free).toEqual({
       configured: true,
@@ -37,6 +37,7 @@ describe("oauth model policy service", () => {
 
   it("serializes only explicitly configured rules", () => {
     const config = normalizeOAuthModelPolicyConfig({});
+    config.enabled = true;
     config.providers.xai.plans["x-premium-plus"] = {
       configured: true,
       excludedModels: [],
@@ -49,7 +50,6 @@ describe("oauth model policy service", () => {
     const serialized = serializeOAuthModelPolicyConfig(config);
     expect(serialized).toMatchObject({
       enabled: true,
-      priority: 10,
       "cache-ttl": "30m",
       "resolve-timeout": "15s",
       providers: {

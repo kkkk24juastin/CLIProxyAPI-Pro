@@ -108,16 +108,6 @@ if [[ "${VALIDATION_RACE:-0}" == "1" ]]; then
   test_flags+=(-race)
 fi
 
-oauth_model_policy_source="${validation_tmp}/oauth-model-policy"
-oauth_model_policy_binary="${validation_tmp}/oauth-model-policy.so"
-cp -R "${repo_root}/cliproxyapi-pro-plugins/oauth-model-policy" "${oauth_model_policy_source}"
-go -C "${oauth_model_policy_source}" mod edit \
-  -replace "github.com/router-for-me/CLIProxyAPI/v7=${upstream_root}"
-go -C "${oauth_model_policy_source}" mod tidy
-CGO_ENABLED=1 go -C "${oauth_model_policy_source}" build \
-  -buildvcs=false -trimpath -buildmode=c-shared \
-  -o "${oauth_model_policy_binary}" .
-
 go -C "${upstream_root}" test "${test_flags[@]}" ./internal/embeddedusage/...
 go -C "${upstream_root}" test "${test_flags[@]}" \
   ./internal/client/claude/models \
@@ -127,13 +117,15 @@ go -C "${upstream_root}" test "${test_flags[@]}" \
   ./internal/pluginstore \
   ./internal/redisqueue \
   ./internal/requestmeta \
+  ./internal/profeatures \
+  ./internal/proxypool/... \
+  ./internal/oauthmodelpolicy/... \
   ./sdk/api/handlers \
   ./sdk/api/handlers/claude \
   ./sdk/cliproxy/auth
-CLIPROXY_OAUTH_MODEL_POLICY_PLUGIN="${oauth_model_policy_binary}" \
-  go -C "${upstream_root}" test "${test_flags[@]}" ./sdk/cliproxy \
-    -run '^TestOAuthModelPolicyXAIRegistersPerPlanModelsAndConstrainsSelection$'
+go -C "${upstream_root}" test "${test_flags[@]}" ./sdk/cliproxy
 
 build_dir="${validation_tmp}/server"
 mkdir -p "${build_dir}"
 go -C "${upstream_root}" build -buildvcs=false -o "${build_dir}/cli-proxy-api" ./cmd/server/
+CGO_ENABLED=0 go -C "${upstream_root}" build -buildvcs=false -o "${build_dir}/cli-proxy-api-no-plugin" ./cmd/server/
