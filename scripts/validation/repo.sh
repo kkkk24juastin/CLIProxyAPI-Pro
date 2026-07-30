@@ -32,6 +32,13 @@ python3 "${repo_root}/scripts/validation/check_workflow_actions.py" \
   "${repo_root}/.github/workflows"
 
 sh -n "${repo_root}/cliproxyapi-pro-core/entrypoint.sh"
+
+if grep -Eq '^[[:space:]]*COPY[[:space:]]+plugins([[:space:]/]|$)' \
+  "${repo_root}/cliproxyapi-pro-core/Dockerfile.runtime"; then
+  echo "Dockerfile.runtime must not require removed bundled plugin artifacts" >&2
+  exit 1
+fi
+
 bash -n \
   "${repo_root}/cliproxyapi-pro-management/apply.sh" \
   "${repo_root}/scripts/validation/repo.sh" \
