@@ -141,6 +141,12 @@ func RegisterGinRoutes(group *gin.RouterGroup) {
 		group.PUT("/settings", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
+		group.GET("/ui/settings", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
+		group.PUT("/ui/settings", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
 		return
 	}
 	server.RegisterGinRoutes(group)
@@ -169,6 +175,8 @@ func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
 	group.POST("/model-prices/recalculate", s.handleModelPricesRecalculate)
 	group.GET("/settings", s.handleMonitoringSettingsGet)
 	group.PUT("/settings", s.handleMonitoringSettingsPut)
+	group.GET("/ui/settings", s.handleMonitoringUISettingsGet)
+	group.PUT("/ui/settings", s.handleMonitoringUISettingsPut)
 }
 
 func parseQueryInt64(c *gin.Context, key string, fallback int64) int64 {
@@ -1505,4 +1513,57 @@ func (s *Server) handleMonitoringSettingsPut(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"settings": settings})
+}
+
+func (s *Server) handleMonitoringUISettingsGet(c *gin.Context) {
+	settings, err := s.store.GetMonitoringSettings(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	passwordConfigured := strings.TrimSpace(settings.WebDAV.Password) != ""
+	settings.WebDAV.Password = ""
+	c.JSON(http.StatusOK, gin.H{"settings": settings, "passwordConfigured": passwordConfigured})
+}
+
+func (s *Server) handleMonitoringUISettingsPut(c *gin.Context) {
+	var payload struct {
+		Settings       MonitoringSettings `json:"settings"`
+		PasswordAction string             `json:"passwordAction"`
+	}
+	if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	settings := normalizeMonitoringSettings(payload.Settings)
+	current, err := s.store.GetMonitoringSettings(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(payload.PasswordAction)) {
+	case "clear":
+		settings.WebDAV.Password = ""
+	case "replace":
+		// The submitted password is already present in settings.
+	default:
+		if strings.TrimSpace(settings.WebDAV.Password) == "" {
+			settings.WebDAV.Password = current.WebDAV.Password
+		}
+	}
+	if settings.WebDAV.Enabled && strings.TrimSpace(settings.WebDAV.URL) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "webdav url is required"})
+		return
+	}
+	if err := s.store.SetMonitoringSettings(c.Request.Context(), settings); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if _, err := s.store.ApplyRetention(c.Request.Context(), time.Now()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	passwordConfigured := strings.TrimSpace(settings.WebDAV.Password) != ""
+	settings.WebDAV.Password = ""
+	c.JSON(http.StatusOK, gin.H{"settings": settings, "passwordConfigured": passwordConfigured})
 }

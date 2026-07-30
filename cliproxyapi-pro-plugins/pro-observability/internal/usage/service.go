@@ -218,6 +218,15 @@ func (s *Service) collect(ctx context.Context) {
 	defer ticker.Stop()
 	pending := make([]internalusage.Event, 0, s.cfg.BatchSize)
 	defer func() {
+	drainQueuedEvents:
+		for {
+			select {
+			case event := <-s.events:
+				pending = append(pending, event)
+			default:
+				break drainQueuedEvents
+			}
+		}
 		if len(pending) == 0 {
 			return
 		}

@@ -83,7 +83,7 @@ export function useUsageAggregates({
   const lastFetchedAtRef = useRef(0);
   const refreshInFlightRef = useRef(false);
   const refreshPendingRef = useRef(false);
-  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
   const hasDataRef = useRef(false);
   const activeConnectionKeyRef = useRef('');
   const apiBase = useAuthStore((state) => state.apiBase);

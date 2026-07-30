@@ -58,8 +58,8 @@ Main capabilities:
 
 - Builds a multi-arch Docker image from an upstream CLIProxyAPI release.
 - Builds Pro binary release assets using the same platform matrix and archive formats as upstream.
-- Embeds a SQLite usage service.
-- Exposes `/v0/management/usage` API routes, including status, incremental event polling, and SSE streaming.
+- Provides the SQLite usage service and business routes through the required `pro-observability` plugin.
+- Preserves the `/v0/management/usage` API family; Core only hosts Management authentication and the SSE transport bridge.
 - Supports usage JSONL/NDJSON import and export, including usage events, model prices, quota cache, Pro settings, routing runtime state, account-inspection schedules, and the latest inspection-result snapshot.
 - Supports WebDAV usage backup restore.
 - Supports SQLite-backed quota cache.
@@ -85,14 +85,13 @@ Frontend management-center customization layer for generating the single-file `m
 
 Main capabilities:
 
-- Adds the `/monitoring` request monitoring page.
+- Provides the sole complete monitoring center through the dynamic `pro-observability` plugin resource; Management no longer compiles a `/monitoring` page.
 - Adds the `/account-inspection` account inspection page.
 - Adds the `/routing` routing-policy page.
 - The `proxy-pool` plugin resource owns node configuration, connectivity tests, runtime statistics, and global-proxy takeover/restoration; Management no longer carries a duplicate page.
 - The `oauth-model-policy` plugin resource edits provider-specific OAuth plan rules, custom plans, fallback policies, and plan-discovery caching.
-- Shows request count, success rate, latency, token, and cost metrics.
-- Persists model prices through SQLite.
-- Persists quota cache through SQLite.
+- The plugin monitoring center shows request, success-rate, latency, token, cache, and cost metrics together with realtime logs, prices, settings, and backup controls.
+- Management Bridge v2 proxies JSON, SSE, binary imports, downloads, and host UI operations without exposing the management key, raw API keys, or auth tokens to the iframe.
 - Shows quota-card cache timestamps and supports single-card refresh.
 - Integrates with backend account inspection for run control, polling, results, and actions.
 - Shows inspection-written `last_error` messages on the auth files page.

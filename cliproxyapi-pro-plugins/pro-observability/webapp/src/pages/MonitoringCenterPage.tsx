@@ -123,6 +123,7 @@ import {
 } from '@/utils/usage';
 import quotaStyles from '@/pages/QuotaPage.module.scss';
 import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';
+import { downloadFromHost, uploadToHost, writeClipboardHost } from '@/services/bridge';
 import styles from '@/features/monitoring/monitoring.module.scss';
 
 type StatusFilter = 'all' | 'success' | 'failed';
@@ -422,7 +423,7 @@ export function MonitoringCenterPage() {
   }, [refreshAggregates, refreshMeta, refreshRealtimeLogs, refreshUsage]);
 
   const fetchMonitoringSettings = useCallback(async () => {
-    const response = await apiClient.get<{ settings: MonitoringSettings }>('/usage/settings');
+    const response = await apiClient.get<{ settings: MonitoringSettings }>('/usage/ui/settings');
     setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
     return response.settings;
   }, []);
@@ -451,7 +452,10 @@ export function MonitoringCenterPage() {
     }
     setIsMonitoringSettingsSaving(true);
     try {
-      const response = await apiClient.put<{ settings: MonitoringSettings }>('/usage/settings', { settings });
+      const response = await apiClient.put<{ settings: MonitoringSettings }>('/usage/ui/settings', {
+        settings,
+        passwordAction: settings.webdav.password ? 'replace' : 'preserve',
+      });
       setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
       if (closeModal) setIsMonitoringSettingsOpen(false);
       showNotification(t('usage_stats.monitoring_settings_saved'), 'success');
@@ -501,17 +505,8 @@ export function MonitoringCenterPage() {
     }
 
     try {
-      const response = await apiClient.getRaw('/usage/export', { responseType: 'blob' });
-      const blob = response.data instanceof Blob ? response.data : new Blob([response.data], { type: 'application/x-ndjson' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      link.href = url;
-      link.download = `usage-export-${timestamp}.jsonl`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      await downloadFromHost('/usage/export', `usage-export-${timestamp}.jsonl`);
       showNotification(t('usage_stats.export_success'), 'success');
     } catch (error) {
       showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
@@ -529,10 +524,11 @@ export function MonitoringCenterPage() {
   const executeUsageImport = useCallback(async (content: string, allowLegacy: boolean) => {
     setIsImportingUsage(true);
     try {
-      const result = await apiClient.post<UsageImportResult>('/usage/import', content, {
-        headers: { 'Content-Type': 'application/x-ndjson' },
-        params: allowLegacy ? { allow_legacy: 1 } : undefined,
-      });
+      const result = await uploadToHost<UsageImportResult>(
+        '/usage/import',
+        content,
+        allowLegacy ? { allow_legacy: 1 } : undefined
+      );
       const importedExtras = [
         (result.modelPriceRecords ?? 0) > 0 ? t('usage_stats.import_model_prices_restored', { count: Math.max(result.modelPrices ?? 0, result.modelPriceRules ?? 0) }) : '',
         (result.quotaCacheRecords ?? 0) > 0 ? t('usage_stats.import_quota_cache_restored', { count: result.quotaCache ?? 0 }) : '',
@@ -598,11 +594,7 @@ export function MonitoringCenterPage() {
 
   const handleCopyRealtimeDiagnostic = useCallback((row: RealtimeLogRow) => {
     const text = buildRealtimeDiagnosticClipboardText(row, t, i18n.language);
-    if (!navigator.clipboard?.writeText) {
-      showNotification(translateRealtimeErrorText('copy_diagnostic_failed', t, i18n.language), 'error');
-      return;
-    }
-    void navigator.clipboard.writeText(text)
+    void writeClipboardHost(text)
       .then(() => showNotification(translateRealtimeErrorText('copy_diagnostic_success', t, i18n.language), 'success'))
       .catch(() => showNotification(translateRealtimeErrorText('copy_diagnostic_failed', t, i18n.language), 'error'));
   }, [i18n.language, showNotification, t]);

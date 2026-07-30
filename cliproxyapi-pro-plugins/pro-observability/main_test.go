@@ -159,7 +159,7 @@ func TestManagementResourceUsesAuthenticatedBridge(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(response.Headers.Get("Content-Type"), "text/html") {
 		t.Fatalf("response = %#v", response)
 	}
-	for _, marker := range []string{"cliproxy-plugin-resource", "/usage/status", "/pro/observability/runtime", "/pro/observability/migration/status"} {
+	for _, marker := range []string{"cliproxy-plugin-resource", "/usage/aggregates", "/usage/events", "/usage/stream", "/usage/export", "model-price-rules", "monitoring.title"} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("resource page missing marker %q", marker)
 		}

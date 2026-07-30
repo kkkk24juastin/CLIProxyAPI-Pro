@@ -35,7 +35,7 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn("REQUEST_SOURCE = 'cliproxy-plugin-resource'", bridge)
         self.assertIn('event.source !== frameWindow', bridge)
         self.assertIn("path.startsWith('//')", bridge)
-        self.assertIn('apiClient.patch(path, request.body)', bridge)
+        self.assertIn('apiClient.patch(path, request.body, config)', bridge)
         self.assertIn('patch_plugin_resource_bridge(target)', customizer)
         self.assertIn('ref={frameRef}', customizer)
 

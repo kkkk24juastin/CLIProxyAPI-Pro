@@ -101,7 +101,7 @@ import {
   MONITORING_PAGE_SIZE_OPTIONS,
   normalizeMonitoringPageSize,
   resolveMonitoringPaginationCopy,
-} from '@/features/monitoring/pagination';
+} from '@/features/shared/pagination';
 import {
   buildZipArchive,
   downloadBlobFile,
@@ -125,7 +125,7 @@ import { resolveAuthProvider } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/utils/sourceResolver';
 import quotaStyles from '@/pages/QuotaPage.module.scss';
 import styles from '@/features/monitoring/accountInspection.module.scss';
-import monitoringStyles from '@/features/monitoring/monitoring.module.scss';
+import monitoringStyles from '@/features/shared/tableControls.module.scss';
 
 type ResultBulkAction = 'suggested' | 'recheck' | ManualAccountInspectionAction;
 

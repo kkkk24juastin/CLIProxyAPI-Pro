@@ -1123,9 +1123,9 @@ func smoothWeightedPickLocked(key string, candidates []pluginapi.SchedulerAuthCa
 
 func managementRoutes() []managementRoute {
 	methods := map[string][]string{
-		http.MethodGet:    {"", "/export", "/status", "/events", "/aggregates", "/account", "/quota-cache", "/model-prices", "/model-price-rules", "/model-prices/sync-status", "/settings"},
+		http.MethodGet:    {"", "/export", "/status", "/events", "/aggregates", "/account", "/quota-cache", "/model-prices", "/model-price-rules", "/model-prices/sync-status", "/settings", "/ui/settings"},
 		http.MethodPost:   {"/import", "/reset", "/model-prices/sync", "/model-prices/recalculate"},
-		http.MethodPut:    {"/quota-cache", "/model-prices", "/model-price-rules", "/settings"},
+		http.MethodPut:    {"/quota-cache", "/model-prices", "/model-price-rules", "/settings", "/ui/settings"},
 		http.MethodDelete: {"/quota-cache", "/model-price-rules"},
 	}
 	routes := make([]managementRoute, 0, 21)
@@ -1146,7 +1146,7 @@ func handleManagement(request pluginapi.ManagementRequest) pluginapi.ManagementR
 			StatusCode: http.StatusOK,
 			Headers: http.Header{
 				"Content-Type":            []string{"text/html; charset=utf-8"},
-				"Content-Security-Policy": []string{"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors *"},
+				"Content-Security-Policy": []string{"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-ancestors *"},
 				"Cache-Control":           []string{"no-store"},
 			},
 			Body: append([]byte(nil), observabilityManagementPage...),

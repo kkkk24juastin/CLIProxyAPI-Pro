@@ -702,12 +702,12 @@ def patch_routes(target: Path) -> None:
     replace_once(
         path,
         "import { QuotaPage } from '@/pages/QuotaPage';\n",
-        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\n",
+        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\n",
     )
     replace_once(
         path,
         "  { path: '/quota', element: <QuotaPage /> },\n",
-        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n",
+        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n",
     )
 
 
@@ -748,16 +748,16 @@ def patch_layout(target: Path) -> None:
     insert_once(
         path,
         "  IconSidebarProviders,\n",
-        "  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
+        "  IconSidebarAccountInspection,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
         "  IconSidebarAccountInspection,\n",
     )
     replace_once(
         path,
         "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n",
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n",
+        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n",
     )
     text = read(path)
-    if "path: '/monitoring'" not in text:
+    if "path: '/account-inspection'" not in text:
         flat_quota_item = "    { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },\n"
         grouped_quota_item = (
             "        {\n"
@@ -773,7 +773,6 @@ def patch_layout(target: Path) -> None:
                 text.replace(
                     flat_quota_item,
                     flat_quota_item
-                    + "    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },\n"
                     + "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
                     1,
                 ),
@@ -785,12 +784,6 @@ def patch_layout(target: Path) -> None:
                     grouped_quota_item,
                     grouped_quota_item
                     + "        {\n"
-                    + "          path: '/monitoring',\n"
-                    + "          labelKey: 'nav.monitoring_center',\n"
-                    + "          metaKey: 'nav_meta.monitoring_center',\n"
-                    + "          icon: sidebarIcons.monitoring,\n"
-                    + "        },\n"
-                    + "        {\n"
                     + "          path: '/account-inspection',\n"
                     + "          labelKey: 'nav.account_inspection',\n"
                     + "          metaKey: 'nav_meta.account_inspection',\n"
@@ -801,26 +794,6 @@ def patch_layout(target: Path) -> None:
             )
         else:
             raise RuntimeError(f'Pattern not found in {path}: quota navigation item')
-    replace_once_if_present(
-        path,
-        "        {\n"
-        "          path: '/account-inspection',\n"
-        "          labelKey: 'nav.account_inspection',\n"
-        "          metaKey: 'nav_meta.account_inspection',\n"
-        "          icon: sidebarIcons.monitoring,\n"
-        "        },\n",
-        "        {\n"
-        "          path: '/account-inspection',\n"
-        "          labelKey: 'nav.account_inspection',\n"
-        "          metaKey: 'nav_meta.account_inspection',\n"
-        "          icon: sidebarIcons.accountInspection,\n"
-        "        },\n",
-    )
-    replace_once_if_present(
-        path,
-        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
-        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
-    )
     flat_routing_item = (
         "    { path: '/routing', label: t('nav.routing_policy'), icon: sidebarIcons.routing },\n"
     )
@@ -2823,12 +2796,12 @@ def patch_supporting_api_and_types(target: Path) -> None:
     insert_once(
         auth_files_path,
         "export const authFilesApi = {\n",
-        "const AUTH_FILES_LIST_CACHE_TTL_MS = 2000;\nlet authFilesListCache: { expiresAt: number; response: AuthFilesResponse } | null = null;\nlet authFilesListRequest: Promise<AuthFilesResponse> | null = null;\nlet authFilesListVersion = 0;\n\nconst cloneAuthFilesResponse = (response: AuthFilesResponse): AuthFilesResponse => ({\n  ...response,\n  files: Array.isArray(response.files) ? [...response.files] : [],\n});\n\nconst invalidateAuthFilesListCache = () => {\n  authFilesListVersion += 1;\n  authFilesListCache = null;\n  authFilesListRequest = null;\n};\n\nconst fetchAuthFilesList = async (): Promise<AuthFilesResponse> => {\n  const now = Date.now();\n  if (authFilesListCache && authFilesListCache.expiresAt > now) {\n    return cloneAuthFilesResponse(authFilesListCache.response);\n  }\n  if (!authFilesListRequest) {\n    const requestVersion = authFilesListVersion;\n    authFilesListRequest = apiClient.get<AuthFilesResponse>('/auth-files')\n      .then(dedupeAuthFilesResponse)\n      .then((response) => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListCache = {\n            expiresAt: Date.now() + AUTH_FILES_LIST_CACHE_TTL_MS,\n            response: cloneAuthFilesResponse(response),\n          };\n        }\n        return response;\n      })\n      .finally(() => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListRequest = null;\n        }\n      });\n  }\n  return cloneAuthFilesResponse(await authFilesListRequest);\n};\n\nexport const authFilesApi = {\n",
+        "const AUTH_FILES_LIST_CACHE_TTL_MS = 2000;\nlet authFilesListCache: { expiresAt: number; response: AuthFilesResponse } | null = null;\nlet authFilesListRequest: Promise<AuthFilesResponse> | null = null;\nlet authFilesListVersion = 0;\n\nconst cloneAuthFilesResponse = (response: AuthFilesResponse): AuthFilesResponse => ({\n  ...response,\n  files: Array.isArray(response.files) ? [...response.files] : [],\n});\n\nconst invalidateAuthFilesListCache = () => {\n  authFilesListVersion += 1;\n  authFilesListCache = null;\n  authFilesListRequest = null;\n};\n\nconst fetchAuthFilesList = async (): Promise<AuthFilesResponse> => {\n  const now = Date.now();\n  if (authFilesListCache && authFilesListCache.expiresAt > now) {\n    return cloneAuthFilesResponse(authFilesListCache.response);\n  }\n  if (!authFilesListRequest) {\n    const requestVersion = authFilesListVersion;\n    authFilesListRequest = apiClient.get<AuthFilesResponse>('/auth-files')\n      .then(normalizeAuthFilesResponse)\n      .then((response) => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListCache = {\n            expiresAt: Date.now() + AUTH_FILES_LIST_CACHE_TTL_MS,\n            response: cloneAuthFilesResponse(response),\n          };\n        }\n        return response;\n      })\n      .finally(() => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListRequest = null;\n        }\n      });\n  }\n  return cloneAuthFilesResponse(await authFilesListRequest);\n};\n\nexport const authFilesApi = {\n",
         "AUTH_FILES_LIST_CACHE_TTL_MS",
     )
     replace_once(
         auth_files_path,
-        "  list: async () => dedupeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),\n\n  setStatus: (name: string, disabled: boolean) =>\n    apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),\n\n",
+        "  list: async () =>\n    normalizeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),\n\n  setStatus: (name: string, disabled: boolean) =>\n    apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),\n\n",
         "  list: fetchAuthFilesList,\n\n  patchFile: async (payload: AuthFilePatchPayload) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files', payload);\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n  setStatus: async (name: string, disabled: boolean) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n",
     )
     replace_once(

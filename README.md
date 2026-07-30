@@ -59,8 +59,8 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 
 - 构建 upstream CLIProxyAPI release 的多架构 Docker 镜像。
 - 构建与 upstream 平台和打包格式一致的 Pro 二进制 release 资产。
-- 内嵌 SQLite usage service。
-- 暴露 `/v0/management/usage` 系列 API，包括状态、增量事件轮询和 SSE 流。
+- 通过 required `pro-observability` 插件提供 SQLite usage service 和业务路由。
+- 暴露兼容的 `/v0/management/usage` 系列 API；Core 仅承载 Management 鉴权和 SSE transport bridge。
 - 支持 usage JSONL/NDJSON 导入导出，包含 usage events、模型价格、quota cache、Pro 设置、路由运行状态、账号巡检调度和最近一次巡检结果快照。
 - 支持 WebDAV usage 备份恢复。
 - 支持 SQLite-backed quota cache。
@@ -86,14 +86,13 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 
 主要能力：
 
-- 新增 `/monitoring` 请求监控页面。
+- 通过 `pro-observability` 插件动态资源提供唯一的完整监控中心；Management 不再编译 `/monitoring` 页面。
 - 新增 `/account-inspection` 账号巡检页面。
 - 新增 `/routing` 路由策略页面。
 - `proxy-pool` 插件资源页负责节点配置、连通性测试、运行统计和全局代理接管/恢复；Management 不再维护重复页面。
 - `oauth-model-policy` 插件资源页按提供商和 OAuth 套餐编辑模型排除规则、自定义套餐、回退策略和套餐探测缓存。
-- 请求量、成功率、延迟、token 和成本统计。
-- 模型价格 SQLite 持久化。
-- quota cache SQLite 持久化。
+- 插件监控中心展示请求量、成功率、延迟、token、缓存和成本统计，并提供实时日志、价格、设置和备份管理。
+- Management Bridge v2 为插件页代理 JSON、SSE、二进制导入、下载和宿主交互，iframe 不接收 management key、原始 API key 或 auth token。
 - 配额卡片缓存时间显示和单卡刷新。
 - 对接后端账号巡检，负责运行控制、状态轮询、结果展示和操作确认。
 - 认证文件页面可显示巡检写入的 `last_error` 健康消息。

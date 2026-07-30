@@ -57,6 +57,7 @@ export function useRealtimeLogData({
   const [nextCursor, setNextCursor] = useState('');
   const [pageCursors, setPageCursors] = useState<string[]>(['']);
   const [snapshotMaxId, setSnapshotMaxId] = useState(0);
+  const [hasSnapshot, setHasSnapshot] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [atTop, setAtTop] = useState(true);
@@ -96,6 +97,7 @@ export function useRealtimeLogData({
     setNextCursor('');
     setPageCursors(['']);
     setSnapshotMaxId(0);
+    setHasSnapshot(false);
     setLoading(false);
     setError('');
     setAtTop(true);
@@ -123,6 +125,7 @@ export function useRealtimeLogData({
       setMatchedTotal(result.matchedTotal);
       setNextCursor(result.nextCursor);
       setSnapshotMaxId(result.snapshotMaxId);
+      setHasSnapshot(true);
       setPageCursors((current) => {
         const next = current.slice(0, Math.max(nextPage, 1));
         next[nextPage - 1] = result.pageCursor;
@@ -156,7 +159,7 @@ export function useRealtimeLogData({
     await fetchPage(page + 1, nextCursor, 'top');
   }, [fetchPage, loading, nextCursor, page]);
 
-  const pendingEventCount = snapshotMaxId > 0 ? Math.max(latestId - snapshotMaxId, 0) : 0;
+  const pendingEventCount = hasSnapshot ? Math.max(latestId - snapshotMaxId, 0) : 0;
   const autoRefreshPaused = page !== 1 || !followEnabled || !atTop || detailsOpen;
   const canAutoRefresh = connectionStatus === 'connected'
     && page === 1

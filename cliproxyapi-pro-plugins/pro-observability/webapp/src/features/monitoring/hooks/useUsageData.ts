@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { apiClient } from '@/services/api/client';
 import { useAuthStore } from '@/stores/useAuthStore';
-import { computeApiUrl } from '@/utils/connection';
+import { openManagementStream } from '@/services/bridge';
 import { isRecordValue } from '@/utils/quota';
 import {
   loadLegacyModelPrices,
@@ -343,15 +343,6 @@ const mergeUsagePayload = (current: UsagePayload | null, next: UsagePayload | nu
   });
 };
 
-const buildUsageStreamUrl = (apiBase: string, afterId: number, generation: number) => {
-  const base = computeApiUrl(apiBase);
-  if (!base) return '';
-  const url = new URL(`${base}/usage/stream`);
-  url.searchParams.set('after_id', String(Math.max(afterId, 0)));
-  if (generation > 0) url.searchParams.set('generation', String(generation));
-  return url.toString();
-};
-
 const nextUsageReconnectDelay = (currentDelay: number) => Math.min(currentDelay * 2, 30000);
 
 type MutableRef<T> = { current: T };
@@ -539,13 +530,12 @@ const connectUsageStream = async ({
 }) => {
   const decoder = new TextDecoder();
   let buffer = '';
-  const url = buildUsageStreamUrl(apiBase, latestIdRef.current, datasetGenerationRef.current);
-  if (!url) return;
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${managementKey}` },
-    signal,
-  });
+  void apiBase;
+  void managementKey;
+  const response = await openManagementStream('/usage/stream', {
+    after_id: Math.max(latestIdRef.current, 0),
+    generation: datasetGenerationRef.current > 0 ? datasetGenerationRef.current : undefined,
+  }, signal);
   if (!response.ok || !response.body) {
     throw new Error(`Usage stream failed: ${response.status}`);
   }

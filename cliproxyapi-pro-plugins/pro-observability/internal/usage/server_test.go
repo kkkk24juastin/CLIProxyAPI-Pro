@@ -105,6 +105,42 @@ func TestHandleUsageResetRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestMonitoringUISettingsNeverExposeAndPreserveWebDAVPassword(t *testing.T) {
+	store := openTestStore(t)
+	settings := defaultMonitoringSettings()
+	settings.WebDAV.Enabled = true
+	settings.WebDAV.URL = "https://dav.example.test/backups"
+	settings.WebDAV.Username = "backup"
+	settings.WebDAV.Password = "super-secret"
+	if err := store.SetMonitoringSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	router := testUsageRouter(store)
+
+	getRecorder := httptest.NewRecorder()
+	router.ServeHTTP(getRecorder, httptest.NewRequest(http.MethodGet, "/usage/ui/settings", nil))
+	if getRecorder.Code != http.StatusOK || strings.Contains(getRecorder.Body.String(), "super-secret") || !strings.Contains(getRecorder.Body.String(), `"passwordConfigured":true`) {
+		t.Fatalf("GET ui settings status=%d body=%s", getRecorder.Code, getRecorder.Body.String())
+	}
+
+	settings.WebDAV.Password = ""
+	body, err := json.Marshal(gin.H{"settings": settings, "passwordAction": "preserve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	putRecorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/usage/ui/settings", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(putRecorder, request)
+	if putRecorder.Code != http.StatusOK || strings.Contains(putRecorder.Body.String(), "super-secret") {
+		t.Fatalf("PUT ui settings status=%d body=%s", putRecorder.Code, putRecorder.Body.String())
+	}
+	stored, err := store.GetMonitoringSettings(context.Background())
+	if err != nil || stored.WebDAV.Password != "super-secret" {
+		t.Fatalf("stored password=%q err=%v", stored.WebDAV.Password, err)
+	}
+}
+
 func TestUsageImportDoesNotWriteBeforeRequestIsFullyRead(t *testing.T) {
 	store := openTestStore(t)
 	gin.SetMode(gin.TestMode)

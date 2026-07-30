@@ -25,17 +25,6 @@ describe('monitoring pagination', () => {
     expect(resolveMonitoringPaginationCopy('en-US').pageSizeValue(100)).toBe('100 / page');
   });
 
-  test('keeps expanded inspection result pages inside a scrollable viewport', async () => {
-    const styles = await Bun.file(
-      new URL('../src/features/monitoring/account-inspection-styles/_tables-dialogs.scss', import.meta.url)
-    ).text();
-
-    expect(styles).toContain('.resultsTableViewport');
-    expect(styles).toContain('max-height: min(620px, 68vh)');
-    expect(styles).toContain('overflow-y: auto');
-    expect(styles).toContain('scrollbar-gutter: stable');
-  });
-
   test('keeps page navigation and page-size controls on the same row', async () => {
     const baseStyles = await Bun.file(
       new URL('../src/features/monitoring/styles/_base.scss', import.meta.url)
