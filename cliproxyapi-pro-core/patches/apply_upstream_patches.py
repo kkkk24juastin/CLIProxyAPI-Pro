@@ -977,6 +977,15 @@ for target in (
         f'\tcoreusage "{import_path("sdk/cliproxy/usage")}"\n',
     )
 
+replace_once(
+    auth_conductor_home_execution,
+    '\t\t\t\t\treturn selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
+    '\t\t\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n'
+    '\t\t\t\t\treturn selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
+    'execCtx = coreusage.NextAttemptContext(execCtx)\n'
+    '\t\t\t\t\treturn selection.Executor.CountTokens',
+)
+
 for target, old_call, new_call, marker in (
     (
         auth_conductor_stream,
@@ -995,12 +1004,6 @@ for target, old_call, new_call, marker in (
         '\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
         '\t\t\t\t\tctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream(ctx, auth, execReq, execOpts)\n',
         'ctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream',
-    ),
-    (
-        auth_conductor_home_execution,
-        '\t\t\t\tresponse, errExecute = selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
-        '\t\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\tresponse, errExecute = selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
-        'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\tresponse, errExecute = selection.Executor.CountTokens',
     ),
     (
         auth_conductor,
