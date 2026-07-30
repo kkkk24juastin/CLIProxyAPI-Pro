@@ -149,7 +149,9 @@ jobs:
         run: bash scripts/validation/repo.sh
 
   validate-core:
-    needs: check-version
+    needs:
+      - check-version
+      - build-management-html
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -170,6 +172,12 @@ jobs:
           ref: ${{ needs.check-version.outputs.core_sha }}
           path: upstream-core
 
+      - name: Download built Pro management fallback
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: management-release-asset
+          path: management-asset
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -182,6 +190,8 @@ jobs:
           python-version: '3.x'
 
       - name: Validate Core customization
+        env:
+          PRO_MANAGEMENT_HTML_PATH: ${{ github.workspace }}/management-asset/management.html
         run: bash customizations-repo/scripts/validation/core.sh upstream-core
 
   validate-management:
@@ -328,6 +338,7 @@ jobs:
       - check-version
       - validate-repository
       - validate-core
+      - build-management-html
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ${{ matrix.runner }}
 
@@ -450,6 +461,12 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Download built Pro management fallback
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: management-release-asset
+          path: management-asset
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -466,6 +483,7 @@ jobs:
         id: prepare-core
         env:
           SRC_ROOT: ${{ github.workspace }}/upstream-core
+          PRO_MANAGEMENT_HTML_PATH: ${{ github.workspace }}/management-asset/management.html
           RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
           CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
           MODELS_SHA: ${{ needs.check-version.outputs.models_sha }}

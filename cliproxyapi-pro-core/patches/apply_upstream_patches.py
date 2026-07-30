@@ -9,9 +9,11 @@ ROOT = Path(os.environ.get('SRC_ROOT', '/src/CLIProxyAPI'))
 PATCH_SOURCE_DIR = Path(__file__).resolve().parent / 'sources'
 PRO_PANEL_REPOSITORY = 'https://github.com/ssfun/CLIProxyAPI-Pro'
 PRO_PANEL_RELEASE_API = 'https://api.github.com/repos/ssfun/CLIProxyAPI-Pro/releases/latest'
+PRO_MANAGEMENT_HTML_PATH = Path(os.environ.get('PRO_MANAGEMENT_HTML_PATH', '')).expanduser()
 
 
 _writes = {}
+_binary_writes = {}
 
 
 def read_text(path: Path) -> str:
@@ -30,6 +32,10 @@ def read(path: Path) -> str:
 
 def write(path: Path, text: str) -> None:
     _writes[path] = text
+
+
+def write_bytes(path: Path, data: bytes) -> None:
+    _binary_writes[path] = data
 
 
 def require_source_hash(path: Path, allowed_hashes: set[str]) -> None:
@@ -53,7 +59,13 @@ def flush_writes() -> None:
     for path, text in _writes.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         write_text(path, text)
+    for path, data in _binary_writes.items():
+        if path in _writes:
+            raise SystemExit(f'path queued for both text and binary writes: {path}')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
     _writes.clear()
+    _binary_writes.clear()
 
 
 def queue_tree(source: Path, target: Path) -> None:
@@ -182,6 +194,15 @@ def replace_go_call_block(path: Path, call_start: str, new_block: str, present: 
 
 
 MODULE_PATH = module_path()
+if not PRO_MANAGEMENT_HTML_PATH.is_file():
+    raise SystemExit(
+        'PRO_MANAGEMENT_HTML_PATH must point to the built Pro management.html asset: '
+        f'{PRO_MANAGEMENT_HTML_PATH}'
+    )
+pro_management_html = PRO_MANAGEMENT_HTML_PATH.read_bytes()
+if not pro_management_html.strip():
+    raise SystemExit(f'Pro management asset is empty: {PRO_MANAGEMENT_HTML_PATH}')
+
 customization_sentinel = ROOT / 'internal/embeddedusage'
 if customization_sentinel.exists():
     raise SystemExit(f'target already contains CLIProxyAPI Pro customizations: {customization_sentinel}')
@@ -205,6 +226,9 @@ new_customization_paths = (
     'internal/pluginhost/auth_model_filter_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
+    'internal/pluginstore/gitstore_auth_test.go',
+    'internal/managementasset/pro_fallback_test.go',
+    'internal/managementasset/pro_management.html',
     'internal/requestmeta/client.go',
     'internal/requestmeta/client_test.go',
     'internal/requestmeta/requestid.go',
@@ -1054,6 +1078,21 @@ insert_before(
     '// PluginAutoInstallProxyURL returns the proxy URL used by plugin store auto-install requests.\nfunc (cfg *Config) PluginAutoInstallProxyURL() string {\n\tif cfg == nil {\n\t\treturn ""\n\t}\n\treturn cfg.ProxyURL\n}\n\n// PluginAutoInstallEnabled reports whether dynamic plugins are enabled.\nfunc (cfg *Config) PluginAutoInstallEnabled() bool {\n\treturn cfg != nil && cfg.Plugins.Enabled\n}\n\n// PluginAutoInstallDir returns the normalized plugin discovery directory.\nfunc (cfg *Config) PluginAutoInstallDir() string {\n\tif cfg == nil {\n\t\treturn ""\n\t}\n\treturn cfg.Plugins.Dir\n}\n\n// PluginAutoInstallStoreSources returns configured third-party plugin registry URLs.\nfunc (cfg *Config) PluginAutoInstallStoreSources() []string {\n\tif cfg == nil || len(cfg.Plugins.StoreSources) == 0 {\n\t\treturn nil\n\t}\n\treturn append([]string(nil), cfg.Plugins.StoreSources...)\n}\n\n// PluginAutoInstallEnabledIDs returns configured plugin IDs that should be present at startup.\nfunc (cfg *Config) PluginAutoInstallEnabledIDs() []string {\n\tif cfg == nil || len(cfg.Plugins.Configs) == 0 {\n\t\treturn nil\n\t}\n\tids := make([]string, 0, len(cfg.Plugins.Configs))\n\tfor id, item := range cfg.Plugins.Configs {\n\t\tif item.Enabled == nil || !*item.Enabled {\n\t\t\tcontinue\n\t\t}\n\t\tids = append(ids, id)\n\t}\n\treturn ids\n}\n\n',
     'func (cfg *Config) PluginAutoInstallProxyURL',
 )
+config_normalization = ROOT / 'internal/config/config_normalization.go'
+insert_before(
+    config_normalization,
+    '// SanitizeCodexHeaderDefaults trims surrounding whitespace from the\n',
+    '''// PluginAutoInstallStoreAuth returns normalized plugin store authentication rules.
+func (cfg *Config) PluginAutoInstallStoreAuth() []sdkpluginstore.AuthConfig {
+\tif cfg == nil || len(cfg.Plugins.StoreAuth) == 0 {
+\t\treturn nil
+\t}
+\treturn append([]sdkpluginstore.AuthConfig(nil), cfg.Plugins.StoreAuth...)
+}
+
+''',
+    'func (cfg *Config) PluginAutoInstallStoreAuth()',
+)
 
 updater = ROOT / 'internal/managementasset/updater.go'
 replace_once(
@@ -1061,25 +1100,175 @@ replace_once(
     'defaultManagementReleaseURL  = "https://api.github.com/repos/router-for-me/Cli-Proxy-API-Management-Center/releases/latest"',
     f'defaultManagementReleaseURL  = "{PRO_PANEL_RELEASE_API}"',
 )
-add_go_import(updater, '"net/http"\n', '\t"net/url"\n')
+replace_once(updater, '\tdefaultManagementFallbackURL = "https://cpamc.router-for.me/"\n', '')
+replace_once(
+    updater,
+    'failed to fetch latest management release information, trying fallback page',
+    'failed to fetch latest management release information, restoring embedded Pro panel',
+)
+replace_once(
+    updater,
+    'failed to download management asset, trying fallback page',
+    'failed to download management asset, restoring embedded Pro panel',
+)
+add_go_import(updater, '"encoding/json"\n', '\t_ "embed"\n')
 replace_once(updater, '\tgitURL := strings.ToLower(strings.TrimSpace(os.Getenv("GITSTORE_GIT_URL")))\n', '')
-replace_once(updater, 'tok != "" && strings.Contains(gitURL, "github.com")', 'tok != "" && isGitHubReleaseURL(releaseURL)')
+replace_once(updater, 'tok != "" && strings.Contains(gitURL, "github.com")', 'tok != "" && isGitHubAPIURL(releaseURL)')
 insert_before(
     updater,
     'func fetchLatestAsset(ctx context.Context, client *http.Client, releaseURL string) (*releaseAsset, string, error) {\n',
-    '''func isGitHubReleaseURL(releaseURL string) bool {
-\tparsed, err := url.Parse(strings.TrimSpace(releaseURL))
-\tif err != nil || parsed.Host == "" {
+    '''func isGitHubAPIURL(requestURL string) bool {
+\tparsed, err := url.Parse(strings.TrimSpace(requestURL))
+\tif err != nil || parsed.Host == "" || parsed.User != nil {
 \t\treturn false
 \t}
-\treturn strings.Contains(strings.ToLower(parsed.Host), "github.com")
+\treturn strings.EqualFold(parsed.Scheme, "https") && strings.EqualFold(parsed.Hostname(), "api.github.com")
 }
 
 ''',
-    'func isGitHubReleaseURL(releaseURL string) bool',
+    'func isGitHubAPIURL(requestURL string) bool',
 )
+replace_once(
+    updater,
+    '\tName               string `json:"name"`\n',
+    '\tAPIURL             string `json:"url"`\n\tName               string `json:"name"`\n',
+    'APIURL             string `json:"url"`',
+)
+insert_before(
+    updater,
+    'var (\n',
+    '//go:embed pro_management.html\nvar proManagementFallbackHTML []byte\n\n',
+    'var proManagementFallbackHTML []byte',
+)
+replace_once(
+    updater,
+    'downloadAsset(ctx, client, asset.BrowserDownloadURL)',
+    'downloadReleaseAsset(ctx, client, asset)',
+)
+replace_go_function(
+    updater,
+    'func ensureFallbackManagementHTML',
+    '''func ensureFallbackManagementHTML(_ context.Context, _ *http.Client, localPath string) bool {
+\tif len(proManagementFallbackHTML) == 0 {
+\t\tlog.Warn("embedded Pro management control panel is empty")
+\t\treturn false
+\t}
+\tdata := append([]byte(nil), proManagementFallbackHTML...)
+\tsum := sha256.Sum256(data)
+\tdownloadedHash := hex.EncodeToString(sum[:])
+
+\tif err := atomicWriteFile(localPath, data); err != nil {
+\t\tlog.WithError(err).Warn("failed to persist embedded Pro management control panel page")
+\t\treturn false
+\t}
+
+\tlog.Infof("management asset restored from embedded Pro panel (hash=%s)", downloadedHash)
+\treturn true
+}
+''',
+    'management asset restored from embedded Pro panel',
+)
+replace_go_function(
+    updater,
+    'func downloadAsset',
+    '''func downloadReleaseAsset(ctx context.Context, client *http.Client, asset *releaseAsset) ([]byte, string, error) {
+\tif asset == nil {
+\t\treturn nil, "", fmt.Errorf("nil management release asset")
+\t}
+\tdownloadURL := strings.TrimSpace(asset.BrowserDownloadURL)
+\theaders := map[string]string{"User-Agent": httpUserAgent}
+\tif tok := strings.TrimSpace(os.Getenv("GITSTORE_GIT_TOKEN")); tok != "" && isGitHubAPIURL(asset.APIURL) {
+\t\tdownloadURL = strings.TrimSpace(asset.APIURL)
+\t\theaders["Accept"] = "application/octet-stream"
+\t\theaders["Authorization"] = "Bearer " + tok
+\t}
+\tif downloadURL == "" {
+\t\treturn nil, "", fmt.Errorf("empty download url")
+\t}
+
+\tdata, err := httpfetch.GetBytes(ctx, client, downloadURL, headers, maxAssetDownloadSize)
+\tif err != nil {
+\t\treturn nil, "", fmt.Errorf("download asset: %w", err)
+\t}
+
+\tsum := sha256.Sum256(data)
+\treturn data, hex.EncodeToString(sum[:]), nil
+}
+''',
+    'func downloadReleaseAsset',
+)
+write_bytes(ROOT / 'internal/managementasset/pro_management.html', pro_management_html)
+queue_go_source('internal/managementasset/pro_fallback_test.go')
 queue_go_source('internal/api/handlers/management/management_panel.go')
 queue_go_source('internal/api/handlers/management/management_panel_test.go')
+
+pluginstore_auth = ROOT / 'internal/pluginstore/auth.go'
+insert_before(
+    pluginstore_auth,
+    'func AuthConfigured(auth []AuthConfig, requestURL string, kind string) bool {\n',
+    '''func gitStoreGitHubToken(requestURL string, kind string) (string, bool) {
+\tswitch strings.ToLower(strings.TrimSpace(kind)) {
+\tcase RequestKindMetadata, RequestKindArtifact:
+\tdefault:
+\t\treturn "", false
+\t}
+\tparsed, err := url.Parse(strings.TrimSpace(requestURL))
+\tif err != nil || parsed.User != nil || !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Hostname(), "api.github.com") {
+\t\treturn "", false
+\t}
+\tpath := strings.ToLower(parsed.Path)
+\tif !strings.HasPrefix(path, "/repos/") || !strings.Contains(path, "/releases/") {
+\t\treturn "", false
+\t}
+\ttoken := strings.TrimSpace(os.Getenv("GITSTORE_GIT_TOKEN"))
+\treturn token, token != ""
+}
+
+func gitStoreGitHubTokenConfigured(requestURL string, kind string) bool {
+\t_, configured := gitStoreGitHubToken(requestURL, kind)
+\treturn configured
+}
+
+''',
+    'func gitStoreGitHubToken(requestURL string, kind string)',
+)
+replace_once(
+    pluginstore_auth,
+    '''func AuthConfigured(auth []AuthConfig, requestURL string, kind string) bool {
+\titem, ok := matchingAuthConfig(auth, requestURL, kind)
+\tif !ok {
+\t\treturn false
+\t}
+''',
+    '''func AuthConfigured(auth []AuthConfig, requestURL string, kind string) bool {
+\titem, ok := matchingAuthConfig(auth, requestURL, kind)
+\tif !ok {
+\t\treturn gitStoreGitHubTokenConfigured(requestURL, kind)
+\t}
+''',
+    'return gitStoreGitHubTokenConfigured(requestURL, kind)',
+)
+replace_once(
+    pluginstore_auth,
+    '''\titem, ok := matchingAuthConfig(auth, requestURL, kind)
+\tif !ok {
+\t\treturn false, nil
+\t}
+\tswitch strings.ToLower(strings.TrimSpace(item.Type)) {
+''',
+    '''\titem, ok := matchingAuthConfig(auth, requestURL, kind)
+\tif !ok {
+\t\tif token, configured := gitStoreGitHubToken(requestURL, kind); configured {
+\t\t\theaders.Set("Authorization", "Bearer "+token)
+\t\t\treturn true, nil
+\t\t}
+\t\treturn false, nil
+\t}
+\tswitch strings.ToLower(strings.TrimSpace(item.Type)) {
+''',
+    'if token, configured := gitStoreGitHubToken(requestURL, kind); configured',
+)
+queue_go_source('internal/pluginstore/gitstore_auth_test.go')
 
 server_main = ROOT / 'cmd/server/main.go'
 add_go_import(server_main, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/pluginstore') + '"\n')
@@ -2403,6 +2592,8 @@ subprocess.run([
     'internal/api/handlers/management/handler.go',
     'internal/api/handlers/management/management_panel.go',
     'internal/api/handlers/management/management_panel_test.go',
+    'internal/managementasset/updater.go',
+    'internal/managementasset/pro_fallback_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
     'internal/client/claude/models/models.go',
@@ -2417,6 +2608,7 @@ subprocess.run([
     'internal/api/handlers/management/routing_policy_test.go',
     'internal/config/config_existing_updates.go',
     'internal/config/config_existing_updates_test.go',
+    'internal/config/config_normalization.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
     'internal/pluginhost/gemini_cli_quota_legacy.go',
@@ -2430,6 +2622,8 @@ subprocess.run([
     'internal/pluginhost/snapshot.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
+    'internal/pluginstore/auth.go',
+    'internal/pluginstore/gitstore_auth_test.go',
     'internal/redisqueue/plugin.go',
     'internal/redisqueue/plugin_test.go',
     'internal/requestmeta/client.go',

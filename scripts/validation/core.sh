@@ -23,6 +23,16 @@ fi
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-${TMPDIR:-/tmp}/cliproxyapi-pro-pycache}"
 export SRC_ROOT="${upstream_root}"
 
+validation_tmp="$(mktemp -d "${TMPDIR:-/tmp}/cliproxyapi-pro-core-validation.XXXXXX")"
+trap 'rm -rf "${validation_tmp}"' EXIT
+if [[ -z "${PRO_MANAGEMENT_HTML_PATH:-}" ]]; then
+  export PRO_MANAGEMENT_HTML_PATH="${validation_tmp}/management.html"
+  printf '%s\n' '<!doctype html><html><body>CLIProxyAPI Pro embedded management validation asset</body></html>' > "${PRO_MANAGEMENT_HTML_PATH}"
+elif [[ ! -s "${PRO_MANAGEMENT_HTML_PATH}" ]]; then
+  echo "Pro management validation asset is missing or empty: ${PRO_MANAGEMENT_HTML_PATH}" >&2
+  exit 1
+fi
+
 guarded_source='internal/logging/requestid.go'
 preflight_log="$(mktemp "${TMPDIR:-/tmp}/cliproxyapi-pro-preflight.XXXXXX")"
 printf '\n' >> "${upstream_root}/${guarded_source}"
@@ -105,8 +115,6 @@ if [[ "${VALIDATION_RACE:-0}" == "1" ]]; then
   test_flags+=(-race)
 fi
 
-validation_tmp="$(mktemp -d "${TMPDIR:-/tmp}/cliproxyapi-pro-core-validation.XXXXXX")"
-trap 'rm -rf "${validation_tmp}"' EXIT
 oauth_model_policy_source="${validation_tmp}/oauth-model-policy"
 oauth_model_policy_binary="${validation_tmp}/oauth-model-policy.so"
 cp -R "${repo_root}/cliproxyapi-pro-plugins/oauth-model-policy" "${oauth_model_policy_source}"
@@ -121,6 +129,7 @@ go -C "${upstream_root}" test "${test_flags[@]}" ./internal/embeddedusage/...
 go -C "${upstream_root}" test "${test_flags[@]}" \
   ./internal/client/claude/models \
   ./internal/api/handlers/management \
+  ./internal/managementasset \
   ./internal/pluginhost \
   ./internal/pluginstore \
   ./internal/redisqueue \

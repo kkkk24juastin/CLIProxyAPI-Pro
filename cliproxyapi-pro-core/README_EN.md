@@ -218,6 +218,10 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 
 This affects the built-in default config, `config.example.yaml`, and the management asset updater's default latest-release API URL.
 
+Release builds embed the Pro `management.html` produced by the same workflow into every Core platform binary. If the GitHub Release API or asset download fails while the local panel is missing, the updater writes this embedded Pro panel directly instead of requesting upstream's public fallback page.
+
+When `GITSTORE_GIT_TOKEN` is set, it is automatically used for management and plugin GitHub Release metadata, authenticated API asset downloads, and startup plugin auto-install. Matching is restricted to HTTPS GitHub API release paths. Explicit `plugins.store-auth` rules take precedence, and a matching `type: none` rule can suppress this environment fallback.
+
 The Management Center's “Check for updates” action calls `POST /v0/management/management-panel/check-update`. The endpoint keeps the updater's 30-second throttle, remote digest verification, and local SHA-256 comparison; it atomically replaces `management.html` only when the latest-release asset differs. This covers both a new release and a same-release asset replacement without re-downloading identical content.
 
 ### Runtime helper process
@@ -276,12 +280,15 @@ Build args:
 - `CLIPROXY_VERSION` — upstream release tag. If empty, the Dockerfile resolves the latest release.
 - `CLIPROXY_COMMIT` — optional upstream commit SHA; when set, source is downloaded from that commit while `CLIPROXY_VERSION` remains the version label.
 - `CLIPROXY_BUILD_VERSION` — optional runtime version. If empty, it uses the upstream version resolved from `CLIPROXY_VERSION`.
+- `PRO_MANAGEMENT_REPO` — repository used by the source Docker build to obtain the embedded Pro management asset; defaults to `ssfun/CLIProxyAPI-Pro`.
 - `SOURCE_DATE_EPOCH` — optional Unix timestamp used for the embedded build date. Set it together with an immutable upstream commit for a deterministic source binary.
 - `GITHUB_TOKEN` — optional token for GitHub API requests.
 
 Release workflows derive `SOURCE_DATE_EPOCH` from the newest immutable Core, models, and customization commit. Core archives use normalized ordering, timestamps, ownership, and permissions; Go builds also use `-trimpath`.
 
 ## Runtime environment variables
+
+- `GITSTORE_GIT_TOKEN` — optional GitHub token used for management and plugin GitHub Release metadata and authenticated API asset downloads, avoiding anonymous API rate-limit 403 responses.
 
 ### Usage service
 
