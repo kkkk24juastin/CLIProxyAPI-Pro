@@ -10,6 +10,7 @@ import {
   isResultAccountInvalid,
   isResultRequestError,
   isXaiQuotaLow,
+  resolveAccountInspectionAccountLabel,
   resolveAccountInspectionPlanLabel,
   resolveAssetInspectionHealthCounts,
   resolveResultHealthStatus,
@@ -83,6 +84,16 @@ describe('account inspection page model', () => {
     expect(view.filterRowCounts.quotaChanges).toBe(1);
     expect(view.filterRowCounts.pending).toBe(2);
     expect(view.actionableActionCounts).toMatchObject({ delete: 1, disable: 1 });
+  });
+
+  test('uses the auth file name when the result email is unavailable', () => {
+    expect(resolveAccountInspectionAccountLabel(result({ email: 'owner@example.com' }))).toBe('owner@example.com');
+    expect(resolveAccountInspectionAccountLabel(result({
+      email: undefined,
+      displayAccount: '-',
+      name: 'Codex Account',
+      fileName: 'codex-account.json',
+    }))).toBe('codex-account.json');
   });
 
   test('builds a compact five-row action preview across every action type', () => {

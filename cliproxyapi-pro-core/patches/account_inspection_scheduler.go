@@ -1943,10 +1943,7 @@ func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 	}
 	name := firstNonEmptyAuthValue(auth, "name")
 	email := accountInspectionAuthEmail(auth)
-	displayName := firstNonEmptyStringValue(email, name)
-	if displayName == "" {
-		displayName = "-"
-	}
+	displayName := firstNonEmptyStringValue(email, fileName)
 	return accountInspectionAccount{
 		Auth:        auth,
 		Key:         accountInspectionKey(fileName, auth.Index),

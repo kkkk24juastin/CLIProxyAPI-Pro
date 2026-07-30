@@ -70,6 +70,18 @@ export type InspectionLogEntry = {
   timestamp: number;
 };
 
+export const resolveAccountInspectionAccountLabel = (
+  item: Pick<AccountInspectionResultItem, 'email' | 'fileName' | 'displayAccount' | 'name'>
+) => {
+  const email = item.email?.trim();
+  if (email) return email;
+  const fileName = item.fileName?.trim();
+  if (fileName) return fileName;
+  const displayAccount = item.displayAccount?.trim();
+  if (displayAccount && displayAccount !== '-') return displayAccount;
+  return item.name?.trim() || '-';
+};
+
 export type SummaryCard = {
   key: string;
   label: string;
@@ -356,7 +368,7 @@ export function InspectionErrorDetailsPanel({
   const httpStatusCode = extractHealthHttpStatusCode(item);
   const errorPresentation = buildInspectionErrorPresentation(item);
   const detailItems = [
-    { label: t('monitoring.account_label'), value: item.displayAccount?.trim() || item.email?.trim() || item.name?.trim() || item.fileName },
+    { label: t('monitoring.account_label'), value: resolveAccountInspectionAccountLabel(item) },
     { label: t('monitoring.account_inspection_file_name'), value: item.fileName },
     { label: t('monitoring.filter_provider'), value: item.provider },
     {

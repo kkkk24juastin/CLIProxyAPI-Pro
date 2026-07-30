@@ -129,6 +129,37 @@ func testInspectionQuotaResult(key string, provider string, action accountInspec
 	return testInspectionProviderResult(key, provider, action, false, nil, true, "")
 }
 
+func TestAccountFromAuthUsesFileNameWhenEmailUnavailable(t *testing.T) {
+	auth := &coreauth.Auth{
+		ID:       "codex-account",
+		Provider: "codex",
+		FileName: "codex-account.json",
+		Metadata: map[string]any{"name": "Codex Account"},
+	}
+
+	account := accountFromAuth(auth)
+	if account.DisplayName != auth.FileName {
+		t.Fatalf("display name = %q, want file name %q", account.DisplayName, auth.FileName)
+	}
+	if account.Name != "Codex Account" {
+		t.Fatalf("name = %q, want metadata name preserved", account.Name)
+	}
+}
+
+func TestAccountFromAuthPrefersEmailOverFileName(t *testing.T) {
+	auth := &coreauth.Auth{
+		ID:       "codex-account",
+		Provider: "codex",
+		FileName: "codex-account.json",
+		Metadata: map[string]any{"email": "owner@example.com"},
+	}
+
+	account := accountFromAuth(auth)
+	if account.DisplayName != "owner@example.com" {
+		t.Fatalf("display name = %q, want email", account.DisplayName)
+	}
+}
+
 func TestManagementHandlerShutdownReleasesBackgroundOwners(t *testing.T) {
 	t.Setenv("ACCOUNT_INSPECTION_SCHEDULE_PATH", filepath.Join(t.TempDir(), "schedule.json"))
 	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, nil)

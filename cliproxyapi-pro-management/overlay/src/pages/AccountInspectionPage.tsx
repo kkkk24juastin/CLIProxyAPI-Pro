@@ -77,6 +77,7 @@ import {
   inspectionBackendReducer,
   isInspectableAccountInspectionAuthFile,
   levelClassMap,
+  resolveAccountInspectionAccountLabel,
   resolveAccountInspectionPlanLabel,
   resolveAssetInspectionHealthCounts,
   scheduleAuthFileAccountStats,
@@ -1891,7 +1892,7 @@ export function AccountInspectionPage() {
                     visibleResultRows.map(({ item, healthStatus, manualActions }) => {
                       const tokenRefreshDetail = formatTokenRefreshDetail(item, i18n.language, t);
                       const healthStatusLabel = buildHealthStatusLabel(item, healthStatus, t);
-                      const accountLabel = item.displayAccount?.trim() || item.email?.trim() || item.name?.trim() || item.fileName;
+                      const accountLabel = resolveAccountInspectionAccountLabel(item);
                       const planLabel = resolveAccountInspectionPlanLabel(
                         item,
                         authFilesByName.get(item.fileName),
