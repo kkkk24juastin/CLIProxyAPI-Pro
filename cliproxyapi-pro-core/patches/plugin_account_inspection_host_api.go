@@ -1,8 +1,10 @@
-// HostAuthRefreshRequest asks the host to refresh one concrete credential.
+// HostAuthInspectionListResponse contains the non-secret credential projection
+// available to the account-inspection plugin.
 type HostAuthInspectionListResponse struct {
 	Auths []HostAuthFileEntry `json:"auths"`
 }
 
+// HostAuthRefreshRequest asks the host to refresh one concrete credential.
 type HostAuthRefreshRequest struct {
 	AuthIndex string `json:"auth_index"`
 	Force     bool   `json:"force,omitempty"`

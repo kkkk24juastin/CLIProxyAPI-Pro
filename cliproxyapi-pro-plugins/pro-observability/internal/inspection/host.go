@@ -1,6 +1,7 @@
 package inspection
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,10 +18,9 @@ import (
 type AuthStatus string
 
 const (
-	AuthStatusActive       AuthStatus = "active"
-	AuthStatusDisabled     AuthStatus = "disabled"
-	AuthStatusError        AuthStatus = "error"
-	AttributeVirtualSource            = "virtual_source"
+	AuthStatusActive   AuthStatus = "active"
+	AuthStatusDisabled AuthStatus = "disabled"
+	AuthStatusError    AuthStatus = "error"
 )
 
 type AuthError struct {
@@ -42,8 +42,8 @@ type QuotaItem struct {
 	RemainingFraction *float64 `json:"remaining_fraction,omitempty"`
 }
 
-// Auth is an inspection-only, non-secret credential projection. It mirrors the
-// legacy scheduler's read model without importing Core auth internals.
+// Auth is the inspection-only, non-secret credential projection used by the
+// plugin scheduler without importing Core auth internals.
 type Auth struct {
 	ID               string
 	Index            string
@@ -84,10 +84,6 @@ func (a *Auth) Clone() *Auth {
 	return &clone
 }
 
-func isPluginVirtualAuth(auth *Auth) bool {
-	return auth != nil && strings.TrimSpace(authAttribute(auth, AttributeVirtualSource)) != ""
-}
-
 func clearRoutingProtectionOwnership(auth *Auth) {
 	if auth != nil && auth.Metadata != nil {
 		delete(auth.Metadata, routingProtectionMetadataKey)
@@ -98,29 +94,31 @@ func clearRoutingProtectionOwnership(auth *Auth) {
 // material never crosses the plugin boundary; authenticated HTTP remains a
 // host operation pinned to AuthIndex.
 type HostAuthEntry struct {
-	ID                 string            `json:"id"`
-	AuthIndex          string            `json:"auth_index"`
-	Name               string            `json:"name"`
-	Type               string            `json:"type"`
-	Provider           string            `json:"provider"`
-	Label              string            `json:"label,omitempty"`
-	Email              string            `json:"email,omitempty"`
-	Status             string            `json:"status,omitempty"`
-	StatusMessage      string            `json:"status_message,omitempty"`
-	Disabled           bool              `json:"disabled,omitempty"`
-	Unavailable        bool              `json:"unavailable,omitempty"`
-	RuntimeOnly        bool              `json:"runtime_only,omitempty"`
-	UpdatedAt          time.Time         `json:"updated_at,omitempty"`
-	Revision           int64             `json:"revision,omitempty"`
-	NextRefreshAfter   time.Time         `json:"next_refresh_after,omitempty"`
-	DisplayName        string            `json:"display_name,omitempty"`
-	AccountID          string            `json:"account_id,omitempty"`
-	UserID             string            `json:"user_id,omitempty"`
-	PlanType           string            `json:"plan_type,omitempty"`
-	UsingAPI           *bool             `json:"using_api,omitempty"`
-	VirtualSource      string            `json:"virtual_source,omitempty"`
-	InspectionMetadata map[string]any    `json:"inspection_metadata,omitempty"`
-	InspectionAttrs    map[string]string `json:"inspection_attributes,omitempty"`
+	ID                  string            `json:"id"`
+	AuthIndex           string            `json:"auth_index"`
+	Name                string            `json:"name"`
+	Type                string            `json:"type"`
+	Provider            string            `json:"provider"`
+	Label               string            `json:"label,omitempty"`
+	Email               string            `json:"email,omitempty"`
+	Status              string            `json:"status,omitempty"`
+	StatusMessage       string            `json:"status_message,omitempty"`
+	Disabled            bool              `json:"disabled,omitempty"`
+	Unavailable         bool              `json:"unavailable,omitempty"`
+	RuntimeOnly         bool              `json:"runtime_only,omitempty"`
+	UpdatedAt           time.Time         `json:"updated_at,omitempty"`
+	Revision            int64             `json:"revision,omitempty"`
+	NextRefreshAfter    time.Time         `json:"next_refresh_after,omitempty"`
+	DisplayName         string            `json:"display_name,omitempty"`
+	AccountID           string            `json:"account_id,omitempty"`
+	UserID              string            `json:"user_id,omitempty"`
+	PlanType            string            `json:"plan_type,omitempty"`
+	UsingAPI            *bool             `json:"using_api,omitempty"`
+	VirtualSource       string            `json:"virtual_source,omitempty"`
+	InspectionMetadata  map[string]any    `json:"inspection_metadata,omitempty"`
+	InspectionAttrs     map[string]string `json:"inspection_attributes,omitempty"`
+	InspectionUserAgent string            `json:"inspection_user_agent,omitempty"`
+	InspectionError     *HostHealthError  `json:"inspection_error,omitempty"`
 }
 
 type HostAuthRefreshResponse struct {
@@ -183,19 +181,13 @@ type compatHandler struct {
 	gateway          Gateway
 	authManager      *compatAuthManager
 	lifecycleContext context.Context
-	config           Config
 }
 
-type Config struct {
-	CodexUserAgent  string
-	ClaudeUserAgent string
-}
-
-func newCompatHandler(ctx context.Context, gateway Gateway, config Config) *compatHandler {
+func newCompatHandler(ctx context.Context, gateway Gateway) *compatHandler {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	h := &compatHandler{gateway: gateway, lifecycleContext: ctx, config: config}
+	h := &compatHandler{gateway: gateway, lifecycleContext: ctx}
 	h.authManager = &compatAuthManager{gateway: gateway}
 	return h
 }
@@ -261,44 +253,28 @@ func persistHostQuotaSnapshot(ctx context.Context, auth *Auth, raw json.RawMessa
 	})
 }
 
-func (h *compatHandler) deleteAuthFileByName(ctx context.Context, name string) (string, bool, error) {
-	auth := h.authByFileName(name)
-	if auth == nil {
-		return "", false, fmt.Errorf("auth not found")
-	}
-	deleted, err := h.gateway.Delete(ctx, auth.Index, authRevisionOf(auth))
-	return deleted, err == nil, err
-}
-
-func (h *compatHandler) authByFileName(name string) *Auth {
-	if h == nil || h.authManager == nil {
-		return nil
-	}
-	for _, auth := range h.authManager.List() {
-		if auth != nil && strings.EqualFold(strings.TrimSpace(auth.FileName), strings.TrimSpace(name)) {
-			return auth
-		}
-	}
-	return nil
-}
-
 type compatAuthManager struct {
 	gateway Gateway
 }
 
 func (m *compatAuthManager) List() []*Auth {
+	auths, _ := m.ListContext(context.Background())
+	return auths
+}
+
+func (m *compatAuthManager) ListContext(ctx context.Context) ([]*Auth, error) {
 	if m == nil || m.gateway == nil {
-		return nil
+		return nil, fmt.Errorf("auth inspection gateway unavailable")
 	}
-	entries, err := m.gateway.List(context.Background())
+	entries, err := m.gateway.List(ctx)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	auths := make([]*Auth, 0, len(entries))
 	for _, entry := range entries {
 		auths = append(auths, authFromHostEntry(entry))
 	}
-	return auths
+	return auths, nil
 }
 
 func (m *compatAuthManager) RefreshIfDueForInspection(ctx context.Context, id string) (*Auth, bool, error) {
@@ -310,7 +286,11 @@ func (m *compatAuthManager) ForceRefreshForInspection(ctx context.Context, id st
 }
 
 func (m *compatAuthManager) refresh(ctx context.Context, id string, force bool) (*Auth, bool, error) {
-	for _, auth := range m.List() {
+	auths, err := m.ListContext(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, auth := range auths {
 		if auth != nil && auth.ID == id {
 			response, err := m.gateway.Refresh(ctx, auth.Index, force)
 			if err != nil {
@@ -326,18 +306,37 @@ func (m *compatAuthManager) HttpRequest(ctx context.Context, auth *Auth, req *ht
 	if m == nil || m.gateway == nil || auth == nil || req == nil {
 		return nil, fmt.Errorf("auth HTTP gateway unavailable")
 	}
-	body, err := io.ReadAll(io.LimitReader(req.Body, 8*1024*1024))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	body, err := io.ReadAll(io.LimitReader(req.Body, 8*1024*1024+1))
 	if err != nil {
 		return nil, err
 	}
+	if len(body) > 8*1024*1024 {
+		return nil, fmt.Errorf("auth HTTP request body exceeds 8 MiB")
+	}
+	timeoutMS := 0
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, context.DeadlineExceeded
+		}
+		if remaining >= 30*time.Second {
+			timeoutMS = 30000
+		} else {
+			timeoutMS = int((remaining + time.Millisecond - 1) / time.Millisecond)
+		}
+	}
 	response, err := m.gateway.HTTPDo(ctx, HostHTTPRequest{
 		AuthIndex: auth.Index, Method: req.Method, URL: req.URL.String(), Headers: req.Header.Clone(), Body: body,
+		TimeoutMS: timeoutMS,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &http.Response{
-		StatusCode: response.StatusCode, Header: response.Headers.Clone(), Body: io.NopCloser(strings.NewReader(string(response.Body))),
+		StatusCode: response.StatusCode, Header: response.Headers.Clone(), Body: io.NopCloser(bytes.NewReader(response.Body)),
 	}, nil
 }
 
@@ -382,11 +381,20 @@ func authFromHostEntry(entry HostAuthEntry) *Auth {
 	if entry.VirtualSource != "" {
 		attributes["virtual_source"] = entry.VirtualSource
 	}
+	if entry.InspectionUserAgent != "" {
+		attributes["inspection_user_agent"] = entry.InspectionUserAgent
+	}
 	auth := &Auth{
 		ID: entry.ID, Index: entry.AuthIndex, Provider: entry.Provider, Label: entry.Label,
 		FileName: entry.Name, Status: AuthStatus(entry.Status), StatusMessage: entry.StatusMessage,
 		Disabled: entry.Disabled, Unavailable: entry.Unavailable, UpdatedAt: entry.UpdatedAt,
 		NextRefreshAfter: entry.NextRefreshAfter, Metadata: metadata, Attributes: attributes,
+	}
+	if entry.InspectionError != nil {
+		auth.LastError = &AuthError{
+			Code: entry.InspectionError.Code, Message: entry.InspectionError.Message,
+			HTTPStatus: entry.InspectionError.HTTPStatus, Retryable: entry.InspectionError.Retryable,
+		}
 	}
 	return auth
 }

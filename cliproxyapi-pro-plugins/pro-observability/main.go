@@ -537,8 +537,9 @@ func ensureService() error {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	service.Server().RegisterGinRoutes(router.Group("/usage"))
-	inspectionService, err := inspection.Start(ctx, rpcInspectionGateway{}, inspection.Config{})
+	inspectionService, err := inspection.Start(ctx, rpcInspectionGateway{})
 	if err != nil {
+		clearHostBackupBridge()
 		cancel()
 		service.Wait()
 		usage.SetDefaultService(nil)
@@ -571,6 +572,7 @@ func stopService() {
 	if service != nil {
 		service.Wait()
 	}
+	clearHostBackupBridge()
 	usage.SetDefaultService(nil)
 	C.store_host_api(nil)
 }
@@ -582,6 +584,7 @@ func currentService() *usage.Service {
 }
 
 func installHostBackupBridge() {
+	clearHostBackupBridge()
 	if C.host_api_available() == 0 {
 		return
 	}
@@ -593,6 +596,11 @@ func installHostBackupBridge() {
 		_, err := callHost(methodHostProBackupImport, hostBackupImportRequest{Kind: "pro-settings", ProSettings: settings})
 		return err
 	})
+}
+
+func clearHostBackupBridge() {
+	usage.SetAuthRuntimeStateImportHandler(nil)
+	usage.SetProSettingsImportHandler(nil)
 }
 
 func callHost(method string, payload any) (json.RawMessage, error) {

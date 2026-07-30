@@ -342,6 +342,21 @@ func TestRoutingProtectionStateChangeKeepsRoutingOwnership(t *testing.T) {
 	}
 }
 
+func TestRoutingProtectionReleasePreservesForeignError(t *testing.T) {
+	auth := &coreauth.Auth{
+		Disabled: true, Status: coreauth.StatusDisabled,
+		LastError: &coreauth.Error{Code: "provider_failure", Message: "provider unavailable", HTTPStatus: 503},
+		Metadata: map[string]any{
+			"last_error":                 map[string]any{"source": "provider", "message": "provider unavailable"},
+			routingProtectionMetadataKey: map[string]any{"owner": routingProtectionOwner},
+		},
+	}
+	setRoutingProtectionDisabledState(auth, false)
+	if auth.Disabled || auth.Status != coreauth.StatusError || !auth.Unavailable || auth.StatusMessage != "provider unavailable" {
+		t.Fatalf("released auth = %#v", auth)
+	}
+}
+
 func TestRoutingProtectionDisableRestoresOwnership(t *testing.T) {
 	manager := coreauth.NewManager(nil, nil, nil)
 	registered, err := manager.Register(context.Background(), &coreauth.Auth{

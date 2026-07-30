@@ -49,23 +49,18 @@ func (h *Host) inspectionAuthEntry(auth *coreauth.Auth) pluginapi.HostAuthFileEn
 	if auth == nil {
 		return pluginapi.HostAuthFileEntry{}
 	}
-	entry := h.buildHostAuthFileEntry(auth)
-	if entry == nil {
-		auth.EnsureIndex()
-		entry = &pluginapi.HostAuthFileEntry{
-			ID: auth.ID, AuthIndex: auth.Index, Name: firstInspectionValue(auth.FileName, auth.ID),
-			Type: auth.Provider, Provider: auth.Provider, Label: auth.Label,
-			Status: string(auth.Status), StatusMessage: auth.StatusMessage,
-			Disabled: auth.Disabled, Unavailable: auth.Unavailable, RuntimeOnly: isRuntimeOnlyAuth(auth),
-			UpdatedAt: auth.UpdatedAt,
-		}
+	auth.EnsureIndex()
+	entry := pluginapi.HostAuthFileEntry{
+		ID: auth.ID, AuthIndex: auth.Index, Name: firstInspectionValue(auth.FileName, auth.ID),
+		Type: auth.Provider, Provider: auth.Provider, Label: auth.Label,
+		Email: inspectionMetadataString(auth, "email"),
+		Status: string(auth.Status), StatusMessage: auth.StatusMessage,
+		Disabled: auth.Disabled, Unavailable: auth.Unavailable, RuntimeOnly: isRuntimeOnlyAuth(auth),
+		UpdatedAt: auth.UpdatedAt,
 	}
 	entry.Revision = authRevision(auth)
 	entry.NextRefreshAfter = auth.NextRefreshAfter
 	entry.DisplayName = inspectionMetadataString(auth, "name", "display_name")
-	if strings.TrimSpace(entry.Email) == "" {
-		entry.Email = inspectionMetadataString(auth, "email")
-	}
 	entry.AccountID = inspectionMetadataString(auth, "account_id", "accountId")
 	entry.UserID = inspectionMetadataString(auth, "user_id", "userId")
 	entry.PlanType = inspectionMetadataString(auth, "plan_type", "planType")
@@ -73,14 +68,61 @@ func (h *Host) inspectionAuthEntry(auth *coreauth.Auth) pluginapi.HostAuthFileEn
 		entry.UsingAPI = &value
 	}
 	if coreauth.IsPluginVirtualAuth(auth) {
-		entry.VirtualSource = strings.TrimSpace(authAttribute(auth, coreauth.AttributeVirtualSource))
-		if entry.VirtualSource == "" {
-			entry.VirtualSource = strings.TrimSpace(authAttribute(auth, "path"))
-		}
+		entry.VirtualSource = "plugin"
 	}
 	entry.InspectionMetadata = safeInspectionMetadata(auth)
 	entry.InspectionAttributes = safeInspectionAttributes(auth)
-	return *entry
+	entry.InspectionUserAgent = h.inspectionUserAgent(auth)
+	entry.InspectionError = inspectionOwnedHealthError(auth)
+	return entry
+}
+
+func (h *Host) inspectionUserAgent(auth *coreauth.Auth) string {
+	if h == nil || h.runtimeConfig == nil || auth == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(auth.Provider)) {
+	case "codex":
+		return strings.TrimSpace(h.runtimeConfig.CodexHeaderDefaults.UserAgent)
+	case "claude":
+		return strings.TrimSpace(h.runtimeConfig.ClaudeHeaderDefaults.UserAgent)
+	default:
+		return ""
+	}
+}
+
+func inspectionOwnedHealthError(auth *coreauth.Auth) *pluginapi.HostAuthHealthError {
+	if inspectionErrorSource(auth) != "account_inspection" {
+		return nil
+	}
+	result := &pluginapi.HostAuthHealthError{}
+	if auth.LastError != nil {
+		result.Code = auth.LastError.Code
+		result.Message = auth.LastError.Message
+		result.HTTPStatus = auth.LastError.HTTPStatus
+		result.Retryable = auth.LastError.Retryable
+	}
+	lastError, _ := auth.Metadata["last_error"].(map[string]any)
+	if result.Code == "" {
+		result.Code, _ = lastError["code"].(string)
+	}
+	if result.Message == "" {
+		result.Message, _ = lastError["message"].(string)
+	}
+	if result.HTTPStatus == 0 {
+		switch value := lastError["http_status"].(type) {
+		case int:
+			result.HTTPStatus = value
+		case float64:
+			result.HTTPStatus = int(value)
+		case json.Number:
+			result.HTTPStatus, _ = strconv.Atoi(value.String())
+		}
+	}
+	if !result.Retryable {
+		result.Retryable, _ = lastError["retryable"].(bool)
+	}
+	return result
 }
 
 func safeInspectionMetadata(auth *coreauth.Auth) map[string]any {
@@ -95,6 +137,12 @@ func safeInspectionMetadata(auth *coreauth.Auth) map[string]any {
 		"subscription_active_until", "subscriptionActiveUntil",
 	} {
 		if value, ok := auth.Metadata[key]; ok {
+			if key == "base_url" {
+				if sanitized := sanitizeInspectionBaseURL(fmt.Sprint(value)); sanitized != "" {
+					out[key] = sanitized
+				}
+				continue
+			}
 			out[key] = value
 		}
 	}
@@ -147,6 +195,12 @@ func safeInspectionAttributes(auth *coreauth.Auth) map[string]string {
 	out := make(map[string]string)
 	for _, key := range []string{"base_url", "using_api", "auth_kind", "runtime_only", "account_id", "accountId", "user_id", "userId", "plan_type", "planType"} {
 		if value := strings.TrimSpace(authAttribute(auth, key)); value != "" {
+			if key == "base_url" {
+				value = sanitizeInspectionBaseURL(value)
+				if value == "" {
+					continue
+				}
+			}
 			out[key] = value
 		}
 	}
@@ -160,6 +214,18 @@ func safeInspectionAttributes(auth *coreauth.Auth) map[string]string {
 		return nil
 	}
 	return out
+}
+
+func sanitizeInspectionBaseURL(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return ""
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func firstInspectionValue(values ...string) string {

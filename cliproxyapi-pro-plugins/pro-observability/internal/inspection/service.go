@@ -12,9 +12,7 @@ import (
 // Service owns the account-inspection scheduler, routes, persistence and
 // lifecycle inside pro-observability.
 type Service struct {
-	ctx       context.Context
 	cancel    context.CancelFunc
-	gateway   Gateway
 	scheduler *accountInspectionScheduler
 	wg        sync.WaitGroup
 }
@@ -23,7 +21,7 @@ type Service struct {
 // wire-compatible while no longer depending on Core's management.Handler.
 type Handler = Service
 
-func Start(ctx context.Context, gateway Gateway, config Config) (*Service, error) {
+func Start(ctx context.Context, gateway Gateway) (*Service, error) {
 	if gateway == nil {
 		return nil, fmt.Errorf("account inspection host gateway is required")
 	}
@@ -31,12 +29,16 @@ func Start(ctx context.Context, gateway Gateway, config Config) (*Service, error
 		ctx = context.Background()
 	}
 	serviceCtx, cancel := context.WithCancel(ctx)
-	service := &Service{ctx: serviceCtx, cancel: cancel, gateway: gateway}
-	handler := newCompatHandler(serviceCtx, gateway, config)
-	service.scheduler = newAccountInspectionScheduler(handler)
+	service := &Service{cancel: cancel}
+	handler := newCompatHandler(serviceCtx, gateway)
+	scheduler, err := newAccountInspectionScheduler(handler)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	service.scheduler = scheduler
 	embeddedusage.SetAccountInspectionScheduleHandlers(service.scheduler.exportSchedule, service.scheduler.importSchedule)
 	embeddedusage.SetAccountInspectionSnapshotHandlers(service.scheduler.exportResultSnapshot, service.scheduler.importResultSnapshot)
-	service.scheduler.cleanupLegacyQuotaCaches(context.Background())
 	service.wg.Add(1)
 	go func() {
 		defer service.wg.Done()

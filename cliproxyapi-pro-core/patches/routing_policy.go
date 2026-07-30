@@ -657,9 +657,20 @@ func setRoutingProtectionDisabledState(auth *coreauth.Auth, disabled bool) {
 		auth.Status = coreauth.StatusDisabled
 		auth.StatusMessage = "disabled by routing policy"
 	} else {
-		auth.Status = coreauth.StatusActive
-		auth.StatusMessage = ""
-		auth.Unavailable = false
+		lastError, _ := auth.Metadata["last_error"].(map[string]any)
+		if auth.LastError != nil || lastError != nil {
+			auth.Status = coreauth.StatusError
+			auth.Unavailable = true
+			if auth.LastError != nil {
+				auth.StatusMessage = strings.TrimSpace(auth.LastError.Message)
+			} else {
+				auth.StatusMessage = stringFromAny(lastError["message"])
+			}
+		} else {
+			auth.Status = coreauth.StatusActive
+			auth.StatusMessage = ""
+			auth.Unavailable = false
+		}
 	}
 	auth.UpdatedAt = time.Now()
 }

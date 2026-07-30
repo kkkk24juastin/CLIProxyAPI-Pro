@@ -367,7 +367,7 @@ type accountInspectionActionOutcome struct {
 	Error       string                  `json:"error"`
 }
 
-func newAccountInspectionScheduler(h *compatHandler) *accountInspectionScheduler {
+func newAccountInspectionScheduler(h *compatHandler) (*accountInspectionScheduler, error) {
 	schedulePath := accountInspectionSchedulePath()
 	scheduler := &accountInspectionScheduler{
 		h:                       h,
@@ -385,8 +385,10 @@ func newAccountInspectionScheduler(h *compatHandler) *accountInspectionScheduler
 	}
 	scheduler.lastRunSettings = scheduler.schedule.Settings
 	scheduler.pause = sync.NewCond(&scheduler.mu)
-	scheduler.load()
-	return scheduler
+	if err := scheduler.load(); err != nil {
+		return nil, err
+	}
+	return scheduler, nil
 }
 
 func accountInspectionSchedulePath() string {
@@ -516,39 +518,48 @@ func normalizeAccountInspectionAutoAction(action accountInspectionAction) accoun
 	return accountInspectionActionNone
 }
 
-func (s *accountInspectionScheduler) load() {
+func (s *accountInspectionScheduler) load() error {
 	state, found, err := embeddedusage.GetAccountInspectionState(context.Background(), accountInspectionScheduleStateKey)
-	if err == nil && found {
-		var schedule accountInspectionSchedule
-		if err := json.Unmarshal(state.Payload, &schedule); err != nil {
-			log.WithError(err).Warn("failed to load account inspection schedule")
-		} else {
-			s.schedule = normalizeAccountInspectionSchedule(schedule)
+	if err != nil {
+		return fmt.Errorf("load plugin account inspection schedule: %w", err)
+	}
+	if found {
+		if state.SchemaVersion != accountInspectionStateSchemaVersion {
+			return fmt.Errorf("unsupported account inspection schedule state schema %d", state.SchemaVersion)
 		}
-	} else if err == nil {
-		s.migrateLegacySchedule()
+		var schedule accountInspectionSchedule
+		if err = json.Unmarshal(state.Payload, &schedule); err != nil {
+			return fmt.Errorf("decode plugin account inspection schedule: %w", err)
+		}
+		s.schedule = normalizeAccountInspectionSchedule(schedule)
 	} else {
-		log.WithError(err).Warn("failed to load plugin account inspection schedule")
+		if err = s.migrateLegacySchedule(); err != nil {
+			return err
+		}
 	}
-	if err := s.loadResultSnapshot(); err != nil {
-		log.WithError(err).Warn("failed to load account inspection snapshot")
+	if err = s.loadResultSnapshot(); err != nil {
+		return fmt.Errorf("load account inspection snapshot: %w", err)
 	}
+	return nil
 }
 
-func (s *accountInspectionScheduler) migrateLegacySchedule() {
+func (s *accountInspectionScheduler) migrateLegacySchedule() error {
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
-		return
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read legacy account inspection schedule: %w", err)
 	}
 	var schedule accountInspectionSchedule
 	if err = json.Unmarshal(raw, &schedule); err != nil {
-		log.WithError(err).Warn("failed to decode legacy account inspection schedule")
-		return
+		return fmt.Errorf("decode legacy account inspection schedule: %w", err)
 	}
 	s.schedule = normalizeAccountInspectionSchedule(schedule)
 	if err = s.saveLocked(); err != nil {
-		log.WithError(err).Warn("failed to migrate legacy account inspection schedule to plugin SQLite")
+		return fmt.Errorf("persist migrated account inspection schedule: %w", err)
 	}
+	return nil
 }
 
 func (s *accountInspectionScheduler) saveLocked() error {
@@ -667,6 +678,9 @@ func (s *accountInspectionScheduler) loadResultSnapshot() error {
 		s.applyResultSnapshotLocked(snapshot, true)
 		return s.saveResultSnapshotLocked()
 	}
+	if state.SchemaVersion != accountInspectionStateSchemaVersion {
+		return fmt.Errorf("unsupported account inspection snapshot state schema %d", state.SchemaVersion)
+	}
 	snapshot, err := decodeAccountInspectionResultSnapshot(state.Payload)
 	if err != nil {
 		return err
@@ -714,9 +728,8 @@ func (s *accountInspectionScheduler) importResultSnapshot(raw []byte) error {
 	}
 	s.applyResultSnapshotLocked(snapshot, true)
 	err = s.saveResultSnapshotLocked()
-	broadcast := s.statusBroadcastLocked()
+	s.statusBroadcastLocked()
 	s.mu.Unlock()
-	broadcast.send()
 	return err
 }
 
@@ -1070,8 +1083,6 @@ func (s *accountInspectionScheduler) logStreamMessageLocked(entry accountInspect
 	return s.streamMessageLocked(accountInspectionStreamLog, accountInspectionSnapshotOptions{}, &entry)
 }
 
-type accountInspectionBroadcast struct{}
-
 type accountInspectionSequencedEvent struct {
 	Sequence int64
 	Message  accountInspectionLogStreamMessage
@@ -1085,18 +1096,14 @@ func (s *accountInspectionScheduler) recordEventLocked(message accountInspection
 	}
 }
 
-func (accountInspectionBroadcast) send() {}
-
-func (s *accountInspectionScheduler) statusBroadcastLocked() accountInspectionBroadcast {
+func (s *accountInspectionScheduler) statusBroadcastLocked() {
 	message := s.statusStreamMessageLocked(false)
 	s.recordEventLocked(message)
-	return accountInspectionBroadcast{}
 }
 
-func (s *accountInspectionScheduler) logBroadcastLocked(entry accountInspectionLogEntry) accountInspectionBroadcast {
+func (s *accountInspectionScheduler) logBroadcastLocked(entry accountInspectionLogEntry) {
 	message := s.logStreamMessageLocked(entry)
 	s.recordEventLocked(message)
-	return accountInspectionBroadcast{}
 }
 
 func (s *accountInspectionScheduler) isRunningLocked() bool {
@@ -1257,9 +1264,8 @@ func (s *accountInspectionScheduler) appendLog(level string, message string) {
 	if len(s.status.Logs) > 200 {
 		s.status.Logs = s.status.Logs[len(s.status.Logs)-200:]
 	}
-	broadcast := s.logBroadcastLocked(entry)
+	s.logBroadcastLocked(entry)
 	s.mu.Unlock()
-	broadcast.send()
 }
 
 func (s *accountInspectionScheduler) updateProgress(total int, completed int, inFlight int, force bool) {
@@ -1277,13 +1283,11 @@ func (s *accountInspectionScheduler) updateProgress(total int, completed int, in
 	}
 	s.status.Progress = next
 	shouldBroadcast := force || completed == total || now-s.lastProgressBroadcastAt >= accountInspectionProgressBroadcastGap.Milliseconds()
-	var broadcast accountInspectionBroadcast
 	if shouldBroadcast {
 		s.lastProgressBroadcastAt = now
-		broadcast = s.statusBroadcastLocked()
+		s.statusBroadcastLocked()
 	}
 	s.mu.Unlock()
-	broadcast.send()
 }
 
 func (s *accountInspectionScheduler) waitIfPaused(ctx context.Context) error {
@@ -1299,39 +1303,33 @@ func (s *accountInspectionScheduler) waitIfPaused(ctx context.Context) error {
 }
 
 func (s *accountInspectionScheduler) pauseRun() {
-	var broadcast accountInspectionBroadcast
 	s.mu.Lock()
 	if s.isRunningLocked() && !s.isStoppingLocked() {
 		s.setRunStateLocked(accountInspectionStatePaused)
-		broadcast = s.statusBroadcastLocked()
+		s.statusBroadcastLocked()
 	}
 	s.mu.Unlock()
-	broadcast.send()
 }
 
 func (s *accountInspectionScheduler) resumeRun() {
-	var broadcast accountInspectionBroadcast
 	s.mu.Lock()
 	if s.isRunningLocked() && s.isPausedLocked() {
 		s.setRunStateLocked(accountInspectionStateRunning)
-		broadcast = s.statusBroadcastLocked()
+		s.statusBroadcastLocked()
 		s.pause.Broadcast()
 	}
 	s.mu.Unlock()
-	broadcast.send()
 }
 
 func (s *accountInspectionScheduler) stopRun() {
-	var broadcast accountInspectionBroadcast
 	s.mu.Lock()
 	cancel := s.cancel
 	if s.isRunningLocked() {
 		s.setRunStateLocked(accountInspectionStateStopping)
-		broadcast = s.statusBroadcastLocked()
+		s.statusBroadcastLocked()
 		s.pause.Broadcast()
 	}
 	s.mu.Unlock()
-	broadcast.send()
 	if cancel != nil {
 		cancel()
 	}
@@ -1372,9 +1370,8 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 		s.status.Results = sortAccountInspectionResults(s.status.Results)
 		saveErr = s.saveResultSnapshotLocked()
 	}
-	broadcast := s.statusBroadcastLocked()
+	s.statusBroadcastLocked()
 	s.mu.Unlock()
-	broadcast.send()
 	if saveErr != nil {
 		return result, fmt.Errorf("failed to save account inspection snapshot: %w", saveErr)
 	}
@@ -1401,7 +1398,7 @@ func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item a
 	if err != nil {
 		return accountInspectionResult{}, err
 	}
-	auths, err := s.auths()
+	auths, err := s.auths(ctx)
 	if err != nil {
 		return accountInspectionResult{}, err
 	}
@@ -1526,7 +1523,7 @@ func (s *accountInspectionScheduler) mergeSingleInspectionResultLocked(result ac
 }
 
 func (s *accountInspectionScheduler) executeSingleInspection(ctx context.Context, settings accountInspectionSettings, item accountInspectionActionItem) (accountInspectionResult, accountInspectionSummary, error) {
-	auths, err := s.auths()
+	auths, err := s.auths(ctx)
 	if err != nil {
 		return accountInspectionResult{}, accountInspectionSummary{}, err
 	}
@@ -1586,7 +1583,7 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 		s.status.LastError = ""
 	}
 	s.cancel = nil
-	broadcast := s.statusBroadcastLocked()
+	s.statusBroadcastLocked()
 	if s.schedule.Enabled && !manual {
 		s.schedule.NextRunAt = time.Now().Add(time.Duration(s.schedule.IntervalMinutes) * time.Minute).UnixMilli()
 		if err := s.saveLocked(); err != nil {
@@ -1597,7 +1594,6 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 		log.WithError(err).Warn("failed to save account inspection snapshot")
 	}
 	s.mu.Unlock()
-	broadcast.send()
 }
 
 func runAccountInspectionWorkers(total int, workers int, beforeNext func() bool, run func(index int) bool) {
@@ -1632,15 +1628,12 @@ func runAccountInspectionWorkers(total int, workers int, beforeNext func() bool,
 }
 
 func (s *accountInspectionScheduler) executeInspection(ctx context.Context, settings accountInspectionSettings) ([]accountInspectionResult, accountInspectionSummary, error) {
-	auths, err := s.auths()
+	auths, err := s.auths(ctx)
 	if err != nil {
 		return nil, accountInspectionSummary{}, err
 	}
-	liveAuths := make([]*Auth, 0, len(auths))
 	accounts := make([]accountInspectionAccount, 0, len(auths))
-	existingPaths := make(map[string]bool)
 	for _, auth := range auths {
-		liveAuths = append(liveAuths, auth)
 		account := accountFromAuth(auth)
 		if shouldInspectAccount(account, settings.TargetType) {
 			accounts = append(accounts, account)
@@ -1654,7 +1647,6 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 	})
 	probeSetCount := len(accounts)
 	accounts = sampleAccounts(accounts, settings.SampleSize)
-	accounts = s.filterExistingAccounts(accounts, existingPaths)
 	s.appendLog("info", fmt.Sprintf("巡检集合 %d 个账号，本次探测 %d 个账号", probeSetCount, len(accounts)))
 
 	results := make([]accountInspectionResult, len(accounts))
@@ -1710,15 +1702,15 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 	)
 	if runErr != nil {
 		partial := completedInspectionResults(results)
-		return partial, summarizeAccountInspection(len(liveAuths), probeSetCount, accounts, partial), runErr
+		return partial, summarizeAccountInspection(len(auths), probeSetCount, accounts, partial), runErr
 	}
 	if err := ctx.Err(); err != nil {
 		partial := completedInspectionResults(results)
-		return partial, summarizeAccountInspection(len(liveAuths), probeSetCount, accounts, partial), err
+		return partial, summarizeAccountInspection(len(auths), probeSetCount, accounts, partial), err
 	}
 
 	s.applyAutomaticActions(ctx, results, settings)
-	return results, summarizeAccountInspection(len(liveAuths), probeSetCount, accounts, results), nil
+	return results, summarizeAccountInspection(len(auths), probeSetCount, accounts, results), nil
 }
 
 func completedInspectionResults(results []accountInspectionResult) []accountInspectionResult {
@@ -1740,25 +1732,11 @@ func accountInspectionProviderLimiters() map[string]chan struct{} {
 	return limiters
 }
 
-func (s *accountInspectionScheduler) auths() ([]*Auth, error) {
+func (s *accountInspectionScheduler) auths(ctx context.Context) ([]*Auth, error) {
 	if s.h == nil || s.h.authManager == nil {
 		return nil, fmt.Errorf("management handler unavailable")
 	}
-	return s.h.authManager.List(), nil
-}
-
-func (s *accountInspectionScheduler) filterExistingAccounts(accounts []accountInspectionAccount, existingPaths map[string]bool) []accountInspectionAccount {
-	out := accounts[:0]
-	for _, account := range accounts {
-		if s.authFileExists(account.Auth, existingPaths) {
-			out = append(out, account)
-		}
-	}
-	return out
-}
-
-func (s *accountInspectionScheduler) authFileExists(auth *Auth, existingPaths map[string]bool) bool {
-	return auth != nil
+	return s.h.authManager.ListContext(ctx)
 }
 
 func accountInspectionKey(fileName string, authIndex string) string {
@@ -2034,18 +2012,6 @@ func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *Auth, me
 	return accountInspectionHTTPResult{StatusCode: resp.StatusCode, Body: string(raw), Header: resp.Header.Clone()}, nil
 }
 
-func accountInspectionShouldUseExecutorHTTPRequest(auth *Auth) bool {
-	if auth == nil {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(auth.Provider)) {
-	case "gemini-cli", "xai":
-		return true
-	default:
-		return false
-	}
-}
-
 func (s *accountInspectionScheduler) withRetry(ctx context.Context, retries int, task func() (accountInspectionHTTPResult, error)) (accountInspectionHTTPResult, error) {
 	var last accountInspectionHTTPResult
 	var err error
@@ -2074,7 +2040,6 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 			return s.apiCall(ctx, account.Auth, http.MethodPost, url, map[string]string{
 				"Authorization": "Bearer $TOKEN$",
 				"Content-Type":  "application/json",
-				"User-Agent":    s.antigravityUserAgent(),
 			}, body, settings.Timeout)
 		})
 		if err != nil {
@@ -2138,7 +2103,6 @@ func (s *accountInspectionScheduler) fetchAntigravitySubscription(ctx context.Co
 		return s.apiCall(ctx, account.Auth, http.MethodPost, antigravityCodeAssistURL, map[string]string{
 			"Authorization": "Bearer $TOKEN$",
 			"Content-Type":  "application/json",
-			"User-Agent":    s.antigravityUserAgent(),
 		}, `{"metadata":{"ideType":"ANTIGRAVITY"}}`, settings.Timeout)
 	})
 	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -2182,7 +2146,6 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 			return s.apiCall(ctx, account.Auth, http.MethodPost, url, map[string]string{
 				"Authorization": "Bearer $TOKEN$",
 				"Content-Type":  "application/json",
-				"User-Agent":    s.antigravityUserAgent(),
 			}, body, settings.Timeout)
 		})
 		if err != nil {
@@ -2368,7 +2331,7 @@ func firstStatus(primary *int, fallback *int) *int {
 
 func (s *accountInspectionScheduler) inspectClaude(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
 	usageResp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
-		return s.apiCall(ctx, account.Auth, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", s.claudeHeaders(), "", settings.Timeout)
+		return s.apiCall(ctx, account.Auth, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", s.claudeHeaders(account.Auth), "", settings.Timeout)
 	})
 	status := intPtr(usageResp.StatusCode)
 	if err != nil {
@@ -2388,7 +2351,7 @@ func (s *accountInspectionScheduler) inspectClaude(ctx context.Context, account 
 		return accountInspectionDecision{}, status, err
 	}
 	planType := ""
-	profileResp, profileErr := s.apiCall(ctx, account.Auth, http.MethodGet, "https://api.anthropic.com/api/oauth/profile", s.claudeHeaders(), "", settings.Timeout)
+	profileResp, profileErr := s.apiCall(ctx, account.Auth, http.MethodGet, "https://api.anthropic.com/api/oauth/profile", s.claudeHeaders(account.Auth), "", settings.Timeout)
 	if profileErr == nil && profileResp.StatusCode >= 200 && profileResp.StatusCode < 300 {
 		planType = resolveClaudePlan(profileResp.Body)
 	}
@@ -2406,7 +2369,7 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 		return s.apiCall(ctx, account.Auth, http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", map[string]string{
 			"Authorization":      "Bearer $TOKEN$",
 			"Content-Type":       "application/json",
-			"User-Agent":         s.codexUserAgent(),
+			"User-Agent":         s.codexUserAgent(account.Auth),
 			"Chatgpt-Account-Id": accountID,
 		}, "", settings.Timeout)
 	})
@@ -2451,9 +2414,6 @@ func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, accou
 			return authErrorDecision(account, upstreamStatus), intPtr(upstreamStatus), nil
 		}
 		return accountInspectionDecision{}, intPtr(status), err
-	}
-	if errCleanup := s.cleanupLegacyQuotaCacheFromAuth(ctx, account); errCleanup != nil {
-		s.appendLog("warning", fmt.Sprintf("%s 旧认证文件配额缓存清理失败：%s", account.identity(), errCleanup.Error()))
 	}
 	used, hasQuota := quotaSnapshotMaxUsedPercent(result.Snapshot)
 	return quotaDecision(account, used, hasQuota, settings.UsedPercentThreshold), intPtr(http.StatusOK), nil
@@ -3003,33 +2963,24 @@ func firstInspectionStatus(values ...int) *int {
 	return nil
 }
 
-func (s *accountInspectionScheduler) antigravityUserAgent() string {
-	return "antigravity/1.11.9 windows/amd64"
-}
-
-func (s *accountInspectionScheduler) codexUserAgent() string {
-	if s != nil && s.h != nil {
-		if value := strings.TrimSpace(s.h.config.CodexUserAgent); value != "" {
-			return value
-		}
+func (s *accountInspectionScheduler) codexUserAgent(auth *Auth) string {
+	if value := strings.TrimSpace(authAttribute(auth, "inspection_user_agent")); value != "" {
+		return value
 	}
 	return "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
 }
 
-func (s *accountInspectionScheduler) claudeUserAgent() string {
-	if s != nil && s.h != nil {
-		return strings.TrimSpace(s.h.config.ClaudeUserAgent)
-	}
-	return ""
+func (s *accountInspectionScheduler) claudeUserAgent(auth *Auth) string {
+	return strings.TrimSpace(authAttribute(auth, "inspection_user_agent"))
 }
 
-func (s *accountInspectionScheduler) claudeHeaders() map[string]string {
+func (s *accountInspectionScheduler) claudeHeaders(auth *Auth) map[string]string {
 	headers := map[string]string{
 		"Authorization":  "Bearer $TOKEN$",
 		"Content-Type":   "application/json",
 		"anthropic-beta": "oauth-2025-04-20",
 	}
-	if userAgent := s.claudeUserAgent(); userAgent != "" {
+	if userAgent := s.claudeUserAgent(auth); userAgent != "" {
 		headers["User-Agent"] = userAgent
 	}
 	return headers
@@ -3106,49 +3057,6 @@ func setAuthInspectionDisabledState(auth *Auth, disabled bool) {
 	auth.UpdatedAt = time.Now()
 }
 
-func pluginVirtualSourcePath(auth *Auth) string {
-	if auth == nil {
-		return ""
-	}
-	sourcePath := strings.TrimSpace(authAttribute(auth, AttributeVirtualSource))
-	if sourcePath == "" {
-		sourcePath = strings.TrimSpace(authAttribute(auth, "path"))
-	}
-	return sourcePath
-}
-
-func sameAuthSourcePath(left string, right string) bool {
-	left = strings.TrimSpace(left)
-	right = strings.TrimSpace(right)
-	if left == "" || right == "" {
-		return false
-	}
-	if strings.EqualFold(filepath.Clean(left), filepath.Clean(right)) {
-		return true
-	}
-	leftAbs, leftErr := filepath.Abs(left)
-	rightAbs, rightErr := filepath.Abs(right)
-	return leftErr == nil && rightErr == nil && strings.EqualFold(filepath.Clean(leftAbs), filepath.Clean(rightAbs))
-}
-
-func isPluginVirtualRuntimeOnlyAuth(auth *Auth) bool {
-	if auth == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(authAttribute(auth, "runtime_only")), "true")
-}
-
-func cloneAnyMapForInspection(in map[string]any) map[string]any {
-	if in == nil {
-		return make(map[string]any)
-	}
-	out := make(map[string]any, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
-
 func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, authIndex string, mutate func(*Auth)) error {
 	if s == nil || s.h == nil || s.h.authManager == nil {
 		return fmt.Errorf("core auth manager unavailable")
@@ -3172,36 +3080,11 @@ func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, a
 	return nil
 }
 
-func (s *accountInspectionScheduler) updateInspectionErrorAuth(ctx context.Context, authIndex string, mutate func(*Auth)) error {
-	if s == nil || s.h == nil || s.h.authManager == nil {
-		return fmt.Errorf("core auth manager unavailable")
-	}
-	auth := s.h.authByIndex(authIndex)
-	if auth == nil {
-		return fmt.Errorf("auth not found")
-	}
-	if !isPluginVirtualAuth(auth) {
-		return s.updateInspectionAuth(ctx, authIndex, mutate)
-	}
-	if mutate == nil {
-		return nil
-	}
-	mutate(auth)
-	updated, err := s.h.authManager.Update(ctx, auth)
-	if err != nil {
-		return err
-	}
-	if updated == nil {
-		return fmt.Errorf("auth not found")
-	}
-	return nil
-}
-
 func (s *accountInspectionScheduler) syncInspectionAuthError(ctx context.Context, account accountInspectionAccount, code string, message string, status int) {
 	if s == nil || s.h == nil || s.h.authManager == nil || account.AuthIndex == "" {
 		return
 	}
-	err := s.updateInspectionErrorAuth(ctx, account.AuthIndex, func(auth *Auth) {
+	err := s.updateInspectionAuth(ctx, account.AuthIndex, func(auth *Auth) {
 		auth.Status = AuthStatusError
 		auth.StatusMessage = message
 		auth.Unavailable = true
@@ -3224,7 +3107,7 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 	if !isInspectionAuthErrorCode(authInspectionLastErrorCode(auth)) {
 		return
 	}
-	err := s.updateInspectionErrorAuth(ctx, account.AuthIndex, func(auth *Auth) {
+	err := s.updateInspectionAuth(ctx, account.AuthIndex, func(auth *Auth) {
 		if auth.Disabled {
 			auth.Status = AuthStatusDisabled
 		} else {
@@ -3519,9 +3402,8 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 	}
 	s.status.Results = sortAccountInspectionResults(s.status.Results)
 	saveErr := s.saveResultSnapshotLocked()
-	broadcast := s.statusBroadcastLocked()
+	s.statusBroadcastLocked()
 	s.mu.Unlock()
-	broadcast.send()
 	if saveErr != nil {
 		return outcomes, fmt.Errorf("failed to save account inspection snapshot: %w", saveErr)
 	}
@@ -3772,23 +3654,6 @@ func (s *accountInspectionScheduler) actionAuthForResult(result accountInspectio
 	return auth, nil
 }
 
-func (s *accountInspectionScheduler) pluginVirtualSourceAuthCount(auth *Auth) int {
-	if s == nil || s.h == nil || s.h.authManager == nil || auth == nil || !isPluginVirtualAuth(auth) {
-		return 0
-	}
-	sourcePath := pluginVirtualSourcePath(auth)
-	if sourcePath == "" {
-		return 0
-	}
-	count := 0
-	for _, candidate := range s.h.authManager.List() {
-		if candidate != nil && isPluginVirtualAuth(candidate) && sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
-			count++
-		}
-	}
-	return count
-}
-
 func summarizeAccountInspection(totalFiles int, probeSetCount int, accounts []accountInspectionAccount, results []accountInspectionResult) accountInspectionSummary {
 	summary := accountInspectionSummary{TotalFiles: totalFiles, ProbeSetCount: probeSetCount, SampledCount: len(results)}
 	for _, account := range accounts {
@@ -3954,18 +3819,7 @@ func jsonShape(value any) any {
 func (s *accountInspectionScheduler) persistQuotaState(ctx context.Context, account accountInspectionAccount, state map[string]any) {
 	if err := persistQuotaState(ctx, account, state); err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 配额缓存写入失败：%s", account.identity(), err.Error()))
-		return
 	}
-	if err := s.cleanupLegacyQuotaCacheFromAuth(ctx, account); err != nil {
-		s.appendLog("warning", fmt.Sprintf("%s 旧认证文件配额缓存清理失败：%s", account.identity(), err.Error()))
-	}
-}
-
-func (s *accountInspectionScheduler) cleanupLegacyQuotaCacheFromAuth(ctx context.Context, account accountInspectionAccount) error {
-	return nil
-}
-
-func (s *accountInspectionScheduler) cleanupLegacyQuotaCaches(ctx context.Context) {
 }
 
 func persistQuotaState(ctx context.Context, account accountInspectionAccount, state map[string]any) error {
@@ -4264,29 +4118,6 @@ func minRemainingFractionFromBuckets(buckets []map[string]any) *float64 {
 		}
 	}
 	return &minValue
-}
-
-func earliestResetTimeFromBuckets(buckets []map[string]any) string {
-	selected := ""
-	var selectedTime time.Time
-	for _, bucket := range buckets {
-		raw := stringFromAny(bucket["resetTime"])
-		if raw == "" {
-			continue
-		}
-		parsed, err := time.Parse(time.RFC3339Nano, raw)
-		if err != nil {
-			if selected == "" {
-				selected = raw
-			}
-			continue
-		}
-		if selected == "" || selectedTime.IsZero() || parsed.Before(selectedTime) {
-			selected = raw
-			selectedTime = parsed
-		}
-	}
-	return selected
 }
 
 func anyMapSlice(value any) []map[string]any {
@@ -4987,64 +4818,11 @@ func toKimiUsageRow(data map[string]any, fallbackLabel map[string]any) map[strin
 	return row
 }
 
-func cloneFloatPtr(value *float64) *float64 {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
-}
-
-func minFloatPtr(current *float64, next *float64) *float64 {
-	if current == nil {
-		return cloneFloatPtr(next)
-	}
-	if next == nil {
-		return cloneFloatPtr(current)
-	}
-	value := math.Min(*current, *next)
-	return &value
-}
-
-func pickEarlierResetTime(current string, next string) string {
-	if current == "" {
-		return next
-	}
-	if next == "" {
-		return current
-	}
-	currentTime, currentErr := time.Parse(time.RFC3339Nano, current)
-	nextTime, nextErr := time.Parse(time.RFC3339Nano, next)
-	if currentErr != nil {
-		return next
-	}
-	if nextErr != nil {
-		return current
-	}
-	if currentTime.Before(nextTime) || currentTime.Equal(nextTime) {
-		return current
-	}
-	return next
-}
-
 func floatPtrAny(value *float64) any {
 	if value == nil {
 		return nil
 	}
 	return *value
-}
-
-func uniqueStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
 }
 
 func firstAnyFromMaps(sources []map[string]any, key string) any {
@@ -5516,17 +5294,6 @@ func anySlice(value any) []any {
 	}
 }
 
-func formatResetTime(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "-"
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return "-"
-	}
-	return parsed.Local().Format("01/02, 15:04")
-}
-
 func floatFromAny(value any) (float64, bool) {
 	switch v := value.(type) {
 	case float64:
@@ -5738,9 +5505,8 @@ func (h *Handler) RefreshAccountInspectionToken(c *gin.Context) {
 		scheduler.status.Results = sortAccountInspectionResults(scheduler.status.Results)
 		saveErr = scheduler.saveResultSnapshotLocked()
 	}
-	broadcast := scheduler.statusBroadcastLocked()
+	scheduler.statusBroadcastLocked()
 	scheduler.mu.Unlock()
-	broadcast.send()
 	err = firstNonNilError(err, saveErr)
 	snapshot := scheduler.snapshotForRequest(c)
 	if err != nil {

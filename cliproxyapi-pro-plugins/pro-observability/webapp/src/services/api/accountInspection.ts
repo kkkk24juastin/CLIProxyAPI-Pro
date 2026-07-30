@@ -1,5 +1,4 @@
 import { apiClient } from './client';
-import { MANAGEMENT_API_PREFIX } from '@/utils/constants';
 import type {
   AccountInspectionBackendLog as BackendLog,
   AccountInspectionBackendResponse,
@@ -95,27 +94,6 @@ const buildAccountInspectionDetailParams = (options: boolean | AccountInspection
   if (normalized.logPageSize !== undefined) params.log_page_size = normalized.logPageSize;
   if (normalized.logLevel) params.log_level = normalized.logLevel;
   return params;
-};
-
-export const buildAccountInspectionLogsWebSocketUrl = (apiBase: string, includeDetails = false) => {
-  const base = apiBase.replace(/\/?v0\/management\/?$/i, '').replace(/\/+$/i, '');
-  const url = new URL(`${base}${MANAGEMENT_API_PREFIX}/account-inspection/logs`);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.searchParams.set('details', includeDetails ? '1' : '0');
-  return url.toString();
-};
-
-export const accountInspectionWebSocketProtocol = (managementKey: string) =>
-  `cpa-management.${encodeURIComponent(managementKey)}`;
-
-export const nextAccountInspectionReconnectDelay = (currentDelayMs: number) =>
-  Math.min(Math.max(currentDelayMs, 1000) * 2, 30000);
-
-export const refreshAccountInspectionAfterReconnect = async (
-  loadSummary: () => Promise<unknown>,
-  loadDetails: () => Promise<unknown>
-) => {
-  await Promise.allSettled([loadSummary(), loadDetails()]);
 };
 
 export const accountInspectionApi = {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,11 +22,30 @@ type pluginManagementEventPage struct {
 
 var pluginManagementStreamUpgrader = websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 
-func pollPluginManagementEvents(ctx context.Context, caller managementRouteCaller, path string, after int64) (pluginManagementEventPage, error) {
+var pluginManagementEventQueryKeys = map[string]struct{}{
+	"details": {}, "result_limit": {}, "log_limit": {}, "result_page": {}, "result_page_size": {},
+	"result_filter": {}, "result_pending_only": {}, "result_provider": {}, "result_search": {},
+	"log_page": {}, "log_page_size": {}, "log_level": {},
+}
+
+func sanitizedPluginManagementEventQuery(source url.Values) url.Values {
+	query := make(url.Values)
+	for key, values := range source {
+		if _, ok := pluginManagementEventQueryKeys[key]; ok {
+			query[key] = append([]string(nil), values...)
+		}
+	}
+	return query
+}
+
+func pollPluginManagementEvents(ctx context.Context, caller managementRouteCaller, path string, baseQuery url.Values, after int64) (pluginManagementEventPage, error) {
 	if caller == nil {
 		return pluginManagementEventPage{}, fmt.Errorf("plugin host is not available")
 	}
-	query := make(url.Values)
+	query := make(url.Values, len(baseQuery)+1)
+	for key, values := range baseQuery {
+		query[key] = append([]string(nil), values...)
+	}
 	query.Set("after_sequence", strconv.FormatInt(max(after, 0), 10))
 	response, handled, err := caller.CallManagement(ctx, pluginapi.ManagementRequest{Method: http.MethodGet, Path: path, Query: query})
 	if err != nil {
@@ -44,8 +64,25 @@ func pollPluginManagementEvents(ctx context.Context, caller managementRouteCalle
 	return page, nil
 }
 
+func pluginManagementWebSocketResponseHeader(request *http.Request) http.Header {
+	header := make(http.Header)
+	if request == nil {
+		return header
+	}
+	for _, protocol := range request.Header.Values("Sec-WebSocket-Protocol") {
+		for _, candidate := range strings.Split(protocol, ",") {
+			candidate = strings.TrimSpace(candidate)
+			if strings.HasPrefix(candidate, "cpa-management.") {
+				header.Set("Sec-WebSocket-Protocol", candidate)
+				return header
+			}
+		}
+	}
+	return header
+}
+
 func (s *Server) servePluginManagementWebSocket(c *gin.Context, eventPath string) {
-	connection, err := pluginManagementStreamUpgrader.Upgrade(c.Writer, c.Request, nil)
+	connection, err := pluginManagementStreamUpgrader.Upgrade(c.Writer, c.Request, pluginManagementWebSocketResponseHeader(c.Request))
 	if err != nil {
 		return
 	}
@@ -63,6 +100,7 @@ func (s *Server) servePluginManagementWebSocket(c *gin.Context, eventPath string
 	}()
 
 	sequence := int64(0)
+	eventQuery := sanitizedPluginManagementEventQuery(c.Request.URL.Query())
 	poll := time.NewTicker(time.Second)
 	ping := time.NewTicker(30 * time.Second)
 	defer poll.Stop()
@@ -79,7 +117,7 @@ func (s *Server) servePluginManagementWebSocket(c *gin.Context, eventPath string
 		}
 		return true
 	}
-	page, err := pollPluginManagementEvents(c.Request.Context(), s.pluginHost, eventPath, sequence)
+	page, err := pollPluginManagementEvents(c.Request.Context(), s.pluginHost, eventPath, eventQuery, sequence)
 	if err != nil || !writePage(page) {
 		return
 	}
@@ -95,7 +133,7 @@ func (s *Server) servePluginManagementWebSocket(c *gin.Context, eventPath string
 				return
 			}
 		case <-poll.C:
-			page, err = pollPluginManagementEvents(c.Request.Context(), s.pluginHost, eventPath, sequence)
+			page, err = pollPluginManagementEvents(c.Request.Context(), s.pluginHost, eventPath, eventQuery, sequence)
 			if err != nil || !writePage(page) {
 				return
 			}
