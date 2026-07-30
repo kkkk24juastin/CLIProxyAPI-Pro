@@ -2,7 +2,7 @@ FROM debian:bookworm@sha256:9344f8b8992482f80cba753f323adeaf17690076c095ccff6cc9
 
 ARG TARGETARCH
 
-RUN mkdir -p /CLIProxyAPI/usage
+RUN mkdir -p /CLIProxyAPI/usage /CLIProxyAPI/static
 
 COPY --from=ghcr.io/komari-monitor/komari-agent:latest /app/komari-agent /CLIProxyAPI/komari-agent
 
@@ -16,9 +16,11 @@ WORKDIR /CLIProxyAPI
 COPY binaries/linux/${TARGETARCH}/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
 COPY plugins /CLIProxyAPI/plugins
 COPY config.example.yaml /CLIProxyAPI/config.example.yaml
+COPY management.html /CLIProxyAPI/static/management.html
 COPY entrypoint.sh /CLIProxyAPI/entrypoint.sh
 
 ENV TZ=Asia/Shanghai
+ENV MANAGEMENT_STATIC_PATH=/CLIProxyAPI/static/management.html
 ENV USAGE_DATA_DIR=/CLIProxyAPI/usage
 ENV USAGE_DB_PATH=/CLIProxyAPI/usage/usage.sqlite
 ENV USAGE_BATCH_SIZE=100

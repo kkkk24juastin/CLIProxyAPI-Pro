@@ -9,11 +9,9 @@ ROOT = Path(os.environ.get('SRC_ROOT', '/src/CLIProxyAPI'))
 PATCH_SOURCE_DIR = Path(__file__).resolve().parent / 'sources'
 PRO_PANEL_REPOSITORY = 'https://github.com/ssfun/CLIProxyAPI-Pro'
 PRO_PANEL_RELEASE_API = 'https://api.github.com/repos/ssfun/CLIProxyAPI-Pro/releases/latest'
-PRO_MANAGEMENT_HTML_PATH = Path(os.environ.get('PRO_MANAGEMENT_HTML_PATH', '')).expanduser()
 
 
 _writes = {}
-_binary_writes = {}
 
 
 def read_text(path: Path) -> str:
@@ -32,10 +30,6 @@ def read(path: Path) -> str:
 
 def write(path: Path, text: str) -> None:
     _writes[path] = text
-
-
-def write_bytes(path: Path, data: bytes) -> None:
-    _binary_writes[path] = data
 
 
 def require_source_hash(path: Path, allowed_hashes: set[str]) -> None:
@@ -59,13 +53,7 @@ def flush_writes() -> None:
     for path, text in _writes.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         write_text(path, text)
-    for path, data in _binary_writes.items():
-        if path in _writes:
-            raise SystemExit(f'path queued for both text and binary writes: {path}')
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
     _writes.clear()
-    _binary_writes.clear()
 
 
 def queue_tree(source: Path, target: Path) -> None:
@@ -194,15 +182,6 @@ def replace_go_call_block(path: Path, call_start: str, new_block: str, present: 
 
 
 MODULE_PATH = module_path()
-if not PRO_MANAGEMENT_HTML_PATH.is_file():
-    raise SystemExit(
-        'PRO_MANAGEMENT_HTML_PATH must point to the built Pro management.html asset: '
-        f'{PRO_MANAGEMENT_HTML_PATH}'
-    )
-pro_management_html = PRO_MANAGEMENT_HTML_PATH.read_bytes()
-if not pro_management_html.strip():
-    raise SystemExit(f'Pro management asset is empty: {PRO_MANAGEMENT_HTML_PATH}')
-
 customization_sentinel = ROOT / 'internal/embeddedusage'
 if customization_sentinel.exists():
     raise SystemExit(f'target already contains CLIProxyAPI Pro customizations: {customization_sentinel}')
@@ -227,8 +206,7 @@ new_customization_paths = (
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
     'internal/pluginstore/gitstore_auth_test.go',
-    'internal/managementasset/pro_fallback_test.go',
-    'internal/managementasset/pro_management.html',
+    'internal/managementasset/gitstore_token_test.go',
     'internal/requestmeta/client.go',
     'internal/requestmeta/client_test.go',
     'internal/requestmeta/requestid.go',
@@ -1100,18 +1078,6 @@ replace_once(
     'defaultManagementReleaseURL  = "https://api.github.com/repos/router-for-me/Cli-Proxy-API-Management-Center/releases/latest"',
     f'defaultManagementReleaseURL  = "{PRO_PANEL_RELEASE_API}"',
 )
-replace_once(updater, '\tdefaultManagementFallbackURL = "https://cpamc.router-for.me/"\n', '')
-replace_once(
-    updater,
-    'failed to fetch latest management release information, trying fallback page',
-    'failed to fetch latest management release information, restoring embedded Pro panel',
-)
-replace_once(
-    updater,
-    'failed to download management asset, trying fallback page',
-    'failed to download management asset, restoring embedded Pro panel',
-)
-add_go_import(updater, '"encoding/json"\n', '\t_ "embed"\n')
 replace_once(updater, '\tgitURL := strings.ToLower(strings.TrimSpace(os.Getenv("GITSTORE_GIT_URL")))\n', '')
 replace_once(updater, 'tok != "" && strings.Contains(gitURL, "github.com")', 'tok != "" && isGitHubAPIURL(releaseURL)')
 insert_before(
@@ -1134,71 +1100,41 @@ replace_once(
     '\tAPIURL             string `json:"url"`\n\tName               string `json:"name"`\n',
     'APIURL             string `json:"url"`',
 )
-insert_before(
-    updater,
-    'var (\n',
-    '//go:embed pro_management.html\nvar proManagementFallbackHTML []byte\n\n',
-    'var proManagementFallbackHTML []byte',
-)
 replace_once(
     updater,
     'downloadAsset(ctx, client, asset.BrowserDownloadURL)',
     'downloadReleaseAsset(ctx, client, asset)',
 )
-replace_go_function(
+insert_before(
     updater,
-    'func ensureFallbackManagementHTML',
-    '''func ensureFallbackManagementHTML(_ context.Context, _ *http.Client, localPath string) bool {
-\tif len(proManagementFallbackHTML) == 0 {
-\t\tlog.Warn("embedded Pro management control panel is empty")
-\t\treturn false
-\t}
-\tdata := append([]byte(nil), proManagementFallbackHTML...)
-\tsum := sha256.Sum256(data)
-\tdownloadedHash := hex.EncodeToString(sum[:])
-
-\tif err := atomicWriteFile(localPath, data); err != nil {
-\t\tlog.WithError(err).Warn("failed to persist embedded Pro management control panel page")
-\t\treturn false
-\t}
-
-\tlog.Infof("management asset restored from embedded Pro panel (hash=%s)", downloadedHash)
-\treturn true
-}
-''',
-    'management asset restored from embedded Pro panel',
-)
-replace_go_function(
-    updater,
-    'func downloadAsset',
+    'func downloadAsset(ctx context.Context, client *http.Client, downloadURL string) ([]byte, string, error) {\n',
     '''func downloadReleaseAsset(ctx context.Context, client *http.Client, asset *releaseAsset) ([]byte, string, error) {
 \tif asset == nil {
 \t\treturn nil, "", fmt.Errorf("nil management release asset")
 \t}
-\tdownloadURL := strings.TrimSpace(asset.BrowserDownloadURL)
-\theaders := map[string]string{"User-Agent": httpUserAgent}
 \tif tok := strings.TrimSpace(os.Getenv("GITSTORE_GIT_TOKEN")); tok != "" && isGitHubAPIURL(asset.APIURL) {
-\t\tdownloadURL = strings.TrimSpace(asset.APIURL)
-\t\theaders["Accept"] = "application/octet-stream"
-\t\theaders["Authorization"] = "Bearer " + tok
-\t}
-\tif downloadURL == "" {
-\t\treturn nil, "", fmt.Errorf("empty download url")
-\t}
+\t\tdownloadURL := strings.TrimSpace(asset.APIURL)
+\t\theaders := map[string]string{
+\t\t\t"Accept":        "application/octet-stream",
+\t\t\t"Authorization": "Bearer " + tok,
+\t\t\t"User-Agent":    httpUserAgent,
+\t\t}
 
-\tdata, err := httpfetch.GetBytes(ctx, client, downloadURL, headers, maxAssetDownloadSize)
-\tif err != nil {
-\t\treturn nil, "", fmt.Errorf("download asset: %w", err)
-\t}
+\t\tdata, err := httpfetch.GetBytes(ctx, client, downloadURL, headers, maxAssetDownloadSize)
+\t\tif err != nil {
+\t\t\treturn nil, "", fmt.Errorf("download asset: %w", err)
+\t\t}
 
-\tsum := sha256.Sum256(data)
-\treturn data, hex.EncodeToString(sum[:]), nil
+\t\tsum := sha256.Sum256(data)
+\t\treturn data, hex.EncodeToString(sum[:]), nil
+\t}
+\treturn downloadAsset(ctx, client, asset.BrowserDownloadURL)
 }
+
 ''',
     'func downloadReleaseAsset',
 )
-write_bytes(ROOT / 'internal/managementasset/pro_management.html', pro_management_html)
-queue_go_source('internal/managementasset/pro_fallback_test.go')
+queue_go_source('internal/managementasset/gitstore_token_test.go')
 queue_go_source('internal/api/handlers/management/management_panel.go')
 queue_go_source('internal/api/handlers/management/management_panel_test.go')
 
@@ -2593,7 +2529,7 @@ subprocess.run([
     'internal/api/handlers/management/management_panel.go',
     'internal/api/handlers/management/management_panel_test.go',
     'internal/managementasset/updater.go',
-    'internal/managementasset/pro_fallback_test.go',
+    'internal/managementasset/gitstore_token_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
     'internal/client/claude/models/models.go',

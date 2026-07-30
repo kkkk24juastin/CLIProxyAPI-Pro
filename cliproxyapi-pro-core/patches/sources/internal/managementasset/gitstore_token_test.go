@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 )
@@ -53,23 +52,6 @@ func TestGitStoreGitTokenCoversManagementMetadataAndAssetAPI(t *testing.T) {
 	}
 	if requests[1].URL.String() != asset.APIURL {
 		t.Fatalf("asset request URL = %q, want %q", requests[1].URL, asset.APIURL)
-	}
-}
-
-func TestEmbeddedProManagementFallbackIsWrittenLocally(t *testing.T) {
-	if len(proManagementFallbackHTML) == 0 {
-		t.Fatal("embedded Pro management fallback is empty")
-	}
-	path := t.TempDir() + "/management.html"
-	if !ensureFallbackManagementHTML(context.Background(), http.DefaultClient, path) {
-		t.Fatal("ensureFallbackManagementHTML() = false, want true")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	if string(data) != string(proManagementFallbackHTML) {
-		t.Fatal("written fallback differs from embedded Pro management")
 	}
 }
 

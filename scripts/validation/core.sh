@@ -25,13 +25,6 @@ export SRC_ROOT="${upstream_root}"
 
 validation_tmp="$(mktemp -d "${TMPDIR:-/tmp}/cliproxyapi-pro-core-validation.XXXXXX")"
 trap 'rm -rf "${validation_tmp}"' EXIT
-if [[ -z "${PRO_MANAGEMENT_HTML_PATH:-}" ]]; then
-  export PRO_MANAGEMENT_HTML_PATH="${validation_tmp}/management.html"
-  printf '%s\n' '<!doctype html><html><body>CLIProxyAPI Pro embedded management validation asset</body></html>' > "${PRO_MANAGEMENT_HTML_PATH}"
-elif [[ ! -s "${PRO_MANAGEMENT_HTML_PATH}" ]]; then
-  echo "Pro management validation asset is missing or empty: ${PRO_MANAGEMENT_HTML_PATH}" >&2
-  exit 1
-fi
 
 guarded_source='internal/logging/requestid.go'
 preflight_log="$(mktemp "${TMPDIR:-/tmp}/cliproxyapi-pro-preflight.XXXXXX")"

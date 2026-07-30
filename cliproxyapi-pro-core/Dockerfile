@@ -48,7 +48,7 @@ COPY cliproxyapi-pro-core/patches /tmp/patches
 COPY cliproxyapi-pro-plugins/proxy-pool /tmp/proxy-pool
 COPY cliproxyapi-pro-plugins/oauth-model-policy /tmp/oauth-model-policy
 
-RUN PRO_MANAGEMENT_HTML_PATH=/tmp/pro-management.html python3 /tmp/patches/apply_upstream_patches.py
+RUN python3 /tmp/patches/apply_upstream_patches.py
 
 RUN set -eux; \
     cd /tmp/proxy-pool; \
@@ -81,7 +81,7 @@ FROM debian:bookworm@sha256:9344f8b8992482f80cba753f323adeaf17690076c095ccff6cc9
 
 ARG TARGETARCH
 
-RUN mkdir -p /CLIProxyAPI/usage
+RUN mkdir -p /CLIProxyAPI/usage /CLIProxyAPI/static
 
 COPY --from=ghcr.io/komari-monitor/komari-agent:latest /app/komari-agent /CLIProxyAPI/komari-agent
 
@@ -96,9 +96,11 @@ COPY --from=builder /out/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
 COPY --from=builder /out/proxy-pool.so /CLIProxyAPI/plugins/linux/${TARGETARCH}/proxy-pool.so
 COPY --from=builder /out/oauth-model-policy.so /CLIProxyAPI/plugins/linux/${TARGETARCH}/oauth-model-policy.so
 COPY --from=builder /src/CLIProxyAPI/config.example.yaml /CLIProxyAPI/config.example.yaml
+COPY --from=builder /tmp/pro-management.html /CLIProxyAPI/static/management.html
 COPY cliproxyapi-pro-core/entrypoint.sh /CLIProxyAPI/entrypoint.sh
 
 ENV TZ=Asia/Shanghai
+ENV MANAGEMENT_STATIC_PATH=/CLIProxyAPI/static/management.html
 ENV USAGE_DATA_DIR=/CLIProxyAPI/usage
 ENV USAGE_DB_PATH=/CLIProxyAPI/usage/usage.sqlite
 ENV USAGE_BATCH_SIZE=100

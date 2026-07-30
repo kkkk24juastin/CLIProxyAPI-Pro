@@ -217,7 +217,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 
 该修改会同时影响内置默认配置、`config.example.yaml`，以及 management asset updater 的默认 latest-release API 地址。
 
-发布构建会把同一次流水线生成的 Pro `management.html` 嵌入所有平台的 Core 二进制。GitHub Release API 或制品下载失败且本地面板不存在时，updater 会直接写出该内嵌 Pro 面板，不再请求 upstream 的公共回退页面。
+发布流水线会把同一次构建生成的 Pro `management.html` 放入 Docker 镜像的 `/CLIProxyAPI/static/management.html`，并通过 `MANAGEMENT_STATIC_PATH` 固定为本地面板。GitHub Release API 或制品下载失败时，上游 updater 会保留并继续使用该本地文件。Core 二进制及非 Docker 发行包不再内嵌 management，也不改变 upstream 原有回退实现。
 
 设置 `GITSTORE_GIT_TOKEN` 后，token 会自动用于 `api.github.com` 上的 management 和插件 GitHub Release 元数据、API 制品下载，以及启动时插件自动安装。匹配仅限 HTTPS GitHub API release 路径；显式的 `plugins.store-auth` 规则优先，其中 `type: none` 可禁止指定范围使用该环境变量。
 
@@ -279,7 +279,7 @@ docker build \
 - `CLIPROXY_VERSION` — upstream release tag。为空时 Dockerfile 自动解析 latest release。
 - `CLIPROXY_COMMIT` — 可选 upstream commit SHA；设置后按该提交下载源码，同时保留 `CLIPROXY_VERSION` 作为版本标识。
 - `CLIPROXY_BUILD_VERSION` — 可选 runtime 版本号。为空时使用 `CLIPROXY_VERSION` 解析到的 upstream 版本。
-- `PRO_MANAGEMENT_REPO` — Source Docker 构建用于取得内嵌 Pro management 的仓库，默认 `ssfun/CLIProxyAPI-Pro`。
+- `PRO_MANAGEMENT_REPO` — Source Docker 构建用于取得镜像内 Pro management 的仓库，默认 `ssfun/CLIProxyAPI-Pro`。
 - `SOURCE_DATE_EPOCH` — 可选 Unix 时间戳，用于写入确定的构建时间；与不可变 upstream commit 一起设置可获得确定的 source binary。
 - `GITHUB_TOKEN` — 可选 GitHub API token。
 
@@ -288,6 +288,7 @@ Release workflow 会从 Core、models 和定制层三个不可变提交中取最
 ## 运行时环境变量
 
 - `GITSTORE_GIT_TOKEN` — 可选 GitHub token；用于 management 和插件的 GitHub Release API 元数据及 API 制品下载，可避免匿名 API 限流导致的 403。
+- `MANAGEMENT_STATIC_PATH` — Docker 镜像固定为 `/CLIProxyAPI/static/management.html`，指向镜像打包的 Pro 面板。
 
 ### Usage service
 

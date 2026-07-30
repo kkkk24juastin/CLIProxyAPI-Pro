@@ -218,7 +218,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 
 This affects the built-in default config, `config.example.yaml`, and the management asset updater's default latest-release API URL.
 
-Release builds embed the Pro `management.html` produced by the same workflow into every Core platform binary. If the GitHub Release API or asset download fails while the local panel is missing, the updater writes this embedded Pro panel directly instead of requesting upstream's public fallback page.
+The release workflow places the Pro `management.html` produced by the same build at `/CLIProxyAPI/static/management.html` in the Docker image and pins it with `MANAGEMENT_STATIC_PATH`. If the GitHub Release API or asset download fails, upstream's updater keeps using this local file. Core binaries and non-Docker archives no longer embed management or change upstream's fallback implementation.
 
 When `GITSTORE_GIT_TOKEN` is set, it is automatically used for management and plugin GitHub Release metadata, authenticated API asset downloads, and startup plugin auto-install. Matching is restricted to HTTPS GitHub API release paths. Explicit `plugins.store-auth` rules take precedence, and a matching `type: none` rule can suppress this environment fallback.
 
@@ -280,7 +280,7 @@ Build args:
 - `CLIPROXY_VERSION` — upstream release tag. If empty, the Dockerfile resolves the latest release.
 - `CLIPROXY_COMMIT` — optional upstream commit SHA; when set, source is downloaded from that commit while `CLIPROXY_VERSION` remains the version label.
 - `CLIPROXY_BUILD_VERSION` — optional runtime version. If empty, it uses the upstream version resolved from `CLIPROXY_VERSION`.
-- `PRO_MANAGEMENT_REPO` — repository used by the source Docker build to obtain the embedded Pro management asset; defaults to `ssfun/CLIProxyAPI-Pro`.
+- `PRO_MANAGEMENT_REPO` — repository used by the source Docker build to obtain the Pro management asset packaged into the image; defaults to `ssfun/CLIProxyAPI-Pro`.
 - `SOURCE_DATE_EPOCH` — optional Unix timestamp used for the embedded build date. Set it together with an immutable upstream commit for a deterministic source binary.
 - `GITHUB_TOKEN` — optional token for GitHub API requests.
 
@@ -289,6 +289,7 @@ Release workflows derive `SOURCE_DATE_EPOCH` from the newest immutable Core, mod
 ## Runtime environment variables
 
 - `GITSTORE_GIT_TOKEN` — optional GitHub token used for management and plugin GitHub Release metadata and authenticated API asset downloads, avoiding anonymous API rate-limit 403 responses.
+- `MANAGEMENT_STATIC_PATH` — fixed to `/CLIProxyAPI/static/management.html` in Docker images and points to the packaged Pro panel.
 
 ### Usage service
 
