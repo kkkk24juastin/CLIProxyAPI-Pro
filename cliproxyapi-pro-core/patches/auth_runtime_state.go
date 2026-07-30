@@ -53,12 +53,8 @@ func cleanupLegacyQuotaCacheOnRegister(auth *Auth) {
 	delete(auth.Metadata, "quota_cache")
 }
 
-func applyStoredAuthRuntimeStats(auth *Auth, stored embeddedusage.AuthRuntimeStats) bool {
+func applyAuthRuntimeStats(auth *Auth, stored embeddedusage.AuthRuntimeStats) bool {
 	if auth == nil {
-		return false
-	}
-	fingerprint := authRuntimeIdentityFingerprint(auth)
-	if stored.IdentityFingerprint != "" && fingerprint != "" && stored.IdentityFingerprint != fingerprint {
 		return false
 	}
 	auth.Selected = stored.SelectedCount
@@ -77,6 +73,17 @@ func applyStoredAuthRuntimeStats(auth *Auth, stored embeddedusage.AuthRuntimeSta
 		}
 	}
 	return true
+}
+
+func applyStoredAuthRuntimeStats(auth *Auth, stored embeddedusage.AuthRuntimeStats) bool {
+	if auth == nil {
+		return false
+	}
+	fingerprint := authRuntimeIdentityFingerprint(auth)
+	if stored.IdentityFingerprint != "" && fingerprint != "" && stored.IdentityFingerprint != fingerprint {
+		return false
+	}
+	return applyAuthRuntimeStats(auth, stored)
 }
 
 func authRuntimeStatsSnapshot(auth *Auth, now time.Time) embeddedusage.AuthRuntimeStats {
@@ -239,12 +246,22 @@ func (m *Manager) ApplyImportedRuntimeState(cursors []embeddedusage.RoutingCurso
 		if auth == nil {
 			continue
 		}
-		item, ok := statsByIndex[strings.TrimSpace(auth.Index)]
-		if !ok {
+		item, matchedByIndex := statsByIndex[strings.TrimSpace(auth.Index)]
+		if matchedByIndex {
+			// An explicit backup import is authoritative when it targets the same
+			// stable auth index. Provider identity metadata can legitimately gain,
+			// lose, or rotate fields across a restart, so requiring the historical
+			// fingerprint here would silently leave the live account statistics at
+			// zero even though the imported database row was accepted.
+			applyAuthRuntimeStats(auth, item)
+		} else {
+			var ok bool
 			item, ok = statsByID[strings.TrimSpace(auth.ID)]
-		}
-		if ok {
-			applyStoredAuthRuntimeStats(auth, item)
+			if ok {
+				// ID-only fallback is less stable and keeps the fingerprint guard to
+				// prevent statistics from being attached to a replaced credential.
+				applyStoredAuthRuntimeStats(auth, item)
+			}
 		}
 		snapshots = append(snapshots, auth.Clone())
 	}
