@@ -186,6 +186,7 @@ GEMINI_CLI_LOCALE_KEYS = {
 
 XAI_QUOTA_LOCALE_KEYS = {
     'en.json': {
+        'plan_free': 'Free',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': 'Paid (unknown tier)',
         'free_quota': 'Free token quota',
@@ -193,6 +194,7 @@ XAI_QUOTA_LOCALE_KEYS = {
         'free_quota_window': 'Rolling 24 hours',
     },
     'ru.json': {
+        'plan_free': 'Бесплатный',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': 'Платный (неизвестный уровень)',
         'free_quota': 'Бесплатная квота токенов',
@@ -200,6 +202,7 @@ XAI_QUOTA_LOCALE_KEYS = {
         'free_quota_window': 'Скользящие 24 часа',
     },
     'zh-CN.json': {
+        'plan_free': '免费套餐',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': '付费版（未知档位）',
         'free_quota': '免费 Token 额度',
@@ -207,6 +210,7 @@ XAI_QUOTA_LOCALE_KEYS = {
         'free_quota_window': '滚动 24 小时',
     },
     'zh-TW.json': {
+        'plan_free': '免費套餐',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': '付費版（未知級別）',
         'free_quota': '免費 Token 配額',
@@ -718,8 +722,8 @@ def patch_routes(target: Path) -> None:
     path = target / 'src/router/MainRoutes.tsx'
     replace_once(
         path,
-        "import { QuotaPage } from '@/pages/QuotaPage';\n",
-        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\nimport { ProxyPoolPage } from '@/pages/ProxyPoolPage';\nimport { OAuthModelPolicyPage } from '@/pages/OAuthModelPolicyPage';\n",
+        "import { QuotaPage } from '@/features/quota/QuotaPage';\n",
+        "import { QuotaPage } from '@/features/quota/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\nimport { ProxyPoolPage } from '@/pages/ProxyPoolPage';\nimport { OAuthModelPolicyPage } from '@/pages/OAuthModelPolicyPage';\n",
     )
     replace_once(
         path,
@@ -3059,6 +3063,175 @@ def patch_locales(target: Path) -> None:
         write(locale_path, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
 
+def _ensure_interface_field(path: Path, interface_name: str, field: str) -> None:
+    text = read(path)
+    start = text.find(f'export interface {interface_name} {{')
+    if start == -1:
+        raise RuntimeError(f'Interface not found in {path}: {interface_name}')
+    end = text.find('\n}', start)
+    if end == -1:
+        raise RuntimeError(f'Interface end not found in {path}: {interface_name}')
+    block = text[start:end]
+    if field.strip() in block:
+        return
+    write(path, f'{text[:end]}\n{field}{text[end:]}')
+
+
+def patch_quota_types_latest(target: Path) -> None:
+    path = target / 'src/types/quota.ts'
+    insert_once(
+        path,
+        '// API payload types\n',
+        "// API payload types\nexport interface GeminiCliQuotaBucket {\n  modelId?: string;\n  model_id?: string;\n  tokenType?: string;\n  token_type?: string;\n  remainingFraction?: number | string;\n  remaining_fraction?: number | string;\n  remainingAmount?: number | string;\n  remaining_amount?: number | string;\n  resetTime?: string;\n  reset_time?: string;\n}\n\nexport interface GeminiCliQuotaPayload {\n  buckets?: GeminiCliQuotaBucket[];\n}\n\nexport interface GeminiCliParsedBucket {\n  modelId: string;\n  tokenType: string | null;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n}\n\n",
+        'export interface GeminiCliQuotaBucket',
+    )
+    insert_once(
+        path,
+        'export interface CodexQuotaWindow',
+        "export interface GeminiCliQuotaBucketState {\n  id: string;\n  label: string;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n  tokenType: string | null;\n  modelIds?: string[];\n  resetAtMs?: number | null;\n  periodHours?: number | null;\n}\n\nexport interface GeminiCliQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  buckets: GeminiCliQuotaBucketState[];\n  projectId?: string;\n  project_id?: string;\n  tierLabel?: string | null;\n  tierId?: string | null;\n  creditBalance?: number | null;\n  quotaProviderSnapshot?: boolean;\n  error?: string;\n  errorStatus?: number;\n  cachedAt?: number;\n}\n\nexport interface CodexQuotaWindow",
+        'export interface GeminiCliQuotaState',
+    )
+    insert_once(
+        path,
+        'export interface XaiBillingSummary {\n',
+        "export interface XaiFreeQuotaSummary {\n  source?: 'rate_limit_headers' | 'free_usage_exhausted';\n  windowKind?: 'rolling_24h' | string;\n  usedTokens?: number | string;\n  limitTokens?: number | string;\n  remainingTokens?: number | string;\n  limitRequests?: number | string;\n  remainingRequests?: number | string;\n  observedAt?: number | string;\n  exhausted?: boolean;\n  model?: string;\n}\n\nexport interface XaiBillingSummary {\n",
+        'export interface XaiFreeQuotaSummary',
+    )
+    replace_once(
+        path,
+        "  planType?: 'paid';\n",
+        "  planType?: 'free' | 'supergrok' | 'x-premium-plus' | 'supergrok-heavy' | 'paid' | 'paid-unknown';\n",
+    )
+    _ensure_interface_field(path, 'XaiBillingSummary', '  freeQuota?: XaiFreeQuotaSummary;')
+    for interface_name in (
+        'ClaudeQuotaState', 'AntigravityQuotaState', 'CodexQuotaState', 'KimiQuotaState', 'XaiQuotaState'
+    ):
+        _ensure_interface_field(path, interface_name, '  cachedAt?: number;')
+
+
+def patch_quota_provider_model_latest(target: Path) -> None:
+    types_path = target / 'src/features/quota/providers/types.ts'
+    replace_once(types_path, '  CodexQuotaState,\n  KimiQuotaState,', '  CodexQuotaState,\n  GeminiCliQuotaState,\n  KimiQuotaState,')
+    replace_once(types_path, "export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai';", "export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';")
+    replace_once(types_path, '  codexQuota: Record<string, CodexQuotaState>;\n  kimiQuota:', '  codexQuota: Record<string, CodexQuotaState>;\n  geminiCliQuota: Record<string, GeminiCliQuotaState>;\n  kimiQuota:')
+    replace_once(types_path, '  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setKimiQuota:', '  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setGeminiCliQuota: (updater: QuotaUpdater<Record<string, GeminiCliQuotaState>>) => void;\n  setKimiQuota:')
+
+    index_path = target / 'src/features/quota/providers/index.ts'
+    replace_once(index_path, "import { XAI_CONFIG } from './xai/data';\nimport { XaiQuotaBody } from './xai/XaiQuotaBody';", "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\nimport { GeminiCliQuotaBody } from '@/extensions/quota/GeminiCliQuotaBody';\nimport { PRO_XAI_CONFIG } from '@/extensions/quota/xaiQuotaAdapter';\nimport { ProXaiQuotaBody } from '@/extensions/quota/ProXaiQuotaBody';")
+    replace_once(index_path, "  errorStatus?: number;\n}", "  errorStatus?: number;\n  cachedAt?: number;\n}")
+    replace_once(index_path, "  codex: { ...CODEX_CONFIG, Body: CodexQuotaBody } as unknown as QuotaAdapter,\n  kimi:", "  codex: { ...CODEX_CONFIG, Body: CodexQuotaBody } as unknown as QuotaAdapter,\n  'gemini-cli': { ...GEMINI_CLI_CONFIG, Body: GeminiCliQuotaBody } as unknown as QuotaAdapter,\n  kimi:")
+    replace_once(index_path, '  xai: { ...XAI_CONFIG, Body: XaiQuotaBody } as unknown as QuotaAdapter,', '  xai: { ...PRO_XAI_CONFIG, Body: ProXaiQuotaBody } as unknown as QuotaAdapter,')
+
+    constants_path = target / 'src/features/quota/constants.ts'
+    replace_once(constants_path, "  'codex',\n  'xai',", "  'codex',\n  'gemini-cli',\n  'xai',")
+
+    logic_path = target / 'src/features/quota/logic.ts'
+    replace_once(logic_path, "import { KIMI_CONFIG } from './providers/kimi/data';", "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\nimport { KIMI_CONFIG } from './providers/kimi/data';")
+    replace_once(logic_path, '  codex: CODEX_CONFIG.filterFn,\n  kimi:', "  codex: CODEX_CONFIG.filterFn,\n  'gemini-cli': GEMINI_CLI_CONFIG.filterFn,\n  kimi:")
+
+    test_path = target / 'tests/quotaPageLogic.test.ts'
+    replace_once(test_path, "      codex: 2,\n      xai: 1,", "      codex: 2,\n      'gemini-cli': 0,\n      xai: 1,")
+
+
+def patch_quota_page_latest(target: Path) -> None:
+    path = target / 'src/features/quota/QuotaPage.tsx'
+    insert_once(path, "import { EmptyState } from '@/components/ui/EmptyState';\n", "import { EmptyState } from '@/components/ui/EmptyState';\nimport { Input } from '@/components/ui/Input';\nimport { IconSearch } from '@/components/ui/icons';\n", 'quota_management.search_label')
+    insert_once(path, "import { readQuotaUiState, writeQuotaUiState } from './uiState';\n", "import { readQuotaUiState, writeQuotaUiState } from './uiState';\nimport { buildQuotaSearchValues, matchesQuotaSearch } from '@/extensions/quota/quotaSearch';\n", 'matchesQuotaSearch')
+    old_classification = "  const entries = useMemo(() => classifyQuotaFiles(files), [files]);\n  const tabCounts = useMemo(() => buildTabCounts(entries), [entries]);\n  const filteredEntries = useMemo(() => filterEntriesByTab(entries, tab), [entries, tab]);\n  const { pageItems, currentPage, totalPages } = useMemo(\n    () => paginate(filteredEntries, page, QUOTA_PAGE_SIZE),\n    [filteredEntries, page]\n  );"
+    text = read(path)
+    if old_classification in text:
+        write(path, text.replace(old_classification, "  const entries = useMemo(() => classifyQuotaFiles(files), [files]);", 1))
+    replace_once(path, '  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const kimiQuota', '  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n  const kimiQuota')
+    replace_once(path, "        codex: codexQuota,\n        kimi:", "        codex: codexQuota,\n        'gemini-cli': geminiCliQuota,\n        kimi:")
+    replace_once(path, '[antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota]', '[antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]')
+    marker = "  const getQuota = useCallback(\n"
+    search_block = "  const [search, setSearch] = useState('');\n  const quotaSearchStore = useMemo(\n    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n  );\n  const searchedEntries = useMemo(\n    () => entries.filter(({ file }) => matchesQuotaSearch(buildQuotaSearchValues(file, quotaSearchStore, t), search)),\n    [entries, quotaSearchStore, search, t]\n  );\n  const tabCounts = useMemo(() => buildTabCounts(searchedEntries), [searchedEntries]);\n  const filteredEntries = useMemo(() => filterEntriesByTab(searchedEntries, tab), [searchedEntries, tab]);\n  const { pageItems, currentPage, totalPages } = useMemo(\n    () => paginate(filteredEntries, page, QUOTA_PAGE_SIZE),\n    [filteredEntries, page]\n  );\n\n"
+    insert_once(path, marker, search_block + marker, 'const [search, setSearch]')
+    insert_once(path, "        {error && (\n", "        <Input\n          type=\"search\"\n          value={search}\n          onChange={(event) => { setSearch(event.target.value); setPage(1); }}\n          placeholder={t('quota_management.search_placeholder')}\n          aria-label={t('quota_management.search_label')}\n          rightElement={<IconSearch size={18} />}\n        />\n\n        {error && (\n", 'rightElement={<IconSearch')
+
+
+def patch_quota_cards_latest(target: Path) -> None:
+    card_path = target / 'src/features/quota/components/QuotaCard.tsx'
+    insert_once(card_path, "import { resolveQuotaErrorMessage } from '@/utils/quota';\n", "import { resolveQuotaErrorMessage } from '@/utils/quota';\nimport { QuotaCachedTime } from '@/extensions/quota/QuotaCardExtras';\n", 'QuotaCardExtras')
+    replace_once(card_path, "        ) : quota ? (\n          <adapter.Body quota={quota} classes={quotaClasses} />\n        ) : (", "        ) : quota ? (\n          <>\n            <adapter.Body quota={quota} classes={quotaClasses} />\n            <QuotaCachedTime quotaStatus={status} cachedAt={quota.cachedAt} />\n          </>\n        ) : (")
+
+    auth_path = target / 'src/features/authFiles/components/AuthFileQuotaSection.tsx'
+    insert_once(auth_path, "import { bindQuotaClasses } from '@/features/quota/types';\n", "import { bindQuotaClasses } from '@/features/quota/types';\nimport { QuotaCachedTime } from '@/extensions/quota/QuotaCardExtras';\n", 'QuotaCardExtras')
+    replace_once(auth_path, "      ) : quota ? (\n        <adapter.Body quota={quota} classes={compactQuotaClasses} />\n      ) : (", "      ) : quota ? (\n        <>\n          <adapter.Body quota={quota} classes={compactQuotaClasses} />\n          <QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />\n        </>\n      ) : (")
+
+
+def patch_quota_provider_timestamps_latest(target: Path) -> None:
+    for provider, setter in (
+        ('antigravity', 'setAntigravityQuota'), ('claude', 'setClaudeQuota'),
+        ('codex', 'setCodexQuota'), ('kimi', 'setKimiQuota')
+    ):
+        ensure_cached_at_in_quota_success_state(
+            target / f'src/features/quota/providers/{provider}/data.ts', setter
+        )
+
+
+def patch_auth_files_gemini_quota_latest(target: Path) -> None:
+    path = target / 'src/features/authFiles/constants.ts'
+    replace_once(path, "export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai';", "export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';")
+    for marker in (
+        'export const QUOTA_PROVIDER_TYPES = new Set<QuotaProviderType>([',
+        'export const AUTH_FILE_MANUAL_REFRESH_PROVIDERS = new Set([',
+    ):
+        text = read(path)
+        start = text.find(marker)
+        end = text.find('\n]);' if 'Set' in marker or 'PROVIDERS' in marker else '\n];', start)
+        if start == -1 or end == -1:
+            raise RuntimeError(f'Provider list not found in {path}: {marker}')
+        block = text[start:end]
+        if "'gemini-cli'" in block:
+            continue
+        updated = block.replace("  'codex',\n", "  'codex',\n  'gemini-cli',\n", 1)
+        write(path, f'{text[:start]}{updated}{text[end:]}')
+    quota_section_path = target / 'src/features/authFiles/components/AuthFileQuotaSection.tsx'
+    replace_once(
+        quota_section_path,
+        "    if (quotaType === 'codex') return state.codexQuota[file.name] as QuotaCardState | undefined;\n    if (quotaType === 'kimi')",
+        "    if (quotaType === 'codex') return state.codexQuota[file.name] as QuotaCardState | undefined;\n    if (quotaType === 'gemini-cli') return state.geminiCliQuota[file.name] as QuotaCardState | undefined;\n    if (quotaType === 'kimi')",
+    )
+
+
+def patch_auth_files_page_search_latest(target: Path) -> None:
+    path = target / 'src/features/authFiles/AuthFilesPage.tsx'
+    replace_once(path, "import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';", "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';")
+    insert_once(path, "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n", "import { buildQuotaSearchValues, matchesQuotaSearch } from '@/extensions/quota/quotaSearch';\nimport { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n", 'buildQuotaSearchValues')
+    insert_once(
+        path,
+        '  const statusBarCache = useAuthFilesStatusBarCache(files);\n',
+        "  const statusBarCache = useAuthFilesStatusBarCache(files);\n\n  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);\n  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n  const kimiQuota = useQuotaStore((state) => state.kimiQuota);\n  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n  const quotaSearchStore = useMemo(\n    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n  );\n",
+        'const quotaSearchStore',
+    )
+    replace_once(
+        path,
+        '        return matchType && matchesAuthFileSearch(item, normalizedSearch, wildcardSearch);',
+        '        return matchType && (\n          matchesAuthFileSearch(item, normalizedSearch, wildcardSearch) ||\n          matchesQuotaSearch(buildQuotaSearchValues(item, quotaSearchStore, t), normalizedSearch)\n        );',
+    )
+    replace_once(path, '[filesMatchingStatusFilters, normalizedFilter, normalizedSearch, wildcardSearch]', '[filesMatchingStatusFilters, normalizedFilter, normalizedSearch, quotaSearchStore, t, wildcardSearch]')
+
+
+def patch_auth_files_page_sorting_latest(target: Path) -> None:
+    page_path = target / 'src/features/authFiles/AuthFilesPage.tsx'
+    ui_state_path = target / 'src/features/authFiles/uiState.ts'
+    replace_once(ui_state_path, "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority'] as const;", "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority', 'plan', 'quota'] as const;")
+    insert_once(
+        page_path,
+        "import { buildQuotaSearchValues, matchesQuotaSearch } from '@/extensions/quota/quotaSearch';\n",
+        "import { buildQuotaSearchValues, matchesQuotaSearch } from '@/extensions/quota/quotaSearch';\nimport { compareAuthFilesByPlanDescending, isAuthFilePlanSortProvider } from '@/features/authFiles/planSort';\nimport { compareAuthFilesByAvailableQuotaDescending, isAuthFileQuotaSortProvider } from '@/features/authFiles/quotaSort';\n",
+        'compareAuthFilesByPlanDescending',
+    )
+    insert_once(
+        page_path,
+        '  const sorted = useMemo(() => sortAuthFiles(filtered, sortMode), [filtered, sortMode]);\n',
+        "  const effectiveSortMode =\n    sortMode === 'plan' && !isAuthFilePlanSortProvider(normalizedFilter)\n      ? 'default'\n      : sortMode === 'quota' && !isAuthFileQuotaSortProvider(normalizedFilter)\n        ? 'default'\n        : sortMode;\n  const sorted = useMemo(() => {\n    if (effectiveSortMode === 'plan') {\n      return [...filtered].sort((a, b) => compareAuthFilesByPlanDescending(a, b, quotaSearchStore));\n    }\n    if (effectiveSortMode === 'quota') {\n      return [...filtered].sort((a, b) => compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore));\n    }\n    return sortAuthFiles(filtered, effectiveSortMode);\n  }, [effectiveSortMode, filtered, quotaSearchStore]);\n",
+        'const effectiveSortMode',
+    )
+    replace_once(page_path, '          sortMode={sortMode}\n', '          sortMode={effectiveSortMode}\n')
+
+
 def main() -> None:
     if len(sys.argv) > 2:
         raise SystemExit('Usage: apply_customizations.py [target_dir]')
@@ -3075,19 +3248,18 @@ def main() -> None:
     patch_routes(target)
     patch_layout(target)
     patch_icons(target)
-    patch_quota_types(target)
+    patch_quota_types_latest(target)
     patch_quota_store(target)
     patch_quota_constants(target)
-    patch_quota_configs(target)
+    patch_quota_provider_model_latest(target)
+    patch_quota_provider_timestamps_latest(target)
     patch_antigravity_quota_builders(target)
-    patch_quota_page(target)
-    patch_quota_page_search(target)
-    patch_quota_card(target)
-    patch_quota_styles(target)
+    patch_quota_page_latest(target)
+    patch_quota_cards_latest(target)
     patch_account_inspection_page(target)
-    patch_auth_files_page_search(target)
-    patch_auth_files_page_sorting(target)
-    patch_auth_files_gemini_quota(target)
+    patch_auth_files_page_search_latest(target)
+    patch_auth_files_page_sorting_latest(target)
+    patch_auth_files_gemini_quota_latest(target)
     patch_auth_files_runtime_state(target)
     patch_account_usage_feature(target)
     patch_runtime_detection(target)

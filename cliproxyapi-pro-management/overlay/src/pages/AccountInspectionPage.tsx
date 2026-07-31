@@ -124,7 +124,7 @@ import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } fro
 import type { AuthFileItem } from '@/types';
 import { resolveAuthProvider } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/utils/sourceResolver';
-import quotaStyles from '@/pages/QuotaPage.module.scss';
+import quotaStyles from '@/features/quota/QuotaPage.module.scss';
 import styles from '@/features/monitoring/accountInspection.module.scss';
 import monitoringStyles from '@/features/monitoring/monitoring.module.scss';
 

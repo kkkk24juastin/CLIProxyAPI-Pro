@@ -25,6 +25,11 @@ export const resolveXaiPlanType = (
   return monthlyLimitCents > 0 ? 'paid-unknown' : undefined;
 };
 
+export const isXaiMonthlyBillingKnown = (billing: XaiBillingSummary): boolean =>
+  billing.monthlyLimitCents !== null ||
+  billing.usedCents !== null ||
+  Boolean(billing.billingPeriodStart || billing.billingPeriodEnd);
+
 const observedAt = (billing: XaiBillingSummary | null | undefined): number => {
   const value = billing?.freeQuota?.observedAt;
   if (typeof value === 'number' && Number.isFinite(value)) return value;

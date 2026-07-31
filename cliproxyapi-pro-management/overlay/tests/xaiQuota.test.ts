@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { TFunction } from 'i18next';
-import { createElement, Fragment } from 'react';
+import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { QuotaRenderHelpers } from '@/components/quota/QuotaCard';
-import { XAI_CONFIG } from '@/components/quota/quotaConfigs';
+import type { QuotaClassMap } from '@/features/quota/types';
+import { PRO_XAI_CONFIG } from '@/extensions/quota/xaiQuotaAdapter';
+import { ProXaiQuotaBody } from '@/extensions/quota/ProXaiQuotaBody';
 import {
   XAI_FREE_QUOTA_PROBE_URL,
   mergeXaiBillingRuntimeState,
@@ -20,10 +21,7 @@ import {
 
 const t = ((key: string) => key) as unknown as TFunction;
 const originalApiCallRequest = apiCallApi.request;
-const renderHelpers = {
-  styles: {} as QuotaRenderHelpers['styles'],
-  QuotaProgressBar: () => createElement('div'),
-};
+const quotaClasses = new Proxy({}, { get: (_target, key) => String(key) }) as QuotaClassMap;
 
 const result = (
   statusCode: number,
@@ -162,20 +160,13 @@ describe('xAI quota normalization', () => {
       freeQuota: { model: 'grok-4.5', usedTokens: 25, limitTokens: 100 },
     };
     const render = (planType: 'free' | 'x-premium-plus') =>
-      renderToStaticMarkup(
-        createElement(
-          Fragment,
-          null,
-          XAI_CONFIG.renderQuotaItems(
-            { status: 'success', billing: { ...billing, planType } },
-            t,
-            renderHelpers
-          )
-        )
-      );
+      renderToStaticMarkup(createElement(ProXaiQuotaBody, {
+        quota: { status: 'success', billing: { ...billing, planType } },
+        classes: quotaClasses,
+      }));
 
-    expect(render('free')).toContain('xai_quota.free_quota · grok-4.5');
-    expect(render('x-premium-plus')).not.toContain('xai_quota.free_quota');
+    expect(render('free')).toContain('grok-4.5');
+    expect(render('x-premium-plus')).not.toContain('grok-4.5');
   });
 });
 
@@ -212,7 +203,7 @@ describe('xAI free quota forced refresh', () => {
       })
     );
 
-    const summary = await XAI_CONFIG.fetchQuota(
+    const summary = await PRO_XAI_CONFIG.fetchQuota(
       { name: 'free.json', type: 'xai', auth_index: 'xai:free' },
       t
     );
@@ -255,7 +246,7 @@ describe('xAI free quota forced refresh', () => {
       result(429, 'subscription:free-usage-exhausted tokens (actual/limit): 1000/1000')
     );
 
-    const summary = await XAI_CONFIG.fetchQuota(
+    const summary = await PRO_XAI_CONFIG.fetchQuota(
       { name: 'exhausted.json', type: 'xai', auth_index: 'xai:exhausted' },
       t
     );
@@ -267,7 +258,7 @@ describe('xAI free quota forced refresh', () => {
     installFreeBillingMock(result(200, { id: 'response-without-rate-limit-headers' }));
 
     await expect(
-      XAI_CONFIG.fetchQuota({ name: 'stale.json', type: 'xai', auth_index: 'xai:stale' }, t)
+      PRO_XAI_CONFIG.fetchQuota({ name: 'stale.json', type: 'xai', auth_index: 'xai:stale' }, t)
     ).rejects.toThrow('xai_quota.empty_data');
   });
 });

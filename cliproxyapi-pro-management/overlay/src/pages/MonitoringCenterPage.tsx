@@ -121,7 +121,7 @@ import {
   type ObservedModelPriceTarget,
   normalizeAuthIndex,
 } from '@/utils/usage';
-import quotaStyles from '@/pages/QuotaPage.module.scss';
+import quotaStyles from '@/features/quota/QuotaPage.module.scss';
 import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';
 import styles from '@/features/monitoring/monitoring.module.scss';
 
