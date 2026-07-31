@@ -753,68 +753,47 @@ def patch_layout(target: Path) -> None:
     )
     insert_once(
         path,
-        "              {\n                path: '/plugins',\n",
-        "              {\n"
-        "                path: '/proxy-pool',\n"
-        "                labelKey: 'nav.proxy_pool',\n"
-        "                metaKey: 'nav_meta.proxy_pool',\n"
-        "                icon: sidebarIcons.proxyPool,\n"
-        "              },\n"
-        "              {\n"
-        "                path: '/oauth-model-policy',\n"
-        "                labelKey: 'nav.oauth_model_policy',\n"
-        "                metaKey: 'nav_meta.oauth_model_policy',\n"
-        "                icon: sidebarIcons.oauthModelPolicy,\n"
-        "              },\n"
-        "              {\n"
-        "                path: '/plugins',\n",
-        "path: '/proxy-pool',",
+        "    {\n      id: 'control',\n",
+        "    {\n"
+        "      id: 'pro',\n"
+        "      labelKey: 'nav_groups.pro',\n"
+        "      items: [\n"
+        "        {\n"
+        "          path: '/monitoring',\n"
+        "          labelKey: 'nav.monitoring_center',\n"
+        "          metaKey: 'nav_meta.monitoring_center',\n"
+        "          icon: sidebarIcons.monitoring,\n"
+        "        },\n"
+        "        {\n"
+        "          path: '/account-inspection',\n"
+        "          labelKey: 'nav.account_inspection',\n"
+        "          metaKey: 'nav_meta.account_inspection',\n"
+        "          icon: sidebarIcons.accountInspection,\n"
+        "        },\n"
+        "        {\n"
+        "          path: '/routing',\n"
+        "          labelKey: 'nav.routing_policy',\n"
+        "          metaKey: 'nav_meta.routing_policy',\n"
+        "          icon: sidebarIcons.routing,\n"
+        "        },\n"
+        "        {\n"
+        "          path: '/oauth-model-policy',\n"
+        "          labelKey: 'nav.oauth_model_policy',\n"
+        "          metaKey: 'nav_meta.oauth_model_policy',\n"
+        "          icon: sidebarIcons.oauthModelPolicy,\n"
+        "        },\n"
+        "        {\n"
+        "          path: '/proxy-pool',\n"
+        "          labelKey: 'nav.proxy_pool',\n"
+        "          metaKey: 'nav_meta.proxy_pool',\n"
+        "          icon: sidebarIcons.proxyPool,\n"
+        "        },\n"
+        "      ],\n"
+        "    },\n"
+        "    {\n"
+        "      id: 'control',\n",
+        "      id: 'pro',\n",
     )
-    text = read(path)
-    if "path: '/monitoring'" not in text:
-        flat_quota_item = "    { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },\n"
-        grouped_quota_item = (
-            "        {\n"
-            "          path: '/quota',\n"
-            "          labelKey: 'nav.quota_management',\n"
-            "          metaKey: 'nav_meta.quota_management',\n"
-            "          icon: sidebarIcons.quota,\n"
-            "        },\n"
-        )
-        if flat_quota_item in text:
-            write(
-                path,
-                text.replace(
-                    flat_quota_item,
-                    flat_quota_item
-                    + "    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },\n"
-                    + "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
-                    1,
-                ),
-            )
-        elif grouped_quota_item in text:
-            write(
-                path,
-                text.replace(
-                    grouped_quota_item,
-                    grouped_quota_item
-                    + "        {\n"
-                    + "          path: '/monitoring',\n"
-                    + "          labelKey: 'nav.monitoring_center',\n"
-                    + "          metaKey: 'nav_meta.monitoring_center',\n"
-                    + "          icon: sidebarIcons.monitoring,\n"
-                    + "        },\n"
-                    + "        {\n"
-                    + "          path: '/account-inspection',\n"
-                    + "          labelKey: 'nav.account_inspection',\n"
-                    + "          metaKey: 'nav_meta.account_inspection',\n"
-                    + "          icon: sidebarIcons.accountInspection,\n"
-                    + "        },\n",
-                    1,
-                ),
-            )
-        else:
-            raise RuntimeError(f'Pattern not found in {path}: quota navigation item')
     replace_once_if_present(
         path,
         "        {\n"
@@ -835,44 +814,6 @@ def patch_layout(target: Path) -> None:
         "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
         "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
     )
-    flat_routing_item = (
-        "    { path: '/routing', label: t('nav.routing_policy'), icon: sidebarIcons.routing },\n"
-    )
-    flat_account_inspection_item = (
-        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n"
-    )
-    grouped_routing_item = (
-        "        {\n"
-        "          path: '/routing',\n"
-        "          labelKey: 'nav.routing_policy',\n"
-        "          metaKey: 'nav_meta.routing_policy',\n"
-        "          icon: sidebarIcons.routing,\n"
-        "        },\n"
-    )
-    grouped_account_inspection_item = (
-        "        {\n"
-        "          path: '/account-inspection',\n"
-        "          labelKey: 'nav.account_inspection',\n"
-        "          metaKey: 'nav_meta.account_inspection',\n"
-        "          icon: sidebarIcons.accountInspection,\n"
-        "        },\n"
-    )
-    text = read(path).replace(flat_routing_item, '').replace(grouped_routing_item, '')
-    if flat_account_inspection_item in text:
-        text = text.replace(
-            flat_account_inspection_item,
-            flat_account_inspection_item + flat_routing_item,
-            1,
-        )
-    elif grouped_account_inspection_item in text:
-        text = text.replace(
-            grouped_account_inspection_item,
-            grouped_account_inspection_item + grouped_routing_item,
-            1,
-        )
-    else:
-        raise RuntimeError(f'Pattern not found in {path}: account inspection navigation item')
-    write(path, text)
     replace_once(
         path,
         "            <PageTransition\n",
@@ -3003,6 +2944,7 @@ def patch_locales(target: Path) -> None:
             OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS['en.json'],
         )
         data.setdefault('nav', {})['oauth_model_policy'] = oauth_model_policy_nav['label']
+        data.setdefault('nav_groups', {})['pro'] = 'PRO'
         nav_additions = additions.get('nav', {})
         data.setdefault('nav_meta', {}).update(
             additions.get(
