@@ -84,7 +84,7 @@ func DedupeActionItems(items []ActionItem) []ActionItem {
 	seen := make(map[string]struct{})
 	out := make([]ActionItem, 0, len(items))
 	for _, item := range items {
-		if item.Action == ActionKeep || item.Action == "" || item.FileName == "" {
+		if item.Action == ActionNone || item.Action == ActionKeep || item.Action == "" || item.FileName == "" {
 			continue
 		}
 		key := item.Key

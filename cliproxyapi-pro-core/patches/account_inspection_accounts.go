@@ -601,7 +601,7 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 	}
 	boundItems := make([]accountInspectionActionItem, 0, len(items))
 	for _, item := range items {
-		if item.Action == accountInspectionActionKeep || item.Action == "" {
+		if item.Action == accountInspectionActionNone || item.Action == accountInspectionActionKeep || item.Action == "" {
 			continue
 		}
 		boundItem, err := s.bindActionItemToSnapshot(item)
@@ -666,7 +666,7 @@ func (s *accountInspectionScheduler) applyAutomaticActions(ctx context.Context, 
 	var mu sync.Mutex
 	runAccountInspectionWorkers(len(results), workers, nil, func(index int) bool {
 		action := proinspection.AutoActionForResult(results[index], settings)
-		if action == "" {
+		if action == accountInspectionActionNone || action == "" {
 			s.clearAutoActionConfirmation(results[index])
 			return true
 		}

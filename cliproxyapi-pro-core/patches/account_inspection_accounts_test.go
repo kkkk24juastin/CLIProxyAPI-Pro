@@ -129,6 +129,27 @@ func TestAutoErrorActionsUseSemanticErrorCategory(t *testing.T) {
 	}
 }
 
+func TestApplyAutomaticActionsSkipsNone(t *testing.T) {
+	scheduler := &accountInspectionScheduler{}
+	requestError := testInspectionProviderResult("codex-request-error", "codex", accountInspectionActionKeep, false, testStatusCode(http.StatusBadGateway), false, "temporary probe failure")
+	requestError.ErrorCode = "inspection_probe_error"
+	results := []accountInspectionResult{
+		testInspectionResult("healthy", accountInspectionActionKeep, false, nil, false, ""),
+		requestError,
+	}
+
+	scheduler.applyAutomaticActions(context.Background(), results, proinspection.DefaultSettings())
+
+	for _, result := range results {
+		if result.ExecuteError != "" || result.Executed {
+			t.Fatalf("automatic none action mutated result = %#v", result)
+		}
+	}
+	if scheduler.autoActionConfirmations != nil {
+		t.Fatal("automatic none action created a confirmation counter")
+	}
+}
+
 func TestSyncAuthInspectionLastErrorClearsMetadata(t *testing.T) {
 	auth := &coreauth.Auth{
 		LastError: &coreauth.Error{Code: "token_refresh_error", Message: "old refresh failed"},

@@ -7,6 +7,7 @@ func TestDedupeActionItems(t *testing.T) {
 		{FileName: "a.json", AuthIndex: "one", Action: ActionDisable},
 		{FileName: "a.json", AuthIndex: "one", Action: ActionDelete},
 		{FileName: "b.json", Action: ActionKeep},
+		{FileName: "none.json", Action: ActionNone},
 		{FileName: "c.json", Action: ActionDelete},
 	}
 	got := DedupeActionItems(items)
