@@ -28,6 +28,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/pluginapi"
+	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
+	proinspection "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/inspection"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -308,6 +310,8 @@ type accountInspectionScheduler struct {
 	xaiDeepProbeGate        chan struct{}
 	runWG                   sync.WaitGroup
 	stopped                 bool
+	lifecycle               *proinspection.Lifecycle
+	backupUnregister        func()
 }
 
 type accountInspectionAccount struct {
@@ -390,6 +394,10 @@ func (h *Handler) startAccountInspectionScheduler() {
 			scheduler.cleanupLegacyQuotaCaches(ctx)
 			return nil
 		})
+		scheduler.backupUnregister = probackup.Default.RegisterLifecycle(probackup.Lifecycle{
+			Pause:  scheduler.pauseForBackup,
+			Resume: scheduler.lifecycle.Resume,
+		})
 		if h.authManager != nil {
 			embeddedusage.SetAuthRuntimeStateImportHandler(h.authManager.ApplyImportedRuntimeState)
 		}
@@ -417,6 +425,9 @@ func (h *Handler) Shutdown() {
 		}
 		if scheduler := schedulerForHandler(h); scheduler != nil {
 			scheduler.shutdown()
+			if scheduler.backupUnregister != nil {
+				scheduler.backupUnregister()
+			}
 		}
 		h.lifecycleWG.Wait()
 		accountInspectionSchedulers.Delete(h)
@@ -449,6 +460,7 @@ func newAccountInspectionScheduler(h *Handler) *accountInspectionScheduler {
 		trigger:                 make(chan struct{}, 1),
 		subscribers:             make(map[chan accountInspectionLogStreamMessage]struct{}),
 		autoActionConfirmations: make(map[string]int),
+		lifecycle:               &proinspection.Lifecycle{},
 		schedule: accountInspectionSchedule{
 			Enabled:         false,
 			IntervalMinutes: accountInspectionDefaultIntervalMin,
@@ -1260,7 +1272,25 @@ func (s *accountInspectionScheduler) maybeRunDue() {
 	go func() { _ = s.startRun(false) }()
 }
 
+func (s *accountInspectionScheduler) beginLifecycle() (func(), error) {
+	if s == nil || s.lifecycle == nil {
+		return func() {}, nil
+	}
+	return s.lifecycle.Begin()
+}
+
+func (s *accountInspectionScheduler) pauseForBackup(ctx context.Context) error {
+	if s == nil || s.lifecycle == nil {
+		return nil
+	}
+	return s.lifecycle.PauseAndCancel(ctx, s.stopRun)
+}
+
 func (s *accountInspectionScheduler) startRun(manual bool) error {
+	release, err := s.beginLifecycle()
+	if err != nil {
+		return err
+	}
 	baseContext := context.Background()
 	if s != nil && s.h != nil && s.h.lifecycleContext != nil {
 		baseContext = s.h.lifecycleContext
@@ -1270,11 +1300,13 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 	if s.stopped {
 		s.mu.Unlock()
 		cancel()
+		release()
 		return fmt.Errorf("account inspection scheduler is shut down")
 	}
 	if s.isRunningLocked() {
 		s.mu.Unlock()
 		cancel()
+		release()
 		return fmt.Errorf("account inspection already running")
 	}
 	s.cancel = cancel
@@ -1302,6 +1334,7 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 	}()
 	go func() {
 		defer s.runWG.Done()
+		defer release()
 		s.run(ctx, cancel, schedule, manual)
 	}()
 	return nil
@@ -1410,6 +1443,11 @@ func (s *accountInspectionScheduler) stopRun() {
 }
 
 func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accountInspectionActionItem) (accountInspectionResult, error) {
+	release, err := s.beginLifecycle()
+	if err != nil {
+		return accountInspectionResult{}, err
+	}
+	defer release()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -3804,6 +3842,11 @@ func (s *accountInspectionScheduler) applyManualActionResultLocked(result accoun
 }
 
 func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, items []accountInspectionActionItem) ([]accountInspectionActionOutcome, error) {
+	release, err := s.beginLifecycle()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	s.mu.Lock()
 	restoredSnapshot := s.status.RestoredSnapshot
 	s.mu.Unlock()
