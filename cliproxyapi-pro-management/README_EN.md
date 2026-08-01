@@ -172,7 +172,7 @@ Request Monitoring uses an initial snapshot plus SSE increments and cursor catch
 - `overlay/src/pro/modules/routing/` — routing policy and request-state-protection UI.
 - `overlay/src/pro/modules/proxyPool/` and `modelPolicy/` — independent module pages and APIs.
 - `overlay/src/pro/modules/quota/` — SQLite quota persistence, sorting, and provider extensions.
-- `overlay/src/pro/registry.tsx` and `ProBootstrap.tsx` — the only host insertion points for Pro routes, navigation, and authenticated startup effects.
+- `overlay/src/pro/modules/*/manifest.tsx` — each business module declares its route, navigation, and startup effects; `registry.tsx` keeps only the module list and derives host projections, while `ProBootstrap.tsx` mounts them after authentication.
 - `overlay/src/pro/shared/` — domain-neutral shared UI models; business modules depend on another module only through its `index.ts` public surface and never through internal `features/` or style files.
 - `overlay/src/services/api/` — added API clients.
 - `overlay-replacements.json` — reviewed upstream SHA-256 values and reasons for full-file replacements that intentionally collide with upstream paths.

@@ -10,6 +10,7 @@ FEATURE_DIR = ROOT / 'overlay/src/pro/modules/proxyPool/features'
 SERVICE = ROOT / 'overlay/src/pro/modules/proxyPool/proxyPool.ts'
 CUSTOMIZER = ROOT / 'apply_customizations.py'
 REGISTRY = ROOT / 'overlay/src/pro/registry.tsx'
+MANIFEST = ROOT / 'overlay/src/pro/modules/proxyPool/manifest.tsx'
 LOCALES = ROOT / 'monitoring-locales.json'
 
 
@@ -125,9 +126,11 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
     def test_routes_and_navigation_are_durable_customizer_edits(self) -> None:
         source = CUSTOMIZER.read_text()
         registry = REGISTRY.read_text()
-        self.assertIn("import { ProxyPoolPage } from '@/pro/modules/proxyPool'", registry)
-        self.assertIn("path: '/proxy-pool'", registry)
-        self.assertIn('<IconSidebarProxyPool size={18} />', registry)
+        manifest = MANIFEST.read_text()
+        self.assertIn("import { proxyPoolModule } from '@/pro/modules/proxyPool'", registry)
+        self.assertIn('proxyPoolModule,', registry)
+        self.assertIn("path: '/proxy-pool'", manifest)
+        self.assertIn('<IconSidebarProxyPool size={18} />', manifest)
         self.assertIn("import { ProBootstrap } from '@/pro/ProBootstrap'", source)
         self.assertIn("import { proNavigationGroups } from '@/pro/registry'", source)
         self.assertIn('PROXY_POOL_NAV_LOCALE_KEYS', source)

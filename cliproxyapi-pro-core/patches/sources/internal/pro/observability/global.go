@@ -11,7 +11,7 @@ import (
 )
 
 var globalService *Service
-var proSettingConsumers = make(map[string]proSettingConsumerRegistration)
+var proSettingConsumers = make(map[string][]proSettingConsumerRegistration)
 var proSettingConsumerGeneration uint64
 var globalStateMu sync.RWMutex
 var globalStateWriter *prostate.Writer
@@ -107,13 +107,23 @@ func RegisterProSettingConsumer(namespace string, apply func(context.Context, Pr
 	globalStateMu.Lock()
 	proSettingConsumerGeneration++
 	generation := proSettingConsumerGeneration
-	proSettingConsumers[namespace] = proSettingConsumerRegistration{generation: generation, apply: apply}
+	registrations := proSettingConsumers[namespace]
+	registrations = append(registrations, proSettingConsumerRegistration{generation: generation, apply: apply})
+	proSettingConsumers[namespace] = registrations
 	globalStateMu.Unlock()
 	return func() {
 		globalStateMu.Lock()
-		current, ok := proSettingConsumers[namespace]
-		if ok && current.generation == generation {
+		registrations := proSettingConsumers[namespace]
+		for index := range registrations {
+			if registrations[index].generation == generation {
+				registrations = append(registrations[:index], registrations[index+1:]...)
+				break
+			}
+		}
+		if len(registrations) == 0 {
 			delete(proSettingConsumers, namespace)
+		} else {
+			proSettingConsumers[namespace] = registrations
 		}
 		globalStateMu.Unlock()
 	}
@@ -122,7 +132,11 @@ func RegisterProSettingConsumer(namespace string, apply func(context.Context, Pr
 func ApplyImportedProSettings(ctx context.Context, settings []ProSetting) error {
 	for _, item := range settings {
 		globalStateMu.RLock()
-		consumer := proSettingConsumers[item.Namespace]
+		registrations := proSettingConsumers[item.Namespace]
+		var consumer proSettingConsumerRegistration
+		if count := len(registrations); count > 0 {
+			consumer = registrations[count-1]
+		}
 		globalStateMu.RUnlock()
 		if consumer.apply == nil {
 			continue
@@ -144,12 +158,14 @@ func defaultServer() *Server {
 }
 
 func SetQuotaCache(ctx context.Context, entry QuotaCacheEntry) error {
-	globalStateMu.RLock()
-	defer globalStateMu.RUnlock()
-	if globalService == nil || globalService.store == nil {
-		return fmt.Errorf("usage service is not available")
-	}
-	return globalService.store.SetQuotaCache(ctx, entry)
+	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		globalStateMu.RLock()
+		defer globalStateMu.RUnlock()
+		if globalService == nil || globalService.store == nil {
+			return fmt.Errorf("usage service is not available")
+		}
+		return globalService.store.SetQuotaCache(ctx, entry)
+	})
 }
 
 func GetQuotaCache(ctx context.Context, provider, fileName string) ([]QuotaCacheEntry, error) {
@@ -171,20 +187,24 @@ func GetProSetting(ctx context.Context, namespace string) (ProSetting, bool, err
 }
 
 func SetProSetting(ctx context.Context, item ProSetting) error {
-	globalStateMu.RLock()
-	defer globalStateMu.RUnlock()
-	if globalService == nil || globalService.store == nil {
-		return fmt.Errorf("usage service is not available")
-	}
-	return globalService.store.SetProSetting(ctx, item)
+	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		globalStateMu.RLock()
+		defer globalStateMu.RUnlock()
+		if globalService == nil || globalService.store == nil {
+			return fmt.Errorf("usage service is not available")
+		}
+		return globalService.store.SetProSetting(ctx, item)
+	})
 }
 
 func QueueRoutingCursorState(state RoutingCursorState) {
-	globalStateMu.RLock()
-	defer globalStateMu.RUnlock()
-	if globalStateWriter != nil {
-		globalStateWriter.QueueRoutingCursor(state)
-	}
+	probackup.Default.TryExecuteWrite(func() {
+		globalStateMu.RLock()
+		defer globalStateMu.RUnlock()
+		if globalStateWriter != nil {
+			globalStateWriter.QueueRoutingCursor(state)
+		}
+	})
 }
 
 func GetRoutingCursorState(ctx context.Context, cursorKey string) (RoutingCursorState, bool, error) {
@@ -206,11 +226,13 @@ func ListRoutingCursorStates(ctx context.Context) ([]RoutingCursorState, error) 
 }
 
 func QueueAuthRuntimeStats(item AuthRuntimeStats) {
-	globalStateMu.RLock()
-	defer globalStateMu.RUnlock()
-	if globalStateWriter != nil {
-		globalStateWriter.QueueAuthRuntimeStats(item)
-	}
+	probackup.Default.TryExecuteWrite(func() {
+		globalStateMu.RLock()
+		defer globalStateMu.RUnlock()
+		if globalStateWriter != nil {
+			globalStateWriter.QueueAuthRuntimeStats(item)
+		}
+	})
 }
 
 func GetAuthRuntimeStats(ctx context.Context, authIndex, authID string) (AuthRuntimeStats, bool, error) {
@@ -223,15 +245,17 @@ func GetAuthRuntimeStats(ctx context.Context, authIndex, authID string) (AuthRun
 }
 
 func DeleteAuthRuntimeState(ctx context.Context, authID, authIndex, fileName string) error {
-	globalStateMu.RLock()
-	defer globalStateMu.RUnlock()
-	service := globalService
-	writer := globalStateWriter
-	if service == nil || service.store == nil {
-		return nil
-	}
-	if writer == nil {
-		return service.store.DeleteAuthRuntimeState(ctx, authID, authIndex, fileName)
-	}
-	return writer.Delete(ctx, authID, authIndex, fileName)
+	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		globalStateMu.RLock()
+		defer globalStateMu.RUnlock()
+		service := globalService
+		writer := globalStateWriter
+		if service == nil || service.store == nil {
+			return nil
+		}
+		if writer == nil {
+			return service.store.DeleteAuthRuntimeState(ctx, authID, authIndex, fileName)
+		}
+		return writer.Delete(ctx, authID, authIndex, fileName)
+	})
 }

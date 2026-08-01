@@ -729,6 +729,12 @@ usage_manager = ROOT / 'sdk/cliproxy/usage/manager.go'
 add_go_import(usage_manager, '"net/http"\n', '\t"reflect"\n')
 replace_once(
     usage_manager,
+    '\tnamed     map[string]int\n',
+    '\tnamed       map[string]int\n\tnamedOwners map[string][]Plugin\n',
+    'namedOwners map[string][]Plugin',
+)
+replace_once(
+    usage_manager,
     'type serviceTierContextKey struct{}\n',
     'type serviceTierContextKey struct{}\ntype streamContextKey struct{}\n',
 )
@@ -824,6 +830,33 @@ func AttemptIndexFromContext(ctx context.Context) (int64, bool) {
 )
 replace_once(
     usage_manager,
+    '''\tif index, exists := m.named[name]; exists && index >= 0 && index < len(m.plugins) {
+\t\tm.plugins[index] = plugin
+\t\tm.pluginsMu.Unlock()
+\t\treturn
+\t}
+''',
+    '''\tif index, exists := m.named[name]; exists && index >= 0 && index < len(m.plugins) {
+\t\tcurrent := m.plugins[index]
+\t\tif samePlugin(current, plugin) {
+\t\t\tm.pluginsMu.Unlock()
+\t\t\treturn
+\t\t}
+\t\tif current != nil {
+\t\t\tif m.namedOwners == nil {
+\t\t\t\tm.namedOwners = make(map[string][]Plugin)
+\t\t\t}
+\t\t\tm.namedOwners[name] = append(m.namedOwners[name], current)
+\t\t}
+\t\tm.plugins[index] = plugin
+\t\tm.pluginsMu.Unlock()
+\t\treturn
+\t}
+''',
+    'm.namedOwners[name] = append(m.namedOwners[name], current)',
+)
+replace_once(
+    usage_manager,
     '''\tm.named[name] = len(m.plugins)
 \tm.plugins = append(m.plugins, plugin)
 \tm.pluginsMu.Unlock()
@@ -863,10 +896,42 @@ func (m *Manager) UnregisterNamed(name string, plugin Plugin) {
 \t}
 \tcurrent := m.plugins[index]
 \tif plugin != nil && !samePlugin(current, plugin) {
+\t\towners := removeNamedOwner(m.namedOwners[name], plugin)
+\t\tif len(owners) == 0 {
+\t\t\tdelete(m.namedOwners, name)
+\t\t} else {
+\t\t\tm.namedOwners[name] = owners
+\t\t}
+\t\treturn
+\t}
+\tif plugin == nil {
+\t\tm.plugins[index] = nil
+\t\tdelete(m.named, name)
+\t\tdelete(m.namedOwners, name)
+\t\treturn
+\t}
+\towners := m.namedOwners[name]
+\tif count := len(owners); count > 0 {
+\t\tm.plugins[index] = owners[count-1]
+\t\towners = owners[:count-1]
+\t\tif len(owners) == 0 {
+\t\t\tdelete(m.namedOwners, name)
+\t\t} else {
+\t\t\tm.namedOwners[name] = owners
+\t\t}
 \t\treturn
 \t}
 \tm.plugins[index] = nil
 \tdelete(m.named, name)
+}
+
+func removeNamedOwner(owners []Plugin, plugin Plugin) []Plugin {
+\tfor index := len(owners) - 1; index >= 0; index-- {
+\t\tif samePlugin(owners[index], plugin) {
+\t\t\treturn append(owners[:index], owners[index+1:]...)
+\t\t}
+\t}
+\treturn owners
 }
 
 func samePlugin(left, right Plugin) bool {
@@ -928,6 +993,24 @@ func TestUnregisterNamedPreservesReplacement(t *testing.T) {
 \tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
 \tif first.calls != 1 {
 \t\tt.Fatalf("re-registered plugin calls = %d, want 1", first.calls)
+\t}
+}
+''')
+
+if 'func TestUnregisterNamedRestoresOlderLiveOwner' not in read(usage_manager_test):
+    write(usage_manager_test, read(usage_manager_test).rstrip() + '''
+
+func TestUnregisterNamedRestoresOlderLiveOwner(t *testing.T) {
+\tmanager := NewManager(1)
+\tfirst := &namedLifecycleUsagePlugin{}
+\treplacement := &namedLifecycleUsagePlugin{}
+\tmanager.RegisterNamed("lifecycle", first)
+\tmanager.RegisterNamed("lifecycle", replacement)
+
+\tmanager.UnregisterNamed("lifecycle", replacement)
+\tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
+\tif first.calls != 1 || replacement.calls != 0 {
+\t\tt.Fatalf("restored owner calls = first:%d replacement:%d", first.calls, replacement.calls)
 \t}
 }
 ''')

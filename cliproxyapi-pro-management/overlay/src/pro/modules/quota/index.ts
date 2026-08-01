@@ -1,4 +1,5 @@
 export { QuotaPersistenceBootstrap } from './extensions/QuotaPersistenceBootstrap';
+export { quotaModule } from './manifest';
 export { FEATURES } from './features';
 export { quotaPersistenceMiddleware } from './extensions/persistenceMiddleware';
 export { resolveAccountPlanLabel, type AccountPlanQuotaStore } from './accountPlan';

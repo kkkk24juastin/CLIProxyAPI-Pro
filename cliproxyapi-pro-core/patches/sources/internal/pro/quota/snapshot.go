@@ -2,6 +2,7 @@ package quota
 
 import (
 	"math"
+	"reflect"
 	"strings"
 	"time"
 
@@ -83,12 +84,17 @@ func CloneSnapshot(snapshot *pluginapi.QuotaSnapshot) *pluginapi.QuotaSnapshot {
 	for index := range clone.Items {
 		clone.Items[index].ModelIDs = append([]string(nil), snapshot.Items[index].ModelIDs...)
 		clone.Items[index].Metadata = cloneSnapshotMap(snapshot.Items[index].Metadata)
+		clone.Items[index].RemainingFraction = cloneFloatPointer(snapshot.Items[index].RemainingFraction)
+		clone.Items[index].UsedPercent = cloneFloatPointer(snapshot.Items[index].UsedPercent)
+		clone.Items[index].RemainingAmount = cloneFloatPointer(snapshot.Items[index].RemainingAmount)
+		clone.Items[index].Limit = cloneFloatPointer(snapshot.Items[index].Limit)
 	}
 	clone.Warnings = append([]pluginapi.QuotaWarning(nil), snapshot.Warnings...)
 	clone.Metadata = cloneSnapshotMap(snapshot.Metadata)
 	if snapshot.Plan != nil {
 		plan := *snapshot.Plan
 		plan.Metadata = cloneSnapshotMap(snapshot.Plan.Metadata)
+		plan.CreditBalance = cloneFloatPointer(snapshot.Plan.CreditBalance)
 		clone.Plan = &plan
 	}
 	return &clone
@@ -100,9 +106,75 @@ func cloneSnapshotMap(source map[string]any) map[string]any {
 	}
 	clone := make(map[string]any, len(source))
 	for key, value := range source {
-		clone[key] = value
+		clone[key] = cloneSnapshotValue(value)
 	}
 	return clone
+}
+
+func cloneSnapshotValue(value any) any {
+	clone := cloneSnapshotReflect(reflect.ValueOf(value))
+	if !clone.IsValid() {
+		return nil
+	}
+	return clone.Interface()
+}
+
+func cloneSnapshotReflect(value reflect.Value) reflect.Value {
+	if !value.IsValid() {
+		return value
+	}
+	switch value.Kind() {
+	case reflect.Interface:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		clone := cloneSnapshotReflect(value.Elem())
+		wrapped := reflect.New(value.Type()).Elem()
+		wrapped.Set(clone)
+		return wrapped
+	case reflect.Map:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		clone := reflect.MakeMapWithSize(value.Type(), value.Len())
+		iterator := value.MapRange()
+		for iterator.Next() {
+			clone.SetMapIndex(iterator.Key(), cloneSnapshotReflect(iterator.Value()))
+		}
+		return clone
+	case reflect.Slice:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		clone := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+		for index := 0; index < value.Len(); index++ {
+			clone.Index(index).Set(cloneSnapshotReflect(value.Index(index)))
+		}
+		return clone
+	case reflect.Array:
+		clone := reflect.New(value.Type()).Elem()
+		for index := 0; index < value.Len(); index++ {
+			clone.Index(index).Set(cloneSnapshotReflect(value.Index(index)))
+		}
+		return clone
+	case reflect.Pointer:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		clone := reflect.New(value.Type().Elem())
+		clone.Elem().Set(cloneSnapshotReflect(value.Elem()))
+		return clone
+	default:
+		return value
+	}
+}
+
+func cloneFloatPointer(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
 }
 
 func clampFloatPointer(value *float64, minValue, maxValue float64) *float64 {

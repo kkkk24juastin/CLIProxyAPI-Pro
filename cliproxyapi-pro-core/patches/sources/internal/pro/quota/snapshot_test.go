@@ -48,17 +48,27 @@ func TestNormalizeSnapshotBoundsValuesAndRetainsUnavailablePlan(t *testing.T) {
 }
 
 func TestCloneSnapshotDoesNotShareNestedCollections(t *testing.T) {
+	remaining := 0.5
+	credit := 10.0
 	source := &pluginapi.QuotaSnapshot{
-		Items:    []pluginapi.QuotaItem{{ModelIDs: []string{"a"}, Metadata: map[string]any{"item": "source"}}},
-		Metadata: map[string]any{"snapshot": "source"},
-		Plan:     &pluginapi.QuotaPlan{Metadata: map[string]any{"plan": "source"}},
+		Items: []pluginapi.QuotaItem{{
+			ModelIDs: []string{"a"}, RemainingFraction: &remaining,
+			Metadata: map[string]any{"item": map[string]any{"values": []any{"source"}}},
+		}},
+		Metadata: map[string]any{"snapshot": []any{map[string]any{"value": "source"}}},
+		Plan:     &pluginapi.QuotaPlan{CreditBalance: &credit, Metadata: map[string]any{"plan": []string{"source"}}},
 	}
 	clone := CloneSnapshot(source)
 	clone.Items[0].ModelIDs[0] = "changed"
-	clone.Items[0].Metadata["item"] = "changed"
-	clone.Metadata["snapshot"] = "changed"
-	clone.Plan.Metadata["plan"] = "changed"
-	if source.Items[0].ModelIDs[0] != "a" || source.Items[0].Metadata["item"] != "source" || source.Metadata["snapshot"] != "source" || source.Plan.Metadata["plan"] != "source" {
+	*clone.Items[0].RemainingFraction = 0
+	*clone.Plan.CreditBalance = 0
+	clone.Items[0].Metadata["item"].(map[string]any)["values"].([]any)[0] = "changed"
+	clone.Metadata["snapshot"].([]any)[0].(map[string]any)["value"] = "changed"
+	clone.Plan.Metadata["plan"].([]string)[0] = "changed"
+	if source.Items[0].ModelIDs[0] != "a" || *source.Items[0].RemainingFraction != 0.5 || *source.Plan.CreditBalance != 10 ||
+		source.Items[0].Metadata["item"].(map[string]any)["values"].([]any)[0] != "source" ||
+		source.Metadata["snapshot"].([]any)[0].(map[string]any)["value"] != "source" ||
+		source.Plan.Metadata["plan"].([]string)[0] != "source" {
 		t.Fatalf("clone mutated source: %+v", source)
 	}
 }

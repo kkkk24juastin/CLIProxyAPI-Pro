@@ -241,6 +241,45 @@ func TestUsageImportRollsBackEarlierDomainsWhenLateDatabaseWriteFails(t *testing
 	}
 }
 
+func TestUsageImportRollsBackDatabaseAndRuntimeWhenConfigurationApplyFails(t *testing.T) {
+	const namespace = "test.import-runtime-rollback"
+	ctx := context.Background()
+	sourceStore := openTestStore(t)
+	if err := sourceStore.SetProSetting(ctx, ProSetting{
+		Namespace: namespace, SchemaVersion: 1,
+		Settings: json.RawMessage(`{"enabled":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	exportRecorder := httptest.NewRecorder()
+	testUsageRouter(sourceStore).ServeHTTP(exportRecorder, httptest.NewRequest(http.MethodGet, "/usage/export", nil))
+	if exportRecorder.Code != http.StatusOK {
+		t.Fatalf("export status = %d; body=%s", exportRecorder.Code, exportRecorder.Body.String())
+	}
+
+	var applied []string
+	unregister := RegisterProSettingConsumer(namespace, func(_ context.Context, item ProSetting) error {
+		applied = append(applied, string(item.Settings))
+		if strings.Contains(string(item.Settings), `"enabled":true`) {
+			return errors.New("forced runtime apply failure")
+		}
+		return nil
+	})
+	defer unregister()
+	targetStore := openTestStore(t)
+	importRecorder := httptest.NewRecorder()
+	testUsageRouter(targetStore).ServeHTTP(importRecorder, httptest.NewRequest(http.MethodPost, "/usage/import", bytes.NewReader(exportRecorder.Body.Bytes())))
+	if importRecorder.Code != http.StatusInternalServerError {
+		t.Fatalf("import status = %d, want 500; body=%s", importRecorder.Code, importRecorder.Body.String())
+	}
+	if _, ok, err := targetStore.GetProSetting(ctx, namespace); err != nil || ok {
+		t.Fatalf("persisted setting after runtime failure = _, %v, %v; want missing", ok, err)
+	}
+	if len(applied) != 2 || !strings.Contains(applied[0], `"enabled":true`) || applied[1] != `{}` {
+		t.Fatalf("runtime apply/rollback calls = %#v", applied)
+	}
+}
+
 func TestUsageBackupRestoresAllNamespacedProSettingsAndConsumers(t *testing.T) {
 	ctx := context.Background()
 	sourceStore := openTestStore(t)
@@ -293,6 +332,32 @@ func TestUsageBackupRestoresAllNamespacedProSettingsAndConsumers(t *testing.T) {
 		if item, ok := seen[want.Namespace]; !ok || string(item.Settings) != string(want.Settings) {
 			t.Fatalf("applied pro setting %q = %+v, found:%v", want.Namespace, item, ok)
 		}
+	}
+}
+
+func TestProSettingConsumerRestoresOlderLiveOwner(t *testing.T) {
+	const namespace = "test.owner-stack"
+	var calls []string
+	unregisterOld := RegisterProSettingConsumer(namespace, func(context.Context, ProSetting) error {
+		calls = append(calls, "old")
+		return nil
+	})
+	unregisterNew := RegisterProSettingConsumer(namespace, func(context.Context, ProSetting) error {
+		calls = append(calls, "new")
+		return nil
+	})
+	t.Cleanup(unregisterOld)
+
+	item := ProSetting{Namespace: namespace, SchemaVersion: 1, Settings: json.RawMessage(`{}`)}
+	if err := ApplyImportedProSettings(context.Background(), []ProSetting{item}); err != nil {
+		t.Fatal(err)
+	}
+	unregisterNew()
+	if err := ApplyImportedProSettings(context.Background(), []ProSetting{item}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(calls, ","); got != "new,old" {
+		t.Fatalf("consumer calls = %q, want new,old", got)
 	}
 }
 

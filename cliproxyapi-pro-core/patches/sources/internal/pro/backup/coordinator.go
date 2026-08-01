@@ -59,8 +59,9 @@ type lifecycleRegistration struct {
 }
 
 type Coordinator struct {
-	mu       sync.RWMutex
-	importMu sync.Mutex
+	mu        sync.RWMutex
+	importMu  sync.Mutex
+	writeGate sync.RWMutex
 
 	scheduleExporter JSONExporter
 	scheduleImporter JSONImporter
@@ -83,6 +84,49 @@ type Coordinator struct {
 func NewCoordinator() *Coordinator { return &Coordinator{} }
 
 var Default = NewCoordinator()
+
+// ExecuteWrite admits one ordinary state mutation while excluding backup
+// imports. Callers should keep the operation bounded and honor ctx themselves.
+func (c *Coordinator) ExecuteWrite(ctx context.Context, operation func(context.Context) error) error {
+	if operation == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c == nil {
+		return operation(ctx)
+	}
+	c.writeGate.RLock()
+	defer c.writeGate.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return operation(ctx)
+}
+
+// TryExecuteWrite admits a best-effort, non-blocking mutation. It is intended
+// for high-frequency runtime snapshots produced while callers may hold their
+// own locks. A false result means an import owns or is waiting on the barrier;
+// the stale snapshot must be dropped rather than applied after the import.
+func (c *Coordinator) TryExecuteWrite(operation func()) bool {
+	if operation == nil {
+		return true
+	}
+	if c == nil {
+		operation()
+		return true
+	}
+	if !c.writeGate.TryRLock() {
+		return false
+	}
+	defer c.writeGate.RUnlock()
+	operation()
+	return true
+}
 
 func (c *Coordinator) SetInspectionSchedule(exporter JSONExporter, importer JSONImporter) {
 	if c == nil {
@@ -324,6 +368,8 @@ func (c *Coordinator) ExecuteImport(ctx context.Context, plan ImportPlan) (err e
 	if c == nil {
 		return executeImportPhases(ctx, plan)
 	}
+	c.writeGate.Lock()
+	defer c.writeGate.Unlock()
 	c.importMu.Lock()
 	defer c.importMu.Unlock()
 	cleanupCtx := context.WithoutCancel(ctx)

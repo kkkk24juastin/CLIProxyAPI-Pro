@@ -172,7 +172,7 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - `overlay/src/pro/modules/routing/` — 路由策略和请求状态保护 UI。
 - `overlay/src/pro/modules/proxyPool/` 与 `modelPolicy/` — 独立业务模块页面及 API。
 - `overlay/src/pro/modules/quota/` — SQLite 配额持久化、排序与 provider 扩展。
-- `overlay/src/pro/registry.tsx` 与 `ProBootstrap.tsx` — Pro 路由、导航和认证后启动副作用的唯一宿主接入点。
+- `overlay/src/pro/modules/*/manifest.tsx` — 各业务模块声明自己的路由、导航和启动副作用；`registry.tsx` 只维护模块清单并派生宿主投影，`ProBootstrap.tsx` 负责认证后挂载。
 - `overlay/src/pro/shared/` — 与业务域无关的共享 UI 模型；业务模块只能通过其他模块的 `index.ts` 公开面依赖，禁止 monitoring/inspection 等模块互相引用内部 `features/` 或样式文件。
 - `overlay/src/services/api/` — 新增 API clients。
 - `overlay-replacements.json` — 对有意覆盖 upstream 同路径文件的 full-file replacements，记录已审阅的 upstream SHA-256 与替换原因。

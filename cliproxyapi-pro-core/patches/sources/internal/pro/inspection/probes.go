@@ -16,7 +16,6 @@ const xaiDeepProbeMinAttempts = 2
 type ProbeResponse struct {
 	StatusCode int
 	Body       string
-	Header     http.Header
 }
 
 func ShouldDeepProbe(decision Decision) bool {

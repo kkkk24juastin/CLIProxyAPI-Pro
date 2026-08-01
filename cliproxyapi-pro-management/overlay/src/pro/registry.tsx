@@ -1,16 +1,10 @@
 import type { ReactNode } from 'react';
-import {
-  IconModelCluster,
-  IconSidebarAccountInspection,
-  IconSidebarMonitor,
-  IconSidebarProxyPool,
-  IconSidebarRouting,
-} from '@/components/ui/icons';
-import { MonitoringCenterPage } from '@/pro/modules/monitoring';
-import { AccountInspectionPage } from '@/pro/modules/inspection';
-import { RoutingPolicyPage } from '@/pro/modules/routing';
-import { ProxyPoolPage } from '@/pro/modules/proxyPool';
-import { OAuthModelPolicyPage } from '@/pro/modules/modelPolicy';
+import { monitoringModule } from '@/pro/modules/monitoring';
+import { inspectionModule } from '@/pro/modules/inspection';
+import { routingModule } from '@/pro/modules/routing';
+import { proxyPoolModule } from '@/pro/modules/proxyPool';
+import { modelPolicyModule } from '@/pro/modules/modelPolicy';
+import { quotaModule } from '@/pro/modules/quota';
 
 export interface ProRouteEntry {
   path: string;
@@ -30,50 +24,41 @@ export interface ProNavigationGroup {
   items: ProNavigationItem[];
 }
 
-// Static Pro modules contribute their routes through one stable host seam.
-export const proRoutes: ProRouteEntry[] = [
-  { path: '/monitoring', element: <MonitoringCenterPage /> },
-  { path: '/account-inspection', element: <AccountInspectionPage /> },
-  { path: '/routing', element: <RoutingPolicyPage /> },
-  { path: '/proxy-pool', element: <ProxyPoolPage /> },
-  { path: '/oauth-model-policy', element: <OAuthModelPolicyPage /> },
+// This is the only host-owned list. Route, navigation and bootstrap projections
+// are derived from each module's public manifest.
+export const proModules = [
+  monitoringModule,
+  inspectionModule,
+  routingModule,
+  modelPolicyModule,
+  proxyPoolModule,
+  quotaModule,
 ];
 
-export const proNavigationGroups: ProNavigationGroup[] = [
-  {
-    id: 'pro',
-    labelKey: 'nav_groups.pro',
-    items: [
-      {
-        path: '/monitoring',
-        labelKey: 'nav.monitoring_center',
-        metaKey: 'nav_meta.monitoring_center',
-        icon: <IconSidebarMonitor size={18} />,
-      },
-      {
-        path: '/account-inspection',
-        labelKey: 'nav.account_inspection',
-        metaKey: 'nav_meta.account_inspection',
-        icon: <IconSidebarAccountInspection size={18} />,
-      },
-      {
-        path: '/routing',
-        labelKey: 'nav.routing_policy',
-        metaKey: 'nav_meta.routing_policy',
-        icon: <IconSidebarRouting size={18} />,
-      },
-      {
-        path: '/oauth-model-policy',
-        labelKey: 'nav.oauth_model_policy',
-        metaKey: 'nav_meta.oauth_model_policy',
-        icon: <IconModelCluster size={18} />,
-      },
-      {
-        path: '/proxy-pool',
-        labelKey: 'nav.proxy_pool',
-        metaKey: 'nav_meta.proxy_pool',
-        icon: <IconSidebarProxyPool size={18} />,
-      },
-    ],
-  },
-];
+export const proRoutes: ProRouteEntry[] = proModules.flatMap((module) =>
+  module.route ? [module.route] : []
+);
+
+const navigationGroups = new Map<string, ProNavigationGroup>();
+for (const module of proModules) {
+  const navigation = module.navigation;
+  if (!navigation) continue;
+  const group = navigationGroups.get(navigation.groupId) ?? {
+    id: navigation.groupId,
+    labelKey: navigation.groupLabelKey,
+    items: [],
+  };
+  group.items.push({
+    path: navigation.path,
+    labelKey: navigation.labelKey,
+    metaKey: navigation.metaKey,
+    icon: navigation.icon,
+  });
+  navigationGroups.set(group.id, group);
+}
+
+export const proNavigationGroups: ProNavigationGroup[] = [...navigationGroups.values()];
+
+export const proBootstraps = proModules.flatMap((module) =>
+  module.bootstrap ? [{ id: module.id, element: module.bootstrap }] : []
+);

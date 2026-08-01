@@ -187,7 +187,15 @@ type accountInspectionAccount struct {
 	Disabled    bool
 }
 
-type accountInspectionHTTPResult = proinspection.ProbeResponse
+type accountInspectionHTTPResult struct {
+	StatusCode int
+	Body       string
+	Header     http.Header
+}
+
+func (r accountInspectionHTTPResult) probeResponse() proinspection.ProbeResponse {
+	return proinspection.ProbeResponse{StatusCode: r.StatusCode, Body: r.Body}
+}
 
 type accountInspectionDecision = proinspection.Decision
 
@@ -953,6 +961,11 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 }
 
 func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item accountInspectionActionItem) (accountInspectionResult, error) {
+	release, err := s.beginLifecycle()
+	if err != nil {
+		return accountInspectionResult{}, err
+	}
+	defer release()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1857,7 +1870,7 @@ func buildAntigravityDeepProbeBody(projectID string, model string) string {
 }
 
 func classifyAntigravityDeepProbeResponse(resp accountInspectionHTTPResult) (accountInspectionDeepProbeStatus, string) {
-	return proinspection.ClassifyAntigravityDeepProbeResponse(resp)
+	return proinspection.ClassifyAntigravityDeepProbeResponse(resp.probeResponse())
 }
 
 func hasAntigravityGenerateContent(body string) bool {
@@ -2206,7 +2219,15 @@ func runXAIDeepProbeWithRetry(
 	retryDelay time.Duration,
 	task func() (accountInspectionHTTPResult, error),
 ) (accountInspectionHTTPResult, accountInspectionDeepProbeStatus, string, error) {
-	return proinspection.RunXAIDeepProbeWithRetry(ctx, retries, retryDelay, task)
+	var last accountInspectionHTTPResult
+	resp, status, message, err := proinspection.RunXAIDeepProbeWithRetry(ctx, retries, retryDelay, func() (proinspection.ProbeResponse, error) {
+		var taskErr error
+		last, taskErr = task()
+		return last.probeResponse(), taskErr
+	})
+	last.StatusCode = resp.StatusCode
+	last.Body = resp.Body
+	return last, status, message, err
 }
 
 func shouldRetryXAIDeepProbe(status accountInspectionDeepProbeStatus, message string) bool {
@@ -2299,7 +2320,7 @@ func buildXAIDeepProbeBody(model string) string {
 }
 
 func classifyXAIDeepProbeResponse(resp accountInspectionHTTPResult) (accountInspectionDeepProbeStatus, string) {
-	return proinspection.ClassifyXAIDeepProbeResponse(resp)
+	return proinspection.ClassifyXAIDeepProbeResponse(resp.probeResponse())
 }
 
 func classifyXAIDeepProbeSuccessBody(body string) (accountInspectionDeepProbeStatus, string) {
@@ -3486,7 +3507,9 @@ func (h *Handler) PutAccountInspectionSchedule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
-	if err := scheduler.update(schedule); err != nil {
+	if err := probackup.Default.ExecuteWrite(c.Request.Context(), func(context.Context) error {
+		return scheduler.update(schedule)
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

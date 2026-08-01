@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	proinspection "github.com/router-for-me/CLIProxyAPI/v6/internal/pro/inspection"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 )
@@ -559,6 +560,17 @@ func TestAccountInspectionResultSnapshotPersistsAndRestoresReadOnly(t *testing.T
 	}
 	if _, err := restored.executeManualActions(context.Background(), nil); !errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
 		t.Fatalf("executeManualActions() error = %v, want read-only error", err)
+	}
+}
+
+func TestRefreshTokenNowRespectsBackupLifecyclePause(t *testing.T) {
+	lifecycle := &proinspection.Lifecycle{}
+	if err := lifecycle.Pause(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	scheduler := &accountInspectionScheduler{lifecycle: lifecycle}
+	if _, err := scheduler.refreshTokenNow(context.Background(), accountInspectionActionItem{}); !errors.Is(err, proinspection.ErrPaused) {
+		t.Fatalf("refreshTokenNow() error = %v, want paused", err)
 	}
 }
 

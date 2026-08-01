@@ -91,6 +91,20 @@ class ProModuleBoundaryTests(unittest.TestCase):
                 violations.append(f'{path.relative_to(ROOT)} uses export *')
         self.assertEqual([], violations, '\n'.join(violations))
 
+    def test_registry_derives_host_surfaces_from_module_manifests(self):
+        registry = (OVERLAY_SRC / 'pro/registry.tsx').read_text(encoding='utf-8')
+        bootstrap = (OVERLAY_SRC / 'pro/ProBootstrap.tsx').read_text(encoding='utf-8')
+        self.assertIn('export const proModules = [', registry)
+        self.assertIn('proModules.flatMap((module)', registry)
+        self.assertIn('const navigationGroups = new Map', registry)
+        self.assertNotRegex(registry, r"path:\s*['\"]/[^'\"]+['\"]")
+        self.assertIn("import { proBootstraps } from '@/pro/registry'", bootstrap)
+        self.assertNotIn('QuotaPersistenceBootstrap', bootstrap)
+
+        for module in ('monitoring', 'inspection', 'routing', 'proxyPool', 'modelPolicy', 'quota'):
+            index = (MODULES / module / 'index.ts').read_text(encoding='utf-8')
+            self.assertIn("from './manifest'", index)
+
 
 if __name__ == '__main__':
     unittest.main()

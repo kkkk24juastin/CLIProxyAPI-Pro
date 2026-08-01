@@ -150,25 +150,37 @@ func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
 	group.GET("", s.handleUsage)
 	group.GET("/export", s.handleUsageExport)
 	group.POST("/import", s.handleUsageImport)
-	group.POST("/reset", s.handleUsageReset)
+	group.POST("/reset", withBackupWriteBarrier(s.handleUsageReset))
 	group.GET("/status", s.handleStatus)
 	group.GET("/events", s.handleUsageEvents)
 	group.GET("/aggregates", s.handleUsageAggregates)
 	group.GET("/account", s.handleAccountUsage)
 	group.GET("/stream", s.handleUsageStream)
 	group.GET("/quota-cache", s.handleQuotaCacheGet)
-	group.PUT("/quota-cache", s.handleQuotaCachePut)
-	group.DELETE("/quota-cache", s.handleQuotaCacheDelete)
+	group.PUT("/quota-cache", withBackupWriteBarrier(s.handleQuotaCachePut))
+	group.DELETE("/quota-cache", withBackupWriteBarrier(s.handleQuotaCacheDelete))
 	group.GET("/model-prices", s.handleModelPricesGet)
-	group.PUT("/model-prices", s.handleModelPricesPut)
+	group.PUT("/model-prices", withBackupWriteBarrier(s.handleModelPricesPut))
 	group.GET("/model-price-rules", s.handleModelPriceRulesGet)
-	group.PUT("/model-price-rules", s.handleModelPriceRulesPut)
-	group.DELETE("/model-price-rules", s.handleModelPriceRulesDelete)
-	group.POST("/model-prices/sync", s.handleModelPricesSync)
+	group.PUT("/model-price-rules", withBackupWriteBarrier(s.handleModelPriceRulesPut))
+	group.DELETE("/model-price-rules", withBackupWriteBarrier(s.handleModelPriceRulesDelete))
+	group.POST("/model-prices/sync", withBackupWriteBarrier(s.handleModelPricesSync))
 	group.GET("/model-prices/sync-status", s.handleModelPricesSyncStatus)
-	group.POST("/model-prices/recalculate", s.handleModelPricesRecalculate)
+	group.POST("/model-prices/recalculate", withBackupWriteBarrier(s.handleModelPricesRecalculate))
 	group.GET("/settings", s.handleMonitoringSettingsGet)
-	group.PUT("/settings", s.handleMonitoringSettingsPut)
+	group.PUT("/settings", withBackupWriteBarrier(s.handleMonitoringSettingsPut))
+}
+
+func withBackupWriteBarrier(handler gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		err := probackup.Default.ExecuteWrite(c.Request.Context(), func(context.Context) error {
+			handler(c)
+			return nil
+		})
+		if err != nil && !c.Writer.Written() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		}
+	}
 }
 
 func parseQueryInt64(c *gin.Context, key string, fallback int64) int64 {
@@ -903,7 +915,20 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return flushRuntimeStateWrites(ctx, s.store)
 		},
 		ImportDatabase: func(ctx context.Context) error {
-			return s.store.RunImportTransaction(ctx, func(ctx context.Context) error {
+			previousProSettings, errPrevious := s.store.ListProSettings(ctx)
+			if errPrevious != nil {
+				return errPrevious
+			}
+			previousProSettings = proSettingRollbackSnapshot(previousProSettings, proSettings)
+			configurationApplied := false
+			rollbackConfiguration := func() error {
+				if !configurationApplied {
+					return nil
+				}
+				configurationApplied = false
+				return ApplyImportedProSettings(context.WithoutCancel(ctx), previousProSettings)
+			}
+			errImport := s.store.RunImportTransaction(ctx, func(ctx context.Context) error {
 				if _, err := eventStage.Seek(0, 0); err != nil {
 					return err
 				}
@@ -971,14 +996,25 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 					}
 				}
 				importedProSettings, err = s.store.ImportProSettings(ctx, proSettings)
-				return err
-			})
-		},
-		ReloadConfiguration: func(ctx context.Context) error {
-			if importedProSettings == 0 {
+				if err != nil || importedProSettings == 0 {
+					return err
+				}
+				configurationApplied = true
+				if err := ApplyImportedProSettings(ctx, proSettings); err != nil {
+					if rollbackErr := rollbackConfiguration(); rollbackErr != nil {
+						return fmt.Errorf("apply imported Pro settings: %w (rollback failed: %v)", err, rollbackErr)
+					}
+					return err
+				}
 				return nil
+			})
+			if errImport != nil {
+				if rollbackErr := rollbackConfiguration(); rollbackErr != nil {
+					return fmt.Errorf("import database: %w (configuration rollback failed: %v)", errImport, rollbackErr)
+				}
+				return errImport
 			}
-			return ApplyImportedProSettings(ctx, proSettings)
+			return nil
 		},
 		ApplyRuntimeState: func(ctx context.Context) error {
 			if !probackup.Default.HasRuntimeStateImporter() || (importedRoutingCursors == 0 && importedAuthRuntimeStats == 0) {
@@ -1055,6 +1091,24 @@ func (s *Server) handleUsageReset(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func proSettingRollbackSnapshot(previous, imported []ProSetting) []ProSetting {
+	previousByNamespace := make(map[string]ProSetting, len(previous))
+	for _, item := range previous {
+		previousByNamespace[item.Namespace] = item
+	}
+	rollback := make([]ProSetting, 0, len(imported))
+	for _, item := range imported {
+		if prior, ok := previousByNamespace[item.Namespace]; ok {
+			rollback = append(rollback, prior)
+			continue
+		}
+		rollback = append(rollback, ProSetting{
+			Namespace: item.Namespace, SchemaVersion: item.SchemaVersion, Settings: json.RawMessage(`{}`),
+		})
+	}
+	return rollback
 }
 
 func readImportRecordType(raw []byte) (string, error) {

@@ -67,7 +67,6 @@ class CoreModuleBoundaryTests(unittest.TestCase):
             'type accountInspectionSummary = proinspection.Summary',
             'type accountInspectionHealthCounts = proinspection.HealthCounts',
             'type accountInspectionPageInfo = proinspection.PageInfo',
-            'type accountInspectionHTTPResult = proinspection.ProbeResponse',
             'type accountInspectionResultSnapshot = proinspection.ResultSnapshot',
             'type accountInspectionRunState = proinspection.RunState',
             'type accountInspectionLogEntry = proinspection.LogEntry',
@@ -78,6 +77,13 @@ class CoreModuleBoundaryTests(unittest.TestCase):
             'type accountInspectionActionOutcome = proinspection.ActionOutcome',
         ):
             self.assertIn(alias, inspection)
+
+        for declaration in (
+            'type accountInspectionHTTPResult struct {',
+            'Header     http.Header',
+            'func (r accountInspectionHTTPResult) probeResponse() proinspection.ProbeResponse {',
+        ):
+            self.assertIn(declaration, inspection)
 
         results_module = (PRO / 'inspection/results.go').read_text(encoding='utf-8')
         for declaration in (
@@ -98,6 +104,7 @@ class CoreModuleBoundaryTests(unittest.TestCase):
             self.assertIn(declaration, providers_module)
 
         probes_module = (PRO / 'inspection/probes.go').read_text(encoding='utf-8')
+        self.assertNotIn('http.Header', probes_module)
         for declaration in (
             'type ProbeResponse struct',
             'func ShouldDeepProbe(',
@@ -115,9 +122,9 @@ class CoreModuleBoundaryTests(unittest.TestCase):
             'return proinspection.ClassifyAntigravityDeepProbeResponse(',
             'return proinspection.BuildXAIDeepProbeBody(',
             'return proinspection.ClassifyXAIDeepProbeResponse(',
-            'return proinspection.RunXAIDeepProbeWithRetry(',
         ):
             self.assertIn(delegation, inspection)
+        self.assertIn('proinspection.RunXAIDeepProbeWithRetry(', inspection)
 
         actions_module = (PRO / 'inspection/actions.go').read_text(encoding='utf-8')
         for declaration in (

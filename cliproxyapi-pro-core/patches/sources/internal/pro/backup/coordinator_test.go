@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	prostate "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/state"
 )
@@ -137,6 +138,55 @@ func TestExecuteImportResumesLifecycleWhosePauseWasCanceled(t *testing.T) {
 	}
 	if paused || !resumed {
 		t.Fatalf("failed pause was not resumed: paused=%v resumed=%v", paused, resumed)
+	}
+}
+
+func TestExecuteImportExcludesOrdinaryWritesUntilResume(t *testing.T) {
+	coordinator := NewCoordinator()
+	importStarted := make(chan struct{})
+	releaseImport := make(chan struct{})
+	importDone := make(chan error, 1)
+	go func() {
+		importDone <- coordinator.ExecuteImport(context.Background(), ImportPlan{
+			ImportDatabase: func(context.Context) error {
+				close(importStarted)
+				<-releaseImport
+				return nil
+			},
+		})
+	}()
+	<-importStarted
+
+	writeStarted := make(chan struct{})
+	writeDone := make(chan error, 1)
+	go func() {
+		writeDone <- coordinator.ExecuteWrite(context.Background(), func(context.Context) error {
+			close(writeStarted)
+			return nil
+		})
+	}()
+	select {
+	case <-writeStarted:
+		t.Fatal("ordinary write entered while import held the write barrier")
+	case <-time.After(25 * time.Millisecond):
+	}
+	if coordinator.TryExecuteWrite(func() {}) {
+		t.Fatal("best-effort write entered while import held the write barrier")
+	}
+	close(releaseImport)
+	if err := <-importDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-writeStarted:
+	default:
+		t.Fatal("ordinary write did not resume after import")
+	}
+	if !coordinator.TryExecuteWrite(func() {}) {
+		t.Fatal("best-effort write did not resume after import")
 	}
 }
 
