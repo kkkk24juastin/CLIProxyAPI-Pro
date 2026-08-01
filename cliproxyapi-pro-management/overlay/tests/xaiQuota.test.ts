@@ -3,15 +3,15 @@ import type { TFunction } from 'i18next';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { QuotaClassMap } from '@/features/quota/types';
-import { PRO_XAI_CONFIG } from '@/extensions/quota/xaiQuotaAdapter';
-import { ProXaiQuotaBody } from '@/extensions/quota/ProXaiQuotaBody';
+import { PRO_XAI_CONFIG } from '@/pro/modules/quota/extensions/xaiQuotaAdapter';
+import { ProXaiQuotaBody } from '@/pro/modules/quota/extensions/ProXaiQuotaBody';
 import {
   XAI_FREE_QUOTA_PROBE_URL,
   mergeXaiBillingRuntimeState,
   parseXaiFreeQuotaProbe,
   resolveXaiPlanType,
   xaiFreeQuotaRemainingPercent,
-} from '@/extensions/quota/xaiQuota';
+} from '@/pro/modules/quota/extensions/xaiQuota';
 import { apiCallApi, type ApiCallRequest, type ApiCallResult } from '@/services/api';
 import {
   XAI_BILLING_MONTHLY_URL,

@@ -3,11 +3,11 @@ import {
   buildAccountUsageLogPath,
   ratio,
   resolveAccountUsageLabel,
-} from '../src/features/monitoring/accountUsage';
+} from '../src/pro/modules/monitoring/features/accountUsage';
 import {
   buildConfiguredApiKeyMap,
   resolveConfiguredApiKeyLabel,
-} from '../src/features/monitoring/apiKeyIdentity';
+} from '../src/pro/modules/monitoring/features/apiKeyIdentity';
 
 describe('account usage helpers', () => {
   test('uses the full auth-file name when no account email is available', () => {

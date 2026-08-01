@@ -15,13 +15,13 @@ import {
   resolveAssetInspectionHealthCounts,
   resolveResultHealthStatus,
   toSettingsDraft,
-} from '../src/features/monitoring/accountInspectionPageModel';
+} from '../src/pro/modules/inspection/features/accountInspectionPageModel';
 import type { TFunction } from 'i18next';
 import {
   DEFAULT_ACCOUNT_INSPECTION_SETTINGS,
   isAccountInspectionBackendResponse,
   type AccountInspectionResultItem,
-} from '../src/features/monitoring/accountInspection';
+} from '../src/pro/modules/inspection/features/accountInspection';
 
 const result = (overrides: Partial<AccountInspectionResultItem> = {}): AccountInspectionResultItem => ({
   key: 'auth-1',

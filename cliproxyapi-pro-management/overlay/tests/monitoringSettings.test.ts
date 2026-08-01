@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildMonitoringSettingsFromDraft,
   createMonitoringSettingsDraft,
-} from '../src/features/monitoring/monitoringSettings';
+} from '../src/pro/modules/monitoring/features/monitoringSettings';
 
 describe('monitoring settings form model', () => {
   test('uses stable defaults for a new settings form', () => {

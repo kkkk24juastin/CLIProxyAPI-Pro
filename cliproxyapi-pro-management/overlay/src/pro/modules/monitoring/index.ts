@@ -1,0 +1,1 @@
+export { MonitoringCenterPage } from './MonitoringCenterPage';

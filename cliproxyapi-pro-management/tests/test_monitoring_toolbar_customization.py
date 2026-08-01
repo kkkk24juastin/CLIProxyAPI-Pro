@@ -4,24 +4,24 @@ from pathlib import Path
 
 PAGE_PATH = (
     Path(__file__).resolve().parents[1]
-    / 'overlay/src/pages/MonitoringCenterPage.tsx'
+    / 'overlay/src/pro/modules/monitoring/MonitoringCenterPage.tsx'
 )
 STYLE_PATH = (
     Path(__file__).resolve().parents[1]
-    / 'overlay/src/features/monitoring/monitoring.module.scss'
+    / 'overlay/src/pro/modules/monitoring/features/monitoring.module.scss'
 )
 STYLE_DIR = STYLE_PATH.parent / 'styles'
 REALTIME_HOOK_PATH = (
     Path(__file__).resolve().parents[1]
-    / 'overlay/src/features/monitoring/hooks/useRealtimeLogData.ts'
+    / 'overlay/src/pro/modules/monitoring/features/hooks/useRealtimeLogData.ts'
 )
 REALTIME_PREFERENCES_PATH = (
     Path(__file__).resolve().parents[1]
-    / 'overlay/src/features/monitoring/realtimeLogPreferences.ts'
+    / 'overlay/src/pro/modules/monitoring/features/realtimeLogPreferences.ts'
 )
 ACCOUNT_PLAN_PATH = (
     Path(__file__).resolve().parents[1]
-    / 'overlay/src/features/monitoring/accountPlan.ts'
+    / 'overlay/src/pro/modules/inspection/features/accountPlan.ts'
 )
 LOCALES_PATH = Path(__file__).resolve().parents[1] / 'monitoring-locales.json'
 

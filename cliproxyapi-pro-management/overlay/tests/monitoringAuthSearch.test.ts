@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { findMonitoringAuthIndexes } from '../src/features/monitoring/monitoringAuthSearch';
+import { findMonitoringAuthIndexes } from '../src/pro/modules/monitoring/features/monitoringAuthSearch';
 
 describe('monitoring auth metadata search', () => {
   test('finds auth indexes from the complete auth-file metadata without a recent event row', () => {

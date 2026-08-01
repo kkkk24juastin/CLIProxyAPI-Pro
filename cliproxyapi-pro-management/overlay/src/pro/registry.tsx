@@ -6,11 +6,11 @@ import {
   IconSidebarProxyPool,
   IconSidebarRouting,
 } from '@/components/ui/icons';
-import { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';
-import { AccountInspectionPage } from '@/pages/AccountInspectionPage';
-import { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';
-import { ProxyPoolPage } from '@/pages/ProxyPoolPage';
-import { OAuthModelPolicyPage } from '@/pages/OAuthModelPolicyPage';
+import { MonitoringCenterPage } from '@/pro/modules/monitoring';
+import { AccountInspectionPage } from '@/pro/modules/inspection';
+import { RoutingPolicyPage } from '@/pro/modules/routing';
+import { ProxyPoolPage } from '@/pro/modules/proxyPool';
+import { OAuthModelPolicyPage } from '@/pro/modules/modelPolicy';
 
 export interface ProRouteEntry {
   path: string;

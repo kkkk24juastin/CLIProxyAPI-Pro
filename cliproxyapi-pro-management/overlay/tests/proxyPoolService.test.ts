@@ -4,12 +4,12 @@ import {
   normalizeProxyPoolConfig,
   parseProxyPoolImport,
   serializeProxyPoolConfig,
-} from '../src/services/api/proxyPool';
+} from '../src/pro/modules/proxyPool/proxyPool';
 import {
   formatProxyPoolSuccessRate,
   proxyPoolDurationValue,
   serializeProxyPoolDuration,
-} from '../src/features/proxyPool/proxyPoolUi';
+} from '../src/pro/modules/proxyPool/features/proxyPoolUi';
 
 describe('proxy pool service model', () => {
   test('recognizes credential routes that already point at the pool listener', () => {

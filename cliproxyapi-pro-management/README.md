@@ -167,11 +167,11 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 ## 目录结构
 
 - `overlay/` — 直接复制到 upstream checkout 的新增/覆盖文件。
-- `overlay/src/pages/MonitoringCenterPage.tsx` — 请求监控页面。
-- `overlay/src/pages/AccountInspectionPage.tsx` — 账号巡检页面。
-- `overlay/src/pages/RoutingPolicyPage.tsx` — 路由策略和请求状态保护页面。
-- `overlay/src/features/monitoring/` — 监控与巡检逻辑。
-- `overlay/src/extensions/quota/` — SQLite 配额持久化集成。
+- `overlay/src/pro/modules/monitoring/` — 请求监控、用量分析与备份 UI。
+- `overlay/src/pro/modules/inspection/` — 账号巡检页面、状态与操作逻辑。
+- `overlay/src/pro/modules/routing/` — 路由策略和请求状态保护 UI。
+- `overlay/src/pro/modules/proxyPool/` 与 `modelPolicy/` — 独立业务模块页面及 API。
+- `overlay/src/pro/modules/quota/` — SQLite 配额持久化、排序与 provider 扩展。
 - `overlay/src/services/api/` — 新增 API clients。
 - `overlay-replacements.json` — 对有意覆盖 upstream 同路径文件的 full-file replacements，记录已审阅的 upstream SHA-256 与替换原因。
 - `monitoring-locales.json` — 合并进 upstream locale 文件的多语言文案。

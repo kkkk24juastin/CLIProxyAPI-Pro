@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   resolveGeminiCliTierDisplayLabel,
   type GeminiCliTierLabelKey,
-} from '../src/extensions/quota/geminiCliTierLabels';
+} from '../src/pro/modules/quota/extensions/geminiCliTierLabels';
 
 const labels: Record<GeminiCliTierLabelKey, string> = {
   tier_free: 'Gemini Code Assist Free',

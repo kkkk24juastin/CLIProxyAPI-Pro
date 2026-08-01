@@ -3,7 +3,7 @@ import {
   createPriceDraft,
   formatDeltaPercent,
   parsePriceValue,
-} from '../src/features/monitoring/modelPricePresentation';
+} from '../src/pro/modules/monitoring/features/modelPricePresentation';
 
 describe('model price presentation model', () => {
   test('creates editable strings without mutating the source rule', () => {

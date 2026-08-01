@@ -167,11 +167,11 @@ Request Monitoring uses an initial snapshot plus SSE increments and cursor catch
 ## Repository layout
 
 - `overlay/` — files copied directly into the upstream checkout.
-- `overlay/src/pages/MonitoringCenterPage.tsx` — request monitoring UI.
-- `overlay/src/pages/AccountInspectionPage.tsx` — account inspection UI.
-- `overlay/src/pages/RoutingPolicyPage.tsx` — routing policy and request-state-protection UI.
-- `overlay/src/features/monitoring/` — monitoring and inspection logic.
-- `overlay/src/extensions/quota/` — SQLite quota persistence integration.
+- `overlay/src/pro/modules/monitoring/` — request monitoring, usage analytics, and backup UI.
+- `overlay/src/pro/modules/inspection/` — account inspection page, state, and actions.
+- `overlay/src/pro/modules/routing/` — routing policy and request-state-protection UI.
+- `overlay/src/pro/modules/proxyPool/` and `modelPolicy/` — independent module pages and APIs.
+- `overlay/src/pro/modules/quota/` — SQLite quota persistence, sorting, and provider extensions.
 - `overlay/src/services/api/` — added API clients.
 - `overlay-replacements.json` — reviewed upstream SHA-256 values and reasons for full-file replacements that intentionally collide with upstream paths.
 - `monitoring-locales.json` — locale additions merged into upstream locale files.

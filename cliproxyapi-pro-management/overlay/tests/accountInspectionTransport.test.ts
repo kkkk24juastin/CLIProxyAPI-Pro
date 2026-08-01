@@ -4,7 +4,7 @@ import {
   buildAccountInspectionLogsWebSocketUrl,
   nextAccountInspectionReconnectDelay,
   refreshAccountInspectionAfterReconnect,
-} from '../src/services/api/accountInspection';
+} from '../src/pro/modules/inspection/api';
 
 describe('account inspection transport contract', () => {
   test('builds a secure management websocket URL without query credentials', () => {

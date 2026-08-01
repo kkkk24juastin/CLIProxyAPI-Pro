@@ -3,7 +3,7 @@ import type { AuthFileItem } from '@/types';
 import {
   compareAuthFilesByPlanDescending,
   isAuthFilePlanSortProvider,
-} from '@/features/authFiles/planSort';
+} from '@/pro/modules/quota/planSort';
 
 type PlanSortQuotaStore = Parameters<typeof compareAuthFilesByPlanDescending>[2];
 

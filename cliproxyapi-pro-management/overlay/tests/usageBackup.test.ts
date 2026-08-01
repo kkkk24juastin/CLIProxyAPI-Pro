@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { hasUsageBackupManifest } from '../src/features/monitoring/usageBackup';
+import { hasUsageBackupManifest } from '../src/pro/modules/monitoring/features/usageBackup';
 
 describe('usage backup compatibility gate', () => {
   test('accepts only a first non-empty manifest record as verified backup', () => {

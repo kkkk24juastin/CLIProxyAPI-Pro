@@ -5,9 +5,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PAGE = ROOT / 'overlay/src/pages/ProxyPoolPage.tsx'
-FEATURE_DIR = ROOT / 'overlay/src/features/proxyPool'
-SERVICE = ROOT / 'overlay/src/services/api/proxyPool.ts'
+PAGE = ROOT / 'overlay/src/pro/modules/proxyPool/ProxyPoolPage.tsx'
+FEATURE_DIR = ROOT / 'overlay/src/pro/modules/proxyPool/features'
+SERVICE = ROOT / 'overlay/src/pro/modules/proxyPool/proxyPool.ts'
 CUSTOMIZER = ROOT / 'apply_customizations.py'
 REGISTRY = ROOT / 'overlay/src/pro/registry.tsx'
 LOCALES = ROOT / 'monitoring-locales.json'
@@ -125,7 +125,7 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
     def test_routes_and_navigation_are_durable_customizer_edits(self) -> None:
         source = CUSTOMIZER.read_text()
         registry = REGISTRY.read_text()
-        self.assertIn("import { ProxyPoolPage } from '@/pages/ProxyPoolPage'", registry)
+        self.assertIn("import { ProxyPoolPage } from '@/pro/modules/proxyPool'", registry)
         self.assertIn("path: '/proxy-pool'", registry)
         self.assertIn('<IconSidebarProxyPool size={18} />', registry)
         self.assertIn("import { ProBootstrap } from '@/pro/ProBootstrap'", source)

@@ -7,7 +7,7 @@ import {
   planDefinitionsForProvider,
   serializeOAuthModelPolicyDuration,
   serializeOAuthModelPolicyConfig,
-} from "@/services/api/oauthModelPolicy";
+} from "@/pro/modules/modelPolicy/oauthModelPolicy";
 
 describe("oauth model policy service", () => {
   it("normalizes known plans and preserves fallback distinction", () => {

@@ -4,8 +4,8 @@ import {
   buildRealtimeLogPageRows,
   getClientPaginationRange,
   resolveRealtimeErrorCategoryKey,
-} from '../src/features/monitoring/realtimeLogPresentation';
-import type { MonitoringEventRow } from '../src/features/monitoring/hooks/useMonitoringData';
+} from '../src/pro/modules/monitoring/features/realtimeLogPresentation';
+import type { MonitoringEventRow } from '../src/pro/modules/monitoring/features/hooks/useMonitoringData';
 
 const event = (overrides: Partial<MonitoringEventRow> = {}): MonitoringEventRow => ({
   id: 'event-1',
@@ -77,7 +77,7 @@ describe('realtime log presentation', () => {
 
   test('keeps realtime badges and recent status bars styled', async () => {
     const styles = await Bun.file(
-      new URL('../src/features/monitoring/styles/_realtime.scss', import.meta.url)
+      new URL('../src/pro/modules/monitoring/features/styles/_realtime.scss', import.meta.url)
     ).text();
 
     [

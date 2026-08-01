@@ -4,7 +4,7 @@ import {
   MONITORING_PAGE_SIZE_OPTIONS,
   normalizeMonitoringPageSize,
   resolveMonitoringPaginationCopy,
-} from '../src/features/monitoring/pagination';
+} from '../src/pro/modules/monitoring/features/pagination';
 
 describe('monitoring pagination', () => {
   test('defaults to 20 rows and exposes only the supported sizes', () => {
@@ -27,7 +27,7 @@ describe('monitoring pagination', () => {
 
   test('keeps expanded inspection result pages inside a scrollable viewport', async () => {
     const styles = await Bun.file(
-      new URL('../src/features/monitoring/account-inspection-styles/_tables-dialogs.scss', import.meta.url)
+      new URL('../src/pro/modules/inspection/features/account-inspection-styles/_tables-dialogs.scss', import.meta.url)
     ).text();
 
     expect(styles).toContain('.resultsTableViewport');
@@ -38,10 +38,10 @@ describe('monitoring pagination', () => {
 
   test('keeps page navigation and page-size controls on the same row', async () => {
     const baseStyles = await Bun.file(
-      new URL('../src/features/monitoring/styles/_base.scss', import.meta.url)
+      new URL('../src/pro/modules/monitoring/features/styles/_base.scss', import.meta.url)
     ).text();
     const responsiveStyles = await Bun.file(
-      new URL('../src/features/monitoring/styles/_responsive.scss', import.meta.url)
+      new URL('../src/pro/modules/monitoring/features/styles/_responsive.scss', import.meta.url)
     ).text();
 
     expect(baseStyles).toMatch(/\.paginationPageSizeControl\s*\{[^}]*grid-row: 1;/s);
