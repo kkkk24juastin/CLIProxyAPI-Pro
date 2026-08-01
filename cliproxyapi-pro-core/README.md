@@ -250,7 +250,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `patches/sources/internal/pro/inspection/` — 巡检调度、单账号探测和人工操作的生命周期闸门。
 - `patches/sources/internal/pro/backup/` — JSONL 导出和“暂停、flush、导入、重载、恢复运行态、恢复巡检、清理旧缓存、resume”的跨模块协调器。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
-- `embeddedusage/` — 内嵌 SQLite usage service、management routes 以及向静态模块提供的兼容 façade。
+- `embeddedusage/` — 保留 upstream 导入路径、公开类型和函数签名的薄兼容 façade；实现位于 `pro/observability`。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。
 - `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
 - 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放巡检、路由保护、登录清理及全局回调。

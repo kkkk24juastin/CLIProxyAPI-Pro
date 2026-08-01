@@ -251,7 +251,7 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `patches/sources/internal/pro/inspection/` — lifecycle gate for scheduled runs, one-shot probes, and manual actions.
 - `patches/sources/internal/pro/backup/` — JSONL export and the cross-module pause, flush, import, reload, live-state restore, inspection restore, legacy cleanup, and resume sequence.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
-- `embeddedusage/` — embedded SQLite usage service, management routes, and compatibility façade for static modules.
+- `embeddedusage/` — thin compatibility façade preserving upstream import paths, public types, and function signatures; implementation lives in `pro/observability`.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.
 - `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
 - The generated API Server shuts down its management Handler from `Stop`; embedders that create a Handler directly through the SDK must also call `Shutdown()` to release inspection, routing-protection, login-cleanup, and global callback ownership.
