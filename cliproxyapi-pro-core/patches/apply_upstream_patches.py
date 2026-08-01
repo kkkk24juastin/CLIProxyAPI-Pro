@@ -182,6 +182,17 @@ def replace_go_call_block(path: Path, call_start: str, new_block: str, present: 
 
 
 MODULE_PATH = module_path()
+ACCOUNT_INSPECTION_SOURCE_FILES = (
+    'account_inspection_runtime.go',
+    'account_inspection_http.go',
+    'account_inspection_accounts.go',
+    'account_inspection_transport.go',
+    'account_inspection_quota.go',
+    'account_inspection_runtime_test.go',
+    'account_inspection_accounts_test.go',
+    'account_inspection_transport_test.go',
+    'account_inspection_quota_test.go',
+)
 customization_sentinel = ROOT / 'internal/embeddedusage'
 if customization_sentinel.exists():
     raise SystemExit(f'target already contains CLIProxyAPI Pro customizations: {customization_sentinel}')
@@ -189,8 +200,10 @@ if customization_sentinel.exists():
 new_customization_paths = (
     'internal/pro',
     'internal/api/handlers/management/account_inspection_host.go',
-    'internal/api/handlers/management/account_inspection_scheduler.go',
-    'internal/api/handlers/management/account_inspection_scheduler_test.go',
+    *[
+        f'internal/api/handlers/management/{name}'
+        for name in ACCOUNT_INSPECTION_SOURCE_FILES
+    ],
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
     'internal/api/handlers/management/pro_auth_mutation.go',
@@ -1499,8 +1512,6 @@ server_management = ROOT / 'internal/api/server_management.go'
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 auth_files_fields = ROOT / 'internal/api/handlers/management/auth_files_fields.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
-management_scheduler = ROOT / 'internal/api/handlers/management/account_inspection_scheduler.go'
-management_scheduler_test = ROOT / 'internal/api/handlers/management/account_inspection_scheduler_test.go'
 routing_policy = ROOT / 'internal/api/handlers/management/routing_policy.go'
 routing_policy_test = ROOT / 'internal/api/handlers/management/routing_policy_test.go'
 replace_once(
@@ -1508,11 +1519,12 @@ replace_once(
     '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n',
     '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n\t\tmgmt.POST("/management-panel/check-update", s.mgmt.PostCheckManagementPanelUpdate)\n',
 )
-scheduler_source = Path(__file__).resolve().parent / 'account_inspection_scheduler.go'
-write(management_scheduler, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(scheduler_source)))
-scheduler_test_source = Path(__file__).resolve().parent / 'account_inspection_scheduler_test.go'
-if scheduler_test_source.is_file():
-    write(management_scheduler_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(scheduler_test_source)))
+for source_name in ACCOUNT_INSPECTION_SOURCE_FILES:
+    source = Path(__file__).resolve().parent / source_name
+    write(
+        ROOT / 'internal/api/handlers/management' / source_name,
+        re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(source)),
+    )
 write(routing_policy, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy.go')))
 write(routing_policy_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy_test.go')))
 
@@ -2703,8 +2715,10 @@ subprocess.run([
     'internal/api/server.go',
     'internal/api/server_test.go',
     'internal/api/server_options.go',
-    'internal/api/handlers/management/account_inspection_scheduler.go',
-    'internal/api/handlers/management/account_inspection_scheduler_test.go',
+    *[
+        f'internal/api/handlers/management/{name}'
+        for name in ACCOUNT_INSPECTION_SOURCE_FILES
+    ],
     'internal/api/handlers/management/account_inspection_host.go',
     'internal/api/handlers/management/auth_files.go',
     'internal/api/handlers/management/handler.go',

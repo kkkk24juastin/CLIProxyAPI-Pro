@@ -36,7 +36,36 @@ class CoreModuleBoundaryTests(unittest.TestCase):
         self.assertEqual([], violations, '\n'.join(violations))
 
     def test_management_feature_files_use_explicit_host_adapters(self):
-        inspection = (PATCHES / 'account_inspection_scheduler.go').read_text(encoding='utf-8')
+        inspection_files = tuple(PATCHES.glob('account_inspection_*.go'))
+        production_files = {
+            path.name for path in inspection_files
+            if not path.name.endswith('_test.go') and path.name != 'account_inspection_host.go'
+        }
+        test_files = {
+            path.name for path in inspection_files
+            if path.name.endswith('_test.go')
+        }
+        self.assertEqual({
+            'account_inspection_runtime.go',
+            'account_inspection_http.go',
+            'account_inspection_accounts.go',
+            'account_inspection_transport.go',
+            'account_inspection_quota.go',
+        }, production_files)
+        self.assertEqual({
+            'account_inspection_runtime_test.go',
+            'account_inspection_accounts_test.go',
+            'account_inspection_transport_test.go',
+            'account_inspection_quota_test.go',
+        }, test_files)
+        inspection = '\n'.join(
+            path.read_text(encoding='utf-8')
+            for path in inspection_files
+            if not path.name.endswith('_test.go') and path.name != 'account_inspection_host.go'
+        )
+        inspection_runtime = (PATCHES / 'account_inspection_runtime.go').read_text(encoding='utf-8')
+        inspection_http = (PATCHES / 'account_inspection_http.go').read_text(encoding='utf-8')
+        inspection_transport = (PATCHES / 'account_inspection_transport.go').read_text(encoding='utf-8')
         routing = (PATCHES / 'routing_policy.go').read_text(encoding='utf-8')
         plugin_quota = (PATCHES / 'plugin_quota_management.go').read_text(encoding='utf-8')
         auth_adapter = (PATCHES / 'pro_auth_mutation.go').read_text(encoding='utf-8')
@@ -78,12 +107,20 @@ class CoreModuleBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(alias, inspection)
 
+        self.assertNotIn('"net/http"', inspection_runtime)
+        self.assertNotIn('github.com/gorilla/websocket', inspection_runtime)
+        for declaration in (
+            'var accountInspectionWebSocketUpgrader = websocket.Upgrader{',
+            'type accountInspectionPageInfo = proinspection.PageInfo',
+            'type accountInspectionSnapshotOptions = proinspection.SnapshotOptions',
+        ):
+            self.assertIn(declaration, inspection_http)
         for declaration in (
             'type accountInspectionHTTPResult struct {',
             'Header     http.Header',
             'func (r accountInspectionHTTPResult) probeResponse() proinspection.ProbeResponse {',
         ):
-            self.assertIn(declaration, inspection)
+            self.assertIn(declaration, inspection_transport)
 
         results_module = (PRO / 'inspection/results.go').read_text(encoding='utf-8')
         for declaration in (
@@ -118,13 +155,22 @@ class CoreModuleBoundaryTests(unittest.TestCase):
             self.assertIn(declaration, probes_module)
 
         for delegation in (
-            'return proinspection.BuildAntigravityDeepProbeBody(',
-            'return proinspection.ClassifyAntigravityDeepProbeResponse(',
-            'return proinspection.BuildXAIDeepProbeBody(',
-            'return proinspection.ClassifyXAIDeepProbeResponse(',
+            'proinspection.BuildAntigravityDeepProbeBody(',
+            'proinspection.ClassifyAntigravityDeepProbeResponse(',
+            'proinspection.BuildXAIDeepProbeBody(',
+            'proinspection.ClassifyXAIDeepProbeResponse(',
         ):
             self.assertIn(delegation, inspection)
         self.assertIn('proinspection.RunXAIDeepProbeWithRetry(', inspection)
+        for removed_wrapper in (
+            'func buildAntigravityDeepProbeBody(',
+            'func buildXAIDeepProbeBody(',
+            'func buildAntigravityGroups(',
+            'func buildCodexWindows(',
+            'func buildXAIBillingSummary(',
+            'func sortAccountInspectionResults(',
+        ):
+            self.assertNotIn(removed_wrapper, inspection)
 
         actions_module = (PRO / 'inspection/actions.go').read_text(encoding='utf-8')
         for declaration in (
@@ -138,11 +184,11 @@ class CoreModuleBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(declaration, actions_module)
         for delegation in (
-            'return proinspection.AccountKey(',
-            'return proinspection.ActionItemFromResult(',
-            'return proinspection.DedupeActionItems(',
-            'return proinspection.SummarizeActionOutcomes(',
-            'return proinspection.MergeManualActionResult(',
+            'proinspection.AccountKey(',
+            'proinspection.ActionItemFromResult(',
+            'proinspection.DedupeActionItems(',
+            'proinspection.SummarizeActionOutcomes(',
+            'proinspection.MergeManualActionResult(',
         ):
             self.assertIn(delegation, inspection)
 
@@ -167,10 +213,18 @@ class CoreModuleBoundaryTests(unittest.TestCase):
             'return proinspection.Sample(',
             'return proinspection.ProviderLimiters(',
             'return proinspection.CodexDecision(',
-            'return proinspection.ErrorCode(',
-            'return proinspection.DecisionErrorCode(',
         ):
             self.assertIn(delegation, inspection)
+        for delegation in (
+            'proinspection.ErrorCode(',
+            'proinspection.DecisionErrorCode(',
+        ):
+            self.assertIn(delegation, inspection)
+        for removed_wrapper in (
+            'func accountInspectionErrorCode(',
+            'func accountInspectionDecisionErrorCode(',
+        ):
+            self.assertNotIn(removed_wrapper, inspection)
 
         snapshot_module = (PRO / 'inspection/snapshot.go').read_text(encoding='utf-8')
         for declaration in (
@@ -223,11 +277,11 @@ class CoreModuleBoundaryTests(unittest.TestCase):
             self.assertIn(declaration, quota_cache)
 
         for delegation in (
-            'return proquota.SnapshotMaxUsedPercent(',
-            'return proquota.SuccessCacheState(',
-            'return proquota.JSONShapeHash(',
-            'return proquota.JSONShapeHashForBodies(',
-            'return proinspection.XAIOfficialAPIQuotaDecision(',
+            'proquota.SnapshotMaxUsedPercent(',
+            'proquota.SuccessCacheState(',
+            'proquota.JSONShapeHash(',
+            'proquota.JSONShapeHashForBodies(',
+            'proinspection.XAIOfficialAPIQuotaDecision(',
         ):
             self.assertIn(delegation, inspection)
 

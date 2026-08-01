@@ -253,7 +253,7 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
 - `embeddedusage/` — thin compatibility façade preserving upstream import paths, public types, and function signatures; implementation lives in `pro/observability`.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.
-- `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
+- `patches/account_inspection_{runtime,http,accounts,transport,quota}.go` — backend account-inspection adapters split by lifecycle/API, account host capabilities, auth-bound transport, and quota-state boundaries before injection into upstream management handlers; tests follow the same split.
 - `patches/account_inspection_host.go` and `patches/pro_auth_mutation.go` — host adapters for the inspection quota port and shared Auth mutation/file persistence.
 - `patches/pro_management_runtime.go` — composes inspection and routing background lifecycles owned by one Management Handler.
 - The generated API Server shuts down its management Handler from `Stop`; embedders that create a Handler directly through the SDK must also call `Shutdown()` to release inspection, routing-protection, login-cleanup, and global callback ownership.
