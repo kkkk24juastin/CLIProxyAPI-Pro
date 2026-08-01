@@ -1,4 +1,4 @@
-package embeddedusage
+package observability
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/pro/observability/internalusage"
 )
 
 const modelPriceSourceManual = "manual"

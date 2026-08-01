@@ -1,4 +1,4 @@
-package embeddedusage
+package observability
 
 import (
 	"bufio"
@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/pro/observability/internalusage"
 )
 
 type failingImportReader struct{}

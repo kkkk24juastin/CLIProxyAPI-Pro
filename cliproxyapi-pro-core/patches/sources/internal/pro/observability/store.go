@@ -1,4 +1,4 @@
-package embeddedusage
+package observability
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/pro/observability/internalusage"
 	prostate "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/state"
 	prostorage "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/storage"
 )

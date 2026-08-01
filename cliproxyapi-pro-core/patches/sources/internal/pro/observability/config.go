@@ -1,4 +1,4 @@
-package embeddedusage
+package observability
 
 import (
 	"os"

@@ -1,4 +1,4 @@
-package embeddedusage
+package observability
 
 import (
 	"bufio"
@@ -8,7 +8,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/pro/observability/internalusage"
 )
 
 func testGPT56PriceRule() ModelPriceRule {

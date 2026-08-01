@@ -1,4 +1,4 @@
-package embeddedusage
+package observability
 
 import (
 	"bytes"
@@ -11,10 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/pro/observability/internalusage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/redisqueue"
 	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
-	proobservability "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/observability"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -24,7 +23,7 @@ type Service struct {
 	store            *Store
 	server           *Server
 	workers          sync.WaitGroup
-	module           *proobservability.Module
+	module           *Module
 	backupUnregister func()
 }
 
@@ -47,7 +46,7 @@ func Start(ctx context.Context) (*Service, error) {
 		ctx:    ctx,
 		cfg:    cfg,
 		store:  store,
-		module: proobservability.New(),
+		module: New(),
 	}
 	service.backupUnregister = probackup.Default.RegisterLifecycle(probackup.Lifecycle{
 		Pause: service.module.Pause, Resume: service.module.Resume,
