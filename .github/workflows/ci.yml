@@ -123,6 +123,7 @@ jobs:
 
   source-image-build:
     needs: resolve-upstream
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -146,6 +147,11 @@ jobs:
             --tag cli-proxy-api-pro:review \
             --file cliproxyapi-pro-core/Dockerfile \
             .
+
+  publish-test-image:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/test-image.yml
+    secrets: inherit
 
   management-baseline:
     needs: resolve-upstream
