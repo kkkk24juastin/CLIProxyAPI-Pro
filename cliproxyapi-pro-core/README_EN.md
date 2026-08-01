@@ -263,7 +263,6 @@ Static modules follow their actual host lifecycles: `pro/app` owns the proxy-poo
 - Core invariants: account inspection takes precedence over request protection; imported `routing_cursor_state` and `auth_runtime_stats` are applied to the live manager immediately; existing DB tables, JSONL record types, and `/v0/management/usage*` APIs remain compatible.
 - `patches/config_existing_updates.go` — existing-scalar-only YAML updates that never create missing keys.
 - `.github/workflows/release-core.yml` — image publish, Pro binary assets, `management.html` publish, usage backup, Render deployment trigger, Telegram notification, and run cleanup.
-- `.github/workflows/test-image.yml` — manually builds Core and Management from the selected Git ref, assembles amd64/arm64 test images through `Dockerfile.runtime`, and publishes only `test-<ref>` and `test-<sha>` tags without replacing release tags.
 
 ## Docker build
 

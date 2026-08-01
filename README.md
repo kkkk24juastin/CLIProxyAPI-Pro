@@ -40,8 +40,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 └── .github/workflows/
     ├── ci.yml
     ├── release-core.yml
-    ├── release-management.yml
-    └── test-image.yml
+    └── release-management.yml
 ```
 
 ## 子项目说明

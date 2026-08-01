@@ -262,7 +262,6 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 静态模块按实际宿主生命周期组合：`pro/app` 管理请求路径上的 proxy-pool 与 model-policy 服务；`pro/observability` 随进程 context 启停；inspection 与 routing 控制器随 Management Handler 启停。跨生命周期备份端口使用 owner-scoped 注册和逆序注销，旧 Handler 或旧 Service 关闭时不会清除新实例的回调。`internal/embeddedusage` 只允许出现在 upstream/SDK 兼容边界，`internal/pro` 业务模块不反向依赖该 façade。
 - `patches/config_existing_updates.go` — 只修改已存在 YAML 标量、禁止补键的配置写入辅助层。
 - `.github/workflows/release-core.yml` — 镜像发布、Pro 二进制资产、management.html 发布、usage 备份、Render 部署触发、Telegram 通知和 workflow 清理。
-- `.github/workflows/test-image.yml` — 手动从当前 Git ref 同步构建 Core 与 Management，通过 `Dockerfile.runtime` 组装 amd64/arm64 测试镜像；仅发布 `test-<ref>` 与 `test-<sha>` 标签，不覆盖正式标签。
 
 ## Docker 构建
 

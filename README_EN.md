@@ -40,8 +40,7 @@ This project does not maintain a full fork of either upstream project. Instead, 
 └── .github/workflows/
     ├── ci.yml
     ├── release-core.yml
-    ├── release-management.yml
-    └── test-image.yml
+    └── release-management.yml
 ```
 
 ## Subprojects
