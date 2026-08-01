@@ -1,0 +1,382 @@
+name: Publish CLIProxyAPI Pro Test Image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: test-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-upstream:
+    runs-on: ubuntu-latest
+
+    outputs:
+      core_tag: ${{ steps.resolve.outputs.core_tag }}
+      core_sha: ${{ steps.resolve.outputs.core_sha }}
+      management_sha: ${{ steps.resolve.outputs.management_sha }}
+      management_version: ${{ steps.resolve.outputs.management_version }}
+      models_sha: ${{ steps.resolve.outputs.models_sha }}
+      normalized_ref: ${{ steps.resolve.outputs.normalized_ref }}
+      channel_tag: ${{ steps.resolve.outputs.channel_tag }}
+      commit_tag: ${{ steps.resolve.outputs.commit_tag }}
+      core_build_version: ${{ steps.resolve.outputs.core_build_version }}
+      management_build_version: ${{ steps.resolve.outputs.management_build_version }}
+
+    steps:
+      - name: Checkout customizations
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Resolve test image inputs
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORE_UPSTREAM_REPO: router-for-me/CLIProxyAPI
+          MANAGEMENT_UPSTREAM_REPO: router-for-me/Cli-Proxy-API-Management-Center
+          MODELS_REPO: router-for-me/models
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          normalize_version() {
+            local version="$1"
+            version="${version#v}"
+            version="${version%-pro}"
+            echo "${version}"
+          }
+
+          normalized_ref="$(
+            printf '%s' "${REF_NAME}" |
+              tr '[:upper:]' '[:lower:]' |
+              sed -E 's/[^a-z0-9_.-]+/-/g; s/^[.-]+//; s/[.-]+$//' |
+              cut -c1-110
+          )"
+          test -n "${normalized_ref}"
+
+          core_tag="$(gh release view --repo "${CORE_UPSTREAM_REPO}" --json tagName --jq '.tagName')"
+          management_tag="$(gh release view --repo "${MANAGEMENT_UPSTREAM_REPO}" --json tagName --jq '.tagName')"
+          core_sha="$(gh api "repos/${CORE_UPSTREAM_REPO}/commits/${core_tag}" --jq '.sha')"
+          management_sha="$(gh api "repos/${MANAGEMENT_UPSTREAM_REPO}/commits/${management_tag}" --jq '.sha')"
+          models_sha="$(gh api "repos/${MODELS_REPO}/commits/main" --jq '.sha')"
+          management_version="$(normalize_version "${management_tag}")"
+          channel_tag="test-${normalized_ref}"
+          commit_tag="test-${GITHUB_SHA::7}"
+          core_build_version="${core_tag}-pro-${channel_tag}"
+          management_build_version="v${management_version}-pro-${channel_tag}"
+
+          echo "core_tag=${core_tag}" >> "${GITHUB_OUTPUT}"
+          echo "core_sha=${core_sha}" >> "${GITHUB_OUTPUT}"
+          echo "management_sha=${management_sha}" >> "${GITHUB_OUTPUT}"
+          echo "management_version=${management_version}" >> "${GITHUB_OUTPUT}"
+          echo "models_sha=${models_sha}" >> "${GITHUB_OUTPUT}"
+          echo "normalized_ref=${normalized_ref}" >> "${GITHUB_OUTPUT}"
+          echo "channel_tag=${channel_tag}" >> "${GITHUB_OUTPUT}"
+          echo "commit_tag=${commit_tag}" >> "${GITHUB_OUTPUT}"
+          echo "core_build_version=${core_build_version}" >> "${GITHUB_OUTPUT}"
+          echo "management_build_version=${management_build_version}" >> "${GITHUB_OUTPUT}"
+
+  build-core:
+    needs: resolve-upstream
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            manylinux_image: quay.io/pypa/manylinux2014_x86_64@sha256:0d25b049964b2549b83384036abdff06789a8c0b1e9ff003ec80f0d531f79e50
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            manylinux_image: quay.io/pypa/manylinux2014_aarch64@sha256:ae34a6ceeefe0b535c525b2e96f297311c8f1e01cfd8b9be5f647eece5b5c60b
+
+    steps:
+      - name: Checkout customizations
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: customizations-repo
+          fetch-depth: 1
+
+      - name: Checkout Core upstream release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: router-for-me/CLIProxyAPI
+          ref: ${{ needs.resolve-upstream.outputs.core_sha }}
+          path: upstream-core
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: upstream-core/go.mod
+          cache: true
+          cache-dependency-path: upstream-core/go.sum
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.x'
+
+      - name: Prepare Pro Core source
+        id: prepare
+        env:
+          SRC_ROOT: ${{ github.workspace }}/upstream-core
+          MODELS_SHA: ${{ needs.resolve-upstream.outputs.models_sha }}
+        run: |
+          set -euo pipefail
+
+          core_source_date_epoch="$(git -C upstream-core show -s --format=%ct HEAD)"
+          customization_source_date_epoch="$(git -C customizations-repo show -s --format=%ct HEAD)"
+          git -C upstream-core fetch --depth 1 https://github.com/router-for-me/models.git "${MODELS_SHA}"
+          test "$(git -C upstream-core rev-parse FETCH_HEAD)" = "${MODELS_SHA}"
+          models_source_date_epoch="$(git -C upstream-core show -s --format=%ct FETCH_HEAD)"
+          source_date_epoch="$(printf '%s\n' "${core_source_date_epoch}" "${customization_source_date_epoch}" "${models_source_date_epoch}" | sort -n | tail -n 1)"
+          build_date="$(SOURCE_DATE_EPOCH="${source_date_epoch}" python3 -c 'import datetime, os; print(datetime.datetime.fromtimestamp(int(os.environ["SOURCE_DATE_EPOCH"]), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
+
+          git -C upstream-core show FETCH_HEAD:models.json > upstream-core/internal/registry/models/models.json
+          python customizations-repo/cliproxyapi-pro-core/patches/apply_upstream_patches.py
+          cd upstream-core
+          go mod tidy
+
+          echo "go_version=$(go env GOVERSION | sed 's/^go//')" >> "${GITHUB_OUTPUT}"
+          echo "build_date=${build_date}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build Linux Core binary
+        working-directory: upstream-core
+        env:
+          GO_VERSION: ${{ steps.prepare.outputs.go_version }}
+          GOARCH: ${{ matrix.arch }}
+          CORE_TAG: ${{ needs.resolve-upstream.outputs.core_tag }}
+          BUILD_VERSION: ${{ needs.resolve-upstream.outputs.core_build_version }}
+          BUILD_DATE: ${{ steps.prepare.outputs.build_date }}
+          MANYLINUX_IMAGE: ${{ matrix.manylinux_image }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          go_archive="go${GO_VERSION}.linux-${GOARCH}.tar.gz"
+          go_sha256="$(
+            curl -fsSL 'https://go.dev/dl/?mode=json&include=all' |
+              python3 -c 'import json, sys; filename = sys.argv[1]; print(next(item["sha256"] for release in json.load(sys.stdin) for item in release["files"] if item["filename"] == filename))' "${go_archive}"
+          )"
+          [[ "${go_sha256}" =~ ^[0-9a-f]{64}$ ]]
+
+          docker run --rm \
+            -v "${PWD}:/src" \
+            -w /src \
+            -e GO_VERSION \
+            -e GOARCH \
+            -e CORE_TAG \
+            -e BUILD_VERSION \
+            -e BUILD_DATE \
+            -e "GO_SHA256=${go_sha256}" \
+            "${MANYLINUX_IMAGE}" \
+            bash -euo pipefail -c '
+              go_archive="go${GO_VERSION}.linux-${GOARCH}.tar.gz"
+              curl -fsSL "https://go.dev/dl/${go_archive}" -o "/tmp/${go_archive}"
+              printf "%s  %s\n" "${GO_SHA256}" "/tmp/${go_archive}" | sha256sum -c -
+              rm -rf /usr/local/go
+              tar -C /usr/local -xzf "/tmp/${go_archive}"
+              export PATH="/usr/local/go/bin:${PATH}"
+
+              CGO_ENABLED=1 GOOS=linux GOARCH="${GOARCH}" go build -buildvcs=false -trimpath \
+                -ldflags="-s -w -X main.Version=${BUILD_VERSION} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
+                -o dist/CLIProxyAPI ./cmd/server/
+            '
+
+          test -x dist/CLIProxyAPI
+
+      - name: Upload Linux Core binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-core-linux-${{ matrix.arch }}
+          path: upstream-core/dist/CLIProxyAPI
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload example configuration
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-core-config
+          path: upstream-core/config.example.yaml
+          if-no-files-found: error
+          retention-days: 3
+
+  build-management:
+    needs: resolve-upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout customizations
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: customizations-repo
+          fetch-depth: 1
+
+      - name: Checkout Management upstream release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: router-for-me/Cli-Proxy-API-Management-Center
+          ref: ${{ needs.resolve-upstream.outputs.management_sha }}
+          path: upstream-management
+          fetch-depth: 1
+
+      - name: Apply Pro Management customizations
+        run: bash customizations-repo/cliproxyapi-pro-management/apply.sh upstream-management
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: upstream-management/package.json
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('upstream-management/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install Management dependencies
+        working-directory: upstream-management
+        run: bun install --frozen-lockfile
+
+      - name: Build Management HTML
+        working-directory: upstream-management
+        env:
+          VERSION: ${{ needs.resolve-upstream.outputs.management_build_version }}
+        run: bun run build
+
+      - name: Prepare Management asset
+        working-directory: upstream-management
+        run: |
+          set -euo pipefail
+          mv dist/index.html dist/management.html
+          test -s dist/management.html
+
+      - name: Upload Management asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-management-html
+          path: upstream-management/dist/management.html
+          if-no-files-found: error
+          retention-days: 3
+
+  publish-image:
+    needs:
+      - resolve-upstream
+      - build-core
+      - build-management
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout customizations
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: customizations-repo
+          fetch-depth: 1
+
+      - name: Download Linux amd64 Core binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-core-linux-amd64
+          path: docker-assets/core-amd64
+
+      - name: Download Linux arm64 Core binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-core-linux-arm64
+          path: docker-assets/core-arm64
+
+      - name: Download example configuration
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-core-config
+          path: docker-assets/config
+
+      - name: Download Management asset
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-management-html
+          path: docker-assets/management
+
+      - name: Prepare Docker runtime context
+        run: |
+          set -euo pipefail
+
+          context_dir="docker-runtime-context"
+          mkdir -p \
+            "${context_dir}/binaries/linux/amd64" \
+            "${context_dir}/binaries/linux/arm64"
+
+          cp docker-assets/core-amd64/CLIProxyAPI "${context_dir}/binaries/linux/amd64/CLIProxyAPI"
+          cp docker-assets/core-arm64/CLIProxyAPI "${context_dir}/binaries/linux/arm64/CLIProxyAPI"
+          cp docker-assets/config/config.example.yaml "${context_dir}/config.example.yaml"
+          cp docker-assets/management/management.html "${context_dir}/management.html"
+          cp customizations-repo/cliproxyapi-pro-core/entrypoint.sh "${context_dir}/entrypoint.sh"
+          cp customizations-repo/cliproxyapi-pro-core/Dockerfile.runtime "${context_dir}/Dockerfile.runtime"
+
+          chmod +x \
+            "${context_dir}/binaries/linux/amd64/CLIProxyAPI" \
+            "${context_dir}/binaries/linux/arm64/CLIProxyAPI"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker Hub test image
+        id: push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./docker-runtime-context
+          file: ./docker-runtime-context/Dockerfile.runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          pull: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro:${{ needs.resolve-upstream.outputs.channel_tag }}
+            ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro:${{ needs.resolve-upstream.outputs.commit_tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.resolve-upstream.outputs.core_build_version }}
+          cache-from: type=gha,scope=runtime-test-image
+          cache-to: type=gha,mode=max,scope=runtime-test-image
+
+      - name: Summarize Docker Hub test image
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          CHANNEL_TAG: ${{ needs.resolve-upstream.outputs.channel_tag }}
+          COMMIT_TAG: ${{ needs.resolve-upstream.outputs.commit_tag }}
+          CORE_VERSION: ${{ needs.resolve-upstream.outputs.core_build_version }}
+          MANAGEMENT_VERSION: ${{ needs.resolve-upstream.outputs.management_build_version }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo "## Docker Hub test image"
+            echo
+            echo "- Image: \`${DOCKER_USERNAME}/cliproxyapi-pro:${CHANNEL_TAG}\`"
+            echo "- Commit image: \`${DOCKER_USERNAME}/cliproxyapi-pro:${COMMIT_TAG}\`"
+            echo "- Core: \`${CORE_VERSION}\`"
+            echo "- Management: \`${MANAGEMENT_VERSION}\`"
+            echo "- Digest: \`${IMAGE_DIGEST}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
