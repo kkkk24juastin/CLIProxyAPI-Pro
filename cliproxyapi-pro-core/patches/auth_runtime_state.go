@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage"
+	prorouting "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/routing"
 )
 
 func authRuntimeIdentityFingerprint(auth *Auth) string {
@@ -123,29 +124,20 @@ func queueAuthRuntimeStats(auth *Auth) {
 	embeddedusage.QueueAuthRuntimeStats(authRuntimeStatsSnapshot(auth, time.Now()))
 }
 
-const legacyRoundRobinCursorPrefix = "legacy|single|"
+const legacyRoundRobinCursorPrefix = prorouting.LegacyRoundRobinCursorPrefix
 
 func legacyRoundRobinCursorKey(provider, model string) string {
-	return legacyRoundRobinCursorPrefix + strings.ToLower(strings.TrimSpace(provider)) + "|" + canonicalModelKey(model)
+	return prorouting.LegacyRoundRobinCursorKey(provider, canonicalModelKey(model))
 }
 
 func routingCursorAfterAuthID(auths []*Auth, lastAuthID string) int {
-	lastAuthID = strings.TrimSpace(lastAuthID)
-	if lastAuthID == "" || len(auths) == 0 {
-		return 0
-	}
-	for index, auth := range auths {
-		if auth == nil {
-			continue
-		}
-		if auth.ID == lastAuthID {
-			return index + 1
-		}
-		if auth.ID > lastAuthID {
-			return index
+	ids := make([]string, 0, len(auths))
+	for _, auth := range auths {
+		if auth != nil {
+			ids = append(ids, auth.ID)
 		}
 	}
-	return 0
+	return prorouting.CursorAfterID(ids, lastAuthID)
 }
 
 // restoreRoutingCursorLocked restores the legacy built-in round-robin selector.

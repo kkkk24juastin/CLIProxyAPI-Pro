@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
+	prorouting "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/routing"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	log "github.com/sirupsen/logrus"
@@ -25,8 +26,8 @@ import (
 
 const (
 	routingPolicyUsagePluginName   = "pro-routing-request-protection"
-	routingProtectionOwner         = "request-protection"
-	routingProtectionMetadataKey   = "request_protection"
+	routingProtectionOwner         = prorouting.ProtectionOwner
+	routingProtectionMetadataKey   = prorouting.ProtectionMetadataKey
 	routingProtectionModeObserve   = "observe"
 	routingProtectionModeEnforce   = "enforce"
 	routingProtectionMaxEvents     = 100
@@ -632,22 +633,21 @@ func routingProtectionReason(record coreusage.Record) string {
 }
 
 func routingProtectionMetadata(auth *coreauth.Auth) map[string]any {
-	if auth == nil || auth.Metadata == nil {
+	if auth == nil {
 		return nil
 	}
-	metadata, _ := auth.Metadata[routingProtectionMetadataKey].(map[string]any)
-	return metadata
+	return prorouting.ProtectionMetadata(auth.Metadata)
 }
 
 func routingProtectionOwned(auth *coreauth.Auth) bool {
-	return strings.EqualFold(strings.TrimSpace(stringFromAny(routingProtectionMetadata(auth)["owner"])), routingProtectionOwner)
+	return auth != nil && prorouting.ProtectionOwned(auth.Metadata)
 }
 
 func clearRoutingProtectionOwnership(auth *coreauth.Auth) {
-	if auth == nil || auth.Metadata == nil {
+	if auth == nil {
 		return
 	}
-	delete(auth.Metadata, routingProtectionMetadataKey)
+	prorouting.InspectionOwnsStatus(auth.Metadata)
 }
 
 func routingProtectionMetadataInt64(metadata map[string]any, key string) int64 {
