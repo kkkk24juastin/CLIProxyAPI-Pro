@@ -227,48 +227,6 @@ func xaiUserIDFromMap(source map[string]any) string {
 	return idTokenStringClaim(source["id_token"], "sub", "id", "user_id", "userId")
 }
 
-func idTokenStringClaim(raw any, keys ...string) string {
-	if mapped, ok := raw.(map[string]any); ok {
-		for _, key := range keys {
-			if value := stringFromAny(mapped[key]); value != "" {
-				return value
-			}
-		}
-		return ""
-	}
-	token := stringFromAny(raw)
-	if token == "" {
-		return ""
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(token), &parsed); err == nil {
-		for _, key := range keys {
-			if value := stringFromAny(parsed[key]); value != "" {
-				return value
-			}
-		}
-		return ""
-	}
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return ""
-	}
-	var data map[string]any
-	if err := json.Unmarshal(payload, &data); err != nil {
-		return ""
-	}
-	for _, key := range keys {
-		if value := stringFromAny(data[key]); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func stringMapToAnyMap(values map[string]string) map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -417,31 +375,6 @@ func idTokenClaimAny(raw any, keys ...string) any {
 	return nil
 }
 
-func accountInspectionAuthEmail(auth *coreauth.Auth) string {
-	if auth == nil {
-		return ""
-	}
-	if value := firstNonEmptyAuthValue(auth, "email"); value != "" {
-		return value
-	}
-	return idTokenClaim(auth.Metadata["id_token"], "email")
-}
-
-func firstNonEmptyAuthValue(auth *coreauth.Auth, keys ...string) string {
-	if auth == nil {
-		return ""
-	}
-	for _, key := range keys {
-		if value := stringFromAny(auth.Metadata[key]); value != "" {
-			return value
-		}
-		if value := strings.TrimSpace(auth.Attributes[key]); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func firstAny(data map[string]any, keys ...string) any {
 	for _, key := range keys {
 		if value, ok := data[key]; ok {
@@ -473,16 +406,6 @@ func nestedString(data map[string]any, key string, child string) string {
 		return stringFromAny(data[key])
 	}
 	return stringFromAny(nestedMap(data, key)[child])
-}
-
-func firstNonEmptyStringValue(values ...string) string {
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func anySlice(value any) []any {
@@ -576,19 +499,6 @@ func normalizeFraction(value float64) float64 {
 		value = value / 100
 	}
 	return math.Max(0, math.Min(1, value))
-}
-
-func intPtr(value int) *int {
-	return &value
-}
-
-func firstNonNilError(values ...error) error {
-	for _, err := range values {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func emptyStringAsNil(value string) any {

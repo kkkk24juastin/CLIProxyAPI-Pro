@@ -1,6 +1,7 @@
 package management
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"math"
@@ -62,6 +63,169 @@ func TestListAuthFilesFromDiskIncludesInspectionAndCodexPlanMetadata(t *testing.
 	}
 	if idTokenEntry["plan_type"] != "pro" || idTokenEntry["chatgpt_account_id"] != "acct-1" || idTokenEntry["chatgpt_subscription_active_until"] != float64(1790000000) {
 		t.Fatalf("id_token entry = %#v, want codex plan/subscription claims", idTokenEntry)
+	}
+}
+
+func TestQuotaSuccessStateIncludesParserMetadata(t *testing.T) {
+	state := quotaSuccessState(map[string]any{"rawShapeHash": proquota.JSONShapeHash(`{"a":1,"items":[{"b":true}]}`)})
+	if state["schemaVersion"] != 2 || state["parserVersion"] != accountInspectionQuotaParserVersion || state["status"] != "success" {
+		t.Fatalf("quota state metadata = %+v", state)
+	}
+	if state["rawShapeHash"] == "" {
+		t.Fatalf("rawShapeHash = %q, want populated", state["rawShapeHash"])
+	}
+}
+
+func TestCleanupLegacyQuotaCacheFromOrdinaryAuthPersistsJSONRemoval(t *testing.T) {
+	authPath := filepath.Join(t.TempDir(), "codex-user.json")
+	manager := coreauth.NewManager(&accountInspectionAuthStore{path: authPath}, nil, nil)
+	registered, err := manager.Register(context.Background(), &coreauth.Auth{
+		Provider: "codex",
+		ID:       "codex-user",
+		FileName: "codex-user.json",
+		Metadata: map[string]any{
+			"email":       "user@example.com",
+			"quota_cache": map[string]any{"status": "success", "cachedAt": float64(123)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	if err := scheduler.cleanupLegacyQuotaCacheFromAuth(context.Background(), accountFromAuth(registered)); err != nil {
+		t.Fatalf("cleanupLegacyQuotaCacheFromAuth() error = %v", err)
+	}
+	raw, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if _, ok := persisted["quota_cache"]; ok {
+		t.Fatalf("persisted quota_cache = %#v, want removed", persisted["quota_cache"])
+	}
+	if persisted["email"] != "user@example.com" {
+		t.Fatalf("persisted email = %#v, want preserved", persisted["email"])
+	}
+	got, ok := manager.GetByID(registered.ID)
+	if !ok || got == nil {
+		t.Fatal("updated auth not found")
+	}
+	if _, ok := got.Metadata["quota_cache"]; ok {
+		t.Fatalf("runtime quota_cache = %#v, want removed", got.Metadata["quota_cache"])
+	}
+}
+
+func TestCleanupLegacyQuotaCachesPreservesPluginVirtualSourceMetadata(t *testing.T) {
+	authPath := filepath.Join(t.TempDir(), "gemini-cli.json")
+	legacyQuota := map[string]any{"status": "success", "cachedAt": float64(123)}
+	if err := os.WriteFile(authPath, []byte(`{"type":"gemini-cli","email":"user@example.com","project_id":"project-a","project_ids":["project-a","project-b"],"quota_cache":{"status":"success","cachedAt":123}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	primary := &coreauth.Auth{
+		Provider: "gemini-cli",
+		ID:       "gemini-cli-primary",
+		FileName: "gemini-cli.json",
+		Metadata: map[string]any{
+			"type":        "gemini-cli",
+			"email":       "user@example.com",
+			"project_id":  "project-a",
+			"quota_cache": legacyQuota,
+		},
+		Attributes: map[string]string{"path": authPath, "project_id": "project-a"},
+	}
+	coreauth.MarkPluginVirtualAuth(primary, authPath, 0)
+	secondary := &coreauth.Auth{
+		Provider: "gemini-cli",
+		ID:       "gemini-cli-project-b",
+		FileName: "user-project-b.json",
+		Metadata: map[string]any{
+			"type":        "gemini-cli",
+			"email":       "user@example.com",
+			"project_id":  "project-b",
+			"virtual":     true,
+			"quota_cache": legacyQuota,
+		},
+		Attributes: map[string]string{"path": authPath, "project_id": "project-b", "runtime_only": "true"},
+	}
+	coreauth.MarkPluginVirtualAuth(secondary, authPath, 1)
+	if _, err := manager.Register(context.Background(), secondary); err != nil {
+		t.Fatalf("Register(secondary) error = %v", err)
+	}
+	if _, err := manager.Register(context.Background(), primary); err != nil {
+		t.Fatalf("Register(primary) error = %v", err)
+	}
+
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	scheduler.cleanupLegacyQuotaCaches(context.Background())
+
+	raw, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if _, ok := persisted["quota_cache"]; ok {
+		t.Fatalf("persisted quota_cache = %#v, want removed", persisted["quota_cache"])
+	}
+	if persisted["project_id"] != "project-a" {
+		t.Fatalf("persisted project_id = %#v, want project-a", persisted["project_id"])
+	}
+	projectIDs, ok := persisted["project_ids"].([]any)
+	if !ok || len(projectIDs) != 2 || projectIDs[0] != "project-a" || projectIDs[1] != "project-b" {
+		t.Fatalf("persisted project_ids = %#v, want original project list", persisted["project_ids"])
+	}
+	for _, auth := range manager.List() {
+		if auth != nil && auth.Metadata != nil {
+			if _, ok := auth.Metadata["quota_cache"]; ok {
+				t.Fatalf("runtime auth %q quota_cache = %#v, want removed", auth.ID, auth.Metadata["quota_cache"])
+			}
+		}
+	}
+}
+
+func TestMergeXAIBillingSummariesCombinesWeeklyAndMonthly(t *testing.T) {
+	weekly, _, err := proquota.BuildXAIBillingSummary(`{
+		"config": {
+			"current_period": {"type": "weekly", "end": "2026-07-13T00:00:00Z"},
+			"credit_usage_percent": 10,
+			"product_usage": [{"product": "Grok", "usage_percent": 10}]
+		}
+	}`)
+	if err != nil {
+		t.Fatalf("weekly build error = %v", err)
+	}
+	monthly, _, err := proquota.BuildXAIBillingSummary(`{
+		"config": {
+			"monthly_limit": 150000,
+			"used": 160000,
+			"on_demand_cap": 20000,
+			"billing_period_end": "2026-08-01T00:00:00Z"
+		}
+	}`)
+	if err != nil {
+		t.Fatalf("monthly build error = %v", err)
+	}
+
+	merged := proquota.MergeXAIBillingSummaries(weekly, monthly)
+	if merged["periodType"] != "weekly" || merged["usagePercent"] != 10.0 {
+		t.Fatalf("merged weekly fields = %+v", merged)
+	}
+	if merged["monthlyLimitCents"] != 150000.0 || merged["includedUsedCents"] != 150000.0 || merged["onDemandUsedCents"] != 10000.0 {
+		t.Fatalf("merged monthly fields = %+v", merged)
+	}
+	if merged["usedPercent"] != 100.0 || merged["onDemandUsedPercent"] != 50.0 {
+		t.Fatalf("merged percentages = %+v", merged)
+	}
+	usage, ok := merged["productUsage"].([]map[string]any)
+	if !ok || len(usage) != 1 || usage[0]["product"] != "Grok" {
+		t.Fatalf("merged productUsage = %#v, want weekly product usage", merged["productUsage"])
 	}
 }
 

@@ -21,42 +21,11 @@ func TestAccountInspectionDeepProbesUnknownXAIQuota(t *testing.T) {
 	}
 }
 
-func TestMergeXAIBillingSummariesCombinesWeeklyAndMonthly(t *testing.T) {
-	weekly, _, err := proquota.BuildXAIBillingSummary(`{
-		"config": {
-			"current_period": {"type": "weekly", "end": "2026-07-13T00:00:00Z"},
-			"credit_usage_percent": 10,
-			"product_usage": [{"product": "Grok", "usage_percent": 10}]
+func TestAntigravityQuotaURLsUseSummaryEndpoint(t *testing.T) {
+	for _, url := range antigravityQuotaURLs() {
+		if !strings.Contains(url, "retrieveUserQuotaSummary") {
+			t.Fatalf("antigravity quota url = %q, want retrieveUserQuotaSummary", url)
 		}
-	}`)
-	if err != nil {
-		t.Fatalf("weekly build error = %v", err)
-	}
-	monthly, _, err := proquota.BuildXAIBillingSummary(`{
-		"config": {
-			"monthly_limit": 150000,
-			"used": 160000,
-			"on_demand_cap": 20000,
-			"billing_period_end": "2026-08-01T00:00:00Z"
-		}
-	}`)
-	if err != nil {
-		t.Fatalf("monthly build error = %v", err)
-	}
-
-	merged := proquota.MergeXAIBillingSummaries(weekly, monthly)
-	if merged["periodType"] != "weekly" || merged["usagePercent"] != 10.0 {
-		t.Fatalf("merged weekly fields = %+v", merged)
-	}
-	if merged["monthlyLimitCents"] != 150000.0 || merged["includedUsedCents"] != 150000.0 || merged["onDemandUsedCents"] != 10000.0 {
-		t.Fatalf("merged monthly fields = %+v", merged)
-	}
-	if merged["usedPercent"] != 100.0 || merged["onDemandUsedPercent"] != 50.0 {
-		t.Fatalf("merged percentages = %+v", merged)
-	}
-	usage, ok := merged["productUsage"].([]map[string]any)
-	if !ok || len(usage) != 1 || usage[0]["product"] != "Grok" {
-		t.Fatalf("merged productUsage = %#v, want weekly product usage", merged["productUsage"])
 	}
 }
 

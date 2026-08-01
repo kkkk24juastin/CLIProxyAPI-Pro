@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,8 +12,122 @@ import (
 
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	proinspection "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/inspection"
-	proquota "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/quota"
 )
+
+func TestAccountFromAuthUsesFileNameWhenEmailUnavailable(t *testing.T) {
+	auth := &coreauth.Auth{
+		ID:       "codex-account",
+		Provider: "codex",
+		FileName: "codex-account.json",
+		Metadata: map[string]any{"name": "Codex Account"},
+	}
+
+	account := accountFromAuth(auth)
+	if account.DisplayName != auth.FileName {
+		t.Fatalf("display name = %q, want file name %q", account.DisplayName, auth.FileName)
+	}
+	if account.Name != "Codex Account" {
+		t.Fatalf("name = %q, want metadata name preserved", account.Name)
+	}
+}
+
+func TestAccountFromAuthPrefersEmailOverFileName(t *testing.T) {
+	auth := &coreauth.Auth{
+		ID:       "codex-account",
+		Provider: "codex",
+		FileName: "codex-account.json",
+		Metadata: map[string]any{"email": "owner@example.com"},
+	}
+
+	account := accountFromAuth(auth)
+	if account.DisplayName != "owner@example.com" {
+		t.Fatalf("display name = %q, want email", account.DisplayName)
+	}
+}
+
+func TestAccountInspectionHealthClassificationUsesSemanticEvidenceAcrossProviders(t *testing.T) {
+	providers := []string{"antigravity", "claude", "codex", "gemini-cli", "kimi", "xai"}
+	for _, provider := range providers {
+		provider := provider
+		t.Run(provider+"/auth-invalid", func(t *testing.T) {
+			result := testInspectionAuthInvalidResult(provider+"-auth", provider, accountInspectionActionDisable)
+			if provider == "codex" {
+				result.Action = accountInspectionActionDelete
+			}
+			if got := proinspection.HealthBucketOf(result); got != accountInspectionHealthAuthInvalid {
+				t.Fatalf("health bucket = %q, want %q", got, accountInspectionHealthAuthInvalid)
+			}
+		})
+
+		t.Run(provider+"/quota", func(t *testing.T) {
+			result := testInspectionQuotaResult(provider+"-quota", provider, accountInspectionActionDisable)
+			if provider == "codex" || provider == "xai" {
+				result.StatusCode = testStatusCode(http.StatusPaymentRequired)
+			}
+			if got := proinspection.HealthBucketOf(result); got != accountInspectionHealthQuotaExhausted {
+				t.Fatalf("health bucket = %q, want %q", got, accountInspectionHealthQuotaExhausted)
+			}
+		})
+	}
+
+	requestErrors := []struct {
+		name            string
+		provider        string
+		errorCode       string
+		status          *int
+		deepProbeStatus string
+	}{
+		{name: "antigravity-deep-probe", provider: "antigravity", errorCode: "antigravity_deep_probe_error", status: testStatusCode(http.StatusBadRequest), deepProbeStatus: string(accountInspectionDeepProbeTransientError)},
+		{name: "claude-probe", provider: "claude", errorCode: "inspection_probe_error", status: testStatusCode(http.StatusBadGateway)},
+		{name: "codex-missing-auth-index", provider: "codex", errorCode: "missing_auth_index"},
+		{name: "gemini-cli-probe", provider: "gemini-cli", errorCode: "inspection_probe_error", status: testStatusCode(http.StatusServiceUnavailable)},
+		{name: "kimi-token-refresh", provider: "kimi", errorCode: "token_refresh_error"},
+		{name: "xai-deep-probe", provider: "xai", errorCode: "xai_deep_probe_error", status: testStatusCode(http.StatusBadRequest), deepProbeStatus: string(accountInspectionDeepProbeTransientError)},
+	}
+	for _, tt := range requestErrors {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testInspectionProviderResult(tt.name, tt.provider, accountInspectionActionDelete, false, tt.status, false, "probe failed")
+			result.ErrorCode = tt.errorCode
+			result.DeepProbeStatus = tt.deepProbeStatus
+			if got := proinspection.HealthBucketOf(result); got != accountInspectionHealthInspectionError {
+				t.Fatalf("health bucket = %q, want %q", got, accountInspectionHealthInspectionError)
+			}
+			if proinspection.IsAccountInvalidResult(result) {
+				t.Fatal("request error was classified as account invalid")
+			}
+		})
+	}
+}
+
+func TestAccountInspectionHealthClassificationDoesNotInferFactsFromActions(t *testing.T) {
+	deleteOnly := testInspectionResult("delete-only", accountInspectionActionDelete, false, nil, false, "")
+	if got := proinspection.HealthBucketOf(deleteOnly); got != accountInspectionHealthHealthy {
+		t.Fatalf("delete-only health bucket = %q, want %q", got, accountInspectionHealthHealthy)
+	}
+
+	disableOnly := testInspectionResult("disable-only", accountInspectionActionDisable, false, nil, false, "")
+	if got := proinspection.HealthBucketOf(disableOnly); got != accountInspectionHealthHealthy {
+		t.Fatalf("disable-only health bucket = %q, want %q", got, accountInspectionHealthHealthy)
+	}
+}
+
+func TestAutoErrorActionsUseSemanticErrorCategory(t *testing.T) {
+	settings := proinspection.DefaultSettings()
+	settings.AutoExecuteAccountInvalidAction = accountInspectionActionDelete
+	settings.AutoExecuteRequestErrorAction = accountInspectionActionDisable
+
+	authInvalid := testInspectionAuthInvalidResult("auth-invalid", "claude", accountInspectionActionKeep)
+	if got := proinspection.AutoActionForResult(authInvalid, settings); got != accountInspectionActionDelete {
+		t.Fatalf("auth-invalid auto action = %q, want %q", got, accountInspectionActionDelete)
+	}
+
+	requestError := testInspectionProviderResult("request-error", "xai", accountInspectionActionKeep, false, testStatusCode(http.StatusBadRequest), false, "temporary deep-probe failure")
+	requestError.ErrorCode = "xai_deep_probe_error"
+	requestError.DeepProbeStatus = string(accountInspectionDeepProbeTransientError)
+	if got := proinspection.AutoActionForResult(requestError, settings); got != accountInspectionActionDisable {
+		t.Fatalf("request-error auto action = %q, want %q", got, accountInspectionActionDisable)
+	}
+}
 
 func TestSyncAuthInspectionLastErrorClearsMetadata(t *testing.T) {
 	auth := &coreauth.Auth{
@@ -73,120 +188,6 @@ func TestSyncInspectionAuthErrorPersistsLastErrorMetadata(t *testing.T) {
 	}
 	if lastError["code"] != "token_refresh_error" || lastError["message"] != "refresh failed" {
 		t.Fatalf("metadata last_error = %#v, want token_refresh_error/refresh failed", lastError)
-	}
-}
-
-func TestCleanupLegacyQuotaCacheFromOrdinaryAuthPersistsJSONRemoval(t *testing.T) {
-	authPath := filepath.Join(t.TempDir(), "codex-user.json")
-	manager := coreauth.NewManager(&accountInspectionAuthStore{path: authPath}, nil, nil)
-	registered, err := manager.Register(context.Background(), &coreauth.Auth{
-		Provider: "codex",
-		ID:       "codex-user",
-		FileName: "codex-user.json",
-		Metadata: map[string]any{
-			"email":       "user@example.com",
-			"quota_cache": map[string]any{"status": "success", "cachedAt": float64(123)},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Register() error = %v", err)
-	}
-	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
-	if err := scheduler.cleanupLegacyQuotaCacheFromAuth(context.Background(), accountFromAuth(registered)); err != nil {
-		t.Fatalf("cleanupLegacyQuotaCacheFromAuth() error = %v", err)
-	}
-	raw, err := os.ReadFile(authPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	var persisted map[string]any
-	if err := json.Unmarshal(raw, &persisted); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-	if _, ok := persisted["quota_cache"]; ok {
-		t.Fatalf("persisted quota_cache = %#v, want removed", persisted["quota_cache"])
-	}
-	if persisted["email"] != "user@example.com" {
-		t.Fatalf("persisted email = %#v, want preserved", persisted["email"])
-	}
-	got, ok := manager.GetByID(registered.ID)
-	if !ok || got == nil {
-		t.Fatal("updated auth not found")
-	}
-	if _, ok := got.Metadata["quota_cache"]; ok {
-		t.Fatalf("runtime quota_cache = %#v, want removed", got.Metadata["quota_cache"])
-	}
-}
-
-func TestCleanupLegacyQuotaCachesPreservesPluginVirtualSourceMetadata(t *testing.T) {
-	authPath := filepath.Join(t.TempDir(), "gemini-cli.json")
-	legacyQuota := map[string]any{"status": "success", "cachedAt": float64(123)}
-	if err := os.WriteFile(authPath, []byte(`{"type":"gemini-cli","email":"user@example.com","project_id":"project-a","project_ids":["project-a","project-b"],"quota_cache":{"status":"success","cachedAt":123}}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	manager := coreauth.NewManager(nil, nil, nil)
-	primary := &coreauth.Auth{
-		Provider: "gemini-cli",
-		ID:       "gemini-cli-primary",
-		FileName: "gemini-cli.json",
-		Metadata: map[string]any{
-			"type":        "gemini-cli",
-			"email":       "user@example.com",
-			"project_id":  "project-a",
-			"quota_cache": legacyQuota,
-		},
-		Attributes: map[string]string{"path": authPath, "project_id": "project-a"},
-	}
-	coreauth.MarkPluginVirtualAuth(primary, authPath, 0)
-	secondary := &coreauth.Auth{
-		Provider: "gemini-cli",
-		ID:       "gemini-cli-project-b",
-		FileName: "user-project-b.json",
-		Metadata: map[string]any{
-			"type":        "gemini-cli",
-			"email":       "user@example.com",
-			"project_id":  "project-b",
-			"virtual":     true,
-			"quota_cache": legacyQuota,
-		},
-		Attributes: map[string]string{"path": authPath, "project_id": "project-b", "runtime_only": "true"},
-	}
-	coreauth.MarkPluginVirtualAuth(secondary, authPath, 1)
-	if _, err := manager.Register(context.Background(), secondary); err != nil {
-		t.Fatalf("Register(secondary) error = %v", err)
-	}
-	if _, err := manager.Register(context.Background(), primary); err != nil {
-		t.Fatalf("Register(primary) error = %v", err)
-	}
-
-	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
-	scheduler.cleanupLegacyQuotaCaches(context.Background())
-
-	raw, err := os.ReadFile(authPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	var persisted map[string]any
-	if err := json.Unmarshal(raw, &persisted); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-	if _, ok := persisted["quota_cache"]; ok {
-		t.Fatalf("persisted quota_cache = %#v, want removed", persisted["quota_cache"])
-	}
-	if persisted["project_id"] != "project-a" {
-		t.Fatalf("persisted project_id = %#v, want project-a", persisted["project_id"])
-	}
-	projectIDs, ok := persisted["project_ids"].([]any)
-	if !ok || len(projectIDs) != 2 || projectIDs[0] != "project-a" || projectIDs[1] != "project-b" {
-		t.Fatalf("persisted project_ids = %#v, want original project list", persisted["project_ids"])
-	}
-	for _, auth := range manager.List() {
-		if auth != nil && auth.Metadata != nil {
-			if _, ok := auth.Metadata["quota_cache"]; ok {
-				t.Fatalf("runtime auth %q quota_cache = %#v, want removed", auth.ID, auth.Metadata["quota_cache"])
-			}
-		}
 	}
 }
 
@@ -451,23 +452,5 @@ func TestEnablePreservesNonInspectionLastError(t *testing.T) {
 	}
 	if _, ok := auth.Metadata["last_error"]; !ok {
 		t.Fatal("metadata last_error was removed")
-	}
-}
-
-func TestQuotaSuccessStateIncludesParserMetadata(t *testing.T) {
-	state := quotaSuccessState(map[string]any{"rawShapeHash": proquota.JSONShapeHash(`{"a":1,"items":[{"b":true}]}`)})
-	if state["schemaVersion"] != 2 || state["parserVersion"] != accountInspectionQuotaParserVersion || state["status"] != "success" {
-		t.Fatalf("quota state metadata = %+v", state)
-	}
-	if state["rawShapeHash"] == "" {
-		t.Fatalf("rawShapeHash = %q, want populated", state["rawShapeHash"])
-	}
-}
-
-func TestAntigravityQuotaURLsUseSummaryEndpoint(t *testing.T) {
-	for _, url := range antigravityQuotaURLs() {
-		if !strings.Contains(url, "retrieveUserQuotaSummary") {
-			t.Fatalf("antigravity quota url = %q, want retrieveUserQuotaSummary", url)
-		}
 	}
 }

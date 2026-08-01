@@ -75,6 +75,15 @@ func parseAccountInspectionQueryInt(c *gin.Context, key string, fallback int) in
 	return parsed
 }
 
+func firstNonNilError(values ...error) error {
+	for _, err := range values {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *accountInspectionScheduler) snapshotForRequest(c *gin.Context) gin.H {
 	return s.snapshotWithOptions(accountInspectionRequestSnapshotOptions(c))
 }

@@ -2,6 +2,8 @@ package management
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -191,6 +193,83 @@ func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 
 func accountInspectionProvider(auth *coreauth.Auth) string {
 	return strings.ToLower(strings.TrimSpace(auth.Provider))
+}
+
+func accountInspectionAuthEmail(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	if value := firstNonEmptyAuthValue(auth, "email"); value != "" {
+		return value
+	}
+	return idTokenStringClaim(auth.Metadata["id_token"], "email")
+}
+
+func firstNonEmptyAuthValue(auth *coreauth.Auth, keys ...string) string {
+	if auth == nil {
+		return ""
+	}
+	for _, key := range keys {
+		if value := stringFromAny(auth.Metadata[key]); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(auth.Attributes[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyStringValue(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func idTokenStringClaim(raw any, keys ...string) string {
+	if mapped, ok := raw.(map[string]any); ok {
+		for _, key := range keys {
+			if value := stringFromAny(mapped[key]); value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	token := stringFromAny(raw)
+	if token == "" {
+		return ""
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(token), &parsed); err == nil {
+		for _, key := range keys {
+			if value := stringFromAny(parsed[key]); value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var data map[string]any
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return ""
+	}
+	for _, key := range keys {
+		if value := stringFromAny(data[key]); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func isAccountInspectionAPIKeyAuth(auth *coreauth.Auth) bool {

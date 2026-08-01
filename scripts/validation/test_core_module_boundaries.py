@@ -1,3 +1,4 @@
+import ast
 import re
 import unittest
 from pathlib import Path
@@ -45,19 +46,42 @@ class CoreModuleBoundaryTests(unittest.TestCase):
             path.name for path in inspection_files
             if path.name.endswith('_test.go')
         }
-        self.assertEqual({
+        expected_production_files = {
             'account_inspection_runtime.go',
             'account_inspection_http.go',
             'account_inspection_accounts.go',
             'account_inspection_transport.go',
             'account_inspection_quota.go',
-        }, production_files)
-        self.assertEqual({
+        }
+        expected_test_files = {
             'account_inspection_runtime_test.go',
+            'account_inspection_http_test.go',
             'account_inspection_accounts_test.go',
             'account_inspection_transport_test.go',
             'account_inspection_quota_test.go',
-        }, test_files)
+        }
+        self.assertEqual(expected_production_files, production_files)
+        self.assertEqual(expected_test_files, test_files)
+
+        generator_path = PATCHES / 'apply_upstream_patches.py'
+        generator_tree = ast.parse(generator_path.read_text(encoding='utf-8'))
+        generated_source_files = None
+        for node in generator_tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            if any(
+                isinstance(target, ast.Name)
+                and target.id == 'ACCOUNT_INSPECTION_SOURCE_FILES'
+                for target in node.targets
+            ):
+                generated_source_files = ast.literal_eval(node.value)
+                break
+        self.assertIsNotNone(generated_source_files)
+        self.assertEqual(
+            expected_production_files | expected_test_files,
+            set(generated_source_files),
+        )
+        self.assertEqual(len(generated_source_files), len(set(generated_source_files)))
         inspection = '\n'.join(
             path.read_text(encoding='utf-8')
             for path in inspection_files

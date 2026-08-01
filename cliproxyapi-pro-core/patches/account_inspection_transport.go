@@ -26,6 +26,10 @@ func (r accountInspectionHTTPResult) probeResponse() proinspection.ProbeResponse
 	return proinspection.ProbeResponse{StatusCode: r.StatusCode, Body: r.Body}
 }
 
+func intPtr(value int) *int {
+	return &value
+}
+
 func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth.Auth, method string, url string, headers map[string]string, data string, timeoutMS int) (accountInspectionHTTPResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -157,7 +161,7 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 		used := proinspection.AntigravityUsedPercent(groups, settings.AntigravityQuotaMode)
 		decision := quotaDecision(account, used, used != nil, settings.UsedPercentThreshold)
 		if settings.AntigravityDeepProbeEnabled && proinspection.ShouldAntigravityDeepProbe(decision) {
-			return s.applyAntigravityDeepProbe(ctx, account, settings, groups, decision, status)
+			return s.applyAntigravityDeepProbe(ctx, account, settings, decision, status)
 		}
 		return decision, status, nil
 	}
@@ -201,7 +205,7 @@ func (s *accountInspectionScheduler) fetchAntigravitySubscription(ctx context.Co
 	return proinspection.BuildAntigravitySubscription(payload)
 }
 
-func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, groups []map[string]any, decision accountInspectionDecision, quotaStatus *int) (accountInspectionDecision, *int, error) {
+func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, decision accountInspectionDecision, quotaStatus *int) (accountInspectionDecision, *int, error) {
 	model := proinspection.SelectAntigravityDeepProbeModel(settings.AntigravityDeepProbeModel)
 	projectID := antigravityProjectID(account.Auth)
 	if model == "" || projectID == "" {
