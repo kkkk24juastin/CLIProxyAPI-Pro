@@ -6,15 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
 	prostate "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/state"
-	_ "modernc.org/sqlite"
+	prostorage "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/storage"
 )
 
 type InsertResult struct {
@@ -301,6 +299,7 @@ type usageExportSnapshot struct {
 }
 
 type Store struct {
+	database     *prostorage.Database
 	db           *sql.DB
 	quotaCacheMu sync.Mutex
 	usageWriteMu sync.Mutex
@@ -312,29 +311,27 @@ type Store struct {
 }
 
 func OpenStore(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", path)
+	database, err := prostorage.OpenSQLite(path)
 	if err != nil {
 		return nil, err
 	}
-	store := &Store{db: db, eventSignal: make(chan struct{})}
-	db.SetMaxOpenConns(1)
+	db := database.SQL()
+	store := &Store{database: database, db: db, eventSignal: make(chan struct{})}
 	if err := store.init(); err != nil {
-		_ = db.Close()
+		_ = database.Close()
 		return nil, err
 	}
 	return store, nil
 }
 
 func (s *Store) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil || s.database == nil {
 		return nil
 	}
-	db := s.db
+	database := s.database
+	s.database = nil
 	s.db = nil
-	return db.Close()
+	return database.Close()
 }
 
 func (s *Store) invalidateUsageSummaryCache() {
@@ -523,12 +520,10 @@ func (s *Store) init() error {
 			updated_at_ms integer not null
 		)`,
 	}
-	for _, statement := range statements {
-		if _, err := s.db.Exec(statement); err != nil {
-			return err
-		}
+	if err := prostorage.ApplySchema(context.Background(), s.db, prostorage.Schema{Create: statements}); err != nil {
+		return err
 	}
-	for _, statement := range []string{
+	alterations := []string{
 		`alter table usage_events add column ttft_ms integer`,
 		`alter table usage_events add column status_code integer`,
 		`alter table usage_events add column error_code text`,
@@ -562,13 +557,12 @@ func (s *Store) init() error {
 		`alter table quota_cache add column stored_at_ms integer not null default 0`,
 		`alter table quota_cache add column revision integer not null default 0`,
 		`alter table auth_runtime_stats add column file_name text not null default ''`,
-	} {
-		if _, err := s.db.Exec(statement); err != nil && !isDuplicateColumnError(err) {
-			return err
-		}
 	}
-	if _, err := s.db.Exec(`insert or ignore into runtime_state_meta(state_key, generation, updated_at_ms) values
-		('quota_cache', 1, 0), ('auth_runtime_stats', 1, 0), ('routing_cursor_state', 1, 0)`); err != nil {
+	if err := prostorage.ApplySchema(context.Background(), s.db, prostorage.Schema{Alter: alterations}); err != nil {
+		return err
+	}
+	if err := prostorage.ApplySchema(context.Background(), s.db, prostorage.Schema{Seed: []string{`insert or ignore into runtime_state_meta(state_key, generation, updated_at_ms) values
+		('quota_cache', 1, 0), ('auth_runtime_stats', 1, 0), ('routing_cursor_state', 1, 0)`}}); err != nil {
 		return err
 	}
 	migratedAccounting, err := s.migrateTokenAccounting(context.Background())
@@ -1751,13 +1745,6 @@ func normalizeAggregateGroups(groups []string) []string {
 	return out
 }
 
-func isDuplicateColumnError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "duplicate column")
-}
-
 func (s *Store) readUsageExportSnapshot(ctx context.Context, afterEventsRead func()) (usageExportSnapshot, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -2303,27 +2290,11 @@ func (s *Store) ImportQuotaCache(ctx context.Context, entries []QuotaCacheEntry)
 }
 
 func retrySQLiteBusy(ctx context.Context, operation func() error) error {
-	var err error
-	for attempt := 0; attempt < 5; attempt++ {
-		err = operation()
-		if !isSQLiteBusy(err) {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
-		}
-	}
-	return err
+	return prostorage.RetryBusy(ctx, operation)
 }
 
 func isSQLiteBusy(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "sqlite_busy") || strings.Contains(message, "database is locked") || strings.Contains(message, "database table is locked")
+	return prostorage.IsBusy(err)
 }
 
 func (s *Store) DeleteQuotaCache(ctx context.Context, provider string, fileName string) error {
