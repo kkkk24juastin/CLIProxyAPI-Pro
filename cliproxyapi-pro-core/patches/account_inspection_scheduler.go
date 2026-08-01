@@ -386,6 +386,10 @@ func (h *Handler) startAccountInspectionScheduler() {
 	if scheduler != nil {
 		embeddedusage.SetAccountInspectionScheduleHandlers(scheduler.exportSchedule, scheduler.importSchedule)
 		embeddedusage.SetAccountInspectionSnapshotHandlers(scheduler.exportResultSnapshot, scheduler.importResultSnapshot)
+		embeddedusage.SetLegacyQuotaCleanupHandler(func(ctx context.Context) error {
+			scheduler.cleanupLegacyQuotaCaches(ctx)
+			return nil
+		})
 		if h.authManager != nil {
 			embeddedusage.SetAuthRuntimeStateImportHandler(h.authManager.ApplyImportedRuntimeState)
 		}
@@ -420,6 +424,7 @@ func (h *Handler) Shutdown() {
 		embeddedusage.SetAccountInspectionScheduleHandlers(nil, nil)
 		embeddedusage.SetAccountInspectionSnapshotHandlers(nil, nil)
 		embeddedusage.SetAuthRuntimeStateImportHandler(nil)
+		embeddedusage.SetLegacyQuotaCleanupHandler(nil)
 	})
 }
 

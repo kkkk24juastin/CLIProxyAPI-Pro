@@ -71,6 +71,10 @@ func SetAuthRuntimeStateImportHandler(importer func([]RoutingCursorState, []Auth
 	probackup.Default.SetRuntimeStateImporter(importer)
 }
 
+func SetLegacyQuotaCleanupHandler(cleanup func(context.Context) error) {
+	probackup.Default.SetLegacyCleanup(cleanup)
+}
+
 type proSettingConsumerRegistration struct {
 	generation uint64
 	apply      func(context.Context, ProSetting) error

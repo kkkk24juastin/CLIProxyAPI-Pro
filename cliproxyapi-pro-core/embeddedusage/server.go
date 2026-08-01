@@ -2,7 +2,6 @@ package embeddedusage
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -690,65 +689,10 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 }
 
 func (s *Server) exportJSONL(ctx context.Context) ([]byte, error) {
-	if err := flushRuntimeStateWrites(ctx, s.store); err != nil {
-		return nil, err
-	}
-	data, err := s.store.ExportJSONL(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if schedule, ok, err := probackup.Default.ExportInspectionSchedule(); ok || err != nil {
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			line, err := json.Marshal(accountInspectionScheduleExportRecord{
-				RecordType: accountInspectionScheduleExportRecordType,
-				Version:    1,
-				Schedule:   schedule,
-				ExportedAt: time.Now().UnixMilli(),
-			})
-			if err != nil {
-				return nil, err
-			}
-			data = append(data, line...)
-			data = append(data, '\n')
-		}
-	}
-	if snapshot, ok, err := probackup.Default.ExportInspectionSnapshot(); ok || err != nil {
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			line, err := json.Marshal(accountInspectionSnapshotExportRecord{
-				RecordType: accountInspectionSnapshotExportRecordType,
-				Version:    1,
-				Snapshot:   snapshot,
-				ExportedAt: time.Now().UnixMilli(),
-			})
-			if err != nil {
-				return nil, err
-			}
-			data = append(data, line...)
-			data = append(data, '\n')
-		}
-	}
-	digest := sha256.Sum256(data)
-	manifest, err := json.Marshal(backupManifestRecord{
-		RecordType: backupManifestRecordType,
-		Version:    1,
-		Records:    bytes.Count(data, []byte{'\n'}),
-		SHA256:     fmt.Sprintf("%x", digest),
-		ExportedAt: time.Now().UnixMilli(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	output := make([]byte, 0, len(manifest)+1+len(data))
-	output = append(output, manifest...)
-	output = append(output, '\n')
-	output = append(output, data...)
-	return output, nil
+	return probackup.Default.ExportJSONL(ctx,
+		func(ctx context.Context) error { return flushRuntimeStateWrites(ctx, s.store) },
+		s.store.ExportJSONL,
+	)
 }
 
 func (s *Server) handleUsageExport(c *gin.Context) {
@@ -950,126 +894,120 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 	if batchSize <= 0 {
 		batchSize = 100
 	}
-	if _, err := eventStage.Seek(0, 0); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	events := make([]internalusage.Event, 0, batchSize)
-	flushEvents := func() error {
-		if len(events) == 0 {
-			return nil
-		}
-		batchResult, err := s.store.InsertEvents(c.Request.Context(), events)
-		if err != nil {
-			return err
-		}
-		result.Inserted += batchResult.Inserted
-		result.Skipped += batchResult.Skipped
-		events = events[:0]
-		return nil
-	}
-	stagedReader := bufio.NewScanner(eventStage)
-	stagedReader.Buffer(make([]byte, 64*1024), 64*1024*1024)
-	for stagedReader.Scan() {
-		event, err := internalusage.NormalizeRaw(stagedReader.Bytes())
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		events = append(events, event)
-		if len(events) >= batchSize {
-			if err := flushEvents(); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
+	var importedQuotaEntries int
+	var importedRoutingCursors int
+	var importedAuthRuntimeStats int
+	var importedProSettings int
+	err = probackup.Default.ExecuteImport(c.Request.Context(), probackup.ImportPlan{
+		FlushQueues: func(ctx context.Context) error {
+			return flushRuntimeStateWrites(ctx, s.store)
+		},
+		ImportDatabase: func(ctx context.Context) error {
+			if _, err := eventStage.Seek(0, 0); err != nil {
+				return err
 			}
-		}
-	}
-	if err := stagedReader.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if err := flushEvents(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if modelPrices != nil {
-		if err := s.store.SetModelPrices(c.Request.Context(), modelPrices); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	for _, rule := range modelPriceRules {
-		if _, _, err := s.store.UpsertModelPriceRule(c.Request.Context(), rule, true); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	if modelPrices != nil || len(modelPriceRules) > 0 {
-		if _, err := s.store.RecalculateEventCosts(c.Request.Context(), true); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	importedQuotaEntries, err := s.store.ImportQuotaCache(c.Request.Context(), quotaEntries)
+			events := make([]internalusage.Event, 0, batchSize)
+			flushEvents := func() error {
+				if len(events) == 0 {
+					return nil
+				}
+				batchResult, err := s.store.InsertEvents(ctx, events)
+				if err != nil {
+					return err
+				}
+				result.Inserted += batchResult.Inserted
+				result.Skipped += batchResult.Skipped
+				events = events[:0]
+				return nil
+			}
+			stagedReader := bufio.NewScanner(eventStage)
+			stagedReader.Buffer(make([]byte, 64*1024), 64*1024*1024)
+			for stagedReader.Scan() {
+				event, err := internalusage.NormalizeRaw(stagedReader.Bytes())
+				if err != nil {
+					return err
+				}
+				events = append(events, event)
+				if len(events) >= batchSize {
+					if err := flushEvents(); err != nil {
+						return err
+					}
+				}
+			}
+			if err := stagedReader.Err(); err != nil {
+				return err
+			}
+			if err := flushEvents(); err != nil {
+				return err
+			}
+			if modelPrices != nil {
+				if err := s.store.SetModelPrices(ctx, modelPrices); err != nil {
+					return err
+				}
+			}
+			for _, rule := range modelPriceRules {
+				if _, _, err := s.store.UpsertModelPriceRule(ctx, rule, true); err != nil {
+					return err
+				}
+			}
+			if modelPrices != nil || len(modelPriceRules) > 0 {
+				if _, err := s.store.RecalculateEventCosts(ctx, true); err != nil {
+					return err
+				}
+			}
+			var err error
+			importedQuotaEntries, err = s.store.ImportQuotaCache(ctx, quotaEntries)
+			if err != nil {
+				return err
+			}
+			importedRoutingCursors, importedAuthRuntimeStats, err = s.store.ImportRuntimeState(ctx, routingCursors, authRuntimeStats)
+			if err != nil {
+				return err
+			}
+			if monitoringSettings != nil {
+				if err := s.store.SetMonitoringSettings(ctx, *monitoringSettings); err != nil {
+					return err
+				}
+			}
+			importedProSettings, err = s.store.ImportProSettings(ctx, proSettings)
+			return err
+		},
+		ReloadConfiguration: func(ctx context.Context) error {
+			if importedProSettings == 0 {
+				return nil
+			}
+			return ApplyImportedProSettings(ctx, proSettings)
+		},
+		ApplyRuntimeState: func(ctx context.Context) error {
+			if !probackup.Default.HasRuntimeStateImporter() || (importedRoutingCursors == 0 && importedAuthRuntimeStats == 0) {
+				return nil
+			}
+			currentRoutingCursors, err := s.store.ListRoutingCursorStates(ctx)
+			if err != nil {
+				return err
+			}
+			currentAuthRuntimeStats, err := s.store.ListAuthRuntimeStats(ctx)
+			if err != nil {
+				return err
+			}
+			return probackup.Default.ImportRuntimeState(currentRoutingCursors, currentAuthRuntimeStats)
+		},
+		RestoreInspection: func(context.Context) error {
+			if accountInspectionSchedule != nil {
+				if err := probackup.Default.ImportInspectionSchedule(accountInspectionSchedule); err != nil {
+					return err
+				}
+			}
+			if accountInspectionSnapshot != nil {
+				return probackup.Default.ImportInspectionSnapshot(accountInspectionSnapshot)
+			}
+			return nil
+		},
+		CleanupLegacy: probackup.Default.CleanupLegacy,
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-	}
-	if len(routingCursors) > 0 || len(authRuntimeStats) > 0 {
-		if err := flushRuntimeStateWrites(c.Request.Context(), s.store); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	importedRoutingCursors, importedAuthRuntimeStats, err := s.store.ImportRuntimeState(c.Request.Context(), routingCursors, authRuntimeStats)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if probackup.Default.HasRuntimeStateImporter() && (importedRoutingCursors > 0 || importedAuthRuntimeStats > 0) {
-		currentRoutingCursors, errLoad := s.store.ListRoutingCursorStates(c.Request.Context())
-		if errLoad != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": errLoad.Error()})
-			return
-		}
-		currentAuthRuntimeStats, errLoad := s.store.ListAuthRuntimeStats(c.Request.Context())
-		if errLoad != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": errLoad.Error()})
-			return
-		}
-		if errApply := probackup.Default.ImportRuntimeState(currentRoutingCursors, currentAuthRuntimeStats); errApply != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": errApply.Error()})
-			return
-		}
-	}
-	if monitoringSettings != nil {
-		if err := s.store.SetMonitoringSettings(c.Request.Context(), *monitoringSettings); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	importedProSettings, err := s.store.ImportProSettings(c.Request.Context(), proSettings)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if importedProSettings > 0 {
-		if err := ApplyImportedProSettings(c.Request.Context(), proSettings); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	if accountInspectionSchedule != nil {
-		if err := probackup.Default.ImportInspectionSchedule(accountInspectionSchedule); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	if accountInspectionSnapshot != nil {
-		if err := probackup.Default.ImportInspectionSnapshot(accountInspectionSnapshot); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"added":                            result.Inserted,
