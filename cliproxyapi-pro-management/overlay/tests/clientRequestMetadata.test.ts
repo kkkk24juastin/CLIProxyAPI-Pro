@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { collectUsageDetailsWithEndpoint } from '../src/utils/usage';
+import { collectUsageDetailsWithEndpoint } from '../src/pro/modules/monitoring/features/usage';
 
 describe('client request metadata', () => {
   test('normalizes snake case metadata from embedded usage details', () => {

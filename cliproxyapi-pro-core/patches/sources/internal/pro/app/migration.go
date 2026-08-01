@@ -11,6 +11,7 @@ import (
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/observability"
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/settings"
 	"gopkg.in/yaml.v3"
@@ -127,7 +128,7 @@ func baseProxyURLFromConfigFile(configFilePath, fallback string) string {
 }
 
 func migrateSettingIfMissing(ctx context.Context, namespace string, encode func() ([]byte, error)) error {
-	store := settings.NewEmbeddedStore()
+	store := observability.NewSettingsStore()
 	if _, found, err := store.Get(ctx, namespace); err != nil {
 		return err
 	} else if found {
@@ -151,7 +152,7 @@ func migrateSettingIfMissing(ctx context.Context, namespace string, encode func(
 }
 
 func persistSetting(ctx context.Context, namespace string, raw []byte) error {
-	return settings.NewEmbeddedStore().Put(ctx, settings.Item{
+	return observability.NewSettingsStore().Put(ctx, settings.Item{
 		Namespace: namespace, SchemaVersion: settings.SchemaVersionOne, Settings: raw,
 	})
 }

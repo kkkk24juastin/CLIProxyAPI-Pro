@@ -286,6 +286,47 @@ type sqlQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+type sqlExecutor interface {
+	sqlQueryer
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	PrepareContext(context.Context, string) (*sql.Stmt, error)
+}
+
+type sqlTransaction interface {
+	sqlExecutor
+	Commit() error
+	Rollback() error
+}
+
+type storeTransactionContextKey struct{}
+
+type storeTransactionContext struct {
+	tx          *sql.Tx
+	afterCommit []func()
+}
+
+// storeTx makes existing domain transaction methods composable. A borrowed
+// transaction delegates SQL operations to the import transaction while Commit
+// and Rollback become no-ops; an owned transaction keeps the normal behavior.
+type storeTx struct {
+	*sql.Tx
+	owned bool
+}
+
+func (t *storeTx) Commit() error {
+	if t == nil || !t.owned {
+		return nil
+	}
+	return t.Tx.Commit()
+}
+
+func (t *storeTx) Rollback() error {
+	if t == nil || !t.owned {
+		return nil
+	}
+	return t.Tx.Rollback()
+}
+
 type usageExportSnapshot struct {
 	Events           []internalusage.Event
 	Prices           map[string]ModelPrice
@@ -308,6 +349,82 @@ type Store struct {
 	eventMu      sync.Mutex
 	eventSignal  chan struct{}
 	priceSyncMu  sync.Mutex
+}
+
+func transactionContext(ctx context.Context) *storeTransactionContext {
+	if ctx == nil {
+		return nil
+	}
+	transaction, _ := ctx.Value(storeTransactionContextKey{}).(*storeTransactionContext)
+	return transaction
+}
+
+func (s *Store) executor(ctx context.Context) sqlExecutor {
+	if transaction := transactionContext(ctx); transaction != nil && transaction.tx != nil {
+		return transaction.tx
+	}
+	return s.db
+}
+
+func (s *Store) beginTx(ctx context.Context, options *sql.TxOptions) (*storeTx, error) {
+	if transaction := transactionContext(ctx); transaction != nil && transaction.tx != nil {
+		return &storeTx{Tx: transaction.tx}, nil
+	}
+	tx, err := s.db.BeginTx(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return &storeTx{Tx: tx, owned: true}, nil
+}
+
+func runAfterCommit(ctx context.Context, callback func()) {
+	if callback == nil {
+		return
+	}
+	if transaction := transactionContext(ctx); transaction != nil {
+		transaction.afterCommit = append(transaction.afterCommit, callback)
+		return
+	}
+	callback()
+}
+
+// RunImportTransaction provides one SQLite commit boundary for every database
+// domain in a backup. It also establishes a stable lock order so live writers
+// cannot hold a domain mutex while waiting for the single SQLite connection.
+func (s *Store) RunImportTransaction(ctx context.Context, run func(context.Context) error) error {
+	if run == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if transactionContext(ctx) != nil {
+		return run(ctx)
+	}
+	s.usageWriteMu.Lock()
+	s.quotaCacheMu.Lock()
+	s.priceSyncMu.Lock()
+	defer s.priceSyncMu.Unlock()
+	defer s.quotaCacheMu.Unlock()
+	defer s.usageWriteMu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	transaction := &storeTransactionContext{tx: tx}
+	transactionCtx := context.WithValue(ctx, storeTransactionContextKey{}, transaction)
+	if err := run(transactionCtx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, callback := range transaction.afterCommit {
+		callback()
+	}
+	return nil
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -593,7 +710,7 @@ func (s *Store) migrateTokenAccounting(ctx context.Context) (int64, error) {
 	const batchSize = 1000
 	var migrated, lastID int64
 	for {
-		rows, err := s.db.QueryContext(ctx, `select
+		rows, err := s.executor(ctx).QueryContext(ctx, `select
 			id, coalesce(provider, ''), coalesce(executor_type, ''),
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens,
 			cache_read_tokens, cache_write_tokens, total_tokens, coalesce(raw_json, '')
@@ -626,7 +743,7 @@ func (s *Store) migrateTokenAccounting(ctx context.Context) (int64, error) {
 			return migrated, nil
 		}
 
-		tx, err := s.db.BeginTx(ctx, nil)
+		tx, err := s.beginTx(ctx, nil)
 		if err != nil {
 			return migrated, err
 		}
@@ -689,14 +806,18 @@ func marshalTokenBreakdown(event internalusage.Event) (string, error) {
 }
 
 func (s *Store) InsertEvents(ctx context.Context, events []internalusage.Event) (InsertResult, error) {
-	s.usageWriteMu.Lock()
-	defer s.usageWriteMu.Unlock()
+	if transactionContext(ctx) == nil {
+		s.usageWriteMu.Lock()
+		defer s.usageWriteMu.Unlock()
+	}
 	return s.insertEvents(ctx, events)
 }
 
 func (s *Store) InsertLiveEvents(ctx context.Context, events []internalusage.Event) (InsertResult, error) {
-	s.usageWriteMu.Lock()
-	defer s.usageWriteMu.Unlock()
+	if transactionContext(ctx) == nil {
+		s.usageWriteMu.Lock()
+		defer s.usageWriteMu.Unlock()
+	}
 	if len(events) == 0 {
 		return InsertResult{}, nil
 	}
@@ -726,7 +847,7 @@ func (s *Store) insertEvents(ctx context.Context, events []internalusage.Event) 
 	if err != nil {
 		return InsertResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return InsertResult{}, err
 	}
@@ -811,8 +932,10 @@ func (s *Store) insertEvents(ctx context.Context, events []internalusage.Event) 
 		return InsertResult{}, err
 	}
 	if result.Inserted > 0 {
-		s.invalidateUsageSummaryCache()
-		s.notifyEventsChanged()
+		runAfterCommit(ctx, func() {
+			s.invalidateUsageSummaryCache()
+			s.notifyEventsChanged()
+		})
 	}
 	return result, nil
 }
@@ -834,7 +957,7 @@ func (s *Store) ensureUsageSummary() error {
 
 func (s *Store) readUsageSummarySnapshot(ctx context.Context) (usageSummarySnapshot, error) {
 	var snapshot usageSummarySnapshot
-	err := s.db.QueryRowContext(ctx, `select
+	err := s.executor(ctx).QueryRowContext(ctx, `select
 		latest_event_id,
 		total_requests,
 		success_count,
@@ -872,7 +995,7 @@ func (s *Store) UsageDatasetState(ctx context.Context) (UsageDatasetState, error
 	return snapshot.State, nil
 }
 
-func (s *Store) applyUsageSummaryDelta(ctx context.Context, tx *sql.Tx, latestID int64, delta UsageSummary) error {
+func (s *Store) applyUsageSummaryDelta(ctx context.Context, tx sqlTransaction, latestID int64, delta UsageSummary) error {
 	_, err := tx.ExecContext(ctx, `insert into usage_summary(
 		id,
 		latest_event_id,
@@ -904,7 +1027,7 @@ func (s *Store) applyUsageSummaryDelta(ctx context.Context, tx *sql.Tx, latestID
 func (s *Store) rebuildUsageSummary(ctx context.Context) error {
 	var latestID sql.NullInt64
 	var totalRequests, successCount, failureCount, totalTokens sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `select
+	if err := s.executor(ctx).QueryRowContext(ctx, `select
 		coalesce(max(id), 0),
 		count(*),
 		coalesce(sum(case when failed = 0 then 1 else 0 end), 0),
@@ -913,7 +1036,7 @@ func (s *Store) rebuildUsageSummary(ctx context.Context) error {
 		from usage_events`).Scan(&latestID, &totalRequests, &successCount, &failureCount, &totalTokens); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `insert into usage_summary(
+	_, err := s.executor(ctx).ExecContext(ctx, `insert into usage_summary(
 		id,
 		latest_event_id,
 		total_requests,
@@ -945,7 +1068,7 @@ func (s *Store) rebuildUsageSummary(ctx context.Context) error {
 }
 
 func (s *Store) AddDeadLetter(ctx context.Context, payload string, parseErr error) error {
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.executor(ctx).ExecContext(ctx,
 		`insert into dead_letter_events(payload, error, created_at_ms) values(?, ?, ?)`,
 		payload, parseErr.Error(), time.Now().UnixMilli(),
 	)
@@ -1029,7 +1152,7 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 }
 
 func (s *Store) RecentEvents(ctx context.Context, limit int) ([]internalusage.Event, error) {
-	return s.recentEventsFrom(ctx, s.db, limit)
+	return s.recentEventsFrom(ctx, s.executor(ctx), limit)
 }
 
 func (s *Store) recentEventsFrom(ctx context.Context, queryer sqlQueryer, limit int) ([]internalusage.Event, error) {
@@ -1057,7 +1180,7 @@ func (s *Store) EventsAfter(ctx context.Context, afterID int64, limit int) ([]in
 	if limit <= 0 || limit > usageEventsSentinelLimit {
 		limit = usageEventsSentinelLimit
 	}
-	rows, err := s.db.QueryContext(ctx, `select
+	rows, err := s.executor(ctx).QueryContext(ctx, `select
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash, client_ip, x_forwarded_for, user_agent,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
@@ -1190,7 +1313,7 @@ func (s *Store) QueryEvents(ctx context.Context, options UsageEventQueryOptions)
 	matchedTotal := options.MatchedTotal
 	if !options.SkipCount {
 		countWheres, countArgs := appendUsageEventQueryFilters(options, false)
-		if err := s.db.QueryRowContext(ctx, `select count(*) from usage_events`+usageEventQueryWhere(countWheres), countArgs...).Scan(&matchedTotal); err != nil {
+		if err := s.executor(ctx).QueryRowContext(ctx, `select count(*) from usage_events`+usageEventQueryWhere(countWheres), countArgs...).Scan(&matchedTotal); err != nil {
 			return UsageEventQueryPage{}, err
 		}
 	}
@@ -1207,7 +1330,7 @@ func (s *Store) QueryEvents(ctx context.Context, options UsageEventQueryOptions)
 		order by timestamp_ms desc, id desc
 		limit ?`
 	queryArgs = append(queryArgs, limit+1)
-	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
+	rows, err := s.executor(ctx).QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return UsageEventQueryPage{}, err
 	}
@@ -1226,7 +1349,7 @@ func (s *Store) QueryEvents(ctx context.Context, options UsageEventQueryOptions)
 func (s *Store) LatestCursor(ctx context.Context) (int64, int64, error) {
 	var id sql.NullInt64
 	var timestamp sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `select id, timestamp_ms from usage_events order by id desc limit 1`).Scan(&id, &timestamp); err != nil {
+	if err := s.executor(ctx).QueryRowContext(ctx, `select id, timestamp_ms from usage_events order by id desc limit 1`).Scan(&id, &timestamp); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, 0, nil
 		}
@@ -1297,7 +1420,7 @@ func (s *Store) UsageSummary(ctx context.Context, maxID int64) (UsageSummary, er
 	args := []any{}
 	query += ` where id <= ?`
 	args = append(args, maxID)
-	err = s.db.QueryRowContext(ctx, query, args...).Scan(&totalRequests, &successCount, &failureCount, &totalTokens)
+	err = s.executor(ctx).QueryRowContext(ctx, query, args...).Scan(&totalRequests, &successCount, &failureCount, &totalTokens)
 	if err != nil {
 		return summary, err
 	}
@@ -1322,10 +1445,10 @@ func (s *Store) UsageSummary(ctx context.Context, maxID int64) (UsageSummary, er
 }
 
 func (s *Store) Counts(ctx context.Context) (events int64, deadLetters int64, err error) {
-	if err = s.db.QueryRowContext(ctx, `select count(*) from usage_events`).Scan(&events); err != nil {
+	if err = s.executor(ctx).QueryRowContext(ctx, `select count(*) from usage_events`).Scan(&events); err != nil {
 		return 0, 0, err
 	}
-	if err = s.db.QueryRowContext(ctx, `select count(*) from dead_letter_events`).Scan(&deadLetters); err != nil {
+	if err = s.executor(ctx).QueryRowContext(ctx, `select count(*) from dead_letter_events`).Scan(&deadLetters); err != nil {
 		return 0, 0, err
 	}
 	return events, deadLetters, nil
@@ -1335,7 +1458,7 @@ func (s *Store) RecentDeadLetters(ctx context.Context, limit int) ([]DeadLetterS
 	if limit <= 0 || limit > 20 {
 		limit = 5
 	}
-	rows, err := s.db.QueryContext(ctx, `select id, error, payload, created_at_ms from dead_letter_events order by id desc limit ?`, limit)
+	rows, err := s.executor(ctx).QueryContext(ctx, `select id, error, payload, created_at_ms from dead_letter_events order by id desc limit ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1466,7 +1589,7 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 	}
 	query += ` group by ` + strings.Join(groups, ", ") + ` order by bucket_start_ms asc limit ?`
 	args = append(args, options.Limit)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.executor(ctx).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1578,7 +1701,7 @@ func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (
 		coalesce(sum(case when attempt_index is not null then 1 else 0 end), 0),
 		coalesce(sum(case when stream != 0 then 1 else 0 end), 0)
 		from usage_events where ` + where
-	if err := s.db.QueryRowContext(ctx, summaryQuery, args...).Scan(
+	if err := s.executor(ctx).QueryRowContext(ctx, summaryQuery, args...).Scan(
 		&detail.TotalRequests,
 		&detail.SuccessCount,
 		&detail.FailureCount,
@@ -1613,7 +1736,7 @@ func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (
 		p95Args := append(append([]any{}, args...), 1, offset)
 		query := `select latency_ms from usage_events where ` + where + ` and latency_ms is not null order by latency_ms asc limit ? offset ?`
 		var p95 int64
-		if err := s.db.QueryRowContext(ctx, query, p95Args...).Scan(&p95); err != nil {
+		if err := s.executor(ctx).QueryRowContext(ctx, query, p95Args...).Scan(&p95); err != nil {
 			return AccountUsageDetail{}, err
 		}
 		detail.P95LatencyMS = &p95
@@ -1626,7 +1749,7 @@ func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (
 		coalesce(sum(estimated_cost), 0)
 		from usage_events where ` + where + ` group by bucket_start_ms order by bucket_start_ms asc`
 	dayArgs := append([]any{offsetMS, dayMS, dayMS, offsetMS}, args...)
-	dayRows, err := s.db.QueryContext(ctx, dayQuery, dayArgs...)
+	dayRows, err := s.executor(ctx).QueryContext(ctx, dayQuery, dayArgs...)
 	if err != nil {
 		return AccountUsageDetail{}, err
 	}
@@ -1664,7 +1787,7 @@ func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (
 		coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0), coalesce(sum(reasoning_tokens), 0),
 		coalesce(sum(case when accounting_quality = 'complete' then cache_read_tokens else 0 end), 0), coalesce(sum(estimated_cost), 0)
 		from usage_events where ` + where + ` group by model order by count(*) desc, model asc`
-	modelRows, err := s.db.QueryContext(ctx, modelQuery, args...)
+	modelRows, err := s.executor(ctx).QueryContext(ctx, modelQuery, args...)
 	if err != nil {
 		return AccountUsageDetail{}, err
 	}
@@ -1685,7 +1808,7 @@ func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (
 
 	keyQuery := `select coalesce(api_key_hash, ''), count(*), coalesce(sum(total_tokens), 0), coalesce(sum(estimated_cost), 0)
 		from usage_events where ` + where + ` group by api_key_hash order by count(*) desc, api_key_hash asc`
-	keyRows, err := s.db.QueryContext(ctx, keyQuery, args...)
+	keyRows, err := s.executor(ctx).QueryContext(ctx, keyQuery, args...)
 	if err != nil {
 		return AccountUsageDetail{}, err
 	}
@@ -1746,7 +1869,7 @@ func normalizeAggregateGroups(groups []string) []string {
 }
 
 func (s *Store) readUsageExportSnapshot(ctx context.Context, afterEventsRead func()) (usageExportSnapshot, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return usageExportSnapshot{}, err
 	}
@@ -1920,7 +2043,7 @@ func normalizeMonitoringSettings(settings MonitoringSettings) MonitoringSettings
 }
 
 func (s *Store) GetMonitoringSettings(ctx context.Context) (MonitoringSettings, error) {
-	return getMonitoringSettingsFrom(ctx, s.db)
+	return getMonitoringSettingsFrom(ctx, s.executor(ctx))
 }
 
 func getMonitoringSettingsFrom(ctx context.Context, queryer sqlQueryer) (MonitoringSettings, error) {
@@ -1944,7 +2067,7 @@ func (s *Store) SetMonitoringSettings(ctx context.Context, settings MonitoringSe
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `insert into monitoring_settings(id, settings_json, updated_at_ms) values(1, ?, ?)
+	_, err = s.executor(ctx).ExecContext(ctx, `insert into monitoring_settings(id, settings_json, updated_at_ms) values(1, ?, ?)
 		on conflict(id) do update set settings_json = excluded.settings_json, updated_at_ms = excluded.updated_at_ms`, string(raw), time.Now().UnixMilli())
 	return err
 }
@@ -1955,7 +2078,7 @@ func (s *Store) DeleteEventsBefore(ctx context.Context, beforeMs int64) (int64, 
 	}
 	s.usageWriteMu.Lock()
 	defer s.usageWriteMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -2018,7 +2141,7 @@ func (s *Store) DeleteEventsBefore(ctx context.Context, beforeMs int64) (int64, 
 func (s *Store) ResetUsageStatistics(ctx context.Context) (UsageResetResult, error) {
 	s.usageWriteMu.Lock()
 	defer s.usageWriteMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return UsageResetResult{}, err
 	}
@@ -2079,7 +2202,7 @@ func (s *Store) ApplyRetention(ctx context.Context, now time.Time) (int64, error
 }
 
 func (s *Store) GetQuotaCache(ctx context.Context, provider string, fileName string) ([]QuotaCacheEntry, error) {
-	entries, err := getQuotaCacheFrom(ctx, s.db, provider, fileName)
+	entries, err := getQuotaCacheFrom(ctx, s.executor(ctx), provider, fileName)
 	if err != nil {
 		return nil, err
 	}
@@ -2132,13 +2255,13 @@ func getQuotaCacheFrom(ctx context.Context, queryer sqlQueryer, provider string,
 func (s *Store) touchQuotaCache(ctx context.Context, provider string, fileName string, accessedAt int64) error {
 	switch {
 	case provider != "" && fileName != "":
-		_, err := s.db.ExecContext(ctx, `update quota_cache set accessed_at_ms = ? where provider = ? and file_name = ?`, accessedAt, provider, fileName)
+		_, err := s.executor(ctx).ExecContext(ctx, `update quota_cache set accessed_at_ms = ? where provider = ? and file_name = ?`, accessedAt, provider, fileName)
 		return err
 	case provider != "":
-		_, err := s.db.ExecContext(ctx, `update quota_cache set accessed_at_ms = ? where provider = ?`, accessedAt, provider)
+		_, err := s.executor(ctx).ExecContext(ctx, `update quota_cache set accessed_at_ms = ? where provider = ?`, accessedAt, provider)
 		return err
 	case fileName != "":
-		_, err := s.db.ExecContext(ctx, `update quota_cache set accessed_at_ms = ? where file_name = ?`, accessedAt, fileName)
+		_, err := s.executor(ctx).ExecContext(ctx, `update quota_cache set accessed_at_ms = ? where file_name = ?`, accessedAt, fileName)
 		return err
 	default:
 		return nil
@@ -2172,7 +2295,7 @@ func (s *Store) SetQuotaCache(ctx context.Context, entry QuotaCacheEntry) error 
 	defer s.quotaCacheMu.Unlock()
 
 	return retrySQLiteBusy(ctx, func() error {
-		tx, err := s.db.BeginTx(ctx, nil)
+		tx, err := s.beginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -2190,7 +2313,7 @@ func (s *Store) SetQuotaCache(ctx context.Context, entry QuotaCacheEntry) error 
 	})
 }
 
-func upsertQuotaCacheTx(ctx context.Context, tx *sql.Tx, entry QuotaCacheEntry, preserveRevision bool, now int64) (bool, error) {
+func upsertQuotaCacheTx(ctx context.Context, tx sqlTransaction, entry QuotaCacheEntry, preserveRevision bool, now int64) (bool, error) {
 	var currentObserved, currentRevision int64
 	err := tx.QueryRowContext(ctx, `select observed_at_ms, revision from quota_cache where id = ?`, entry.ID).Scan(&currentObserved, &currentRevision)
 	if err != nil && err != sql.ErrNoRows {
@@ -2233,7 +2356,7 @@ func upsertQuotaCacheTx(ctx context.Context, tx *sql.Tx, entry QuotaCacheEntry, 
 	return err == nil, err
 }
 
-func bumpRuntimeGenerationTx(ctx context.Context, tx *sql.Tx, stateKey string, now int64) error {
+func bumpRuntimeGenerationTx(ctx context.Context, tx sqlTransaction, stateKey string, now int64) error {
 	_, err := tx.ExecContext(ctx, `insert into runtime_state_meta(state_key, generation, updated_at_ms) values(?, 2, ?)
 		on conflict(state_key) do update set generation = runtime_state_meta.generation + 1, updated_at_ms = excluded.updated_at_ms`, stateKey, now)
 	return err
@@ -2243,12 +2366,14 @@ func (s *Store) ImportQuotaCache(ctx context.Context, entries []QuotaCacheEntry)
 	if len(entries) == 0 {
 		return 0, nil
 	}
-	s.quotaCacheMu.Lock()
-	defer s.quotaCacheMu.Unlock()
+	if transactionContext(ctx) == nil {
+		s.quotaCacheMu.Lock()
+		defer s.quotaCacheMu.Unlock()
+	}
 	imported := 0
 	err := retrySQLiteBusy(ctx, func() error {
 		attemptImported := 0
-		tx, err := s.db.BeginTx(ctx, nil)
+		tx, err := s.beginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -2300,7 +2425,7 @@ func isSQLiteBusy(err error) bool {
 func (s *Store) DeleteQuotaCache(ctx context.Context, provider string, fileName string) error {
 	s.quotaCacheMu.Lock()
 	defer s.quotaCacheMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -2329,14 +2454,14 @@ func (s *Store) DeleteQuotaCache(ctx context.Context, provider string, fileName 
 
 func (s *Store) QuotaCacheStats(ctx context.Context) (QuotaCacheStats, error) {
 	var stats QuotaCacheStats
-	err := s.db.QueryRowContext(ctx, `select count(*), coalesce(max(stored_at_ms), 0),
+	err := s.executor(ctx).QueryRowContext(ctx, `select count(*), coalesce(max(stored_at_ms), 0),
 		coalesce((select generation from runtime_state_meta where state_key = 'quota_cache'), 1) from quota_cache`).Scan(&stats.TotalEntries, &stats.UpdatedAt, &stats.Generation)
 	return stats, err
 }
 
 func (s *Store) GetRoutingCursorState(ctx context.Context, cursorKey string) (RoutingCursorState, bool, error) {
 	var state RoutingCursorState
-	err := s.db.QueryRowContext(ctx, `select cursor_key, last_auth_id, updated_at_ms from routing_cursor_state where cursor_key = ?`, cursorKey).
+	err := s.executor(ctx).QueryRowContext(ctx, `select cursor_key, last_auth_id, updated_at_ms from routing_cursor_state where cursor_key = ?`, cursorKey).
 		Scan(&state.CursorKey, &state.LastAuthID, &state.UpdatedAtMS)
 	if err == sql.ErrNoRows {
 		return RoutingCursorState{}, false, nil
@@ -2345,7 +2470,7 @@ func (s *Store) GetRoutingCursorState(ctx context.Context, cursorKey string) (Ro
 }
 
 func (s *Store) ListRoutingCursorStates(ctx context.Context) ([]RoutingCursorState, error) {
-	return listRoutingCursorStatesFrom(ctx, s.db)
+	return listRoutingCursorStatesFrom(ctx, s.executor(ctx))
 }
 
 func listRoutingCursorStatesFrom(ctx context.Context, queryer sqlQueryer) ([]RoutingCursorState, error) {
@@ -2374,7 +2499,7 @@ func (s *Store) SetRoutingCursorState(ctx context.Context, state RoutingCursorSt
 	if state.UpdatedAtMS <= 0 {
 		state.UpdatedAtMS = time.Now().UnixMilli()
 	}
-	_, err := s.db.ExecContext(ctx, `insert into routing_cursor_state(cursor_key, last_auth_id, updated_at_ms) values(?, ?, ?)
+	_, err := s.executor(ctx).ExecContext(ctx, `insert into routing_cursor_state(cursor_key, last_auth_id, updated_at_ms) values(?, ?, ?)
 		on conflict(cursor_key) do update set last_auth_id = excluded.last_auth_id, updated_at_ms = excluded.updated_at_ms
 		where excluded.updated_at_ms >= routing_cursor_state.updated_at_ms`, state.CursorKey, state.LastAuthID, state.UpdatedAtMS)
 	return err
@@ -2389,7 +2514,7 @@ func (s *Store) ImportRuntimeState(ctx context.Context, cursors []RoutingCursorS
 	if len(cursors) == 0 && len(stats) == 0 {
 		return 0, 0, nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -2450,7 +2575,7 @@ func (s *Store) GetAuthRuntimeStats(ctx context.Context, authIndex, authID strin
 	}
 	var item AuthRuntimeStats
 	var buckets string
-	err := s.db.QueryRowContext(ctx, query, arg).Scan(&item.AuthIndex, &item.AuthID, &item.FileName, &item.IdentityFingerprint,
+	err := s.executor(ctx).QueryRowContext(ctx, query, arg).Scan(&item.AuthIndex, &item.AuthID, &item.FileName, &item.IdentityFingerprint,
 		&item.SelectedCount, &item.SuccessCount, &item.FailureCount, &buckets, &item.Generation, &item.UpdatedAtMS)
 	if err == sql.ErrNoRows {
 		return AuthRuntimeStats{}, false, nil
@@ -2465,7 +2590,7 @@ func (s *Store) GetAuthRuntimeStats(ctx context.Context, authIndex, authID strin
 }
 
 func (s *Store) ListAuthRuntimeStats(ctx context.Context) ([]AuthRuntimeStats, error) {
-	return listAuthRuntimeStatsFrom(ctx, s.db)
+	return listAuthRuntimeStatsFrom(ctx, s.executor(ctx))
 }
 
 func listAuthRuntimeStatsFrom(ctx context.Context, queryer sqlQueryer) ([]AuthRuntimeStats, error) {
@@ -2505,7 +2630,7 @@ func normalizeRuntimeBuckets(items []RuntimeRequestBucket) []RuntimeRequestBucke
 	return out
 }
 
-func setAuthRuntimeStatsTx(ctx context.Context, tx *sql.Tx, item AuthRuntimeStats, force bool) (bool, error) {
+func setAuthRuntimeStatsTx(ctx context.Context, tx sqlTransaction, item AuthRuntimeStats, force bool) (bool, error) {
 	item.AuthIndex = strings.TrimSpace(item.AuthIndex)
 	item.AuthID = strings.TrimSpace(item.AuthID)
 	if item.AuthIndex == "" || item.AuthID == "" || item.SelectedCount < 0 || item.SuccessCount < 0 || item.FailureCount < 0 {
@@ -2549,7 +2674,7 @@ func setAuthRuntimeStatsTx(ctx context.Context, tx *sql.Tx, item AuthRuntimeStat
 }
 
 func (s *Store) SetAuthRuntimeStats(ctx context.Context, item AuthRuntimeStats) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -2574,7 +2699,7 @@ func (s *Store) ImportAuthRuntimeStats(ctx context.Context, items []AuthRuntimeS
 func (s *Store) DeleteAuthRuntimeState(ctx context.Context, authID, authIndex, fileName string) error {
 	s.quotaCacheMu.Lock()
 	defer s.quotaCacheMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -2609,7 +2734,7 @@ func (s *Store) GetModelPrices(ctx context.Context) (map[string]ModelPrice, erro
 }
 
 func (s *Store) getModelPrices(ctx context.Context, includeProviderRules bool) (map[string]ModelPrice, error) {
-	return getModelPricesFrom(ctx, s.db, includeProviderRules)
+	return getModelPricesFrom(ctx, s.executor(ctx), includeProviderRules)
 }
 
 func getModelPricesFrom(ctx context.Context, queryer sqlQueryer, includeProviderRules bool) (map[string]ModelPrice, error) {
@@ -2644,7 +2769,7 @@ func getModelPricesFrom(ctx context.Context, queryer sqlQueryer, includeProvider
 }
 
 func (s *Store) SetModelPrices(ctx context.Context, prices map[string]ModelPrice) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -2673,7 +2798,7 @@ func (s *Store) SetModelPrices(ctx context.Context, prices map[string]ModelPrice
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `delete from model_price_rules where provider = ''`); err != nil {
+	if _, err := s.executor(ctx).ExecContext(ctx, `delete from model_price_rules where provider = ''`); err != nil {
 		return err
 	}
 	for model, price := range prices {

@@ -1,4 +1,4 @@
-import { sha256Hex } from '@/utils/hash';
+import { sha256Hex } from './hash';
 
 export type MonitoringApiKeyIdentity = {
   id: string;

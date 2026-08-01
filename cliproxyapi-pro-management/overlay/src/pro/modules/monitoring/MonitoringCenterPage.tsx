@@ -41,7 +41,11 @@ import {
   type UsageMetricCard,
 } from '@/pro/modules/monitoring/features/components/UsageAnalyticsPanels';
 import { buildAggregateSummary } from '@/pro/modules/monitoring/features/monitoringAggregates';
-import { resolveAccountPlanLabel, type AccountPlanQuotaStore } from '@/pro/modules/inspection/features/accountPlan';
+import {
+  quotaPersistenceMiddleware,
+  resolveAccountPlanLabel,
+  type AccountPlanQuotaStore,
+} from '@/pro/modules/quota';
 import {
   addMonitoringSummaryRow,
   buildServerUsageTrendAnalytics,
@@ -94,11 +98,11 @@ import {
 } from '@/pro/modules/monitoring/features/realtimeLogPresentation';
 import { hasUsageBackupManifest } from '@/pro/modules/monitoring/features/usageBackup';
 import {
-  DEFAULT_MONITORING_PAGE_SIZE,
-  MONITORING_PAGE_SIZE_OPTIONS,
-  normalizeMonitoringPageSize,
-  resolveMonitoringPaginationCopy,
-} from '@/pro/modules/monitoring/features/pagination';
+  DEFAULT_PRO_PAGE_SIZE,
+  PRO_PAGE_SIZE_OPTIONS,
+  normalizeProPageSize,
+  resolveProPaginationCopy,
+} from '@/pro/shared/pagination';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { apiClient } from '@/services/api/client';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
@@ -120,9 +124,8 @@ import {
   type ModelPriceSyncState,
   type ObservedModelPriceTarget,
   normalizeAuthIndex,
-} from '@/utils/usage';
+} from '@/pro/modules/monitoring/features/usage';
 import quotaStyles from '@/features/quota/QuotaPage.module.scss';
-import { quotaPersistenceMiddleware } from '@/pro/modules/quota/extensions/persistenceMiddleware';
 import styles from '@/pro/modules/monitoring/features/monitoring.module.scss';
 
 type StatusFilter = 'all' | 'success' | 'failed';
@@ -295,7 +298,7 @@ export function MonitoringCenterPage() {
   const [apiKeyRankingMetric, setApiKeyRankingMetric] = useState<RankingMetric>('requests');
   const [usageTrendApiKey, setUsageTrendApiKey] = useState('all');
   const [realtimeLogUsage, setRealtimeLogUsage] = useState<UsagePayload | null>(null);
-  const [realtimeLogPageSize, setRealtimeLogPageSize] = useState(DEFAULT_MONITORING_PAGE_SIZE);
+  const [realtimeLogPageSize, setRealtimeLogPageSize] = useState(DEFAULT_PRO_PAGE_SIZE);
   const [realtimeLogColumns, setRealtimeLogColumns] = useState<RealtimeLogColumnPreference[]>(loadRealtimeLogColumns);
   const [realtimeLogFollowEnabled, setRealtimeLogFollowEnabled] = useState(loadRealtimeLogFollowEnabled);
   const [draggedRealtimeLogColumnKey, setDraggedRealtimeLogColumnKey] = useState<RealtimeLogColumnKey | null>(null);
@@ -303,7 +306,7 @@ export function MonitoringCenterPage() {
   const realtimeColumnsMenuRef = useRef<HTMLDivElement | null>(null);
   const deferredSearchInput = useDeferredValue(searchInput);
   const [deferredSearch, setDeferredSearch] = useState(searchInput);
-  const paginationCopy = resolveMonitoringPaginationCopy(i18n.resolvedLanguage ?? i18n.language);
+  const paginationCopy = resolveProPaginationCopy(i18n.resolvedLanguage ?? i18n.language);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -1868,7 +1871,7 @@ export function MonitoringCenterPage() {
               <Select
                 id="realtime-log-page-size"
                 value={String(realtimeLogPageSize)}
-                options={MONITORING_PAGE_SIZE_OPTIONS.map((pageSize) => ({
+                options={PRO_PAGE_SIZE_OPTIONS.map((pageSize) => ({
                   value: String(pageSize),
                   label: t('monitoring.pagination_page_size_value', {
                     count: pageSize,
@@ -1876,7 +1879,7 @@ export function MonitoringCenterPage() {
                   }),
                 }))}
                 onChange={(value) => {
-                  const nextPageSize = normalizeMonitoringPageSize(value);
+                  const nextPageSize = normalizeProPageSize(value);
                   if (nextPageSize === realtimeLogPageSize) return;
                   resetRealtimeLogs();
                   setRealtimeLogPageSize(nextPageSize);

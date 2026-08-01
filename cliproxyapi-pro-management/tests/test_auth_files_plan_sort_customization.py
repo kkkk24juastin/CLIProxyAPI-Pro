@@ -111,8 +111,9 @@ class AuthFilesSortingCustomizationTest(unittest.TestCase):
             ui_state = ui_state_path.read_text()
 
             self.assertIn("['default', 'az', 'priority', 'plan', 'quota']", ui_state)
-            self.assertIn("from '@/pro/modules/quota/planSort'", page)
-            self.assertIn("from '@/pro/modules/quota/quotaSort'", page)
+            self.assertGreaterEqual(page.count("from '@/pro/modules/quota'"), 2)
+            self.assertIn('compareAuthFilesByPlanDescending', page)
+            self.assertIn('compareAuthFilesByAvailableQuotaDescending', page)
             self.assertIn(
                 'const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter);',
                 page,

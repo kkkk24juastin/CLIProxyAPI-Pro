@@ -16,7 +16,7 @@ import {
   type TrendPoint,
 } from '../monitoringAnalytics';
 import { RANKING_METRIC_OPTIONS, TIME_RANGE_OPTIONS } from '../monitoringOptions';
-import { formatCompactNumber, formatUsd } from '@/utils/usage';
+import { formatCompactNumber, formatUsd } from '@/pro/modules/monitoring/features/usage';
 import styles from '../monitoring.module.scss';
 
 export type UsageMetricCard = {

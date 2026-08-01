@@ -32,6 +32,20 @@
 }
 
 @media (max-width: 900px) {
+	.filterGrid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.filterGrid :global(.select-trigger) {
+		padding-inline: 8px !important;
+	}
+
+	.filterGrid :global(.select-value) {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
   .heroHeader,
   .panelHeader,
   .cockpitHeader {
@@ -194,6 +208,25 @@
 }
 
 @media (max-width: 640px) {
+	.paginationBar {
+		display: flex;
+		flex-wrap: nowrap;
+		justify-content: space-between;
+		overflow-x: auto;
+		scrollbar-width: thin;
+	}
+
+	.paginationNavigation {
+		flex: 0 0 auto;
+		order: 1;
+		flex-wrap: nowrap;
+	}
+
+	.paginationPageSizeControl {
+		flex: 0 0 auto;
+		order: 2;
+	}
+
   .panel,
   .assetIntelligenceCard,
   .runControlCard,

@@ -9,7 +9,7 @@ import { createPortal } from 'react-dom';
 import type { TFunction } from 'i18next';
 import { IconInfo } from '@/components/ui/icons';
 import type { RealtimeLogRow } from '../realtimeLogPresentation';
-import { formatCompactNumber, formatUsdPrecise } from '@/utils/usage';
+import { formatCompactNumber, formatUsdPrecise } from '@/pro/modules/monitoring/features/usage';
 import styles from '../monitoring.module.scss';
 
 type RealtimeCostTooltipPosition = {

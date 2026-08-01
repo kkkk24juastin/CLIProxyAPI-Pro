@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { IconTrash2 } from '@/components/ui/icons';
-import { formatCompactNumber } from '@/utils/usage';
+import { formatCompactNumber } from '@/pro/modules/monitoring/features/usage';
 import type { MonitoringSettingsDraft } from '../monitoringSettings';
 import styles from '../monitoring.module.scss';
 

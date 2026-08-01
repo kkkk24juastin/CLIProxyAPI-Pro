@@ -1,8 +1,8 @@
 import i18n from '@/i18n';
 import { apiClient } from '@/services/api/client';
-import { maskApiKey } from './format';
-import { normalizeAuthIndex } from './authIndex';
-import { parseTimestampMs } from './timestamp';
+import { maskApiKey } from '@/utils/format';
+import { normalizeAuthIndex } from '@/utils/authIndex';
+import { parseTimestampMs } from '@/utils/timestamp';
 
 export { normalizeAuthIndex };
 

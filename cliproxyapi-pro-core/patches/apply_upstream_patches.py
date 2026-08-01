@@ -2687,6 +2687,7 @@ subprocess.run([
     'internal/pro/observability/pro_settings.go',
     'internal/pro/observability/server.go',
     'internal/pro/observability/server_test.go',
+    'internal/pro/observability/settings_store.go',
     'internal/pro/observability/service.go',
     'internal/pro/observability/service_test.go',
     'internal/pro/observability/store.go',

@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/settings"
 )
 
 const (
-	ProSettingNamespaceRoutingRequestProtection = "routing.request-protection"
-	ProSettingNamespaceProxyPool                = "proxy.pool"
-	ProSettingNamespaceOAuthModelPolicy         = "model.oauth-policy"
+	ProSettingNamespaceRoutingRequestProtection = settings.NamespaceRoutingRequestProtection
+	ProSettingNamespaceProxyPool                = settings.NamespaceProxyPool
+	ProSettingNamespaceOAuthModelPolicy         = settings.NamespaceOAuthModelPolicy
 )
 
 // ProSetting stores one versioned Pro-owned configuration document outside upstream config.yaml.
@@ -104,15 +106,15 @@ func setProSettingWith(ctx context.Context, execer interface {
 }
 
 func (s *Store) GetProSetting(ctx context.Context, namespace string) (ProSetting, bool, error) {
-	return getProSettingFrom(ctx, s.db, namespace)
+	return getProSettingFrom(ctx, s.executor(ctx), namespace)
 }
 
 func (s *Store) ListProSettings(ctx context.Context) ([]ProSetting, error) {
-	return listProSettingsFrom(ctx, s.db)
+	return listProSettingsFrom(ctx, s.executor(ctx))
 }
 
 func (s *Store) SetProSetting(ctx context.Context, item ProSetting) error {
-	return setProSettingWith(ctx, s.db, item)
+	return setProSettingWith(ctx, s.executor(ctx), item)
 }
 
 func (s *Store) ImportProSettings(ctx context.Context, items []ProSetting) (int, error) {
@@ -132,7 +134,7 @@ func (s *Store) ImportProSettings(ctx context.Context, items []ProSetting) (int,
 		seen[clean.Namespace] = struct{}{}
 		normalized = append(normalized, clean)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}

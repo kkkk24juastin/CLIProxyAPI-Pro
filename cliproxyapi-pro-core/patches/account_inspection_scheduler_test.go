@@ -991,8 +991,9 @@ func TestAutoActionConfirmationDelaysExecution(t *testing.T) {
 		t.Fatalf("second confirmation = confirmed:%v count:%d required:%d, want true/2/2", confirmed, count, required)
 	}
 	scheduler.clearAutoActionConfirmation(result)
-	if len(scheduler.autoActionConfirmations) != 0 {
-		t.Fatalf("autoActionConfirmations = %+v, want empty after clear", scheduler.autoActionConfirmations)
+	confirmed, count, required = scheduler.confirmAutoAction(result, action, settings.AutoExecuteConfirmations)
+	if confirmed || count != 1 || required != 2 {
+		t.Fatalf("confirmation after clear = confirmed:%v count:%d required:%d, want false/1/2", confirmed, count, required)
 	}
 }
 
@@ -1172,7 +1173,7 @@ func TestEnablePreservesNonInspectionLastError(t *testing.T) {
 		Metadata:    map[string]any{"last_error": map[string]any{"code": "upstream_refresh_error", "message": "refresh failed"}},
 		Unavailable: true,
 	}
-	setAuthInspectionDisabledState(auth, false)
+	setProAuthDisabledState(auth, false)
 	if auth.Disabled || auth.Status != coreauth.StatusError || !auth.Unavailable {
 		t.Fatalf("enabled auth state = disabled:%v status:%q unavailable:%v", auth.Disabled, auth.Status, auth.Unavailable)
 	}

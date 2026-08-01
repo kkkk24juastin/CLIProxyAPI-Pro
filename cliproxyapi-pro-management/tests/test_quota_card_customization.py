@@ -49,7 +49,7 @@ class QuotaCardCustomizationTest(unittest.TestCase):
             CUSTOMIZATIONS.flush_writes()
 
             source = path.read_text()
-            self.assertIn("import { QuotaCachedTime } from '@/pro/modules/quota/extensions/QuotaCardExtras';", source)
+            self.assertIn("import { QuotaCachedTime } from '@/pro/modules/quota';", source)
             self.assertIn('cachedAt?: number;', source)
             self.assertIn(f'{{{render_call}}}', source)
             self.assertIn('<QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />', source)

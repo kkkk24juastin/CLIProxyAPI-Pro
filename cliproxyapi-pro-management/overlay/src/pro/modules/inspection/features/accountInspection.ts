@@ -1,6 +1,6 @@
 import type { Config, AuthFileItem } from '@/types';
 import { isDisabledAuthFile, isRecordValue, normalizeNumberValue, readBooleanValue, readStringValue, resolveAuthProvider, resolveCodexChatgptAccountId } from '@/utils/quota';
-import { normalizeAuthIndex } from '@/utils/usage';
+import { normalizeAuthIndex } from '@/utils/authIndex';
 
 export type AccountInspectionLogLevel = 'info' | 'success' | 'warning' | 'error';
 export type AccountInspectionAction = 'keep' | 'delete' | 'disable' | 'enable';

@@ -8,7 +8,7 @@ import {
   loadModelPricesFromSqlite,
   saveModelPricesToSqlite,
   type ModelPrice,
-} from '@/utils/usage';
+} from '@/pro/modules/monitoring/features/usage';
 import { processUsageSseBlocks } from '../usageStream';
 
 export interface UsagePayload {

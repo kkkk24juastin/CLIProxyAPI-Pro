@@ -1206,3 +1206,38 @@ func TestImportProSettingsIsAtomic(t *testing.T) {
 		t.Fatalf("GetProSetting(valid) after failed import = _, %v, %v; want missing", ok, err)
 	}
 }
+
+func TestRunImportTransactionRollsBackAllDomains(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	wantErr := errors.New("forced late import failure")
+	err := store.RunImportTransaction(ctx, func(importCtx context.Context) error {
+		if _, err := store.InsertEvents(importCtx, []internalusage.Event{testUsageEvent(0, false, 10)}); err != nil {
+			return err
+		}
+		if _, _, err := store.ImportRuntimeState(importCtx,
+			[]RoutingCursorState{{CursorKey: "single|codex", LastAuthID: "backup-auth", UpdatedAtMS: 100}}, nil,
+		); err != nil {
+			return err
+		}
+		if _, err := store.ImportProSettings(importCtx, []ProSetting{{
+			Namespace: "test.atomic", SchemaVersion: 1, Settings: json.RawMessage(`{"enabled":true}`),
+		}}); err != nil {
+			return err
+		}
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("RunImportTransaction() error = %v, want %v", err, wantErr)
+	}
+	events, _, err := store.Counts(ctx)
+	if err != nil || events != 0 {
+		t.Fatalf("Counts() after rollback = %d, _, %v; want zero events", events, err)
+	}
+	if _, ok, err := store.GetRoutingCursorState(ctx, "single|codex"); err != nil || ok {
+		t.Fatalf("routing cursor after rollback = _, %v, %v; want missing", ok, err)
+	}
+	if _, ok, err := store.GetProSetting(ctx, "test.atomic"); err != nil || ok {
+		t.Fatalf("pro setting after rollback = _, %v, %v; want missing", ok, err)
+	}
+}

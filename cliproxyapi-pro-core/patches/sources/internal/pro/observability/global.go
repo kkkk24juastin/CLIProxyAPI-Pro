@@ -63,16 +63,32 @@ func SetAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error),
 	probackup.Default.SetInspectionSchedule(exporter, importer)
 }
 
+func RegisterAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) func() {
+	return probackup.Default.RegisterInspectionSchedule(exporter, importer)
+}
+
 func SetAccountInspectionSnapshotHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
 	probackup.Default.SetInspectionSnapshot(exporter, importer)
+}
+
+func RegisterAccountInspectionSnapshotHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) func() {
+	return probackup.Default.RegisterInspectionSnapshot(exporter, importer)
 }
 
 func SetAuthRuntimeStateImportHandler(importer func([]RoutingCursorState, []AuthRuntimeStats) error) {
 	probackup.Default.SetRuntimeStateImporter(importer)
 }
 
+func RegisterAuthRuntimeStateImportHandler(importer func([]RoutingCursorState, []AuthRuntimeStats) error) func() {
+	return probackup.Default.RegisterRuntimeStateImporter(importer)
+}
+
 func SetLegacyQuotaCleanupHandler(cleanup func(context.Context) error) {
 	probackup.Default.SetLegacyCleanup(cleanup)
+}
+
+func RegisterLegacyQuotaCleanupHandler(cleanup func(context.Context) error) func() {
+	return probackup.Default.RegisterLegacyCleanup(cleanup)
 }
 
 type proSettingConsumerRegistration struct {

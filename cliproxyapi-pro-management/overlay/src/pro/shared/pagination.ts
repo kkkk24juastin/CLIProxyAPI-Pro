@@ -1,15 +1,15 @@
-export const MONITORING_PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
+export const PRO_PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
 
-export type MonitoringPageSize = (typeof MONITORING_PAGE_SIZE_OPTIONS)[number];
+export type ProPageSize = (typeof PRO_PAGE_SIZE_OPTIONS)[number];
 
-export const DEFAULT_MONITORING_PAGE_SIZE: MonitoringPageSize = 20;
+export const DEFAULT_PRO_PAGE_SIZE: ProPageSize = 20;
 
-type MonitoringPaginationCopy = {
+type ProPaginationCopy = {
   pageSizeLabel: string;
-  pageSizeValue: (pageSize: MonitoringPageSize) => string;
+  pageSizeValue: (pageSize: ProPageSize) => string;
 };
 
-export const resolveMonitoringPaginationCopy = (language: string): MonitoringPaginationCopy => {
+export const resolveProPaginationCopy = (language: string): ProPaginationCopy => {
   const normalized = language.trim().toLowerCase();
   if (normalized.startsWith('zh-tw') || normalized.startsWith('zh-hk')) {
     return {
@@ -35,8 +35,8 @@ export const resolveMonitoringPaginationCopy = (language: string): MonitoringPag
   };
 };
 
-export const normalizeMonitoringPageSize = (value: string | number): MonitoringPageSize => {
+export const normalizeProPageSize = (value: string | number): ProPageSize => {
   const parsed = typeof value === 'number' ? value : Number.parseInt(value, 10);
-  return MONITORING_PAGE_SIZE_OPTIONS.find((pageSize) => pageSize === parsed)
-    ?? DEFAULT_MONITORING_PAGE_SIZE;
+  return PRO_PAGE_SIZE_OPTIONS.find((pageSize) => pageSize === parsed)
+    ?? DEFAULT_PRO_PAGE_SIZE;
 };

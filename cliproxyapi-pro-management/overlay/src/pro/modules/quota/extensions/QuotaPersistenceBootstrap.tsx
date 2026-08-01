@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { FEATURES } from '@/config/features';
+import { FEATURES } from '../features';
 import { quotaPersistenceMiddleware } from '@/pro/modules/quota/extensions/persistenceMiddleware';
 
 export function QuotaPersistenceBootstrap() {

@@ -56,6 +56,7 @@ func (l *Lifecycle) PauseAndCancel(ctx context.Context, cancel func()) error {
 		ctx = context.Background()
 	}
 	l.mu.Lock()
+	startedPause := !l.paused
 	l.paused = true
 	l.mu.Unlock()
 	if cancel != nil {
@@ -70,6 +71,9 @@ func (l *Lifecycle) PauseAndCancel(ctx context.Context, cancel func()) error {
 		}
 		select {
 		case <-ctx.Done():
+			if startedPause {
+				_ = l.Resume(context.Background())
+			}
 			return ctx.Err()
 		case <-time.After(5 * time.Millisecond):
 		}

@@ -12,7 +12,7 @@ import {
 import type { UsageAggregateBucket, UsageAggregates } from './hooks/useUsageAggregates';
 import { calculateAggregateCost } from './monitoringAggregates';
 import { maskSensitiveText } from '@/utils/format';
-import { formatCompactNumber, formatUsd, type ModelPrice } from '@/utils/usage';
+import { formatCompactNumber, formatUsd, type ModelPrice } from '@/pro/modules/monitoring/features/usage';
 
 export const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
 

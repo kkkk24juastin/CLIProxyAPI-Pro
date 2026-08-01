@@ -302,7 +302,7 @@ func observedModelsHash(models []ObservedModel) string {
 
 func (s *Store) GetModelPriceSyncState(ctx context.Context) (ModelPriceSyncState, error) {
 	var raw string
-	if err := s.db.QueryRowContext(ctx, `select state_json from model_price_sync_state where id = 1`).Scan(&raw); err != nil {
+	if err := s.executor(ctx).QueryRowContext(ctx, `select state_json from model_price_sync_state where id = 1`).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return ModelPriceSyncState{Status: "idle"}, nil
 		}
@@ -320,7 +320,7 @@ func (s *Store) SetModelPriceSyncState(ctx context.Context, state ModelPriceSync
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `insert into model_price_sync_state(id, state_json, updated_at_ms) values(1, ?, ?)
+	_, err = s.executor(ctx).ExecContext(ctx, `insert into model_price_sync_state(id, state_json, updated_at_ms) values(1, ?, ?)
 		on conflict(id) do update set state_json=excluded.state_json, updated_at_ms=excluded.updated_at_ms`, string(raw), time.Now().UnixMilli())
 	return err
 }

@@ -21,7 +21,7 @@ REALTIME_PREFERENCES_PATH = (
 )
 ACCOUNT_PLAN_PATH = (
     Path(__file__).resolve().parents[1]
-    / 'overlay/src/pro/modules/inspection/features/accountPlan.ts'
+    / 'overlay/src/pro/modules/quota/accountPlan.ts'
 )
 LOCALES_PATH = Path(__file__).resolve().parents[1] / 'monitoring-locales.json'
 

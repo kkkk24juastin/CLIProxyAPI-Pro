@@ -115,6 +115,66 @@ func TestExecuteImportResumesAfterPhaseFailure(t *testing.T) {
 	}
 }
 
+func TestExecuteImportResumesLifecycleWhosePauseWasCanceled(t *testing.T) {
+	coordinator := NewCoordinator()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	paused := true
+	var resumed bool
+	coordinator.RegisterLifecycle(Lifecycle{
+		Pause: func(ctx context.Context) error { return ctx.Err() },
+		Resume: func(ctx context.Context) error {
+			if ctx.Err() != nil {
+				t.Fatal("resume received canceled cleanup context")
+			}
+			paused = false
+			resumed = true
+			return nil
+		},
+	})
+	if err := coordinator.ExecuteImport(ctx, ImportPlan{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ExecuteImport() error = %v, want context canceled", err)
+	}
+	if paused || !resumed {
+		t.Fatalf("failed pause was not resumed: paused=%v resumed=%v", paused, resumed)
+	}
+}
+
+func TestOwnedHookUnregisterDoesNotClearNewerRegistration(t *testing.T) {
+	coordinator := NewCoordinator()
+	unregisterOld := coordinator.RegisterInspectionSchedule(
+		func() ([]byte, bool, error) { return []byte(`{"owner":"old"}`), true, nil }, nil,
+	)
+	unregisterNew := coordinator.RegisterInspectionSchedule(
+		func() ([]byte, bool, error) { return []byte(`{"owner":"new"}`), true, nil }, nil,
+	)
+	unregisterOld()
+	got, ok, err := coordinator.ExportInspectionSchedule()
+	if err != nil || !ok || string(got) != `{"owner":"new"}` {
+		t.Fatalf("newer hook after old unregister = %s, %v, %v", got, ok, err)
+	}
+	unregisterNew()
+	if _, ok, err := coordinator.ExportInspectionSchedule(); err != nil || ok {
+		t.Fatalf("hook after owner unregister = _, %v, %v; want absent", ok, err)
+	}
+}
+
+func TestOwnedHookUnregisterRestoresOlderLiveRegistration(t *testing.T) {
+	coordinator := NewCoordinator()
+	unregisterOld := coordinator.RegisterInspectionSchedule(
+		func() ([]byte, bool, error) { return []byte(`{"owner":"old"}`), true, nil }, nil,
+	)
+	unregisterNew := coordinator.RegisterInspectionSchedule(
+		func() ([]byte, bool, error) { return []byte(`{"owner":"new"}`), true, nil }, nil,
+	)
+	unregisterNew()
+	got, ok, err := coordinator.ExportInspectionSchedule()
+	if err != nil || !ok || string(got) != `{"owner":"old"}` {
+		t.Fatalf("older hook after new unregister = %s, %v, %v", got, ok, err)
+	}
+	unregisterOld()
+}
+
 func TestExportJSONLFlushesAndIncludesInspectionBeforeManifest(t *testing.T) {
 	coordinator := NewCoordinator()
 	coordinator.SetInspectionSchedule(func() ([]byte, bool, error) {

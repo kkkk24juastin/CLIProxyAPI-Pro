@@ -4,9 +4,10 @@ import { apiClient } from '@/services/api/client';
 import { useAuthStore } from '@/stores/useAuthStore';
 import type { AuthFileItem } from '@/types/authFile';
 import type { Config } from '@/types/config';
-import type { CredentialInfo } from '@/types/sourceInfo';
+import type { CredentialInfo } from '@/pro/modules/monitoring/features/sourceInfo';
 import { isRecordValue, readBooleanValue, readStringValue } from '@/utils/quota';
-import { buildSourceInfoMap, resolveProviderDisplayLabel, resolveSourceDisplay, type SourceInfoMapInput } from '@/utils/sourceResolver';
+import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
+import { buildSourceInfoMap, resolveSourceDisplay, type SourceInfoMapInput } from '@/pro/modules/monitoring/features/sourceResolver';
 import {
   calculateCost,
   collectUsageDetailsWithEndpoint,
@@ -15,7 +16,7 @@ import {
   type ModelPrice,
   type UsageCostBreakdown,
   type UsageDetailWithEndpoint,
-} from '@/utils/usage';
+} from '@/pro/modules/monitoring/features/usage';
 import {
   buildConfiguredApiKeyMap,
   type MonitoringApiKeyIdentity,

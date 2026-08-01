@@ -87,7 +87,7 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 - `account_inspection_schedule` — 后端账号巡检调度设置。
 - `account_inspection_snapshot` — 最近一次已结束的账号巡检结果，包含运行设置、汇总、健康统计、完整结果和原始错误详情，不包含巡检日志。
 
-`/usage/import` 接受同样的 JSONL 格式。导入时会先完整读取和校验请求，再导入 usage events，恢复模型价格、quota cache entries、运行时路由状态、监控设置、账号巡检调度和最近一次巡检结果快照。路由游标与账号运行统计在同一个 SQLite 事务中恢复。恢复的结果快照为只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。无 manifest 的旧版 event-only 或混合 JSONL 默认拒绝，因为它们无法获得文件级完整性校验；可信旧备份可显式使用 `?allow_legacy=1` 或 `X-CLIProxy-Allow-Legacy-Backup: true` 请求头导入，管理端会在启用兼容模式前要求确认。
+`/usage/import` 接受同样的 JSONL 格式。导入时会先完整读取和校验请求，再在一个 SQLite 事务中导入 usage events、模型价格、quota cache entries、运行时路由状态、监控设置和 Pro 设置；任一数据库领域失败都会整体回滚。事务提交后再按固定顺序重载 live 配置、运行态、账号巡检调度和最近一次巡检结果快照。恢复的结果快照为只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。无 manifest 的旧版 event-only 或混合 JSONL 默认拒绝，因为它们无法获得文件级完整性校验；可信旧备份可显式使用 `?allow_legacy=1` 或 `X-CLIProxy-Allow-Legacy-Backup: true` 请求头导入，管理端会在启用兼容模式前要求确认。
 
 导入响应示例字段：
 
@@ -256,6 +256,8 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放巡检、路由保护、登录清理及全局回调。
 - `patches/routing_policy.go` — 注入统一路由配置和请求状态保护 handlers、usage plugin 与自动解除任务。
 - 核心不变量：账号巡检状态优先于 request protection；导入的 `routing_cursor_state` 和 `auth_runtime_stats` 必须立即应用到 live manager；原 DB 表、JSONL record type 和 `/v0/management/usage*` API 保持兼容。
+
+静态模块按实际宿主生命周期组合：`pro/app` 管理请求路径上的 proxy-pool 与 model-policy 服务；`pro/observability` 随进程 context 启停；inspection 与 routing 控制器随 Management Handler 启停。跨生命周期备份端口使用 owner-scoped 注册和逆序注销，旧 Handler 或旧 Service 关闭时不会清除新实例的回调。`internal/embeddedusage` 只允许出现在 upstream/SDK 兼容边界，`internal/pro` 业务模块不反向依赖该 façade。
 - `patches/config_existing_updates.go` — 只修改已存在 YAML 标量、禁止补键的配置写入辅助层。
 - `.github/workflows/release-core.yml` — 镜像发布、Pro 二进制资产、management.html 发布、usage 备份、Render 部署触发、Telegram 通知和 workflow 清理。
 

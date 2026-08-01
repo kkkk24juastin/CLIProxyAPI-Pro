@@ -208,6 +208,39 @@ func TestUsageImportRejectsTamperedManifestBackupBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestUsageImportRollsBackEarlierDomainsWhenLateDatabaseWriteFails(t *testing.T) {
+	ctx := context.Background()
+	sourceStore := openTestStore(t)
+	insertTestUsageEvents(t, sourceStore, testUsageEvent(0, false, 10))
+	if err := sourceStore.SetProSetting(ctx, ProSetting{
+		Namespace: "test.rollback", SchemaVersion: 1, Settings: json.RawMessage(`{"enabled":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	exportRecorder := httptest.NewRecorder()
+	testUsageRouter(sourceStore).ServeHTTP(exportRecorder, httptest.NewRequest(http.MethodGet, "/usage/export", nil))
+	if exportRecorder.Code != http.StatusOK {
+		t.Fatalf("export status = %d; body=%s", exportRecorder.Code, exportRecorder.Body.String())
+	}
+
+	targetStore := openTestStore(t)
+	if _, err := targetStore.db.ExecContext(ctx, `create trigger fail_late_backup_import before insert on pro_settings begin select raise(abort, 'forced late backup import failure'); end`); err != nil {
+		t.Fatal(err)
+	}
+	importRecorder := httptest.NewRecorder()
+	testUsageRouter(targetStore).ServeHTTP(importRecorder, httptest.NewRequest(http.MethodPost, "/usage/import", bytes.NewReader(exportRecorder.Body.Bytes())))
+	if importRecorder.Code != http.StatusInternalServerError {
+		t.Fatalf("import status = %d, want 500; body=%s", importRecorder.Code, importRecorder.Body.String())
+	}
+	events, _, err := targetStore.Counts(ctx)
+	if err != nil || events != 0 {
+		t.Fatalf("Counts() after failed import = %d, _, %v; want rollback", events, err)
+	}
+	if _, ok, err := targetStore.GetProSetting(ctx, "test.rollback"); err != nil || ok {
+		t.Fatalf("pro setting after failed import = _, %v, %v; want missing", ok, err)
+	}
+}
+
 func TestUsageBackupRestoresAllNamespacedProSettingsAndConsumers(t *testing.T) {
 	ctx := context.Background()
 	sourceStore := openTestStore(t)

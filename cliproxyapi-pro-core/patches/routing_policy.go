@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,8 +27,8 @@ const (
 	routingPolicyUsagePluginName   = "pro-routing-request-protection"
 	routingProtectionOwner         = prorouting.ProtectionOwner
 	routingProtectionMetadataKey   = prorouting.ProtectionMetadataKey
-	routingProtectionModeObserve   = "observe"
-	routingProtectionModeEnforce   = "enforce"
+	routingProtectionModeObserve   = prorouting.ModeObserve
+	routingProtectionModeEnforce   = prorouting.ModeEnforce
 	routingProtectionMaxEvents     = 100
 	routingProtectionSchemaVersion = 1
 )
@@ -52,7 +51,7 @@ var routingProtectionProviders = []string{
 type routingPolicyController struct {
 	h                     *Handler
 	mu                    sync.Mutex
-	confirmations         map[string]routingProtectionConfirmation
+	confirmations         *prorouting.ConfirmationTracker
 	events                []routingProtectionEvent
 	lifecycleMu           sync.Mutex
 	usageWG               sync.WaitGroup
@@ -60,12 +59,6 @@ type routingPolicyController struct {
 	configMu              sync.RWMutex
 	requestProtection     routingRequestProtectionConfig
 	proSettingsUnregister func()
-}
-
-type routingProtectionConfirmation struct {
-	Count   int
-	FirstAt time.Time
-	LastAt  time.Time
 }
 
 type routingPolicyGlobalSettings struct {
@@ -84,21 +77,9 @@ type routingPolicyGlobalSettings struct {
 	CodexIdentityConfuse          bool   `json:"codexIdentityConfuse"`
 }
 
-type routingRequestProtectionConfig struct {
-	Enabled   bool                                       `yaml:"enabled" json:"enabled"`
-	Mode      string                                     `yaml:"mode,omitempty" json:"mode,omitempty"`
-	Providers map[string]routingProtectionProviderPolicy `yaml:"providers,omitempty" json:"providers,omitempty"`
-}
+type routingRequestProtectionConfig = prorouting.RequestProtectionConfig
 
-type routingProtectionProviderPolicy struct {
-	Enabled                   bool  `yaml:"enabled" json:"enabled"`
-	StatusCodes               []int `yaml:"status-codes,omitempty" json:"statusCodes,omitempty"`
-	Confirmations             int   `yaml:"confirmations,omitempty" json:"confirmations,omitempty"`
-	ConfirmationWindowSeconds int   `yaml:"confirmation-window-seconds,omitempty" json:"confirmationWindowSeconds,omitempty"`
-	AutoEnable                bool  `yaml:"auto-enable" json:"autoEnable"`
-	FallbackDisableMinutes    int   `yaml:"fallback-disable-minutes,omitempty" json:"fallbackDisableMinutes,omitempty"`
-	RequireQuotaEvidence      bool  `yaml:"require-quota-evidence" json:"requireQuotaEvidence"`
-}
+type routingProtectionProviderPolicy = prorouting.ProviderPolicy
 
 type routingPolicyResponse struct {
 	Global             routingPolicyGlobalSettings      `json:"global"`
@@ -150,7 +131,7 @@ func startRoutingPolicyController(h *Handler) {
 	}
 	controller := &routingPolicyController{
 		h:                 h,
-		confirmations:     make(map[string]routingProtectionConfirmation),
+		confirmations:     prorouting.NewConfirmationTracker(),
 		requestProtection: requestProtection,
 	}
 	actual, loaded := routingPolicyControllers.LoadOrStore(h, controller)
@@ -352,47 +333,27 @@ func (c *routingPolicyController) authForRecord(record coreusage.Record) *coreau
 }
 
 func (c *routingPolicyController) confirm(authID, provider string, statusCode int, policy routingProtectionProviderPolicy, now time.Time) (bool, int, int) {
-	required := policy.Confirmations
-	if required <= 1 {
-		return true, 1, 1
+	if c == nil {
+		return false, 0, policy.Confirmations
 	}
-	window := time.Duration(policy.ConfirmationWindowSeconds) * time.Second
-	if window <= 0 {
-		window = 10 * time.Minute
-	}
-	key := strings.Join([]string{authID, provider, strconv.Itoa(statusCode)}, "|")
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	state := c.confirmations[key]
-	if state.FirstAt.IsZero() || now.Sub(state.FirstAt) > window {
-		state = routingProtectionConfirmation{FirstAt: now}
-	}
-	state.Count++
-	state.LastAt = now
-	c.confirmations[key] = state
-	return state.Count >= required, state.Count, required
+	return c.confirmations.Confirm(authID, provider, statusCode, policy, now)
 }
 
 func (c *routingPolicyController) clearConfirmations(authID, provider string) {
-	prefix := authID + "|" + provider + "|"
-	c.mu.Lock()
-	for key := range c.confirmations {
-		if strings.HasPrefix(key, prefix) {
-			delete(c.confirmations, key)
-		}
+	if c != nil {
+		c.confirmations.Clear(authID, provider)
 	}
-	c.mu.Unlock()
 }
 
 func (c *routingPolicyController) disableAuth(ctx context.Context, auth *coreauth.Auth, event routingProtectionEvent) error {
 	if auth == nil {
 		return fmt.Errorf("auth not found")
 	}
-	return c.updateAuth(ctx, auth.Index, func(updated *coreauth.Auth) {
+	return c.h.updateProAuth(ctx, auth.Index, func(updated *coreauth.Auth) {
 		if updated == nil || (updated.Disabled && !routingProtectionOwned(updated)) {
 			return
 		}
-		setAuthInspectionDisabledState(updated, true)
+		setProAuthDisabledState(updated, true)
 		updated.StatusMessage = fmt.Sprintf("disabled by routing policy after HTTP %d", event.StatusCode)
 		if updated.Metadata == nil {
 			updated.Metadata = make(map[string]any)
@@ -412,29 +373,13 @@ func (c *routingPolicyController) releaseAuth(ctx context.Context, auth *coreaut
 	if auth == nil {
 		return fmt.Errorf("auth not found")
 	}
-	return c.updateAuth(ctx, auth.Index, func(updated *coreauth.Auth) {
+	return c.h.updateProAuth(ctx, auth.Index, func(updated *coreauth.Auth) {
 		if updated == nil || !routingProtectionOwned(updated) {
 			return
 		}
-		setAuthInspectionDisabledState(updated, false)
+		setProAuthDisabledState(updated, false)
 		clearRoutingProtectionOwnership(updated)
 	})
-}
-
-func (c *routingPolicyController) updateAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
-	if c == nil || c.h == nil || c.h.authManager == nil {
-		return fmt.Errorf("core auth manager unavailable")
-	}
-	if scheduler := schedulerForHandler(c.h); scheduler != nil {
-		return scheduler.updateInspectionAuth(ctx, authIndex, mutate)
-	}
-	auth := c.h.authByIndex(authIndex)
-	if auth == nil {
-		return fmt.Errorf("auth not found")
-	}
-	mutate(auth)
-	_, err := c.h.authManager.Update(ctx, auth)
-	return err
 }
 
 func (c *routingPolicyController) reconcileLoop(ctx context.Context) {
@@ -462,7 +407,7 @@ func (c *routingPolicyController) reconcile(now time.Time) {
 		metadata := routingProtectionMetadata(auth)
 		releaseAt := routingProtectionMetadataInt64(metadata, "release_at")
 		if !auth.Disabled {
-			_ = c.updateAuth(context.Background(), auth.Index, func(updated *coreauth.Auth) {
+			_ = c.h.updateProAuth(context.Background(), auth.Index, func(updated *coreauth.Auth) {
 				if updated != nil && updated.Metadata != nil {
 					delete(updated.Metadata, routingProtectionMetadataKey)
 				}
@@ -509,127 +454,27 @@ func (c *routingPolicyController) recentEvents() []routingProtectionEvent {
 }
 
 func routingProtectionStatusMatches(values []int, status int) bool {
-	for _, value := range values {
-		if value == status {
-			return true
-		}
-	}
-	return false
+	return prorouting.StatusMatches(values, status)
 }
 
 func routingProtectionHasQuotaEvidence(record coreusage.Record) bool {
-	headers := record.ResponseHeaders
-	if headers.Get("Retry-After") != "" {
-		return true
-	}
-	for _, key := range []string{"x-codex-primary-used-percent", "x-codex-secondary-used-percent"} {
-		if value, err := strconv.ParseFloat(strings.TrimSpace(headers.Get(key)), 64); err == nil && value >= 99.5 {
-			return true
-		}
-	}
-	body := strings.ToLower(strings.TrimSpace(record.Fail.Body))
-	for _, marker := range []string{
-		"usage_limit_reached",
-		"rate_limit_exceeded",
-		"insufficient_quota",
-		"free-usage-exhausted",
-		"quota exceeded",
-		"quota_exceeded",
-		"used all the included free usage",
-		"resource_exhausted",
-	} {
-		if strings.Contains(body, marker) {
-			return true
-		}
-	}
-	return false
+	return prorouting.HasQuotaEvidence(routingProtectionFailure(record))
 }
 
 func routingProtectionReleaseAt(record coreusage.Record, policy routingProtectionProviderPolicy, now time.Time) time.Time {
-	if !policy.AutoEnable {
-		return time.Time{}
-	}
-	candidates := make([]time.Time, 0, 4)
-	if retryAt := routingProtectionRetryAfter(record.ResponseHeaders.Get("Retry-After"), now); !retryAt.IsZero() {
-		candidates = append(candidates, retryAt)
-	}
-	for _, key := range []string{"x-codex-primary-reset-at", "x-codex-secondary-reset-at"} {
-		if unix, err := strconv.ParseInt(strings.TrimSpace(record.ResponseHeaders.Get(key)), 10, 64); err == nil && unix > now.Unix() {
-			candidates = append(candidates, time.Unix(unix, 0))
-		}
-	}
-	if bodyAt := routingProtectionBodyResetAt(record.Fail.Body, now); !bodyAt.IsZero() {
-		candidates = append(candidates, bodyAt)
-	}
-	var releaseAt time.Time
-	for _, candidate := range candidates {
-		if candidate.After(releaseAt) {
-			releaseAt = candidate
-		}
-	}
-	if releaseAt.IsZero() && policy.FallbackDisableMinutes > 0 {
-		releaseAt = now.Add(time.Duration(policy.FallbackDisableMinutes) * time.Minute)
-	}
-	return releaseAt
-}
-
-func routingProtectionRetryAfter(value string, now time.Time) time.Time {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return time.Time{}
-	}
-	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
-		return now.Add(time.Duration(seconds) * time.Second)
-	}
-	if parsed, err := http.ParseTime(value); err == nil && parsed.After(now) {
-		return parsed
-	}
-	return time.Time{}
-}
-
-func routingProtectionBodyResetAt(body string, now time.Time) time.Time {
-	var payload map[string]any
-	if json.Unmarshal([]byte(body), &payload) != nil {
-		return time.Time{}
-	}
-	errorPayload, _ := payload["error"].(map[string]any)
-	for _, source := range []map[string]any{errorPayload, payload} {
-		if source == nil {
-			continue
-		}
-		if unix, ok := routingProtectionAnyInt64(source["resets_at"]); ok && unix > now.Unix() {
-			return time.Unix(unix, 0)
-		}
-		if seconds, ok := routingProtectionAnyInt64(source["resets_in_seconds"]); ok && seconds > 0 {
-			return now.Add(time.Duration(seconds) * time.Second)
-		}
-	}
-	return time.Time{}
-}
-
-func routingProtectionAnyInt64(value any) (int64, bool) {
-	switch typed := value.(type) {
-	case float64:
-		return int64(typed), typed > 0
-	case int64:
-		return typed, typed > 0
-	case json.Number:
-		parsed, err := typed.Int64()
-		return parsed, err == nil && parsed > 0
-	case string:
-		parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
-		return parsed, err == nil && parsed > 0
-	default:
-		return 0, false
-	}
+	return prorouting.ReleaseAt(routingProtectionFailure(record), policy, now)
 }
 
 func routingProtectionReason(record coreusage.Record) string {
-	body := strings.TrimSpace(record.Fail.Body)
-	if body != "" {
-		return body
+	return prorouting.Reason(routingProtectionFailure(record))
+}
+
+func routingProtectionFailure(record coreusage.Record) prorouting.UsageFailure {
+	return prorouting.UsageFailure{
+		StatusCode: record.Fail.StatusCode,
+		Headers:    record.ResponseHeaders,
+		Body:       record.Fail.Body,
 	}
-	return fmt.Sprintf("HTTP %d", record.Fail.StatusCode)
 }
 
 func routingProtectionMetadata(auth *coreauth.Auth) map[string]any {
@@ -651,8 +496,7 @@ func clearRoutingProtectionOwnership(auth *coreauth.Auth) {
 }
 
 func routingProtectionMetadataInt64(metadata map[string]any, key string) int64 {
-	value, _ := routingProtectionAnyInt64(metadata[key])
-	return value
+	return prorouting.MetadataInt64(metadata, key)
 }
 
 func defaultRoutingRequestProtectionConfig() routingRequestProtectionConfig {
@@ -818,60 +662,15 @@ func yamlMappingKeyIndex(node *yaml.Node, key string) int {
 }
 
 func normalizeRoutingRequestProtectionConfig(input routingRequestProtectionConfig) routingRequestProtectionConfig {
-	input.Mode = normalizeRoutingProtectionMode(input.Mode)
-	providers := make(map[string]routingProtectionProviderPolicy, len(routingProtectionProviders))
-	for _, provider := range routingProtectionProviders {
-		policy := input.Providers[provider]
-		policy.StatusCodes = normalizeRoutingProtectionStatusCodes(policy.StatusCodes)
-		if len(policy.StatusCodes) == 0 {
-			policy.StatusCodes = []int{http.StatusTooManyRequests}
-		}
-		if policy.Confirmations <= 0 {
-			policy.Confirmations = 1
-		}
-		if policy.Confirmations > 5 {
-			policy.Confirmations = 5
-		}
-		if policy.ConfirmationWindowSeconds <= 0 {
-			policy.ConfirmationWindowSeconds = 600
-		}
-		if policy.ConfirmationWindowSeconds > 86400 {
-			policy.ConfirmationWindowSeconds = 86400
-		}
-		if policy.FallbackDisableMinutes < 0 {
-			policy.FallbackDisableMinutes = 0
-		}
-		if policy.FallbackDisableMinutes > 10080 {
-			policy.FallbackDisableMinutes = 10080
-		}
-		providers[provider] = policy
-	}
-	input.Providers = providers
-	return input
+	return prorouting.NormalizeConfig(input, routingProtectionProviders)
 }
 
 func normalizeRoutingProtectionMode(value string) string {
-	if strings.EqualFold(strings.TrimSpace(value), routingProtectionModeEnforce) {
-		return routingProtectionModeEnforce
-	}
-	return routingProtectionModeObserve
+	return prorouting.NormalizeMode(value)
 }
 
 func normalizeRoutingProtectionStatusCodes(values []int) []int {
-	seen := make(map[int]struct{})
-	out := make([]int, 0, len(values))
-	for _, value := range values {
-		if value < 100 || value > 599 {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	sort.Ints(out)
-	return out
+	return prorouting.NormalizeStatusCodes(values)
 }
 
 func (h *Handler) RegisterRoutingPolicyRoutes(group *gin.RouterGroup) {

@@ -10,16 +10,18 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/host"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy"
 	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/observability"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool"
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
 	proxyengine "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/engine"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/settings"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
-// App owns the lifecycle and wiring of static Pro modules. It intentionally
-// contains no proxy-pool or model-policy business state of its own.
+// App owns the lifecycle and wiring of stateful Pro modules on the proxy
+// request path. Process-scoped observability and Management-scoped inspection
+// controllers keep their natural host lifecycles and register owner-safe ports
+// with the shared backup coordinator.
 type App struct {
 	proxyPool   *proxypool.Service
 	modelPolicy *modelpolicy.Service
@@ -37,7 +39,7 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 	if migrated {
 		baseProxyURL = baseProxyURLFromConfigFile(configFilePath, baseProxyURL)
 	}
-	store := settings.NewEmbeddedStore()
+	store := observability.NewSettingsStore()
 	proxyPool, err := proxypool.New(ctx, store, host.NewProxyOverride(), baseProxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("initialize proxy pool module: %w", err)
@@ -119,16 +121,31 @@ func (a *App) ProxyStatus() proxyengine.Status {
 }
 
 func (a *App) ProbeProxy(ctx context.Context, nodeID, proxyURL, testURL string) proxyengine.ProbeResult {
+	if a == nil || a.proxyPool == nil {
+		return proxyengine.ProbeResult{NodeID: nodeID, Error: "proxy pool module is unavailable"}
+	}
 	return a.proxyPool.Probe(ctx, nodeID, proxyURL, testURL)
 }
 
 func (a *App) ProbeAllProxies(ctx context.Context, concurrency int) []proxyengine.ProbeResult {
+	if a == nil || a.proxyPool == nil {
+		return []proxyengine.ProbeResult{}
+	}
 	return a.proxyPool.ProbeAll(ctx, concurrency)
 }
 
-func (a *App) RecoverProxy(nodeID string) error { return a.proxyPool.Recover(nodeID) }
+func (a *App) RecoverProxy(nodeID string) error {
+	if a == nil || a.proxyPool == nil {
+		return fmt.Errorf("proxy pool module is unavailable")
+	}
+	return a.proxyPool.Recover(nodeID)
+}
 
-func (a *App) ResetProxyStats() { a.proxyPool.ResetStats() }
+func (a *App) ResetProxyStats() {
+	if a != nil && a.proxyPool != nil {
+		a.proxyPool.ResetStats()
+	}
+}
 
 func (a *App) ModelConfig() modelconfig.Config {
 	if a == nil || a.modelPolicy == nil {

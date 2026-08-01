@@ -217,7 +217,7 @@ func maxPricingInt64(left, right int64) int64 {
 }
 
 func (s *Store) activeModelPriceRules(ctx context.Context, preserveProvider bool) ([]ModelPriceRule, error) {
-	return activeModelPriceRulesFrom(ctx, s.db, preserveProvider)
+	return activeModelPriceRulesFrom(ctx, s.executor(ctx), preserveProvider)
 }
 
 func activeModelPriceRulesFrom(ctx context.Context, queryer sqlQueryer, preserveProvider bool) ([]ModelPriceRule, error) {
@@ -261,13 +261,13 @@ func (s *Store) ActiveModelPriceRules(ctx context.Context) ([]ModelPriceRule, er
 
 func (s *Store) migrateLegacyModelPrices(ctx context.Context) error {
 	var existing int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from model_price_rules`).Scan(&existing); err != nil {
+	if err := s.executor(ctx).QueryRowContext(ctx, `select count(*) from model_price_rules`).Scan(&existing); err != nil {
 		return err
 	}
 	if existing > 0 {
 		return nil
 	}
-	rows, err := s.db.QueryContext(ctx, `select model, prompt_price, completion_price, cache_price, updated_at_ms from model_prices`)
+	rows, err := s.executor(ctx).QueryContext(ctx, `select model, prompt_price, completion_price, cache_price, updated_at_ms from model_prices`)
 	if err != nil {
 		return err
 	}
@@ -343,7 +343,7 @@ func (s *Store) migrateProviderBoundModelPriceRules(ctx context.Context) error {
 		if _, _, err := s.UpsertModelPriceRule(ctx, rule, true); err != nil {
 			return err
 		}
-		if _, err := s.db.ExecContext(ctx, `delete from model_price_rules where model = ? and provider != ''`, rule.Model); err != nil {
+		if _, err := s.executor(ctx).ExecContext(ctx, `delete from model_price_rules where model = ? and provider != ''`, rule.Model); err != nil {
 			return err
 		}
 	}
@@ -373,7 +373,7 @@ func (s *Store) UpsertModelPriceRule(ctx context.Context, rule ModelPriceRule, a
 	if err := validateModelPriceRule(rule); err != nil {
 		return ModelPriceRule{}, false, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ModelPriceRule{}, false, err
 	}
@@ -434,12 +434,12 @@ func (s *Store) UpsertModelPriceRule(ctx context.Context, rule ModelPriceRule, a
 }
 
 func (s *Store) DeleteModelPriceRule(ctx context.Context, provider, model string) error {
-	_, err := s.db.ExecContext(ctx, `delete from model_price_rules where model = ?`, strings.TrimSpace(model))
+	_, err := s.executor(ctx).ExecContext(ctx, `delete from model_price_rules where model = ?`, strings.TrimSpace(model))
 	return err
 }
 
 func (s *Store) ObservedModels(ctx context.Context) ([]ObservedModel, error) {
-	rows, err := s.db.QueryContext(ctx, `select coalesce(max(provider), ''), model, coalesce(max(alias), ''), count(*), max(timestamp_ms)
+	rows, err := s.executor(ctx).QueryContext(ctx, `select coalesce(max(provider), ''), model, coalesce(max(alias), ''), count(*), max(timestamp_ms)
 		from usage_events where model != '' and model != '-' group by model order by max(timestamp_ms) desc`)
 	if err != nil {
 		return nil, err
@@ -466,7 +466,7 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 	if onlyUnpriced {
 		query += ` where estimated_cost is null`
 	}
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.executor(ctx).QueryContext(ctx, query)
 	if err != nil {
 		return 0, err
 	}
@@ -492,7 +492,7 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 	if err := rows.Close(); err != nil {
 		return 0, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}

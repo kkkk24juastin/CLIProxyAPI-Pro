@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FEATURES } from '@/config/features';
+import { FEATURES } from '../features';
 
 type QuotaCachedTimeProps = {
   quotaStatus: string;

@@ -331,7 +331,7 @@ func TestInspectionStateChangeClearsRoutingProtectionOwnership(t *testing.T) {
 					},
 				},
 			}
-			setAuthInspectionDisabledState(auth, disabled)
+			setProAuthDisabledState(auth, disabled)
 			if auth.Disabled != disabled {
 				t.Fatalf("disabled = %v want %v", auth.Disabled, disabled)
 			}

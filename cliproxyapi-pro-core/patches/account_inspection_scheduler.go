@@ -34,14 +34,14 @@ import (
 )
 
 const (
-	accountInspectionProviderAll            = "all"
-	accountInspectionDefaultIntervalMin     = 360
-	accountInspectionDefaultTimeoutMS       = 15000
-	accountInspectionMinTimeoutMS           = 3000
-	accountInspectionMaxTimeoutMS           = 30000
-	accountInspectionMaxWorkers             = 8
-	accountInspectionMaxDeleteWorkers       = 4
-	accountInspectionMaxRetries             = 1
+	accountInspectionProviderAll            = proinspection.ProviderAll
+	accountInspectionDefaultIntervalMin     = proinspection.DefaultIntervalMin
+	accountInspectionDefaultTimeoutMS       = proinspection.DefaultTimeoutMS
+	accountInspectionMinTimeoutMS           = proinspection.MinTimeoutMS
+	accountInspectionMaxTimeoutMS           = proinspection.MaxTimeoutMS
+	accountInspectionMaxWorkers             = proinspection.MaxWorkers
+	accountInspectionMaxDeleteWorkers       = proinspection.MaxDeleteWorkers
+	accountInspectionMaxRetries             = proinspection.MaxRetries
 	accountInspectionMaxRunDuration         = 30 * time.Minute
 	accountInspectionMaxProviderConcurrency = 2
 	accountInspectionMaxRefreshConcurrency  = 2
@@ -60,43 +60,12 @@ var accountInspectionWebSocketUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-var accountInspectionSupportedProviders = map[string]struct{}{
-	"antigravity": {},
-	"claude":      {},
-	"codex":       {},
-	"gemini-cli":  {},
-	"kimi":        {},
-	"xai":         {},
-}
+var accountInspectionSupportedProviders = proinspection.SupportedProviderSet()
 
 var accountInspectionSchedulers sync.Map
 
-type accountInspectionSettings struct {
-	TargetType                      string                                `json:"targetType"`
-	Workers                         int                                   `json:"workers"`
-	DeleteWorkers                   int                                   `json:"deleteWorkers"`
-	Timeout                         int                                   `json:"timeout"`
-	Retries                         int                                   `json:"retries"`
-	UsedPercentThreshold            int                                   `json:"usedPercentThreshold"`
-	SampleSize                      int                                   `json:"sampleSize"`
-	AntigravityDeepProbeEnabled     bool                                  `json:"antigravityDeepProbeEnabled"`
-	AntigravityDeepProbeModel       string                                `json:"antigravityDeepProbeModel"`
-	AntigravityQuotaMode            accountInspectionAntigravityQuotaMode `json:"antigravityQuotaMode"`
-	XAIDeepProbeEnabled             bool                                  `json:"xaiDeepProbeEnabled"`
-	XAIDeepProbeModel               string                                `json:"xaiDeepProbeModel"`
-	AutoExecuteQuotaLimitDisable    bool                                  `json:"autoExecuteQuotaLimitDisable"`
-	AutoExecuteQuotaRecoveryEnable  bool                                  `json:"autoExecuteQuotaRecoveryEnable"`
-	AutoExecuteAccountInvalidAction accountInspectionAction               `json:"autoExecuteAccountInvalidAction"`
-	AutoExecuteRequestErrorAction   accountInspectionAction               `json:"autoExecuteRequestErrorAction"`
-	AutoExecuteConfirmations        int                                   `json:"autoExecuteConfirmations,omitempty"`
-}
-
-type accountInspectionSchedule struct {
-	Enabled         bool                      `json:"enabled"`
-	IntervalMinutes int                       `json:"intervalMinutes"`
-	NextRunAt       int64                     `json:"nextRunAt"`
-	Settings        accountInspectionSettings `json:"settings"`
-}
+type accountInspectionSettings = proinspection.Settings
+type accountInspectionSchedule = proinspection.Schedule
 
 type accountInspectionLogEntry struct {
 	Time    int64  `json:"time"`
@@ -162,11 +131,11 @@ type accountInspectionRunState string
 
 type accountInspectionStreamMessageType string
 
-type accountInspectionDeepProbeStatus string
+type accountInspectionDeepProbeStatus = proinspection.DeepProbeStatus
 
-type accountInspectionAntigravityQuotaMode string
+type accountInspectionAntigravityQuotaMode = proinspection.AntigravityQuotaMode
 
-type accountInspectionAction string
+type accountInspectionAction = proinspection.Action
 
 const (
 	accountInspectionStreamSnapshot accountInspectionStreamMessageType = "snapshot"
@@ -175,24 +144,24 @@ const (
 )
 
 const (
-	accountInspectionActionNone    accountInspectionAction = "none"
-	accountInspectionActionKeep    accountInspectionAction = "keep"
-	accountInspectionActionDelete  accountInspectionAction = "delete"
-	accountInspectionActionDisable accountInspectionAction = "disable"
-	accountInspectionActionEnable  accountInspectionAction = "enable"
+	accountInspectionActionNone    = proinspection.ActionNone
+	accountInspectionActionKeep    = proinspection.ActionKeep
+	accountInspectionActionDelete  = proinspection.ActionDelete
+	accountInspectionActionDisable = proinspection.ActionDisable
+	accountInspectionActionEnable  = proinspection.ActionEnable
 )
 
 const (
-	accountInspectionDeepProbeSuccess        accountInspectionDeepProbeStatus = "success"
-	accountInspectionDeepProbeQuota          accountInspectionDeepProbeStatus = "quota"
-	accountInspectionDeepProbeAuthError      accountInspectionDeepProbeStatus = "auth_error"
-	accountInspectionDeepProbeTransientError accountInspectionDeepProbeStatus = "transient_error"
-	accountInspectionDeepProbeSkipped        accountInspectionDeepProbeStatus = "skipped"
+	accountInspectionDeepProbeSuccess        = proinspection.DeepProbeSuccess
+	accountInspectionDeepProbeQuota          = proinspection.DeepProbeQuota
+	accountInspectionDeepProbeAuthError      = proinspection.DeepProbeAuthError
+	accountInspectionDeepProbeTransientError = proinspection.DeepProbeTransientError
+	accountInspectionDeepProbeSkipped        = proinspection.DeepProbeSkipped
 )
 
 const (
-	accountInspectionAntigravityQuotaModeMaxUsed   accountInspectionAntigravityQuotaMode = "max-used"
-	accountInspectionAntigravityQuotaModeClaudeGpt accountInspectionAntigravityQuotaMode = "claude-gpt"
+	accountInspectionAntigravityQuotaModeMaxUsed   = proinspection.AntigravityQuotaModeMaxUsed
+	accountInspectionAntigravityQuotaModeClaudeGpt = proinspection.AntigravityQuotaModeClaudeGPT
 )
 
 const antigravityCodeAssistURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
@@ -292,6 +261,7 @@ type accountInspectionLogStreamMessage struct {
 
 type accountInspectionScheduler struct {
 	h                       *Handler
+	quota                   proinspection.QuotaGateway
 	path                    string
 	snapshotPath            string
 	trigger                 chan struct{}
@@ -303,7 +273,7 @@ type accountInspectionScheduler struct {
 	lastRunSettings         accountInspectionSettings
 	status                  accountInspectionStatus
 	healthCounts            accountInspectionHealthCounts
-	autoActionConfirmations map[string]int
+	autoActionConfirmations *proinspection.ConfirmationCounter
 	subscribers             map[chan accountInspectionLogStreamMessage]struct{}
 	lastProgressBroadcastAt int64
 	xaiDeepProbeOnce        sync.Once
@@ -312,6 +282,7 @@ type accountInspectionScheduler struct {
 	stopped                 bool
 	lifecycle               *proinspection.Lifecycle
 	backupUnregister        func()
+	backupHookUnregister    func()
 }
 
 type accountInspectionAccount struct {
@@ -332,16 +303,7 @@ type accountInspectionHTTPResult struct {
 	Header     http.Header
 }
 
-type accountInspectionDecision struct {
-	Action          accountInspectionAction
-	ActionReason    string
-	UsedPercent     *float64
-	IsQuota         bool
-	Error           string
-	ErrorDetail     string
-	DeepProbeStatus accountInspectionDeepProbeStatus
-	DeepProbeError  string
-}
+type accountInspectionDecision = proinspection.Decision
 
 type accountInspectionActionItem struct {
 	Key         string                  `json:"key"`
@@ -388,19 +350,26 @@ func (h *Handler) startAccountInspectionScheduler() {
 	}
 	scheduler := schedulerForHandler(h)
 	if scheduler != nil {
-		embeddedusage.SetAccountInspectionScheduleHandlers(scheduler.exportSchedule, scheduler.importSchedule)
-		embeddedusage.SetAccountInspectionSnapshotHandlers(scheduler.exportResultSnapshot, scheduler.importResultSnapshot)
-		embeddedusage.SetLegacyQuotaCleanupHandler(func(ctx context.Context) error {
-			scheduler.cleanupLegacyQuotaCaches(ctx)
-			return nil
-		})
+		unregisterHooks := []func(){
+			embeddedusage.RegisterAccountInspectionScheduleHandlers(scheduler.exportSchedule, scheduler.importSchedule),
+			embeddedusage.RegisterAccountInspectionSnapshotHandlers(scheduler.exportResultSnapshot, scheduler.importResultSnapshot),
+			embeddedusage.RegisterLegacyQuotaCleanupHandler(func(ctx context.Context) error {
+				scheduler.cleanupLegacyQuotaCaches(ctx)
+				return nil
+			}),
+		}
+		if h.authManager != nil {
+			unregisterHooks = append(unregisterHooks, embeddedusage.RegisterAuthRuntimeStateImportHandler(h.authManager.ApplyImportedRuntimeState))
+		}
+		scheduler.backupHookUnregister = func() {
+			for index := len(unregisterHooks) - 1; index >= 0; index-- {
+				unregisterHooks[index]()
+			}
+		}
 		scheduler.backupUnregister = probackup.Default.RegisterLifecycle(probackup.Lifecycle{
 			Pause:  scheduler.pauseForBackup,
 			Resume: scheduler.lifecycle.Resume,
 		})
-		if h.authManager != nil {
-			embeddedusage.SetAuthRuntimeStateImportHandler(h.authManager.ApplyImportedRuntimeState)
-		}
 		scheduler.cleanupLegacyQuotaCaches(context.Background())
 		if h.lifecycleContext != nil {
 			h.lifecycleWG.Add(1)
@@ -428,14 +397,13 @@ func (h *Handler) Shutdown() {
 			if scheduler.backupUnregister != nil {
 				scheduler.backupUnregister()
 			}
+			if scheduler.backupHookUnregister != nil {
+				scheduler.backupHookUnregister()
+			}
 		}
 		h.lifecycleWG.Wait()
 		accountInspectionSchedulers.Delete(h)
 		stopRoutingPolicyController(h)
-		embeddedusage.SetAccountInspectionScheduleHandlers(nil, nil)
-		embeddedusage.SetAccountInspectionSnapshotHandlers(nil, nil)
-		embeddedusage.SetAuthRuntimeStateImportHandler(nil)
-		embeddedusage.SetLegacyQuotaCleanupHandler(nil)
 	})
 }
 
@@ -455,11 +423,12 @@ func newAccountInspectionScheduler(h *Handler) *accountInspectionScheduler {
 	schedulePath := accountInspectionSchedulePath()
 	scheduler := &accountInspectionScheduler{
 		h:                       h,
+		quota:                   accountInspectionQuotaAdapter{h: h},
 		path:                    schedulePath,
 		snapshotPath:            accountInspectionResultSnapshotPath(schedulePath),
 		trigger:                 make(chan struct{}, 1),
 		subscribers:             make(map[chan accountInspectionLogStreamMessage]struct{}),
-		autoActionConfirmations: make(map[string]int),
+		autoActionConfirmations: proinspection.NewConfirmationCounter(),
 		lifecycle:               &proinspection.Lifecycle{},
 		schedule: accountInspectionSchedule{
 			Enabled:         false,
@@ -493,112 +462,15 @@ func accountInspectionResultSnapshotPath(schedulePath string) string {
 }
 
 func defaultAccountInspectionSettings() accountInspectionSettings {
-	return accountInspectionSettings{
-		TargetType:                      accountInspectionProviderAll,
-		Workers:                         4,
-		DeleteWorkers:                   4,
-		Timeout:                         accountInspectionDefaultTimeoutMS,
-		Retries:                         0,
-		UsedPercentThreshold:            100,
-		SampleSize:                      0,
-		AntigravityDeepProbeEnabled:     false,
-		AntigravityDeepProbeModel:       "claude-sonnet-4-6",
-		AntigravityQuotaMode:            accountInspectionAntigravityQuotaModeClaudeGpt,
-		XAIDeepProbeEnabled:             false,
-		XAIDeepProbeModel:               "grok-4.5",
-		AutoExecuteQuotaLimitDisable:    false,
-		AutoExecuteQuotaRecoveryEnable:  false,
-		AutoExecuteAccountInvalidAction: accountInspectionActionNone,
-		AutoExecuteRequestErrorAction:   accountInspectionActionNone,
-		AutoExecuteConfirmations:        1,
-	}
+	return proinspection.DefaultSettings()
 }
 
 func normalizeAccountInspectionSchedule(input accountInspectionSchedule) accountInspectionSchedule {
-	defaults := defaultAccountInspectionSettings()
-	settings := input.Settings
-	settings.TargetType = strings.ToLower(strings.TrimSpace(settings.TargetType))
-	if settings.TargetType == "" {
-		settings.TargetType = defaults.TargetType
-	}
-	if _, ok := accountInspectionSupportedProviders[settings.TargetType]; !ok && settings.TargetType != accountInspectionProviderAll {
-		settings.TargetType = defaults.TargetType
-	}
-	if settings.Workers <= 0 {
-		settings.Workers = defaults.Workers
-	}
-	if settings.Workers > accountInspectionMaxWorkers {
-		settings.Workers = accountInspectionMaxWorkers
-	}
-	if settings.DeleteWorkers <= 0 {
-		settings.DeleteWorkers = settings.Workers
-	}
-	if settings.DeleteWorkers > accountInspectionMaxDeleteWorkers {
-		settings.DeleteWorkers = accountInspectionMaxDeleteWorkers
-	}
-	if settings.Timeout <= 0 {
-		settings.Timeout = defaults.Timeout
-	}
-	if settings.Timeout < accountInspectionMinTimeoutMS {
-		settings.Timeout = accountInspectionMinTimeoutMS
-	}
-	if settings.Timeout > accountInspectionMaxTimeoutMS {
-		settings.Timeout = accountInspectionMaxTimeoutMS
-	}
-	if settings.Retries < 0 {
-		settings.Retries = 0
-	}
-	if settings.Retries > accountInspectionMaxRetries {
-		settings.Retries = accountInspectionMaxRetries
-	}
-	if settings.UsedPercentThreshold < 0 {
-		settings.UsedPercentThreshold = 0
-	}
-	if settings.UsedPercentThreshold > 100 {
-		settings.UsedPercentThreshold = 100
-	}
-	if settings.SampleSize < 0 {
-		settings.SampleSize = 0
-	}
-	if settings.AutoExecuteConfirmations <= 0 {
-		settings.AutoExecuteConfirmations = defaults.AutoExecuteConfirmations
-	}
-	if settings.AutoExecuteConfirmations > 5 {
-		settings.AutoExecuteConfirmations = 5
-	}
-	settings.AntigravityDeepProbeModel = strings.TrimSpace(settings.AntigravityDeepProbeModel)
-	if settings.AntigravityDeepProbeModel == "" {
-		settings.AntigravityDeepProbeModel = defaults.AntigravityDeepProbeModel
-	}
-	settings.AntigravityQuotaMode = accountInspectionAntigravityQuotaMode(strings.ToLower(strings.TrimSpace(string(settings.AntigravityQuotaMode))))
-	if settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeMaxUsed && settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeClaudeGpt {
-		settings.AntigravityQuotaMode = defaults.AntigravityQuotaMode
-	}
-	settings.XAIDeepProbeModel = strings.TrimSpace(settings.XAIDeepProbeModel)
-	if settings.XAIDeepProbeModel == "" {
-		settings.XAIDeepProbeModel = defaults.XAIDeepProbeModel
-	}
-	settings.AutoExecuteAccountInvalidAction = normalizeAccountInspectionAutoAction(settings.AutoExecuteAccountInvalidAction)
-	settings.AutoExecuteRequestErrorAction = normalizeAccountInspectionAutoAction(settings.AutoExecuteRequestErrorAction)
-	input.Settings = settings
-	if input.IntervalMinutes <= 0 {
-		input.IntervalMinutes = accountInspectionDefaultIntervalMin
-	}
-	if input.Enabled && input.NextRunAt <= 0 {
-		input.NextRunAt = time.Now().Add(time.Duration(input.IntervalMinutes) * time.Minute).UnixMilli()
-	}
-	if !input.Enabled {
-		input.NextRunAt = 0
-	}
-	return input
+	return proinspection.NormalizeSchedule(input, time.Now())
 }
 
 func normalizeAccountInspectionAutoAction(action accountInspectionAction) accountInspectionAction {
-	action = accountInspectionAction(strings.ToLower(strings.TrimSpace(string(action))))
-	if action == accountInspectionActionDisable || action == accountInspectionActionDelete {
-		return action
-	}
-	return accountInspectionActionNone
+	return proinspection.NormalizeAutoAction(action)
 }
 
 func (s *accountInspectionScheduler) load() {
@@ -1782,34 +1654,7 @@ func writeAccountInspectionWebSocketMessage(conn *websocket.Conn, message accoun
 }
 
 func runAccountInspectionWorkers(total int, workers int, beforeNext func() bool, run func(index int) bool) {
-	if workers <= 0 {
-		workers = 1
-	}
-	cursor := 0
-	var cursorMu sync.Mutex
-	var wg sync.WaitGroup
-	for i := 0; i < workers && i < total; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				if beforeNext != nil && !beforeNext() {
-					return
-				}
-				cursorMu.Lock()
-				index := cursor
-				cursor++
-				cursorMu.Unlock()
-				if index >= total {
-					return
-				}
-				if !run(index) {
-					return
-				}
-			}
-		}()
-	}
-	wg.Wait()
+	proinspection.RunWorkers(total, workers, beforeNext, run)
 }
 
 func (s *accountInspectionScheduler) executeInspection(ctx context.Context, settings accountInspectionSettings) ([]accountInspectionResult, accountInspectionSummary, error) {
@@ -2662,19 +2507,22 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 }
 
 func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
+	if s == nil || s.quota == nil {
+		return accountInspectionDecision{}, intPtr(http.StatusServiceUnavailable), fmt.Errorf("quota gateway unavailable")
+	}
 	attemptCtx, cancel := context.WithTimeout(ctx, time.Duration(settings.Timeout)*time.Millisecond)
-	result, serviceStatus, _, err := s.h.fetchAndPersistPluginQuota(attemptCtx, account.Auth)
+	result, err := s.quota.FetchQuota(attemptCtx, account.AuthIndex)
 	cancel()
 	for attempt := 0; err != nil && attempt < settings.Retries && ctx.Err() == nil; attempt++ {
 		attemptCtx, cancel = context.WithTimeout(ctx, time.Duration(settings.Timeout)*time.Millisecond)
-		result, serviceStatus, _, err = s.h.fetchAndPersistPluginQuota(attemptCtx, account.Auth)
+		result, err = s.quota.FetchQuota(attemptCtx, account.AuthIndex)
 		cancel()
 	}
 	upstreamStatus := result.UpstreamStatus
 	if err != nil {
 		status := upstreamStatus
 		if status == 0 {
-			status = serviceStatus
+			status = result.ServiceStatus
 		}
 		if isQuotaHTTPStatus(upstreamStatus) {
 			return quotaUnavailableDecision(account, "Gemini CLI 额度不可用，建议禁用账号", ""), intPtr(upstreamStatus), nil
@@ -3303,7 +3151,7 @@ func syncAuthInspectionLastError(auth *coreauth.Auth, lastError *coreauth.Error)
 	}
 }
 
-func setAuthInspectionDisabledState(auth *coreauth.Auth, disabled bool) {
+func setProAuthDisabledState(auth *coreauth.Auth, disabled bool) {
 	if auth == nil {
 		return
 	}
@@ -3381,8 +3229,8 @@ func cloneAnyMapForInspection(in map[string]any) map[string]any {
 	return out
 }
 
-func (s *accountInspectionScheduler) preferredAuthForPluginVirtualWrite(auth *coreauth.Auth) *coreauth.Auth {
-	if auth == nil || !coreauth.IsPluginVirtualAuth(auth) || s == nil || s.h == nil || s.h.authManager == nil {
+func (h *Handler) preferredAuthForPluginVirtualWrite(auth *coreauth.Auth) *coreauth.Auth {
+	if auth == nil || !coreauth.IsPluginVirtualAuth(auth) || h == nil || h.authManager == nil {
 		return auth
 	}
 	sourcePath := pluginVirtualSourcePath(auth)
@@ -3390,7 +3238,7 @@ func (s *accountInspectionScheduler) preferredAuthForPluginVirtualWrite(auth *co
 		return auth
 	}
 	var firstVirtual *coreauth.Auth
-	for _, candidate := range s.h.authManager.List() {
+	for _, candidate := range h.authManager.List() {
 		if candidate == nil || !sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
 			continue
 		}
@@ -3489,30 +3337,30 @@ func writePluginVirtualManagedMetadataToSourceFile(sourcePath string, auth *core
 	return os.WriteFile(sourcePath, append(raw, '\n'), 0o600)
 }
 
-func (s *accountInspectionScheduler) updatePluginVirtualRuntimeAuths(ctx context.Context, sourceAuth *coreauth.Auth, mutate func(*coreauth.Auth)) {
-	if s == nil || s.h == nil || s.h.authManager == nil || sourceAuth == nil || mutate == nil {
+func (h *Handler) updatePluginVirtualRuntimeAuths(ctx context.Context, sourceAuth *coreauth.Auth, mutate func(*coreauth.Auth)) {
+	if h == nil || h.authManager == nil || sourceAuth == nil || mutate == nil {
 		return
 	}
 	sourcePath := pluginVirtualSourcePath(sourceAuth)
 	if sourcePath == "" {
 		mutate(sourceAuth)
-		_, _ = s.h.authManager.Update(ctx, sourceAuth)
+		_, _ = h.authManager.Update(ctx, sourceAuth)
 		return
 	}
-	for _, candidate := range s.h.authManager.List() {
+	for _, candidate := range h.authManager.List() {
 		if candidate == nil || !sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
 			continue
 		}
 		mutate(candidate)
-		_, _ = s.h.authManager.Update(ctx, candidate)
+		_, _ = h.authManager.Update(ctx, candidate)
 	}
 }
 
-func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
-	if s == nil || s.h == nil || s.h.authManager == nil {
+func (h *Handler) updateProAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
+	if h == nil || h.authManager == nil {
 		return fmt.Errorf("core auth manager unavailable")
 	}
-	auth := s.h.authByIndex(authIndex)
+	auth := h.authByIndex(authIndex)
 	if auth == nil {
 		return fmt.Errorf("auth not found")
 	}
@@ -3520,7 +3368,7 @@ func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, a
 		return nil
 	}
 	if coreauth.IsPluginVirtualAuth(auth) {
-		sourceAuth := s.preferredAuthForPluginVirtualWrite(auth)
+		sourceAuth := h.preferredAuthForPluginVirtualWrite(auth)
 		var sourceMetadata map[string]any
 		if coreauth.IsPluginVirtualAuth(sourceAuth) {
 			var err error
@@ -3530,7 +3378,7 @@ func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, a
 			}
 		}
 		mutate(sourceAuth)
-		s.updatePluginVirtualRuntimeAuths(ctx, sourceAuth, mutate)
+		h.updatePluginVirtualRuntimeAuths(ctx, sourceAuth, mutate)
 		if coreauth.IsPluginVirtualAuth(sourceAuth) {
 			return writePluginVirtualManagedMetadataToSourceFile(pluginVirtualSourcePath(sourceAuth), sourceAuth, sourceMetadata)
 		}
@@ -3540,7 +3388,7 @@ func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, a
 		return nil
 	}
 	mutate(auth)
-	updated, err := s.h.authManager.Update(ctx, auth)
+	updated, err := h.authManager.Update(ctx, auth)
 	if err != nil {
 		return err
 	}
@@ -3550,22 +3398,22 @@ func (s *accountInspectionScheduler) updateInspectionAuth(ctx context.Context, a
 	return nil
 }
 
-func (s *accountInspectionScheduler) updateInspectionErrorAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
-	if s == nil || s.h == nil || s.h.authManager == nil {
+func (h *Handler) updateProErrorAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
+	if h == nil || h.authManager == nil {
 		return fmt.Errorf("core auth manager unavailable")
 	}
-	auth := s.h.authByIndex(authIndex)
+	auth := h.authByIndex(authIndex)
 	if auth == nil {
 		return fmt.Errorf("auth not found")
 	}
 	if !coreauth.IsPluginVirtualAuth(auth) {
-		return s.updateInspectionAuth(ctx, authIndex, mutate)
+		return h.updateProAuth(ctx, authIndex, mutate)
 	}
 	if mutate == nil {
 		return nil
 	}
 	mutate(auth)
-	updated, err := s.h.authManager.Update(ctx, auth)
+	updated, err := h.authManager.Update(ctx, auth)
 	if err != nil {
 		return err
 	}
@@ -3579,7 +3427,7 @@ func (s *accountInspectionScheduler) syncInspectionAuthError(ctx context.Context
 	if s == nil || s.h == nil || s.h.authManager == nil || account.AuthIndex == "" {
 		return
 	}
-	err := s.updateInspectionErrorAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
+	err := s.h.updateProErrorAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
 		auth.Status = coreauth.StatusError
 		auth.StatusMessage = message
 		auth.Unavailable = true
@@ -3602,7 +3450,7 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 	if !isInspectionAuthErrorCode(authInspectionLastErrorCode(auth)) {
 		return
 	}
-	err := s.updateInspectionErrorAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
+	err := s.h.updateProErrorAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
 		if auth.Disabled {
 			auth.Status = coreauth.StatusDisabled
 		} else {
@@ -3653,10 +3501,7 @@ func (s *accountInspectionScheduler) syncInspectionAuthStatus(ctx context.Contex
 }
 
 func authErrorDecision(account accountInspectionAccount, status int) accountInspectionDecision {
-	if account.Disabled {
-		return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: fmt.Sprintf("接口返回 %d，但账号已禁用", status)}
-	}
-	return accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: fmt.Sprintf("接口返回 %d，建议禁用账号", status)}
+	return proinspection.AuthErrorDecision(account.Disabled, status)
 }
 
 func accountInspectionErrorCode(status *int, fallback string) string {
@@ -3693,45 +3538,15 @@ func accountInspectionDecisionErrorCode(provider string, decision accountInspect
 }
 
 func healthyDecision(account accountInspectionAccount) accountInspectionDecision {
-	if account.Disabled {
-		return accountInspectionDecision{Action: accountInspectionActionEnable, ActionReason: "账号恢复健康，建议重新启用"}
-	}
-	return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: "无需处理"}
+	return proinspection.HealthyDecision(account.Disabled)
 }
 
 func quotaDecision(account accountInspectionAccount, used *float64, hasQuotaData bool, threshold int) accountInspectionDecision {
-	over := used != nil && *used >= float64(threshold)
-	if (over || !hasQuotaData) && account.Disabled {
-		reason := "未获取到可判断额度，保留账号"
-		if over {
-			reason = "额度达到阈值，但账号已禁用"
-		}
-		return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: reason, UsedPercent: used, IsQuota: over}
-	}
-	if over {
-		return accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "额度达到阈值，建议禁用账号", UsedPercent: used, IsQuota: true}
-	}
-	if !hasQuotaData {
-		return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: "未获取到可判断额度，保留账号", UsedPercent: used}
-	}
-	if account.Disabled {
-		return accountInspectionDecision{Action: accountInspectionActionEnable, ActionReason: "额度可用，建议重新启用账号", UsedPercent: used}
-	}
-	return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: "额度可用，无需处理", UsedPercent: used}
+	return proinspection.QuotaDecision(account.Disabled, used, hasQuotaData, threshold)
 }
 
 func quotaUnavailableDecision(account accountInspectionAccount, reason string, body string) accountInspectionDecision {
-	action := accountInspectionActionDisable
-	if account.Disabled {
-		action = accountInspectionActionKeep
-		reason = strings.TrimSuffix(reason, "，建议禁用账号") + "，但账号已禁用"
-	}
-	return accountInspectionDecision{
-		Action:       action,
-		ActionReason: reason,
-		IsQuota:      true,
-		ErrorDetail:  inspectionHTTPErrorDetail(body),
-	}
+	return proinspection.QuotaUnavailableDecision(account.Disabled, reason, inspectionHTTPErrorDetail(body))
 }
 
 func codexDecision(account accountInspectionAccount, status int, used *float64, isQuota bool, threshold int) accountInspectionDecision {
@@ -4001,21 +3816,17 @@ func (s *accountInspectionScheduler) applyAutomaticActions(ctx context.Context, 
 }
 
 func (s *accountInspectionScheduler) confirmAutoAction(result accountInspectionResult, action accountInspectionAction, required int) (bool, int, int) {
-	if required <= 1 {
-		return true, 1, 1
-	}
 	key := autoActionConfirmationKey(result, action)
-	if key == "" {
+	if s == nil {
 		return true, 1, required
 	}
 	s.mu.Lock()
 	if s.autoActionConfirmations == nil {
-		s.autoActionConfirmations = make(map[string]int)
+		s.autoActionConfirmations = proinspection.NewConfirmationCounter()
 	}
-	count := s.autoActionConfirmations[key] + 1
-	s.autoActionConfirmations[key] = count
+	confirmations := s.autoActionConfirmations
 	s.mu.Unlock()
-	return count >= required, count, required
+	return confirmations.Confirm(key, required)
 }
 
 func (s *accountInspectionScheduler) clearAutoActionConfirmation(result accountInspectionResult) {
@@ -4026,13 +3837,14 @@ func (s *accountInspectionScheduler) clearAutoActionConfirmation(result accountI
 	if keyPrefix == "" {
 		return
 	}
-	s.mu.Lock()
-	for key := range s.autoActionConfirmations {
-		if strings.HasPrefix(key, keyPrefix+"|") {
-			delete(s.autoActionConfirmations, key)
+	if s != nil {
+		s.mu.Lock()
+		confirmations := s.autoActionConfirmations
+		s.mu.Unlock()
+		if confirmations != nil {
+			confirmations.ClearPrefix(keyPrefix + "|")
 		}
 	}
-	s.mu.Unlock()
 }
 
 func autoActionConfirmationKey(result accountInspectionResult, action accountInspectionAction) string {
@@ -4123,8 +3935,8 @@ func (s *accountInspectionScheduler) executeAction(ctx context.Context, result a
 	}
 	switch action {
 	case accountInspectionActionDisable, accountInspectionActionEnable:
-		return s.updateInspectionAuth(ctx, result.AuthIndex, func(auth *coreauth.Auth) {
-			setAuthInspectionDisabledState(auth, action == accountInspectionActionDisable)
+		return s.h.updateProAuth(ctx, result.AuthIndex, func(auth *coreauth.Auth) {
+			setProAuthDisabledState(auth, action == accountInspectionActionDisable)
 		})
 	case accountInspectionActionDelete:
 		if s.pluginVirtualSourceAuthCount(auth) > 1 {
@@ -4358,7 +4170,7 @@ func (s *accountInspectionScheduler) cleanupLegacyQuotaCacheFromAuth(ctx context
 	if _, exists := auth.Metadata["quota_cache"]; !exists {
 		return nil
 	}
-	return s.updateInspectionAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
+	return s.h.updateProAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
 		if auth.Metadata == nil {
 			return
 		}

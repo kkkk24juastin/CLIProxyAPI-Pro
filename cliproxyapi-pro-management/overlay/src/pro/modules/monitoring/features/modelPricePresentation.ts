@@ -1,7 +1,7 @@
 import type {
   ModelPriceRule,
   ModelPriceSyncChangeAction,
-} from '@/utils/usage';
+} from '@/pro/modules/monitoring/features/usage';
 
 export type PriceTierDraft = {
   contextSize: string;

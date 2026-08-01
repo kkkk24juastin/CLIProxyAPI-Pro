@@ -20,7 +20,7 @@ import {
   formatCompactNumber,
   type ModelPriceSyncResult,
   type ModelPriceSyncState,
-} from '@/utils/usage';
+} from '@/pro/modules/monitoring/features/usage';
 import styles from '../monitoring.module.scss';
 
 export function ModelPriceManagerModal({

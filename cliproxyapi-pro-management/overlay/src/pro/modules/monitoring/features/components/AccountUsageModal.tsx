@@ -26,7 +26,7 @@ import {
   formatDurationMs,
   formatUsd,
   normalizeAuthIndex,
-} from '@/utils/usage';
+} from '@/pro/modules/monitoring/features/usage';
 import { buildAccountUsageLogPath, ratio, resolveAccountUsageLabel } from '../accountUsage';
 import {
   buildConfiguredApiKeyMap,

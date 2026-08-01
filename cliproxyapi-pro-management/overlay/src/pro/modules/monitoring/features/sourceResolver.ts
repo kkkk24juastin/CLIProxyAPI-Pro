@@ -1,6 +1,7 @@
 import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
-import type { CredentialInfo, SourceInfo } from '@/types/sourceInfo';
-import { buildCandidateUsageSourceIds, normalizeAuthIndex } from '@/utils/usage';
+import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
+import type { CredentialInfo, SourceInfo } from './sourceInfo';
+import { buildCandidateUsageSourceIds, normalizeAuthIndex } from './usage';
 
 export interface SourceInfoMapInput {
   geminiApiKeys?: GeminiKeyConfig[];
@@ -17,24 +18,6 @@ export interface SourceInfoMap {
   byAuthIndex: Map<string, SourceInfoEntry | null>;
   bySource: Map<string, SourceInfoEntry | null>;
 }
-
-const PROVIDER_DISPLAY_LABELS: Record<string, string> = {
-  antigravity: 'Antigravity',
-  claude: 'Claude',
-  codex: 'Codex',
-  gemini: 'Gemini',
-  aistudio: 'AI Studio',
-  kimi: 'Kimi',
-  vertex: 'Vertex',
-  xai: 'xAI',
-  iflow: 'iFlow',
-  'openai-compatibility': 'OpenAI Compat',
-};
-
-export const resolveProviderDisplayLabel = (provider: string) => {
-  const key = provider.trim().toLowerCase();
-  return PROVIDER_DISPLAY_LABELS[key] ?? (key ? key.charAt(0).toUpperCase() + key.slice(1) : provider);
-};
 
 const buildProviderIdentityKey = (type: string, index: number) => `${type}:${index}`;
 

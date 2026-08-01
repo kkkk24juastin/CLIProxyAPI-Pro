@@ -33,8 +33,8 @@ import {
   readStringValue,
   resolveAuthProvider,
 } from '@/utils/quota';
-import { resolveProviderDisplayLabel } from '@/utils/sourceResolver';
-import { resolveAccountPlanLabel, type AccountPlanQuotaStore } from './accountPlan';
+import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
+import { resolveAccountPlanLabel, type AccountPlanQuotaStore } from '@/pro/modules/quota';
 import styles from './accountInspection.module.scss';
 
 export type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';

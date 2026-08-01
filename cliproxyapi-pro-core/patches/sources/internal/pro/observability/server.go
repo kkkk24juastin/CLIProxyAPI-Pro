@@ -903,74 +903,76 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return flushRuntimeStateWrites(ctx, s.store)
 		},
 		ImportDatabase: func(ctx context.Context) error {
-			if _, err := eventStage.Seek(0, 0); err != nil {
-				return err
-			}
-			events := make([]internalusage.Event, 0, batchSize)
-			flushEvents := func() error {
-				if len(events) == 0 {
+			return s.store.RunImportTransaction(ctx, func(ctx context.Context) error {
+				if _, err := eventStage.Seek(0, 0); err != nil {
+					return err
+				}
+				events := make([]internalusage.Event, 0, batchSize)
+				flushEvents := func() error {
+					if len(events) == 0 {
+						return nil
+					}
+					batchResult, err := s.store.InsertEvents(ctx, events)
+					if err != nil {
+						return err
+					}
+					result.Inserted += batchResult.Inserted
+					result.Skipped += batchResult.Skipped
+					events = events[:0]
 					return nil
 				}
-				batchResult, err := s.store.InsertEvents(ctx, events)
-				if err != nil {
+				stagedReader := bufio.NewScanner(eventStage)
+				stagedReader.Buffer(make([]byte, 64*1024), 64*1024*1024)
+				for stagedReader.Scan() {
+					event, err := internalusage.NormalizeRaw(stagedReader.Bytes())
+					if err != nil {
+						return err
+					}
+					events = append(events, event)
+					if len(events) >= batchSize {
+						if err := flushEvents(); err != nil {
+							return err
+						}
+					}
+				}
+				if err := stagedReader.Err(); err != nil {
 					return err
 				}
-				result.Inserted += batchResult.Inserted
-				result.Skipped += batchResult.Skipped
-				events = events[:0]
-				return nil
-			}
-			stagedReader := bufio.NewScanner(eventStage)
-			stagedReader.Buffer(make([]byte, 64*1024), 64*1024*1024)
-			for stagedReader.Scan() {
-				event, err := internalusage.NormalizeRaw(stagedReader.Bytes())
-				if err != nil {
+				if err := flushEvents(); err != nil {
 					return err
 				}
-				events = append(events, event)
-				if len(events) >= batchSize {
-					if err := flushEvents(); err != nil {
+				if modelPrices != nil {
+					if err := s.store.SetModelPrices(ctx, modelPrices); err != nil {
 						return err
 					}
 				}
-			}
-			if err := stagedReader.Err(); err != nil {
-				return err
-			}
-			if err := flushEvents(); err != nil {
-				return err
-			}
-			if modelPrices != nil {
-				if err := s.store.SetModelPrices(ctx, modelPrices); err != nil {
+				for _, rule := range modelPriceRules {
+					if _, _, err := s.store.UpsertModelPriceRule(ctx, rule, true); err != nil {
+						return err
+					}
+				}
+				if modelPrices != nil || len(modelPriceRules) > 0 {
+					if _, err := s.store.RecalculateEventCosts(ctx, true); err != nil {
+						return err
+					}
+				}
+				var err error
+				importedQuotaEntries, err = s.store.ImportQuotaCache(ctx, quotaEntries)
+				if err != nil {
 					return err
 				}
-			}
-			for _, rule := range modelPriceRules {
-				if _, _, err := s.store.UpsertModelPriceRule(ctx, rule, true); err != nil {
+				importedRoutingCursors, importedAuthRuntimeStats, err = s.store.ImportRuntimeState(ctx, routingCursors, authRuntimeStats)
+				if err != nil {
 					return err
 				}
-			}
-			if modelPrices != nil || len(modelPriceRules) > 0 {
-				if _, err := s.store.RecalculateEventCosts(ctx, true); err != nil {
-					return err
+				if monitoringSettings != nil {
+					if err := s.store.SetMonitoringSettings(ctx, *monitoringSettings); err != nil {
+						return err
+					}
 				}
-			}
-			var err error
-			importedQuotaEntries, err = s.store.ImportQuotaCache(ctx, quotaEntries)
-			if err != nil {
+				importedProSettings, err = s.store.ImportProSettings(ctx, proSettings)
 				return err
-			}
-			importedRoutingCursors, importedAuthRuntimeStats, err = s.store.ImportRuntimeState(ctx, routingCursors, authRuntimeStats)
-			if err != nil {
-				return err
-			}
-			if monitoringSettings != nil {
-				if err := s.store.SetMonitoringSettings(ctx, *monitoringSettings); err != nil {
-					return err
-				}
-			}
-			importedProSettings, err = s.store.ImportProSettings(ctx, proSettings)
-			return err
+			})
 		},
 		ReloadConfiguration: func(ctx context.Context) error {
 			if importedProSettings == 0 {

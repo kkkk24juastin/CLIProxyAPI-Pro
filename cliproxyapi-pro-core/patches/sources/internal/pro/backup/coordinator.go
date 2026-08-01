@@ -37,16 +37,47 @@ type Lifecycle struct {
 	Resume func(context.Context) error
 }
 
+type inspectionRegistration struct {
+	owner    uint64
+	exporter JSONExporter
+	importer JSONImporter
+}
+
+type runtimeRegistration struct {
+	owner    uint64
+	importer RuntimeStateImporter
+}
+
+type cleanupRegistration struct {
+	owner   uint64
+	cleanup func(context.Context) error
+}
+
+type lifecycleRegistration struct {
+	owner     uint64
+	lifecycle Lifecycle
+}
+
 type Coordinator struct {
-	mu sync.RWMutex
+	mu       sync.RWMutex
+	importMu sync.Mutex
 
 	scheduleExporter JSONExporter
 	scheduleImporter JSONImporter
+	scheduleOwner    uint64
+	scheduleOwners   []inspectionRegistration
 	snapshotExporter JSONExporter
 	snapshotImporter JSONImporter
+	snapshotOwner    uint64
+	snapshotOwners   []inspectionRegistration
 	runtimeImporter  RuntimeStateImporter
+	runtimeOwner     uint64
+	runtimeOwners    []runtimeRegistration
 	legacyCleanup    func(context.Context) error
-	lifecycles       []Lifecycle
+	cleanupOwner     uint64
+	cleanupOwners    []cleanupRegistration
+	nextOwner        uint64
+	lifecycles       []lifecycleRegistration
 }
 
 func NewCoordinator() *Coordinator { return &Coordinator{} }
@@ -58,8 +89,44 @@ func (c *Coordinator) SetInspectionSchedule(exporter JSONExporter, importer JSON
 		return
 	}
 	c.mu.Lock()
+	c.nextOwner++
+	c.scheduleOwner = c.nextOwner
+	c.scheduleOwners = nil
 	c.scheduleExporter, c.scheduleImporter = exporter, importer
 	c.mu.Unlock()
+}
+
+// RegisterInspectionSchedule installs lifecycle-owned inspection hooks. The
+// returned function only removes this exact registration, so an older owner
+// cannot clear a newer replacement during shutdown.
+func (c *Coordinator) RegisterInspectionSchedule(exporter JSONExporter, importer JSONImporter) func() {
+	if c == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	c.nextOwner++
+	owner := c.nextOwner
+	c.scheduleOwner = owner
+	c.scheduleExporter, c.scheduleImporter = exporter, importer
+	c.scheduleOwners = append(c.scheduleOwners, inspectionRegistration{owner: owner, exporter: exporter, importer: importer})
+	c.mu.Unlock()
+	return func() {
+		c.mu.Lock()
+		if c.scheduleOwner == owner {
+			c.scheduleOwners = removeInspectionRegistration(c.scheduleOwners, owner)
+			if count := len(c.scheduleOwners); count > 0 {
+				current := c.scheduleOwners[count-1]
+				c.scheduleOwner = current.owner
+				c.scheduleExporter, c.scheduleImporter = current.exporter, current.importer
+			} else {
+				c.scheduleExporter, c.scheduleImporter = nil, nil
+				c.scheduleOwner = 0
+			}
+		} else {
+			c.scheduleOwners = removeInspectionRegistration(c.scheduleOwners, owner)
+		}
+		c.mu.Unlock()
+	}
 }
 
 func (c *Coordinator) SetInspectionSnapshot(exporter JSONExporter, importer JSONImporter) {
@@ -67,8 +134,41 @@ func (c *Coordinator) SetInspectionSnapshot(exporter JSONExporter, importer JSON
 		return
 	}
 	c.mu.Lock()
+	c.nextOwner++
+	c.snapshotOwner = c.nextOwner
+	c.snapshotOwners = nil
 	c.snapshotExporter, c.snapshotImporter = exporter, importer
 	c.mu.Unlock()
+}
+
+func (c *Coordinator) RegisterInspectionSnapshot(exporter JSONExporter, importer JSONImporter) func() {
+	if c == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	c.nextOwner++
+	owner := c.nextOwner
+	c.snapshotOwner = owner
+	c.snapshotExporter, c.snapshotImporter = exporter, importer
+	c.snapshotOwners = append(c.snapshotOwners, inspectionRegistration{owner: owner, exporter: exporter, importer: importer})
+	c.mu.Unlock()
+	return func() {
+		c.mu.Lock()
+		if c.snapshotOwner == owner {
+			c.snapshotOwners = removeInspectionRegistration(c.snapshotOwners, owner)
+			if count := len(c.snapshotOwners); count > 0 {
+				current := c.snapshotOwners[count-1]
+				c.snapshotOwner = current.owner
+				c.snapshotExporter, c.snapshotImporter = current.exporter, current.importer
+			} else {
+				c.snapshotExporter, c.snapshotImporter = nil, nil
+				c.snapshotOwner = 0
+			}
+		} else {
+			c.snapshotOwners = removeInspectionRegistration(c.snapshotOwners, owner)
+		}
+		c.mu.Unlock()
+	}
 }
 
 func (c *Coordinator) SetRuntimeStateImporter(importer RuntimeStateImporter) {
@@ -76,8 +176,40 @@ func (c *Coordinator) SetRuntimeStateImporter(importer RuntimeStateImporter) {
 		return
 	}
 	c.mu.Lock()
+	c.nextOwner++
+	c.runtimeOwner = c.nextOwner
+	c.runtimeOwners = nil
 	c.runtimeImporter = importer
 	c.mu.Unlock()
+}
+
+func (c *Coordinator) RegisterRuntimeStateImporter(importer RuntimeStateImporter) func() {
+	if c == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	c.nextOwner++
+	owner := c.nextOwner
+	c.runtimeOwner = owner
+	c.runtimeImporter = importer
+	c.runtimeOwners = append(c.runtimeOwners, runtimeRegistration{owner: owner, importer: importer})
+	c.mu.Unlock()
+	return func() {
+		c.mu.Lock()
+		if c.runtimeOwner == owner {
+			c.runtimeOwners = removeRuntimeRegistration(c.runtimeOwners, owner)
+			if count := len(c.runtimeOwners); count > 0 {
+				current := c.runtimeOwners[count-1]
+				c.runtimeOwner, c.runtimeImporter = current.owner, current.importer
+			} else {
+				c.runtimeImporter = nil
+				c.runtimeOwner = 0
+			}
+		} else {
+			c.runtimeOwners = removeRuntimeRegistration(c.runtimeOwners, owner)
+		}
+		c.mu.Unlock()
+	}
 }
 
 func (c *Coordinator) SetLegacyCleanup(cleanup func(context.Context) error) {
@@ -85,8 +217,67 @@ func (c *Coordinator) SetLegacyCleanup(cleanup func(context.Context) error) {
 		return
 	}
 	c.mu.Lock()
+	c.nextOwner++
+	c.cleanupOwner = c.nextOwner
+	c.cleanupOwners = nil
 	c.legacyCleanup = cleanup
 	c.mu.Unlock()
+}
+
+func (c *Coordinator) RegisterLegacyCleanup(cleanup func(context.Context) error) func() {
+	if c == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	c.nextOwner++
+	owner := c.nextOwner
+	c.cleanupOwner = owner
+	c.legacyCleanup = cleanup
+	c.cleanupOwners = append(c.cleanupOwners, cleanupRegistration{owner: owner, cleanup: cleanup})
+	c.mu.Unlock()
+	return func() {
+		c.mu.Lock()
+		if c.cleanupOwner == owner {
+			c.cleanupOwners = removeCleanupRegistration(c.cleanupOwners, owner)
+			if count := len(c.cleanupOwners); count > 0 {
+				current := c.cleanupOwners[count-1]
+				c.cleanupOwner, c.legacyCleanup = current.owner, current.cleanup
+			} else {
+				c.legacyCleanup = nil
+				c.cleanupOwner = 0
+			}
+		} else {
+			c.cleanupOwners = removeCleanupRegistration(c.cleanupOwners, owner)
+		}
+		c.mu.Unlock()
+	}
+}
+
+func removeInspectionRegistration(items []inspectionRegistration, owner uint64) []inspectionRegistration {
+	for index := range items {
+		if items[index].owner == owner {
+			return append(items[:index], items[index+1:]...)
+		}
+	}
+	return items
+}
+
+func removeRuntimeRegistration(items []runtimeRegistration, owner uint64) []runtimeRegistration {
+	for index := range items {
+		if items[index].owner == owner {
+			return append(items[:index], items[index+1:]...)
+		}
+	}
+	return items
+}
+
+func removeCleanupRegistration(items []cleanupRegistration, owner uint64) []cleanupRegistration {
+	for index := range items {
+		if items[index].owner == owner {
+			return append(items[:index], items[index+1:]...)
+		}
+	}
+	return items
 }
 
 func (c *Coordinator) CleanupLegacy(ctx context.Context) error {
@@ -107,13 +298,17 @@ func (c *Coordinator) RegisterLifecycle(lifecycle Lifecycle) func() {
 		return func() {}
 	}
 	c.mu.Lock()
-	c.lifecycles = append(c.lifecycles, lifecycle)
-	index := len(c.lifecycles) - 1
+	c.nextOwner++
+	owner := c.nextOwner
+	c.lifecycles = append(c.lifecycles, lifecycleRegistration{owner: owner, lifecycle: lifecycle})
 	c.mu.Unlock()
 	return func() {
 		c.mu.Lock()
-		if index < len(c.lifecycles) {
-			c.lifecycles[index] = Lifecycle{}
+		for index := range c.lifecycles {
+			if c.lifecycles[index].owner == owner {
+				c.lifecycles = append(c.lifecycles[:index], c.lifecycles[index+1:]...)
+				break
+			}
 		}
 		c.mu.Unlock()
 	}
@@ -123,12 +318,22 @@ func (c *Coordinator) RegisterLifecycle(lifecycle Lifecycle) func() {
 // non-HTTP restore surfaces. Successfully paused modules are always resumed in
 // reverse order, including when a later import phase fails.
 func (c *Coordinator) ExecuteImport(ctx context.Context, plan ImportPlan) (err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if c == nil {
 		return executeImportPhases(ctx, plan)
 	}
+	c.importMu.Lock()
+	defer c.importMu.Unlock()
+	cleanupCtx := context.WithoutCancel(ctx)
 	c.mu.RLock()
-	lifecycles := append([]Lifecycle(nil), c.lifecycles...)
+	registrations := append([]lifecycleRegistration(nil), c.lifecycles...)
 	c.mu.RUnlock()
+	lifecycles := make([]Lifecycle, 0, len(registrations))
+	for _, registration := range registrations {
+		lifecycles = append(lifecycles, registration.lifecycle)
+	}
 	paused := make([]Lifecycle, 0, len(lifecycles))
 	for _, lifecycle := range lifecycles {
 		if lifecycle.Pause == nil && lifecycle.Resume == nil {
@@ -136,14 +341,17 @@ func (c *Coordinator) ExecuteImport(ctx context.Context, plan ImportPlan) (err e
 		}
 		if lifecycle.Pause != nil {
 			if err := lifecycle.Pause(ctx); err != nil {
-				resumeLifecycles(ctx, paused)
+				// Pause implementations may have already closed their admission
+				// gate before waiting for active work. Include the failing lifecycle
+				// in cleanup and never use the canceled request context to resume.
+				resumeLifecycles(cleanupCtx, append(paused, lifecycle))
 				return err
 			}
 		}
 		paused = append(paused, lifecycle)
 	}
 	defer func() {
-		if resumeErr := resumeLifecycles(ctx, paused); err == nil {
+		if resumeErr := resumeLifecycles(cleanupCtx, paused); err == nil {
 			err = resumeErr
 		}
 	}()

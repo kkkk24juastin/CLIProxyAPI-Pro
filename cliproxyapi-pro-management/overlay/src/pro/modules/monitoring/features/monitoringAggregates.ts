@@ -1,4 +1,4 @@
-import { calculateCost, type ModelPrice } from '@/utils/usage';
+import { calculateCost, type ModelPrice } from '@/pro/modules/monitoring/features/usage';
 import type { MonitoringSummary } from './hooks/useMonitoringData';
 import type { UsageAggregateBucket } from './hooks/useUsageAggregates';
 

@@ -13,9 +13,28 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
+	proinspection "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/inspection"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
+
+type accountInspectionQuotaAdapter struct{ h *Handler }
+
+func (a accountInspectionQuotaAdapter) FetchQuota(ctx context.Context, authIndex string) (proinspection.QuotaResult, error) {
+	if a.h == nil {
+		return proinspection.QuotaResult{}, fmt.Errorf("management handler unavailable")
+	}
+	auth := a.h.authByIndex(authIndex)
+	if auth == nil {
+		return proinspection.QuotaResult{}, fmt.Errorf("auth not found")
+	}
+	result, serviceStatus, _, err := a.h.fetchAndPersistPluginQuota(ctx, auth)
+	return proinspection.QuotaResult{
+		Snapshot:       result.Snapshot,
+		ServiceStatus:  serviceStatus,
+		UpstreamStatus: result.UpstreamStatus,
+	}, err
+}
 
 // RegisterPluginQuotaRoutes registers the host-owned normalized quota endpoint.
 func (h *Handler) RegisterPluginQuotaRoutes(group *gin.RouterGroup) {

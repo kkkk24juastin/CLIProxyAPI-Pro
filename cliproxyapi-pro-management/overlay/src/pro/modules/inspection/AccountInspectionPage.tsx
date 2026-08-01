@@ -98,11 +98,11 @@ import {
   type SummaryCard,
 } from '@/pro/modules/inspection/features/accountInspectionPageModel';
 import {
-  DEFAULT_MONITORING_PAGE_SIZE,
-  MONITORING_PAGE_SIZE_OPTIONS,
-  normalizeMonitoringPageSize,
-  resolveMonitoringPaginationCopy,
-} from '@/pro/modules/monitoring/features/pagination';
+  DEFAULT_PRO_PAGE_SIZE,
+  PRO_PAGE_SIZE_OPTIONS,
+  normalizeProPageSize,
+  resolveProPaginationCopy,
+} from '@/pro/shared/pagination';
 import {
   buildZipArchive,
   downloadBlobFile,
@@ -119,14 +119,13 @@ import {
   type AccountInspectionScheduleResponse,
 } from '@/services/api';
 import { authFilesApi } from '@/services/api/authFiles';
-import { quotaPersistenceMiddleware } from '@/pro/modules/quota/extensions/persistenceMiddleware';
+import { quotaPersistenceMiddleware } from '@/pro/modules/quota';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { resolveAuthProvider } from '@/utils/quota';
-import { resolveProviderDisplayLabel } from '@/utils/sourceResolver';
+import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
 import quotaStyles from '@/features/quota/QuotaPage.module.scss';
 import styles from '@/pro/modules/inspection/features/accountInspection.module.scss';
-import monitoringStyles from '@/pro/modules/monitoring/features/monitoring.module.scss';
 
 type ResultBulkAction = 'suggested' | 'recheck' | ManualAccountInspectionAction;
 
@@ -180,7 +179,7 @@ export function AccountInspectionPage() {
   const deferredResultSearchInput = useDeferredValue(resultSearchInput);
   const [resultSearch, setResultSearch] = useState('');
   const [resultPage, setResultPage] = useState(1);
-  const [resultPageSize, setResultPageSize] = useState(DEFAULT_MONITORING_PAGE_SIZE);
+  const [resultPageSize, setResultPageSize] = useState(DEFAULT_PRO_PAGE_SIZE);
   const [logLevelFilter, setLogLevelFilter] = useState<AccountInspectionLogLevel | 'all'>('all');
   const [logPage, setLogPage] = useState(1);
   const [authFiles, setAuthFiles] = useState<AuthFileItem[]>([]);
@@ -197,7 +196,7 @@ export function AccountInspectionPage() {
   const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
   const activeResultFilter = resultReasonFilter ?? resultStatusFilter;
-  const paginationCopy = resolveMonitoringPaginationCopy(i18n.resolvedLanguage ?? i18n.language);
+  const paginationCopy = resolveProPaginationCopy(i18n.resolvedLanguage ?? i18n.language);
   const logListRef = useRef<HTMLDivElement | null>(null);
   const resultsPanelRef = useRef<HTMLDivElement | null>(null);
   const resultsTableViewportRef = useRef<HTMLDivElement | null>(null);
@@ -1767,7 +1766,7 @@ export function AccountInspectionPage() {
         {result ? (
           <>
             <div className={[
-              monitoringStyles.filterGrid,
+              styles.filterGrid,
               styles.resultToolbar,
               !hasAutoExecutionPolicy ? styles.resultToolbarWithPending : '',
             ].filter(Boolean).join(' ')}>
@@ -1777,7 +1776,7 @@ export function AccountInspectionPage() {
                 onChange={(event) => setResultSearchInput(event.target.value)}
                 placeholder={t('monitoring.account_inspection_search_placeholder')}
                 aria-label={t('monitoring.account_inspection_search_label')}
-                className={monitoringStyles.toolbarHeaderSearchInput}
+                className={styles.toolbarHeaderSearchInput}
                 rightElement={<IconSearch size={16} />}
               />
               <Select
@@ -1990,15 +1989,15 @@ export function AccountInspectionPage() {
               </table>
             </div>
             {resultPagination.total > 0 ? (
-              <div className={monitoringStyles.paginationBar}>
-                <div className={monitoringStyles.paginationPageSizeControl}>
+              <div className={styles.paginationBar}>
+                <div className={styles.paginationPageSizeControl}>
                   <span id="account-inspection-result-page-size-label">
                     {t('monitoring.pagination_page_size', { defaultValue: paginationCopy.pageSizeLabel })}
                   </span>
                   <Select
                     id="account-inspection-result-page-size"
                     value={String(resultPageSize)}
-                    options={MONITORING_PAGE_SIZE_OPTIONS.map((pageSize) => ({
+                    options={PRO_PAGE_SIZE_OPTIONS.map((pageSize) => ({
                       value: String(pageSize),
                       label: t('monitoring.pagination_page_size_value', {
                         count: pageSize,
@@ -2006,17 +2005,17 @@ export function AccountInspectionPage() {
                       }),
                     }))}
                     onChange={(value) => {
-                      const nextPageSize = normalizeMonitoringPageSize(value);
+                      const nextPageSize = normalizeProPageSize(value);
                       if (nextPageSize === resultPageSize) return;
                       setResultPageSize(nextPageSize);
                       setResultPage(1);
                     }}
                     ariaLabelledBy="account-inspection-result-page-size-label"
-                    className={monitoringStyles.paginationPageSizeSelect}
+                    className={styles.paginationPageSizeSelect}
                   />
                 </div>
                 {resultPagination.totalPages > 1 ? (
-                  <div className={monitoringStyles.paginationNavigation}>
+                  <div className={styles.paginationNavigation}>
                     <Button
                       size="sm"
                       variant="secondary"

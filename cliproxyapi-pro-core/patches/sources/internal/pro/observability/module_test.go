@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -40,4 +41,23 @@ func TestPauseCreatesWriteBarrierUntilResume(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("work did not resume")
 	}
+}
+
+func TestCanceledPauseReopensAdmissionGate(t *testing.T) {
+	module := New()
+	release, err := module.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := module.Pause(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Pause() error = %v, want context canceled", err)
+	}
+	release()
+	secondRelease, err := module.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("Begin() after canceled pause error = %v", err)
+	}
+	secondRelease()
 }

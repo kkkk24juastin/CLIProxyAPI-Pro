@@ -70,9 +70,11 @@ func (m *Module) Pause(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	m.mu.Lock()
+	startedPause := false
 	if !m.paused {
 		m.paused = true
 		m.resumed = make(chan struct{})
+		startedPause = true
 	}
 	m.mu.Unlock()
 	for {
@@ -84,6 +86,9 @@ func (m *Module) Pause(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			if startedPause {
+				_ = m.Resume(context.Background())
+			}
 			return ctx.Err()
 		case <-time.After(5 * time.Millisecond):
 		}

@@ -32,3 +32,22 @@ func TestPauseWaitsForActiveInspectionAndRejectsNewWork(t *testing.T) {
 	}
 	release()
 }
+
+func TestCanceledPauseReopensLifecycle(t *testing.T) {
+	lifecycle := &Lifecycle{}
+	release, err := lifecycle.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := lifecycle.Pause(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Pause() error = %v, want context canceled", err)
+	}
+	release()
+	secondRelease, err := lifecycle.Begin()
+	if err != nil {
+		t.Fatalf("Begin() after canceled pause error = %v", err)
+	}
+	secondRelease()
+}
