@@ -2668,6 +2668,8 @@ subprocess.run([
     'internal/pro/proxypool/service.go',
     'internal/pro/settings/store.go',
     'internal/pro/state/types.go',
+    'internal/pro/state/writer.go',
+    'internal/pro/state/writer_test.go',
     'internal/pro/proxypool/config/config.go',
     'internal/pro/proxypool/config/config_test.go',
     'internal/pro/proxypool/engine/engine.go',
