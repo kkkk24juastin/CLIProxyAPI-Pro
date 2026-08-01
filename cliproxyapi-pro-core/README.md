@@ -245,14 +245,16 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `patches/sources/internal/pro/storage/` — 单一 SQLite 生命周期、幂等 schema、领域仓储和事务边界。
 - `patches/sources/internal/pro/state/` — 路由游标、账号运行统计的稳定契约及合并写入器。
 - `patches/sources/internal/pro/observability/` — usage、留存、价格同步与 WebDAV 后台任务的导入写屏障。
-- `patches/sources/internal/pro/quota/` — provider 配额解析与合并策略。
+- `patches/sources/internal/pro/quota/` — Quota snapshot 规范化/最大使用率、cache 成功态与响应 shape 指纹、Gemini CLI/xAI billing、plan、request-path 配额解析与合并策略。
 - `patches/sources/internal/pro/routing/` — 稳定选路游标和 request-protection 所有权规则。
-- `patches/sources/internal/pro/inspection/` — 巡检调度、单账号探测和人工操作的生命周期闸门。
+- `patches/sources/internal/pro/inspection/` — 巡检配置、候选过滤/抽样/worker 策略、状态/日志/流与手动操作 DTO、结果分类/过滤/分页/汇总与合并状态机、provider 决策与错误码、操作去重/汇总、结果快照 schema/codec、自动操作决策、Antigravity/Claude/Codex/Kimi 响应解析，以及 Antigravity/xAI deep-probe 请求与响应协议；provider 探测 transport、并发闸门、Gin/WebSocket、快照/quota cache/observation I/O 与 Auth 写回仍位于 Management host adapter。
 - `patches/sources/internal/pro/backup/` — JSONL 导出和“暂停、flush、导入、重载、恢复运行态、恢复巡检、清理旧缓存、resume”的跨模块协调器。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
 - `embeddedusage/` — 保留 upstream 导入路径、公开类型和函数签名的薄兼容 façade；实现位于 `pro/observability`。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。
 - `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
+- `patches/account_inspection_host.go`、`patches/pro_auth_mutation.go` — Inspection quota port 与共享 Auth mutation/file persistence host adapter。
+- `patches/pro_management_runtime.go` — 组合随 Management Handler 启停的 inspection、routing 后台生命周期。
 - 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放巡检、路由保护、登录清理及全局回调。
 - `patches/routing_policy.go` — 注入统一路由配置和请求状态保护 handlers、usage plugin 与自动解除任务。
 - 核心不变量：账号巡检状态优先于 request protection；导入的 `routing_cursor_state` 和 `auth_runtime_stats` 必须立即应用到 live manager；原 DB 表、JSONL record type 和 `/v0/management/usage*` API 保持兼容。

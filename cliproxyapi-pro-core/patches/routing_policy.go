@@ -26,7 +26,6 @@ import (
 const (
 	routingPolicyUsagePluginName   = "pro-routing-request-protection"
 	routingProtectionOwner         = prorouting.ProtectionOwner
-	routingProtectionMetadataKey   = prorouting.ProtectionMetadataKey
 	routingProtectionModeObserve   = prorouting.ModeObserve
 	routingProtectionModeEnforce   = prorouting.ModeEnforce
 	routingProtectionMaxEvents     = 100
@@ -486,13 +485,6 @@ func routingProtectionMetadata(auth *coreauth.Auth) map[string]any {
 
 func routingProtectionOwned(auth *coreauth.Auth) bool {
 	return auth != nil && prorouting.ProtectionOwned(auth.Metadata)
-}
-
-func clearRoutingProtectionOwnership(auth *coreauth.Auth) {
-	if auth == nil {
-		return
-	}
-	prorouting.InspectionOwnsStatus(auth.Metadata)
 }
 
 func routingProtectionMetadataInt64(metadata map[string]any, key string) int64 {

@@ -8,6 +8,10 @@ MODULES = ROOT / 'overlay/src/pro/modules'
 OVERLAY_SRC = ROOT / 'overlay/src'
 CUSTOMIZER = ROOT / 'apply_customizations.py'
 IMPORT_PATTERN = re.compile(r"@/pro/modules/([^/'\"]+)([^'\"]*)")
+RELATIVE_IMPORT_PATTERN = re.compile(
+    r"(?:from\s+|import\s*\()\s*['\"](\.{1,2}/[^'\"]+)['\"]"
+)
+SERVICES_API_BARREL_PATTERN = re.compile(r"from\s+['\"]@/services/api['\"]")
 
 
 class ProModuleBoundaryTests(unittest.TestCase):
@@ -44,6 +48,47 @@ class ProModuleBoundaryTests(unittest.TestCase):
                         f'{path.relative_to(ROOT)} imports private path '
                         f'@/pro/modules/{dependency}{suffix}'
                     )
+        self.assertEqual([], violations, '\n'.join(violations))
+
+    def test_relative_imports_do_not_escape_module_root(self):
+        violations = []
+        for path in sorted(MODULES.rglob('*')):
+            if path.suffix not in {'.ts', '.tsx'}:
+                continue
+            owner_root = MODULES / path.relative_to(MODULES).parts[0]
+            source = path.read_text(encoding='utf-8')
+            for match in RELATIVE_IMPORT_PATTERN.finditer(source):
+                target = (path.parent / match.group(1)).resolve()
+                if target != owner_root.resolve() and owner_root.resolve() not in target.parents:
+                    violations.append(
+                        f'{path.relative_to(ROOT)} escapes its module with {match.group(1)}'
+                    )
+        self.assertEqual([], violations, '\n'.join(violations))
+
+    def test_shared_layer_does_not_depend_on_feature_modules(self):
+        violations = []
+        shared = OVERLAY_SRC / 'pro/shared'
+        for path in sorted(shared.rglob('*')):
+            if path.suffix not in {'.ts', '.tsx'}:
+                continue
+            if IMPORT_PATTERN.search(path.read_text(encoding='utf-8')):
+                violations.append(f'{path.relative_to(ROOT)} imports a feature module')
+        self.assertEqual([], violations, '\n'.join(violations))
+
+    def test_modules_do_not_import_services_api_barrel(self):
+        violations = []
+        for path in sorted(MODULES.rglob('*')):
+            if path.suffix not in {'.ts', '.tsx'}:
+                continue
+            if SERVICES_API_BARREL_PATTERN.search(path.read_text(encoding='utf-8')):
+                violations.append(f'{path.relative_to(ROOT)} imports @/services/api barrel')
+        self.assertEqual([], violations, '\n'.join(violations))
+
+    def test_public_module_indexes_use_explicit_exports(self):
+        violations = []
+        for path in sorted(MODULES.glob('*/index.ts')):
+            if re.search(r'^\s*export\s+\*', path.read_text(encoding='utf-8'), re.MULTILINE):
+                violations.append(f'{path.relative_to(ROOT)} uses export *')
         self.assertEqual([], violations, '\n'.join(violations))
 
 

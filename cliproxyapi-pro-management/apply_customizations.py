@@ -2787,13 +2787,6 @@ def patch_supporting_api_and_types(target: Path) -> None:
         "  deleteAll: async () => {\n    const response = await apiClient.delete('/auth-files', { params: { all: true } });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n",
     )
 
-    api_index_path = target / 'src/services/api/index.ts'
-    replace_once(
-        api_index_path,
-        "export * from './apiCall';\n",
-        "export * from './apiCall';\nexport * from '@/pro/modules/inspection';\nexport * from '@/pro/modules/routing';\n",
-    )
-
     format_path = target / 'src/utils/format.ts'
     insert_once(
         format_path,

@@ -18,6 +18,10 @@ python3 -m unittest discover \
   -p 'test_*.py'
 
 python3 -m unittest discover \
+  -s "${repo_root}/scripts/validation" \
+  -p 'test_*.py'
+
+python3 -m unittest discover \
   -s "${repo_root}/scripts/build/tests" \
   -p 'test_*.py'
 

@@ -187,12 +187,15 @@ if customization_sentinel.exists():
     raise SystemExit(f'target already contains CLIProxyAPI Pro customizations: {customization_sentinel}')
 
 new_customization_paths = (
-	'internal/pro',
+    'internal/pro',
+    'internal/api/handlers/management/account_inspection_host.go',
     'internal/api/handlers/management/account_inspection_scheduler.go',
     'internal/api/handlers/management/account_inspection_scheduler_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
+    'internal/api/handlers/management/pro_auth_mutation.go',
     'internal/api/handlers/management/pro_features.go',
+    'internal/api/handlers/management/pro_management_runtime.go',
     'internal/api/handlers/management/routing_policy.go',
     'internal/api/handlers/management/routing_policy_test.go',
     'internal/config/config_existing_updates.go',
@@ -585,6 +588,20 @@ plugin_quota_management = ROOT / 'internal/api/handlers/management/plugin_quota.
 write(plugin_quota_management, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'plugin_quota_management.go')))
 plugin_quota_management_test = ROOT / 'internal/api/handlers/management/plugin_quota_test.go'
 write(plugin_quota_management_test, read_text(Path(__file__).resolve().parent / 'plugin_quota_management_test.go'))
+
+for source_name, target_name in (
+    ('account_inspection_host.go', 'account_inspection_host.go'),
+    ('pro_auth_mutation.go', 'pro_auth_mutation.go'),
+    ('pro_management_runtime.go', 'pro_management_runtime.go'),
+):
+    write(
+        ROOT / 'internal/api/handlers/management' / target_name,
+        re.sub(
+            r'github\.com/router-for-me/CLIProxyAPI/v\d+',
+            MODULE_PATH,
+            read_text(Path(__file__).resolve().parent / source_name),
+        ),
+    )
 
 pro_features_management = ROOT / 'internal/api/handlers/management/pro_features.go'
 write(pro_features_management, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'pro_features_management.go')))
@@ -1924,7 +1941,7 @@ replace_once(
     '''\th.startAttemptCleanup()
 \treturn h
 ''',
-    '''\th.startAccountInspectionScheduler()
+    '''\th.startProManagementRuntime()
 \th.startAttemptCleanup()
 \treturn h
 ''',
@@ -2605,6 +2622,7 @@ subprocess.run([
     'internal/api/server_options.go',
     'internal/api/handlers/management/account_inspection_scheduler.go',
     'internal/api/handlers/management/account_inspection_scheduler_test.go',
+    'internal/api/handlers/management/account_inspection_host.go',
     'internal/api/handlers/management/auth_files.go',
     'internal/api/handlers/management/handler.go',
     'internal/api/handlers/management/management_panel.go',
@@ -2613,7 +2631,9 @@ subprocess.run([
     'internal/managementasset/gitstore_token_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
+    'internal/api/handlers/management/pro_auth_mutation.go',
     'internal/api/handlers/management/pro_features.go',
+    'internal/api/handlers/management/pro_management_runtime.go',
     'internal/client/claude/models/models.go',
     'internal/client/claude/models/models_test.go',
     'internal/config/sdk_config.go',
@@ -2673,10 +2693,40 @@ subprocess.run([
     'internal/pro/storage/schema.go',
     'internal/pro/quota/xai.go',
     'internal/pro/quota/xai_test.go',
+    'internal/pro/quota/xai_billing.go',
+    'internal/pro/quota/xai_billing_test.go',
+    'internal/pro/quota/cache.go',
+    'internal/pro/quota/cache_test.go',
+    'internal/pro/quota/gemini_cli.go',
+    'internal/pro/quota/snapshot.go',
+    'internal/pro/quota/snapshot_test.go',
     'internal/pro/routing/runtime.go',
     'internal/pro/routing/runtime_test.go',
     'internal/pro/inspection/lifecycle.go',
     'internal/pro/inspection/lifecycle_test.go',
+    'internal/pro/inspection/confirmations.go',
+    'internal/pro/inspection/confirmations_test.go',
+    'internal/pro/inspection/policy.go',
+    'internal/pro/inspection/policy_test.go',
+    'internal/pro/inspection/ports.go',
+    'internal/pro/inspection/schedule.go',
+    'internal/pro/inspection/schedule_test.go',
+    'internal/pro/inspection/workers.go',
+    'internal/pro/inspection/workers_test.go',
+    'internal/pro/inspection/results.go',
+    'internal/pro/inspection/results_test.go',
+    'internal/pro/inspection/providers.go',
+    'internal/pro/inspection/providers_test.go',
+    'internal/pro/inspection/probes.go',
+    'internal/pro/inspection/probes_test.go',
+    'internal/pro/inspection/snapshot.go',
+    'internal/pro/inspection/snapshot_test.go',
+    'internal/pro/inspection/status.go',
+    'internal/pro/inspection/status_test.go',
+    'internal/pro/inspection/actions.go',
+    'internal/pro/inspection/actions_test.go',
+    'internal/pro/inspection/selection.go',
+    'internal/pro/inspection/selection_test.go',
     'internal/pro/observability/module.go',
     'internal/pro/observability/module_test.go',
     'internal/pro/observability/config.go',

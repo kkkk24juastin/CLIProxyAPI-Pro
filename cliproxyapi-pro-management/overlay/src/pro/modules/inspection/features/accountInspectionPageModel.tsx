@@ -23,7 +23,7 @@ import {
 import type {
   AccountInspectionInspectOneItem,
   AccountInspectionScheduleResponse,
-} from '@/services/api';
+} from '../api';
 import type { AuthFileItem } from '@/types';
 import {
   isDisabledAuthFile,

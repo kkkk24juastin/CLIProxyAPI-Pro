@@ -11,11 +11,9 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +28,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/pluginapi"
 	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
 	proinspection "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/inspection"
+	proquota "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/quota"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -45,7 +44,6 @@ const (
 	accountInspectionMaxRunDuration         = 30 * time.Minute
 	accountInspectionMaxProviderConcurrency = 2
 	accountInspectionMaxRefreshConcurrency  = 2
-	accountInspectionXAIMinAttempts         = 2
 	accountInspectionXAIRetryDelay          = 300 * time.Millisecond
 	accountInspectionWebSocketWriteTimeout  = 5 * time.Second
 	accountInspectionWebSocketPongWait      = 60 * time.Second
@@ -53,7 +51,7 @@ const (
 	accountInspectionProgressBroadcastGap   = 500 * time.Millisecond
 	accountInspectionMaxResultPageSize      = 500
 	accountInspectionMaxLogPageSize         = 500
-	accountInspectionQuotaParserVersion     = embeddedusage.XAIQuotaParserVersion
+	accountInspectionQuotaParserVersion     = proquota.CacheParserVersion
 )
 
 var accountInspectionWebSocketUpgrader = websocket.Upgrader{
@@ -67,69 +65,15 @@ var accountInspectionSchedulers sync.Map
 type accountInspectionSettings = proinspection.Settings
 type accountInspectionSchedule = proinspection.Schedule
 
-type accountInspectionLogEntry struct {
-	Time    int64  `json:"time"`
-	Level   string `json:"level"`
-	Message string `json:"message"`
-}
+type accountInspectionLogEntry = proinspection.LogEntry
 
-type accountInspectionResult struct {
-	Key                   string                  `json:"key"`
-	Provider              string                  `json:"provider"`
-	FileName              string                  `json:"fileName"`
-	DisplayName           string                  `json:"displayName"`
-	Email                 string                  `json:"email"`
-	Name                  string                  `json:"name"`
-	AuthIndex             string                  `json:"authIndex"`
-	Disabled              bool                    `json:"disabled"`
-	Action                accountInspectionAction `json:"action"`
-	ActionReason          string                  `json:"actionReason"`
-	StatusCode            *int                    `json:"statusCode"`
-	UsedPercent           *float64                `json:"usedPercent"`
-	IsQuota               bool                    `json:"isQuota"`
-	Error                 string                  `json:"error"`
-	ErrorDetail           string                  `json:"errorDetail,omitempty"`
-	ErrorCode             string                  `json:"errorCode"`
-	DeepProbeTriggered    bool                    `json:"deepProbeTriggered"`
-	DeepProbeStatus       string                  `json:"deepProbeStatus"`
-	DeepProbeError        string                  `json:"deepProbeError"`
-	TokenRefreshTriggered bool                    `json:"tokenRefreshTriggered"`
-	TokenRefreshStatus    string                  `json:"tokenRefreshStatus"`
-	TokenRefreshError     string                  `json:"tokenRefreshError"`
-	NextRefreshAt         int64                   `json:"nextRefreshAt"`
-	Executed              bool                    `json:"executed"`
-	ExecuteError          string                  `json:"executeError"`
-}
+type accountInspectionResult = proinspection.Result
+type accountInspectionSummary = proinspection.Summary
+type accountInspectionHealthCounts = proinspection.HealthCounts
 
-type accountInspectionSummary struct {
-	TotalFiles           int `json:"totalFiles"`
-	ProbeSetCount        int `json:"probeSetCount"`
-	SampledCount         int `json:"sampledCount"`
-	DisabledCount        int `json:"disabledCount"`
-	EnabledCount         int `json:"enabledCount"`
-	DeleteCount          int `json:"deleteCount"`
-	DisableCount         int `json:"disableCount"`
-	EnableCount          int `json:"enableCount"`
-	KeepCount            int `json:"keepCount"`
-	ErrorCount           int `json:"errorCount"`
-	ExecutedDeleteCount  int `json:"executedDeleteCount"`
-	ExecutedDisableCount int `json:"executedDisableCount"`
-	ExecutedEnableCount  int `json:"executedEnableCount"`
-}
+type accountInspectionRunState = proinspection.RunState
 
-type accountInspectionHealthCounts struct {
-	Total           int `json:"total"`
-	Healthy         int `json:"healthy"`
-	Disabled        int `json:"disabled"`
-	AuthInvalid     int `json:"authInvalid"`
-	QuotaExhausted  int `json:"quotaExhausted"`
-	InspectionError int `json:"inspectionError"`
-	Recoverable     int `json:"recoverable"`
-}
-
-type accountInspectionRunState string
-
-type accountInspectionStreamMessageType string
+type accountInspectionStreamMessageType = proinspection.StreamMessageType
 
 type accountInspectionDeepProbeStatus = proinspection.DeepProbeStatus
 
@@ -138,9 +82,9 @@ type accountInspectionAntigravityQuotaMode = proinspection.AntigravityQuotaMode
 type accountInspectionAction = proinspection.Action
 
 const (
-	accountInspectionStreamSnapshot accountInspectionStreamMessageType = "snapshot"
-	accountInspectionStreamLog      accountInspectionStreamMessageType = "log"
-	accountInspectionStreamStatus   accountInspectionStreamMessageType = "status"
+	accountInspectionStreamSnapshot = proinspection.StreamSnapshot
+	accountInspectionStreamLog      = proinspection.StreamLog
+	accountInspectionStreamStatus   = proinspection.StreamStatus
 )
 
 const (
@@ -167,97 +111,43 @@ const (
 const antigravityCodeAssistURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
 
 const (
-	accountInspectionStateIdle      accountInspectionRunState = "idle"
-	accountInspectionStateRunning   accountInspectionRunState = "running"
-	accountInspectionStatePaused    accountInspectionRunState = "paused"
-	accountInspectionStateStopping  accountInspectionRunState = "stopping"
-	accountInspectionStateStopped   accountInspectionRunState = "stopped"
-	accountInspectionStateCompleted accountInspectionRunState = "completed"
-	accountInspectionStatePartial   accountInspectionRunState = "partial"
-	accountInspectionStateFailed    accountInspectionRunState = "failed"
+	accountInspectionStateIdle      = proinspection.RunStateIdle
+	accountInspectionStateRunning   = proinspection.RunStateRunning
+	accountInspectionStatePaused    = proinspection.RunStatePaused
+	accountInspectionStateStopping  = proinspection.RunStateStopping
+	accountInspectionStateStopped   = proinspection.RunStateStopped
+	accountInspectionStateCompleted = proinspection.RunStateCompleted
+	accountInspectionStatePartial   = proinspection.RunStatePartial
+	accountInspectionStateFailed    = proinspection.RunStateFailed
 )
 
-const accountInspectionResultSnapshotVersion = 1
+const accountInspectionResultSnapshotVersion = proinspection.ResultSnapshotVersion
 
 var errAccountInspectionRestoredSnapshotReadOnly = errors.New("restored account inspection snapshot is read-only; run a new inspection first")
 var errAccountInspectionResultStale = errors.New("account inspection result is stale or no longer available")
 var errAccountInspectionSharedSourceDelete = errors.New("cannot delete one plugin virtual auth from a shared source file")
 
-type accountInspectionProgress struct {
-	Total     int `json:"total"`
-	Completed int `json:"completed"`
-	InFlight  int `json:"inFlight"`
-	Pending   int `json:"pending"`
-}
+type accountInspectionProgress = proinspection.Progress
+type accountInspectionStatus = proinspection.Status
 
-type accountInspectionStatus struct {
-	State                accountInspectionRunState                `json:"state"`
-	LastStartedAt        int64                                    `json:"lastStartedAt"`
-	LastFinishedAt       int64                                    `json:"lastFinishedAt"`
-	LastError            string                                   `json:"lastError"`
-	Progress             accountInspectionProgress                `json:"progress"`
-	Summary              accountInspectionSummary                 `json:"summary"`
-	HealthCounts         *accountInspectionHealthCounts           `json:"healthCounts,omitempty"`
-	ProviderHealthCounts map[string]accountInspectionHealthCounts `json:"providerHealthCounts,omitempty"`
-	LogsPage             *accountInspectionPageInfo               `json:"logsPage,omitempty"`
-	ResultsPage          *accountInspectionPageInfo               `json:"resultsPage,omitempty"`
-	LogsLimited          bool                                     `json:"logsLimited,omitempty"`
-	ResultsLimited       bool                                     `json:"resultsLimited,omitempty"`
-	RestoredSnapshot     bool                                     `json:"restoredSnapshot,omitempty"`
-	Logs                 []accountInspectionLogEntry              `json:"logs"`
-	Results              []accountInspectionResult                `json:"results"`
-}
+type accountInspectionResultSnapshot = proinspection.ResultSnapshot
 
-type accountInspectionResultSnapshot struct {
-	Version        int                           `json:"version"`
-	State          accountInspectionRunState     `json:"state"`
-	LastStartedAt  int64                         `json:"lastStartedAt"`
-	LastFinishedAt int64                         `json:"lastFinishedAt"`
-	LastError      string                        `json:"lastError,omitempty"`
-	Settings       accountInspectionSettings     `json:"settings"`
-	Summary        accountInspectionSummary      `json:"summary"`
-	HealthCounts   accountInspectionHealthCounts `json:"healthCounts"`
-	Results        []accountInspectionResult     `json:"results"`
-}
+type accountInspectionPageInfo = proinspection.PageInfo
 
-type accountInspectionPageInfo struct {
-	Page       int  `json:"page"`
-	PageSize   int  `json:"pageSize"`
-	Total      int  `json:"total"`
-	TotalPages int  `json:"totalPages"`
-	HasMore    bool `json:"hasMore"`
-}
+type accountInspectionSnapshotOptions = proinspection.SnapshotOptions
 
-type accountInspectionSnapshotOptions struct {
-	IncludeDetails    bool
-	ResultPage        int
-	ResultPageSize    int
-	ResultFilter      string
-	ResultPendingOnly bool
-	ResultProvider    string
-	ResultSearch      string
-	LogPage           int
-	LogPageSize       int
-	LogLevel          string
-}
-
-type accountInspectionHealthBucket string
+type accountInspectionHealthBucket = proinspection.HealthBucket
 
 const (
-	accountInspectionHealthHealthy         accountInspectionHealthBucket = "healthy"
-	accountInspectionHealthDisabled        accountInspectionHealthBucket = "disabled"
-	accountInspectionHealthAuthInvalid     accountInspectionHealthBucket = "authInvalid"
-	accountInspectionHealthQuotaExhausted  accountInspectionHealthBucket = "quotaExhausted"
-	accountInspectionHealthInspectionError accountInspectionHealthBucket = "inspectionError"
-	accountInspectionHealthRecoverable     accountInspectionHealthBucket = "recoverable"
+	accountInspectionHealthHealthy         = proinspection.HealthHealthy
+	accountInspectionHealthDisabled        = proinspection.HealthDisabled
+	accountInspectionHealthAuthInvalid     = proinspection.HealthAuthInvalid
+	accountInspectionHealthQuotaExhausted  = proinspection.HealthQuotaExhausted
+	accountInspectionHealthInspectionError = proinspection.HealthInspectionError
+	accountInspectionHealthRecoverable     = proinspection.HealthRecoverable
 )
 
-type accountInspectionLogStreamMessage struct {
-	Type     accountInspectionStreamMessageType `json:"type"`
-	Schedule accountInspectionSchedule          `json:"schedule"`
-	Status   accountInspectionStatus            `json:"status"`
-	Log      *accountInspectionLogEntry         `json:"log,omitempty"`
-}
+type accountInspectionLogStreamMessage = proinspection.LogStreamMessage
 
 type accountInspectionScheduler struct {
 	h                       *Handler
@@ -297,55 +187,21 @@ type accountInspectionAccount struct {
 	Disabled    bool
 }
 
-type accountInspectionHTTPResult struct {
-	StatusCode int
-	Body       string
-	Header     http.Header
-}
+type accountInspectionHTTPResult = proinspection.ProbeResponse
 
 type accountInspectionDecision = proinspection.Decision
 
-type accountInspectionActionItem struct {
-	Key         string                  `json:"key"`
-	Provider    string                  `json:"provider"`
-	FileName    string                  `json:"fileName"`
-	DisplayName string                  `json:"displayName"`
-	Email       string                  `json:"email"`
-	Name        string                  `json:"name"`
-	AuthIndex   string                  `json:"authIndex"`
-	Disabled    bool                    `json:"disabled"`
-	Action      accountInspectionAction `json:"action"`
-}
+type accountInspectionActionItem = proinspection.ActionItem
+type accountInspectionActionRequest = proinspection.ActionRequest
+type accountInspectionOneRequest = proinspection.OneRequest
+type accountInspectionRefreshTokenRequest = proinspection.RefreshTokenRequest
+type accountInspectionActionOutcome = proinspection.ActionOutcome
 
-type accountInspectionActionRequest struct {
-	Items []accountInspectionActionItem `json:"items"`
-}
-
-type accountInspectionOneRequest struct {
-	Item accountInspectionActionItem `json:"item"`
-}
-
-type accountInspectionRefreshTokenRequest struct {
-	Item accountInspectionActionItem `json:"item"`
-}
-
-type accountInspectionActionOutcome struct {
-	Action      accountInspectionAction `json:"action"`
-	FileName    string                  `json:"fileName"`
-	DisplayName string                  `json:"displayName"`
-	Email       string                  `json:"email"`
-	Name        string                  `json:"name"`
-	Provider    string                  `json:"provider"`
-	AuthIndex   string                  `json:"authIndex"`
-	Success     bool                    `json:"success"`
-	Error       string                  `json:"error"`
-}
-
-func (h *Handler) startAccountInspectionScheduler() {
+func (h *Handler) startAccountInspectionScheduler(quota proinspection.QuotaGateway) {
 	if h == nil {
 		return
 	}
-	if _, loaded := accountInspectionSchedulers.LoadOrStore(h, newAccountInspectionScheduler(h)); loaded {
+	if _, loaded := accountInspectionSchedulers.LoadOrStore(h, newAccountInspectionScheduler(h, quota)); loaded {
 		return
 	}
 	scheduler := schedulerForHandler(h)
@@ -379,32 +235,6 @@ func (h *Handler) startAccountInspectionScheduler() {
 			}()
 		}
 	}
-	startRoutingPolicyController(h)
-}
-
-// Shutdown stops every background task owned by this management handler.
-// It is safe to call more than once.
-func (h *Handler) Shutdown() {
-	if h == nil {
-		return
-	}
-	h.shutdownOnce.Do(func() {
-		if h.lifecycleCancel != nil {
-			h.lifecycleCancel()
-		}
-		if scheduler := schedulerForHandler(h); scheduler != nil {
-			scheduler.shutdown()
-			if scheduler.backupUnregister != nil {
-				scheduler.backupUnregister()
-			}
-			if scheduler.backupHookUnregister != nil {
-				scheduler.backupHookUnregister()
-			}
-		}
-		h.lifecycleWG.Wait()
-		accountInspectionSchedulers.Delete(h)
-		stopRoutingPolicyController(h)
-	})
 }
 
 func schedulerForHandler(h *Handler) *accountInspectionScheduler {
@@ -419,11 +249,11 @@ func schedulerForHandler(h *Handler) *accountInspectionScheduler {
 	return scheduler
 }
 
-func newAccountInspectionScheduler(h *Handler) *accountInspectionScheduler {
+func newAccountInspectionScheduler(h *Handler, quota proinspection.QuotaGateway) *accountInspectionScheduler {
 	schedulePath := accountInspectionSchedulePath()
 	scheduler := &accountInspectionScheduler{
 		h:                       h,
-		quota:                   accountInspectionQuotaAdapter{h: h},
+		quota:                   quota,
 		path:                    schedulePath,
 		snapshotPath:            accountInspectionResultSnapshotPath(schedulePath),
 		trigger:                 make(chan struct{}, 1),
@@ -500,36 +330,11 @@ func (s *accountInspectionScheduler) saveLocked() error {
 }
 
 func normalizeAccountInspectionSnapshotState(state accountInspectionRunState) accountInspectionRunState {
-	switch state {
-	case accountInspectionStateStopped, accountInspectionStateCompleted, accountInspectionStatePartial, accountInspectionStateFailed:
-		return state
-	default:
-		return accountInspectionStateCompleted
-	}
+	return proinspection.NormalizeSnapshotState(state)
 }
 
 func decodeAccountInspectionResultSnapshot(raw []byte) (accountInspectionResultSnapshot, error) {
-	var snapshot accountInspectionResultSnapshot
-	if err := json.Unmarshal(raw, &snapshot); err != nil {
-		return accountInspectionResultSnapshot{}, err
-	}
-	if snapshot.Version != accountInspectionResultSnapshotVersion {
-		return accountInspectionResultSnapshot{}, fmt.Errorf("unsupported account inspection snapshot version %d", snapshot.Version)
-	}
-	if snapshot.LastFinishedAt <= 0 {
-		return accountInspectionResultSnapshot{}, fmt.Errorf("account inspection snapshot is missing completion time")
-	}
-	if snapshot.LastStartedAt <= 0 || snapshot.LastStartedAt > snapshot.LastFinishedAt {
-		snapshot.LastStartedAt = snapshot.LastFinishedAt
-	}
-	snapshot.State = normalizeAccountInspectionSnapshotState(snapshot.State)
-	snapshot.Settings = normalizeAccountInspectionSchedule(accountInspectionSchedule{Settings: snapshot.Settings}).Settings
-	for index := range snapshot.Results {
-		snapshot.Results[index] = normalizeAccountInspectionResultSemantics(snapshot.Results[index])
-	}
-	snapshot.Results = sortAccountInspectionResults(snapshot.Results)
-	snapshot.HealthCounts = accountInspectionResultHealthCounts(snapshot.Results)
-	return snapshot, nil
+	return proinspection.DecodeResultSnapshot(raw, time.Now())
 }
 
 func (s *accountInspectionScheduler) resultSnapshotLocked() (accountInspectionResultSnapshot, bool) {
@@ -714,55 +519,15 @@ func (s *accountInspectionScheduler) snapshotForRequest(c *gin.Context) gin.H {
 }
 
 func accountInspectionResultHealthCounts(results []accountInspectionResult) accountInspectionHealthCounts {
-	counts := accountInspectionHealthCounts{Total: len(results)}
-	for _, result := range results {
-		switch accountInspectionResultHealthBucketOf(result) {
-		case accountInspectionHealthAuthInvalid:
-			counts.AuthInvalid++
-		case accountInspectionHealthInspectionError:
-			counts.InspectionError++
-		case accountInspectionHealthQuotaExhausted:
-			counts.QuotaExhausted++
-		case accountInspectionHealthRecoverable:
-			counts.Recoverable++
-		case accountInspectionHealthDisabled:
-			counts.Disabled++
-		default:
-			counts.Healthy++
-		}
-	}
-	return counts
+	return proinspection.ResultHealthCounts(results)
 }
 
 func accountInspectionResultProviderHealthCounts(results []accountInspectionResult) map[string]accountInspectionHealthCounts {
-	counts := make(map[string]accountInspectionHealthCounts)
-	for _, result := range results {
-		provider := strings.ToLower(strings.TrimSpace(result.Provider))
-		if provider == "" {
-			provider = "unknown"
-		}
-		counts[provider] = adjustAccountInspectionHealthCountsForResult(counts[provider], result, 1)
-	}
-	return counts
+	return proinspection.ResultProviderHealthCounts(results)
 }
 
 func adjustAccountInspectionHealthCountsForResult(counts accountInspectionHealthCounts, result accountInspectionResult, delta int) accountInspectionHealthCounts {
-	counts.Total += delta
-	switch accountInspectionResultHealthBucketOf(result) {
-	case accountInspectionHealthAuthInvalid:
-		counts.AuthInvalid += delta
-	case accountInspectionHealthInspectionError:
-		counts.InspectionError += delta
-	case accountInspectionHealthQuotaExhausted:
-		counts.QuotaExhausted += delta
-	case accountInspectionHealthRecoverable:
-		counts.Recoverable += delta
-	case accountInspectionHealthDisabled:
-		counts.Disabled += delta
-	default:
-		counts.Healthy += delta
-	}
-	return counts
+	return proinspection.AdjustHealthCountsForResult(counts, result, delta)
 }
 
 func (s *accountInspectionScheduler) healthCountsLocked() accountInspectionHealthCounts {
@@ -774,219 +539,43 @@ func (s *accountInspectionScheduler) healthCountsLocked() accountInspectionHealt
 }
 
 func accountInspectionResultHealthBucketOf(result accountInspectionResult) accountInspectionHealthBucket {
-	switch {
-	case isAccountInspectionQuotaResult(result):
-		return accountInspectionHealthQuotaExhausted
-	case isAccountInspectionAccountInvalidResult(result):
-		return accountInspectionHealthAuthInvalid
-	case isAccountInspectionRequestErrorResult(result):
-		return accountInspectionHealthInspectionError
-	case result.Action == accountInspectionActionEnable:
-		return accountInspectionHealthRecoverable
-	case result.Disabled:
-		return accountInspectionHealthDisabled
-	default:
-		return accountInspectionHealthHealthy
-	}
+	return proinspection.HealthBucketOf(result)
 }
 
 func isAccountInspectionQuotaResult(result accountInspectionResult) bool {
-	if result.IsQuota {
-		return true
-	}
-	message := strings.Join([]string{result.Error, result.ErrorDetail, result.DeepProbeError}, "\n")
-	switch strings.ToLower(strings.TrimSpace(result.Provider)) {
-	case "antigravity":
-		return isAntigravityQuotaFailure(message)
-	case "xai":
-		return isXAIQuotaFailure(message)
-	default:
-		return false
-	}
+	return proinspection.IsQuotaResult(result)
 }
 
 func normalizeAccountInspectionResultSemantics(result accountInspectionResult) accountInspectionResult {
-	if !result.IsQuota && isAccountInspectionQuotaResult(result) {
-		result.IsQuota = true
-		result.ErrorCode = ""
-	}
-	return result
+	return proinspection.NormalizeResultSemantics(result)
 }
 
 func accountInspectionResultMatchesFilter(result accountInspectionResult, filter string) bool {
-	filter = strings.ToLower(strings.TrimSpace(filter))
-	switch filter {
-	case "", "all":
-		return true
-	case "attention", "needs-attention", "needs_attention":
-		return accountInspectionResultHealthBucketOf(result) != accountInspectionHealthHealthy
-	case "accountissues", "account-issues", "account_issues":
-		bucket := accountInspectionResultHealthBucketOf(result)
-		return bucket == accountInspectionHealthAuthInvalid || bucket == accountInspectionHealthInspectionError
-	case "quotachanges", "quota-changes", "quota_changes":
-		bucket := accountInspectionResultHealthBucketOf(result)
-		return bucket == accountInspectionHealthQuotaExhausted || bucket == accountInspectionHealthRecoverable
-	case "pending":
-		return result.Action != accountInspectionActionKeep && !result.Executed
-	case "accountinvalid", "account-invalid", "account_invalid", "authinvalid", "auth-invalid", "auth_invalid":
-		return accountInspectionResultHealthBucketOf(result) == accountInspectionHealthAuthInvalid
-	case "requesterror", "request-error", "request_error", "inspectionerror", "inspection-error", "inspection_error":
-		return accountInspectionResultHealthBucketOf(result) == accountInspectionHealthInspectionError
-	case "quotaexhausted", "quota-exhausted", "quota_exhausted":
-		return accountInspectionResultHealthBucketOf(result) == accountInspectionHealthQuotaExhausted
-	case "recoverable":
-		return accountInspectionResultHealthBucketOf(result) == accountInspectionHealthRecoverable
-	case "highavailable", "high-available", "high_available", "healthy":
-		return accountInspectionResultHealthBucketOf(result) == accountInspectionHealthHealthy
-	default:
-		return true
-	}
+	return proinspection.ResultMatchesFilter(result, filter)
 }
 
 func accountInspectionResultMatchesProvider(result accountInspectionResult, provider string) bool {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	return provider == "" || provider == accountInspectionProviderAll || strings.EqualFold(result.Provider, provider)
+	return proinspection.ResultMatchesProvider(result, provider)
 }
 
 func accountInspectionResultMatchesSearch(result accountInspectionResult, search string) bool {
-	search = strings.ToLower(strings.TrimSpace(search))
-	if search == "" {
-		return true
-	}
-	for _, value := range []string{
-		result.Key,
-		result.FileName,
-		result.DisplayName,
-		result.Email,
-		result.Name,
-		result.AuthIndex,
-	} {
-		if strings.Contains(strings.ToLower(value), search) {
-			return true
-		}
-	}
-	return false
-}
-
-func minInt(left int, right int) int {
-	if left < right {
-		return left
-	}
-	return right
-}
-
-func maxInt(left int, right int) int {
-	if left > right {
-		return left
-	}
-	return right
-}
-
-func normalizeAccountInspectionPage(page int) int {
-	if page <= 0 {
-		return 1
-	}
-	return page
-}
-
-func normalizeAccountInspectionPageSize(size int, fallback int, maxSize int) int {
-	if size <= 0 {
-		size = fallback
-	}
-	if size > maxSize {
-		return maxSize
-	}
-	return size
-}
-
-func accountInspectionPageInfoFor(total int, page int, pageSize int) accountInspectionPageInfo {
-	page = normalizeAccountInspectionPage(page)
-	if pageSize <= 0 {
-		pageSize = 1
-	}
-	totalPages := 0
-	if total > 0 {
-		totalPages = (total + pageSize - 1) / pageSize
-	}
-	start := (page - 1) * pageSize
-	return accountInspectionPageInfo{
-		Page:       page,
-		PageSize:   pageSize,
-		Total:      total,
-		TotalPages: totalPages,
-		HasMore:    start+pageSize < total,
-	}
+	return proinspection.ResultMatchesSearch(result, search)
 }
 
 func paginateAccountInspectionLogs(logs []accountInspectionLogEntry, page int, pageSize int, level string) ([]accountInspectionLogEntry, accountInspectionPageInfo) {
-	page = normalizeAccountInspectionPage(page)
-	pageSize = normalizeAccountInspectionPageSize(pageSize, 100, accountInspectionMaxLogPageSize)
-	filtered := make([]accountInspectionLogEntry, 0, len(logs))
-	for _, entry := range logs {
-		if level == "" || level == "all" || strings.EqualFold(entry.Level, level) {
-			filtered = append(filtered, entry)
-		}
-	}
-	total := len(filtered)
-	info := accountInspectionPageInfoFor(total, page, pageSize)
-	if total == 0 {
-		return []accountInspectionLogEntry{}, info
-	}
-	end := total - (page-1)*pageSize
-	if end <= 0 {
-		return []accountInspectionLogEntry{}, info
-	}
-	start := maxInt(0, end-pageSize)
-	return append([]accountInspectionLogEntry(nil), filtered[start:end]...), info
+	return proinspection.PaginateLogs(logs, page, pageSize, accountInspectionMaxLogPageSize, level)
 }
 
 func paginateAccountInspectionResults(results []accountInspectionResult, page int, pageSize int, filter string, pendingOnly bool, provider string, search string) ([]accountInspectionResult, accountInspectionPageInfo) {
-	page = normalizeAccountInspectionPage(page)
-	pageSize = normalizeAccountInspectionPageSize(pageSize, 100, accountInspectionMaxResultPageSize)
-	filtered := make([]accountInspectionResult, 0, len(results))
-	for _, result := range results {
-		if accountInspectionResultMatchesFilter(result, filter) &&
-			(!pendingOnly || accountInspectionResultMatchesFilter(result, "pending")) &&
-			accountInspectionResultMatchesProvider(result, provider) &&
-			accountInspectionResultMatchesSearch(result, search) {
-			filtered = append(filtered, result)
-		}
-	}
-	total := len(filtered)
-	info := accountInspectionPageInfoFor(total, page, pageSize)
-	start := (page - 1) * pageSize
-	if start >= total {
-		return []accountInspectionResult{}, info
-	}
-	end := minInt(total, start+pageSize)
-	return append([]accountInspectionResult(nil), filtered[start:end]...), info
+	return proinspection.PaginateResults(results, page, pageSize, accountInspectionMaxResultPageSize, filter, pendingOnly, provider, search)
 }
 
 func (s *accountInspectionScheduler) streamStatusLocked(options accountInspectionSnapshotOptions) accountInspectionStatus {
-	status := s.status
+	healthCounts := s.healthCounts
 	if options.IncludeDetails {
-		healthCounts := s.healthCountsLocked()
-		logs, logsPage := paginateAccountInspectionLogs(s.status.Logs, options.LogPage, options.LogPageSize, options.LogLevel)
-		results, resultsPage := paginateAccountInspectionResults(s.status.Results, options.ResultPage, options.ResultPageSize, options.ResultFilter, options.ResultPendingOnly, options.ResultProvider, options.ResultSearch)
-		status.HealthCounts = &healthCounts
-		status.ProviderHealthCounts = accountInspectionResultProviderHealthCounts(s.status.Results)
-		status.Logs = logs
-		status.Results = results
-		status.LogsPage = &logsPage
-		status.ResultsPage = &resultsPage
-		status.LogsLimited = logsPage.Total > len(logs)
-		status.ResultsLimited = resultsPage.Total > len(results)
-	} else {
-		status.HealthCounts = nil
-		status.ProviderHealthCounts = nil
-		status.LogsPage = nil
-		status.ResultsPage = nil
-		status.Logs = nil
-		status.Results = nil
-		status.LogsLimited = false
-		status.ResultsLimited = false
+		healthCounts = s.healthCountsLocked()
 	}
-	return status
+	return proinspection.ProjectStatus(s.status, healthCounts, options, accountInspectionMaxResultPageSize, accountInspectionMaxLogPageSize)
 }
 
 func (s *accountInspectionScheduler) streamMessageLocked(messageType accountInspectionStreamMessageType, options accountInspectionSnapshotOptions, logEntry *accountInspectionLogEntry) accountInspectionLogStreamMessage {
@@ -1437,7 +1026,7 @@ func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item a
 }
 
 func sameAccountInspectionResult(a accountInspectionResult, b accountInspectionResult) bool {
-	return a.Key == b.Key || (a.FileName == b.FileName && a.AuthIndex == b.AuthIndex)
+	return proinspection.SameResult(a, b)
 }
 
 func (s *accountInspectionScheduler) updateInspectionResultLocked(result accountInspectionResult, appendMissing bool, update func(accountInspectionResult) (accountInspectionResult, bool)) bool {
@@ -1470,40 +1059,13 @@ func (s *accountInspectionScheduler) updateInspectionResultLocked(result account
 
 func (s *accountInspectionScheduler) mergeTokenRefreshResultLocked(result accountInspectionResult) {
 	s.updateInspectionResultLocked(result, true, func(current accountInspectionResult) (accountInspectionResult, bool) {
-		current.Provider = result.Provider
-		current.FileName = result.FileName
-		current.DisplayName = result.DisplayName
-		current.Email = result.Email
-		current.Name = result.Name
-		current.AuthIndex = result.AuthIndex
-		current.Disabled = result.Disabled
-		current.TokenRefreshTriggered = result.TokenRefreshTriggered
-		current.TokenRefreshStatus = result.TokenRefreshStatus
-		current.TokenRefreshError = result.TokenRefreshError
-		current.NextRefreshAt = result.NextRefreshAt
-		if result.TokenRefreshStatus == "failed" {
-			current.Error = result.Error
-			current.ErrorDetail = result.ErrorDetail
-			current.ErrorCode = result.ErrorCode
-			current.ActionReason = result.ActionReason
-			return current, true
-		}
-		if result.TokenRefreshStatus == "success" && current.ErrorCode == "token_refresh_error" {
-			current.Error = ""
-			current.ErrorDetail = ""
-			current.ErrorCode = ""
-			current.ActionReason = result.ActionReason
-			return current, true
-		}
-		return current, false
+		return proinspection.MergeTokenRefreshResult(current, result)
 	})
 }
 
 func (s *accountInspectionScheduler) mergeSingleInspectionResultLocked(result accountInspectionResult) {
 	s.updateInspectionResultLocked(result, false, func(current accountInspectionResult) (accountInspectionResult, bool) {
-		result.Executed = current.Executed
-		result.ExecuteError = current.ExecuteError
-		return result, true
+		return proinspection.MergeReinspectionResult(current, result)
 	})
 }
 
@@ -1748,22 +1310,11 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 }
 
 func completedInspectionResults(results []accountInspectionResult) []accountInspectionResult {
-	out := make([]accountInspectionResult, 0, len(results))
-	for _, result := range results {
-		if result.Key == "" {
-			continue
-		}
-		out = append(out, result)
-	}
-	return out
+	return proinspection.CompletedResults(results)
 }
 
 func accountInspectionProviderLimiters() map[string]chan struct{} {
-	limiters := make(map[string]chan struct{}, len(accountInspectionSupportedProviders))
-	for provider := range accountInspectionSupportedProviders {
-		limiters[provider] = make(chan struct{}, accountInspectionMaxProviderConcurrency)
-	}
-	return limiters
+	return proinspection.ProviderLimiters(accountInspectionSupportedProviders, accountInspectionMaxProviderConcurrency)
 }
 
 func (s *accountInspectionScheduler) auths() ([]*coreauth.Auth, error) {
@@ -1816,7 +1367,7 @@ func (s *accountInspectionScheduler) authFileExists(auth *coreauth.Auth, existin
 }
 
 func accountInspectionKey(fileName string, authIndex string) string {
-	return fileName + "::" + firstNonEmptyStringValue(authIndex, "-")
+	return proinspection.AccountKey(fileName, authIndex)
 }
 
 func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
@@ -1865,27 +1416,11 @@ func isAccountInspectionAPIKeyAuth(auth *coreauth.Auth) bool {
 }
 
 func shouldInspectAccount(account accountInspectionAccount, targetType string) bool {
-	if account.Auth == nil {
-		return false
-	}
-	if isAccountInspectionAPIKeyAuth(account.Auth) {
-		return false
-	}
-	if _, ok := accountInspectionSupportedProviders[account.Provider]; !ok {
-		return false
-	}
-	return targetType == accountInspectionProviderAll || targetType == account.Provider
+	return proinspection.ShouldInspectCandidate(account.Auth != nil, isAccountInspectionAPIKeyAuth(account.Auth), account.Provider, targetType)
 }
 
 func sampleAccounts(accounts []accountInspectionAccount, sampleSize int) []accountInspectionAccount {
-	if sampleSize <= 0 || sampleSize >= len(accounts) {
-		return accounts
-	}
-	out := append([]accountInspectionAccount(nil), accounts...)
-	rand.New(rand.NewSource(time.Now().UnixNano())).Shuffle(len(out), func(i, j int) {
-		out[i], out[j] = out[j], out[i]
-	})
-	return out[:sampleSize]
+	return proinspection.Sample(accounts, sampleSize, time.Now().UnixNano())
 }
 
 func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, refreshLimiter chan struct{}) accountInspectionResult {
@@ -2229,10 +1764,7 @@ func (s *accountInspectionScheduler) fetchAntigravitySubscription(ctx context.Co
 }
 
 func antigravityShouldDeepProbe(decision accountInspectionDecision) bool {
-	if decision.UsedPercent == nil || decision.IsQuota {
-		return false
-	}
-	return decision.Action == accountInspectionActionKeep || decision.Action == accountInspectionActionEnable
+	return proinspection.ShouldAntigravityDeepProbe(decision)
 }
 
 func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, groups []map[string]any, decision accountInspectionDecision, quotaStatus *int) (accountInspectionDecision, *int, error) {
@@ -2317,130 +1849,43 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 }
 
 func selectAntigravityDeepProbeModel(groups []map[string]any, preferredModel string) string {
-	if model := strings.TrimSpace(preferredModel); model != "" {
-		return model
-	}
-	return "claude-sonnet-4-6"
+	return proinspection.SelectAntigravityDeepProbeModel(preferredModel)
 }
 
 func buildAntigravityDeepProbeBody(projectID string, model string) string {
-	raw, _ := json.Marshal(map[string]any{
-		"project": projectID,
-		"model":   model,
-		"request": map[string]any{
-			"contents": []map[string]any{{
-				"role":  "user",
-				"parts": []map[string]string{{"text": "ping"}},
-			}},
-			"generationConfig": map[string]any{"maxOutputTokens": 1},
-		},
-	})
-	return string(raw)
+	return proinspection.BuildAntigravityDeepProbeBody(projectID, model)
 }
 
 func classifyAntigravityDeepProbeResponse(resp accountInspectionHTTPResult) (accountInspectionDeepProbeStatus, string) {
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		if hasAntigravityGenerateContent(resp.Body) {
-			return accountInspectionDeepProbeSuccess, ""
-		}
-		return accountInspectionDeepProbeTransientError, "Antigravity 深度检测响应为空或格式异常"
-	}
-	message := summarizeInspectionHTTPBody(resp.Body)
-	if message == "" {
-		message = fmt.Sprintf("HTTP %d", resp.StatusCode)
-	}
-	if isQuotaHTTPStatus(resp.StatusCode) || isAntigravityQuotaFailure(resp.Body) {
-		return accountInspectionDeepProbeQuota, message
-	}
-	if isAccountErrorStatus(resp.StatusCode) {
-		return accountInspectionDeepProbeAuthError, message
-	}
-	return accountInspectionDeepProbeTransientError, message
+	return proinspection.ClassifyAntigravityDeepProbeResponse(resp)
 }
 
 func hasAntigravityGenerateContent(body string) bool {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return false
-	}
-	if candidates, ok := nestedMap(payload, "response")["candidates"].([]any); ok && len(candidates) > 0 {
-		return true
-	}
-	if candidates, ok := payload["candidates"].([]any); ok && len(candidates) > 0 {
-		return true
-	}
-	return false
+	return proinspection.HasAntigravityGenerateContent(body)
 }
 
 func isAntigravityQuotaFailure(body string) bool {
-	lower := strings.ToLower(body)
-	if strings.Contains(lower, "quota_exhausted") || strings.Contains(lower, "quota exhausted") || strings.Contains(lower, "limit reached") {
-		return true
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return false
-	}
-	if !strings.EqualFold(stringFromAny(nestedMap(payload, "error")["status"]), "RESOURCE_EXHAUSTED") {
-		return false
-	}
-	details := anySlice(nestedMap(payload, "error")["details"])
-	for _, raw := range details {
-		detail, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if strings.EqualFold(stringFromAny(detail["reason"]), "QUOTA_EXHAUSTED") {
-			return true
-		}
-	}
-	return false
+	return proinspection.IsAntigravityQuotaFailure(body)
 }
 
 func summarizeInspectionHTTPBody(body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err == nil {
-		if message := nestedString(nestedMap(payload, "error"), "message", ""); message != "" {
-			return message
-		}
-		if message := stringFromAny(payload["error"]); message != "" {
-			return message
-		}
-		if message := stringFromAny(payload["message"]); message != "" {
-			return message
-		}
-	}
-	if len(body) > 240 {
-		return body[:240]
-	}
-	return body
+	return proinspection.SummarizeHTTPBody(body)
 }
 
 func inspectionHTTPErrorDetail(body string) string {
-	return strings.TrimSpace(body)
+	return proinspection.HTTPErrorDetail(body)
 }
 
 func withInspectionHTTPErrorDetail(decision accountInspectionDecision, body string) accountInspectionDecision {
-	decision.ErrorDetail = inspectionHTTPErrorDetail(body)
-	return decision
+	return proinspection.WithHTTPErrorDetail(decision, body)
 }
 
 func statusValue(status *int) int {
-	if status == nil {
-		return 0
-	}
-	return *status
+	return proinspection.StatusValue(status)
 }
 
 func firstStatus(primary *int, fallback *int) *int {
-	if primary != nil {
-		return primary
-	}
-	return fallback
+	return proinspection.FirstStatus(primary, fallback)
 }
 
 func (s *accountInspectionScheduler) inspectClaude(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
@@ -2540,18 +1985,7 @@ func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, accou
 }
 
 func quotaSnapshotMaxUsedPercent(snapshot pluginapi.QuotaSnapshot) (*float64, bool) {
-	usedValues := make([]float64, 0, len(snapshot.Items))
-	for _, item := range snapshot.Items {
-		if item.UsedPercent != nil {
-			usedValues = append(usedValues, math.Max(0, math.Min(100, *item.UsedPercent)))
-			continue
-		}
-		if item.RemainingFraction != nil {
-			remaining := normalizeFraction(*item.RemainingFraction)
-			usedValues = append(usedValues, math.Max(0, math.Min(100, (1-remaining)*100)))
-		}
-	}
-	return maxFloatPtr(usedValues), len(snapshot.Items) > 0
+	return proquota.SnapshotMaxUsedPercent(snapshot)
 }
 
 func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
@@ -2671,10 +2105,7 @@ func (s *accountInspectionScheduler) inspectXAICLI(ctx context.Context, account 
 }
 
 func accountInspectionShouldDeepProbe(decision accountInspectionDecision) bool {
-	if decision.IsQuota {
-		return false
-	}
-	return decision.Action == accountInspectionActionKeep || decision.Action == accountInspectionActionEnable
+	return proinspection.ShouldDeepProbe(decision)
 }
 
 func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, decision accountInspectionDecision, quotaStatus *int) (accountInspectionDecision, *int, error) {
@@ -2775,55 +2206,11 @@ func runXAIDeepProbeWithRetry(
 	retryDelay time.Duration,
 	task func() (accountInspectionHTTPResult, error),
 ) (accountInspectionHTTPResult, accountInspectionDeepProbeStatus, string, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	attempts := retries + 1
-	if attempts < accountInspectionXAIMinAttempts {
-		attempts = accountInspectionXAIMinAttempts
-	}
-	if attempts > accountInspectionMaxRetries+1 {
-		attempts = accountInspectionMaxRetries + 1
-	}
-	var last accountInspectionHTTPResult
-	var lastStatus accountInspectionDeepProbeStatus
-	var lastMessage string
-	var lastErr error
-	for attempt := 0; attempt < attempts; attempt++ {
-		last, lastErr = task()
-		if lastErr == nil {
-			lastStatus, lastMessage = classifyXAIDeepProbeResponse(last)
-			if !shouldRetryXAIDeepProbe(lastStatus, lastMessage) {
-				return last, lastStatus, lastMessage, nil
-			}
-		}
-		if attempt+1 >= attempts {
-			break
-		}
-		if retryDelay <= 0 {
-			continue
-		}
-		timer := time.NewTimer(retryDelay)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return last, lastStatus, lastMessage, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	return last, lastStatus, lastMessage, lastErr
+	return proinspection.RunXAIDeepProbeWithRetry(ctx, retries, retryDelay, task)
 }
 
 func shouldRetryXAIDeepProbe(status accountInspectionDeepProbeStatus, message string) bool {
-	if status != accountInspectionDeepProbeTransientError {
-		return false
-	}
-	return !strings.Contains(strings.ToLower(message), "content_filter")
+	return proinspection.ShouldRetryXAIDeepProbe(status, message)
 }
 
 func xaiInspectionBaseURL(auth *coreauth.Auth) string {
@@ -2896,143 +2283,31 @@ func xaiOfficialAPIHeaders() map[string]string {
 }
 
 func buildXAIOfficialHealthBody(model string) string {
-	raw, _ := json.Marshal(map[string]any{
-		"model":      strings.TrimSpace(model),
-		"messages":   []map[string]any{{"role": "user", "content": "ping"}},
-		"max_tokens": 1,
-		"stream":     false,
-	})
-	return string(raw)
+	return proinspection.BuildXAIOfficialHealthBody(model)
 }
 
 func xaiPaidHealthSummary() map[string]any {
-	summary := emptyXAIBillingSummary()
-	summary["mode"] = "paid-health"
-	summary["source"] = "api.x.ai"
-	summary["planType"] = "paid"
-	summary["healthStatus"] = "chat-ok"
-	return summary
+	return proquota.XAIPaidHealthSummary()
 }
 
 func xaiOfficialAPIQuotaDecision(account accountInspectionAccount, body string) accountInspectionDecision {
-	reason := "xAI 官方 API 额度不足，建议禁用账号"
-	action := accountInspectionActionDisable
-	if account.Disabled {
-		reason = "xAI 官方 API 额度不足，但账号已禁用"
-		action = accountInspectionActionKeep
-	}
-	return accountInspectionDecision{
-		Action:       action,
-		ActionReason: reason,
-		IsQuota:      true,
-		ErrorDetail:  summarizeInspectionHTTPBody(body),
-	}
+	return proinspection.XAIOfficialAPIQuotaDecision(account.Disabled, body)
 }
 
 func buildXAIDeepProbeBody(model string) string {
-	raw, _ := json.Marshal(map[string]any{
-		"model": strings.TrimSpace(model),
-		"input": []map[string]any{{
-			"role": "user",
-			"content": []map[string]any{{
-				"type": "input_text",
-				"text": "ping",
-			}},
-		}},
-		"instructions":      "You are a helpful assistant. Reply briefly.",
-		"max_output_tokens": 1,
-		"stream":            true,
-		"store":             false,
-	})
-	return string(raw)
+	return proinspection.BuildXAIDeepProbeBody(model)
 }
 
 func classifyXAIDeepProbeResponse(resp accountInspectionHTTPResult) (accountInspectionDeepProbeStatus, string) {
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return classifyXAIDeepProbeSuccessBody(resp.Body)
-	}
-	message := summarizeInspectionHTTPBody(resp.Body)
-	if message == "" {
-		message = fmt.Sprintf("HTTP %d", resp.StatusCode)
-	}
-	if isQuotaHTTPStatus(resp.StatusCode) || isXAIQuotaFailure(resp.Body) {
-		return accountInspectionDeepProbeQuota, message
-	}
-	if isAccountErrorStatus(resp.StatusCode) {
-		return accountInspectionDeepProbeAuthError, message
-	}
-	return accountInspectionDeepProbeTransientError, message
+	return proinspection.ClassifyXAIDeepProbeResponse(resp)
 }
 
 func classifyXAIDeepProbeSuccessBody(body string) (accountInspectionDeepProbeStatus, string) {
-	lastEvent := ""
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "data:") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		}
-		if line == "" || line == "[DONE]" {
-			continue
-		}
-		var payload map[string]any
-		if json.Unmarshal([]byte(line), &payload) != nil {
-			continue
-		}
-		eventType := strings.ToLower(strings.TrimSpace(stringFromAny(payload["type"])))
-		response := nestedMap(payload, "response")
-		if eventType == "" {
-			switch strings.ToLower(strings.TrimSpace(stringFromAny(payload["status"]))) {
-			case "completed":
-				eventType = "response.completed"
-			case "incomplete":
-				eventType = "response.incomplete"
-				response = payload
-			case "failed":
-				eventType = "response.failed"
-				response = payload
-			}
-		}
-		if eventType != "" {
-			lastEvent = eventType
-		}
-		switch eventType {
-		case "response.completed":
-			return accountInspectionDeepProbeSuccess, ""
-		case "response.incomplete":
-			reason := strings.ToLower(strings.TrimSpace(stringFromAny(nestedMap(response, "incomplete_details")["reason"])))
-			if reason == "max_output_tokens" {
-				return accountInspectionDeepProbeSuccess, ""
-			}
-			if reason == "" {
-				reason = "unknown reason"
-			}
-			return accountInspectionDeepProbeTransientError, "xAI 深度检测响应未完成：" + reason
-		case "response.failed", "error":
-			message := nestedString(nestedMap(response, "error"), "message", "")
-			if message == "" {
-				message = nestedString(nestedMap(payload, "error"), "message", "")
-			}
-			if message == "" {
-				message = "unknown response failure"
-			}
-			return accountInspectionDeepProbeTransientError, "xAI 深度检测响应失败：" + message
-		}
-	}
-	if lastEvent != "" {
-		return accountInspectionDeepProbeTransientError, "xAI 深度检测缺少终态事件，最后事件：" + lastEvent
-	}
-	return accountInspectionDeepProbeTransientError, "xAI 深度检测响应为空或格式异常"
+	return proinspection.ClassifyXAIDeepProbeSuccessBody(body)
 }
 
 func isXAIQuotaFailure(body string) bool {
-	lower := strings.ToLower(body)
-	return strings.Contains(lower, "free-usage-exhausted") ||
-		strings.Contains(lower, "quota_exhausted") ||
-		strings.Contains(lower, "quota exhausted") ||
-		strings.Contains(lower, "usage limit") ||
-		strings.Contains(lower, "included free usage") ||
-		strings.Contains(lower, "out of credits") ||
-		strings.Contains(lower, "grok subscription")
+	return proinspection.IsXAIQuotaFailure(body)
 }
 
 func (s *accountInspectionScheduler) fetchXAIBillingSummary(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, url string, headers map[string]string) (map[string]any, accountInspectionHTTPResult, error) {
@@ -3075,12 +2350,7 @@ func xaiRequestHeaders(auth *coreauth.Auth) map[string]string {
 }
 
 func firstInspectionStatus(values ...int) *int {
-	for _, value := range values {
-		if value != 0 {
-			return intPtr(value)
-		}
-	}
-	return nil
+	return proinspection.FirstNonZeroStatus(values...)
 }
 
 func (s *accountInspectionScheduler) antigravityUserAgent() string {
@@ -3116,7 +2386,7 @@ func (s *accountInspectionScheduler) claudeHeaders() map[string]string {
 }
 
 func isAccountErrorStatus(status int) bool {
-	return status == 400 || status == 401 || status == 403 || status == 404
+	return proinspection.IsAccountErrorStatus(status)
 }
 
 func isQuotaHTTPStatus(status int) bool {
@@ -3125,302 +2395,6 @@ func isQuotaHTTPStatus(status int) bool {
 
 func isInspectionAuthRecoveryStatus(status int) bool {
 	return (status >= 200 && status < 300) || status == 402 || status == 429
-}
-
-func syncAuthInspectionLastError(auth *coreauth.Auth, lastError *coreauth.Error) {
-	if auth == nil {
-		return
-	}
-	auth.LastError = lastError
-	if lastError == nil {
-		if auth.Metadata != nil {
-			delete(auth.Metadata, "last_error")
-		}
-		return
-	}
-	if auth.Metadata == nil {
-		auth.Metadata = make(map[string]any)
-	}
-	auth.Metadata["last_error"] = map[string]any{
-		"code":          lastError.Code,
-		"message":       lastError.Message,
-		"retryable":     lastError.Retryable,
-		"http_status":   lastError.HTTPStatus,
-		"source":        "account_inspection",
-		"updated_at_ms": time.Now().UnixMilli(),
-	}
-}
-
-func setProAuthDisabledState(auth *coreauth.Auth, disabled bool) {
-	if auth == nil {
-		return
-	}
-	auth.Disabled = disabled
-	if auth.Metadata == nil {
-		auth.Metadata = make(map[string]any)
-	}
-	clearRoutingProtectionOwnership(auth)
-	auth.Metadata["disabled"] = disabled
-	if disabled {
-		auth.Status = coreauth.StatusDisabled
-		auth.StatusMessage = "disabled by scheduled account inspection"
-	} else {
-		code := authInspectionLastErrorCode(auth)
-		if code != "" && !isInspectionAuthErrorCode(code) {
-			auth.Status = coreauth.StatusError
-			auth.Unavailable = true
-			if auth.LastError != nil {
-				auth.StatusMessage = strings.TrimSpace(auth.LastError.Message)
-			} else if raw, ok := auth.Metadata["last_error"].(map[string]any); ok {
-				auth.StatusMessage = strings.TrimSpace(stringFromAny(raw["message"]))
-			}
-		} else {
-			auth.Status = coreauth.StatusActive
-			auth.StatusMessage = ""
-			auth.Unavailable = false
-			if isInspectionAuthErrorCode(code) {
-				syncAuthInspectionLastError(auth, nil)
-			}
-		}
-	}
-	auth.UpdatedAt = time.Now()
-}
-
-func pluginVirtualSourcePath(auth *coreauth.Auth) string {
-	if auth == nil {
-		return ""
-	}
-	sourcePath := strings.TrimSpace(authAttribute(auth, coreauth.AttributeVirtualSource))
-	if sourcePath == "" {
-		sourcePath = strings.TrimSpace(authAttribute(auth, "path"))
-	}
-	return sourcePath
-}
-
-func sameAuthSourcePath(left string, right string) bool {
-	left = strings.TrimSpace(left)
-	right = strings.TrimSpace(right)
-	if left == "" || right == "" {
-		return false
-	}
-	if strings.EqualFold(filepath.Clean(left), filepath.Clean(right)) {
-		return true
-	}
-	leftAbs, leftErr := filepath.Abs(left)
-	rightAbs, rightErr := filepath.Abs(right)
-	return leftErr == nil && rightErr == nil && strings.EqualFold(filepath.Clean(leftAbs), filepath.Clean(rightAbs))
-}
-
-func isPluginVirtualRuntimeOnlyAuth(auth *coreauth.Auth) bool {
-	if auth == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(authAttribute(auth, "runtime_only")), "true")
-}
-
-func cloneAnyMapForInspection(in map[string]any) map[string]any {
-	if in == nil {
-		return make(map[string]any)
-	}
-	out := make(map[string]any, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
-
-func (h *Handler) preferredAuthForPluginVirtualWrite(auth *coreauth.Auth) *coreauth.Auth {
-	if auth == nil || !coreauth.IsPluginVirtualAuth(auth) || h == nil || h.authManager == nil {
-		return auth
-	}
-	sourcePath := pluginVirtualSourcePath(auth)
-	if sourcePath == "" {
-		return auth
-	}
-	var firstVirtual *coreauth.Auth
-	for _, candidate := range h.authManager.List() {
-		if candidate == nil || !sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
-			continue
-		}
-		if !coreauth.IsPluginVirtualAuth(candidate) {
-			return candidate
-		}
-		if firstVirtual == nil {
-			firstVirtual = candidate
-		}
-		if !isPluginVirtualRuntimeOnlyAuth(candidate) {
-			return candidate
-		}
-	}
-	if firstVirtual != nil {
-		return firstVirtual
-	}
-	return auth
-}
-
-func savePluginVirtualAuthToSourceFile(auth *coreauth.Auth) error {
-	if auth == nil {
-		return fmt.Errorf("auth not found")
-	}
-	sourcePath := pluginVirtualSourcePath(auth)
-	if sourcePath == "" {
-		return fmt.Errorf("plugin virtual auth source path unavailable")
-	}
-	if auth.Metadata == nil {
-		auth.Metadata = make(map[string]any)
-	}
-	auth.Metadata["disabled"] = auth.Disabled
-	if coreauth.IsPluginVirtualAuth(auth) {
-		return savePluginVirtualManagedMetadataToSourceFile(sourcePath, auth)
-	}
-	type metadataSetter interface {
-		SetMetadata(map[string]any)
-	}
-	if setter, ok := auth.Storage.(metadataSetter); ok {
-		setter.SetMetadata(auth.Metadata)
-	}
-	if auth.Storage != nil {
-		return auth.Storage.SaveTokenToFile(sourcePath)
-	}
-	raw, err := json.Marshal(auth.Metadata)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(sourcePath, append(raw, '\n'), 0o600)
-}
-
-func savePluginVirtualManagedMetadataToSourceFile(sourcePath string, auth *coreauth.Auth) error {
-	source, err := readPluginVirtualSourceMetadata(sourcePath)
-	if err != nil {
-		return err
-	}
-	return writePluginVirtualManagedMetadataToSourceFile(sourcePath, auth, source)
-}
-
-func readPluginVirtualSourceMetadata(sourcePath string) (map[string]any, error) {
-	rawSource, err := os.ReadFile(sourcePath)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	source := make(map[string]any)
-	if len(bytes.TrimSpace(rawSource)) > 0 {
-		if err = json.Unmarshal(rawSource, &source); err != nil {
-			return nil, fmt.Errorf("decode plugin virtual auth source: %w", err)
-		}
-		if source == nil {
-			source = make(map[string]any)
-		}
-	}
-	return source, nil
-}
-
-func writePluginVirtualManagedMetadataToSourceFile(sourcePath string, auth *coreauth.Auth, source map[string]any) error {
-	if source == nil {
-		source = make(map[string]any)
-	}
-	source["disabled"] = auth.Disabled
-	if value, ok := auth.Metadata["last_error"]; ok {
-		source["last_error"] = value
-	} else {
-		delete(source, "last_error")
-	}
-	delete(source, "quota_cache")
-	if value, ok := auth.Metadata[routingProtectionMetadataKey]; ok {
-		source[routingProtectionMetadataKey] = value
-	} else {
-		delete(source, routingProtectionMetadataKey)
-	}
-	raw, err := json.Marshal(source)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(sourcePath, append(raw, '\n'), 0o600)
-}
-
-func (h *Handler) updatePluginVirtualRuntimeAuths(ctx context.Context, sourceAuth *coreauth.Auth, mutate func(*coreauth.Auth)) {
-	if h == nil || h.authManager == nil || sourceAuth == nil || mutate == nil {
-		return
-	}
-	sourcePath := pluginVirtualSourcePath(sourceAuth)
-	if sourcePath == "" {
-		mutate(sourceAuth)
-		_, _ = h.authManager.Update(ctx, sourceAuth)
-		return
-	}
-	for _, candidate := range h.authManager.List() {
-		if candidate == nil || !sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
-			continue
-		}
-		mutate(candidate)
-		_, _ = h.authManager.Update(ctx, candidate)
-	}
-}
-
-func (h *Handler) updateProAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
-	if h == nil || h.authManager == nil {
-		return fmt.Errorf("core auth manager unavailable")
-	}
-	auth := h.authByIndex(authIndex)
-	if auth == nil {
-		return fmt.Errorf("auth not found")
-	}
-	if mutate == nil {
-		return nil
-	}
-	if coreauth.IsPluginVirtualAuth(auth) {
-		sourceAuth := h.preferredAuthForPluginVirtualWrite(auth)
-		var sourceMetadata map[string]any
-		if coreauth.IsPluginVirtualAuth(sourceAuth) {
-			var err error
-			sourceMetadata, err = readPluginVirtualSourceMetadata(pluginVirtualSourcePath(sourceAuth))
-			if err != nil {
-				return err
-			}
-		}
-		mutate(sourceAuth)
-		h.updatePluginVirtualRuntimeAuths(ctx, sourceAuth, mutate)
-		if coreauth.IsPluginVirtualAuth(sourceAuth) {
-			return writePluginVirtualManagedMetadataToSourceFile(pluginVirtualSourcePath(sourceAuth), sourceAuth, sourceMetadata)
-		}
-		if err := savePluginVirtualAuthToSourceFile(sourceAuth); err != nil {
-			return err
-		}
-		return nil
-	}
-	mutate(auth)
-	updated, err := h.authManager.Update(ctx, auth)
-	if err != nil {
-		return err
-	}
-	if updated == nil {
-		return fmt.Errorf("auth not found")
-	}
-	return nil
-}
-
-func (h *Handler) updateProErrorAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
-	if h == nil || h.authManager == nil {
-		return fmt.Errorf("core auth manager unavailable")
-	}
-	auth := h.authByIndex(authIndex)
-	if auth == nil {
-		return fmt.Errorf("auth not found")
-	}
-	if !coreauth.IsPluginVirtualAuth(auth) {
-		return h.updateProAuth(ctx, authIndex, mutate)
-	}
-	if mutate == nil {
-		return nil
-	}
-	mutate(auth)
-	updated, err := h.authManager.Update(ctx, auth)
-	if err != nil {
-		return err
-	}
-	if updated == nil {
-		return fmt.Errorf("auth not found")
-	}
-	return nil
 }
 
 func (s *accountInspectionScheduler) syncInspectionAuthError(ctx context.Context, account accountInspectionAccount, code string, message string, status int) {
@@ -3466,29 +2440,6 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 	}
 }
 
-func authInspectionLastErrorCode(auth *coreauth.Auth) string {
-	if auth == nil {
-		return ""
-	}
-	if auth.LastError != nil {
-		return strings.TrimSpace(auth.LastError.Code)
-	}
-	raw, ok := auth.Metadata["last_error"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	return stringFromAny(raw["code"])
-}
-
-func isInspectionAuthErrorCode(code string) bool {
-	switch strings.TrimSpace(code) {
-	case "inspection_http_error", "inspection_probe_error", "antigravity_deep_probe_error", "xai_deep_probe_error", "token_refresh_error":
-		return true
-	default:
-		return false
-	}
-}
-
 func (s *accountInspectionScheduler) syncInspectionAuthStatus(ctx context.Context, account accountInspectionAccount, status int) {
 	if isAccountErrorStatus(status) {
 		message := fmt.Sprintf("HTTP %d", status)
@@ -3505,36 +2456,11 @@ func authErrorDecision(account accountInspectionAccount, status int) accountInsp
 }
 
 func accountInspectionErrorCode(status *int, fallback string) string {
-	if status != nil && isAccountErrorStatus(*status) {
-		return "inspection_http_error"
-	}
-	return fallback
+	return proinspection.ErrorCode(status, fallback)
 }
 
 func accountInspectionDecisionErrorCode(provider string, decision accountInspectionDecision, status *int) string {
-	if decision.IsQuota {
-		return ""
-	}
-	if decision.DeepProbeStatus == accountInspectionDeepProbeTransientError {
-		if strings.EqualFold(strings.TrimSpace(provider), "xai") {
-			return "xai_deep_probe_error"
-		}
-		return "antigravity_deep_probe_error"
-	}
-	if status != nil && isAccountErrorStatus(*status) {
-		return "inspection_http_error"
-	}
-	switch decision.DeepProbeStatus {
-	case accountInspectionDeepProbeAuthError:
-		if strings.EqualFold(strings.TrimSpace(provider), "xai") {
-			return "xai_deep_probe_error"
-		}
-		return "antigravity_deep_probe_error"
-	}
-	if decision.Error != "" {
-		return "inspection_probe_error"
-	}
-	return ""
+	return proinspection.DecisionErrorCode(provider, decision, status)
 }
 
 func healthyDecision(account accountInspectionAccount) accountInspectionDecision {
@@ -3550,50 +2476,11 @@ func quotaUnavailableDecision(account accountInspectionAccount, reason string, b
 }
 
 func codexDecision(account accountInspectionAccount, status int, used *float64, isQuota bool, threshold int) accountInspectionDecision {
-	if isQuota || (used != nil && *used >= float64(threshold)) {
-		if account.Disabled {
-			return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: "额度超阈值，但账号已禁用", UsedPercent: used, IsQuota: true}
-		}
-		return accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "额度超阈值，建议禁用账号", UsedPercent: used, IsQuota: true}
-	}
-	if status == 401 {
-		return accountInspectionDecision{Action: accountInspectionActionDelete, ActionReason: "接口返回 401，建议删除失效账号", UsedPercent: used}
-	}
-	if isAccountErrorStatus(status) {
-		return authErrorDecision(account, status)
-	}
-	if status == 200 && account.Disabled {
-		return accountInspectionDecision{Action: accountInspectionActionEnable, ActionReason: "账号恢复健康，建议重新启用", UsedPercent: used}
-	}
-	return accountInspectionDecision{Action: accountInspectionActionKeep, ActionReason: "无需处理", UsedPercent: used, IsQuota: false}
-}
-
-func (item accountInspectionActionItem) toResult() accountInspectionResult {
-	return accountInspectionResult{
-		Key:         item.Key,
-		Provider:    item.Provider,
-		FileName:    item.FileName,
-		DisplayName: item.DisplayName,
-		Email:       item.Email,
-		Name:        item.Name,
-		AuthIndex:   item.AuthIndex,
-		Disabled:    item.Disabled,
-		Action:      item.Action,
-	}
+	return proinspection.CodexDecision(account.Disabled, status, used, isQuota, threshold)
 }
 
 func accountInspectionActionItemFromResult(result accountInspectionResult, action accountInspectionAction) accountInspectionActionItem {
-	return accountInspectionActionItem{
-		Key:         result.Key,
-		Provider:    result.Provider,
-		FileName:    result.FileName,
-		DisplayName: result.DisplayName,
-		Email:       result.Email,
-		Name:        result.Name,
-		AuthIndex:   result.AuthIndex,
-		Disabled:    result.Disabled,
-		Action:      action,
-	}
+	return proinspection.ActionItemFromResult(result, action)
 }
 
 func (s *accountInspectionScheduler) bindActionItemToSnapshot(item accountInspectionActionItem) (accountInspectionActionItem, error) {
@@ -3637,22 +2524,7 @@ func (s *accountInspectionScheduler) applyManualActionResultLocked(result accoun
 		return
 	}
 	s.updateInspectionResultLocked(result, true, func(current accountInspectionResult) (accountInspectionResult, bool) {
-		merged := current
-		merged.Provider = result.Provider
-		merged.FileName = result.FileName
-		merged.DisplayName = result.DisplayName
-		merged.Email = result.Email
-		merged.Name = result.Name
-		merged.AuthIndex = result.AuthIndex
-		merged.Disabled = result.Disabled
-		merged.Executed = result.Executed
-		merged.ExecuteError = result.ExecuteError
-		if result.Executed && (result.Action == accountInspectionActionDisable || result.Action == accountInspectionActionEnable) {
-			merged.Action = accountInspectionActionKeep
-			merged.ActionReason = "无需处理"
-			merged.Error = ""
-		}
-		return merged, true
+		return proinspection.MergeManualActionResult(current, result)
 	})
 }
 
@@ -3684,7 +2556,7 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 	executedResults := make([]accountInspectionResult, len(executableItems))
 	runAccountInspectionWorkers(len(executableItems), accountInspectionMaxDeleteWorkers, nil, func(index int) bool {
 		item := executableItems[index]
-		result := item.toResult()
+		result := item.ToResult()
 		action := item.Action
 		outcome := accountInspectionActionOutcome{Action: action, FileName: item.FileName, DisplayName: item.DisplayName, Email: item.Email, Name: item.Name, Provider: item.Provider, AuthIndex: item.AuthIndex}
 		if err := s.executeAction(ctx, result, action); err != nil {
@@ -3727,39 +2599,11 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 }
 
 func dedupeExecutionActionItems(items []accountInspectionActionItem) []accountInspectionActionItem {
-	seen := make(map[string]struct{})
-	out := make([]accountInspectionActionItem, 0, len(items))
-	for _, item := range items {
-		if item.Action == accountInspectionActionKeep || item.Action == "" || item.FileName == "" {
-			continue
-		}
-		key := item.Key
-		if key == "" {
-			key = accountInspectionKey(item.FileName, item.AuthIndex)
-		}
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		if item.Key == "" {
-			item.Key = key
-		}
-		out = append(out, item)
-	}
-	return out
+	return proinspection.DedupeActionItems(items)
 }
 
-func summarizeManualActionOutcomes(outcomes []accountInspectionActionOutcome) gin.H {
-	success := 0
-	failed := 0
-	for _, outcome := range outcomes {
-		if outcome.Success {
-			success++
-		} else {
-			failed++
-		}
-	}
-	return gin.H{"total": len(outcomes), "success": success, "failed": failed}
+func summarizeManualActionOutcomes(outcomes []accountInspectionActionOutcome) proinspection.ActionOutcomeSummary {
+	return proinspection.SummarizeActionOutcomes(outcomes)
 }
 
 func (s *accountInspectionScheduler) applyAutomaticActions(ctx context.Context, results []accountInspectionResult, settings accountInspectionSettings) {
@@ -3848,79 +2692,23 @@ func (s *accountInspectionScheduler) clearAutoActionConfirmation(result accountI
 }
 
 func autoActionConfirmationKey(result accountInspectionResult, action accountInspectionAction) string {
-	key := result.Key
-	if key == "" {
-		key = result.FileName + ":" + result.AuthIndex
-	}
-	if key == "" || action == "" {
-		return ""
-	}
-	category := "action"
-	switch {
-	case isAccountInspectionAccountInvalidResult(result):
-		category = "account-invalid"
-	case isAccountInspectionRequestErrorResult(result):
-		category = "request-error"
-	case result.IsQuota:
-		category = "quota"
-	case action == accountInspectionActionEnable:
-		category = "recovery"
-	}
-	return key + "|" + string(action) + "|" + category
+	return proinspection.AutoActionConfirmationKey(result, action)
 }
 
 func accountInspectionAutoActionForError(result accountInspectionResult, action accountInspectionAction) accountInspectionAction {
-	if action == accountInspectionActionDelete {
-		return accountInspectionActionDelete
-	}
-	if action == accountInspectionActionDisable && !result.Disabled {
-		return accountInspectionActionDisable
-	}
-	return ""
+	return proinspection.AutoActionForError(result, action)
 }
 
 func isAccountInspectionAccountInvalidResult(result accountInspectionResult) bool {
-	if isAccountInspectionQuotaResult(result) {
-		return false
-	}
-	status := 0
-	if result.StatusCode != nil {
-		status = *result.StatusCode
-	}
-	code := strings.TrimSpace(result.ErrorCode)
-	if code != "" {
-		return code == "inspection_http_error" && isAccountErrorStatus(status)
-	}
-	if result.DeepProbeStatus == string(accountInspectionDeepProbeTransientError) {
-		return false
-	}
-	return isAccountErrorStatus(status)
+	return proinspection.IsAccountInvalidResult(result)
 }
 
 func isAccountInspectionRequestErrorResult(result accountInspectionResult) bool {
-	if isAccountInspectionQuotaResult(result) || isAccountInspectionAccountInvalidResult(result) {
-		return false
-	}
-	return strings.TrimSpace(result.ErrorCode) != "" ||
-		result.DeepProbeStatus == string(accountInspectionDeepProbeTransientError) ||
-		result.TokenRefreshStatus == "failed" ||
-		result.Error != ""
+	return proinspection.IsRequestErrorResult(result)
 }
 
 func autoActionForResult(result accountInspectionResult, settings accountInspectionSettings) accountInspectionAction {
-	if isAccountInspectionAccountInvalidResult(result) {
-		return accountInspectionAutoActionForError(result, settings.AutoExecuteAccountInvalidAction)
-	}
-	if isAccountInspectionRequestErrorResult(result) {
-		return accountInspectionAutoActionForError(result, settings.AutoExecuteRequestErrorAction)
-	}
-	if result.Action == accountInspectionActionDisable && result.IsQuota && settings.AutoExecuteQuotaLimitDisable {
-		return accountInspectionActionDisable
-	}
-	if result.Action == accountInspectionActionEnable && settings.AutoExecuteQuotaRecoveryEnable {
-		return accountInspectionActionEnable
-	}
-	return ""
+	return proinspection.AutoActionForResult(result, settings)
 }
 
 func (s *accountInspectionScheduler) executeAction(ctx context.Context, result accountInspectionResult, action accountInspectionAction) error {
@@ -3988,165 +2776,37 @@ func (s *accountInspectionScheduler) pluginVirtualSourceAuthCount(auth *coreauth
 }
 
 func summarizeAccountInspection(totalFiles int, probeSetCount int, accounts []accountInspectionAccount, results []accountInspectionResult) accountInspectionSummary {
-	summary := accountInspectionSummary{TotalFiles: totalFiles, ProbeSetCount: probeSetCount, SampledCount: len(results)}
+	disabledCount := 0
 	for _, account := range accounts {
 		if account.Disabled {
-			summary.DisabledCount++
-		} else {
-			summary.EnabledCount++
+			disabledCount++
 		}
 	}
-	for _, result := range results {
-		switch result.Action {
-		case accountInspectionActionDelete:
-			summary.DeleteCount++
-		case accountInspectionActionDisable:
-			summary.DisableCount++
-		case accountInspectionActionEnable:
-			summary.EnableCount++
-		default:
-			summary.KeepCount++
-		}
-		if result.Error != "" {
-			summary.ErrorCount++
-		}
-		if result.Executed {
-			switch result.Action {
-			case accountInspectionActionDelete:
-				summary.ExecutedDeleteCount++
-			case accountInspectionActionDisable:
-				summary.ExecutedDisableCount++
-			case accountInspectionActionEnable:
-				summary.ExecutedEnableCount++
-			}
-		}
-	}
-	return summary
+	return proinspection.SummarizeResults(totalFiles, probeSetCount, disabledCount, len(accounts)-disabledCount, results)
 }
 
 func sortAccountInspectionResults(results []accountInspectionResult) []accountInspectionResult {
-	sorted := append([]accountInspectionResult(nil), results...)
-	sort.Slice(sorted, func(i, j int) bool {
-		left := sorted[i]
-		right := sorted[j]
-		if left.Provider != right.Provider {
-			return left.Provider < right.Provider
-		}
-		return resultIdentity(left) < resultIdentity(right)
-	})
-	return sorted
+	return proinspection.SortResults(results)
 }
 
 func adjustAccountInspectionSummaryForResult(summary accountInspectionSummary, result accountInspectionResult, delta int) accountInspectionSummary {
-	summary.SampledCount += delta
-	switch result.Action {
-	case accountInspectionActionDelete:
-		summary.DeleteCount += delta
-	case accountInspectionActionDisable:
-		summary.DisableCount += delta
-	case accountInspectionActionEnable:
-		summary.EnableCount += delta
-	default:
-		summary.KeepCount += delta
-	}
-	if result.Error != "" {
-		summary.ErrorCount += delta
-	}
-	if result.Executed {
-		switch result.Action {
-		case accountInspectionActionDelete:
-			summary.ExecutedDeleteCount += delta
-		case accountInspectionActionDisable:
-			summary.ExecutedDisableCount += delta
-		case accountInspectionActionEnable:
-			summary.ExecutedEnableCount += delta
-		}
-	}
-	return summary
+	return proinspection.AdjustSummaryForResult(summary, result, delta)
 }
 
 func resultIdentity(result accountInspectionResult) string {
-	return formatAccountInspectionIdentity(result.FileName, result.Email, result.Name, result.DisplayName)
+	return proinspection.ResultIdentity(result)
 }
 
 func quotaSuccessState(values map[string]any) map[string]any {
-	state := map[string]any{"status": "success", "schemaVersion": 2, "parserVersion": accountInspectionQuotaParserVersion, "cachedAt": time.Now().UnixMilli()}
-	for key, value := range values {
-		state[key] = value
-	}
-	return state
+	return proquota.SuccessCacheState(accountInspectionQuotaParserVersion, values)
 }
 
 func jsonShapeHash(body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return ""
-	}
-	var payload any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return ""
-	}
-	shape, err := json.Marshal(jsonShape(payload))
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(shape)
-	return hex.EncodeToString(sum[:])
+	return proquota.JSONShapeHash(body)
 }
 
 func jsonShapeHashForBodies(bodies map[string]string) string {
-	shape := make(map[string]any, len(bodies))
-	for key, body := range bodies {
-		body = strings.TrimSpace(body)
-		if body == "" {
-			continue
-		}
-		var payload any
-		if err := json.Unmarshal([]byte(body), &payload); err != nil {
-			continue
-		}
-		shape[key] = jsonShape(payload)
-	}
-	if len(shape) == 0 {
-		return ""
-	}
-	encoded, err := json.Marshal(shape)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
-}
-
-func jsonShape(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		keys := make([]string, 0, len(typed))
-		for key := range typed {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		out := make(map[string]any, len(keys))
-		for _, key := range keys {
-			out[key] = jsonShape(typed[key])
-		}
-		return out
-	case []any:
-		if len(typed) == 0 {
-			return []any{}
-		}
-		return []any{jsonShape(typed[0])}
-	case string:
-		return "string"
-	case float64:
-		return "number"
-	case bool:
-		return "bool"
-	case nil:
-		return "null"
-	default:
-		return fmt.Sprintf("%T", value)
-	}
+	return proquota.JSONShapeHashForBodies(bodies)
 }
 
 func (s *accountInspectionScheduler) persistQuotaState(ctx context.Context, account accountInspectionAccount, state map[string]any) {
@@ -4237,904 +2897,59 @@ func persistQuotaState(ctx context.Context, account accountInspectionAccount, st
 }
 
 func buildAntigravityGroups(body string) ([]map[string]any, error) {
-	payload, err := parseAntigravityQuotaPayload(body)
-	if err != nil {
-		return nil, err
-	}
-	if groups := buildAntigravitySummaryGroups(payload); len(groups) > 0 {
-		return groups, nil
-	}
-	return nil, fmt.Errorf("empty antigravity quota groups")
-}
-
-var antigravityPlanByTierID = map[string]string{
-	"free-tier":          "free",
-	"g1-pro-tier":        "pro",
-	"g1-ultra-tier":      "ultra",
-	"g1-ultra-lite-tier": "ultra-lite",
+	return proinspection.BuildAntigravityGroups(body)
 }
 
 func buildAntigravitySubscription(payload map[string]any) map[string]any {
-	if payload == nil {
-		return nil
-	}
-	rawCurrentTier := firstAny(payload, "currentTier", "current_tier")
-	rawPaidTier := firstAny(payload, "paidTier", "paid_tier")
-	currentTier := normalizeAntigravityTier(rawCurrentTier)
-	paidTier := normalizeAntigravityTier(rawPaidTier)
-	effectiveTier := currentTier
-	source := "current"
-	if stringFromAny(paidTier["id"]) != "" {
-		effectiveTier = paidTier
-		source = "paid"
-	}
-	tierID := stringFromAny(effectiveTier["id"])
-	tierName := stringFromAny(effectiveTier["name"])
-	if tierID == "" && tierName == "" {
-		return nil
-	}
-	plan := antigravityPlanByTierID[tierID]
-	if plan == "" {
-		plan = "unknown"
-	}
-	subscription := map[string]any{
-		"plan":     plan,
-		"tierId":   emptyStringAsNil(tierID),
-		"tierName": emptyStringAsNil(tierName),
-		"source":   source,
-	}
-	if currentTier != nil {
-		subscription["currentTier"] = currentTier
-	}
-	if paidTier != nil {
-		subscription["paidTier"] = paidTier
-		if paidTierPayload, ok := rawPaidTier.(map[string]any); ok {
-			credits := normalizeAntigravityCredits(firstAny(paidTierPayload, "availableCredits", "available_credits"))
-			if len(credits) > 0 {
-				subscription["availableCredits"] = credits
-			}
-		}
-	}
-	if _, ok := subscription["availableCredits"]; !ok {
-		if currentTierPayload, ok := rawCurrentTier.(map[string]any); ok {
-			credits := normalizeAntigravityCredits(firstAny(currentTierPayload, "availableCredits", "available_credits"))
-			if len(credits) > 0 {
-				subscription["availableCredits"] = credits
-			}
-		}
-	}
-	return subscription
-}
-
-func normalizeAntigravityTier(value any) map[string]any {
-	tier, ok := value.(map[string]any)
-	if !ok {
-		return nil
-	}
-	id := stringFromAny(tier["id"])
-	name := stringFromAny(tier["name"])
-	if id == "" && name == "" {
-		return nil
-	}
-	return map[string]any{
-		"id":   emptyStringAsNil(id),
-		"name": emptyStringAsNil(name),
-	}
-}
-
-func normalizeAntigravityCredits(value any) []map[string]any {
-	items := anySlice(value)
-	if len(items) == 0 {
-		return nil
-	}
-	credits := make([]map[string]any, 0, len(items))
-	for _, raw := range items {
-		credit, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		creditType := stringFromAny(firstAny(credit, "creditType", "credit_type"))
-		creditAmount := normalizeAntigravityCreditValue(firstAny(credit, "creditAmount", "credit_amount"))
-		minimum := normalizeAntigravityCreditValue(firstAny(credit, "minimumCreditAmountForUsage", "minimum_credit_amount_for_usage"))
-		if creditType == "" && creditAmount == nil {
-			continue
-		}
-		credits = append(credits, map[string]any{
-			"creditType":                  emptyStringAsNil(creditType),
-			"creditAmount":                creditAmount,
-			"minimumCreditAmountForUsage": minimum,
-		})
-	}
-	return credits
-}
-
-func normalizeAntigravityCreditValue(value any) any {
-	if number, ok := floatFromAny(value); ok {
-		return number
-	}
-	if text := stringFromAny(value); text != "" {
-		return text
-	}
-	return nil
+	return proinspection.BuildAntigravitySubscription(payload)
 }
 
 func parseAntigravityQuotaPayload(body string) (map[string]any, error) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return nil, err
-	}
-	if len(anySlice(payload["groups"])) > 0 {
-		return payload, nil
-	}
-	bodyValue, ok := payload["body"]
-	if !ok {
-		return payload, nil
-	}
-	switch value := bodyValue.(type) {
-	case string:
-		var nested map[string]any
-		if err := json.Unmarshal([]byte(strings.TrimSpace(value)), &nested); err != nil {
-			return payload, nil
-		}
-		return nested, nil
-	case map[string]any:
-		return value, nil
-	default:
-		return payload, nil
-	}
-}
-
-func buildAntigravitySummaryGroups(payload map[string]any) []map[string]any {
-	rawGroups := anySlice(payload["groups"])
-	if len(rawGroups) == 0 {
-		return nil
-	}
-	groups := make([]map[string]any, 0, len(rawGroups))
-	for groupIndex, rawGroup := range rawGroups {
-		group, ok := rawGroup.(map[string]any)
-		if !ok {
-			continue
-		}
-		label := firstNonEmptyStringValue(stringFromAny(firstAny(group, "displayName", "display_name")), fmt.Sprintf("Quota Group %d", groupIndex+1))
-		description := firstNonEmptyStringValue(stringFromAny(group["description"]))
-		groupID := canonicalAntigravityGroupID(label, description)
-		if groupID == "" {
-			groupID = fmt.Sprintf("quota-group-%d", groupIndex+1)
-		}
-		rawBuckets := anySlice(group["buckets"])
-		buckets := make([]map[string]any, 0, len(rawBuckets))
-		for bucketIndex, rawBucket := range rawBuckets {
-			bucket, ok := rawBucket.(map[string]any)
-			if !ok {
-				continue
-			}
-			remaining, ok := floatFromAny(firstAny(bucket, "remainingFraction", "remaining_fraction"))
-			if !ok {
-				continue
-			}
-			window := firstNonEmptyStringValue(stringFromAny(bucket["window"]))
-			fallbackID := fmt.Sprintf("%s-bucket-%d", groupID, bucketIndex+1)
-			if window != "" {
-				fallbackID = groupID + "-" + normalizeWindowID(window)
-			}
-			bucketID := firstNonEmptyStringValue(stringFromAny(firstAny(bucket, "bucketId", "bucket_id")), fallbackID)
-			bucketLabel := firstNonEmptyStringValue(stringFromAny(firstAny(bucket, "displayName", "display_name")), bucketID)
-			parsed := map[string]any{"id": bucketID, "label": bucketLabel, "remainingFraction": normalizeFraction(remaining)}
-			if window != "" {
-				parsed["window"] = window
-			}
-			if resetTime := firstNonEmptyStringValue(stringFromAny(firstAny(bucket, "resetTime", "reset_time"))); resetTime != "" {
-				parsed["resetTime"] = resetTime
-			}
-			if description := firstNonEmptyStringValue(stringFromAny(bucket["description"])); description != "" {
-				parsed["description"] = description
-			}
-			buckets = append(buckets, parsed)
-		}
-		if len(buckets) == 0 {
-			continue
-		}
-		sort.SliceStable(buckets, func(i, j int) bool {
-			leftOrder := antigravityBucketWindowOrder(stringFromAny(buckets[i]["window"]))
-			rightOrder := antigravityBucketWindowOrder(stringFromAny(buckets[j]["window"]))
-			if leftOrder != rightOrder {
-				return leftOrder < rightOrder
-			}
-			return stringFromAny(buckets[i]["label"]) < stringFromAny(buckets[j]["label"])
-		})
-		parsedGroup := map[string]any{"id": groupID, "label": label, "buckets": buckets}
-		if description != "" {
-			parsedGroup["description"] = description
-		}
-		groups = append(groups, parsedGroup)
-	}
-	return groups
-}
-
-func canonicalAntigravityGroupID(label string, description string) string {
-	normalizedLabel := normalizeWindowID(label)
-	normalizedDescription := normalizeWindowID(description)
-	combined := normalizedLabel + "-" + normalizedDescription
-	switch {
-	case strings.Contains(combined, "claude") && (strings.Contains(combined, "gpt") || strings.Contains(combined, "gpt-oss") || strings.Contains(combined, "openai")):
-		return "claude-gpt"
-	case strings.Contains(combined, "gemini"):
-		return "gemini"
-	default:
-		return normalizedLabel
-	}
-}
-
-func antigravityBucketWindowOrder(window string) int {
-	switch strings.ToLower(strings.TrimSpace(window)) {
-	case "weekly", "week":
-		return 0
-	case "5h", "five-hour", "five_hour":
-		return 1
-	default:
-		return math.MaxInt
-	}
-}
-
-func minRemainingFractionFromBuckets(buckets []map[string]any) *float64 {
-	values := make([]float64, 0, len(buckets))
-	for _, bucket := range buckets {
-		if remaining, ok := floatFromAny(bucket["remainingFraction"]); ok {
-			values = append(values, normalizeFraction(remaining))
-		}
-	}
-	if len(values) == 0 {
-		return nil
-	}
-	minValue := values[0]
-	for _, value := range values[1:] {
-		if value < minValue {
-			minValue = value
-		}
-	}
-	return &minValue
-}
-
-func earliestResetTimeFromBuckets(buckets []map[string]any) string {
-	selected := ""
-	var selectedTime time.Time
-	for _, bucket := range buckets {
-		raw := stringFromAny(bucket["resetTime"])
-		if raw == "" {
-			continue
-		}
-		parsed, err := time.Parse(time.RFC3339Nano, raw)
-		if err != nil {
-			if selected == "" {
-				selected = raw
-			}
-			continue
-		}
-		if selected == "" || selectedTime.IsZero() || parsed.Before(selectedTime) {
-			selected = raw
-			selectedTime = parsed
-		}
-	}
-	return selected
-}
-
-func anyMapSlice(value any) []map[string]any {
-	switch items := value.(type) {
-	case []map[string]any:
-		return items
-	case []any:
-		out := make([]map[string]any, 0, len(items))
-		for _, item := range items {
-			if mapped, ok := item.(map[string]any); ok {
-				out = append(out, mapped)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
+	return proinspection.ParseAntigravityQuotaPayload(body)
 }
 
 func antigravityUsedPercent(groups []map[string]any, mode accountInspectionAntigravityQuotaMode) *float64 {
-	if mode == accountInspectionAntigravityQuotaModeMaxUsed {
-		return antigravityMaxUsedPercent(groups)
-	}
-	if used := antigravityClaudeGptUsedPercent(groups); used != nil {
-		return used
-	}
-	return antigravityMaxUsedPercent(groups)
-}
-
-func antigravityMaxUsedPercent(groups []map[string]any) *float64 {
-	values := make([]float64, 0, len(groups))
-	for _, group := range groups {
-		if used := antigravityGroupUsedPercent(group); used != nil {
-			values = append(values, *used)
-		}
-	}
-	return maxFloatPtr(values)
+	return proinspection.AntigravityUsedPercent(groups, mode)
 }
 
 func antigravityGroupUsedPercent(group map[string]any) *float64 {
-	remaining, ok := antigravityGroupRemainingFraction(group)
-	if !ok {
-		return nil
-	}
-	used := math.Max(0, math.Min(100, (1-normalizeFraction(remaining))*100))
-	return &used
-}
-
-func antigravityGroupRemainingFraction(group map[string]any) (float64, bool) {
-	if remaining := minRemainingFractionFromBuckets(anyMapSlice(group["buckets"])); remaining != nil {
-		return *remaining, true
-	}
-	return 0, false
-}
-
-func antigravityClaudeGptUsedPercent(groups []map[string]any) *float64 {
-	for _, group := range groups {
-		if !isAntigravityClaudeGptGroup(group) {
-			continue
-		}
-		return antigravityGroupUsedPercent(group)
-	}
-	return nil
-}
-
-func isAntigravityClaudeGptGroup(group map[string]any) bool {
-	id := normalizeWindowID(stringFromAny(group["id"]))
-	label := normalizeWindowID(stringFromAny(group["label"]))
-	if id == "claude-gpt" || label == "claude-gpt" {
-		return true
-	}
-	combined := id + "-" + label
-	return strings.Contains(combined, "claude") && (strings.Contains(combined, "gpt") || strings.Contains(combined, "openai"))
+	return proinspection.AntigravityGroupUsedPercent(group)
 }
 
 func buildClaudeWindows(body string) ([]map[string]any, any, error) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return nil, nil, err
-	}
-	defs := []struct{ Key, ID, LabelKey string }{
-		{"five_hour", "five-hour", "claude_quota.five_hour"},
-		{"seven_day", "seven-day", "claude_quota.seven_day"},
-		{"seven_day_oauth_apps", "seven-day-oauth-apps", "claude_quota.seven_day_oauth_apps"},
-		{"seven_day_opus", "seven-day-opus", "claude_quota.seven_day_opus"},
-		{"seven_day_sonnet", "seven-day-sonnet", "claude_quota.seven_day_sonnet"},
-		{"seven_day_cowork", "seven-day-cowork", "claude_quota.seven_day_cowork"},
-		{"iguana_necktie", "iguana-necktie", "claude_quota.iguana_necktie"},
-	}
-	windows := make([]map[string]any, 0)
-	for _, def := range defs {
-		window, ok := payload[def.Key].(map[string]any)
-		if !ok {
-			continue
-		}
-		used, ok := floatFromAny(window["utilization"])
-		if !ok {
-			continue
-		}
-		windows = append(windows, map[string]any{"id": def.ID, "label": def.LabelKey, "labelKey": def.LabelKey, "usedPercent": used, "resetLabel": stringFromAny(window["resets_at"])})
-	}
-	return windows, payload["extra_usage"], nil
+	return proinspection.BuildClaudeWindows(body)
 }
 
 func resolveClaudePlan(body string) string {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return ""
-	}
-	if account, ok := payload["account"].(map[string]any); ok {
-		hasMax, hasMaxOK := boolValue(account["has_claude_max"])
-		if hasMax {
-			return "plan_max"
-		}
-		hasPro, hasProOK := boolValue(account["has_claude_pro"])
-		if hasPro {
-			return "plan_pro"
-		}
-		if hasMaxOK && hasProOK && !hasMax && !hasPro {
-			return "plan_free"
-		}
-	}
-	if org, ok := payload["organization"].(map[string]any); ok {
-		if strings.EqualFold(stringFromAny(org["organization_type"]), "claude_team") && strings.EqualFold(stringFromAny(org["subscription_status"]), "active") {
-			return "plan_team"
-		}
-	}
-	return ""
+	return proinspection.ResolveClaudePlan(body)
 }
 
 func buildCodexWindows(body string) (map[string]any, []map[string]any, *float64) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return nil, nil, nil
-	}
-	windows := make([]map[string]any, 0)
-	rateLimit, _ := firstAny(payload, "rate_limit", "rateLimit").(map[string]any)
-	codeReviewLimit, _ := firstAny(payload, "code_review_rate_limit", "codeReviewRateLimit").(map[string]any)
-
-	addCodexWindow := func(id string, labelKey string, labelParams map[string]any, window map[string]any, limitReached any, allowed any) {
-		if window == nil {
-			return
-		}
-		used, hasUsed := floatFromAny(firstAny(window, "used_percent", "usedPercent"))
-		if !hasUsed {
-			if (boolFromAny(limitReached) || allowed == false) && codexResetLabel(window) != "-" {
-				used = 100
-				hasUsed = true
-			}
-		}
-		var usedValue any
-		if hasUsed {
-			usedValue = used
-		} else {
-			usedValue = nil
-		}
-		item := map[string]any{"id": id, "label": labelKey, "labelKey": labelKey, "usedPercent": usedValue, "resetLabel": codexResetLabel(window)}
-		if labelParams != nil {
-			item["labelParams"] = labelParams
-		}
-		windows = append(windows, item)
-	}
-
-	fiveHour, weekly := codexClassifiedWindows(rateLimit, true)
-	addCodexWindow("five-hour", "codex_quota.primary_window", nil, fiveHour, firstAny(rateLimit, "limit_reached", "limitReached"), rateLimit["allowed"])
-	secondaryID, secondaryLabel := codexSecondaryWindowMeta(weekly, "weekly", "codex_quota.secondary_window", "monthly", "codex_quota.team_secondary_window")
-	addCodexWindow(secondaryID, secondaryLabel, nil, weekly, firstAny(rateLimit, "limit_reached", "limitReached"), rateLimit["allowed"])
-
-	codeReviewFiveHour, codeReviewWeekly := codexClassifiedWindows(codeReviewLimit, true)
-	addCodexWindow("code-review-five-hour", "codex_quota.code_review_primary_window", nil, codeReviewFiveHour, firstAny(codeReviewLimit, "limit_reached", "limitReached"), codeReviewLimit["allowed"])
-	codeReviewSecondaryID, codeReviewSecondaryLabel := codexSecondaryWindowMeta(codeReviewWeekly, "code-review-weekly", "codex_quota.code_review_secondary_window", "code-review-monthly", "codex_quota.code_review_team_secondary_window")
-	addCodexWindow(codeReviewSecondaryID, codeReviewSecondaryLabel, nil, codeReviewWeekly, firstAny(codeReviewLimit, "limit_reached", "limitReached"), codeReviewLimit["allowed"])
-
-	for index, raw := range anySlice(firstAny(payload, "additional_rate_limits", "additionalRateLimits")) {
-		limitItem, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		rateInfo, _ := firstAny(limitItem, "rate_limit", "rateLimit").(map[string]any)
-		if rateInfo == nil {
-			continue
-		}
-		limitName := firstNonEmptyStringValue(stringFromAny(firstAny(limitItem, "limit_name", "limitName")), stringFromAny(firstAny(limitItem, "metered_feature", "meteredFeature")), fmt.Sprintf("additional-%d", index+1))
-		idPrefix := normalizeWindowID(limitName)
-		if idPrefix == "" {
-			idPrefix = fmt.Sprintf("additional-%d", index+1)
-		}
-		primary, _ := firstAny(rateInfo, "primary_window", "primaryWindow").(map[string]any)
-		secondary, _ := firstAny(rateInfo, "secondary_window", "secondaryWindow").(map[string]any)
-		params := map[string]any{"name": limitName}
-		addCodexWindow(fmt.Sprintf("%s-five-hour-%d", idPrefix, index), "codex_quota.additional_primary_window", params, primary, firstAny(rateInfo, "limit_reached", "limitReached"), rateInfo["allowed"])
-		additionalSecondaryID, additionalSecondaryLabel := codexSecondaryWindowMeta(secondary, "weekly", "codex_quota.additional_secondary_window", "monthly", "codex_quota.additional_team_secondary_window")
-		addCodexWindow(fmt.Sprintf("%s-%s-%d", idPrefix, additionalSecondaryID, index), additionalSecondaryLabel, params, secondary, firstAny(rateInfo, "limit_reached", "limitReached"), rateInfo["allowed"])
-	}
-
-	used := maxUsedPercentFromWindows(windows)
-	return payload, windows, used
-}
-
-func codexClassifiedWindows(limitInfo map[string]any, allowOrderFallback bool) (map[string]any, map[string]any) {
-	if limitInfo == nil {
-		return nil, nil
-	}
-	primary, _ := firstAny(limitInfo, "primary_window", "primaryWindow").(map[string]any)
-	secondary, _ := firstAny(limitInfo, "secondary_window", "secondaryWindow").(map[string]any)
-	var fiveHour map[string]any
-	var weekly map[string]any
-	for _, window := range []map[string]any{primary, secondary} {
-		seconds, ok := floatFromAny(firstAny(window, "limit_window_seconds", "limitWindowSeconds"))
-		if !ok {
-			continue
-		}
-		if int(seconds) == 18000 && fiveHour == nil {
-			fiveHour = window
-		} else if (int(seconds) == 604800 || isCodexMonthlyWindow(window)) && weekly == nil {
-			weekly = window
-		}
-	}
-	if allowOrderFallback {
-		if fiveHour == nil {
-			fiveHour = primary
-		}
-		if weekly == nil {
-			weekly = secondary
-		}
-	}
-	return fiveHour, weekly
-}
-
-func isCodexMonthlyWindow(window map[string]any) bool {
-	if window == nil {
-		return false
-	}
-	seconds, ok := floatFromAny(firstAny(window, "limit_window_seconds", "limitWindowSeconds"))
-	if !ok {
-		return false
-	}
-	return seconds >= 28*24*60*60 && seconds <= 31*24*60*60
-}
-
-func codexSecondaryWindowMeta(window map[string]any, weeklyID string, weeklyLabelKey string, monthlyID string, monthlyLabelKey string) (string, string) {
-	if isCodexMonthlyWindow(window) {
-		return monthlyID, monthlyLabelKey
-	}
-	return weeklyID, weeklyLabelKey
-}
-
-func codexResetLabel(window map[string]any) string {
-	if window == nil {
-		return "-"
-	}
-	if resetAt, ok := floatFromAny(firstAny(window, "reset_at", "resetAt")); ok && resetAt > 0 {
-		return formatUnixSeconds(int64(resetAt))
-	}
-	if resetAfter, ok := floatFromAny(firstAny(window, "reset_after_seconds", "resetAfterSeconds")); ok && resetAfter > 0 {
-		return formatUnixSeconds(time.Now().Unix() + int64(resetAfter))
-	}
-	return "-"
-}
-
-func formatUnixSeconds(seconds int64) string {
-	return time.Unix(seconds, 0).Format("01/02, 15:04")
-}
-
-func normalizeWindowID(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	var builder strings.Builder
-	lastDash := false
-	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			builder.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			builder.WriteByte('-')
-			lastDash = true
-		}
-	}
-	return strings.Trim(builder.String(), "-")
+	return proinspection.BuildCodexWindows(body)
 }
 
 func buildKimiRows(body string) ([]map[string]any, *float64, error) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return nil, nil, err
-	}
-	rows := make([]map[string]any, 0)
-	if usage, ok := payload["usage"].(map[string]any); ok {
-		if row := toKimiUsageRow(usage, map[string]any{"labelKey": "kimi_quota.weekly_limit"}); row != nil {
-			row["id"] = "summary"
-			rows = append(rows, row)
-		}
-	}
-	for i, raw := range anySlice(payload["limits"]) {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		detail := firstMap(item, "detail")
-		if detail == nil {
-			detail = item
-		}
-		window := firstMap(item, "window")
-		if window == nil {
-			window = map[string]any{}
-		}
-		if row := toKimiUsageRow(detail, kimiLimitLabel(item, detail, window, i)); row != nil {
-			row["id"] = "limit-" + strconv.Itoa(i)
-			rows = append(rows, row)
-		}
-	}
-	usedValues := make([]float64, 0, len(rows))
-	for _, row := range rows {
-		used, okUsed := floatFromAny(row["used"])
-		limit, okLimit := floatFromAny(row["limit"])
-		if okUsed && okLimit && limit > 0 {
-			usedValues = append(usedValues, math.Max(0, math.Min(100, (used/limit)*100)))
-		}
-	}
-	return rows, maxFloatPtr(usedValues), nil
+	return proinspection.BuildKimiRows(body)
 }
 
 func buildXAIBillingSummary(body string) (map[string]any, *float64, error) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return nil, nil, err
-	}
-	config := firstMap(payload, "config")
-	if config == nil {
-		return nil, nil, fmt.Errorf("empty xai billing config")
-	}
-	return buildXAIBillingSummaryFromConfig(config)
-}
-
-func buildXAIBillingSummaryFromConfig(config map[string]any) (map[string]any, *float64, error) {
-	monthlyLimitCents, hasMonthlyLimit := xaiCentValue(firstAny(config, "monthlyLimit", "monthly_limit"))
-	usedCents, hasUsed := xaiCentValue(config["used"])
-	onDemandCapCents, hasOnDemandCap := xaiCentValue(firstAny(config, "onDemandCap", "on_demand_cap"))
-	explicitOnDemandUsedCents, hasExplicitOnDemandUsed := xaiCentValue(firstAny(config, "onDemandUsed", "on_demand_used"))
-	currentPeriod := firstMap(config, "currentPeriod", "current_period")
-	periodType := xaiPeriodType(currentPeriod)
-	creditUsagePercent, hasCreditUsagePercent := floatFromAny(firstAny(config, "creditUsagePercent", "credit_usage_percent"))
-	productUsage := xaiProductUsage(firstAny(config, "productUsage", "product_usage"))
-	billingPeriodStart := firstNonEmptyStringValue(stringFromAny(firstAny(config, "billingPeriodStart", "billing_period_start")))
-	billingPeriodEnd := firstNonEmptyStringValue(stringFromAny(firstAny(config, "billingPeriodEnd", "billing_period_end")))
-	periodStart := firstNonEmptyStringValue(stringFromAny(currentPeriod["start"]), billingPeriodStart)
-	periodEnd := firstNonEmptyStringValue(stringFromAny(currentPeriod["end"]), billingPeriodEnd)
-	hasWeeklyData := hasCreditUsagePercent || periodType == "weekly" || len(productUsage) > 0
-	hasMonthlyData := hasMonthlyLimit || hasUsed || (!hasWeeklyData && (hasOnDemandCap || billingPeriodEnd != ""))
-	if !hasWeeklyData && !hasMonthlyData {
-		return nil, nil, fmt.Errorf("empty xai billing config")
-	}
-	summary := map[string]any{
-		"periodType":          "unknown",
-		"usagePercent":        nil,
-		"productUsage":        productUsage,
-		"monthlyLimitCents":   nil,
-		"usedCents":           nil,
-		"includedUsedCents":   nil,
-		"onDemandCapCents":    nil,
-		"onDemandUsedCents":   nil,
-		"onDemandUsedPercent": nil,
-		"usedPercent":         nil,
-	}
-	var includedUsedCents *float64
-	if hasUsed {
-		value := usedCents
-		if hasMonthlyLimit && monthlyLimitCents > 0 {
-			value = math.Min(usedCents, monthlyLimitCents)
-		}
-		includedUsedCents = &value
-	}
-	var onDemandUsedCents *float64
-	if hasExplicitOnDemandUsed {
-		value := explicitOnDemandUsedCents
-		onDemandUsedCents = &value
-	} else if hasUsed && hasMonthlyLimit {
-		value := math.Max(0, usedCents-monthlyLimitCents)
-		onDemandUsedCents = &value
-	}
-	var usedPercent *float64
-	if hasMonthlyLimit && monthlyLimitCents > 0 && includedUsedCents != nil {
-		value := (*includedUsedCents / monthlyLimitCents) * 100
-		usedPercent = &value
-	}
-	var onDemandUsedPercent *float64
-	if hasOnDemandCap && onDemandCapCents > 0 && onDemandUsedCents != nil {
-		value := (*onDemandUsedCents / onDemandCapCents) * 100
-		onDemandUsedPercent = &value
-	}
-	if hasWeeklyData {
-		if periodType == "unknown" {
-			summary["periodType"] = "weekly"
-		} else {
-			summary["periodType"] = periodType
-		}
-		if hasCreditUsagePercent {
-			summary["usagePercent"] = creditUsagePercent
-		}
-		if periodStart != "" {
-			summary["periodStart"] = periodStart
-		}
-		if periodEnd != "" {
-			summary["periodEnd"] = periodEnd
-		}
-	} else {
-		summary["periodType"] = "monthly"
-		summary["usagePercent"] = floatPtrAny(usedPercent)
-		if billingPeriodStart != "" {
-			summary["periodStart"] = billingPeriodStart
-		}
-		if billingPeriodEnd != "" {
-			summary["periodEnd"] = billingPeriodEnd
-		}
-	}
-	if hasMonthlyLimit {
-		summary["monthlyLimitCents"] = monthlyLimitCents
-	}
-	if hasUsed {
-		summary["usedCents"] = usedCents
-	}
-	if includedUsedCents != nil {
-		summary["includedUsedCents"] = *includedUsedCents
-	}
-	if hasOnDemandCap {
-		summary["onDemandCapCents"] = onDemandCapCents
-	}
-	if onDemandUsedCents != nil {
-		summary["onDemandUsedCents"] = *onDemandUsedCents
-	}
-	if onDemandUsedPercent != nil {
-		summary["onDemandUsedPercent"] = *onDemandUsedPercent
-	}
-	if usedPercent != nil {
-		summary["usedPercent"] = *usedPercent
-	}
-	if hasMonthlyData && billingPeriodStart != "" {
-		summary["billingPeriodStart"] = billingPeriodStart
-	}
-	if hasMonthlyData && billingPeriodEnd != "" {
-		summary["billingPeriodEnd"] = billingPeriodEnd
-	}
-	return summary, xaiSummaryUsedPercent(summary), nil
-}
-
-func xaiCentValue(value any) (float64, bool) {
-	if mapped, ok := value.(map[string]any); ok {
-		return floatFromAny(mapped["val"])
-	}
-	return floatFromAny(value)
-}
-
-func xaiPeriodType(period map[string]any) string {
-	raw := strings.ToLower(stringFromAny(period["type"]))
-	switch {
-	case strings.Contains(raw, "weekly"):
-		return "weekly"
-	case strings.Contains(raw, "monthly"):
-		return "monthly"
-	default:
-		return "unknown"
-	}
-}
-
-func xaiProductUsage(value any) []map[string]any {
-	items := make([]map[string]any, 0)
-	for i, raw := range anySlice(value) {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		product := firstNonEmptyStringValue(stringFromAny(item["product"]), fmt.Sprintf("Product %d", i+1))
-		usagePercent, hasUsagePercent := floatFromAny(firstAny(item, "usagePercent", "usage_percent"))
-		row := map[string]any{"product": product, "usagePercent": nil}
-		if hasUsagePercent {
-			row["usagePercent"] = usagePercent
-		}
-		items = append(items, row)
-	}
-	return items
+	return proquota.BuildXAIBillingSummary(body)
 }
 
 func mergeXAIBillingSummaries(primary map[string]any, fallback map[string]any) map[string]any {
-	if primary == nil {
-		return fallback
-	}
-	if fallback == nil {
-		return primary
-	}
-	merged := map[string]any{
-		"periodType":          firstKnownXaiPeriodType(primary["periodType"], fallback["periodType"]),
-		"usagePercent":        firstNonNilAny(primary["usagePercent"], fallback["usagePercent"]),
-		"productUsage":        firstNonEmptyXaiProductUsage(primary["productUsage"], fallback["productUsage"]),
-		"monthlyLimitCents":   firstNonNilAny(primary["monthlyLimitCents"], fallback["monthlyLimitCents"]),
-		"usedCents":           firstNonNilAny(primary["usedCents"], fallback["usedCents"]),
-		"includedUsedCents":   firstNonNilAny(primary["includedUsedCents"], fallback["includedUsedCents"]),
-		"onDemandCapCents":    firstNonNilAny(primary["onDemandCapCents"], fallback["onDemandCapCents"]),
-		"onDemandUsedCents":   firstNonNilAny(primary["onDemandUsedCents"], fallback["onDemandUsedCents"]),
-		"onDemandUsedPercent": firstNonNilAny(primary["onDemandUsedPercent"], fallback["onDemandUsedPercent"]),
-		"billingPeriodStart":  firstNonNilAny(primary["billingPeriodStart"], fallback["billingPeriodStart"]),
-		"billingPeriodEnd":    firstNonNilAny(primary["billingPeriodEnd"], fallback["billingPeriodEnd"]),
-		"usedPercent":         firstNonNilAny(primary["usedPercent"], fallback["usedPercent"]),
-	}
-	if value := firstNonNilAny(primary["periodStart"], fallback["periodStart"]); value != nil {
-		merged["periodStart"] = value
-	}
-	if value := firstNonNilAny(primary["periodEnd"], fallback["periodEnd"]); value != nil {
-		merged["periodEnd"] = value
-	}
-	return merged
-}
-
-func firstKnownXaiPeriodType(primary any, fallback any) any {
-	if value := stringFromAny(primary); value != "" && value != "unknown" {
-		return value
-	}
-	if value := stringFromAny(fallback); value != "" {
-		return value
-	}
-	return "unknown"
-}
-
-func firstNonNilAny(primary any, fallback any) any {
-	if primary != nil {
-		return primary
-	}
-	return fallback
-}
-
-func firstNonEmptyXaiProductUsage(primary any, fallback any) any {
-	if len(anySlice(primary)) > 0 {
-		return primary
-	}
-	if len(anySlice(fallback)) > 0 {
-		return fallback
-	}
-	return []map[string]any{}
+	return proquota.MergeXAIBillingSummaries(primary, fallback)
 }
 
 func xaiSummaryUsedPercent(summary map[string]any) *float64 {
-	if strings.EqualFold(strings.TrimSpace(stringFromAny(summary["planType"])), "free") {
-		freeQuota := firstMap(summary, "freeQuota", "free_quota")
-		if boolFromAny(freeQuota["exhausted"]) {
-			value := 100.0
-			return &value
-		}
-		if used, okUsed := floatFromAny(firstAny(freeQuota, "usedTokens", "used_tokens")); okUsed {
-			if limit, okLimit := floatFromAny(firstAny(freeQuota, "limitTokens", "limit_tokens")); okLimit && limit > 0 {
-				value := math.Max(0, math.Min(100, (used/limit)*100))
-				return &value
-			}
-		}
-	}
-	for _, key := range []string{"usagePercent", "usage_percent", "usedPercent", "used_percent", "onDemandUsedPercent", "on_demand_used_percent"} {
-		if value, ok := floatFromAny(summary[key]); ok {
-			return &value
-		}
-	}
-	values := make([]float64, 0)
-	for _, raw := range anySlice(firstAny(summary, "productUsage", "product_usage")) {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if value, ok := floatFromAny(firstAny(item, "usagePercent", "usage_percent")); ok {
-			values = append(values, value)
-		}
-	}
-	return maxFloatPtr(values)
+	return proquota.XAISummaryUsedPercent(summary)
 }
 
-const (
-	xaiSuperGrokLimitCents      = 15_000
-	xaiXPremiumPlusLimitCents   = 20_000
-	xaiSuperGrokHeavyLimitCents = 150_000
-)
-
 func emptyXAIBillingSummary() map[string]any {
-	return map[string]any{
-		"periodType":          "unknown",
-		"usagePercent":        nil,
-		"productUsage":        []map[string]any{},
-		"monthlyLimitCents":   nil,
-		"usedCents":           nil,
-		"includedUsedCents":   nil,
-		"onDemandCapCents":    nil,
-		"onDemandUsedCents":   nil,
-		"onDemandUsedPercent": nil,
-		"usedPercent":         nil,
-	}
+	return proquota.EmptyXAIBillingSummary()
 }
 
 func xaiPlanTypeFromBillingBody(status int, body string) (string, bool) {
-	if status < 200 || status >= 300 {
-		return "", false
-	}
-	var payload map[string]any
-	if json.Unmarshal([]byte(body), &payload) != nil {
-		return "", false
-	}
-	config := firstMap(payload, "config")
-	if config == nil {
-		return "", false
-	}
-	limit, hasLimit := xaiCentValue(firstAny(config, "monthlyLimit", "monthly_limit"))
-	if !hasLimit || math.Round(limit) == 0 {
-		return "free", true
-	}
-	switch int64(math.Round(limit)) {
-	case xaiSuperGrokLimitCents:
-		return "supergrok", true
-	case xaiXPremiumPlusLimitCents:
-		return "x-premium-plus", true
-	case xaiSuperGrokHeavyLimitCents:
-		return "supergrok-heavy", true
-	default:
-		return "paid-unknown", true
-	}
+	return proquota.XAIPlanTypeFromBillingBody(status, body)
 }
 
 func mergeCachedXAIFreeQuota(ctx context.Context, account accountInspectionAccount, billing map[string]any) map[string]any {
@@ -5168,136 +2983,11 @@ func observeAccountXAIQuota(ctx context.Context, account accountInspectionAccoun
 	})
 }
 
-func kimiLimitLabel(item map[string]any, detail map[string]any, window map[string]any, index int) map[string]any {
-	for _, key := range []string{"name", "title", "scope"} {
-		if value := firstNonEmptyStringValue(stringFromAny(item[key]), stringFromAny(detail[key])); value != "" {
-			return map[string]any{"label": value}
-		}
-	}
-	duration, ok := firstInt(window, item, detail, "duration")
-	if ok && duration > 0 {
-		return map[string]any{"labelKey": "kimi_quota.limit_window", "labelParams": map[string]any{"duration": kimiDurationToken(duration, firstAnyFromMaps([]map[string]any{window, item, detail}, "timeUnit"))}}
-	}
-	return map[string]any{"labelKey": "kimi_quota.limit_index", "labelParams": map[string]any{"index": index + 1}}
-}
-
-func toKimiUsageRow(data map[string]any, fallbackLabel map[string]any) map[string]any {
-	limit, okLimit := intFromAny(data["limit"])
-	used, okUsed := intFromAny(data["used"])
-	if !okUsed {
-		if remaining, okRemaining := intFromAny(data["remaining"]); okRemaining && okLimit {
-			used = limit - remaining
-			okUsed = true
-		}
-	}
-	if !okLimit && !okUsed {
-		return nil
-	}
-	row := make(map[string]any, len(fallbackLabel)+4)
-	for key, value := range fallbackLabel {
-		row[key] = value
-	}
-	if label := firstNonEmptyStringValue(stringFromAny(data["name"]), stringFromAny(data["title"])); label != "" {
-		row["label"] = label
-		delete(row, "labelKey")
-		delete(row, "labelParams")
-	}
-	if okUsed {
-		row["used"] = used
-	} else {
-		row["used"] = 0
-	}
-	if okLimit {
-		row["limit"] = limit
-	} else {
-		row["limit"] = 0
-	}
-	row["resetHint"] = emptyStringAsNil(kimiResetHint(data))
-	return row
-}
-
-func cloneFloatPtr(value *float64) *float64 {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
-}
-
-func minFloatPtr(current *float64, next *float64) *float64 {
-	if current == nil {
-		return cloneFloatPtr(next)
-	}
-	if next == nil {
-		return cloneFloatPtr(current)
-	}
-	value := math.Min(*current, *next)
-	return &value
-}
-
-func pickEarlierResetTime(current string, next string) string {
-	if current == "" {
-		return next
-	}
-	if next == "" {
-		return current
-	}
-	currentTime, currentErr := time.Parse(time.RFC3339Nano, current)
-	nextTime, nextErr := time.Parse(time.RFC3339Nano, next)
-	if currentErr != nil {
-		return next
-	}
-	if nextErr != nil {
-		return current
-	}
-	if currentTime.Before(nextTime) || currentTime.Equal(nextTime) {
-		return current
-	}
-	return next
-}
-
 func floatPtrAny(value *float64) any {
 	if value == nil {
 		return nil
 	}
 	return *value
-}
-
-func uniqueStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
-func firstAnyFromMaps(sources []map[string]any, key string) any {
-	for _, source := range sources {
-		if source == nil {
-			continue
-		}
-		if value, ok := source[key]; ok {
-			return value
-		}
-	}
-	return nil
-}
-
-func firstInt(a map[string]any, b map[string]any, c map[string]any, key string) (int, bool) {
-	for _, source := range []map[string]any{a, b, c} {
-		if source == nil {
-			continue
-		}
-		if value, ok := intFromAny(source[key]); ok {
-			return value, true
-		}
-	}
-	return 0, false
 }
 
 func intFromAny(value any) (int, bool) {
@@ -5308,78 +2998,8 @@ func intFromAny(value any) (int, bool) {
 	return int(parsed), true
 }
 
-func kimiDurationToken(duration int, rawTimeUnit any) string {
-	unit := strings.ToUpper(strings.TrimSpace(stringFromAny(rawTimeUnit)))
-	switch unit {
-	case "MINUTES":
-		if duration%60 == 0 {
-			return fmt.Sprintf("%dh", duration/60)
-		}
-		return fmt.Sprintf("%dm", duration)
-	case "HOURS":
-		return fmt.Sprintf("%dh", duration)
-	case "DAYS":
-		return fmt.Sprintf("%dd", duration)
-	default:
-		return fmt.Sprintf("%ds", duration)
-	}
-}
-
-func kimiResetHint(data map[string]any) string {
-	for _, key := range []string{"reset_at", "resetAt", "reset_time", "resetTime"} {
-		raw := stringFromAny(data[key])
-		if raw == "" {
-			continue
-		}
-		truncated := regexpMustCompile(`(\.\d{6})\d+`).ReplaceAllString(raw, "$1")
-		date, err := time.Parse(time.RFC3339Nano, truncated)
-		if err != nil {
-			continue
-		}
-		return kimiDurationHint(time.Until(date))
-	}
-	for _, key := range []string{"reset_in", "resetIn", "ttl"} {
-		seconds, ok := intFromAny(data[key])
-		if ok && seconds > 0 {
-			return kimiDurationHint(time.Duration(seconds) * time.Second)
-		}
-	}
-	return ""
-}
-
-func kimiDurationHint(delta time.Duration) string {
-	if delta <= 0 {
-		return ""
-	}
-	totalMinutes := int(delta / time.Minute)
-	hours := totalMinutes / 60
-	minutes := totalMinutes % 60
-	if hours > 0 && minutes > 0 {
-		return fmt.Sprintf("%dh %dm", hours, minutes)
-	}
-	if hours > 0 {
-		return fmt.Sprintf("%dh", hours)
-	}
-	if minutes > 0 {
-		return fmt.Sprintf("%dm", minutes)
-	}
-	return "<1m"
-}
-
-func regexpMustCompile(expr string) *regexp.Regexp {
-	return regexp.MustCompile(expr)
-}
-
 func maxUsedPercentFromWindows(windows []map[string]any) *float64 {
-	values := make([]float64, 0, len(windows))
-	for _, window := range windows {
-		used, ok := floatFromAny(window["usedPercent"])
-		if !ok {
-			continue
-		}
-		values = append(values, used)
-	}
-	return maxFloatPtr(values)
+	return proinspection.MaxUsedPercentFromWindows(windows)
 }
 
 func maxFloatPtr(values []float64) *float64 {
@@ -5701,17 +3321,6 @@ func nestedString(data map[string]any, key string, child string) string {
 		return stringFromAny(data[key])
 	}
 	return stringFromAny(nestedMap(data, key)[child])
-}
-
-func stringFromAny(value any) string {
-	switch v := value.(type) {
-	case string:
-		return strings.TrimSpace(v)
-	case fmt.Stringer:
-		return strings.TrimSpace(v.String())
-	default:
-		return ""
-	}
 }
 
 func firstNonEmptyStringValue(values ...string) string {

@@ -111,13 +111,13 @@ import {
 import {
   accountInspectionApi,
   accountInspectionWebSocketProtocol,
-  apiClient,
   buildAccountInspectionLogsWebSocketUrl,
   nextAccountInspectionReconnectDelay,
   refreshAccountInspectionAfterReconnect,
   type AccountInspectionLogStreamMessage,
   type AccountInspectionScheduleResponse,
-} from '@/services/api';
+} from './api';
+import { apiClient } from '@/services/api/client';
 import { authFilesApi } from '@/services/api/authFiles';
 import { quotaPersistenceMiddleware } from '@/pro/modules/quota';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';

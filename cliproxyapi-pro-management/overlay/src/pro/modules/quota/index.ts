@@ -16,4 +16,11 @@ export {
   compareAuthFilesByAvailableQuotaDescending,
   isAuthFileQuotaSortProvider,
 } from './quotaSort';
-export * from './extensions/xaiQuota';
+export {
+  XAI_FREE_QUOTA_PROBE_URL,
+  mergeXaiBillingRuntimeState,
+  parseXaiFreeQuotaProbe,
+  resolveXaiPlanType,
+  xaiFreeQuotaUsedPercent,
+  type XaiNormalizedPlanType,
+} from './extensions/xaiQuota';

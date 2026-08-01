@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next';
 import type { AuthFileItem, XaiBillingSummary, XaiQuotaState } from '@/types';
-import { apiCallApi, getApiCallErrorMessage } from '@/services/api';
+import { apiCallApi, getApiCallErrorMessage } from '@/services/api/apiCall';
 import { useQuotaStore } from '@/stores';
 import { XAI_PAID_HEALTH_MODEL, XAI_REQUEST_HEADERS, createStatusError } from '@/utils/quota';
 import { XAI_CONFIG } from '@/features/quota/providers/xai/data';

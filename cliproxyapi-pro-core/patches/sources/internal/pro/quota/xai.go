@@ -13,7 +13,12 @@ import (
 	"time"
 )
 
-const XAIParserVersion = 5
+const (
+	// CacheParserVersion is the shared version of normalized quota cache
+	// records. Provider-specific parser versions may diverge from it later.
+	CacheParserVersion = 5
+	XAIParserVersion   = CacheParserVersion
+)
 
 type XAIObservation struct {
 	FileName   string

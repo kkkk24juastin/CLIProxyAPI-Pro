@@ -246,14 +246,16 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `patches/sources/internal/pro/storage/` — single SQLite lifecycle, idempotent schema, domain repositories, and transaction boundary.
 - `patches/sources/internal/pro/state/` — stable routing/runtime contracts and the coalescing state writer.
 - `patches/sources/internal/pro/observability/` — import write barrier for usage, retention, price-sync, and WebDAV background jobs.
-- `patches/sources/internal/pro/quota/` — provider quota parsing and merge policy.
+- `patches/sources/internal/pro/quota/` — quota snapshot normalization/max-use calculation, cache success state and response-shape fingerprints, plus Gemini CLI/xAI billing, plan, request-path parsing, and merge policy.
 - `patches/sources/internal/pro/routing/` — durable selection cursors and request-protection ownership policy.
-- `patches/sources/internal/pro/inspection/` — lifecycle gate for scheduled runs, one-shot probes, and manual actions.
+- `patches/sources/internal/pro/inspection/` — inspection configuration, candidate filtering/sampling/worker policy, status/log/stream/manual-action DTOs, result classification/filtering/pagination/summaries and merge transitions, provider decisions/error codes, action deduplication/summaries, result-snapshot schema/codec, automatic-action decisions, Antigravity/Claude/Codex/Kimi response parsing, and Antigravity/xAI deep-probe request/response protocols; provider probe transport, concurrency gates, Gin/WebSocket, snapshot/quota-cache/observation I/O, and Auth mutation remain Management host adapters.
 - `patches/sources/internal/pro/backup/` — JSONL export and the cross-module pause, flush, import, reload, live-state restore, inspection restore, legacy cleanup, and resume sequence.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
 - `embeddedusage/` — thin compatibility façade preserving upstream import paths, public types, and function signatures; implementation lives in `pro/observability`.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.
 - `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
+- `patches/account_inspection_host.go` and `patches/pro_auth_mutation.go` — host adapters for the inspection quota port and shared Auth mutation/file persistence.
+- `patches/pro_management_runtime.go` — composes inspection and routing background lifecycles owned by one Management Handler.
 - The generated API Server shuts down its management Handler from `Stop`; embedders that create a Handler directly through the SDK must also call `Shutdown()` to release inspection, routing-protection, login-cleanup, and global callback ownership.
 - `patches/routing_policy.go` — unified routing configuration, request-state-protection handlers, usage plugin, and automatic release task.
 
