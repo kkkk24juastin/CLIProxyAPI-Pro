@@ -2679,6 +2679,8 @@ subprocess.run([
     'internal/pro/routing/runtime_test.go',
     'internal/pro/inspection/lifecycle.go',
     'internal/pro/inspection/lifecycle_test.go',
+    'internal/pro/observability/module.go',
+    'internal/pro/observability/module_test.go',
     'internal/pro/proxypool/config/config.go',
     'internal/pro/proxypool/config/config_test.go',
     'internal/pro/proxypool/engine/engine.go',

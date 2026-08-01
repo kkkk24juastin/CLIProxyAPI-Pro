@@ -13,15 +13,19 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/redisqueue"
+	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
+	proobservability "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/observability"
 	log "github.com/sirupsen/logrus"
 )
 
 type Service struct {
-	ctx     context.Context
-	cfg     Config
-	store   *Store
-	server  *Server
-	workers sync.WaitGroup
+	ctx              context.Context
+	cfg              Config
+	store            *Store
+	server           *Server
+	workers          sync.WaitGroup
+	module           *proobservability.Module
+	backupUnregister func()
 }
 
 func Start(ctx context.Context) (*Service, error) {
@@ -40,10 +44,14 @@ func Start(ctx context.Context) (*Service, error) {
 	redisqueue.SetUsageStatisticsEnabled(true)
 
 	service := &Service{
-		ctx:   ctx,
-		cfg:   cfg,
-		store: store,
+		ctx:    ctx,
+		cfg:    cfg,
+		store:  store,
+		module: proobservability.New(),
 	}
+	service.backupUnregister = probackup.Default.RegisterLifecycle(probackup.Lifecycle{
+		Pause: service.module.Pause, Resume: service.module.Resume,
+	})
 	service.server = NewServer(cfg, store)
 	service.startWorker(func() { service.collect(ctx) })
 	service.startWorker(func() { service.maintain(ctx) })
@@ -52,6 +60,9 @@ func Start(ctx context.Context) (*Service, error) {
 	go func() {
 		<-ctx.Done()
 		service.workers.Wait()
+		if service.backupUnregister != nil {
+			service.backupUnregister()
+		}
 		stopRuntimeStateWriter(service)
 		if err := store.Close(); err != nil {
 			log.WithError(err).Warn("failed to close embedded usage store")
@@ -72,18 +83,23 @@ func (s *Service) startWorker(run func()) {
 
 func (s *Service) runModelPriceSync(ctx context.Context) {
 	for {
-		settings, err := s.store.GetMonitoringSettings(ctx)
-		if err != nil {
-			log.WithError(err).Warn("failed to load model price sync settings")
-		} else if settings.ModelPriceSync.Enabled {
-			state, stateErr := s.store.GetModelPriceSyncState(ctx)
-			if stateErr != nil {
-				log.WithError(stateErr).Warn("failed to load model price sync state")
-			} else if lastRun := maxModelPriceSyncTimestamp(state.LastSuccess, state.LastAttempt); lastRun <= 0 || time.Since(time.UnixMilli(lastRun)) >= time.Duration(settings.ModelPriceSync.IntervalMinutes)*time.Minute {
-				if _, syncErr := s.store.SyncModelsDevPrices(ctx, false, true); syncErr != nil {
-					log.WithError(syncErr).Warn("failed to sync model prices from models.dev")
+		if err := s.module.Run(ctx, func() error {
+			settings, err := s.store.GetMonitoringSettings(ctx)
+			if err != nil {
+				log.WithError(err).Warn("failed to load model price sync settings")
+			} else if settings.ModelPriceSync.Enabled {
+				state, stateErr := s.store.GetModelPriceSyncState(ctx)
+				if stateErr != nil {
+					log.WithError(stateErr).Warn("failed to load model price sync state")
+				} else if lastRun := maxModelPriceSyncTimestamp(state.LastSuccess, state.LastAttempt); lastRun <= 0 || time.Since(time.UnixMilli(lastRun)) >= time.Duration(settings.ModelPriceSync.IntervalMinutes)*time.Minute {
+					if _, syncErr := s.store.SyncModelsDevPrices(ctx, false, true); syncErr != nil {
+						log.WithError(syncErr).Warn("failed to sync model prices from models.dev")
+					}
 				}
 			}
+			return nil
+		}); err != nil {
+			return
 		}
 		select {
 		case <-ctx.Done():
@@ -129,31 +145,35 @@ func (s *Service) collect(ctx context.Context) {
 		default:
 		}
 
-		if len(pending) == 0 {
-			items := redisqueue.PopOldest(s.cfg.BatchSize)
-			if len(items) == 0 {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					continue
-				}
-			}
-			for _, item := range items {
-				event, err := internalusage.NormalizeRaw(item)
-				if err != nil {
-					if addErr := s.store.AddDeadLetter(ctx, string(item), err); addErr != nil {
-						log.WithError(addErr).Warn("failed to add embedded usage dead letter")
+		didWork := len(pending) > 0
+		err := s.module.Run(ctx, func() error {
+			if len(pending) == 0 {
+				items := redisqueue.PopOldest(s.cfg.BatchSize)
+				didWork = len(items) > 0
+				for _, item := range items {
+					event, err := internalusage.NormalizeRaw(item)
+					if err != nil {
+						if addErr := s.store.AddDeadLetter(ctx, string(item), err); addErr != nil {
+							log.WithError(addErr).Warn("failed to add embedded usage dead letter")
+						}
+						continue
 					}
-					continue
+					pending = append(pending, event)
 				}
-				pending = append(pending, event)
 			}
-		}
-		if len(pending) == 0 {
-			continue
-		}
-		if _, err := s.store.InsertLiveEvents(ctx, pending); err != nil {
+			if len(pending) == 0 {
+				return nil
+			}
+			_, err := s.store.InsertLiveEvents(ctx, pending)
+			if err == nil {
+				pending = pending[:0]
+			}
+			return err
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			log.WithError(err).Warn("failed to insert embedded usage events")
 			select {
 			case <-ctx.Done():
@@ -162,7 +182,13 @@ func (s *Service) collect(ctx context.Context) {
 				continue
 			}
 		}
-		pending = pending[:0]
+		if !didWork {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
 	}
 }
 
@@ -173,10 +199,15 @@ func (s *Service) maintain(ctx context.Context) {
 			return
 		case <-time.After(time.Until(nextMonitoringRetentionRun(time.Now()))):
 		}
-		if deleted, err := s.store.ApplyRetention(ctx, time.Now()); err != nil {
-			log.WithError(err).Warn("failed to apply embedded usage retention")
-		} else if deleted > 0 {
-			log.Infof("embedded usage retention deleted %d events", deleted)
+		if err := s.module.Run(ctx, func() error {
+			if deleted, err := s.store.ApplyRetention(ctx, time.Now()); err != nil {
+				log.WithError(err).Warn("failed to apply embedded usage retention")
+			} else if deleted > 0 {
+				log.Infof("embedded usage retention deleted %d events", deleted)
+			}
+			return nil
+		}); err != nil {
+			return
 		}
 	}
 }
@@ -192,15 +223,20 @@ func nextMonitoringRetentionRun(now time.Time) time.Time {
 func (s *Service) runWebDAVBackups(ctx context.Context) {
 	var lastBackup time.Time
 	for {
-		settings, err := s.store.GetMonitoringSettings(ctx)
-		if err != nil {
-			log.WithError(err).Warn("failed to load monitoring settings")
-		} else if shouldRunWebDAVBackup(settings, lastBackup) {
-			if err := s.backupToWebDAV(ctx, settings.WebDAV); err != nil {
-				log.WithError(err).Warn("failed to backup embedded usage to WebDAV")
-			} else {
-				lastBackup = time.Now()
+		if err := s.module.Run(ctx, func() error {
+			settings, err := s.store.GetMonitoringSettings(ctx)
+			if err != nil {
+				log.WithError(err).Warn("failed to load monitoring settings")
+			} else if shouldRunWebDAVBackup(settings, lastBackup) {
+				if err := s.backupToWebDAV(ctx, settings.WebDAV); err != nil {
+					log.WithError(err).Warn("failed to backup embedded usage to WebDAV")
+				} else {
+					lastBackup = time.Now()
+				}
 			}
+			return nil
+		}); err != nil {
+			return
 		}
 
 		select {
