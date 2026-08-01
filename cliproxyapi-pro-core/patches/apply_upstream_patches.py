@@ -2673,6 +2673,8 @@ subprocess.run([
     'internal/pro/storage/database.go',
     'internal/pro/storage/database_test.go',
     'internal/pro/storage/schema.go',
+    'internal/pro/quota/xai.go',
+    'internal/pro/quota/xai_test.go',
     'internal/pro/proxypool/config/config.go',
     'internal/pro/proxypool/config/config_test.go',
     'internal/pro/proxypool/engine/engine.go',
