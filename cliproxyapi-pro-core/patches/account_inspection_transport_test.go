@@ -288,6 +288,19 @@ func TestClassifyAntigravityDeepProbePrefersQuotaEvidenceOverAuthStatus(t *testi
 	}
 }
 
+func TestAntigravityDeepProbeFailoverStopsOnDeterministicClientErrors(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound} {
+		if !shouldStopAntigravityDeepProbeFailover(status) {
+			t.Fatalf("shouldStopAntigravityDeepProbeFailover(%d) = false, want true", status)
+		}
+	}
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable} {
+		if shouldStopAntigravityDeepProbeFailover(status) {
+			t.Fatalf("shouldStopAntigravityDeepProbeFailover(%d) = true, want false", status)
+		}
+	}
+}
+
 func TestCodexDecisionPrefersQuotaEvidenceOverUnauthorizedStatus(t *testing.T) {
 	decision := codexDecision(accountInspectionAccount{}, http.StatusUnauthorized, nil, true, 95)
 	if !decision.IsQuota || decision.Action != accountInspectionActionDisable {

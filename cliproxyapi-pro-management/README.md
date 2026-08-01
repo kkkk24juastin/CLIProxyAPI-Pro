@@ -179,8 +179,6 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - `monitoring-locales.json` — 合并进 upstream locale 文件的多语言文案。
 - `apply_customizations.py` — 将全部定制应用到目标 upstream checkout。
 - `apply.sh` — `apply_customizations.py` 的 shell 包装脚本。
-- `quota-persistence.patch` — 历史补丁文件，保留用于参考；当前构建使用 `apply_customizations.py`。
-
 Overlay collision 预检会校验每个已审阅替换的 upstream 内容。upstream 文件变化时必须显式更新 `overlay-replacements.json`；本地替换通过正常 PR diff 和行为测试审查，新的未审阅路径冲突会在复制任何 overlay 文件前被拒绝。
 
 ## 本地应用

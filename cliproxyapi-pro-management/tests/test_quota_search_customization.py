@@ -11,64 +11,16 @@ CUSTOMIZATIONS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CUSTOMIZATIONS)
 
 
-QUOTA_PAGE_SOURCE = """import { useCallback, useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { GEMINI_CLI_CONFIG } from '@/pro/modules/quota';
-import { useAuthStore } from '@/stores';
+AUTH_FILES_PAGE_SOURCE = """import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
 
-export function QuotaPage() {
-  const { t } = useTranslation();
-  const connectionStatus = useAuthStore((state) => state.connectionStatus);
-
-  const [files, setFiles] = useState<AuthFileItem[]>([]);
-  const [error, setError] = useState('');
-
-  const disableControls = false;
-
-  return (
-    <div>
-      {error && <div className={styles.errorBox}>{error}</div>}
-      <QuotaSection
-        disabled={disableControls}
-      />
-    </div>
-  );
-}
-"""
-
-
-QUOTA_SECTION_SOURCE = """interface QuotaSectionProps<TState, TData> {
-  disabled: boolean;
-}
-
-export function QuotaSection<TState, TData>({
-  loading,
-  disabled,
-}: QuotaSectionProps<TState, TData>) {
-  const filteredFiles = useMemo(
-    () => files.filter((file) => config.filterFn(file)),
-    [files, config]
-  );
-
-  useEffect(() => {
-    if (filteredFiles.length === 0) {
-      setQuota({});
-      return;
-    }
-    setQuota((prev) => {
-      const nextState: Record<string, TState> = {};
-      filteredFiles.forEach((file) => {
-        const cached = prev[file.name];
-        if (cached) nextState[file.name] = cached;
-      });
-      return nextState;
-    });
-  }, [filteredFiles, loading, setQuota]);
-
-  return (
-    <Card
-    />
+export function AuthFilesPage() {
+  const statusBarCache = useAuthFilesStatusBarCache(files);
+  const filtered = useMemo(
+    () => filesMatchingStatusFilters.filter((item) => {
+        const matchType = !normalizedFilter || normalizeProviderKey(item.type) === normalizedFilter;
+        return matchType && matchesAuthFileSearch(item, normalizedSearch, wildcardSearch);
+      }),
+    [filesMatchingStatusFilters, normalizedFilter, normalizedSearch, wildcardSearch]
   );
 }
 """
@@ -81,39 +33,25 @@ class QuotaSearchCustomizationTest(unittest.TestCase):
     def test_adds_search_without_pruning_hidden_quota_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             target = Path(temp_dir)
-            pages_dir = target / 'src/pages'
-            quota_dir = target / 'src/components/quota'
-            pages_dir.mkdir(parents=True)
-            quota_dir.mkdir(parents=True)
-            (pages_dir / 'QuotaPage.tsx').write_text(QUOTA_PAGE_SOURCE)
-            (pages_dir / 'QuotaPage.module.scss').write_text('.errorBox {\n}\n')
-            (quota_dir / 'QuotaSection.tsx').write_text(QUOTA_SECTION_SOURCE)
+            feature_dir = target / 'src/features/authFiles'
+            feature_dir.mkdir(parents=True)
+            page_path = feature_dir / 'AuthFilesPage.tsx'
+            page_path.write_text(AUTH_FILES_PAGE_SOURCE)
 
-            CUSTOMIZATIONS.patch_quota_page_search(target)
+            CUSTOMIZATIONS.patch_auth_files_page_search_latest(target)
             CUSTOMIZATIONS.flush_writes()
 
-            page = (pages_dir / 'QuotaPage.tsx').read_text()
-            section = (quota_dir / 'QuotaSection.tsx').read_text()
-            styles = (pages_dir / 'QuotaPage.module.scss').read_text()
+            page = page_path.read_text()
+            self.assertIn('buildQuotaSearchValues', page)
+            self.assertIn('matchesQuotaSearch', page)
+            self.assertIn('const quotaSearchStore = useMemo(', page)
+            self.assertIn('state.geminiCliQuota', page)
+            self.assertIn('matchesQuotaSearch(buildQuotaSearchValues(item, quotaSearchStore, t)', page)
+            self.assertIn('quotaSearchStore, t, wildcardSearch', page)
 
-            self.assertIn('QUOTA_SEARCH_FIELD_KEYS', page)
-            self.assertIn("import { resolveXaiPlanType } from '@/pro/modules/quota';", page)
-            self.assertIn("import { useAuthStore, useQuotaStore } from '@/stores';", page)
-            self.assertIn('buildQuotaStateSearchValues', page)
-            self.assertIn("value.split('*')", page)
-            self.assertIn("placeholder={t('quota_management.search_placeholder')}", page)
-            self.assertIn('searchFileNames={searchFileNames}', page)
-            self.assertIn('hideWhenEmpty={Boolean(normalizedSearch)}', page)
-            self.assertIn('const providerFiles = useMemo(', section)
-            self.assertIn('providerFiles.forEach((file)', section)
-            self.assertNotIn('filteredFiles.forEach((file)', section)
-            self.assertIn('if (hideWhenEmpty && filteredFiles.length === 0) return null;', section)
-            self.assertIn('.searchBar {', styles)
-
-            CUSTOMIZATIONS.patch_quota_page_search(target)
+            CUSTOMIZATIONS.patch_auth_files_page_search_latest(target)
             CUSTOMIZATIONS.flush_writes()
-            self.assertEqual(page, (pages_dir / 'QuotaPage.tsx').read_text())
-            self.assertEqual(section, (quota_dir / 'QuotaSection.tsx').read_text())
+            self.assertEqual(page, page_path.read_text())
 
 
 if __name__ == '__main__':

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -139,32 +138,12 @@ func observeAccountXAIQuota(ctx context.Context, account accountInspectionAccoun
 	})
 }
 
-func floatPtrAny(value *float64) any {
-	if value == nil {
-		return nil
-	}
-	return *value
-}
-
 func intFromAny(value any) (int, bool) {
 	parsed, ok := floatFromAny(value)
 	if !ok {
 		return 0, false
 	}
 	return int(parsed), true
-}
-
-func maxFloatPtr(values []float64) *float64 {
-	if len(values) == 0 {
-		return nil
-	}
-	maxValue := values[0]
-	for _, value := range values[1:] {
-		if value > maxValue {
-			maxValue = value
-		}
-	}
-	return &maxValue
 }
 
 func antigravityProjectID(auth *coreauth.Auth) string {
@@ -401,45 +380,6 @@ func nestedMap(data map[string]any, key string) map[string]any {
 	return value
 }
 
-func nestedString(data map[string]any, key string, child string) string {
-	if child == "" {
-		return stringFromAny(data[key])
-	}
-	return stringFromAny(nestedMap(data, key)[child])
-}
-
-func anySlice(value any) []any {
-	switch items := value.(type) {
-	case []any:
-		return items
-	case []map[string]any:
-		out := make([]any, 0, len(items))
-		for _, item := range items {
-			out = append(out, item)
-		}
-		return out
-	case []string:
-		out := make([]any, 0, len(items))
-		for _, item := range items {
-			out = append(out, item)
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func formatResetTime(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "-"
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return "-"
-	}
-	return parsed.Local().Format("01/02, 15:04")
-}
-
 func floatFromAny(value any) (float64, bool) {
 	switch v := value.(type) {
 	case float64:
@@ -459,46 +399,6 @@ func floatFromAny(value any) (float64, bool) {
 	default:
 		return 0, false
 	}
-}
-
-func boolValue(value any) (bool, bool) {
-	switch v := value.(type) {
-	case bool:
-		return v, true
-	case string:
-		trimmed := strings.ToLower(strings.TrimSpace(v))
-		if trimmed == "true" || trimmed == "1" || trimmed == "yes" || trimmed == "y" || trimmed == "on" {
-			return true, true
-		}
-		if trimmed == "false" || trimmed == "0" || trimmed == "no" || trimmed == "n" || trimmed == "off" {
-			return false, true
-		}
-	case float64:
-		return v != 0, true
-	case int:
-		return v != 0, true
-	}
-	return false, false
-}
-
-func boolFromAny(value any) bool {
-	switch v := value.(type) {
-	case bool:
-		return v
-	case string:
-		return strings.EqualFold(v, "true") || v == "1"
-	case float64:
-		return v != 0
-	default:
-		return false
-	}
-}
-
-func normalizeFraction(value float64) float64 {
-	if value > 1 && value <= 100 {
-		value = value / 100
-	}
-	return math.Max(0, math.Min(1, value))
 }
 
 func emptyStringAsNil(value string) any {

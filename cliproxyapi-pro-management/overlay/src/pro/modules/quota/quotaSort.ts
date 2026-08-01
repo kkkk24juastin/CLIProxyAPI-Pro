@@ -12,7 +12,7 @@ const QUOTA_SORT_PROVIDERS = new Set([
   'xai',
 ]);
 
-export const AUTH_FILE_QUOTA_SORT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const AUTH_FILE_QUOTA_SORT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const AUTH_FILE_QUOTA_SORT_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 type QuotaSortStore = Pick<

@@ -1,6 +1,6 @@
 import { authFilesApi } from '@/services/api/authFiles';
 import { apiClient } from '@/services/api/client';
-export const DEFAULT_PROXY_POOL_LISTEN = '127.0.0.1:8318';
+const DEFAULT_PROXY_POOL_LISTEN = '127.0.0.1:8318';
 
 export type ProxyPoolStrategy = 'round-robin' | 'weighted' | 'least-connections';
 export type ProxyPoolHealthState = 'unknown' | 'healthy' | 'degraded' | 'isolated' | 'disabled';

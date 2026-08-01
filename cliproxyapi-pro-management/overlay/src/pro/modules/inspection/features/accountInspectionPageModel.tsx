@@ -164,17 +164,17 @@ export type InspectionResultsViewState = {
   filterRowCounts: Record<ResultFilter, number>;
 };
 
-export const ACCOUNT_INSPECTION_LOG_LIMIT = 200;
+const ACCOUNT_INSPECTION_LOG_LIMIT = 200;
 export const ACCOUNT_INSPECTION_LOG_PAGE_SIZE = 100;
 export const ACCOUNT_INSPECTION_ACTION_PAGE_SIZE = 500;
 export const ACCOUNT_INSPECTION_DETAILS_IDLE_DELAY_MS = 250;
 export const ACCOUNT_INSPECTION_AUTH_FILES_IDLE_DELAY_MS = 300;
-export const ACCOUNT_INSPECTION_ASSET_STATS_CHUNK_SIZE = 500;
+const ACCOUNT_INSPECTION_ASSET_STATS_CHUNK_SIZE = 500;
 export const ACCOUNT_INSPECTION_EXPORT_DOWNLOAD_CONCURRENCY = 4;
 
 export type AccountInspectionIdleCallback = (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void;
 
-export const appendInspectionLogEntry = (entries: InspectionLogEntry[], entry: InspectionLogEntry) =>
+const appendInspectionLogEntry = (entries: InspectionLogEntry[], entry: InspectionLogEntry) =>
   [...entries, entry].slice(-ACCOUNT_INSPECTION_LOG_LIMIT);
 
 export const getPaginationRange = (pageInfo: AccountInspectionPageInfo | null, visibleCount: number) => {
@@ -213,13 +213,13 @@ export const getDocumentTheme = (): ResolvedTheme => {
   return String(theme).toLowerCase().includes('dark') ? 'dark' : 'light';
 };
 
-export const emptyAutoExecutionCounts = (): AutoExecutionCounts => ({
+const emptyAutoExecutionCounts = (): AutoExecutionCounts => ({
   delete: 0,
   disable: 0,
   enable: 0,
 });
 
-export const createEmptyFilterRows = (): Record<ResultFilter, InspectionResultViewRow[]> => ({
+const createEmptyFilterRows = (): Record<ResultFilter, InspectionResultViewRow[]> => ({
   all: [],
   accountIssues: [],
   quotaChanges: [],
@@ -247,7 +247,7 @@ export const healthToneClass: Record<ResultHealthStatus, string> = {
   recoverable: styles.healthRecoverable,
 };
 
-export const healthLabelKey: Record<ResultHealthStatus, string> = {
+const healthLabelKey: Record<ResultHealthStatus, string> = {
   healthy: 'monitoring.account_inspection_health_healthy',
   disabled: 'monitoring.account_inspection_health_disabled',
   authInvalid: 'monitoring.account_inspection_account_invalid',
@@ -256,14 +256,14 @@ export const healthLabelKey: Record<ResultHealthStatus, string> = {
   recoverable: 'monitoring.account_inspection_health_recoverable',
 };
 
-export const extractHealthHttpStatusCode = (item: AccountInspectionResultItem) => {
+const extractHealthHttpStatusCode = (item: AccountInspectionResultItem) => {
   if (item.statusCode !== null && item.statusCode >= 400) return item.statusCode;
   const errorText = [item.error, item.deepProbeError, item.tokenRefreshError].filter(Boolean).join(' ');
   const match = errorText.match(/\bHTTP\s+(\d{3})\b/i) ?? errorText.match(/\bstatus(?:\s+code)?\s*[:=]?\s*(\d{3})\b/i);
   return match ? Number(match[1]) : null;
 };
 
-export const buildHealthStatusCodeText = (item: AccountInspectionResultItem) => {
+const buildHealthStatusCodeText = (item: AccountInspectionResultItem) => {
   const httpStatusCode = extractHealthHttpStatusCode(item);
   return httpStatusCode !== null ? String(httpStatusCode) : '';
 };
@@ -278,16 +278,7 @@ export const buildHealthStatusLabel = (
   return code ? `${label} · ${code}` : label;
 };
 
-export const hasInspectionErrorDetails = (item: AccountInspectionResultItem) => Boolean(
-  item.error
-  || item.errorDetail?.trim()
-  || item.errorCode?.trim()
-  || item.deepProbeError
-  || item.tokenRefreshError
-  || extractHealthHttpStatusCode(item) !== null
-);
-
-export const parseInspectionErrorPayload = (value: string): unknown => {
+const parseInspectionErrorPayload = (value: string): unknown => {
   const text = value.trim();
   if (!text || (!text.startsWith('{') && !text.startsWith('['))) return null;
   try {
@@ -297,7 +288,7 @@ export const parseInspectionErrorPayload = (value: string): unknown => {
   }
 };
 
-export const readInspectionErrorMessage = (value: unknown): string => {
+const readInspectionErrorMessage = (value: unknown): string => {
   if (typeof value === 'string') return value.trim();
   if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
   const record = value as Record<string, unknown>;
@@ -308,7 +299,7 @@ export const readInspectionErrorMessage = (value: unknown): string => {
   return '';
 };
 
-export const buildInspectionErrorPresentation = (item: AccountInspectionResultItem) => {
+const buildInspectionErrorPresentation = (item: AccountInspectionResultItem) => {
   const candidates = [item.error, item.deepProbeError || '', item.tokenRefreshError || '']
     .map((value) => value.trim())
     .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
@@ -407,13 +398,13 @@ export function InspectionErrorDetailsPanel({
   );
 }
 
-export const ACCOUNT_INVALID_ERROR_STATUSES = new Set([400, 401, 403, 404]);
+const ACCOUNT_INVALID_ERROR_STATUSES = new Set([400, 401, 403, 404]);
 export const ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET = new Set<string>(ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS);
 
-export const readAuthFileField = (file: AuthFileItem, key: string) =>
+const readAuthFileField = (file: AuthFileItem, key: string) =>
   readStringValue((file as unknown as Record<string, unknown>)[key]);
 
-export const isAccountInspectionApiKeyAuthFile = (file: AuthFileItem) => {
+const isAccountInspectionApiKeyAuthFile = (file: AuthFileItem) => {
   const label = readAuthFileField(file, 'label').toLowerCase();
   const source = readAuthFileField(file, 'source').toLowerCase();
   const apiKey = readAuthFileField(file, 'api_key') || readAuthFileField(file, 'apiKey');
@@ -430,14 +421,14 @@ export const isInspectableAccountInspectionAuthFile = (file: AuthFileItem) => {
   return ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET.has(provider) && !isAccountInspectionApiKeyAuthFile(file);
 };
 
-export const readAuthFileLastError = (file: AuthFileItem) => {
+const readAuthFileLastError = (file: AuthFileItem) => {
   const raw = file['last_error'] ?? file.lastError;
   return isRecordValue(raw) ? raw : null;
 };
 
-export const readAuthFileLastErrorCode = (file: AuthFileItem) => readStringValue(readAuthFileLastError(file)?.code);
+const readAuthFileLastErrorCode = (file: AuthFileItem) => readStringValue(readAuthFileLastError(file)?.code);
 
-export const readAuthFileLastErrorStatus = (file: AuthFileItem) => {
+const readAuthFileLastErrorStatus = (file: AuthFileItem) => {
   const error = readAuthFileLastError(file);
   return error ? normalizeNumberValue(error.http_status ?? error.httpStatus ?? error.status) : null;
 };
@@ -455,7 +446,7 @@ export const isAuthFileRequestError = (file: AuthFileItem) => {
     || code === 'token_refresh_error';
 };
 
-export const incrementProviderStats = (stats: ProviderAccountStats, disabled: boolean, highAvailable: boolean, quotaLow: boolean, accountInvalid: boolean, requestError: boolean) => {
+const incrementProviderStats = (stats: ProviderAccountStats, disabled: boolean, highAvailable: boolean, quotaLow: boolean, accountInvalid: boolean, requestError: boolean) => {
   stats.total += 1;
   if (disabled) {
     stats.disabled += 1;
@@ -468,7 +459,7 @@ export const incrementProviderStats = (stats: ProviderAccountStats, disabled: bo
   if (requestError) stats.requestError += 1;
 };
 
-export const emptyProviderAccountStats = (provider: string): ProviderAccountStats => ({
+const emptyProviderAccountStats = (provider: string): ProviderAccountStats => ({
   provider,
   total: 0,
   enabled: 0,
@@ -503,7 +494,7 @@ export const resolveAssetInspectionHealthCounts = (
   return counts?.total === assetTotal ? counts : null;
 };
 
-export const finalizeAuthFileAccountStats = (
+const finalizeAuthFileAccountStats = (
   stats: AuthFileAccountStats,
   providerStats: Map<string, ProviderAccountStats>
 ) => ({
@@ -512,7 +503,7 @@ export const finalizeAuthFileAccountStats = (
   providers: [...providerStats.values()].sort((left, right) => right.total - left.total || left.provider.localeCompare(right.provider)),
 });
 
-export const quotaUsedPercentFromRemaining = (item: unknown): number | null => {
+const quotaUsedPercentFromRemaining = (item: unknown): number | null => {
   if (!isRecordValue(item)) return null;
   const usedPercent = normalizeNumberValue(item.usedPercent ?? item.used_percent);
   if (usedPercent !== null) return Math.max(0, Math.min(100, usedPercent));
@@ -522,7 +513,7 @@ export const quotaUsedPercentFromRemaining = (item: unknown): number | null => {
   return Math.max(0, Math.min(100, (1 - Math.max(0, Math.min(1, normalized))) * 100));
 };
 
-export const maxQuotaUsedPercent = (items: unknown): number | null => {
+const maxQuotaUsedPercent = (items: unknown): number | null => {
   if (!Array.isArray(items)) return null;
   const values = items
     .map(quotaUsedPercentFromRemaining)
@@ -531,12 +522,12 @@ export const maxQuotaUsedPercent = (items: unknown): number | null => {
   return Math.max(...values);
 };
 
-export const antigravityGroupUsedPercent = (group: unknown): number | null => {
+const antigravityGroupUsedPercent = (group: unknown): number | null => {
   if (!isRecordValue(group)) return null;
   return maxQuotaUsedPercent(group.buckets);
 };
 
-export const maxAntigravityGroupUsedPercent = (groups: unknown[]): number | null => {
+const maxAntigravityGroupUsedPercent = (groups: unknown[]): number | null => {
   const values = groups
     .map(antigravityGroupUsedPercent)
     .filter((value): value is number => value !== null);
@@ -544,7 +535,7 @@ export const maxAntigravityGroupUsedPercent = (groups: unknown[]): number | null
   return Math.max(...values);
 };
 
-export const isAntigravityClaudeGptGroup = (group: unknown): boolean => {
+const isAntigravityClaudeGptGroup = (group: unknown): boolean => {
   if (!isRecordValue(group)) return false;
   const normalize = (value: unknown) =>
     typeof value === 'string'
@@ -557,7 +548,7 @@ export const isAntigravityClaudeGptGroup = (group: unknown): boolean => {
   return combined.includes('claude') && (combined.includes('gpt') || combined.includes('openai'));
 };
 
-export const isAntigravityQuotaLow = (
+const isAntigravityQuotaLow = (
   quota: unknown,
   usedPercentThreshold: number,
   quotaMode: AccountInspectionAntigravityQuotaMode
@@ -595,7 +586,7 @@ export const isXaiQuotaLow = (quota: unknown, usedPercentThreshold: number) => {
   return used !== null && used >= usedPercentThreshold;
 };
 
-export const isProviderQuotaLow = (
+const isProviderQuotaLow = (
   provider: string,
   quotaStore: QuotaAccountStatsState,
   fileName: string,
@@ -618,7 +609,7 @@ export const isProviderQuotaLow = (
   }
 };
 
-export const accumulateAuthFileAccountStats = (
+const accumulateAuthFileAccountStats = (
   stats: AuthFileAccountStats,
   providerStats: Map<string, ProviderAccountStats>,
   file: AuthFileItem,
@@ -725,7 +716,7 @@ export const scheduleAuthFileAccountStats = (
   runChunk();
 };
 
-export const emptyHealthCounts = (): HealthCounts => ({
+const emptyHealthCounts = (): HealthCounts => ({
   total: 0,
   healthy: 0,
   disabled: 0,
@@ -735,7 +726,7 @@ export const emptyHealthCounts = (): HealthCounts => ({
   recoverable: 0,
 });
 
-export const getManualActionsByHealthStatus = (
+const getManualActionsByHealthStatus = (
   item: AccountInspectionResultItem,
   healthStatus: ResultHealthStatus
 ): ManualAccountInspectionAction[] => {
@@ -994,7 +985,7 @@ export const tokenRefreshToneClass = (item: AccountInspectionResultItem) => {
   return styles.stateTextMuted;
 };
 
-export const formatInspectionVerdictPrimary = (
+const formatInspectionVerdictPrimary = (
   item: AccountInspectionResultItem,
   healthStatus: ResultHealthStatus,
   t: TFunction
@@ -1022,7 +1013,7 @@ export const formatInspectionVerdictPrimary = (
   }
 };
 
-export const inspectionToastTone = (healthStatus: ResultHealthStatus): 'success' | 'warning' | 'error' => {
+const inspectionToastTone = (healthStatus: ResultHealthStatus): 'success' | 'warning' | 'error' => {
   if (healthStatus === 'healthy' || healthStatus === 'recoverable') return 'success';
   if (healthStatus === 'inspectionError' || healthStatus === 'authInvalid') return 'error';
   return 'warning';
@@ -1163,7 +1154,7 @@ export const buildExecuteConfirmationMessage = (
   );
 };
 
-export const buildConfirmationAccountCard = (
+const buildConfirmationAccountCard = (
   item: AccountInspectionResultItem,
   t: TFunction
 ) => (
@@ -1196,7 +1187,7 @@ export const buildDeleteConfirmationMessage = (
   </div>
 );
 
-export const withChanged = <S, K extends keyof S>(
+const withChanged = <S, K extends keyof S>(
   state: S,
   key: K,
   next: S[K],
@@ -1206,7 +1197,7 @@ export const withChanged = <S, K extends keyof S>(
   return { ...state, [key]: next };
 };
 
-export const sameProgressSnapshot = (left: AccountInspectionProgressSnapshot, right: AccountInspectionProgressSnapshot) =>
+const sameProgressSnapshot = (left: AccountInspectionProgressSnapshot, right: AccountInspectionProgressSnapshot) =>
   left.total === right.total &&
   left.completed === right.completed &&
   left.inFlight === right.inFlight &&
@@ -1225,49 +1216,44 @@ export const sameProgressSnapshot = (left: AccountInspectionProgressSnapshot, ri
   left.summary.keepCount === right.summary.keepCount &&
   left.summary.errorCount === right.summary.errorCount;
 
-export const sameInspectionSettings = (left: AccountInspectionConfigurableSettings, right: AccountInspectionConfigurableSettings) =>
-  left.targetType === right.targetType &&
-  left.workers === right.workers &&
-  left.deleteWorkers === right.deleteWorkers &&
-  left.timeout === right.timeout &&
-  left.retries === right.retries &&
-  left.usedPercentThreshold === right.usedPercentThreshold &&
-  left.sampleSize === right.sampleSize &&
-  left.antigravityDeepProbeEnabled === right.antigravityDeepProbeEnabled &&
-  left.antigravityDeepProbeModel === right.antigravityDeepProbeModel &&
-  left.antigravityQuotaMode === right.antigravityQuotaMode &&
-  left.xaiDeepProbeEnabled === right.xaiDeepProbeEnabled &&
-  left.xaiDeepProbeModel === right.xaiDeepProbeModel &&
-  left.autoExecuteQuotaLimitDisable === right.autoExecuteQuotaLimitDisable &&
-  left.autoExecuteQuotaRecoveryEnable === right.autoExecuteQuotaRecoveryEnable &&
-  left.autoExecuteAccountInvalidAction === right.autoExecuteAccountInvalidAction &&
-  left.autoExecuteRequestErrorAction === right.autoExecuteRequestErrorAction &&
+const INSPECTION_SETTINGS_DRAFT_KEYS = [
+  'targetType',
+  'workers',
+  'deleteWorkers',
+  'timeout',
+  'retries',
+  'usedPercentThreshold',
+  'sampleSize',
+  'antigravityDeepProbeEnabled',
+  'antigravityDeepProbeModel',
+  'antigravityQuotaMode',
+  'xaiDeepProbeEnabled',
+  'xaiDeepProbeModel',
+  'autoExecuteQuotaLimitDisable',
+  'autoExecuteQuotaRecoveryEnable',
+  'autoExecuteAccountInvalidAction',
+  'autoExecuteRequestErrorAction',
+] as const satisfies readonly (keyof InspectionSettingsDraft)[];
+
+const sameSelectedFields = <T extends object>(
+  left: T,
+  right: T,
+  keys: readonly (keyof T)[]
+) => keys.every((key) => left[key] === right[key]);
+
+const sameInspectionSettings = (left: AccountInspectionConfigurableSettings, right: AccountInspectionConfigurableSettings) =>
+  sameSelectedFields(left, right, INSPECTION_SETTINGS_DRAFT_KEYS) &&
   left.autoExecuteConfirmations === right.autoExecuteConfirmations;
 
-export const sameSettingsDraft = (left: InspectionSettingsDraft, right: InspectionSettingsDraft) =>
-  left.targetType === right.targetType &&
-  left.workers === right.workers &&
-  left.deleteWorkers === right.deleteWorkers &&
-  left.timeout === right.timeout &&
-  left.retries === right.retries &&
-  left.usedPercentThreshold === right.usedPercentThreshold &&
-  left.sampleSize === right.sampleSize &&
-  left.antigravityDeepProbeEnabled === right.antigravityDeepProbeEnabled &&
-  left.antigravityDeepProbeModel === right.antigravityDeepProbeModel &&
-  left.antigravityQuotaMode === right.antigravityQuotaMode &&
-  left.xaiDeepProbeEnabled === right.xaiDeepProbeEnabled &&
-  left.xaiDeepProbeModel === right.xaiDeepProbeModel &&
-  left.autoExecuteQuotaLimitDisable === right.autoExecuteQuotaLimitDisable &&
-  left.autoExecuteQuotaRecoveryEnable === right.autoExecuteQuotaRecoveryEnable &&
-  left.autoExecuteAccountInvalidAction === right.autoExecuteAccountInvalidAction &&
-  left.autoExecuteRequestErrorAction === right.autoExecuteRequestErrorAction;
+const sameSettingsDraft = (left: InspectionSettingsDraft, right: InspectionSettingsDraft) =>
+  sameSelectedFields(left, right, INSPECTION_SETTINGS_DRAFT_KEYS);
 
-export const sameScheduleDraft = (left: ScheduleDraft, right: ScheduleDraft) =>
+const sameScheduleDraft = (left: ScheduleDraft, right: ScheduleDraft) =>
   left.enabled === right.enabled && left.intervalMinutes === right.intervalMinutes;
 
 export type InspectionScheduleSnapshot = AccountInspectionScheduleResponse['schedule'];
 
-export const sameScheduleSnapshot = (
+const sameScheduleSnapshot = (
   left: InspectionScheduleSnapshot | null,
   right: InspectionScheduleSnapshot | null
 ) => {
@@ -1279,10 +1265,10 @@ export const sameScheduleSnapshot = (
     sameInspectionSettings(left.settings, right.settings);
 };
 
-export const sameAutoExecutionCounts = (left: AutoExecutionCounts, right: AutoExecutionCounts) =>
+const sameAutoExecutionCounts = (left: AutoExecutionCounts, right: AutoExecutionCounts) =>
   left.delete === right.delete && left.disable === right.disable && left.enable === right.enable;
 
-export const sameRunStatus = (left: RunStatus, right: RunStatus) => left === right;
+const sameRunStatus = (left: RunStatus, right: RunStatus) => left === right;
 
 export const handleAccountInspectionControlError = (
   error: unknown,
@@ -1340,7 +1326,7 @@ export const createInspectionBackendState = (settings: AccountInspectionConfigur
   restoredSnapshot: false,
 });
 
-export const applyBackendViewState = (
+const applyBackendViewState = (
   state: InspectionBackendState,
   response: AccountInspectionScheduleResponse,
   viewState: BackendInspectionViewState

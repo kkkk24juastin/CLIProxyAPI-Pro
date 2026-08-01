@@ -179,8 +179,6 @@ Request Monitoring uses an initial snapshot plus SSE increments and cursor catch
 - `monitoring-locales.json` — locale additions merged into upstream locale files.
 - `apply_customizations.py` — applies all customizations to a target upstream checkout.
 - `apply.sh` — shell wrapper around `apply_customizations.py`.
-- `quota-persistence.patch` — legacy patch artifact kept for reference; current builds use `apply_customizations.py`.
-
 Overlay collision preflight validates the upstream side of every reviewed replacement. Upstream file changes must update `overlay-replacements.json` explicitly; local replacements are reviewed through normal PR diffs and behavior tests, and new unreviewed path collisions are rejected before any overlay file is copied.
 
 ## Applying locally

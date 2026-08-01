@@ -327,6 +327,29 @@ func TestExecuteActionDisablesGeminiCLIPluginVirtualSourceFile(t *testing.T) {
 	}
 }
 
+func TestWritePluginVirtualManagedMetadataDoesNotRecreateMissingSource(t *testing.T) {
+	authPath := filepath.Join(t.TempDir(), "removed.json")
+	auth := &coreauth.Auth{Disabled: true, Metadata: map[string]any{}}
+	err := writePluginVirtualManagedMetadataToSourceFile(authPath, auth, map[string]any{"type": "gemini-cli"})
+	if !os.IsNotExist(err) {
+		t.Fatalf("writePluginVirtualManagedMetadataToSourceFile() error = %v, want not-exist", err)
+	}
+	if _, statErr := os.Stat(authPath); !os.IsNotExist(statErr) {
+		t.Fatalf("removed source file was recreated: %v", statErr)
+	}
+}
+
+func TestUpdatePluginVirtualRuntimeAuthsRejectsMissingIdentity(t *testing.T) {
+	handler := &Handler{authManager: coreauth.NewManager(nil, nil, nil)}
+	auth := &coreauth.Auth{ID: "removed", Provider: "gemini-cli", Metadata: map[string]any{}}
+	err := handler.updatePluginVirtualRuntimeAuths(context.Background(), auth, func(updated *coreauth.Auth) {
+		updated.Disabled = true
+	})
+	if err == nil || !strings.Contains(err.Error(), "no longer exists") {
+		t.Fatalf("updatePluginVirtualRuntimeAuths() error = %v, want missing-identity error", err)
+	}
+}
+
 func TestManualActionsBindIdentityToCurrentSnapshot(t *testing.T) {
 	manager := coreauth.NewManager(nil, nil, nil)
 	registeredA, err := manager.Register(context.Background(), &coreauth.Auth{Provider: "codex", ID: "auth-a", FileName: "a.json", Metadata: map[string]any{"email": "a@example.com"}})

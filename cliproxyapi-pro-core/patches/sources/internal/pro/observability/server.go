@@ -207,18 +207,6 @@ func parseQueryInt(c *gin.Context, key string, fallback int) int {
 	return parsed
 }
 
-func parseQueryIntSigned(c *gin.Context, key string, fallback int) int {
-	value := strings.TrimSpace(c.Query(key))
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
 func allowLegacyUsageImport(c *gin.Context) bool {
 	value := strings.ToLower(strings.TrimSpace(c.Query("allow_legacy")))
 	if value == "" {
@@ -338,6 +326,37 @@ func usageHistoryCursorFromOptions(options UsageEventQueryOptions, status string
 	}
 }
 
+func (s *Server) buildUsageHistoryPayload(
+	ctx context.Context,
+	page UsageEventQueryPage,
+	options UsageEventQueryOptions,
+	status string,
+	pageCursor string,
+	limit int,
+) (internalusage.Payload, error) {
+	payload := internalusage.BuildPayload(page.Events)
+	state, err := s.usageDatasetState(ctx)
+	if err != nil {
+		return internalusage.Payload{}, err
+	}
+	applyUsageDatasetState(&payload, state)
+	payload.DetailsLimit = int64(limit)
+	payload.DetailsLimited = page.HasMore
+	payload.MatchedTotal = page.MatchedTotal
+	payload.SnapshotMaxID = options.SnapshotMaxID
+	payload.PageCursor = pageCursor
+	payload.HasMore = page.HasMore
+	if page.HasMore && len(page.Events) > 0 {
+		payload.NextCursor = encodeUsageHistoryCursor(usageHistoryCursorFromOptions(
+			options,
+			status,
+			page.MatchedTotal,
+			page.Events[len(page.Events)-1],
+		))
+	}
+	return payload, nil
+}
+
 func (s *Server) handleUsageHistoryEvents(c *gin.Context) {
 	limit := usageEventPageLimit(parseQueryInt(c, "limit", 100))
 	cursorValue := strings.TrimSpace(c.Query("cursor"))
@@ -356,21 +375,12 @@ func (s *Server) handleUsageHistoryEvents(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		payload := internalusage.BuildPayload(page.Events)
-		state, err := s.usageDatasetState(c.Request.Context())
+		payload, err := s.buildUsageHistoryPayload(
+			c.Request.Context(), page, options, status, cursorValue, limit,
+		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
-		}
-		applyUsageDatasetState(&payload, state)
-		payload.DetailsLimit = int64(limit)
-		payload.DetailsLimited = page.HasMore
-		payload.MatchedTotal = page.MatchedTotal
-		payload.SnapshotMaxID = options.SnapshotMaxID
-		payload.PageCursor = cursorValue
-		payload.HasMore = page.HasMore
-		if page.HasMore && len(page.Events) > 0 {
-			payload.NextCursor = encodeUsageHistoryCursor(usageHistoryCursorFromOptions(options, status, page.MatchedTotal, page.Events[len(page.Events)-1]))
 		}
 		c.JSON(http.StatusOK, payload)
 		return
@@ -414,26 +424,18 @@ func (s *Server) handleUsageHistoryEvents(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	payload := internalusage.BuildPayload(page.Events)
-	state, err := s.usageDatasetState(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	applyUsageDatasetState(&payload, state)
-	payload.DetailsLimit = int64(limit)
-	payload.DetailsLimited = page.HasMore
-	payload.MatchedTotal = page.MatchedTotal
-	payload.SnapshotMaxID = options.SnapshotMaxID
-	payload.PageCursor = encodeUsageHistoryCursor(usageHistoryCursorFromOptions(
+	pageCursor := encodeUsageHistoryCursor(usageHistoryCursorFromOptions(
 		options,
 		status,
 		page.MatchedTotal,
 		internalusage.Event{TimestampMS: usageHistoryStartCursorValue, ID: usageHistoryStartCursorValue},
 	))
-	payload.HasMore = page.HasMore
-	if page.HasMore && len(page.Events) > 0 {
-		payload.NextCursor = encodeUsageHistoryCursor(usageHistoryCursorFromOptions(options, status, page.MatchedTotal, page.Events[len(page.Events)-1]))
+	payload, err := s.buildUsageHistoryPayload(
+		c.Request.Context(), page, options, status, pageCursor, limit,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 	c.JSON(http.StatusOK, payload)
 }
@@ -516,7 +518,7 @@ func (s *Server) handleUsageAggregates(c *gin.Context) {
 		GroupBy:               parseCSVQuery(c.Query("group_by")),
 		Limit:                 parseQueryInt(c, "limit", 1000),
 		APIKeyHash:            strings.TrimSpace(c.Query("api_key_hash")),
-		TimezoneOffsetMinutes: parseQueryIntSigned(c, "timezone_offset_minutes", 0),
+		TimezoneOffsetMinutes: parseQueryInt(c, "timezone_offset_minutes", 0),
 	}
 	buckets, err := s.store.UsageAggregates(c.Request.Context(), options)
 	if err != nil {

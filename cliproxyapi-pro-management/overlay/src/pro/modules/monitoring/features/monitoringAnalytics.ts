@@ -11,6 +11,10 @@ import {
 } from './hooks/useMonitoringData';
 import type { UsageAggregateBucket, UsageAggregates } from './hooks/useUsageAggregates';
 import { calculateAggregateCost } from './monitoringAggregates';
+import {
+  projectMonitoringAccountRow,
+  type MonitoringAccountRowAccumulator,
+} from './accountRowProjection';
 import { maskSensitiveText } from '@/utils/format';
 import { formatCompactNumber, formatUsd, type ModelPrice } from '@/pro/modules/monitoring/features/usage';
 
@@ -39,7 +43,7 @@ export type TokenDistributionPoint = {
   totalCost: number;
 };
 
-type RankingRowAccumulator = {
+type RankingRowAccumulator = MonitoringAccountRowAccumulator & {
   id: string;
   group: 'apiKey' | 'model';
   model: string;
@@ -47,21 +51,6 @@ type RankingRowAccumulator = {
   apiKeyMasked: string;
   account: string;
   accountMasked: string;
-  authLabels: Set<string>;
-  authIndices: Set<string>;
-  channels: Set<string>;
-  providers: Set<string>;
-  totalCalls: number;
-  successCalls: number;
-  failureCalls: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  totalTokens: number;
-  totalCost: number;
-  latencySum: number;
-  latencyCount: number;
-  lastSeenAt: number;
 };
 
 export type UsageTrendAnalytics = {
@@ -281,41 +270,7 @@ const createRankingRowAccumulator = (
   row: MonitoringEventRow,
   group: 'apiKey' | 'model'
 ): RankingRowAccumulator => {
-  if (group === 'apiKey') {
-    return {
-      id: row.clientApiKey.id,
-      group,
-      model: '-',
-      apiKeyHash: row.clientApiKey.hash,
-      apiKeyMasked: row.clientApiKey.masked,
-      account: row.clientApiKey.masked,
-      accountMasked: row.clientApiKey.masked,
-      authLabels: new Set(),
-      authIndices: new Set(),
-      channels: new Set(),
-      providers: new Set(),
-      totalCalls: 0,
-      successCalls: 0,
-      failureCalls: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-      totalTokens: 0,
-      totalCost: 0,
-      latencySum: 0,
-      latencyCount: 0,
-      lastSeenAt: 0,
-    };
-  }
-
-  return {
-    id: `model:${row.model}`,
-    group,
-    model: row.model,
-    apiKeyHash: '-',
-    apiKeyMasked: '-',
-    account: row.model,
-    accountMasked: row.model,
+  const accumulator: MonitoringAccountRowAccumulator = {
     authLabels: new Set(),
     authIndices: new Set(),
     channels: new Set(),
@@ -331,6 +286,29 @@ const createRankingRowAccumulator = (
     latencySum: 0,
     latencyCount: 0,
     lastSeenAt: 0,
+  };
+  if (group === 'apiKey') {
+    return {
+      ...accumulator,
+      id: row.clientApiKey.id,
+      group,
+      model: '-',
+      apiKeyHash: row.clientApiKey.hash,
+      apiKeyMasked: row.clientApiKey.masked,
+      account: row.clientApiKey.masked,
+      accountMasked: row.clientApiKey.masked,
+    };
+  }
+
+  return {
+    ...accumulator,
+    id: `model:${row.model}`,
+    group,
+    model: row.model,
+    apiKeyHash: '-',
+    apiKeyMasked: '-',
+    account: row.model,
+    accountMasked: row.model,
   };
 };
 
@@ -356,7 +334,7 @@ const addRankingRow = (accumulator: RankingRowAccumulator, row: MonitoringEventR
 };
 
 const finalizeRankingRows = (grouped: Map<string, RankingRowAccumulator>): MonitoringAccountRow[] =>
-  Array.from(grouped.values()).map((item) => ({
+  Array.from(grouped.values()).map((item) => projectMonitoringAccountRow(item, {
     id: item.id,
     group: item.group,
     model: item.model,
@@ -364,23 +342,6 @@ const finalizeRankingRows = (grouped: Map<string, RankingRowAccumulator>): Monit
     apiKeyMasked: item.apiKeyMasked,
     account: item.account,
     accountMasked: item.accountMasked,
-    authLabels: Array.from(item.authLabels).sort(),
-    authIndices: Array.from(item.authIndices).sort(),
-    channels: Array.from(item.channels).sort(),
-    providers: Array.from(item.providers).sort(),
-    totalCalls: item.totalCalls,
-    successCalls: item.successCalls,
-    failureCalls: item.failureCalls,
-    successRate: item.totalCalls > 0 ? item.successCalls / item.totalCalls : 1,
-    inputTokens: item.inputTokens,
-    outputTokens: item.outputTokens,
-    cachedTokens: item.cachedTokens,
-    totalTokens: item.totalTokens,
-    totalCost: item.totalCost,
-    averageLatencyMs: item.latencyCount > 0 ? item.latencySum / item.latencyCount : null,
-    lastSeenAt: item.lastSeenAt,
-    recentPattern: [],
-    models: [],
   }));
 
 export const buildUsageTrendAnalytics = (

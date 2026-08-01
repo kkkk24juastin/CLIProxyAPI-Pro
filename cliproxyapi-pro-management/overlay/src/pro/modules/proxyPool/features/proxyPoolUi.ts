@@ -1,4 +1,5 @@
 import type { ProxyPoolHealthState, ProxyPoolNodeConfig } from '@/pro/modules/proxyPool/proxyPool';
+import { parsePositiveGoDuration, serializeGoDuration } from '@/pro/shared/duration';
 
 export type ProxyPoolView = 'nodes' | 'diagnostics' | 'settings';
 export type ProxyPoolStatusFilter = 'all' | ProxyPoolHealthState;
@@ -33,41 +34,13 @@ export const formatProxyPoolSuccessRate = (success: number, total: number): stri
   return `${Math.round((normalizedSuccess / total) * 1000) / 10}%`;
 };
 
-const durationUnitMilliseconds: Record<string, number> = {
-  ns: 0.000001,
-  us: 0.001,
-  µs: 0.001,
-  μs: 0.001,
-  ms: 1,
-  s: 1000,
-  m: 60_000,
-  h: 3_600_000,
-};
-
 export const proxyPoolDurationValue = (
   value: string,
   targetUnit: ProxyPoolDurationUnit
-): number | null => {
-  const source = value.trim();
-  if (!source) return null;
-  const pattern = /(-?\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/g;
-  let milliseconds = 0;
-  let cursor = 0;
-  let matched = false;
-  for (const match of source.matchAll(pattern)) {
-    if (match.index !== cursor) return null;
-    milliseconds += Number(match[1]) * durationUnitMilliseconds[match[2]];
-    cursor = match.index + match[0].length;
-    matched = true;
-  }
-  if (!matched || cursor !== source.length || !Number.isFinite(milliseconds) || milliseconds <= 0) {
-    return null;
-  }
-  return milliseconds / durationUnitMilliseconds[targetUnit];
-};
+): number | null => parsePositiveGoDuration(value, targetUnit);
 
 export const serializeProxyPoolDuration = (value: number, unit: ProxyPoolDurationUnit): string =>
-  `${Math.round(value * 1000) / 1000}${unit}`;
+  serializeGoDuration(value, unit);
 
 export const proxyPoolStateLabel = (state: ProxyPoolHealthState): string => {
   if (state === 'healthy') return 'Healthy';

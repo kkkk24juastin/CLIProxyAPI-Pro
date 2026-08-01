@@ -222,26 +222,60 @@ func writePluginVirtualManagedMetadataToSourceFile(sourcePath string, auth *core
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(sourcePath, append(raw, '\n'), 0o600)
+	return writeExistingAuthFile(sourcePath, append(raw, '\n'))
 }
 
-func (h *Handler) updatePluginVirtualRuntimeAuths(ctx context.Context, sourceAuth *coreauth.Auth, mutate func(*coreauth.Auth)) {
+func writeExistingAuthFile(path string, raw []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if err = file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err = file.Write(raw); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func (h *Handler) updatePluginVirtualRuntimeAuths(ctx context.Context, sourceAuth *coreauth.Auth, mutate func(*coreauth.Auth)) error {
 	if h == nil || h.authManager == nil || sourceAuth == nil || mutate == nil {
-		return
+		return fmt.Errorf("plugin virtual auth update is unavailable")
 	}
 	sourcePath := pluginVirtualSourcePath(sourceAuth)
 	if sourcePath == "" {
 		mutate(sourceAuth)
-		_, _ = h.authManager.Update(ctx, sourceAuth)
-		return
+		updated, err := h.authManager.Update(ctx, sourceAuth)
+		if err != nil {
+			return err
+		}
+		if updated == nil {
+			return fmt.Errorf("plugin virtual auth no longer exists")
+		}
+		return nil
 	}
+	updatedCount := 0
 	for _, candidate := range h.authManager.List() {
 		if candidate == nil || !sameAuthSourcePath(pluginVirtualSourcePath(candidate), sourcePath) {
 			continue
 		}
 		mutate(candidate)
-		_, _ = h.authManager.Update(ctx, candidate)
+		updated, err := h.authManager.Update(ctx, candidate)
+		if err != nil {
+			return err
+		}
+		if updated == nil {
+			return fmt.Errorf("plugin virtual auth %q no longer exists", candidate.ID)
+		}
+		updatedCount++
 	}
+	if updatedCount == 0 {
+		return fmt.Errorf("plugin virtual auth source no longer has runtime identities")
+	}
+	return nil
 }
 
 func (h *Handler) updateProAuth(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
@@ -266,7 +300,9 @@ func (h *Handler) updateProAuth(ctx context.Context, authIndex string, mutate fu
 			}
 		}
 		mutate(sourceAuth)
-		h.updatePluginVirtualRuntimeAuths(ctx, sourceAuth, mutate)
+		if err := h.updatePluginVirtualRuntimeAuths(ctx, sourceAuth, mutate); err != nil {
+			return err
+		}
 		if coreauth.IsPluginVirtualAuth(sourceAuth) {
 			return writePluginVirtualManagedMetadataToSourceFile(pluginVirtualSourcePath(sourceAuth), sourceAuth, sourceMetadata)
 		}

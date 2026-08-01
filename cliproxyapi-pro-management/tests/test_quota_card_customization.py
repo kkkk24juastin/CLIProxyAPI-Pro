@@ -11,22 +11,27 @@ CUSTOMIZATIONS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CUSTOMIZATIONS)
 
 
-QUOTA_CARD_TEMPLATE = """import { TYPE_COLORS%s } from '@/utils/quota';
-import { QuotaProgressBar, type QuotaProgressBarProps } from './QuotaProgressBar';
-import styles from '@/pages/QuotaPage.module.scss';
-
-export interface QuotaStatusState {
-  status: QuotaStatus;
-  error?: string;
-  errorStatus?: number;
-}
+QUOTA_CARD_SOURCE = """import { resolveQuotaErrorMessage } from '@/utils/quota';
 
 export function QuotaCard() {
   return (
     <div>
         ) : quota ? (
-          %s
+          <adapter.Body quota={quota} classes={quotaClasses} />
         ) : (
+    </div>
+  );
+}
+"""
+
+AUTH_FILE_QUOTA_SECTION_SOURCE = """import { bindQuotaClasses } from '@/features/quota/types';
+
+export function AuthFileQuotaSection() {
+  return (
+    <div>
+      ) : quota ? (
+        <adapter.Body quota={quota} classes={compactQuotaClasses} />
+      ) : (
     </div>
   );
 }
@@ -37,38 +42,32 @@ class QuotaCardCustomizationTest(unittest.TestCase):
     def setUp(self) -> None:
         CUSTOMIZATIONS._writes.clear()
 
-    def assert_variant_is_customized(self, import_suffix: str, render_call: str) -> None:
+    def test_adds_cached_time_to_quota_renderers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             target = Path(temp_dir)
-            quota_dir = target / 'src/components/quota'
+            quota_dir = target / 'src/features/quota/components'
+            auth_dir = target / 'src/features/authFiles/components'
             quota_dir.mkdir(parents=True)
-            path = quota_dir / 'QuotaCard.tsx'
-            path.write_text(QUOTA_CARD_TEMPLATE % (import_suffix, render_call))
+            auth_dir.mkdir(parents=True)
+            quota_path = quota_dir / 'QuotaCard.tsx'
+            auth_path = auth_dir / 'AuthFileQuotaSection.tsx'
+            quota_path.write_text(QUOTA_CARD_SOURCE)
+            auth_path.write_text(AUTH_FILE_QUOTA_SECTION_SOURCE)
 
-            CUSTOMIZATIONS.patch_quota_card(target)
+            CUSTOMIZATIONS.patch_quota_cards_latest(target)
             CUSTOMIZATIONS.flush_writes()
 
-            source = path.read_text()
-            self.assertIn("import { QuotaCachedTime } from '@/pro/modules/quota';", source)
-            self.assertIn('cachedAt?: number;', source)
-            self.assertIn(f'{{{render_call}}}', source)
-            self.assertIn('<QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />', source)
+            quota_source = quota_path.read_text()
+            auth_source = auth_path.read_text()
+            self.assertIn("import { QuotaCachedTime } from '@/pro/modules/quota';", quota_source)
+            self.assertIn('<QuotaCachedTime quotaStatus={status} cachedAt={quota.cachedAt} />', quota_source)
+            self.assertIn("import { QuotaCachedTime } from '@/pro/modules/quota';", auth_source)
+            self.assertIn('<QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />', auth_source)
 
-            CUSTOMIZATIONS.patch_quota_card(target)
+            CUSTOMIZATIONS.patch_quota_cards_latest(target)
             CUSTOMIZATIONS.flush_writes()
-            self.assertEqual(source, path.read_text())
-
-    def test_supports_legacy_quota_card_renderer(self) -> None:
-        self.assert_variant_is_customized(
-            '',
-            'renderQuotaItems(quota, t, { styles, QuotaProgressBar })',
-        )
-
-    def test_supports_upstream_bound_quota_progress_bar_renderer(self) -> None:
-        self.assert_variant_is_customized(
-            ', resolveQuotaErrorMessage',
-            'renderQuotaItems(quota, t, { styles, QuotaProgressBar: BoundQuotaProgressBar })',
-        )
+            self.assertEqual(quota_source, quota_path.read_text())
+            self.assertEqual(auth_source, auth_path.read_text())
 
 
 if __name__ == '__main__':

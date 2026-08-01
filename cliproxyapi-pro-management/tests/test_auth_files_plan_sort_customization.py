@@ -12,71 +12,18 @@ CUSTOMIZATIONS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CUSTOMIZATIONS)
 
 
-AUTH_FILES_PAGE_SOURCE = """import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';
-
-const resolveStatusFilterMode = (
-  problemOnly: boolean,
-  disabledOnly: boolean
-): AuthFilesStatusFilterMode => {
-  if (problemOnly) return 'problem';
-  if (disabledOnly) return 'disabled';
-  return 'all';
-};
+AUTH_FILES_PAGE_SOURCE = """import { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';
 
 export function AuthFilesPage() {
   const normalizedFilter = normalizeProviderKey(String(filter));
-  const enabledOnly = statusFilterMode === 'enabled';
-
-  const handleSortModeChange = useCallback(
-    (value: string) => {
-      if (!isAuthFilesSortMode(value) || value === sortMode) return;
-      setSortMode(value);
-      setPage(1);
-    },
-    [sortMode]
-  );
-
-  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {
-    setStatusFilterMode(nextMode);
-    setPage(1);
-  }, []);
-
-  const sortOptions = useMemo(
-    () => [
-      { value: 'default', label: t('auth_files.sort_default') },
-      { value: 'az', label: t('auth_files.sort_az') },
-      { value: 'priority', label: t('auth_files.sort_priority') },
-    ],
-    [t]
-  );
-
-  const sorted = useMemo(() => {
-    const copy = [...filtered];
-    if (sortMode === 'default') {
-      copy.sort((a, b) => {
-        const providerA = normalizeProviderKey(String(a.provider ?? a.type ?? 'unknown'));
-        const providerB = normalizeProviderKey(String(b.provider ?? b.type ?? 'unknown'));
-        const providerCompare = providerA.localeCompare(providerB);
-        if (providerCompare !== 0) return providerCompare;
-        return a.name.localeCompare(b.name);
-      });
-    } else if (sortMode === 'az') {
-      copy.sort((a, b) => a.name.localeCompare(b.name));
-    } else if (sortMode === 'priority') {
-      copy.sort((a, b) => {
-        const pa = parsePriorityValue(a.priority) ?? 0;
-        const pb = parsePriorityValue(b.priority) ?? 0;
-        return pb - pa; // 高优先级排前面
-      });
-    }
-    return copy;
-  }, [filtered, sortMode]);
+  const sorted = useMemo(() => sortAuthFiles(filtered, sortMode), [filtered, sortMode]);
 
   return (
     <Select
                 value={sortMode}
                 options={sortOptions}
                 onChange={handleSortModeChange}
+          sortMode={sortMode}
     />
   );
 }
@@ -95,42 +42,30 @@ class AuthFilesSortingCustomizationTest(unittest.TestCase):
     def test_adds_provider_scoped_sorting_and_state_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             target = Path(temp_dir)
-            pages_dir = target / 'src/pages'
             feature_dir = target / 'src/features/authFiles'
-            pages_dir.mkdir(parents=True)
             feature_dir.mkdir(parents=True)
-            page_path = pages_dir / 'AuthFilesPage.tsx'
+            page_path = feature_dir / 'AuthFilesPage.tsx'
             ui_state_path = feature_dir / 'uiState.ts'
             page_path.write_text(AUTH_FILES_PAGE_SOURCE)
             ui_state_path.write_text(UI_STATE_SOURCE)
 
-            CUSTOMIZATIONS.patch_auth_files_page_sorting(target)
+            CUSTOMIZATIONS.patch_auth_files_page_sorting_latest(target)
             CUSTOMIZATIONS.flush_writes()
 
             page = page_path.read_text()
             ui_state = ui_state_path.read_text()
 
             self.assertIn("['default', 'az', 'priority', 'plan', 'quota']", ui_state)
-            self.assertGreaterEqual(page.count("from '@/pro/modules/quota'"), 2)
+            self.assertEqual(page.count("from '@/pro/modules/quota'"), 1)
             self.assertIn('compareAuthFilesByPlanDescending', page)
             self.assertIn('compareAuthFilesByAvailableQuotaDescending', page)
-            self.assertIn(
-                'const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter);',
-                page,
-            )
-            self.assertIn(
-                'const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter);',
-                page,
-            )
-            self.assertIn('if (selectedSortModeAvailable) return;', page)
-            self.assertIn("options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') });", page)
-            self.assertIn("options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') });", page)
-            self.assertIn("selectedSortModeAvailable ? sortMode : 'default'", page)
+            self.assertIn("sortMode === 'plan' && !isAuthFilePlanSortProvider(normalizedFilter)", page)
+            self.assertIn("sortMode === 'quota' && !isAuthFileQuotaSortProvider(normalizedFilter)", page)
             self.assertIn('compareAuthFilesByPlanDescending(a, b, quotaSearchStore)', page)
             self.assertIn('compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore)', page)
-            self.assertIn('value={effectiveSortMode}', page)
+            self.assertIn('sortMode={effectiveSortMode}', page)
 
-            CUSTOMIZATIONS.patch_auth_files_page_sorting(target)
+            CUSTOMIZATIONS.patch_auth_files_page_sorting_latest(target)
             CUSTOMIZATIONS.flush_writes()
             self.assertEqual(page, page_path.read_text())
             self.assertEqual(ui_state, ui_state_path.read_text())

@@ -224,6 +224,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 	var lastStatus *int
 	var lastMessage string
 	var lastDetail string
+endpointLoop:
 	for _, url := range antigravityGenerateURLs() {
 		resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
 			return s.apiCall(ctx, account.Auth, http.MethodPost, url, map[string]string{
@@ -267,8 +268,8 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 		default:
 			lastMessage = probeMessage
 			lastDetail = probeDetail
-			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < http.StatusInternalServerError {
-				break
+			if shouldStopAntigravityDeepProbeFailover(resp.StatusCode) {
+				break endpointLoop
 			}
 		}
 	}
@@ -284,6 +285,10 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 	decision.DeepProbeError = lastMessage
 	s.appendLog("warning", fmt.Sprintf("%s Antigravity 深度检测临时异常：%s", account.identity(), lastMessage))
 	return decision, proinspection.FirstStatus(lastStatus, quotaStatus), nil
+}
+
+func shouldStopAntigravityDeepProbeFailover(status int) bool {
+	return status != http.StatusTooManyRequests && status < http.StatusInternalServerError
 }
 
 func classifyAntigravityDeepProbeResponse(resp accountInspectionHTTPResult) (accountInspectionDeepProbeStatus, string) {

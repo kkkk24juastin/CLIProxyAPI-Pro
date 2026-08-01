@@ -288,29 +288,6 @@ func minRemainingFractionFromBuckets(buckets []map[string]any) *float64 {
 	return &minValue
 }
 
-func earliestResetTimeFromBuckets(buckets []map[string]any) string {
-	selected := ""
-	var selectedTime time.Time
-	for _, bucket := range buckets {
-		raw := stringFromProviderValue(bucket["resetTime"])
-		if raw == "" {
-			continue
-		}
-		parsed, err := time.Parse(time.RFC3339Nano, raw)
-		if err != nil {
-			if selected == "" {
-				selected = raw
-			}
-			continue
-		}
-		if selected == "" || selectedTime.IsZero() || parsed.Before(selectedTime) {
-			selected = raw
-			selectedTime = parsed
-		}
-	}
-	return selected
-}
-
 func anyMapSlice(value any) []map[string]any {
 	switch items := value.(type) {
 	case []map[string]any:
@@ -684,66 +661,6 @@ func toKimiUsageRow(data map[string]any, fallbackLabel map[string]any) map[strin
 	return row
 }
 
-func cloneFloatPtr(value *float64) *float64 {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
-}
-
-func minFloatPtr(current *float64, next *float64) *float64 {
-	if current == nil {
-		return cloneFloatPtr(next)
-	}
-	if next == nil {
-		return cloneFloatPtr(current)
-	}
-	value := math.Min(*current, *next)
-	return &value
-}
-
-func pickEarlierResetTime(current string, next string) string {
-	if current == "" {
-		return next
-	}
-	if next == "" {
-		return current
-	}
-	currentTime, currentErr := time.Parse(time.RFC3339Nano, current)
-	nextTime, nextErr := time.Parse(time.RFC3339Nano, next)
-	if currentErr != nil {
-		return next
-	}
-	if nextErr != nil {
-		return current
-	}
-	if currentTime.Before(nextTime) || currentTime.Equal(nextTime) {
-		return current
-	}
-	return next
-}
-
-func floatPtrAny(value *float64) any {
-	if value == nil {
-		return nil
-	}
-	return *value
-}
-
-func uniqueStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
 func firstAnyFromMaps(sources []map[string]any, key string) any {
 	for _, source := range sources {
 		if source == nil {
@@ -925,17 +842,6 @@ func anySlice(value any) []any {
 	default:
 		return nil
 	}
-}
-
-func formatResetTime(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "-"
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return "-"
-	}
-	return parsed.Local().Format("01/02, 15:04")
 }
 
 func floatFromAny(value any) (float64, bool) {

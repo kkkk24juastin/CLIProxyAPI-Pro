@@ -20,7 +20,7 @@ export const buildRealtimeMetaText = (row: MonitoringEventRow) => {
   return maskSensitiveText(text || '-');
 };
 
-export const buildRealtimeDiagnosticText = (row: MonitoringEventRow) => {
+const buildRealtimeDiagnosticText = (row: MonitoringEventRow) => {
   const parts: string[] = [];
   if (row.statusCode !== null && row.statusCode >= 400) {
     parts.push(`HTTP ${row.statusCode}`);
@@ -30,7 +30,7 @@ export const buildRealtimeDiagnosticText = (row: MonitoringEventRow) => {
   return maskSensitiveText(parts.join(' · '));
 };
 
-export const buildRealtimeStatusCodeText = (
+const buildRealtimeStatusCodeText = (
   row: Pick<MonitoringEventRow, 'statusCode' | 'errorCode'>
 ) => {
   if (row.statusCode !== null && row.statusCode >= 400) return String(row.statusCode);
@@ -247,7 +247,7 @@ export const translateRealtimeErrorCategory = (
   }
 };
 
-export const buildRealtimeErrorSummary = (row: MonitoringEventRow) => {
+const buildRealtimeErrorSummary = (row: MonitoringEventRow) => {
   if (!row.failed) return '';
   const parts: string[] = [];
   if (row.errorMessage) parts.push(compactRealtimeErrorMessage(row.errorMessage));

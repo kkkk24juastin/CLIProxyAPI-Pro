@@ -84,6 +84,18 @@ rm -f "${late_preflight_log}"
 python3 "${repo_root}/cliproxyapi-pro-core/patches/apply_upstream_patches.py"
 git -C "${upstream_root}" diff --check
 
+if [[ "${VALIDATION_STATICCHECK:-0}" == "1" ]]; then
+  if ! command -v staticcheck >/dev/null 2>&1; then
+    echo "VALIDATION_STATICCHECK=1 requires staticcheck" >&2
+    exit 1
+  fi
+  (
+    cd "${upstream_root}"
+    staticcheck -checks=SA4011 ./internal/api/handlers/management
+    staticcheck -checks=U1000 ./internal/pro/...
+  )
+fi
+
 git -C "${upstream_root}" add -N .
 patched_diff_hash="$(git -C "${upstream_root}" diff --binary | git hash-object --stdin)"
 reapply_log="$(mktemp "${TMPDIR:-/tmp}/cliproxyapi-pro-reapply.XXXXXX")"

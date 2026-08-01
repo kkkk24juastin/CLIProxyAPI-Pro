@@ -58,7 +58,7 @@ export const mergeXaiBillingRuntimeState = (
   return merged;
 };
 
-export const xaiFreeQuotaUsedPercent = (
+const xaiFreeQuotaUsedPercent = (
   billing: unknown
 ): number | null => {
   if (!billing || typeof billing !== 'object' || Array.isArray(billing)) return null;

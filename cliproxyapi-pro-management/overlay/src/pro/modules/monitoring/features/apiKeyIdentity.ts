@@ -6,7 +6,7 @@ export type MonitoringApiKeyIdentity = {
   masked: string;
 };
 
-export const maskConfiguredApiKey = (value: string): string => {
+const maskConfiguredApiKey = (value: string): string => {
   const trimmed = value.trim();
   if (!trimmed || trimmed === '-') return '-';
   const visibleChars = trimmed.length < 4 ? 1 : 2;

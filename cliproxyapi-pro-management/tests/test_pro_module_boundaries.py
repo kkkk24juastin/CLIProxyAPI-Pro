@@ -94,7 +94,7 @@ class ProModuleBoundaryTests(unittest.TestCase):
     def test_registry_derives_host_surfaces_from_module_manifests(self):
         registry = (OVERLAY_SRC / 'pro/registry.tsx').read_text(encoding='utf-8')
         bootstrap = (OVERLAY_SRC / 'pro/ProBootstrap.tsx').read_text(encoding='utf-8')
-        self.assertIn('export const proModules = [', registry)
+        self.assertIn('const proModules = [', registry)
         self.assertIn('proModules.flatMap((module)', registry)
         self.assertIn('const navigationGroups = new Map', registry)
         self.assertNotRegex(registry, r"path:\s*['\"]/[^'\"]+['\"]")

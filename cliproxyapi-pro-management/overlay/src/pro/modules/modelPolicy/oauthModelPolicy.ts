@@ -1,6 +1,7 @@
 import { apiClient } from "@/services/api/client";
+import { parsePositiveGoDuration, serializeGoDuration } from '@/pro/shared/duration';
 
-export const OAUTH_MODEL_PROVIDER_KEYS = [
+const OAUTH_MODEL_PROVIDER_KEYS = [
   "xai",
   "codex",
   "claude",
@@ -134,8 +135,6 @@ export const OAUTH_MODEL_PROVIDER_DEFINITIONS: OAuthModelProviderDefinition[] =
     { key: "kimi", plans: [...fallbackPlans] },
   ];
 
-export const XAI_PLAN_DEFINITIONS = OAUTH_MODEL_PROVIDER_DEFINITIONS[0].plans;
-
 export const normalizeOAuthModelPlanKey = (
   value: string,
   provider?: string,
@@ -198,7 +197,7 @@ const asString = (value: unknown, fallback = ""): string =>
 const hasOwn = (source: Record<string, unknown>, key: string): boolean =>
   Object.prototype.hasOwnProperty.call(source, key);
 
-export const normalizeModelPatterns = (value: unknown): string[] => {
+const normalizeModelPatterns = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   return value
@@ -313,48 +312,15 @@ export const serializeOAuthModelPolicyConfig = (
   };
 };
 
-const durationUnitMilliseconds: Record<string, number> = {
-  ns: 0.000001,
-  us: 0.001,
-  µs: 0.001,
-  μs: 0.001,
-  ms: 1,
-  s: 1000,
-  m: 60_000,
-  h: 3_600_000,
-};
-
 export const oauthModelPolicyDurationValue = (
   value: string,
   targetUnit: OAuthModelPolicyDurationUnit,
-): number | null => {
-  const source = value.trim();
-  if (!source) return null;
-  const pattern = /(-?\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/g;
-  let milliseconds = 0;
-  let cursor = 0;
-  let matched = false;
-  for (const match of source.matchAll(pattern)) {
-    if (match.index !== cursor) return null;
-    milliseconds += Number(match[1]) * durationUnitMilliseconds[match[2]];
-    cursor = match.index + match[0].length;
-    matched = true;
-  }
-  if (
-    !matched ||
-    cursor !== source.length ||
-    !Number.isFinite(milliseconds) ||
-    milliseconds <= 0
-  ) {
-    return null;
-  }
-  return milliseconds / durationUnitMilliseconds[targetUnit];
-};
+): number | null => parsePositiveGoDuration(value, targetUnit);
 
 export const serializeOAuthModelPolicyDuration = (
   value: number,
   unit: OAuthModelPolicyDurationUnit,
-): string => `${Math.round(value * 1000) / 1000}${unit}`;
+): string => serializeGoDuration(value, unit);
 
 export const isPositiveDuration = (value: string): boolean =>
   oauthModelPolicyDurationValue(value, "s") !== null;

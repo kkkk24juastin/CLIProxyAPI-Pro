@@ -52,7 +52,7 @@ const translatedPlanLabel = (t: TFunction, key: string, fallback: string) => {
   return translated && translated !== key ? translated : fallback;
 };
 
-export const formatRawAccountPlanLabel = (value: unknown): string => {
+const formatRawAccountPlanLabel = (value: unknown): string => {
   const raw = readPlanValue(value);
   if (!raw) return '';
   return raw

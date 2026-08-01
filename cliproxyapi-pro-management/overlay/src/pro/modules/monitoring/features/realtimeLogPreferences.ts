@@ -1,7 +1,7 @@
 const REALTIME_LOG_COLUMNS_STORAGE_KEY = 'cli-proxy-realtime-log-columns-v2';
 const REALTIME_LOG_FOLLOW_STORAGE_KEY = 'cli-proxy-realtime-log-follow-v1';
 
-export const REALTIME_LOG_COLUMN_KEYS = [
+const REALTIME_LOG_COLUMN_KEYS = [
   'type',
   'accountPlan',
   'model',

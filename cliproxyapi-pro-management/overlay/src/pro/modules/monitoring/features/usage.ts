@@ -184,7 +184,6 @@ const MASKED_TOKEN_HINT_REGEX = /^[^\s]{1,24}(\*{2,}|\.{3})[^\s]{1,24}$/;
 
 const KEY_FINGERPRINT_CACHE_LIMIT = 2048;
 const keyFingerprintCache = new Map<string, string>();
-const usageDetailsCache = new WeakMap<object, UsageDetail[]>();
 const usageDetailsWithEndpointCache = new WeakMap<object, UsageDetailWithEndpoint[]>();
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -262,7 +261,7 @@ const extractRawSecretFromText = (text: string): string | null => {
   return bearerValue && looksLikeRawSecret(bearerValue) ? bearerValue : null;
 };
 
-export function normalizeUsageSourceId(
+function normalizeUsageSourceId(
   value: unknown,
   masker: (val: string) => string = maskApiKey
 ): string {
@@ -300,7 +299,7 @@ export function buildCandidateUsageSourceIds(input: {
   return Array.from(new Set(result.filter(Boolean)));
 }
 
-export function extractLatencyMs(detail: unknown): number | null {
+function extractLatencyMs(detail: unknown): number | null {
   return extractNonNegativeNumberField(detail, ['latency_ms']);
 }
 
@@ -500,39 +499,6 @@ const buildUsageDetail = (
     __timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
   };
 };
-
-export function collectUsageDetails(usageData: unknown): UsageDetail[] {
-  const cacheKey = isRecord(usageData) ? (usageData as object) : null;
-  if (cacheKey) {
-    const cached = usageDetailsCache.get(cacheKey);
-    if (cached) return cached;
-  }
-
-  const apis = getApisRecord(usageData);
-  if (!apis) return [];
-
-  const details: UsageDetail[] = [];
-  const sourceCache = new Map<string, string>();
-
-  Object.values(apis).forEach((apiEntry) => {
-    if (!isRecord(apiEntry)) return;
-    const models = isRecord(apiEntry.models) ? apiEntry.models : null;
-    if (!models) return;
-
-    Object.entries(models).forEach(([modelName, modelEntry]) => {
-      if (!isRecord(modelEntry)) return;
-      const modelDetails = Array.isArray(modelEntry.details) ? modelEntry.details : [];
-
-      modelDetails.forEach((detailRaw) => {
-        const detail = buildUsageDetail(detailRaw, modelName, sourceCache);
-        if (detail) details.push(detail);
-      });
-    });
-  });
-
-  if (cacheKey) usageDetailsCache.set(cacheKey, details);
-  return details;
-}
 
 export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetailWithEndpoint[] {
   const cacheKey = isRecord(usageData) ? (usageData as object) : null;

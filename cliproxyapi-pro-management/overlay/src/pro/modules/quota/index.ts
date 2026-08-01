@@ -1,6 +1,4 @@
-export { QuotaPersistenceBootstrap } from './extensions/QuotaPersistenceBootstrap';
 export { quotaModule } from './manifest';
-export { FEATURES } from './features';
 export { quotaPersistenceMiddleware } from './extensions/persistenceMiddleware';
 export { resolveAccountPlanLabel, type AccountPlanQuotaStore } from './accountPlan';
 export { GEMINI_CLI_CONFIG } from './extensions/geminiCliQuotaConfig';
@@ -22,6 +20,4 @@ export {
   mergeXaiBillingRuntimeState,
   parseXaiFreeQuotaProbe,
   resolveXaiPlanType,
-  xaiFreeQuotaUsedPercent,
-  type XaiNormalizedPlanType,
 } from './extensions/xaiQuota';

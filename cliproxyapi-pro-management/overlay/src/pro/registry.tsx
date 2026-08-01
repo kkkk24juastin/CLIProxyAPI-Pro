@@ -26,7 +26,7 @@ export interface ProNavigationGroup {
 
 // This is the only host-owned list. Route, navigation and bootstrap projections
 // are derived from each module's public manifest.
-export const proModules = [
+const proModules = [
   monitoringModule,
   inspectionModule,
   routingModule,

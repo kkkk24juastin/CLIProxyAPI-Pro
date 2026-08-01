@@ -20,7 +20,7 @@ type UsageStreamHandlers = {
 const toFiniteNumber = (value: unknown) =>
   Number.isFinite(Number(value)) ? Number(value) : 0;
 
-export const readUsageSseMessage = (block: string): { event: string; data: string } | null => {
+const readUsageSseMessage = (block: string): { event: string; data: string } | null => {
   if (!block.trim()) return null;
   let event = 'message';
   const dataLines: string[] = [];

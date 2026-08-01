@@ -490,6 +490,18 @@ export function TokenDistributionPanel({
   );
 }
 
+type RankingPanelProps = {
+  title: string;
+  subtitle: string;
+  rows: MonitoringAccountRow[];
+  metric: RankingMetric;
+  metricTotal: number;
+  onMetricChange: (metric: RankingMetric) => void;
+  emptyText: string;
+  hasPrices: boolean;
+  t: TFunction;
+};
+
 export function ModelStatsPanel({
   title,
   subtitle,
@@ -500,17 +512,7 @@ export function ModelStatsPanel({
   emptyText,
   hasPrices,
   t,
-}: {
-  title: string;
-  subtitle: string;
-  rows: MonitoringAccountRow[];
-  metric: RankingMetric;
-  metricTotal: number;
-  onMetricChange: (metric: RankingMetric) => void;
-  emptyText: string;
-  hasPrices: boolean;
-  t: TFunction;
-}) {
+}: RankingPanelProps) {
   const shareBase = metricTotal > 0 ? metricTotal : rows.reduce((sum, row) => sum + getRankingMetricValue(row, metric), 0);
   const shareModeLabel = t('monitoring.share_by_metric', { metric: getRankingMetricLabel(metric, t) });
   const totalShareValue = formatRankingMetricValue(shareBase, metric, hasPrices);
@@ -633,17 +635,7 @@ export function ApiKeyRankingPanel({
   emptyText,
   hasPrices,
   t,
-}: {
-  title: string;
-  subtitle: string;
-  rows: MonitoringAccountRow[];
-  metric: RankingMetric;
-  metricTotal: number;
-  onMetricChange: (metric: RankingMetric) => void;
-  emptyText: string;
-  hasPrices: boolean;
-  t: TFunction;
-}) {
+}: RankingPanelProps) {
   const shareBase = metricTotal > 0 ? metricTotal : rows.reduce((sum, row) => sum + getRankingMetricValue(row, metric), 0);
   const summaryLabel = getRankingSummaryLabel(metric, t);
 

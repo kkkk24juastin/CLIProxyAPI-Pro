@@ -1,6 +1,5 @@
 import type { Config, AuthFileItem } from '@/types';
-import { isDisabledAuthFile, isRecordValue, normalizeNumberValue, readBooleanValue, readStringValue, resolveAuthProvider, resolveCodexChatgptAccountId } from '@/utils/quota';
-import { normalizeAuthIndex } from '@/utils/authIndex';
+import { isRecordValue, normalizeNumberValue, readBooleanValue, readStringValue } from '@/utils/quota';
 
 export type AccountInspectionLogLevel = 'info' | 'success' | 'warning' | 'error';
 export type AccountInspectionAction = 'keep' | 'delete' | 'disable' | 'enable';
@@ -227,12 +226,6 @@ export interface AccountInspectionExecutionOutcome {
   error: string;
 }
 
-export interface AccountInspectionExecutionResult {
-  outcomes: AccountInspectionExecutionOutcome[];
-  refreshedFiles: AuthFileItem[];
-  refreshError: string;
-}
-
 export const ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE = 'all';
 
 export const ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS = [
@@ -259,7 +252,7 @@ export const ACCOUNT_INSPECTION_SETTING_LIMITS = {
   scheduleIntervalMinutes: { min: 1 },
 } as const;
 
-export const ACCOUNT_INSPECTION_SETTINGS_STORAGE_KEY = 'cli-proxy-account-inspection-settings-v1';
+const ACCOUNT_INSPECTION_SETTINGS_STORAGE_KEY = 'cli-proxy-account-inspection-settings-v1';
 
 export const DEFAULT_ACCOUNT_INSPECTION_SETTINGS: AccountInspectionConfigurableSettings = {
   targetType: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE,
@@ -320,7 +313,7 @@ export const normalizeAntigravityQuotaMode = (value: unknown): AccountInspection
   return normalized === 'max-used' ? 'max-used' : 'claude-gpt';
 };
 
-export const formatAccountInspectionIdentity = (
+const formatAccountInspectionIdentity = (
   item: Pick<AccountInspectionAccount, 'displayAccount' | 'email' | 'name' | 'fileName'>
 ) => {
   const label = item.email || item.name || item.displayAccount;
@@ -329,41 +322,6 @@ export const formatAccountInspectionIdentity = (
   }
   return item.fileName;
 };
-
-const readAuthFileName = (file: AuthFileItem) => {
-  const name = readStringValue(file.name);
-  if (name) return name;
-  const id = readStringValue(file.id);
-  if (id) return id;
-  const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
-  return authIndex || 'unknown-auth-file';
-};
-
-const readAuthEmail = (file: AuthFileItem) => {
-  const idToken = file.id_token;
-  return readStringValue(file.email) ||
-    (typeof idToken === 'object' && idToken !== null ? readStringValue((idToken as Record<string, unknown>).email) : '');
-};
-
-const readDisplayAccount = (file: AuthFileItem) =>
-  readAuthEmail(file) ||
-  readStringValue(file.name) ||
-  '-';
-
-const toInspectionAccount = (file: AuthFileItem): AccountInspectionAccount => ({
-  key: `${readAuthFileName(file)}::${normalizeAuthIndex(file['auth_index'] ?? file.authIndex) || '-'}`,
-  fileName: readAuthFileName(file),
-  displayAccount: readDisplayAccount(file),
-  email: readAuthEmail(file) || undefined,
-  name: readStringValue(file.name) || undefined,
-  authIndex: normalizeAuthIndex(file['auth_index'] ?? file.authIndex),
-  accountId: resolveCodexChatgptAccountId(file),
-  provider: resolveAuthProvider(file),
-  disabled: isDisabledAuthFile(file),
-  status: readStringValue(file.status),
-  state: readStringValue(file.state),
-  raw: file,
-});
 
 const readConfigurableSettingsFromConfig = (
   config?: Config | null
@@ -527,61 +485,6 @@ export const clearAccountInspectionConfigurableSettings = () => {
   }
 };
 
-const accountInspectionItemKey = (item: Pick<AccountInspectionAccount, 'fileName' | 'authIndex'>) =>
-  `${item.fileName}::${item.authIndex ?? '-'}`;
-
-const sortResults = (items: AccountInspectionResultItem[]) =>
-  [...items].sort(
-    (left, right) =>
-      left.fileName.localeCompare(right.fileName) ||
-      left.displayAccount.localeCompare(right.displayAccount) ||
-      left.key.localeCompare(right.key)
-  );
-
-const summarizeResults = (results: AccountInspectionResultItem[]) => {
-  const summary = {
-    deleteCount: 0,
-    disableCount: 0,
-    enableCount: 0,
-    keepCount: 0,
-    errorCount: 0,
-    disabledCount: 0,
-    enabledCount: 0,
-    plannedActionPreview: [] as string[],
-  };
-
-  results.forEach((item) => {
-    if (item.disabled) {
-      summary.disabledCount += 1;
-    } else {
-      summary.enabledCount += 1;
-    }
-    if (item.error) summary.errorCount += 1;
-
-    switch (item.action) {
-      case 'delete':
-        summary.deleteCount += 1;
-        break;
-      case 'disable':
-        summary.disableCount += 1;
-        break;
-      case 'enable':
-        summary.enableCount += 1;
-        break;
-      case 'keep':
-      default:
-        summary.keepCount += 1;
-        break;
-    }
-
-    if (item.action !== 'keep' && summary.plannedActionPreview.length < 10) {
-      summary.plannedActionPreview.push(`${formatAccountInspectionIdentity(item)} -> ${item.action}`);
-    }
-  });
-
-  return summary;
-};
-
 const buildPlannedActionPreview = (results: AccountInspectionResultItem[]) => {
   const preview: string[] = [];
   for (const item of results) {
@@ -654,7 +557,7 @@ export const accountInspectionBackendResultToItem = (
   executed: item.executed,
 });
 
-export const accountInspectionBackendProgressStatus = (
+const accountInspectionBackendProgressStatus = (
   status: AccountInspectionBackendStatus
 ): AccountInspectionProgressSnapshot['status'] => {
   if (status.state === 'paused') return 'paused';
@@ -665,7 +568,7 @@ export const accountInspectionBackendProgressStatus = (
   return 'idle';
 };
 
-export const accountInspectionBackendRunStatus = (
+const accountInspectionBackendRunStatus = (
   status: AccountInspectionBackendStatus
 ): AccountInspectionDisplayRunStatus => {
   if (status.state === 'paused') return 'paused';
@@ -771,60 +674,3 @@ export const hasAccountInspectionAutoExecutePolicies = (settings: AccountInspect
   settings.autoExecuteQuotaRecoveryEnable ||
   settings.autoExecuteAccountInvalidAction !== 'none' ||
   settings.autoExecuteRequestErrorAction !== 'none';
-
-export const applyAccountInspectionExecutionResult = (
-  previousResult: AccountInspectionRunResult,
-  execution: AccountInspectionExecutionResult
-): AccountInspectionRunResult => {
-  const successfulOutcomes = new Map(
-    execution.outcomes.filter((item) => item.success).map((item) => [accountInspectionItemKey(item), item] as const)
-  );
-  const refreshedAccounts = new Map(
-    execution.refreshedFiles.map((file) => {
-      const account = toInspectionAccount(file);
-      return [accountInspectionItemKey(account), account] as const;
-    })
-  );
-
-  const nextResults = sortResults(
-    previousResult.results.map((item) => {
-      const refreshedAccount = refreshedAccounts.get(accountInspectionItemKey(item));
-      const baseItem: AccountInspectionResultItem = refreshedAccount
-        ? {
-            ...item,
-            ...refreshedAccount,
-            raw: refreshedAccount.raw,
-          }
-        : item;
-      const outcome = successfulOutcomes.get(accountInspectionItemKey(baseItem));
-
-      if (!outcome) {
-        return baseItem;
-      }
-
-      return {
-        ...baseItem,
-        disabled: outcome.action === 'disable' ? true : outcome.action === 'enable' ? false : baseItem.disabled,
-        action: 'keep',
-        actionReason: '无需处理',
-        error: '',
-        executed: true,
-      };
-    })
-  );
-
-  const summary = summarizeResults(nextResults);
-
-  return {
-    ...previousResult,
-    results: nextResults,
-    summary: {
-      ...previousResult.summary,
-      ...summary,
-    },
-    finishedAt: Date.now(),
-  };
-};
-
-export const buildSuggestedActionCountLabel = (summary: AccountInspectionSummary) =>
-  summary.deleteCount + summary.disableCount + summary.enableCount;

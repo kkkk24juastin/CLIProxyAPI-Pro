@@ -2418,10 +2418,6 @@ func retrySQLiteBusy(ctx context.Context, operation func() error) error {
 	return prostorage.RetryBusy(ctx, operation)
 }
 
-func isSQLiteBusy(err error) bool {
-	return prostorage.IsBusy(err)
-}
-
 func (s *Store) DeleteQuotaCache(ctx context.Context, provider string, fileName string) error {
 	s.quotaCacheMu.Lock()
 	defer s.quotaCacheMu.Unlock()

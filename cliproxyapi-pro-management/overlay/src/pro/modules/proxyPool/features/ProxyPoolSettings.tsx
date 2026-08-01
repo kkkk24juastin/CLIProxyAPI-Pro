@@ -1,4 +1,3 @@
-import { useEffect, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -6,6 +5,7 @@ import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconAlertTriangle } from '@/components/ui/icons';
 import type { ProxyPoolConfig } from '@/pro/modules/proxyPool/proxyPool';
+import { DurationInput, type DurationFieldProps } from '@/pro/shared/DurationInput';
 import {
   proxyPoolDurationValue,
   serializeProxyPoolDuration,
@@ -13,69 +13,18 @@ import {
 } from './proxyPoolUi';
 import styles from './ProxyPool.module.scss';
 
-interface DurationInputProps {
-  label: string;
-  value: string;
-  unit: ProxyPoolDurationUnit;
-  unitLabel: string;
-  fallback: number;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}
-
-const formatDurationNumber = (value: number): string => String(Math.round(value * 1000) / 1000);
-
-function DurationInput({
-  label,
-  value,
-  unit,
-  unitLabel,
-  fallback,
-  disabled = false,
-  onChange,
-}: DurationInputProps) {
-  const inputId = useId();
-  const numericValue = proxyPoolDurationValue(value, unit) ?? fallback;
-  const [text, setText] = useState(() => formatDurationNumber(numericValue));
-
-  useEffect(() => {
-    setText(formatDurationNumber(numericValue));
-  }, [numericValue]);
-
-  const commit = () => {
-    const next = Number(text);
-    if (!Number.isFinite(next) || next <= 0) {
-      setText(formatDurationNumber(numericValue));
-      return;
-    }
-    const normalized = Math.round(next * 1000) / 1000;
-    setText(formatDurationNumber(normalized));
-    if (Math.abs(normalized - numericValue) < 0.000001) return;
-    onChange(serializeProxyPoolDuration(normalized, unit));
-  };
-
+function ProxyPoolDurationInput(props: DurationFieldProps<ProxyPoolDurationUnit>) {
   return (
-    <div className="form-group">
-      <label htmlFor={inputId}>{label}</label>
-      <div className={styles.durationControl}>
-        <input
-          id={inputId}
-          className="input"
-          type="number"
-          min="0.001"
-          step="0.1"
-          inputMode="decimal"
-          value={text}
-          disabled={disabled}
-          onChange={(event) => setText(event.target.value)}
-          onBlur={commit}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') event.currentTarget.blur();
-          }}
-        />
-        <span aria-hidden="true">{unitLabel}</span>
-      </div>
-    </div>
+    <DurationInput
+      {...props}
+      className={styles.durationControl}
+      min={0.001}
+      step={0.1}
+      inputMode="decimal"
+      parse={proxyPoolDurationValue}
+      normalize={(value) => Math.round(value * 1000) / 1000}
+      serialize={serializeProxyPoolDuration}
+    />
   );
 }
 
@@ -139,7 +88,7 @@ export function ProxyPoolSettings({ draft, onChange, onEnableFailOpen }: ProxyPo
             onChange={(event) => patch({ listen: event.target.value })}
             placeholder="127.0.0.1:8318"
           />
-          <DurationInput
+          <ProxyPoolDurationInput
             label={t('proxy_pool.dial_timeout', { defaultValue: 'Dial timeout' })}
             value={draft.dialTimeout}
             unit="s"
@@ -176,7 +125,7 @@ export function ProxyPoolSettings({ draft, onChange, onEnableFailOpen }: ProxyPo
           />
         </div>
         <div className={styles.settingsGrid}>
-          <DurationInput
+          <ProxyPoolDurationInput
             label={t('proxy_pool.health_interval', { defaultValue: 'Check interval' })}
             value={draft.healthCheck.interval}
             unit="s"
@@ -185,7 +134,7 @@ export function ProxyPoolSettings({ draft, onChange, onEnableFailOpen }: ProxyPo
             onChange={(interval) => patchHealth({ interval })}
             disabled={!draft.healthCheck.enabled}
           />
-          <DurationInput
+          <ProxyPoolDurationInput
             label={t('proxy_pool.health_timeout', { defaultValue: 'Check timeout' })}
             value={draft.healthCheck.timeout}
             unit="s"
@@ -206,7 +155,7 @@ export function ProxyPoolSettings({ draft, onChange, onEnableFailOpen }: ProxyPo
             }
             disabled={!draft.healthCheck.enabled}
           />
-          <DurationInput
+          <ProxyPoolDurationInput
             label={t('proxy_pool.isolation_duration', { defaultValue: 'Isolation duration' })}
             value={draft.healthCheck.isolationDuration}
             unit="m"

@@ -60,8 +60,6 @@ type accountInspectionStreamMessageType = proinspection.StreamMessageType
 
 type accountInspectionDeepProbeStatus = proinspection.DeepProbeStatus
 
-type accountInspectionAntigravityQuotaMode = proinspection.AntigravityQuotaMode
-
 type accountInspectionAction = proinspection.Action
 
 const (
@@ -114,8 +112,6 @@ type accountInspectionProgress = proinspection.Progress
 type accountInspectionStatus = proinspection.Status
 
 type accountInspectionResultSnapshot = proinspection.ResultSnapshot
-
-type accountInspectionHealthBucket = proinspection.HealthBucket
 
 const (
 	accountInspectionHealthHealthy         = proinspection.HealthHealthy

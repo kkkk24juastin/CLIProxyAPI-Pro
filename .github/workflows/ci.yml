@@ -116,9 +116,17 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Install Staticcheck
+        env:
+          GOBIN: ${{ runner.temp }}/validation-bin
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+          echo "${GOBIN}" >> "${GITHUB_PATH}"
+
       - name: Validate Core customization
         env:
           VALIDATION_RACE: "1"
+          VALIDATION_STATICCHECK: "1"
         run: bash customizations-repo/scripts/validation/core.sh upstream-core
 
   source-image-build:

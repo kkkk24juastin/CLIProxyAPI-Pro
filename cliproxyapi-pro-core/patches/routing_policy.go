@@ -661,10 +661,6 @@ func normalizeRoutingProtectionMode(value string) string {
 	return prorouting.NormalizeMode(value)
 }
 
-func normalizeRoutingProtectionStatusCodes(values []int) []int {
-	return prorouting.NormalizeStatusCodes(values)
-}
-
 func (h *Handler) RegisterRoutingPolicyRoutes(group *gin.RouterGroup) {
 	group.GET("/routing-policy", h.GetRoutingPolicy)
 	group.PATCH("/routing-policy/upstream", h.PatchRoutingPolicyUpstream)

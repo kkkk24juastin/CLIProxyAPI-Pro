@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -40,6 +39,7 @@ import {
 } from "@/pro/modules/modelPolicy/oauthModelPolicy";
 import { useActionBarHeightVar } from "@/hooks/useActionBarHeightVar";
 import { useAuthStore, useNotificationStore } from "@/stores";
+import { DurationInput, type DurationFieldProps } from '@/pro/shared/DurationInput';
 import configStyles from "@/pages/ConfigPage.module.scss";
 import styles from "./OAuthModelPolicyPage.module.scss";
 
@@ -67,78 +67,26 @@ const isLikelyValidGlob = (value: string): boolean => {
   return !escaped;
 };
 
+function OAuthDurationInput(props: DurationFieldProps<OAuthModelPolicyDurationUnit>) {
+  return (
+    <DurationInput
+      {...props}
+      className={styles.durationControl}
+      min={1}
+      step={1}
+      inputMode="numeric"
+      parse={oauthModelPolicyDurationValue}
+      normalize={(value) => Math.max(1, Math.round(value))}
+      serialize={serializeOAuthModelPolicyDuration}
+    />
+  );
+}
+
 interface PatternEditorProps {
   planKey: OAuthModelPlanKey;
   disabled: boolean;
   patterns: string[];
   onChange: (patterns: string[]) => void;
-}
-
-interface DurationInputProps {
-  label: string;
-  value: string;
-  unit: OAuthModelPolicyDurationUnit;
-  unitLabel: string;
-  fallback: number;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}
-
-const formatDurationNumber = (value: number): string =>
-  String(Math.round(value * 1000) / 1000);
-
-function DurationInput({
-  label,
-  value,
-  unit,
-  unitLabel,
-  fallback,
-  disabled = false,
-  onChange,
-}: DurationInputProps) {
-  const inputId = useId();
-  const numericValue = oauthModelPolicyDurationValue(value, unit) ?? fallback;
-  const [text, setText] = useState(() => formatDurationNumber(numericValue));
-
-  useEffect(() => {
-    setText(formatDurationNumber(numericValue));
-  }, [numericValue]);
-
-  const commit = () => {
-    const next = Number(text);
-    if (!Number.isFinite(next) || next <= 0) {
-      setText(formatDurationNumber(numericValue));
-      return;
-    }
-    const normalized = Math.max(1, Math.round(next));
-    setText(formatDurationNumber(normalized));
-    if (Math.abs(normalized - numericValue) < 0.000001) return;
-    onChange(serializeOAuthModelPolicyDuration(normalized, unit));
-  };
-
-  return (
-    <div className="form-group">
-      <label htmlFor={inputId}>{label}</label>
-      <div className={styles.durationControl}>
-        <input
-          id={inputId}
-          className="input"
-          type="number"
-          min="1"
-          step="1"
-          inputMode="numeric"
-          value={text}
-          disabled={disabled}
-          onChange={(event) => setText(event.target.value)}
-          onBlur={commit}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-        />
-        <span aria-hidden="true">{unitLabel}</span>
-      </div>
-    </div>
-  );
 }
 
 function PatternEditor({
@@ -625,7 +573,7 @@ export function OAuthModelPolicyPage() {
                 </div>
               </div>
               <div className={styles.settingsGrid}>
-                <DurationInput
+                <OAuthDurationInput
                   label={t("oauth_model_policy.cache_ttl", {
                     defaultValue: "Plan cache TTL",
                   })}
@@ -638,7 +586,7 @@ export function OAuthModelPolicyPage() {
                   disabled={saving}
                   onChange={(cacheTTL) => updateDraft({ ...draft, cacheTTL })}
                 />
-                <DurationInput
+                <OAuthDurationInput
                   label={t("oauth_model_policy.resolve_timeout", {
                     defaultValue: "Provider resolve timeout",
                   })}
