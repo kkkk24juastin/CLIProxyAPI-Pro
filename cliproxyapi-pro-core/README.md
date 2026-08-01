@@ -242,14 +242,20 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `patches/sources/internal/pro/proxypool/` — 独立的代理池配置、运行服务、节点池和 SOCKS5 实现。
 - `patches/sources/internal/pro/modelpolicy/` — 独立的 OAuth 套餐识别、模型过滤和配置服务。
 - `patches/sources/internal/pro/settings/` — 模块使用的版本化设置持久化端口。
-- `patches/sources/internal/pro/state/` — 路由游标和账号运行统计的稳定共享契约。
-- `patches/sources/internal/pro/backup/` — 巡检、路由运行态和 usage JSONL 的跨模块恢复协调器。
+- `patches/sources/internal/pro/storage/` — 单一 SQLite 生命周期、幂等 schema、领域仓储和事务边界。
+- `patches/sources/internal/pro/state/` — 路由游标、账号运行统计的稳定契约及合并写入器。
+- `patches/sources/internal/pro/observability/` — usage、留存、价格同步与 WebDAV 后台任务的导入写屏障。
+- `patches/sources/internal/pro/quota/` — provider 配额解析与合并策略。
+- `patches/sources/internal/pro/routing/` — 稳定选路游标和 request-protection 所有权规则。
+- `patches/sources/internal/pro/inspection/` — 巡检调度、单账号探测和人工操作的生命周期闸门。
+- `patches/sources/internal/pro/backup/` — JSONL 导出和“暂停、flush、导入、重载、恢复运行态、恢复巡检、清理旧缓存、resume”的跨模块协调器。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
 - `embeddedusage/` — 内嵌 SQLite usage service、management routes 以及向静态模块提供的兼容 façade。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。
 - `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
 - 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放巡检、路由保护、登录清理及全局回调。
 - `patches/routing_policy.go` — 注入统一路由配置和请求状态保护 handlers、usage plugin 与自动解除任务。
+- 核心不变量：账号巡检状态优先于 request protection；导入的 `routing_cursor_state` 和 `auth_runtime_stats` 必须立即应用到 live manager；原 DB 表、JSONL record type 和 `/v0/management/usage*` API 保持兼容。
 - `patches/config_existing_updates.go` — 只修改已存在 YAML 标量、禁止补键的配置写入辅助层。
 - `.github/workflows/release-core.yml` — 镜像发布、Pro 二进制资产、management.html 发布、usage 备份、Render 部署触发、Telegram 通知和 workflow 清理。
 

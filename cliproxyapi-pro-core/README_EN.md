@@ -243,14 +243,20 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `patches/sources/internal/pro/proxypool/` — independent proxy-pool configuration, runtime service, node pool, and SOCKS5 implementation.
 - `patches/sources/internal/pro/modelpolicy/` — independent OAuth plan detection, model filtering, and configuration service.
 - `patches/sources/internal/pro/settings/` — versioned settings persistence port consumed by modules.
-- `patches/sources/internal/pro/state/` — stable shared contracts for routing cursors and per-auth runtime statistics.
-- `patches/sources/internal/pro/backup/` — cross-module restore coordinator for inspection, routing state, and usage JSONL.
+- `patches/sources/internal/pro/storage/` — single SQLite lifecycle, idempotent schema, domain repositories, and transaction boundary.
+- `patches/sources/internal/pro/state/` — stable routing/runtime contracts and the coalescing state writer.
+- `patches/sources/internal/pro/observability/` — import write barrier for usage, retention, price-sync, and WebDAV background jobs.
+- `patches/sources/internal/pro/quota/` — provider quota parsing and merge policy.
+- `patches/sources/internal/pro/routing/` — durable selection cursors and request-protection ownership policy.
+- `patches/sources/internal/pro/inspection/` — lifecycle gate for scheduled runs, one-shot probes, and manual actions.
+- `patches/sources/internal/pro/backup/` — JSONL export and the cross-module pause, flush, import, reload, live-state restore, inspection restore, legacy cleanup, and resume sequence.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
 - `embeddedusage/` — embedded SQLite usage service, management routes, and compatibility façade for static modules.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.
 - `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
 - The generated API Server shuts down its management Handler from `Stop`; embedders that create a Handler directly through the SDK must also call `Shutdown()` to release inspection, routing-protection, login-cleanup, and global callback ownership.
 - `patches/routing_policy.go` — unified routing configuration, request-state-protection handlers, usage plugin, and automatic release task.
+- Core invariants: account inspection takes precedence over request protection; imported `routing_cursor_state` and `auth_runtime_stats` are applied to the live manager immediately; existing DB tables, JSONL record types, and `/v0/management/usage*` APIs remain compatible.
 - `patches/config_existing_updates.go` — existing-scalar-only YAML updates that never create missing keys.
 - `.github/workflows/release-core.yml` — image publish, Pro binary assets, `management.html` publish, usage backup, Render deployment trigger, Telegram notification, and run cleanup.
 
