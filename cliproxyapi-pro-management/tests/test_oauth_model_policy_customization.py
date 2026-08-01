@@ -9,6 +9,7 @@ PAGE = ROOT / 'overlay/src/pages/OAuthModelPolicyPage.tsx'
 STYLE = ROOT / 'overlay/src/pages/OAuthModelPolicyPage.module.scss'
 SERVICE = ROOT / 'overlay/src/services/api/oauthModelPolicy.ts'
 CUSTOMIZER = ROOT / 'apply_customizations.py'
+REGISTRY = ROOT / 'overlay/src/pro/registry.tsx'
 LOCALES = ROOT / 'monitoring-locales.json'
 
 
@@ -50,9 +51,12 @@ class OAuthModelPolicyCustomizationTest(unittest.TestCase):
 
     def test_routes_and_navigation_are_durable(self) -> None:
         source = CUSTOMIZER.read_text()
-        self.assertIn("import { OAuthModelPolicyPage } from '@/pages/OAuthModelPolicyPage'", source)
-        self.assertIn("path: '/oauth-model-policy'", source)
-        self.assertIn('oauthModelPolicy: <IconModelCluster', source)
+        registry = REGISTRY.read_text()
+        self.assertIn("import { OAuthModelPolicyPage } from '@/pages/OAuthModelPolicyPage'", registry)
+        self.assertIn("path: '/oauth-model-policy'", registry)
+        self.assertIn('<IconModelCluster size={18} />', registry)
+        self.assertIn("import { proRoutes } from '@/pro/registry'", source)
+        self.assertIn('...proNavigationGroups', source)
         self.assertIn('OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS', source)
         self.assertIn("'zh-CN.json': {'label': '模型策略'", source)
 

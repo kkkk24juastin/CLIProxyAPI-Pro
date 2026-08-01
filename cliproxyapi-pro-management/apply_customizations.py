@@ -723,12 +723,12 @@ def patch_routes(target: Path) -> None:
     replace_once(
         path,
         "import { QuotaPage } from '@/features/quota/QuotaPage';\n",
-        "import { QuotaPage } from '@/features/quota/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\nimport { ProxyPoolPage } from '@/pages/ProxyPoolPage';\nimport { OAuthModelPolicyPage } from '@/pages/OAuthModelPolicyPage';\n",
+        "import { QuotaPage } from '@/features/quota/QuotaPage';\nimport { proRoutes } from '@/pro/registry';\n",
     )
     replace_once(
         path,
         "  { path: '/quota', element: <QuotaPage /> },\n",
-        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n  { path: '/proxy-pool', element: <ProxyPoolPage /> },\n  { path: '/oauth-model-policy', element: <OAuthModelPolicyPage /> },\n",
+        "  { path: '/quota', element: <QuotaPage /> },\n  ...proRoutes,\n",
     )
 
 
@@ -737,87 +737,19 @@ def patch_layout(target: Path) -> None:
     insert_once(
         path,
         "import {\n  IconSidebar",
-        "import { QuotaPersistenceBootstrap } from '@/extensions/quota/QuotaPersistenceBootstrap';\nimport {\n  IconSidebar",
-        "QuotaPersistenceBootstrap",
-    )
-    insert_once(
-        path,
-        "  IconSidebarProviders,\n",
-        "  IconModelCluster,\n  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarProxyPool,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
-        "  IconSidebarAccountInspection,\n",
-    )
-    replace_once(
-        path,
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n",
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n  proxyPool: <IconSidebarProxyPool size={18} />,\n  oauthModelPolicy: <IconModelCluster size={18} />,\n",
+        "import { ProBootstrap } from '@/pro/ProBootstrap';\nimport { proNavigationGroups } from '@/pro/registry';\nimport {\n  IconSidebar",
+        "proNavigationGroups",
     )
     insert_once(
         path,
         "    {\n      id: 'control',\n",
-        "    {\n"
-        "      id: 'pro',\n"
-        "      labelKey: 'nav_groups.pro',\n"
-        "      items: [\n"
-        "        {\n"
-        "          path: '/monitoring',\n"
-        "          labelKey: 'nav.monitoring_center',\n"
-        "          metaKey: 'nav_meta.monitoring_center',\n"
-        "          icon: sidebarIcons.monitoring,\n"
-        "        },\n"
-        "        {\n"
-        "          path: '/account-inspection',\n"
-        "          labelKey: 'nav.account_inspection',\n"
-        "          metaKey: 'nav_meta.account_inspection',\n"
-        "          icon: sidebarIcons.accountInspection,\n"
-        "        },\n"
-        "        {\n"
-        "          path: '/routing',\n"
-        "          labelKey: 'nav.routing_policy',\n"
-        "          metaKey: 'nav_meta.routing_policy',\n"
-        "          icon: sidebarIcons.routing,\n"
-        "        },\n"
-        "        {\n"
-        "          path: '/oauth-model-policy',\n"
-        "          labelKey: 'nav.oauth_model_policy',\n"
-        "          metaKey: 'nav_meta.oauth_model_policy',\n"
-        "          icon: sidebarIcons.oauthModelPolicy,\n"
-        "        },\n"
-        "        {\n"
-        "          path: '/proxy-pool',\n"
-        "          labelKey: 'nav.proxy_pool',\n"
-        "          metaKey: 'nav_meta.proxy_pool',\n"
-        "          icon: sidebarIcons.proxyPool,\n"
-        "        },\n"
-        "      ],\n"
-        "    },\n"
-        "    {\n"
-        "      id: 'control',\n",
-        "      id: 'pro',\n",
-    )
-    replace_once_if_present(
-        path,
-        "        {\n"
-        "          path: '/account-inspection',\n"
-        "          labelKey: 'nav.account_inspection',\n"
-        "          metaKey: 'nav_meta.account_inspection',\n"
-        "          icon: sidebarIcons.monitoring,\n"
-        "        },\n",
-        "        {\n"
-        "          path: '/account-inspection',\n"
-        "          labelKey: 'nav.account_inspection',\n"
-        "          metaKey: 'nav_meta.account_inspection',\n"
-        "          icon: sidebarIcons.accountInspection,\n"
-        "        },\n",
-    )
-    replace_once_if_present(
-        path,
-        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
-        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
+        "    ...proNavigationGroups,\n    {\n      id: 'control',\n",
+        "...proNavigationGroups",
     )
     replace_once(
         path,
         "            <PageTransition\n",
-        "            <QuotaPersistenceBootstrap />\n            <PageTransition\n",
+        "            <ProBootstrap />\n            <PageTransition\n",
     )
 
 def patch_icons(target: Path) -> None:
