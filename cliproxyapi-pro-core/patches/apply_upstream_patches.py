@@ -2663,6 +2663,8 @@ subprocess.run([
     'internal/pro/host/model_policy.go',
     'internal/pro/host/proxy.go',
     'internal/pro/modelpolicy/service.go',
+    'internal/pro/modelpolicy/management.go',
+    'internal/pro/proxypool/management.go',
     'internal/pro/proxypool/service.go',
     'internal/pro/settings/store.go',
     'internal/pro/state/types.go',
