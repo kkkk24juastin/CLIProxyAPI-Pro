@@ -1,4 +1,4 @@
-package profeatures
+package app
 
 import (
 	"os"
@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/oauthmodelpolicy/config"
-	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
 )
 
-func TestRuntimeUpdatesPersistOnlyToSQLite(t *testing.T) {
+func TestAppModulesPersistSettingsOnlyToSQLite(t *testing.T) {
 	ctx := startMigrationStore(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	before := []byte("host: 127.0.0.1\nport: 8317\n")
@@ -18,15 +18,15 @@ func TestRuntimeUpdatesPersistOnlyToSQLite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runtime, err := New(ctx, configPath, "")
+	proApp, err := New(ctx, configPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(runtime.Close)
+	t.Cleanup(proApp.Close)
 
 	proxyCfg := proxyconfig.Default()
 	proxyCfg.TakeoverEnabled = true
-	if err := runtime.UpdateProxyConfig(ctx, proxyCfg); err != nil {
+	if err := proApp.UpdateProxyConfig(ctx, proxyCfg); err != nil {
 		t.Fatal(err)
 	}
 	modelCfg, err := modelconfig.Parse([]byte(`{
@@ -36,7 +36,7 @@ func TestRuntimeUpdatesPersistOnlyToSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.UpdateModelConfig(ctx, modelCfg); err != nil {
+	if err := proApp.UpdateModelConfig(ctx, modelCfg); err != nil {
 		t.Fatal(err)
 	}
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/oauthmodelpolicy/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
 )
 
 func TestFilterUsesXAIPlanFromBilling(t *testing.T) {

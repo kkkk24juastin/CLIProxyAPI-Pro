@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/config"
+	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
 	proxy "golang.org/x/net/proxy"
 )
 

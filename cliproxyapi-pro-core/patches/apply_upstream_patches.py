@@ -187,6 +187,7 @@ if customization_sentinel.exists():
     raise SystemExit(f'target already contains CLIProxyAPI Pro customizations: {customization_sentinel}')
 
 new_customization_paths = (
+	'internal/pro',
     'internal/api/handlers/management/account_inspection_scheduler.go',
     'internal/api/handlers/management/account_inspection_scheduler_test.go',
     'internal/api/handlers/management/plugin_quota.go',
@@ -221,9 +222,7 @@ for relative_path in new_customization_paths:
     if target_path.exists():
         raise SystemExit(f'upstream path collides with a Pro customization: {target_path}')
 
-queue_tree(PATCH_SOURCE_DIR / 'internal/proxypool', ROOT / 'internal/proxypool')
-queue_tree(PATCH_SOURCE_DIR / 'internal/oauthmodelpolicy', ROOT / 'internal/oauthmodelpolicy')
-queue_tree(PATCH_SOURCE_DIR / 'internal/profeatures', ROOT / 'internal/profeatures')
+queue_tree(PATCH_SOURCE_DIR / 'internal/pro', ROOT / 'internal/pro')
 queue_tree(PATCH_SOURCE_DIR / 'sdk/proxyutil', ROOT / 'sdk/proxyutil')
 
 proxyutil_source = ROOT / 'sdk/proxyutil/proxy.go'
@@ -543,10 +542,10 @@ insert_before(
     service_models,
     'func (s *Service) oauthExcludedModels(provider, authKind string) []string {\n',
     '''func (s *Service) applyOAuthModelPolicy(ctx context.Context, auth *coreauth.Auth, models []*ModelInfo) []*ModelInfo {
-\tif s == nil || s.proFeatures == nil || auth == nil || len(models) == 0 {
+\tif s == nil || s.proApp == nil || auth == nil || len(models) == 0 {
 \t\treturn models
 \t}
-\treturn s.proFeatures.FilterModels(ctx, s.cfg, auth, models)
+\treturn s.proApp.FilterModels(ctx, s.cfg, auth, models)
 }
 
 ''',
@@ -591,76 +590,76 @@ pro_features_management = ROOT / 'internal/api/handlers/management/pro_features.
 write(pro_features_management, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'pro_features_management.go')))
 
 server_options_source = ROOT / 'internal/api/server_options.go'
-add_go_import(server_options_source, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/profeatures') + '"\n')
+add_go_import(server_options_source, '"' + import_path('internal/pluginhost') + '"\n', '\tproapp "' + import_path('internal/pro/app') + '"\n')
 replace_once(
     server_options_source,
     '\tpluginHost            *pluginhost.Host\n',
-    '\tpluginHost            *pluginhost.Host\n\tproFeatures           *profeatures.Runtime\n',
-    'proFeatures           *profeatures.Runtime',
+    '\tpluginHost            *pluginhost.Host\n\tproApp               *proapp.App\n',
+    'proApp               *proapp.App',
 )
 insert_before(
     server_options_source,
     '// WithConfigReloadHook registers a callback used after management saves config changes.\n',
-    '''// WithProFeatures registers the statically linked Pro feature runtime.
-func WithProFeatures(runtime *profeatures.Runtime) ServerOption {
+    '''// WithProApp registers the statically linked Pro module composition root.
+func WithProApp(application *proapp.App) ServerOption {
 \treturn func(cfg *serverOptionConfig) {
-\t\tcfg.proFeatures = runtime
+\t\tcfg.proApp = application
 \t}
 }
 
 ''',
-    'func WithProFeatures(runtime *profeatures.Runtime)',
+    'func WithProApp(application *proapp.App)',
 )
 
 management_handler_source = ROOT / 'internal/api/handlers/management/handler.go'
-add_go_import(management_handler_source, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/profeatures') + '"\n')
+add_go_import(management_handler_source, '"' + import_path('internal/pluginhost') + '"\n', '\tproapp "' + import_path('internal/pro/app') + '"\n')
 replace_once(
     management_handler_source,
     '\tpluginHost              *pluginhost.Host\n',
-    '\tpluginHost              *pluginhost.Host\n\tproFeatures             *profeatures.Runtime\n',
-    'proFeatures             *profeatures.Runtime',
+    '\tpluginHost              *pluginhost.Host\n\tproApp                 *proapp.App\n',
+    'proApp                 *proapp.App',
 )
 
 server_source = ROOT / 'internal/api/server.go'
 replace_once(
     server_source,
     '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n',
-    '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n\ts.mgmt.SetProFeatures(optionState.proFeatures)\n',
-    's.mgmt.SetProFeatures(optionState.proFeatures)',
+    '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n\ts.mgmt.SetProApp(optionState.proApp)\n',
+    's.mgmt.SetProApp(optionState.proApp)',
 )
 
 service_source = ROOT / 'sdk/cliproxy/service.go'
-add_go_import(service_source, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/profeatures') + '"\n')
+add_go_import(service_source, '"' + import_path('internal/pluginhost') + '"\n', '\tproapp "' + import_path('internal/pro/app') + '"\n')
 replace_once(
     service_source,
     '\t// pluginHost owns dynamic plugin lifecycle and runtime capability adapters.\n\tpluginHost *pluginhost.Host\n',
-    '\t// pluginHost owns dynamic plugin lifecycle and runtime capability adapters.\n\tpluginHost *pluginhost.Host\n\n\t// proFeatures owns the statically linked Pro proxy pool and OAuth model policy.\n\tproFeatures *profeatures.Runtime\n',
-    'proFeatures *profeatures.Runtime',
+    '\t// pluginHost owns dynamic plugin lifecycle and runtime capability adapters.\n\tpluginHost *pluginhost.Host\n\n\t// proApp owns and wires the statically linked Pro modules.\n\tproApp *proapp.App\n',
+    'proApp *proapp.App',
 )
 
 builder_source = ROOT / 'sdk/cliproxy/builder.go'
-add_go_import(builder_source, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/profeatures') + '"\n')
+add_go_import(builder_source, '"' + import_path('internal/pluginhost') + '"\n', '\tproapp "' + import_path('internal/pro/app') + '"\n')
 replace_once(
     builder_source,
     '''\tconfigaccess.Register(&b.cfg.SDKConfig)
 \tpluginHost := b.pluginHost
 ''',
-    '''\tproFeatureRuntime, errProFeatures := profeatures.New(context.Background(), b.configPath, b.cfg.ProxyURL)
-\tif errProFeatures != nil {
-\t\treturn nil, fmt.Errorf("cliproxy: initialize Pro features: %w", errProFeatures)
+    '''\tproApplication, errProApp := proapp.New(context.Background(), b.configPath, b.cfg.ProxyURL)
+\tif errProApp != nil {
+\t\treturn nil, fmt.Errorf("cliproxy: initialize Pro features: %w", errProApp)
 \t}
-\tb.cfg.ProxyURL = proFeatureRuntime.BaseProxyURL()
+\tb.cfg.ProxyURL = proApplication.BaseProxyURL()
 
 \tconfigaccess.Register(&b.cfg.SDKConfig)
 \tpluginHost := b.pluginHost
 ''',
-    'proFeatureRuntime, errProFeatures := profeatures.New',
+    'proApplication, errProApp := proapp.New',
 )
 replace_once(
     builder_source,
     '\t\tpluginHost:          pluginHost,\n',
-    '\t\tpluginHost:          pluginHost,\n\t\tproFeatures:         proFeatureRuntime,\n',
-    'proFeatures:         proFeatureRuntime',
+    '\t\tpluginHost:          pluginHost,\n\t\tproApp:         proApplication,\n',
+    'proApp:         proApplication',
 )
 replace_once(
     builder_source,
@@ -668,7 +667,7 @@ replace_once(
 \t\tservice.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
 \t}
 ''',
-    '''\tproFeatureRuntime.SetModelPolicyChangeHandler(func(ctx context.Context) {
+    '''\tproApplication.SetModelPolicyChangeHandler(func(ctx context.Context) {
 \t\tif service.coreManager == nil {
 \t\t\treturn
 \t\t}
@@ -679,13 +678,13 @@ replace_once(
 \t\tservice.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
 \t}
 ''',
-    'proFeatureRuntime.SetModelPolicyChangeHandler',
+    'proApplication.SetModelPolicyChangeHandler',
 )
 replace_once(
     builder_source,
     '\t\tapi.WithPluginHost(pluginHost),\n',
-    '\t\tapi.WithPluginHost(pluginHost),\n\t\tapi.WithProFeatures(proFeatureRuntime),\n',
-    'api.WithProFeatures(proFeatureRuntime)',
+    '\t\tapi.WithPluginHost(pluginHost),\n\t\tapi.WithProApp(proApplication),\n',
+    'api.WithProApp(proApplication)',
 )
 
 service_config_source = ROOT / 'sdk/cliproxy/service_config.go'
@@ -693,20 +692,20 @@ replace_once(
     service_config_source,
     '''\troutingState := normalizedRoutingRuntimeState(commit.cfg)
 ''',
-    '''\tif s.proFeatures != nil {
-\t\ts.proFeatures.SetBaseProxyURL(commit.cfg.ProxyURL)
+    '''\tif s.proApp != nil {
+\t\ts.proApp.SetBaseProxyURL(commit.cfg.ProxyURL)
 \t}
 \troutingState := normalizedRoutingRuntimeState(commit.cfg)
 ''',
-    's.proFeatures.SetBaseProxyURL(commit.cfg.ProxyURL)',
+    's.proApp.SetBaseProxyURL(commit.cfg.ProxyURL)',
 )
 
 service_lifecycle_source = ROOT / 'sdk/cliproxy/service_lifecycle.go'
 replace_once(
     service_lifecycle_source,
     '\t\tusage.StopDefault()\n',
-    '\t\tif s.proFeatures != nil {\n\t\t\ts.proFeatures.Close()\n\t\t}\n\t\tusage.StopDefault()\n',
-    's.proFeatures.Close()',
+    '\t\tif s.proApp != nil {\n\t\t\ts.proApp.Close()\n\t\t}\n\t\tusage.StopDefault()\n',
+    's.proApp.Close()',
 )
 
 usage_manager = ROOT / 'sdk/cliproxy/usage/manager.go'
@@ -2651,20 +2650,29 @@ subprocess.run([
     'internal/requestmeta/client_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
-    'internal/oauthmodelpolicy/config/config.go',
-    'internal/oauthmodelpolicy/config/config_test.go',
-    'internal/oauthmodelpolicy/policy/engine.go',
-    'internal/oauthmodelpolicy/policy/engine_test.go',
-    'internal/profeatures/migration.go',
-    'internal/profeatures/migration_test.go',
-    'internal/profeatures/runtime.go',
-    'internal/proxypool/config/config.go',
-    'internal/proxypool/config/config_test.go',
-    'internal/proxypool/engine/engine.go',
-    'internal/proxypool/engine/engine_test.go',
-    'internal/proxypool/pool/pool.go',
-    'internal/proxypool/pool/pool_test.go',
-    'internal/proxypool/socks5/server.go',
+    'internal/pro/modelpolicy/config/config.go',
+    'internal/pro/modelpolicy/config/config_test.go',
+    'internal/pro/modelpolicy/policy/engine.go',
+    'internal/pro/modelpolicy/policy/engine_test.go',
+    'internal/pro/app/migration.go',
+    'internal/pro/app/migration_test.go',
+    'internal/pro/app/app.go',
+    'internal/pro/app/app_test.go',
+    'internal/pro/backup/coordinator.go',
+    'internal/pro/backup/coordinator_test.go',
+    'internal/pro/host/model_policy.go',
+    'internal/pro/host/proxy.go',
+    'internal/pro/modelpolicy/service.go',
+    'internal/pro/proxypool/service.go',
+    'internal/pro/settings/store.go',
+    'internal/pro/state/types.go',
+    'internal/pro/proxypool/config/config.go',
+    'internal/pro/proxypool/config/config_test.go',
+    'internal/pro/proxypool/engine/engine.go',
+    'internal/pro/proxypool/engine/engine_test.go',
+    'internal/pro/proxypool/pool/pool.go',
+    'internal/pro/proxypool/pool/pool_test.go',
+    'internal/pro/proxypool/socks5/server.go',
     'internal/runtime/executor/xai_executor.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'internal/runtime/executor/xai_websockets_executor.go',

@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
+	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
 )
 
 const accountInspectionScheduleExportRecordType = "account_inspection_schedule"
@@ -696,8 +697,7 @@ func (s *Server) exportJSONL(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if accountInspectionScheduleExporter != nil {
-		schedule, ok, err := accountInspectionScheduleExporter()
+	if schedule, ok, err := probackup.Default.ExportInspectionSchedule(); ok || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -715,8 +715,7 @@ func (s *Server) exportJSONL(ctx context.Context) ([]byte, error) {
 			data = append(data, '\n')
 		}
 	}
-	if accountInspectionSnapshotExporter != nil {
-		snapshot, ok, err := accountInspectionSnapshotExporter()
+	if snapshot, ok, err := probackup.Default.ExportInspectionSnapshot(); ok || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -1027,7 +1026,7 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if authRuntimeStateImporter != nil && (importedRoutingCursors > 0 || importedAuthRuntimeStats > 0) {
+	if probackup.Default.HasRuntimeStateImporter() && (importedRoutingCursors > 0 || importedAuthRuntimeStats > 0) {
 		currentRoutingCursors, errLoad := s.store.ListRoutingCursorStates(c.Request.Context())
 		if errLoad != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": errLoad.Error()})
@@ -1038,7 +1037,7 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": errLoad.Error()})
 			return
 		}
-		if errApply := authRuntimeStateImporter(currentRoutingCursors, currentAuthRuntimeStats); errApply != nil {
+		if errApply := probackup.Default.ImportRuntimeState(currentRoutingCursors, currentAuthRuntimeStats); errApply != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": errApply.Error()})
 			return
 		}
@@ -1060,14 +1059,14 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return
 		}
 	}
-	if accountInspectionSchedule != nil && accountInspectionScheduleImporter != nil {
-		if err := accountInspectionScheduleImporter(accountInspectionSchedule); err != nil {
+	if accountInspectionSchedule != nil {
+		if err := probackup.Default.ImportInspectionSchedule(accountInspectionSchedule); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 	}
-	if accountInspectionSnapshot != nil && accountInspectionSnapshotImporter != nil {
-		if err := accountInspectionSnapshotImporter(accountInspectionSnapshot); err != nil {
+	if accountInspectionSnapshot != nil {
+		if err := probackup.Default.ImportInspectionSnapshot(accountInspectionSnapshot); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

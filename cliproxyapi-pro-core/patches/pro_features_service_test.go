@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/profeatures"
+	proapp "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/app"
 	internalregistry "github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -46,14 +46,14 @@ func TestBuiltInOAuthModelPolicyConstrainsRegistrationAndSelection(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := profeatures.New(ctx, filepath.Join(t.TempDir(), "missing-config.yaml"), "")
+	runtime, err := proapp.New(ctx, filepath.Join(t.TempDir(), "missing-config.yaml"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(runtime.Close)
 
 	manager := coreauth.NewManager(nil, nil, nil)
-	service := &Service{cfg: cfg, proFeatures: runtime, coreManager: manager}
+	service := &Service{cfg: cfg, proApp: runtime, coreManager: manager}
 	freeAuth := &coreauth.Auth{
 		ID: "xai-free-auth", Provider: "xai", Status: coreauth.StatusActive,
 		Attributes: map[string]string{"auth_kind": "oauth", "plan_type": "free"},

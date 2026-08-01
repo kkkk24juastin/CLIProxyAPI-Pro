@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/pool"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/socks5"
+	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/pool"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/socks5"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 	proxy "golang.org/x/net/proxy"
 )

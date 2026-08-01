@@ -237,9 +237,15 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `Dockerfile` — 下载 upstream CLIProxyAPI，应用定制层，并构建最终镜像。
 - `Dockerfile.runtime` — GitHub Actions 使用预构建 Linux 二进制组装运行时镜像。
 - `QUOTA_PROVIDER.md` — QuotaProvider 插件协议和兼容策略。
-- `patches/sources/internal/profeatures/` — 内建代理池、模型策略的 SQLite 迁移与运行时编排。
+- `patches/sources/internal/pro/app/` — 静态 Pro 模块的 composition root、生命周期和旧配置迁移。
+- `patches/sources/internal/pro/host/` — 最终代理传输、模型注册和认证对象等 upstream 易变边界适配。
+- `patches/sources/internal/pro/proxypool/` — 独立的代理池配置、运行服务、节点池和 SOCKS5 实现。
+- `patches/sources/internal/pro/modelpolicy/` — 独立的 OAuth 套餐识别、模型过滤和配置服务。
+- `patches/sources/internal/pro/settings/` — 模块使用的版本化设置持久化端口。
+- `patches/sources/internal/pro/state/` — 路由游标和账号运行统计的稳定共享契约。
+- `patches/sources/internal/pro/backup/` — 巡检、路由运行态和 usage JSONL 的跨模块恢复协调器。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
-- `embeddedusage/` — 内嵌 SQLite usage service 和 management routes。
+- `embeddedusage/` — 内嵌 SQLite usage service、management routes 以及向静态模块提供的兼容 façade。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。
 - `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
 - 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放巡检、路由保护、登录清理及全局回调。

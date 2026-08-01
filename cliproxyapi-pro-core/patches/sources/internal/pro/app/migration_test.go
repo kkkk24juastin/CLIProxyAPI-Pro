@@ -1,4 +1,4 @@
-package profeatures
+package app
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/oauthmodelpolicy/config"
-	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
 )
 
 func startMigrationStore(t *testing.T) context.Context {

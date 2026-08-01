@@ -6,14 +6,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
 )
 
 var globalService *Service
-var accountInspectionScheduleExporter func() (jsonBytes []byte, ok bool, err error)
-var accountInspectionScheduleImporter func(jsonBytes []byte) error
-var accountInspectionSnapshotExporter func() (jsonBytes []byte, ok bool, err error)
-var accountInspectionSnapshotImporter func(jsonBytes []byte) error
-var authRuntimeStateImporter func(cursors []RoutingCursorState, stats []AuthRuntimeStats) error
 var proSettingConsumers = make(map[string]proSettingConsumerRegistration)
 var proSettingConsumerGeneration uint64
 var globalStateMu sync.RWMutex
@@ -283,17 +280,15 @@ func flushRuntimeStateWrites(ctx context.Context, store *Store) error {
 }
 
 func SetAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
-	accountInspectionScheduleExporter = exporter
-	accountInspectionScheduleImporter = importer
+	probackup.Default.SetInspectionSchedule(exporter, importer)
 }
 
 func SetAccountInspectionSnapshotHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
-	accountInspectionSnapshotExporter = exporter
-	accountInspectionSnapshotImporter = importer
+	probackup.Default.SetInspectionSnapshot(exporter, importer)
 }
 
 func SetAuthRuntimeStateImportHandler(importer func([]RoutingCursorState, []AuthRuntimeStats) error) {
-	authRuntimeStateImporter = importer
+	probackup.Default.SetRuntimeStateImporter(importer)
 }
 
 type proSettingConsumerRegistration struct {

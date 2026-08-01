@@ -10,27 +10,27 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/oauthmodelpolicy/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/profeatures"
-	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	proapp "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/app"
+	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
 )
 
-func (h *Handler) SetProFeatures(runtime *profeatures.Runtime) {
+func (h *Handler) SetProApp(application *proapp.App) {
 	if h == nil {
 		return
 	}
 	h.mu.Lock()
-	h.proFeatures = runtime
+	h.proApp = application
 	h.mu.Unlock()
 }
 
-func (h *Handler) proFeatureRuntime() *profeatures.Runtime {
+func (h *Handler) proApplication() *proapp.App {
 	if h == nil {
 		return nil
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.proFeatures
+	return h.proApp
 }
 
 func (h *Handler) RegisterProFeatureRoutes(group *gin.RouterGroup) {
@@ -52,7 +52,7 @@ func (h *Handler) RegisterProFeatureRoutes(group *gin.RouterGroup) {
 	group.GET("/pro/oauth-model-policy/status", h.GetOAuthModelPolicyStatus)
 }
 
-func unavailableProFeatures(c *gin.Context) {
+func unavailableProApp(c *gin.Context) {
 	if c == nil {
 		return
 	}
@@ -60,18 +60,18 @@ func unavailableProFeatures(c *gin.Context) {
 }
 
 func (h *Handler) GetProxyPoolConfig(c *gin.Context) {
-	runtime := h.proFeatureRuntime()
+	runtime := h.proApplication()
 	if runtime == nil {
-		unavailableProFeatures(c)
+		unavailableProApp(c)
 		return
 	}
 	c.JSON(http.StatusOK, runtime.ProxyConfig())
 }
 
 func (h *Handler) PutProxyPoolConfig(c *gin.Context) {
-	runtime := h.proFeatureRuntime()
+	runtime := h.proApplication()
 	if runtime == nil {
-		unavailableProFeatures(c)
+		unavailableProApp(c)
 		return
 	}
 	cfg := proxyconfig.Default()
@@ -87,18 +87,18 @@ func (h *Handler) PutProxyPoolConfig(c *gin.Context) {
 }
 
 func (h *Handler) GetProxyPoolStatus(c *gin.Context) {
-	runtime := h.proFeatureRuntime()
+	runtime := h.proApplication()
 	if runtime == nil {
-		unavailableProFeatures(c)
+		unavailableProApp(c)
 		return
 	}
 	c.JSON(http.StatusOK, runtime.ProxyStatus())
 }
 
 func (h *Handler) TestProxyPoolNode(c *gin.Context) {
-	runtime := h.proFeatureRuntime()
+	runtime := h.proApplication()
 	if runtime == nil {
-		unavailableProFeatures(c)
+		unavailableProApp(c)
 		return
 	}
 	var body struct {
@@ -121,9 +121,9 @@ func (h *Handler) TestProxyPoolNode(c *gin.Context) {
 }
 
 func (h *Handler) TestAllProxyPoolNodes(c *gin.Context) {
-	runtime := h.proFeatureRuntime()
+	runtime := h.proApplication()
 	if runtime == nil {
-		unavailableProFeatures(c)
+		unavailableProApp(c)
 		return
 	}
 	var body struct {
@@ -136,9 +136,9 @@ func (h *Handler) TestAllProxyPoolNodes(c *gin.Context) {
 }
 
 func (h *Handler) RecoverProxyPoolNode(c *gin.Context) {
-	runtime := h.proFeatureRuntime()
+	runtime := h.proApplication()
 	if runtime == nil {
-		unavailableProFeatures(c)
+		unavailableProApp(c)
 		return
 	}
 	var body struct {
@@ -156,9 +156,9 @@ func (h *Handler) RecoverProxyPoolNode(c *gin.Context) {
 }
 
 func (h *Handler) ResetProxyPoolStats(c *gin.Context) {
-	runtime := h.proFeatureRuntime()
+	runtime := h.proApplication()
 	if runtime == nil {
-		unavailableProFeatures(c)
+		unavailableProApp(c)
 		return
 	}
 	runtime.ResetProxyStats()
@@ -166,9 +166,9 @@ func (h *Handler) ResetProxyPoolStats(c *gin.Context) {
 }
 
 func (h *Handler) GetOAuthModelPolicyConfig(c *gin.Context) {
-	runtime := h.proFeatureRuntime()
+	runtime := h.proApplication()
 	if runtime == nil {
-		unavailableProFeatures(c)
+		unavailableProApp(c)
 		return
 	}
 	raw, err := modelconfig.Marshal(runtime.ModelConfig())
@@ -180,9 +180,9 @@ func (h *Handler) GetOAuthModelPolicyConfig(c *gin.Context) {
 }
 
 func (h *Handler) PutOAuthModelPolicyConfig(c *gin.Context) {
-	runtime := h.proFeatureRuntime()
+	runtime := h.proApplication()
 	if runtime == nil {
-		unavailableProFeatures(c)
+		unavailableProApp(c)
 		return
 	}
 	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, 2<<20))
@@ -212,9 +212,9 @@ func (h *Handler) PutOAuthModelPolicyConfig(c *gin.Context) {
 }
 
 func (h *Handler) GetOAuthModelPolicyStatus(c *gin.Context) {
-	runtime := h.proFeatureRuntime()
+	runtime := h.proApplication()
 	if runtime == nil {
-		unavailableProFeatures(c)
+		unavailableProApp(c)
 		return
 	}
 	c.JSON(http.StatusOK, runtime.ModelStatus())

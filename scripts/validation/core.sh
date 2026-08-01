@@ -117,9 +117,7 @@ go -C "${upstream_root}" test "${test_flags[@]}" \
   ./internal/pluginstore \
   ./internal/redisqueue \
   ./internal/requestmeta \
-  ./internal/profeatures \
-  ./internal/proxypool/... \
-  ./internal/oauthmodelpolicy/... \
+  ./internal/pro/... \
   ./sdk/api/handlers \
   ./sdk/api/handlers/claude \
   ./sdk/cliproxy/auth

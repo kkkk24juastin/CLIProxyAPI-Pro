@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage/internalusage"
+	prostate "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/state"
 	_ "modernc.org/sqlite"
 )
 
@@ -202,30 +203,9 @@ type QuotaCacheStats struct {
 	Generation   int64 `json:"generation"`
 }
 
-type RoutingCursorState struct {
-	CursorKey   string `json:"cursorKey"`
-	LastAuthID  string `json:"lastAuthId"`
-	UpdatedAtMS int64  `json:"updatedAtMs"`
-}
-
-type RuntimeRequestBucket struct {
-	BucketID int64 `json:"bucketId"`
-	Success  int64 `json:"success"`
-	Failed   int64 `json:"failed"`
-}
-
-type AuthRuntimeStats struct {
-	AuthIndex           string                 `json:"authIndex"`
-	AuthID              string                 `json:"authId"`
-	FileName            string                 `json:"fileName,omitempty"`
-	IdentityFingerprint string                 `json:"identityFingerprint,omitempty"`
-	SelectedCount       int64                  `json:"selectedCount"`
-	SuccessCount        int64                  `json:"successCount"`
-	FailureCount        int64                  `json:"failureCount"`
-	RecentBuckets       []RuntimeRequestBucket `json:"recentBuckets"`
-	Generation          int64                  `json:"generation"`
-	UpdatedAtMS         int64                  `json:"updatedAtMs"`
-}
+type RoutingCursorState = prostate.RoutingCursor
+type RuntimeRequestBucket = prostate.RequestBucket
+type AuthRuntimeStats = prostate.AuthRuntimeStats
 
 type MonitoringSettings struct {
 	RetentionDays  int                          `json:"retentionDays"`

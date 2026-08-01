@@ -238,9 +238,15 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `Dockerfile` — downloads upstream CLIProxyAPI, applies this customization layer, and builds the final image.
 - `Dockerfile.runtime` — assembles the Actions runtime image from prebuilt Linux binaries.
 - `QUOTA_PROVIDER.md` — QuotaProvider plugin protocol and compatibility rules.
-- `patches/sources/internal/profeatures/` — SQLite migration and runtime orchestration for the built-in proxy pool and model policy.
+- `patches/sources/internal/pro/app/` — composition root, lifecycle, and legacy configuration migration for static Pro modules.
+- `patches/sources/internal/pro/host/` — adapters around volatile upstream transport, model-registration, and auth boundaries.
+- `patches/sources/internal/pro/proxypool/` — independent proxy-pool configuration, runtime service, node pool, and SOCKS5 implementation.
+- `patches/sources/internal/pro/modelpolicy/` — independent OAuth plan detection, model filtering, and configuration service.
+- `patches/sources/internal/pro/settings/` — versioned settings persistence port consumed by modules.
+- `patches/sources/internal/pro/state/` — stable shared contracts for routing cursors and per-auth runtime statistics.
+- `patches/sources/internal/pro/backup/` — cross-module restore coordinator for inspection, routing state, and usage JSONL.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
-- `embeddedusage/` — embedded SQLite usage service and management routes.
+- `embeddedusage/` — embedded SQLite usage service, management routes, and compatibility façade for static modules.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.
 - `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
 - The generated API Server shuts down its management Handler from `Stop`; embedders that create a Handler directly through the SDK must also call `Shutdown()` to release inspection, routing-protection, login-cleanup, and global callback ownership.

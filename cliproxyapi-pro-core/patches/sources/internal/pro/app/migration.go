@@ -1,4 +1,4 @@
-package profeatures
+package app
 
 import (
 	"bytes"
@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/oauthmodelpolicy/config"
-	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/proxypool/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/settings"
 	"gopkg.in/yaml.v3"
 )
 
@@ -64,7 +64,7 @@ func migrateLegacySettings(ctx context.Context, configFilePath string) (bool, er
 		if isProxyPoolURL(scalarMapValue(root, "proxy-url"), proxyCfg.Listen) {
 			proxyCfg.TakeoverEnabled = true
 		}
-		if err := migrateSettingIfMissing(ctx, embeddedusage.ProSettingNamespaceProxyPool, func() ([]byte, error) {
+		if err := migrateSettingIfMissing(ctx, settings.NamespaceProxyPool, func() ([]byte, error) {
 			return proxyconfig.Marshal(proxyCfg)
 		}); err != nil {
 			return false, err
@@ -79,7 +79,7 @@ func migrateLegacySettings(ctx context.Context, configFilePath string) (bool, er
 		if errParse != nil {
 			return false, errParse
 		}
-		if err := migrateSettingIfMissing(ctx, embeddedusage.ProSettingNamespaceOAuthModelPolicy, func() ([]byte, error) {
+		if err := migrateSettingIfMissing(ctx, settings.NamespaceOAuthModelPolicy, func() ([]byte, error) {
 			return modelconfig.Marshal(modelCfg)
 		}); err != nil {
 			return false, err
@@ -127,7 +127,8 @@ func baseProxyURLFromConfigFile(configFilePath, fallback string) string {
 }
 
 func migrateSettingIfMissing(ctx context.Context, namespace string, encode func() ([]byte, error)) error {
-	if _, found, err := embeddedusage.GetProSetting(ctx, namespace); err != nil {
+	store := settings.NewEmbeddedStore()
+	if _, found, err := store.Get(ctx, namespace); err != nil {
 		return err
 	} else if found {
 		return nil
@@ -139,14 +140,20 @@ func migrateSettingIfMissing(ctx context.Context, namespace string, encode func(
 	if err := persistSetting(ctx, namespace, raw); err != nil {
 		return err
 	}
-	stored, found, err := embeddedusage.GetProSetting(ctx, namespace)
+	stored, found, err := store.Get(ctx, namespace)
 	if err != nil {
 		return err
 	}
-	if !found || stored.SchemaVersion != settingSchemaVersion || !bytes.Equal(bytes.TrimSpace(stored.Settings), bytes.TrimSpace(raw)) {
+	if !found || stored.SchemaVersion != settings.SchemaVersionOne || !bytes.Equal(bytes.TrimSpace(stored.Settings), bytes.TrimSpace(raw)) {
 		return fmt.Errorf("verify migrated Pro setting %q failed", namespace)
 	}
 	return nil
+}
+
+func persistSetting(ctx context.Context, namespace string, raw []byte) error {
+	return settings.NewEmbeddedStore().Put(ctx, settings.Item{
+		Namespace: namespace, SchemaVersion: settings.SchemaVersionOne, Settings: raw,
+	})
 }
 
 func mapValue(mapping *yaml.Node, key string) *yaml.Node {
