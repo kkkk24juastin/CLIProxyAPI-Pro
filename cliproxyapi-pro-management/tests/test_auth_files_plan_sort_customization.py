@@ -16,14 +16,28 @@ AUTH_FILES_PAGE_SOURCE = """import { buildQuotaSearchValues, matchesQuotaSearch 
 
 export function AuthFilesPage() {
   const normalizedFilter = normalizeProviderKey(String(filter));
+  const enabledOnly = statusFilterMode === 'enabled';
+
+  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {
+    setStatusFilterMode(nextMode);
+    setPage(1);
+  }, []);
+
+  const sortOptions = useMemo(
+    () => [
+      { value: 'default', label: t('auth_files.sort_default') },
+      { value: 'az', label: t('auth_files.sort_az') },
+      { value: 'priority', label: t('auth_files.sort_priority') },
+    ],
+    [t]
+  );
+
   const sorted = useMemo(() => sortAuthFiles(filtered, sortMode), [filtered, sortMode]);
 
   return (
-    <Select
-                value={sortMode}
-                options={sortOptions}
-                onChange={handleSortModeChange}
+    <AuthFilesToolbar
           sortMode={sortMode}
+          sortOptions={sortOptions}
     />
   );
 }
@@ -59,8 +73,13 @@ class AuthFilesSortingCustomizationTest(unittest.TestCase):
             self.assertEqual(page.count("from '@/pro/modules/quota'"), 1)
             self.assertIn('compareAuthFilesByPlanDescending', page)
             self.assertIn('compareAuthFilesByAvailableQuotaDescending', page)
-            self.assertIn("sortMode === 'plan' && !isAuthFilePlanSortProvider(normalizedFilter)", page)
-            self.assertIn("sortMode === 'quota' && !isAuthFileQuotaSortProvider(normalizedFilter)", page)
+            self.assertIn('const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter)', page)
+            self.assertIn('const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter)', page)
+            self.assertIn("options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') })", page)
+            self.assertIn("options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') })", page)
+            self.assertIn('if (selectedSortModeAvailable) return;', page)
+            self.assertIn("setSortMode('default');", page)
+            self.assertIn("selectedSortModeAvailable ? sortMode : 'default'", page)
             self.assertIn('compareAuthFilesByPlanDescending(a, b, quotaSearchStore)', page)
             self.assertIn('compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore)', page)
             self.assertIn('sortMode={effectiveSortMode}', page)

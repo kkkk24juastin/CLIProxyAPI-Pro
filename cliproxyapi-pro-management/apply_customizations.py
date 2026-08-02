@@ -1832,8 +1832,55 @@ def patch_auth_files_page_sorting_latest(target: Path) -> None:
     )
     insert_once(
         page_path,
+        "  const enabledOnly = statusFilterMode === 'enabled';\n",
+        "  const enabledOnly = statusFilterMode === 'enabled';\n"
+        "  const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter);\n"
+        "  const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter);\n"
+        "  const selectedSortModeAvailable =\n"
+        "    (sortMode !== 'plan' || planSortAvailable) &&\n"
+        "    (sortMode !== 'quota' || quotaSortAvailable);\n",
+        'const planSortAvailable',
+    )
+    insert_once(
+        page_path,
+        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
+        "  useEffect(() => {\n"
+        "    if (selectedSortModeAvailable) return;\n"
+        "    setSortMode('default');\n"
+        "    setPage(1);\n"
+        "  }, [selectedSortModeAvailable]);\n\n"
+        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
+        'if (selectedSortModeAvailable) return;',
+    )
+    replace_once(
+        page_path,
+        "  const sortOptions = useMemo(\n"
+        "    () => [\n"
+        "      { value: 'default', label: t('auth_files.sort_default') },\n"
+        "      { value: 'az', label: t('auth_files.sort_az') },\n"
+        "      { value: 'priority', label: t('auth_files.sort_priority') },\n"
+        "    ],\n"
+        "    [t]\n"
+        "  );\n",
+        "  const sortOptions = useMemo(() => {\n"
+        "    const options: Array<{ value: AuthFilesSortMode; label: string }> = [\n"
+        "      { value: 'default', label: t('auth_files.sort_default') },\n"
+        "      { value: 'az', label: t('auth_files.sort_az') },\n"
+        "      { value: 'priority', label: t('auth_files.sort_priority') },\n"
+        "    ];\n"
+        "    if (planSortAvailable) {\n"
+        "      options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') });\n"
+        "    }\n"
+        "    if (quotaSortAvailable) {\n"
+        "      options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') });\n"
+        "    }\n"
+        "    return options;\n"
+        "  }, [planSortAvailable, quotaSortAvailable, t]);\n",
+    )
+    insert_once(
+        page_path,
         '  const sorted = useMemo(() => sortAuthFiles(filtered, sortMode), [filtered, sortMode]);\n',
-        "  const effectiveSortMode =\n    sortMode === 'plan' && !isAuthFilePlanSortProvider(normalizedFilter)\n      ? 'default'\n      : sortMode === 'quota' && !isAuthFileQuotaSortProvider(normalizedFilter)\n        ? 'default'\n        : sortMode;\n  const sorted = useMemo(() => {\n    if (effectiveSortMode === 'plan') {\n      return [...filtered].sort((a, b) => compareAuthFilesByPlanDescending(a, b, quotaSearchStore));\n    }\n    if (effectiveSortMode === 'quota') {\n      return [...filtered].sort((a, b) => compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore));\n    }\n    return sortAuthFiles(filtered, effectiveSortMode);\n  }, [effectiveSortMode, filtered, quotaSearchStore]);\n",
+        "  const effectiveSortMode: AuthFilesSortMode =\n    selectedSortModeAvailable ? sortMode : 'default';\n  const sorted = useMemo(() => {\n    if (effectiveSortMode === 'plan') {\n      return [...filtered].sort((a, b) => compareAuthFilesByPlanDescending(a, b, quotaSearchStore));\n    }\n    if (effectiveSortMode === 'quota') {\n      return [...filtered].sort((a, b) => compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore));\n    }\n    return sortAuthFiles(filtered, effectiveSortMode);\n  }, [effectiveSortMode, filtered, quotaSearchStore]);\n",
         'const effectiveSortMode',
     )
     replace_once(page_path, '          sortMode={sortMode}\n', '          sortMode={effectiveSortMode}\n')
