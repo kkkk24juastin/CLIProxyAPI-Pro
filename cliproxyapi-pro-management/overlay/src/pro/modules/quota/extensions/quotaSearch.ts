@@ -14,7 +14,7 @@ export type QuotaSearchStore = {
 };
 
 const FILE_KEYS = [
-  'name', 'type', 'provider', 'note', 'notes', 'remark', 'remarks', 'description',
+  'name', 'email', 'type', 'provider', 'note', 'notes', 'remark', 'remarks', 'description',
   'plan', 'plan_type', 'planType', 'package', 'package_name', 'tier', 'tier_id', 'tierId',
 ] as const;
 

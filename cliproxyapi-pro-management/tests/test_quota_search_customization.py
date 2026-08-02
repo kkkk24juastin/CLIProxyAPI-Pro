@@ -53,6 +53,36 @@ class QuotaSearchCustomizationTest(unittest.TestCase):
             CUSTOMIZATIONS.flush_writes()
             self.assertEqual(page, page_path.read_text())
 
+    def test_search_placeholders_are_concise_and_match_each_page(self) -> None:
+        self.assertEqual(
+            {
+                'en.json': 'Search name, email, note, or plan',
+                'ru.json': 'Поиск по имени, почте, заметке или тарифу',
+                'zh-CN.json': '搜索名称、邮箱、备注或套餐',
+                'zh-TW.json': '搜尋名稱、電子郵件、備註或套餐',
+            },
+            CUSTOMIZATIONS.AUTH_FILES_SEARCH_PLACEHOLDER_KEYS,
+        )
+        quota_placeholders = {
+            locale: values['search_placeholder']
+            for locale, values in CUSTOMIZATIONS.QUOTA_LOCALE_KEYS.items()
+        }
+        self.assertEqual(
+            {
+                'en.json': 'Search name, email, note, or plan',
+                'ru.json': 'Поиск по имени, почте, заметке или тарифу',
+                'zh-CN.json': '搜索名称、邮箱、备注或套餐',
+                'zh-TW.json': '搜尋名稱、電子郵件、備註或套餐',
+            },
+            quota_placeholders,
+        )
+
+        placeholders = [
+            *CUSTOMIZATIONS.AUTH_FILES_SEARCH_PLACEHOLDER_KEYS.values(),
+            *quota_placeholders.values(),
+        ]
+        self.assertTrue(all('auth_index' not in placeholder for placeholder in placeholders))
+
 
 if __name__ == '__main__':
     unittest.main()
