@@ -14,7 +14,7 @@ func TestXAIPaidHealthSummary(t *testing.T) {
 
 func TestXAIBillingParserCombinesWeeklyAndMonthlyShapes(t *testing.T) {
 	weekly, used, err := BuildXAIBillingSummary(`{
-		"config":{"current_period":{"type":"weekly","end":"2026-07-13T00:00:00Z"},"credit_usage_percent":10,"product_usage":[{"product":"Grok","usage_percent":25}]}
+		"config":{"current_period":{"type":"weekly","start":"2026-07-06T00:00:00Z","end":"2026-07-13T00:00:00Z"},"credit_usage_percent":10,"product_usage":[{"product":"Grok","usage_percent":25}]}
 	}`)
 	if err != nil || used == nil || *used != 10 {
 		t.Fatalf("weekly/used/error = %+v / %v / %v", weekly, used, err)
@@ -28,6 +28,18 @@ func TestXAIBillingParserCombinesWeeklyAndMonthlyShapes(t *testing.T) {
 	merged := MergeXAIBillingSummaries(weekly, monthly)
 	if merged["periodType"] != "weekly" || merged["monthlyLimitCents"] != 150000.0 || merged["onDemandUsedPercent"] != 50.0 {
 		t.Fatalf("merged = %+v", merged)
+	}
+	if merged["resetAtMs"] != int64(1783900800000) || merged["periodHours"] != float64(168) {
+		t.Fatalf("merged timeline fields = %+v", merged)
+	}
+	if merged["periodEnd"] != "2026-07-13T00:00:00Z" {
+		t.Fatalf("merged period borrowed monthly clock = %+v", merged)
+	}
+}
+
+func TestCacheParserVersionCoversQuotaTimelineFields(t *testing.T) {
+	if CacheParserVersion != 6 {
+		t.Fatalf("CacheParserVersion = %d, want 6", CacheParserVersion)
 	}
 }
 

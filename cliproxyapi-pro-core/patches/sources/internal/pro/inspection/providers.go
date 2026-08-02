@@ -29,6 +29,51 @@ func emptyStringAsNil(value string) any {
 	return value
 }
 
+func quotaResetAtMS(candidates ...any) (int64, bool) {
+	for _, candidate := range candidates {
+		if text := stringFromProviderValue(candidate); text != "" {
+			normalized := regexpMustCompile(`(\.\d{6})\d+`).ReplaceAllString(text, "$1")
+			if parsed, err := time.Parse(time.RFC3339Nano, normalized); err == nil {
+				return parsed.UnixMilli(), true
+			}
+		}
+		if numeric, ok := floatFromAny(candidate); ok && numeric > 0 {
+			if numeric < 1e11 {
+				numeric *= 1000
+			}
+			return int64(numeric), true
+		}
+	}
+	return 0, false
+}
+
+func quotaResetAfterMS(value any, now time.Time) (int64, bool) {
+	seconds, ok := floatFromAny(value)
+	if !ok || seconds <= 0 {
+		return 0, false
+	}
+	return now.UnixMilli() + int64(seconds*1000), true
+}
+
+func quotaPeriodHoursFromSeconds(value any) (float64, bool) {
+	seconds, ok := floatFromAny(value)
+	if !ok || seconds <= 0 {
+		return 0, false
+	}
+	return seconds / 3600, true
+}
+
+func antigravityPeriodHours(window string) (float64, bool) {
+	switch strings.ToLower(strings.TrimSpace(window)) {
+	case "5h", "five-hour", "five_hour":
+		return 5, true
+	case "weekly", "week":
+		return 24 * 7, true
+	default:
+		return 0, false
+	}
+}
+
 func BuildAntigravityGroups(body string) ([]map[string]any, error) {
 	payload, err := ParseAntigravityQuotaPayload(body)
 	if err != nil {
@@ -212,12 +257,24 @@ func buildAntigravitySummaryGroups(payload map[string]any) []map[string]any {
 			}
 			bucketID := firstNonEmptyStringValue(stringFromProviderValue(firstAny(bucket, "bucketId", "bucket_id")), fallbackID)
 			bucketLabel := firstNonEmptyStringValue(stringFromProviderValue(firstAny(bucket, "displayName", "display_name")), bucketID)
-			parsed := map[string]any{"id": bucketID, "label": bucketLabel, "remainingFraction": normalizeFraction(remaining)}
+			parsed := map[string]any{
+				"id":                bucketID,
+				"label":             bucketLabel,
+				"remainingFraction": normalizeFraction(remaining),
+				"resetAtMs":         nil,
+				"periodHours":       nil,
+			}
 			if window != "" {
 				parsed["window"] = window
+				if periodHours, ok := antigravityPeriodHours(window); ok {
+					parsed["periodHours"] = periodHours
+				}
 			}
 			if resetTime := firstNonEmptyStringValue(stringFromProviderValue(firstAny(bucket, "resetTime", "reset_time"))); resetTime != "" {
 				parsed["resetTime"] = resetTime
+				if resetAtMS, ok := quotaResetAtMS(resetTime); ok {
+					parsed["resetAtMs"] = resetAtMS
+				}
 			}
 			if description := firstNonEmptyStringValue(stringFromProviderValue(bucket["description"])); description != "" {
 				parsed["description"] = description
@@ -389,7 +446,24 @@ func BuildClaudeWindows(body string) ([]map[string]any, any, error) {
 		if !ok {
 			continue
 		}
-		windows = append(windows, map[string]any{"id": def.ID, "label": def.LabelKey, "labelKey": def.LabelKey, "usedPercent": used, "resetLabel": stringFromProviderValue(window["resets_at"])})
+		resetLabel := stringFromProviderValue(window["resets_at"])
+		var resetAtMS any
+		if parsed, ok := quotaResetAtMS(window["resets_at"]); ok {
+			resetAtMS = parsed
+		}
+		periodHours := float64(24 * 7)
+		if def.Key == "five_hour" {
+			periodHours = 5
+		}
+		windows = append(windows, map[string]any{
+			"id":          def.ID,
+			"label":       def.LabelKey,
+			"labelKey":    def.LabelKey,
+			"usedPercent": used,
+			"resetLabel":  resetLabel,
+			"resetAtMs":   resetAtMS,
+			"periodHours": periodHours,
+		})
 	}
 	return windows, payload["extra_usage"], nil
 }
@@ -428,6 +502,7 @@ func BuildCodexWindows(body string) (map[string]any, []map[string]any, *float64)
 	windows := make([]map[string]any, 0)
 	rateLimit, _ := firstAny(payload, "rate_limit", "rateLimit").(map[string]any)
 	codeReviewLimit, _ := firstAny(payload, "code_review_rate_limit", "codeReviewRateLimit").(map[string]any)
+	now := time.Now()
 
 	addCodexWindow := func(id string, labelKey string, labelParams map[string]any, window map[string]any, limitReached any, allowed any) {
 		if window == nil {
@@ -446,7 +521,25 @@ func BuildCodexWindows(body string) (map[string]any, []map[string]any, *float64)
 		} else {
 			usedValue = nil
 		}
-		item := map[string]any{"id": id, "label": labelKey, "labelKey": labelKey, "usedPercent": usedValue, "resetLabel": codexResetLabel(window)}
+		var resetAtMS any
+		if parsed, ok := quotaResetAtMS(firstAny(window, "reset_at", "resetAt")); ok {
+			resetAtMS = parsed
+		} else if parsed, ok := quotaResetAfterMS(firstAny(window, "reset_after_seconds", "resetAfterSeconds"), now); ok {
+			resetAtMS = parsed
+		}
+		var periodHours any
+		if parsed, ok := quotaPeriodHoursFromSeconds(firstAny(window, "limit_window_seconds", "limitWindowSeconds")); ok {
+			periodHours = parsed
+		}
+		item := map[string]any{
+			"id":          id,
+			"label":       labelKey,
+			"labelKey":    labelKey,
+			"usedPercent": usedValue,
+			"resetLabel":  codexResetLabel(window),
+			"resetAtMs":   resetAtMS,
+			"periodHours": periodHours,
+		}
 		if labelParams != nil {
 			item["labelParams"] = labelParams
 		}
@@ -578,8 +671,9 @@ func BuildKimiRows(body string) ([]map[string]any, *float64, error) {
 		return nil, nil, err
 	}
 	rows := make([]map[string]any, 0)
+	now := time.Now()
 	if usage, ok := payload["usage"].(map[string]any); ok {
-		if row := toKimiUsageRow(usage, map[string]any{"labelKey": "kimi_quota.weekly_limit"}); row != nil {
+		if row := toKimiUsageRow(usage, map[string]any{"labelKey": "kimi_quota.weekly_limit"}, 0, nil, now); row != nil {
 			row["id"] = "summary"
 			rows = append(rows, row)
 		}
@@ -597,7 +691,9 @@ func BuildKimiRows(body string) ([]map[string]any, *float64, error) {
 		if window == nil {
 			window = map[string]any{}
 		}
-		if row := toKimiUsageRow(detail, kimiLimitLabel(item, detail, window, i)); row != nil {
+		duration, _ := firstInt(window, item, detail, "duration")
+		timeUnit := firstAnyFromMaps([]map[string]any{window, item, detail}, "timeUnit")
+		if row := toKimiUsageRow(detail, kimiLimitLabel(item, detail, window, i), duration, timeUnit, now); row != nil {
 			row["id"] = "limit-" + strconv.Itoa(i)
 			rows = append(rows, row)
 		}
@@ -626,7 +722,7 @@ func kimiLimitLabel(item map[string]any, detail map[string]any, window map[strin
 	return map[string]any{"labelKey": "kimi_quota.limit_index", "labelParams": map[string]any{"index": index + 1}}
 }
 
-func toKimiUsageRow(data map[string]any, fallbackLabel map[string]any) map[string]any {
+func toKimiUsageRow(data map[string]any, fallbackLabel map[string]any, duration int, timeUnit any, now time.Time) map[string]any {
 	limit, okLimit := intFromAny(data["limit"])
 	used, okUsed := intFromAny(data["used"])
 	if !okUsed {
@@ -658,7 +754,58 @@ func toKimiUsageRow(data map[string]any, fallbackLabel map[string]any) map[strin
 		row["limit"] = 0
 	}
 	row["resetHint"] = emptyStringAsNil(kimiResetHint(data))
+	row["resetAtMs"] = nil
+	if resetAtMS, ok := kimiResetAtMS(data, now); ok {
+		row["resetAtMs"] = resetAtMS
+	}
+	row["periodHours"] = nil
+	label := firstNonEmptyStringValue(stringFromProviderValue(row["label"]), stringFromProviderValue(row["labelKey"]))
+	if periodHours, ok := kimiPeriodHours(label, duration, timeUnit); ok {
+		row["periodHours"] = periodHours
+	}
 	return row
+}
+
+func kimiResetAtMS(data map[string]any, now time.Time) (int64, bool) {
+	if resetAtMS, ok := quotaResetAtMS(data["reset_at"], data["resetAt"], data["reset_time"], data["resetTime"]); ok {
+		return resetAtMS, true
+	}
+	for _, key := range []string{"reset_in", "resetIn", "ttl"} {
+		if resetAtMS, ok := quotaResetAfterMS(data[key], now); ok {
+			return resetAtMS, true
+		}
+	}
+	return 0, false
+}
+
+func kimiPeriodHours(label string, duration int, rawTimeUnit any) (float64, bool) {
+	if duration > 0 {
+		switch strings.ToUpper(strings.TrimSpace(stringFromProviderValue(rawTimeUnit))) {
+		case "SECONDS", "SECOND":
+			return float64(duration) / 3600, true
+		case "HOURS", "HOUR":
+			return float64(duration), true
+		case "DAYS", "DAY":
+			return float64(duration * 24), true
+		case "WEEKS", "WEEK":
+			return float64(duration * 7 * 24), true
+		default:
+			return float64(duration) / 60, true
+		}
+	}
+	lower := strings.ToLower(label)
+	switch {
+	case strings.Contains(lower, "daily"), strings.Contains(lower, "day"):
+		return 24, true
+	case strings.Contains(lower, "weekly"), strings.Contains(lower, "week"):
+		return 24 * 7, true
+	case strings.Contains(lower, "monthly"), strings.Contains(lower, "month"):
+		return 24 * 30, true
+	case strings.Contains(lower, "5h"), strings.Contains(lower, "hour"):
+		return 5, true
+	default:
+		return 0, false
+	}
 }
 
 func firstAnyFromMaps(sources []map[string]any, key string) any {

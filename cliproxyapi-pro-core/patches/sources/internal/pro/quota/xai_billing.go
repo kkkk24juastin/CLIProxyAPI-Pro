@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func billingString(value any) string {
@@ -106,6 +107,26 @@ func billingMax(values []float64) *float64 {
 		}
 	}
 	return &maximum
+}
+
+func xaiPeriodInstants(periodStart string, periodEnd string) (any, any) {
+	parse := func(value string) (time.Time, bool) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return time.Time{}, false
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, value)
+		return parsed, err == nil
+	}
+	end, hasEnd := parse(periodEnd)
+	if !hasEnd {
+		return nil, nil
+	}
+	var periodHours any
+	if start, hasStart := parse(periodStart); hasStart && end.After(start) {
+		periodHours = end.Sub(start).Hours()
+	}
+	return end.UnixMilli(), periodHours
 }
 
 func BuildXAIBillingSummary(body string) (map[string]any, *float64, error) {
@@ -228,6 +249,9 @@ func BuildXAIBillingSummaryFromConfig(config map[string]any) (map[string]any, *f
 	if hasMonthlyData && billingPeriodEnd != "" {
 		summary["billingPeriodEnd"] = billingPeriodEnd
 	}
+	resetAtMS, periodHours := xaiPeriodInstants(billingString(summary["periodStart"]), billingString(summary["periodEnd"]))
+	summary["resetAtMs"] = resetAtMS
+	summary["periodHours"] = periodHours
 	return summary, XAISummaryUsedPercent(summary), nil
 }
 
@@ -275,6 +299,15 @@ func MergeXAIBillingSummaries(primary map[string]any, fallback map[string]any) m
 	if fallback == nil {
 		return primary
 	}
+	periodSummary := primary
+	if billingString(primary["periodType"]) == "" || billingString(primary["periodType"]) == "unknown" {
+		if fallbackType := billingString(fallback["periodType"]); fallbackType != "" && fallbackType != "unknown" {
+			periodSummary = fallback
+		}
+	}
+	periodStart := billingString(periodSummary["periodStart"])
+	periodEnd := billingString(periodSummary["periodEnd"])
+	resetAtMS, periodHours := xaiPeriodInstants(periodStart, periodEnd)
 	merged := map[string]any{
 		"periodType":          firstKnownXaiPeriodType(primary["periodType"], fallback["periodType"]),
 		"usagePercent":        firstNonNilAny(primary["usagePercent"], fallback["usagePercent"]),
@@ -288,12 +321,14 @@ func MergeXAIBillingSummaries(primary map[string]any, fallback map[string]any) m
 		"billingPeriodStart":  firstNonNilAny(primary["billingPeriodStart"], fallback["billingPeriodStart"]),
 		"billingPeriodEnd":    firstNonNilAny(primary["billingPeriodEnd"], fallback["billingPeriodEnd"]),
 		"usedPercent":         firstNonNilAny(primary["usedPercent"], fallback["usedPercent"]),
+		"resetAtMs":           resetAtMS,
+		"periodHours":         periodHours,
 	}
-	if value := firstNonNilAny(primary["periodStart"], fallback["periodStart"]); value != nil {
-		merged["periodStart"] = value
+	if periodStart != "" {
+		merged["periodStart"] = periodStart
 	}
-	if value := firstNonNilAny(primary["periodEnd"], fallback["periodEnd"]); value != nil {
-		merged["periodEnd"] = value
+	if periodEnd != "" {
+		merged["periodEnd"] = periodEnd
 	}
 	return merged
 }

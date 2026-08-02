@@ -1652,8 +1652,29 @@ def patch_quota_provider_model_latest(target: Path) -> None:
     replace_once(test_path, "      codex: 2,\n      xai: 1,", "      codex: 2,\n      'gemini-cli': 0,\n      xai: 1,")
 
 
+def patch_quota_page_cache_refresh(target: Path) -> None:
+    path = target / 'src/features/quota/QuotaPage.tsx'
+    insert_once(
+        path,
+        "import { readQuotaUiState, writeQuotaUiState } from './uiState';\n",
+        "import { readQuotaUiState, writeQuotaUiState } from './uiState';\n"
+        "import { quotaPersistenceMiddleware } from '@/pro/modules/quota';\n",
+        "quotaPersistenceMiddleware } from '@/pro/modules/quota'",
+    )
+    insert_once(
+        path,
+        "  useEffect(() => {\n    void loadFiles();\n  }, [loadFiles]);\n",
+        "  useEffect(() => {\n    void loadFiles();\n  }, [loadFiles]);\n\n"
+        "  useEffect(() => {\n"
+        "    void quotaPersistenceMiddleware.ensureFresh();\n"
+        "  }, []);\n",
+        'void quotaPersistenceMiddleware.ensureFresh();',
+    )
+
+
 def patch_quota_page_latest(target: Path) -> None:
     path = target / 'src/features/quota/QuotaPage.tsx'
+    patch_quota_page_cache_refresh(target)
     insert_once(path, "import { EmptyState } from '@/components/ui/EmptyState';\n", "import { EmptyState } from '@/components/ui/EmptyState';\nimport { Input } from '@/components/ui/Input';\nimport { IconSearch } from '@/components/ui/icons';\n", 'quota_management.search_label')
     insert_once(path, "import { readQuotaUiState, writeQuotaUiState } from './uiState';\n", "import { readQuotaUiState, writeQuotaUiState } from './uiState';\nimport { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';\n", 'matchesQuotaSearch')
     old_classification = "  const entries = useMemo(() => classifyQuotaFiles(files), [files]);\n  const tabCounts = useMemo(() => buildTabCounts(entries), [entries]);\n  const filteredEntries = useMemo(() => filterEntriesByTab(entries, tab), [entries, tab]);\n  const { pageItems, currentPage, totalPages } = useMemo(\n    () => paginate(filteredEntries, page, QUOTA_PAGE_SIZE),\n    [filteredEntries, page]\n  );"
