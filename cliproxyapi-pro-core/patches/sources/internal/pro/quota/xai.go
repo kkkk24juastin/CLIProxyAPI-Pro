@@ -16,7 +16,7 @@ import (
 const (
 	// CacheParserVersion is the shared version of normalized quota cache
 	// records. Provider-specific parser versions may diverge from it later.
-	CacheParserVersion = 6
+	CacheParserVersion = 7
 	XAIParserVersion   = CacheParserVersion
 )
 

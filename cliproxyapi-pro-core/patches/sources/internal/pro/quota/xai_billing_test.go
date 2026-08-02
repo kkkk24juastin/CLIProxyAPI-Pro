@@ -37,9 +37,9 @@ func TestXAIBillingParserCombinesWeeklyAndMonthlyShapes(t *testing.T) {
 	}
 }
 
-func TestCacheParserVersionCoversQuotaTimelineFields(t *testing.T) {
-	if CacheParserVersion != 6 {
-		t.Fatalf("CacheParserVersion = %d, want 6", CacheParserVersion)
+func TestCacheParserVersionCoversCodexWindowClassification(t *testing.T) {
+	if CacheParserVersion != 7 {
+		t.Fatalf("CacheParserVersion = %d, want 7", CacheParserVersion)
 	}
 }
 

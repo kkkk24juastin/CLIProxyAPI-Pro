@@ -570,12 +570,11 @@ func BuildCodexWindows(body string) (map[string]any, []map[string]any, *float64)
 		if idPrefix == "" {
 			idPrefix = fmt.Sprintf("additional-%d", index+1)
 		}
-		primary, _ := firstAny(rateInfo, "primary_window", "primaryWindow").(map[string]any)
-		secondary, _ := firstAny(rateInfo, "secondary_window", "secondaryWindow").(map[string]any)
+		additionalFiveHour, additionalLong := codexClassifiedWindows(rateInfo, true)
 		params := map[string]any{"name": limitName}
-		addCodexWindow(fmt.Sprintf("%s-five-hour-%d", idPrefix, index), "codex_quota.additional_primary_window", params, primary, firstAny(rateInfo, "limit_reached", "limitReached"), rateInfo["allowed"])
-		additionalSecondaryID, additionalSecondaryLabel := codexSecondaryWindowMeta(secondary, "weekly", "codex_quota.additional_secondary_window", "monthly", "codex_quota.additional_team_secondary_window")
-		addCodexWindow(fmt.Sprintf("%s-%s-%d", idPrefix, additionalSecondaryID, index), additionalSecondaryLabel, params, secondary, firstAny(rateInfo, "limit_reached", "limitReached"), rateInfo["allowed"])
+		addCodexWindow(fmt.Sprintf("%s-five-hour-%d", idPrefix, index), "codex_quota.additional_primary_window", params, additionalFiveHour, firstAny(rateInfo, "limit_reached", "limitReached"), rateInfo["allowed"])
+		additionalSecondaryID, additionalSecondaryLabel := codexSecondaryWindowMeta(additionalLong, "weekly", "codex_quota.additional_secondary_window", "monthly", "codex_quota.additional_team_secondary_window")
+		addCodexWindow(fmt.Sprintf("%s-%s-%d", idPrefix, additionalSecondaryID, index), additionalSecondaryLabel, params, additionalLong, firstAny(rateInfo, "limit_reached", "limitReached"), rateInfo["allowed"])
 	}
 
 	used := MaxUsedPercentFromWindows(windows)
@@ -590,23 +589,29 @@ func codexClassifiedWindows(limitInfo map[string]any, allowOrderFallback bool) (
 	secondary, _ := firstAny(limitInfo, "secondary_window", "secondaryWindow").(map[string]any)
 	var fiveHour map[string]any
 	var weekly map[string]any
-	for _, window := range []map[string]any{primary, secondary} {
+	fiveHourSlot := -1
+	weeklySlot := -1
+	for slot, window := range []map[string]any{primary, secondary} {
 		seconds, ok := floatFromAny(firstAny(window, "limit_window_seconds", "limitWindowSeconds"))
 		if !ok {
 			continue
 		}
 		if int(seconds) == 18000 && fiveHour == nil {
 			fiveHour = window
+			fiveHourSlot = slot
 		} else if (int(seconds) == 604800 || isCodexMonthlyWindow(window)) && weekly == nil {
 			weekly = window
+			weeklySlot = slot
 		}
 	}
 	if allowOrderFallback {
-		if fiveHour == nil {
+		if fiveHour == nil && primary != nil && weeklySlot != 0 {
 			fiveHour = primary
+			fiveHourSlot = 0
 		}
-		if weekly == nil {
+		if weekly == nil && secondary != nil && fiveHourSlot != 1 {
 			weekly = secondary
+			weeklySlot = 1
 		}
 	}
 	return fiveHour, weekly
