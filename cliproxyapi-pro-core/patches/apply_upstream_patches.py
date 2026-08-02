@@ -264,6 +264,39 @@ write(
         read_text(Path(__file__).resolve().parent / 'xai_quota_observer.go'),
     ),
 )
+write(
+    ROOT / 'internal/runtime/executor/xai_pro_bridge.go',
+    re.sub(
+        r'github\.com/router-for-me/CLIProxyAPI/v\d+',
+        MODULE_PATH,
+        read_text(Path(__file__).resolve().parent / 'xai_upstream_bridge.go'),
+    ),
+)
+write(
+    ROOT / 'internal/runtime/executor/xai_pro_bridge_test.go',
+    re.sub(
+        r'github\.com/router-for-me/CLIProxyAPI/v\d+',
+        MODULE_PATH,
+        read_text(Path(__file__).resolve().parent / 'xai_upstream_bridge_test.go'),
+    ),
+)
+
+xai_executor = ROOT / 'internal/runtime/executor/xai_executor.go'
+replace_once(
+    xai_executor,
+    '''\tif strings.TrimSpace(token) != "" {
+\t\treq.Header.Set("Authorization", "Bearer "+token)
+\t}
+\tvar attrs map[string]string
+''',
+    '''\tif strings.TrimSpace(token) != "" {
+\t\treq.Header.Set("Authorization", "Bearer "+token)
+\t}
+\tapplyProXAIHTTPRequestIdentity(req, auth)
+\tvar attrs map[string]string
+''',
+    'applyProXAIHTTPRequestIdentity(req, auth)',
+)
 
 xai_executor_sources = (
     ROOT / 'internal/runtime/executor/xai_executor_execute.go',

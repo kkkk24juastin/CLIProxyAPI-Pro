@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"path"
 	"strconv"
@@ -14,16 +13,16 @@ import (
 	"time"
 
 	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	proquota "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/quota"
+	upstreamexecutor "github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
 const (
-	xaiBillingURL               = "https://cli-chat-proxy.grok.com/v1/billing"
-	claudeProfileURL            = "https://api.anthropic.com/api/oauth/profile"
-	geminiCodeAssistURL         = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
-	antigravityCodeAssistURL    = "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
-	xaiSuperGrokLimitCents      = int64(15_000)
-	xaiXPremiumPlusLimitCents   = int64(20_000)
-	xaiSuperGrokHeavyLimitCents = int64(150_000)
+	xaiBillingURL            = "https://cli-chat-proxy.grok.com/v1/billing"
+	claudeProfileURL         = "https://api.anthropic.com/api/oauth/profile"
+	geminiCodeAssistURL      = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+	antigravityCodeAssistURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
 )
 
 type ModelInfo struct {
@@ -433,6 +432,10 @@ func resolveXAIPlan(ctx context.Context, timeout time.Duration, input Input) (st
 		}
 	}
 	sources := []map[string]any{storage, input.Metadata, stringMapToAny(input.Attributes)}
+	auth := xaiPolicyAuth(input)
+	if upstreamexecutor.XAIUsingAPI(auth) {
+		return "paid-unknown", nil
+	}
 	token := accessToken(input)
 	if token == "" {
 		return "", fmt.Errorf("xai access token is unavailable")
@@ -444,13 +447,7 @@ func resolveXAIPlan(ctx context.Context, timeout time.Duration, input Input) (st
 		requestCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	headers := http.Header{
-		"Authorization":         []string{"Bearer " + token},
-		"x-xai-token-auth":      []string{"xai-grok-cli"},
-		"x-grok-client-version": []string{"0.2.91"},
-		"Accept":                []string{"*/*"},
-		"User-Agent":            []string{"grok-pager/0.2.91 grok-shell/0.2.91 (macos; aarch64)"},
-	}
+	headers := upstreamexecutor.XAIChatRequestHeaders(auth, token, false)
 	if userID != "" {
 		headers["x-userid"] = []string{userID}
 	}
@@ -477,19 +474,23 @@ func resolveXAIPlan(ctx context.Context, timeout time.Duration, input Input) (st
 }
 
 func xaiPlanFromLimit(limit float64) string {
-	rounded := int64(math.Round(limit))
-	if rounded == 0 {
-		return "free"
+	plan, _ := proquota.XAIPlanTypeFromMonthlyLimit(limit, true)
+	return plan
+}
+
+func xaiPolicyAuth(input Input) *coreauth.Auth {
+	attributes := make(map[string]string, len(input.Attributes)+1)
+	for key, value := range input.Attributes {
+		attributes[key] = value
 	}
-	switch rounded {
-	case xaiSuperGrokLimitCents:
-		return "supergrok"
-	case xaiXPremiumPlusLimitCents:
-		return "x-premium-plus"
-	case xaiSuperGrokHeavyLimitCents:
-		return "supergrok-heavy"
-	default:
-		return "paid-unknown"
+	if strings.TrimSpace(attributes["auth_kind"]) == "" {
+		attributes["auth_kind"] = input.AuthKind
+	}
+	return &coreauth.Auth{
+		ID:         input.AuthID,
+		Provider:   input.AuthProvider,
+		Attributes: attributes,
+		Metadata:   input.Metadata,
 	}
 }
 

@@ -14,6 +14,8 @@ import {
 } from '@/pro/modules/quota/extensions/xaiQuota';
 import { apiCallApi, type ApiCallRequest, type ApiCallResult } from '@/services/api';
 import {
+  XAI_API_CHAT_URL,
+  XAI_API_ME_URL,
   XAI_BILLING_MONTHLY_URL,
   XAI_BILLING_WEEKLY_URL,
   XAI_PAID_HEALTH_MODEL,
@@ -209,6 +211,13 @@ describe('xAI free quota forced refresh', () => {
     );
 
     expect(requests.map((request) => request.url)).toContain(XAI_FREE_QUOTA_PROBE_URL);
+    expect(
+      requests
+        .filter((request) =>
+          request.url === XAI_BILLING_WEEKLY_URL || request.url === XAI_BILLING_MONTHLY_URL
+        )
+        .every((request) => request.useExecutor === true)
+    ).toBe(true);
     const probe = requests.find((request) => request.url === XAI_FREE_QUOTA_PROBE_URL);
     expect(probe).toMatchObject({ method: 'POST', useExecutor: true });
     expect(probe?.url).toBe('https://cli-chat-proxy.grok.com/v1/responses');
@@ -238,6 +247,32 @@ describe('xAI free quota forced refresh', () => {
         limitTokens: 1000,
         remainingTokens: 700,
       },
+    });
+  });
+
+  test('routes using_api accounts directly to upstream paid health', async () => {
+    apiCallApi.request = async (payload) => {
+      requests.push(payload);
+      if (payload.url === XAI_API_ME_URL) return result(200, { user_id: 'official-user' });
+      if (payload.url === XAI_API_CHAT_URL) return result(200, { choices: [] });
+      throw new Error(`Unexpected URL: ${payload.url}`);
+    };
+
+    const summary = await PRO_XAI_CONFIG.fetchQuota(
+      { name: 'official.json', type: 'xai', auth_index: 'xai:official', using_api: true },
+      t
+    );
+
+    expect(requests.map((request) => request.url).sort()).toEqual(
+      [XAI_API_CHAT_URL, XAI_API_ME_URL].sort()
+    );
+    expect(requests.every((request) => request.useExecutor === true)).toBe(true);
+    expect(requests.some((request) => request.url.includes('/billing'))).toBe(false);
+    expect(summary).toMatchObject({
+      mode: 'paid-health',
+      planType: 'paid',
+      healthStatus: 'chat-ok',
+      userId: 'official-user',
     });
   });
 

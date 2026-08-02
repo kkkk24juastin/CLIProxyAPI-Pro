@@ -1635,6 +1635,66 @@ def patch_quota_provider_model_latest(target: Path) -> None:
     replace_once(types_path, '  codexQuota: Record<string, CodexQuotaState>;\n  kimiQuota:', '  codexQuota: Record<string, CodexQuotaState>;\n  geminiCliQuota: Record<string, GeminiCliQuotaState>;\n  kimiQuota:')
     replace_once(types_path, '  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setKimiQuota:', '  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setGeminiCliQuota: (updater: QuotaUpdater<Record<string, GeminiCliQuotaState>>) => void;\n  setKimiQuota:')
 
+    xai_paid_path = target / 'src/utils/quota/xaiPaid.ts'
+    replace_once(
+        xai_paid_path,
+        '''export const isPaidXaiAuthFile = (file: AuthFileItem | Record<string, unknown>): boolean => {
+  const records = collectAuthRecords(file);
+  const usesOfficialApi = records.some((record) =>
+    isTruthyValue(record.using_api ?? record.usingApi)
+  );
+  const prefixes = readStrings(records, ['prefix']);
+''',
+        '''export const isXaiUsingOfficialAPI = (file: AuthFileItem | Record<string, unknown>): boolean =>
+  collectAuthRecords(file).some((record) =>
+    isTruthyValue(record.using_api ?? record.usingApi)
+  );
+
+export const isPaidXaiAuthFile = (file: AuthFileItem | Record<string, unknown>): boolean => {
+  const records = collectAuthRecords(file);
+  const usesOfficialApi = isXaiUsingOfficialAPI(file);
+  const prefixes = readStrings(records, ['prefix']);
+''',
+    )
+    xai_data_path = target / 'src/features/quota/providers/xai/data.ts'
+    replace_once(
+        xai_data_path,
+        'const requestXaiPaidHealth = async (authIndex: string): Promise<XaiBillingSummary> => {',
+        'export const requestXaiPaidHealth = async (authIndex: string): Promise<XaiBillingSummary> => {',
+    )
+    replace_once(
+        xai_data_path,
+        '''    url,
+    header,
+  });
+''',
+        '''    url,
+    header,
+    useExecutor: true,
+  });
+''',
+    )
+    replace_once(
+        xai_data_path,
+        '''        url: XAI_API_ME_URL,
+        header: XAI_API_REQUEST_HEADERS,
+''',
+        '''        url: XAI_API_ME_URL,
+        header: XAI_API_REQUEST_HEADERS,
+        useExecutor: true,
+''',
+    )
+    replace_once(
+        xai_data_path,
+        '''          stream: false,
+        }),
+''',
+        '''          stream: false,
+        }),
+        useExecutor: true,
+''',
+    )
+
     index_path = target / 'src/features/quota/providers/index.ts'
     replace_once(index_path, "import { XAI_CONFIG } from './xai/data';\nimport { XaiQuotaBody } from './xai/XaiQuotaBody';", "import { GEMINI_CLI_CONFIG, GeminiCliQuotaBody, PRO_XAI_CONFIG, ProXaiQuotaBody } from '@/pro/modules/quota';")
     replace_once(index_path, "  errorStatus?: number;\n}", "  errorStatus?: number;\n  cachedAt?: number;\n}")

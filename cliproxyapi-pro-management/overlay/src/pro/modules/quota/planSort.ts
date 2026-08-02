@@ -51,6 +51,7 @@ const PLAN_RANKS: Record<string, Record<string, number>> = {
     'supergrok-heavy': 500,
     'x-premium-plus': 450,
     supergrok: 400,
+    paid: 300,
     'paid-unknown': 300,
     free: 100,
   },

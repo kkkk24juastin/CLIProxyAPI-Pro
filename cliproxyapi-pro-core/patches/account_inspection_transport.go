@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
+	upstreamexecutor "github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	proinspection "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/inspection"
 	proquota "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/quota"
@@ -429,7 +429,7 @@ func (s *accountInspectionScheduler) inspectXAIOfficialAPI(ctx context.Context, 
 		model = "grok-4.5"
 	}
 	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
-		return s.apiCall(ctx, account.Auth, http.MethodPost, xaiOfficialChatURL(account.Auth), xaiOfficialAPIHeaders(), proinspection.BuildXAIOfficialHealthBody(model), settings.Timeout)
+		return s.apiCall(ctx, account.Auth, http.MethodPost, xaiOfficialChatURL(account.Auth), xaiOfficialAPIHeaders(account.Auth), proinspection.BuildXAIOfficialHealthBody(model), settings.Timeout)
 	})
 	status := intPtr(resp.StatusCode)
 	if err != nil {
@@ -617,19 +617,7 @@ func runXAIDeepProbeWithRetry(
 }
 
 func xaiInspectionBaseURL(auth *coreauth.Auth) string {
-	baseURL := ""
-	if auth != nil {
-		baseURL = strings.TrimSpace(auth.Attributes["base_url"])
-		if baseURL == "" {
-			baseURL = strings.TrimSpace(stringFromAny(auth.Metadata["base_url"]))
-		}
-	}
-	if !xaiInspectionUsingAPI(auth) && (baseURL == "" || strings.EqualFold(strings.TrimRight(baseURL, "/"), "https://api.x.ai/v1")) {
-		baseURL = "https://cli-chat-proxy.grok.com/v1"
-	} else if baseURL == "" {
-		baseURL = "https://api.x.ai/v1"
-	}
-	return strings.TrimRight(baseURL, "/")
+	return strings.TrimRight(upstreamexecutor.XAIChatBaseURL(auth), "/")
 }
 
 func xaiResponsesURL(auth *coreauth.Auth) string {
@@ -641,48 +629,15 @@ func xaiOfficialChatURL(auth *coreauth.Auth) string {
 }
 
 func xaiInspectionUsingAPI(auth *coreauth.Auth) bool {
-	if auth == nil {
-		return true
-	}
-	if raw := strings.TrimSpace(auth.Attributes["using_api"]); raw != "" {
-		if parsed, err := strconv.ParseBool(raw); err == nil {
-			return parsed
-		}
-	}
-	if raw, ok := auth.Metadata["using_api"]; ok && raw != nil {
-		switch value := raw.(type) {
-		case bool:
-			return value
-		case string:
-			if parsed, err := strconv.ParseBool(strings.TrimSpace(value)); err == nil {
-				return parsed
-			}
-		}
-	}
-	if authKind := strings.TrimSpace(auth.Attributes["auth_kind"]); authKind != "" {
-		return !strings.EqualFold(authKind, "oauth")
-	}
-	return !strings.EqualFold(strings.TrimSpace(stringFromAny(auth.Metadata["auth_kind"])), "oauth")
+	return upstreamexecutor.XAIUsingAPI(auth)
 }
 
 func xaiDeepProbeHeaders(auth *coreauth.Auth) map[string]string {
-	headers := map[string]string{"Authorization": "Bearer $TOKEN$"}
-	if !xaiInspectionUsingAPI(auth) && strings.EqualFold(xaiInspectionBaseURL(auth), "https://cli-chat-proxy.grok.com/v1") {
-		headers = xaiRequestHeaders(auth)
-	}
-	headers["Content-Type"] = "application/json"
-	headers["Accept"] = "text/event-stream"
-	headers["Connection"] = "Keep-Alive"
-	return headers
+	return xaiHeaderMap(upstreamexecutor.XAIChatRequestHeaders(auth, "$TOKEN$", true))
 }
 
-func xaiOfficialAPIHeaders() map[string]string {
-	return map[string]string{
-		"Authorization": "Bearer $TOKEN$",
-		"Content-Type":  "application/json",
-		"Accept":        "application/json",
-		"Connection":    "Keep-Alive",
-	}
+func xaiOfficialAPIHeaders(auth *coreauth.Auth) map[string]string {
+	return xaiHeaderMap(upstreamexecutor.XAIChatRequestHeaders(auth, "$TOKEN$", false))
 }
 
 func xaiOfficialAPIQuotaDecision(account accountInspectionAccount, body string) accountInspectionDecision {
@@ -719,17 +674,21 @@ func xaiBillingWeeklyURL() string {
 }
 
 func xaiRequestHeaders(auth *coreauth.Auth) map[string]string {
-	headers := map[string]string{
-		"Authorization":         "Bearer $TOKEN$",
-		"x-xai-token-auth":      "xai-grok-cli",
-		"x-grok-client-version": "0.2.91",
-		"accept":                "*/*",
-		"user-agent":            "grok-pager/0.2.91 grok-shell/0.2.91 (macos; aarch64)",
-	}
+	headers := xaiHeaderMap(upstreamexecutor.XAIChatRequestHeaders(auth, "$TOKEN$", false))
 	if userID := xaiUserID(auth); userID != "" {
 		headers["x-userid"] = userID
 	}
 	return headers
+}
+
+func xaiHeaderMap(headers http.Header) map[string]string {
+	values := make(map[string]string, len(headers))
+	for key, entries := range headers {
+		if len(entries) > 0 {
+			values[key] = entries[0]
+		}
+	}
+	return values
 }
 
 func (s *accountInspectionScheduler) antigravityUserAgent() string {

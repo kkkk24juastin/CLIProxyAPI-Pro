@@ -435,6 +435,10 @@ func XAIPlanTypeFromBillingBody(status int, body string) (string, bool) {
 		return "", false
 	}
 	limit, hasLimit := xaiCentValue(billingFirstAny(config, "monthlyLimit", "monthly_limit"))
+	return XAIPlanTypeFromMonthlyLimit(limit, hasLimit)
+}
+
+func XAIPlanTypeFromMonthlyLimit(limit float64, hasLimit bool) (string, bool) {
 	if !hasLimit || math.Round(limit) == 0 {
 		return "free", true
 	}

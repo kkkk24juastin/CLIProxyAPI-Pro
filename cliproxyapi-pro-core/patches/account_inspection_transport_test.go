@@ -31,15 +31,19 @@ func TestAntigravityQuotaURLsUseSummaryEndpoint(t *testing.T) {
 
 func TestXAIRequestHeadersIncludeGrokClientAndUserID(t *testing.T) {
 	auth := &coreauth.Auth{
-		Provider: "xai",
-		Metadata: map[string]any{"sub": "user-123"},
+		Provider:   "xai",
+		Attributes: map[string]string{"using_api": "false"},
+		Metadata:   map[string]any{"sub": "user-123"},
 	}
 	headers := xaiRequestHeaders(auth)
-	if headers["x-xai-token-auth"] != "xai-grok-cli" {
-		t.Fatalf("x-xai-token-auth = %q", headers["x-xai-token-auth"])
+	if headers["X-Xai-Token-Auth"] != "xai-grok-cli" {
+		t.Fatalf("x-xai-token-auth = %q", headers["X-Xai-Token-Auth"])
 	}
-	if headers["x-grok-client-version"] != "0.2.91" {
-		t.Fatalf("x-grok-client-version = %q", headers["x-grok-client-version"])
+	if headers["X-Grok-Client-Version"] != "0.2.93" {
+		t.Fatalf("x-grok-client-version = %q", headers["X-Grok-Client-Version"])
+	}
+	if headers["User-Agent"] != "xai-grok-workspace/0.2.93" {
+		t.Fatalf("User-Agent = %q", headers["User-Agent"])
 	}
 	if headers["x-userid"] != "user-123" {
 		t.Fatalf("x-userid = %q, want user-123", headers["x-userid"])
@@ -167,20 +171,20 @@ func TestXAIResponsesURLUsesConfiguredBaseURL(t *testing.T) {
 		t.Fatalf("xaiResponsesURL(custom) = %q", got)
 	}
 	headers := xaiDeepProbeHeaders(oauth)
-	if headers["x-xai-token-auth"] != "xai-grok-cli" || headers["Accept"] != "text/event-stream" {
+	if headers["X-Xai-Token-Auth"] != "xai-grok-cli" || headers["Accept"] != "text/event-stream" {
 		t.Fatalf("xaiDeepProbeHeaders(oauth) = %#v", headers)
 	}
 	apiHeaders := xaiDeepProbeHeaders(api)
-	if apiHeaders["x-xai-token-auth"] != "" || apiHeaders["Authorization"] != "Bearer $TOKEN$" {
+	if apiHeaders["X-Xai-Token-Auth"] != "" || apiHeaders["Authorization"] != "Bearer $TOKEN$" {
 		t.Fatalf("xaiDeepProbeHeaders(api) = %#v", apiHeaders)
 	}
-	officialHeaders := xaiOfficialAPIHeaders()
-	if officialHeaders["x-xai-token-auth"] != "" || officialHeaders["Accept"] != "application/json" {
+	officialHeaders := xaiOfficialAPIHeaders(api)
+	if officialHeaders["X-Xai-Token-Auth"] != "" || officialHeaders["Accept"] != "application/json" {
 		t.Fatalf("xaiOfficialAPIHeaders() = %#v", officialHeaders)
 	}
 	customOAuth := &coreauth.Auth{Attributes: map[string]string{"base_url": "https://xai.example/v1", "using_api": "false"}}
 	customHeaders := xaiDeepProbeHeaders(customOAuth)
-	if customHeaders["x-xai-token-auth"] != "" {
+	if customHeaders["X-Xai-Token-Auth"] != "" {
 		t.Fatalf("xaiDeepProbeHeaders(customOAuth) = %#v", customHeaders)
 	}
 }

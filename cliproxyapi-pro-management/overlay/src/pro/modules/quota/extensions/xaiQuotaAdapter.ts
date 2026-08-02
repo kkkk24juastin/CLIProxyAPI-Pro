@@ -2,8 +2,13 @@ import type { TFunction } from 'i18next';
 import type { AuthFileItem, XaiBillingSummary, XaiQuotaState } from '@/types';
 import { apiCallApi, getApiCallErrorMessage } from '@/services/api/apiCall';
 import { useQuotaStore } from '@/stores';
-import { XAI_PAID_HEALTH_MODEL, XAI_REQUEST_HEADERS, createStatusError } from '@/utils/quota';
-import { XAI_CONFIG } from '@/features/quota/providers/xai/data';
+import {
+  XAI_PAID_HEALTH_MODEL,
+  XAI_REQUEST_HEADERS,
+  createStatusError,
+  isXaiUsingOfficialAPI,
+} from '@/utils/quota';
+import { XAI_CONFIG, requestXaiPaidHealth } from '@/features/quota/providers/xai/data';
 import type { QuotaProviderData } from '@/features/quota/providers/types';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import {
@@ -48,6 +53,13 @@ async function requestXaiFreeQuota(authIndex: string, t: TFunction) {
 }
 
 async function fetchProXaiQuota(file: AuthFileItem, t: TFunction): Promise<XaiBillingSummary> {
+  const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
+  if (authIndex && isXaiUsingOfficialAPI(file)) {
+    const billing = await requestXaiPaidHealth(authIndex);
+    const previous = useQuotaStore.getState().xaiQuota[file.name]?.billing;
+    return mergeXaiBillingRuntimeState({ ...billing, planType: 'paid' }, previous);
+  }
+
   const billing = await XAI_CONFIG.fetchQuota(file, t);
   const previous = useQuotaStore.getState().xaiQuota[file.name]?.billing;
   if (billing.mode === 'paid-health') {
@@ -58,7 +70,6 @@ async function fetchProXaiQuota(file: AuthFileItem, t: TFunction): Promise<XaiBi
   const merged = mergeXaiBillingRuntimeState({ ...billing, planType }, previous);
   if (planType !== 'free') return merged;
 
-  const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
   if (!authIndex) return merged;
   const freeQuota = await requestXaiFreeQuota(authIndex, t);
   return { ...merged, freeQuota };

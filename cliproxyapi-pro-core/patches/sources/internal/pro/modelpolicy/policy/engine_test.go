@@ -40,6 +40,12 @@ providers:
 			if got := request.Headers["x-userid"]; len(got) != 1 || got[0] != "user" {
 				t.Fatalf("x-userid = %#v", got)
 			}
+			if got := request.Headers.Get("x-grok-client-version"); got != "0.2.93" {
+				t.Fatalf("x-grok-client-version = %q", got)
+			}
+			if got := request.Headers.Get("User-Agent"); got != "xai-grok-workspace/0.2.93" {
+				t.Fatalf("User-Agent = %q", got)
+			}
 			return HTTPResponse{StatusCode: 200, Body: []byte(`{"config":{"monthlyLimit":{"val":20000}}}`)}, nil
 		},
 	})
@@ -48,6 +54,34 @@ providers:
 	}
 	if result.Annotations["plan_key"] != "x-premium-plus" || result.Annotations["plan_source"] != "billing" {
 		t.Fatalf("annotations = %#v", result.Annotations)
+	}
+}
+
+func TestFilterDoesNotQueryCLIBillingForXAIOfficialAPI(t *testing.T) {
+	cfg, _ := modelconfig.Parse([]byte(`
+providers:
+  xai:
+    plans:
+      paid-unknown:
+        excluded-models: ["grok-cli-only"]
+`))
+	engine := New()
+	engine.ApplyConfig(cfg)
+	called := false
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "xai-official", AuthProvider: "xai", AuthKind: "oauth",
+		Attributes: map[string]string{"using_api": "true"},
+		Models:     []ModelInfo{{ID: "grok-cli-only"}},
+		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+			called = true
+			return HTTPResponse{}, nil
+		},
+	})
+	if called {
+		t.Fatal("official API account queried CLI billing")
+	}
+	if !result.Handled || result.Annotations["plan_key"] != "paid-unknown" {
+		t.Fatalf("Filter() = %#v", result)
 	}
 }
 
