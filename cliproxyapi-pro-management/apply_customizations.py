@@ -1737,16 +1737,25 @@ def patch_quota_page_latest(target: Path) -> None:
     patch_quota_page_cache_refresh(target)
     insert_once(path, "import { EmptyState } from '@/components/ui/EmptyState';\n", "import { EmptyState } from '@/components/ui/EmptyState';\nimport { Input } from '@/components/ui/Input';\nimport { IconSearch } from '@/components/ui/icons';\n", 'quota_management.search_label')
     insert_once(path, "import { readQuotaUiState, writeQuotaUiState } from './uiState';\n", "import { readQuotaUiState, writeQuotaUiState } from './uiState';\nimport { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';\n", 'matchesQuotaSearch')
-    old_classification = "  const entries = useMemo(() => classifyQuotaFiles(files), [files]);\n  const tabCounts = useMemo(() => buildTabCounts(entries), [entries]);\n  const filteredEntries = useMemo(() => filterEntriesByTab(entries, tab), [entries, tab]);\n  const { pageItems, currentPage, totalPages } = useMemo(\n    () => paginate(filteredEntries, page, QUOTA_PAGE_SIZE),\n    [filteredEntries, page]\n  );"
-    text = read(path)
-    if old_classification in text:
-        write(path, text.replace(old_classification, "  const entries = useMemo(() => classifyQuotaFiles(files), [files]);", 1))
     replace_once(path, '  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const kimiQuota', '  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n  const kimiQuota')
     replace_once(path, "        codex: codexQuota,\n        kimi:", "        codex: codexQuota,\n        'gemini-cli': geminiCliQuota,\n        kimi:")
     replace_once(path, '[antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota]', '[antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]')
     marker = "  const getQuota = useCallback(\n"
-    search_block = "  const [search, setSearch] = useState('');\n  const quotaSearchStore = useMemo(\n    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n  );\n  const searchedEntries = useMemo(\n    () => entries.filter(({ file }) => matchesQuotaSearch(buildQuotaSearchValues(file, quotaSearchStore, t), search)),\n    [entries, quotaSearchStore, search, t]\n  );\n  const tabCounts = useMemo(() => buildTabCounts(searchedEntries), [searchedEntries]);\n  const filteredEntries = useMemo(() => filterEntriesByTab(searchedEntries, tab), [searchedEntries, tab]);\n  const { pageItems, currentPage, totalPages } = useMemo(\n    () => paginate(filteredEntries, page, QUOTA_PAGE_SIZE),\n    [filteredEntries, page]\n  );\n\n"
-    insert_once(path, marker, search_block + marker, 'const [search, setSearch]')
+    search_state = "  const [search, setSearch] = useState('');\n  const quotaSearchStore = useMemo(\n    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n  );\n\n"
+    insert_once(path, marker, search_state + marker, 'const [search, setSearch]')
+    entries_marker = "  const entries = useMemo(() => classifyQuotaFiles(files), [files]);\n"
+    searched_entries = entries_marker + "  const searchedEntries = useMemo(\n    () => entries.filter(({ file }) => matchesQuotaSearch(buildQuotaSearchValues(file, quotaSearchStore, t), search)),\n    [entries, quotaSearchStore, search, t]\n  );\n"
+    insert_once(path, entries_marker, searched_entries, 'const searchedEntries = useMemo(')
+    replace_once(
+        path,
+        '  const tabCounts = useMemo(() => buildTabCounts(entries), [entries]);',
+        '  const tabCounts = useMemo(() => buildTabCounts(searchedEntries), [searchedEntries]);',
+    )
+    replace_once(
+        path,
+        '  const filteredEntries = useMemo(() => filterEntriesByTab(entries, tab), [entries, tab]);',
+        '  const filteredEntries = useMemo(() => filterEntriesByTab(searchedEntries, tab), [searchedEntries, tab]);',
+    )
     insert_once(path, "        {error && (\n", "        <Input\n          type=\"search\"\n          value={search}\n          onChange={(event) => { setSearch(event.target.value); setPage(1); }}\n          placeholder={t('quota_management.search_placeholder')}\n          aria-label={t('quota_management.search_label')}\n          rightElement={<IconSearch size={18} />}\n        />\n\n        {error && (\n", 'rightElement={<IconSearch')
 
 

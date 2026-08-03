@@ -1143,12 +1143,6 @@ for target, old_call, new_call, marker in (
         'ctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream',
     ),
     (
-        auth_conductor_home_execution,
-        '\t\t\t\tresponse, errExecute = selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
-        '\t\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\tresponse, errExecute = selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
-        'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\tresponse, errExecute = selection.Executor.CountTokens',
-    ),
-    (
         auth_conductor,
         '\t\t\tresp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)\n',
         '\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\tresp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)\n',
@@ -1180,6 +1174,34 @@ for target, old_call, new_call, marker in (
     ),
 ):
     replace_once(target, old_call, new_call, marker)
+
+home_attempt_marker = '\t\t\t\tattemptCtx := coreusage.NextAttemptContext(execCtx)\n'
+closure_execution = '''\t\t\texecutorCtx := execCtx
+\t\t\tif countTokens {
+\t\t\t\texecutorCtx = withAccessTokenFingerprintObserver(execCtx, setEffectiveAuth)
+\t\t\t}
+\t\t\texecute := func() (cliproxyexecutor.Response, error) {
+\t\t\t\tif countTokens {
+\t\t\t\t\treturn selection.Executor.CountTokens(executorCtx, preparedAuth, execReq, execOpts)
+\t\t\t\t}
+\t\t\t\treturn selection.Executor.Execute(execCtx, preparedAuth, execReq, execOpts)
+\t\t\t}
+'''
+tracked_closure_execution = '''\t\t\texecute := func() (cliproxyexecutor.Response, error) {
+\t\t\t\tattemptCtx := coreusage.NextAttemptContext(execCtx)
+\t\t\t\tif countTokens {
+\t\t\t\t\tattemptCtx = withAccessTokenFingerprintObserver(attemptCtx, setEffectiveAuth)
+\t\t\t\t\treturn selection.Executor.CountTokens(attemptCtx, preparedAuth, execReq, execOpts)
+\t\t\t\t}
+\t\t\t\treturn selection.Executor.Execute(attemptCtx, preparedAuth, execReq, execOpts)
+\t\t\t}
+'''
+replace_once(
+    auth_conductor_home_execution,
+    closure_execution,
+    tracked_closure_execution,
+    home_attempt_marker,
+)
 
 usage_helpers = ROOT / 'internal/runtime/executor/helps/usage_helpers.go'
 replace_once(

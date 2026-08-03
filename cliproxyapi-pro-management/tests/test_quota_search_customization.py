@@ -25,6 +25,59 @@ export function AuthFilesPage() {
 }
 """
 
+QUOTA_PAGE_SOURCE = """import { EmptyState } from '@/components/ui/EmptyState';
+import { readQuotaUiState, writeQuotaUiState } from './uiState';
+
+export function QuotaPage() {
+  const { t } = useTranslation();
+  useEffect(() => {
+    void loadFiles();
+  }, [loadFiles]);
+
+  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
+  const claudeQuota = useQuotaStore((state) => state.claudeQuota);
+  const codexQuota = useQuotaStore((state) => state.codexQuota);
+  const kimiQuota = useQuotaStore((state) => state.kimiQuota);
+  const xaiQuota = useQuotaStore((state) => state.xaiQuota);
+
+  const quotaByType = useMemo(
+    () => ({
+        antigravity: antigravityQuota,
+        claude: claudeQuota,
+        codex: codexQuota,
+        kimi: kimiQuota,
+        xai: xaiQuota,
+      }),
+    [antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota]
+  );
+
+  const getQuota = useCallback(
+    (entry) => quotaByType[entry.type][entry.file.name],
+    [quotaByType]
+  );
+
+  const entries = useMemo(() => classifyQuotaFiles(files), [files]);
+  const tabCounts = useMemo(() => buildTabCounts(entries), [entries]);
+  const filteredEntries = useMemo(() => filterEntriesByTab(entries, tab), [entries, tab]);
+  const sortedEntries = useMemo(
+    () => sortQuotaEntries(filteredEntries, sortMode, resolveNextRecovery),
+    [filteredEntries, sortMode, resolveNextRecovery]
+  );
+  const { pageItems, currentPage, totalPages } = useMemo(
+    () => paginate(sortedEntries, page, QUOTA_PAGE_SIZE),
+    [sortedEntries, page]
+  );
+
+  return (
+    <>
+        {error && (
+          <div>{error}</div>
+        )}
+    </>
+  );
+}
+"""
+
 
 class QuotaSearchCustomizationTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -50,6 +103,33 @@ class QuotaSearchCustomizationTest(unittest.TestCase):
             self.assertIn('quotaSearchStore, t, wildcardSearch', page)
 
             CUSTOMIZATIONS.patch_auth_files_page_search_latest(target)
+            CUSTOMIZATIONS.flush_writes()
+            self.assertEqual(page, page_path.read_text())
+
+    def test_quota_page_search_preserves_upstream_sort_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir)
+            feature_dir = target / 'src/features/quota'
+            feature_dir.mkdir(parents=True)
+            page_path = feature_dir / 'QuotaPage.tsx'
+            page_path.write_text(QUOTA_PAGE_SOURCE)
+
+            CUSTOMIZATIONS.patch_quota_page_latest(target)
+            CUSTOMIZATIONS.flush_writes()
+
+            page = page_path.read_text()
+            self.assertEqual(page.count('const searchedEntries = useMemo('), 1)
+            self.assertEqual(page.count('const tabCounts = useMemo('), 1)
+            self.assertEqual(page.count('const filteredEntries = useMemo('), 1)
+            self.assertEqual(page.count('const { pageItems, currentPage, totalPages } = useMemo('), 1)
+            self.assertIn('buildTabCounts(searchedEntries)', page)
+            self.assertIn('filterEntriesByTab(searchedEntries, tab)', page)
+            self.assertIn('sortQuotaEntries(filteredEntries, sortMode, resolveNextRecovery)', page)
+            self.assertIn('paginate(sortedEntries, page, QUOTA_PAGE_SIZE)', page)
+            self.assertLess(page.index('const entries = useMemo('), page.index('const searchedEntries = useMemo('))
+            self.assertLess(page.index('const searchedEntries = useMemo('), page.index('const filteredEntries = useMemo('))
+
+            CUSTOMIZATIONS.patch_quota_page_latest(target)
             CUSTOMIZATIONS.flush_writes()
             self.assertEqual(page, page_path.read_text())
 
