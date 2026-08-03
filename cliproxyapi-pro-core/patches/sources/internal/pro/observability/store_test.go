@@ -973,6 +973,43 @@ func TestQueuedAuthRuntimeDeleteCannotBeOverwrittenByPendingSnapshot(t *testing.
 	}
 }
 
+func TestDeleteQuotaCacheKeepsAuthRuntimeStatsAndRoutingCursor(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	service := &Service{ctx: ctx, store: store}
+	SetDefaultService(service)
+	defer stopRuntimeStateWriter(service)
+
+	stats := AuthRuntimeStats{
+		AuthIndex: "idx-relogin", AuthID: "auth-relogin", SelectedCount: 4, UpdatedAtMS: 100,
+	}
+	if err := store.SetAuthRuntimeStats(ctx, stats); err != nil {
+		t.Fatalf("SetAuthRuntimeStats() error = %v", err)
+	}
+	cursor := RoutingCursorState{CursorKey: "single|codex", LastAuthID: stats.AuthID, UpdatedAtMS: 100}
+	if err := store.SetRoutingCursorState(ctx, cursor); err != nil {
+		t.Fatalf("SetRoutingCursorState() error = %v", err)
+	}
+	if err := store.SetQuotaCache(ctx, QuotaCacheEntry{
+		Provider: "codex", FileName: "account.json", Data: json.RawMessage(`{"plan":"free"}`), CachedAt: 100, ObservedAt: 100,
+	}); err != nil {
+		t.Fatalf("SetQuotaCache() error = %v", err)
+	}
+
+	if err := DeleteQuotaCache(ctx, "codex", "account.json"); err != nil {
+		t.Fatalf("DeleteQuotaCache() error = %v", err)
+	}
+	if entries, err := store.GetQuotaCache(ctx, "codex", "account.json"); err != nil || len(entries) != 0 {
+		t.Fatalf("GetQuotaCache() = %+v, %v; want empty", entries, err)
+	}
+	if got, ok, err := store.GetAuthRuntimeStats(ctx, stats.AuthIndex, stats.AuthID); err != nil || !ok || got.SelectedCount != stats.SelectedCount {
+		t.Fatalf("GetAuthRuntimeStats() = %+v, %v, %v", got, ok, err)
+	}
+	if got, ok, err := store.GetRoutingCursorState(ctx, cursor.CursorKey); err != nil || !ok || got.LastAuthID != cursor.LastAuthID {
+		t.Fatalf("GetRoutingCursorState() = %+v, %v, %v", got, ok, err)
+	}
+}
+
 func TestRuntimeStateWriterRetainsSnapshotsAfterWriteFailure(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()

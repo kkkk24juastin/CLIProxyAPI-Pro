@@ -242,3 +242,33 @@ func TestRegisterRemovesLegacyQuotaCacheFromOrdinaryAuthPersistence(t *testing.T
 		t.Fatalf("persisted quota_cache = %#v, want removed", store.saved.Metadata["quota_cache"])
 	}
 }
+
+func TestManagerUpdateKeepsCanonicalIdentityAndRuntimeStats(t *testing.T) {
+	store := &runtimeStateTestStore{}
+	manager := NewManager(store, nil, nil)
+	registered, err := manager.Register(context.Background(), &Auth{
+		ID: "codex-old.json", Provider: "codex", FileName: "codex-old.json",
+		Selected: 8, Success: 6, Failed: 2,
+		Metadata: map[string]any{"account_id": "account-1", "access_token": "old"},
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if registered == nil || registered.Index == "" {
+		t.Fatalf("registered auth = %+v", registered)
+	}
+
+	updated, err := manager.Update(context.Background(), &Auth{
+		ID: "codex-old.json", Provider: "codex", FileName: "codex-old.json",
+		Metadata: map[string]any{"account_id": "account-1", "access_token": "new"},
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if updated == nil || updated.ID != registered.ID || updated.Index != registered.Index {
+		t.Fatalf("updated identity = %+v, want id/index %q/%q", updated, registered.ID, registered.Index)
+	}
+	if updated.Selected != 8 || updated.Success != 6 || updated.Failed != 2 {
+		t.Fatalf("updated runtime totals = selected:%d success:%d failed:%d", updated.Selected, updated.Success, updated.Failed)
+	}
+}

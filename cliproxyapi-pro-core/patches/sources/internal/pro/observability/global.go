@@ -244,6 +244,19 @@ func GetAuthRuntimeStats(ctx context.Context, authIndex, authID string) (AuthRun
 	return globalService.store.GetAuthRuntimeStats(ctx, authIndex, authID)
 }
 
+// DeleteQuotaCache invalidates only cached provider quota data. Credential
+// replacement must retain auth runtime statistics and routing cursor ownership.
+func DeleteQuotaCache(ctx context.Context, provider, fileName string) error {
+	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		globalStateMu.RLock()
+		defer globalStateMu.RUnlock()
+		if globalService == nil || globalService.store == nil {
+			return nil
+		}
+		return globalService.store.DeleteQuotaCache(ctx, provider, fileName)
+	})
+}
+
 func DeleteAuthRuntimeState(ctx context.Context, authID, authIndex, fileName string) error {
 	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
 		globalStateMu.RLock()

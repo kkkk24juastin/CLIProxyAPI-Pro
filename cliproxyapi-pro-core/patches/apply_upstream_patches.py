@@ -242,6 +242,463 @@ for relative_path in new_customization_paths:
 queue_tree(PATCH_SOURCE_DIR / 'internal/pro', ROOT / 'internal/pro')
 queue_tree(PATCH_SOURCE_DIR / 'sdk/proxyutil', ROOT / 'sdk/proxyutil')
 
+codex_filename = ROOT / 'internal/auth/codex/filename.go'
+replace_once(
+    codex_filename,
+    '''// The account hash is included when available to keep accounts with the same email
+// and plan distinct. The legacy email-based format remains the fallback.
+''',
+    '''// The account hash is included when available to keep accounts with the same email
+// distinct without treating the mutable subscription plan as identity.
+''',
+    'mutable subscription plan as identity',
+)
+replace_go_function(
+    codex_filename,
+    'func CredentialFileName(',
+    '''func CredentialFileName(email, planType, hashAccountID string, includeProviderPrefix bool) string {
+	email = strings.TrimSpace(email)
+	plan := normalizePlanTypeForFilename(planType)
+	hashAccountID = strings.TrimSpace(hashAccountID)
+
+	prefix := ""
+	if includeProviderPrefix {
+		prefix = "codex"
+	}
+
+	// The account hash is the strong identity. A subscription plan is mutable
+	// metadata and must not create a second credential when the same account is
+	// upgraded or downgraded.
+	if hashAccountID != "" {
+		return fmt.Sprintf("%s-%s-%s.json", prefix, hashAccountID, email)
+	}
+
+	// Keep the existing weak-identity fallback when an account ID is unavailable.
+	// Without a strong identity, automatically collapsing credentials is unsafe.
+	if plan == "" {
+		return fmt.Sprintf("%s-%s.json", prefix, email)
+	}
+	return fmt.Sprintf("%s-%s-%s.json", prefix, email, plan)
+}
+''',
+    'A subscription plan is mutable',
+)
+
+codex_filename_test = ROOT / 'internal/auth/codex/filename_test.go'
+for old, new in (
+    ('codex-abc12345-user@example.com-team.json', 'codex-abc12345-user@example.com.json'),
+    ('codex-def67890-user@example.com-k12.json', 'codex-def67890-user@example.com.json'),
+    ('codex-abc12345-user@example.com-plus.json', 'codex-abc12345-user@example.com.json'),
+    ('codex-abc12345-user@example.com-team-plan.json', 'codex-abc12345-user@example.com.json'),
+):
+    text = read(codex_filename_test)
+    if text.count(old) != 1:
+        raise SystemExit(f'expected one Codex filename test value in {codex_filename_test}: {old!r}')
+    write(codex_filename_test, text.replace(old, new, 1))
+if 'func TestCredentialFileNameIgnoresPlanForStrongIdentity' not in read(codex_filename_test):
+    write(
+        codex_filename_test,
+        read(codex_filename_test) + '''
+func TestCredentialFileNameIgnoresPlanForStrongIdentity(t *testing.T) {
+	free := CredentialFileName("user@example.com", "free", "abc12345", true)
+	plus := CredentialFileName("user@example.com", "plus", "abc12345", true)
+	if free != plus {
+		t.Fatalf("plan change altered strong credential identity: %q != %q", free, plus)
+	}
+}
+''',
+    )
+
+codex_device = ROOT / 'sdk/auth/codex_device.go'
+replace_once(
+    codex_device,
+    '''	metadata := map[string]any{
+		"email": tokenStorage.Email,
+	}
+''',
+    '''	metadata := map[string]any{
+		"email":      tokenStorage.Email,
+		"account_id": tokenStorage.AccountID,
+	}
+''',
+    '"account_id": tokenStorage.AccountID',
+)
+
+file_token_store = ROOT / 'sdk/auth/filestore.go'
+replace_once(
+    file_token_store,
+    '''	path, err := s.resolveAuthPath(auth)
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", fmt.Errorf("auth filestore: missing file path attribute for %s", auth.ID)
+	}
+
+	if auth.Disabled {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+			return "", nil
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+''',
+    '''	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.reuseExistingProviderIdentity(auth); err != nil {
+		return "", err
+	}
+	path, err := s.resolveAuthPath(auth)
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", fmt.Errorf("auth filestore: missing file path attribute for %s", auth.ID)
+	}
+
+	if auth.Disabled {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+			return "", nil
+		}
+	}
+''',
+    's.reuseExistingProviderIdentity(auth)',
+)
+insert_before(
+    file_token_store,
+    'func (s *FileTokenStore) resolveAuthPath(auth *cliproxyauth.Auth) (string, error) {\n',
+    '''const reusedExistingAuthIdentityAttribute = "reused_existing_auth_identity"
+
+// TakeReusedExistingAuthIdentity reports and consumes the transient marker set
+// when Save updates an existing strong provider identity in place.
+func TakeReusedExistingAuthIdentity(auth *cliproxyauth.Auth) bool {
+	if auth == nil || auth.Attributes == nil {
+		return false
+	}
+	reused := strings.EqualFold(strings.TrimSpace(auth.Attributes[reusedExistingAuthIdentityAttribute]), "true")
+	delete(auth.Attributes, reusedExistingAuthIdentityAttribute)
+	return reused
+}
+
+func authMetadataString(metadata map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := metadata[key].(string); ok {
+			if value = strings.TrimSpace(value); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+type providerFileIdentity struct {
+	provider  string
+	strongKey string
+	companion string
+}
+
+func resolveProviderFileIdentity(provider string, metadata map[string]any) (providerFileIdentity, bool) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" || metadata == nil {
+		return providerFileIdentity{}, false
+	}
+	email := strings.ToLower(authMetadataString(metadata, "email", "client_email"))
+	identity := providerFileIdentity{provider: provider}
+	switch provider {
+	case "codex":
+		identity.strongKey = authMetadataString(metadata, "account_id", "chatgpt_account_id", "chatgptAccountId")
+		identity.companion = email
+	case "claude":
+		identity.strongKey = authMetadataString(metadata, "account_uuid", "account_id")
+		identity.companion = email
+	case "xai":
+		identity.strongKey = authMetadataString(metadata, "sub", "subject", "user_id")
+		identity.companion = email
+	case "antigravity":
+		// Google userinfo supplies a verified account email and the current
+		// upstream already treats it as the credential filename identity.
+		identity.strongKey = email
+	case "gemini-cli", "gemini", "vertex":
+		identity.strongKey = authMetadataString(metadata, "project_id")
+		identity.companion = email
+	default:
+		// Providers such as Kimi currently expose only device/token material.
+		// Treating those values as account identity would merge unrelated users.
+		return providerFileIdentity{}, false
+	}
+	if identity.strongKey == "" {
+		return providerFileIdentity{}, false
+	}
+	return identity, true
+}
+
+func authProviderFileIdentity(auth *cliproxyauth.Auth) (providerFileIdentity, bool) {
+	if auth == nil {
+		return providerFileIdentity{}, false
+	}
+	provider := strings.TrimSpace(auth.Provider)
+	if provider == "" && auth.Metadata != nil {
+		provider = authMetadataString(auth.Metadata, "type")
+	}
+	return resolveProviderFileIdentity(provider, auth.Metadata)
+}
+
+func storedProviderFileIdentity(path string) (providerFileIdentity, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil || len(raw) == 0 {
+		return providerFileIdentity{}, false
+	}
+	metadata := make(map[string]any)
+	if err = json.Unmarshal(raw, &metadata); err != nil {
+		return providerFileIdentity{}, false
+	}
+	return resolveProviderFileIdentity(authMetadataString(metadata, "type"), metadata)
+}
+
+// reuseExistingProviderIdentity follows an active-account upsert model: strong
+// identity is only used to find the existing credential, while its file-backed
+// ID and stable index remain the canonical history/runtime keys.
+func (s *FileTokenStore) reuseExistingProviderIdentity(auth *cliproxyauth.Auth) error {
+	if auth == nil {
+		return nil
+	}
+	if auth.Attributes != nil {
+		delete(auth.Attributes, reusedExistingAuthIdentityAttribute)
+		if strings.TrimSpace(auth.Attributes[cliproxyauth.AttributePath]) != "" ||
+			strings.TrimSpace(auth.Attributes[cliproxyauth.AttributeSource]) != "" {
+			return nil
+		}
+	}
+	identity, ok := authProviderFileIdentity(auth)
+	if !ok {
+		return nil
+	}
+	baseDir := s.baseDirSnapshot()
+	if baseDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(baseDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("auth filestore: list provider identities: %w", err)
+	}
+
+	matches := make([]string, 0, 1)
+	for _, entry := range entries {
+		if entry == nil || entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
+			continue
+		}
+		path := filepath.Join(baseDir, entry.Name())
+		existing, exists := storedProviderFileIdentity(path)
+		if !exists || existing.provider != identity.provider || existing.strongKey != identity.strongKey {
+			continue
+		}
+		if identity.companion != "" && existing.companion != "" &&
+			!strings.EqualFold(identity.companion, existing.companion) {
+			continue
+		}
+		matches = append(matches, path)
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	if len(matches) > 1 {
+		return fmt.Errorf("auth filestore: multiple %s credentials match the same strong identity", identity.provider)
+	}
+
+	path := matches[0]
+	id := s.idFor(path, baseDir)
+	auth.ID = id
+	auth.Index = ""
+	auth.FileName = id
+	if auth.Attributes == nil {
+		auth.Attributes = make(map[string]string)
+	}
+	auth.Attributes[cliproxyauth.AttributePath] = path
+	auth.Attributes[cliproxyauth.AttributeSource] = path
+	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceFile
+	auth.Attributes[reusedExistingAuthIdentityAttribute] = "true"
+	return nil
+}
+
+''',
+    'func (s *FileTokenStore) reuseExistingProviderIdentity',
+)
+
+file_token_store_test = ROOT / 'sdk/auth/filestore_test.go'
+if 'func TestFileTokenStoreSaveReusesExistingCodexStrongIdentity' not in read(file_token_store_test):
+    write(
+        file_token_store_test,
+        read(file_token_store_test) + '''
+
+func TestFileTokenStoreSaveReusesExistingCodexStrongIdentity(t *testing.T) {
+	baseDir := t.TempDir()
+	oldName := "codex-abc12345-user@example.com-free.json"
+	oldPath := filepath.Join(baseDir, oldName)
+	if err := os.WriteFile(oldPath, []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com","access_token":"old"}`), 0o600); err != nil {
+		t.Fatalf("write old auth: %v", err)
+	}
+
+	store := NewFileTokenStore()
+	store.SetBaseDir(baseDir)
+	auth := &cliproxyauth.Auth{
+		ID:       "codex-abc12345-user@example.com.json",
+		FileName: "codex-abc12345-user@example.com.json",
+		Provider: "codex",
+		Metadata: map[string]any{
+			"type":         "codex",
+			"account_id":   "acct-1",
+			"email":        "user@example.com",
+			"access_token": "new",
+		},
+	}
+
+	savedPath, err := store.Save(context.Background(), auth)
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if savedPath != oldPath || auth.ID != oldName || auth.FileName != oldName {
+		t.Fatalf("reused identity = path:%q id:%q file:%q, want %q", savedPath, auth.ID, auth.FileName, oldName)
+	}
+	if !TakeReusedExistingAuthIdentity(auth) || TakeReusedExistingAuthIdentity(auth) {
+		t.Fatal("reused identity marker was not consumed exactly once")
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "codex-abc12345-user@example.com.json")); !os.IsNotExist(err) {
+		t.Fatalf("Save() created a duplicate credential: %v", err)
+	}
+	persisted, err := os.ReadFile(oldPath)
+	if err != nil {
+		t.Fatalf("read reused auth: %v", err)
+	}
+	if !jsonEqual(persisted, []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com","access_token":"new","disabled":false}`)) {
+		t.Fatalf("reused auth content = %s", persisted)
+	}
+}
+
+func TestFileTokenStoreSaveDoesNotMergeCodexIdentityWithoutGuardedEmail(t *testing.T) {
+	baseDir := t.TempDir()
+	oldPath := filepath.Join(baseDir, "codex-old.json")
+	if err := os.WriteFile(oldPath, []byte(`{"type":"codex","account_id":"acct-1","email":"first@example.com"}`), 0o600); err != nil {
+		t.Fatalf("write old auth: %v", err)
+	}
+
+	store := NewFileTokenStore()
+	store.SetBaseDir(baseDir)
+	auth := &cliproxyauth.Auth{
+		ID: "codex-new.json", FileName: "codex-new.json", Provider: "codex",
+		Metadata: map[string]any{"type": "codex", "account_id": "acct-1", "email": "second@example.com"},
+	}
+	savedPath, err := store.Save(context.Background(), auth)
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if savedPath != filepath.Join(baseDir, "codex-new.json") || TakeReusedExistingAuthIdentity(auth) {
+		t.Fatalf("conflicting email reused old identity: path=%q", savedPath)
+	}
+}
+
+func TestFileTokenStoreSaveReusesProviderScopedStrongIdentities(t *testing.T) {
+	tests := []struct {
+		provider string
+		oldJSON  string
+		metadata map[string]any
+	}{
+		{
+			provider: "claude",
+			oldJSON:  `{"type":"claude","account_uuid":"account-1","email":"user@example.com"}`,
+			metadata: map[string]any{"type": "claude", "account_uuid": "account-1", "email": "user@example.com"},
+		},
+		{
+			provider: "xai",
+			oldJSON:  `{"type":"xai","sub":"subject-1","email":"user@example.com"}`,
+			metadata: map[string]any{"type": "xai", "sub": "subject-1", "email": "user@example.com"},
+		},
+		{
+			provider: "antigravity",
+			oldJSON:  `{"type":"antigravity","email":"user@example.com","project_id":"old-project"}`,
+			metadata: map[string]any{"type": "antigravity", "email": "user@example.com", "project_id": "new-project"},
+		},
+		{
+			provider: "vertex",
+			oldJSON:  `{"type":"vertex","project_id":"project-1","email":"service@example.com"}`,
+			metadata: map[string]any{"type": "vertex", "project_id": "project-1", "email": "service@example.com"},
+		},
+		{
+			provider: "gemini-cli",
+			oldJSON:  `{"type":"gemini-cli","project_id":"project-1","email":"user@example.com"}`,
+			metadata: map[string]any{"type": "gemini-cli", "project_id": "project-1", "email": "user@example.com"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			baseDir := t.TempDir()
+			oldPath := filepath.Join(baseDir, tt.provider+"-old.json")
+			if err := os.WriteFile(oldPath, []byte(tt.oldJSON), 0o600); err != nil {
+				t.Fatalf("write old auth: %v", err)
+			}
+			store := NewFileTokenStore()
+			store.SetBaseDir(baseDir)
+			auth := &cliproxyauth.Auth{
+				ID: tt.provider + "-new.json", FileName: tt.provider + "-new.json",
+				Provider: tt.provider, Metadata: tt.metadata,
+			}
+			savedPath, err := store.Save(context.Background(), auth)
+			if err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			if savedPath != oldPath || !TakeReusedExistingAuthIdentity(auth) {
+				t.Fatalf("provider identity was not reused: path=%q", savedPath)
+			}
+		})
+	}
+}
+
+func TestFileTokenStoreSaveDoesNotGuessUnsupportedProviderIdentity(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "kimi-old.json"), []byte(`{"type":"kimi","device_id":"device-1"}`), 0o600); err != nil {
+		t.Fatalf("write old auth: %v", err)
+	}
+	store := NewFileTokenStore()
+	store.SetBaseDir(baseDir)
+	auth := &cliproxyauth.Auth{
+		ID: "kimi-new.json", FileName: "kimi-new.json", Provider: "kimi",
+		Metadata: map[string]any{"type": "kimi", "device_id": "device-1"},
+	}
+	savedPath, err := store.Save(context.Background(), auth)
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if savedPath != filepath.Join(baseDir, "kimi-new.json") || TakeReusedExistingAuthIdentity(auth) {
+		t.Fatalf("unsupported provider identity was guessed: path=%q", savedPath)
+	}
+}
+
+func TestFileTokenStoreSaveRejectsAmbiguousCodexStrongIdentity(t *testing.T) {
+	baseDir := t.TempDir()
+	for _, name := range []string{"codex-old-free.json", "codex-old-plus.json"} {
+		if err := os.WriteFile(filepath.Join(baseDir, name), []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com"}`), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	store := NewFileTokenStore()
+	store.SetBaseDir(baseDir)
+	auth := &cliproxyauth.Auth{
+		ID: "codex-new.json", FileName: "codex-new.json", Provider: "codex",
+		Metadata: map[string]any{"type": "codex", "account_id": "acct-1", "email": "user@example.com"},
+	}
+	if _, err := store.Save(context.Background(), auth); err == nil {
+		t.Fatal("Save() accepted an ambiguous strong identity")
+	}
+}
+''',
+    )
+
 proxyutil_source = ROOT / 'sdk/proxyutil/proxy.go'
 replace_once(
     proxyutil_source,
@@ -2399,10 +2856,38 @@ replace_once(
 
 auth_files_handler = ROOT / 'internal/api/handlers/management/auth_files.go'
 auth_files_crud_handler = ROOT / 'internal/api/handlers/management/auth_files_crud.go'
+auth_files_fields_handler = ROOT / 'internal/api/handlers/management/auth_files_fields.go'
 add_go_import(
     auth_files_crud_handler,
     '"github.com/gin-gonic/gin"\n',
     '\t"' + import_path('internal/embeddedusage') + '"\n',
+)
+add_go_import(
+    auth_files_fields_handler,
+    f'\t"{import_path("internal/credentialweight")}"\n',
+    f'\t"{import_path("internal/embeddedusage")}"\n',
+)
+replace_once(
+    auth_files_fields_handler,
+    '''\tsavedPath, errSave := store.Save(ctx, record)
+\tif errSave != nil {
+\t\treturn savedPath, errSave
+\t}
+\tif h.postAuthPersistHook != nil {
+''',
+    '''\tsavedPath, errSave := store.Save(ctx, record)
+\tif errSave != nil {
+\t\treturn savedPath, errSave
+\t}
+\tif sdkAuth.TakeReusedExistingAuthIdentity(record) {
+\t\t// The stable auth ID/index and runtime statistics remain attached to the
+\t\t// existing file. Only quota is invalidated because credential or
+\t\t// entitlement changes make the previous snapshot unsafe to reuse.
+\t\t_ = embeddedusage.DeleteQuotaCache(ctx, record.Provider, record.FileName)
+\t}
+\tif h.postAuthPersistHook != nil {
+''',
+    'sdkAuth.TakeReusedExistingAuthIdentity(record)',
 )
 replace_once(
     auth_files_handler,
@@ -2776,6 +3261,7 @@ subprocess.run([
         for name in ACCOUNT_INSPECTION_SOURCE_FILES
     ],
     'internal/api/handlers/management/account_inspection_host.go',
+    'internal/api/handlers/management/auth_files_fields.go',
     'internal/api/handlers/management/auth_files.go',
     'internal/api/handlers/management/handler.go',
     'internal/api/handlers/management/management_panel.go',
@@ -2789,6 +3275,8 @@ subprocess.run([
     'internal/api/handlers/management/pro_management_runtime.go',
     'internal/client/claude/models/models.go',
     'internal/client/claude/models/models_test.go',
+    'internal/auth/codex/filename.go',
+    'internal/auth/codex/filename_test.go',
     'internal/config/sdk_config.go',
     'internal/logging/requestid.go',
     'internal/logging/requestmeta.go',
@@ -2911,6 +3399,9 @@ subprocess.run([
     'internal/runtime/executor/xai_websockets_executor.go',
     'sdk/api/handlers/claude/code_handlers.go',
     'sdk/api/handlers/claude/code_handlers_model_test.go',
+    'sdk/auth/codex_device.go',
+    'sdk/auth/filestore.go',
+    'sdk/auth/filestore_test.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
     'sdk/cliproxy/auth/conductor.go',

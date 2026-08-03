@@ -79,6 +79,7 @@ var (
 	ListRoutingCursorStates                   = proobservability.ListRoutingCursorStates
 	QueueAuthRuntimeStats                     = proobservability.QueueAuthRuntimeStats
 	GetAuthRuntimeStats                       = proobservability.GetAuthRuntimeStats
+	DeleteQuotaCache                          = proobservability.DeleteQuotaCache
 	DeleteAuthRuntimeState                    = proobservability.DeleteAuthRuntimeState
 	ObserveXAIQuotaResponse                   = proobservability.ObserveXAIQuotaResponse
 	MergeXAIQuotaCache                        = proobservability.MergeXAIQuotaCache
