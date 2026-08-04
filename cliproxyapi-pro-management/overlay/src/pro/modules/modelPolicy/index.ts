@@ -1,0 +1,1 @@
+export { modelPolicyModule } from './manifest';

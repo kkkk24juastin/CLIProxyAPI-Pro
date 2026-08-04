@@ -5,22 +5,31 @@ from pathlib import Path
 
 PAGE_PATH = (
     Path(__file__).resolve().parents[1]
-    / 'overlay/src/pages/MonitoringCenterPage.tsx'
+    / 'overlay/src/pro/modules/monitoring/MonitoringCenterPage.tsx'
 )
 ACCOUNT_INSPECTION_PAGE_PATH = (
     Path(__file__).resolve().parents[1]
-    / 'overlay/src/pages/AccountInspectionPage.tsx'
+    / 'overlay/src/pro/modules/inspection/AccountInspectionPage.tsx'
 )
 LOCALES_PATH = Path(__file__).resolve().parents[1] / 'monitoring-locales.json'
 STYLE_PATH = (
     Path(__file__).resolve().parents[1]
-    / 'overlay/src/features/monitoring/monitoring.module.scss'
+    / 'overlay/src/pro/modules/monitoring/features/monitoring.module.scss'
 )
 STYLE_DIR = STYLE_PATH.parent / 'styles'
 REALTIME_HOOK_PATH = (
     Path(__file__).resolve().parents[1]
-    / 'overlay/src/features/monitoring/hooks/useRealtimeLogData.ts'
+    / 'overlay/src/pro/modules/monitoring/features/hooks/useRealtimeLogData.ts'
 )
+REALTIME_PREFERENCES_PATH = (
+    Path(__file__).resolve().parents[1]
+    / 'overlay/src/pro/modules/monitoring/features/realtimeLogPreferences.ts'
+)
+ACCOUNT_PLAN_PATH = (
+    Path(__file__).resolve().parents[1]
+    / 'overlay/src/pro/modules/quota/accountPlan.ts'
+)
+LOCALES_PATH = Path(__file__).resolve().parents[1] / 'monitoring-locales.json'
 
 
 def read_monitoring_styles() -> str:
@@ -40,17 +49,11 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
         self.assertIn("{t('usage_stats.monitoring_settings')}", button)
         self.assertNotIn("isMonitoringSettingsLoading ? t('common.loading')", button)
 
-    def test_pagination_uses_the_localized_usage_stats_key(self) -> None:
+    def test_pagination_uses_the_localized_monitoring_key(self) -> None:
         sources = [PAGE_PATH.read_text(), ACCOUNT_INSPECTION_PAGE_PATH.read_text()]
-        self.assertTrue(any("t('usage_stats.pagination_info'" in source for source in sources))
+        self.assertTrue(all("t('monitoring.pagination_info'" in source for source in sources))
         for source in sources:
-            self.assertNotIn("t('monitoring.pagination_info'", source)
-
-        locales = json.loads(LOCALES_PATH.read_text())
-        self.assertEqual({'en.json', 'ru.json', 'zh-CN.json', 'zh-TW.json'}, set(locales))
-        for locale, additions in locales.items():
-            with self.subTest(locale=locale):
-                self.assertTrue(additions['usage_stats']['pagination_info'])
+            self.assertNotIn("t('usage_stats.pagination_info'", source)
 
     def test_realtime_logs_pause_auto_refresh_during_browsing(self) -> None:
         source = PAGE_PATH.read_text()
@@ -92,6 +95,26 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
         self.assertIn("height: min(620px, 68vh);", styles)
         self.assertIn(".realtimeUpdateBar {\n  position: absolute;", styles)
         self.assertIn("flex-wrap: nowrap;", styles)
+
+    def test_realtime_logs_show_account_plan_from_shared_quota_sources(self) -> None:
+        source = PAGE_PATH.read_text()
+        preferences = REALTIME_PREFERENCES_PATH.read_text()
+        account_plan = ACCOUNT_PLAN_PATH.read_text()
+        locales = LOCALES_PATH.read_text()
+
+        self.assertIn("'accountPlan'", preferences)
+        self.assertIn("shouldMigrateAccountPlan", preferences)
+        self.assertIn("label: t('monitoring.column_account_plan')", source)
+        self.assertIn("authFileByAuthIndex.get(row.authIndex)", source)
+        self.assertIn("accountPlan: resolveAccountPlanLabel({", source)
+        self.assertIn("quotaStore.antigravityQuota[fileName]", account_plan)
+        self.assertIn("quotaStore.claudeQuota[fileName]", account_plan)
+        self.assertIn("quotaStore.codexQuota[fileName]", account_plan)
+        self.assertIn("quotaStore.geminiCliQuota[fileName]", account_plan)
+        self.assertIn("quotaStore.kimiQuota[fileName]", account_plan)
+        self.assertIn("quotaStore.xaiQuota[fileName]", account_plan)
+        self.assertIn('"column_account_plan": "Account Plan"', locales)
+        self.assertIn('"column_account_plan": "账号套餐"', locales)
 
 
 if __name__ == '__main__':

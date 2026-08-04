@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	proquota "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/quota"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -79,7 +80,7 @@ func TestLegacyGeminiCLIProjectIDUsesFirstVirtualProject(t *testing.T) {
 }
 
 func TestLegacyGeminiCLIQuotaItemsInferExhaustedBucket(t *testing.T) {
-	items := legacyGeminiCLIQuotaItems(map[string]any{"buckets": []any{
+	items := proquota.GeminiCLIQuotaItems(map[string]any{"buckets": []any{
 		map[string]any{"modelId": "gemini-4-pro-preview", "remainingAmount": float64(0), "resetTime": "2026-01-01T00:00:00Z"},
 	}})
 	if len(items) != 1 || items[0].RemainingFraction == nil || *items[0].RemainingFraction != 0 {
@@ -147,7 +148,7 @@ func TestLegacyGeminiCLIQuotaAdapterUsesRegisteredExecutorAndRetainsPlan(t *test
 }
 
 func TestLegacyGeminiCLIQuotaPlanPrefersPaidTier(t *testing.T) {
-	plan := legacyGeminiCLIQuotaPlan(map[string]any{
+	plan := proquota.GeminiCLIQuotaPlan(map[string]any{
 		"response": map[string]any{
 			"currentTier": map[string]any{"id": "free-tier"},
 			"paidTier": map[string]any{
@@ -162,7 +163,7 @@ func TestLegacyGeminiCLIQuotaPlanPrefersPaidTier(t *testing.T) {
 }
 
 func TestLegacyGeminiCLIQuotaPlanUnwrapsJSONStringBody(t *testing.T) {
-	plan := legacyGeminiCLIQuotaPlan(map[string]any{
+	plan := proquota.GeminiCLIQuotaPlan(map[string]any{
 		"bodyText": `{"currentTier":{"id":"standard-tier","name":"Standard"}}`,
 	}, 123)
 	if plan == nil || plan.ID != "standard-tier" || plan.Kind != "standard" {
@@ -171,7 +172,7 @@ func TestLegacyGeminiCLIQuotaPlanUnwrapsJSONStringBody(t *testing.T) {
 }
 
 func TestLegacyGeminiCLIQuotaPlanSkipsUnrelatedWrapper(t *testing.T) {
-	plan := legacyGeminiCLIQuotaPlan(map[string]any{
+	plan := proquota.GeminiCLIQuotaPlan(map[string]any{
 		"body":     map[string]any{"status": "ok"},
 		"response": map[string]any{"currentTier": map[string]any{"id": "legacy-tier"}},
 	}, 123)
@@ -181,7 +182,7 @@ func TestLegacyGeminiCLIQuotaPlanSkipsUnrelatedWrapper(t *testing.T) {
 }
 
 func TestLegacyGeminiCLIQuotaPlanUsesDefaultAllowedTier(t *testing.T) {
-	plan := legacyGeminiCLIQuotaPlan(map[string]any{
+	plan := proquota.GeminiCLIQuotaPlan(map[string]any{
 		"allowedTiers": []any{
 			map[string]any{"id": "legacy-tier", "isDefault": false},
 			map[string]any{"id": "free-tier", "name": "Free", "isDefault": true},

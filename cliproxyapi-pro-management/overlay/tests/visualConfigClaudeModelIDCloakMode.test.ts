@@ -2,10 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createElement, useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { parse as parseYaml } from 'yaml';
-import {
-  parseClaudeModelIDCloakMode,
-  useVisualConfig,
-} from '../src/hooks/useVisualConfig';
+import { parseClaudeModelIDCloakMode, useVisualConfig } from '../src/hooks/useVisualConfig';
 
 describe('visual config Claude model ID cloak mode', () => {
   test('normalizes unsupported values to auto', () => {
@@ -39,7 +36,6 @@ describe('visual config Claude model ID cloak mode', () => {
 
     const markup = renderToStaticMarkup(createElement(Harness));
     const result = markup.slice('<pre>'.length, -'</pre>'.length);
-
     expect(parseYaml(result)).toEqual({ 'claude-model-id-cloak-mode': 'never' });
   });
 });

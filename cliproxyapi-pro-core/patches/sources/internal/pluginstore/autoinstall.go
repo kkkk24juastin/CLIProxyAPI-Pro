@@ -38,6 +38,7 @@ type AutoInstallConfig interface {
 	PluginAutoInstallEnabled() bool
 	PluginAutoInstallDir() string
 	PluginAutoInstallStoreSources() []string
+	PluginAutoInstallStoreAuth() []AuthConfig
 	PluginAutoInstallEnabledIDs() []string
 }
 
@@ -128,10 +129,11 @@ func ensureConfiguredPluginsInstalled(ctx context.Context, cfg AutoInstallConfig
 	if httpClient == nil {
 		httpClient = autoInstallHTTPClient(cfg.PluginAutoInstallProxyURL())
 	}
+	storeAuth := NormalizeAuthConfigs(cfg.PluginAutoInstallStoreAuth())
 
 	matches := make(map[string][]autoInstallSourcePlugin, len(missingIDs))
 	for _, source := range sources {
-		client := Client{HTTPClient: httpClient, RegistryURL: source.URL}
+		client := Client{HTTPClient: httpClient, RegistryURL: source.URL, Auth: storeAuth}
 		registry, errRegistry := client.FetchRegistry(ctx)
 		if errRegistry != nil {
 			report.Warnings = append(report.Warnings, AutoInstallWarning{
@@ -172,7 +174,7 @@ func ensureConfiguredPluginsInstalled(ctx context.Context, cfg AutoInstallConfig
 			continue
 		case 1:
 			candidate := candidates[0]
-			result, errInstall := installer(ctx, Client{HTTPClient: httpClient, RegistryURL: candidate.source.URL}, candidate.plugin, InstallOptions{
+			result, errInstall := installer(ctx, Client{HTTPClient: httpClient, RegistryURL: candidate.source.URL, Auth: storeAuth}, candidate.plugin, InstallOptions{
 				PluginsDir: cfg.PluginAutoInstallDir(),
 				GOOS:       goos,
 				GOARCH:     goarch,

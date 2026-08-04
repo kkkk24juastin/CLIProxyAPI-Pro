@@ -3,7 +3,7 @@ import type { AuthFileItem } from '@/types';
 import {
   compareAuthFilesByPlanDescending,
   isAuthFilePlanSortProvider,
-} from '@/features/authFiles/planSort';
+} from '@/pro/modules/quota/planSort';
 
 type PlanSortQuotaStore = Parameters<typeof compareAuthFilesByPlanDescending>[2];
 
@@ -78,6 +78,7 @@ describe('auth-file plan sorting', () => {
       file('supergrok.json', 'xai'),
       file('premium-plus.json', 'xai'),
       file('heavy.json', 'xai'),
+      file('paid.json', 'xai'),
     ];
     const store = quotaStore({
       xaiQuota: {
@@ -85,6 +86,7 @@ describe('auth-file plan sorting', () => {
         'supergrok.json': { billing: { monthlyLimitCents: 15_000 } },
         'premium-plus.json': { billing: { monthlyLimitCents: 20_000 } },
         'heavy.json': { billing: { monthlyLimitCents: 150_000 } },
+        'paid.json': { billing: { monthlyLimitCents: null, planType: 'paid' } },
       },
     } as unknown as Partial<PlanSortQuotaStore>);
 
@@ -94,6 +96,7 @@ describe('auth-file plan sorting', () => {
       'heavy.json',
       'premium-plus.json',
       'supergrok.json',
+      'paid.json',
       'free.json',
     ]);
   });

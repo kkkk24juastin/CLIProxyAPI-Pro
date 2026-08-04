@@ -6,6 +6,16 @@
 
 ## 定制内容
 
+### 代理池页面
+
+新增 `/proxy-pool` 顶级页面，管理 Core 二进制内建代理池。页面可配置 HTTP/HTTPS/SOCKS5/SOCKS5H 节点、轮询策略、权重、健康检查、隔离和故障转移，并提供批量粘贴导入、节点搜索、筛选结果批量启停、快速复制、未保存草稿测试和手动解除隔离。运行区展示成功率、失败数、活动连接、最近成功/失败、配置代次和健康检查时间。
+
+新增 `/oauth-model-policy` 顶级页面，管理 Core 二进制内建模型策略。页面按 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi 标签页编辑套餐模型排除规则，支持自定义套餐，并区分套餐识别失败使用的 `_unknown` 与已识别套餐缺少专属规则时使用的 `_default`。同时可配置缓存时间和提供商探测超时。
+
+页面通过原生管理 API 开关运行时代理接管，不修改 `config.yaml` 或根 `proxy-url`；带独立 `proxy-url` 的凭证会作为绕过项明确列出。两项功能配置均持久化到 usage SQLite 的 `pro_settings`，健康状态和连接统计仍属于进程级运行数据。
+
+轮换粒度是 SOCKS5 TCP tunnel，不保证每个复用的 HTTP 请求都切换节点。默认 `fail-open=false`，避免所有代理失效时静默直连。
+
 ### 请求监控页面
 
 新增顶级监控路由：
@@ -60,8 +70,6 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 
 各 provider 分组的“刷新全部凭证”会启动后端 `account-inspection/quota-refresh` 持久任务，不再由浏览器并发请求所有账号。按钮显示完成进度，页面重开后会重新接管运行中的任务，结束时按 quota-cache generation 重新加载 SQLite 快照。任务仅覆盖该 provider 的启用凭证。
 
-各 provider 分组的“刷新全部凭证”会启动后端 `account-inspection/quota-refresh` 持久任务，不再由浏览器并发请求所有账号。按钮显示完成进度，页面重开后会重新接管运行中的任务，结束时按 quota-cache generation 重新加载 SQLite 快照。任务仅覆盖该 provider 的启用凭证。
-
 支持的配额 provider：
 
 - Antigravity
@@ -71,7 +79,7 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - Kimi
 - xAI
 
-当 `src/config/features.ts` 中的特性开关启用时，配额卡片还会显示缓存时间戳，并支持成功状态下的单卡刷新。
+当 `src/pro/modules/quota/features.ts` 中的特性开关启用时，配额卡片还会显示缓存时间戳，并支持成功状态下的单卡刷新。
 
 ### 账号巡检页面
 
@@ -154,24 +162,25 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - `Select` 的 `triggerClassName` 和 `dropdownClassName` props。
 - `maskSensitiveText` 工具函数。
 - quota state 类型和 success state 中的 `cachedAt` 字段。
+- 管理中心版本卡片的“检查更新”按钮；调用后端 `POST /management-panel/check-update`，仅在 latest release 资源哈希变化时替换面板，并在实际更新后重新加载页面。
 
 请求监控采用“首屏快照 + SSE 增量 + cursor 追平”同步链路，并按事件 ID 去重。趋势图、模型排行和 API Key 排行优先使用 `/usage/aggregates` 服务端聚合，接口不可用时自动回退到本地明细计算。页面隐藏时会暂停 SSE 和 React 增量刷新，回到前台后再按 cursor 补齐；标题区会展示实时、重连、后台暂停、异常和最近事件时间。
 
 ## 目录结构
 
 - `overlay/` — 直接复制到 upstream checkout 的新增/覆盖文件。
-- `overlay/src/pages/MonitoringCenterPage.tsx` — 请求监控页面。
-- `overlay/src/pages/AccountInspectionPage.tsx` — 账号巡检页面。
-- `overlay/src/pages/RoutingPolicyPage.tsx` — 路由策略和请求状态保护页面。
-- `overlay/src/features/monitoring/` — 监控与巡检逻辑。
-- `overlay/src/extensions/quota/` — SQLite 配额持久化集成。
+- `overlay/src/pro/modules/monitoring/` — 请求监控、用量分析与备份 UI。
+- `overlay/src/pro/modules/inspection/` — 账号巡检页面、状态与操作逻辑。
+- `overlay/src/pro/modules/routing/` — 路由策略和请求状态保护 UI。
+- `overlay/src/pro/modules/proxyPool/` 与 `modelPolicy/` — 独立业务模块页面及 API。
+- `overlay/src/pro/modules/quota/` — SQLite 配额持久化、排序与 provider 扩展。
+- `overlay/src/pro/modules/*/manifest.tsx` — 各业务模块声明自己的路由、导航和启动副作用；`registry.tsx` 只维护模块清单并派生宿主投影，`ProBootstrap.tsx` 负责认证后挂载。
+- `overlay/src/pro/shared/` — 与业务域无关的共享 UI 模型；业务模块只能通过其他模块的 `index.ts` 公开面依赖，禁止 monitoring/inspection 等模块互相引用内部 `features/` 或样式文件。
 - `overlay/src/services/api/` — 新增 API clients。
 - `overlay-replacements.json` — 对有意覆盖 upstream 同路径文件的 full-file replacements，记录已审阅的 upstream SHA-256 与替换原因。
 - `monitoring-locales.json` — 合并进 upstream locale 文件的多语言文案。
 - `apply_customizations.py` — 将全部定制应用到目标 upstream checkout。
 - `apply.sh` — `apply_customizations.py` 的 shell 包装脚本。
-- `quota-persistence.patch` — 历史补丁文件，保留用于参考；当前构建使用 `apply_customizations.py`。
-
 Overlay collision 预检会校验每个已审阅替换的 upstream 内容。upstream 文件变化时必须显式更新 `overlay-replacements.json`；本地替换通过正常 PR diff 和行为测试审查，新的未审阅路径冲突会在复制任何 overlay 文件前被拒绝。
 
 ## 本地应用

@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildAggregateSummary,
-} from '../src/features/monitoring/monitoringAggregates';
-import type { UsageAggregateBucket } from '../src/features/monitoring/hooks/useUsageAggregates';
+} from '../src/pro/modules/monitoring/features/monitoringAggregates';
+import type { UsageAggregateBucket } from '../src/pro/modules/monitoring/features/hooks/useUsageAggregates';
 
 const bucket = (overrides: Partial<UsageAggregateBucket> = {}): UsageAggregateBucket => ({
   bucketStartMs: 100,

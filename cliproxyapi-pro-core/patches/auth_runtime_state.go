@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage"
+	prorouting "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/routing"
 )
 
 func authRuntimeIdentityFingerprint(auth *Auth) string {
@@ -53,12 +54,8 @@ func cleanupLegacyQuotaCacheOnRegister(auth *Auth) {
 	delete(auth.Metadata, "quota_cache")
 }
 
-func applyStoredAuthRuntimeStats(auth *Auth, stored embeddedusage.AuthRuntimeStats) bool {
+func applyAuthRuntimeStats(auth *Auth, stored embeddedusage.AuthRuntimeStats) bool {
 	if auth == nil {
-		return false
-	}
-	fingerprint := authRuntimeIdentityFingerprint(auth)
-	if stored.IdentityFingerprint != "" && fingerprint != "" && stored.IdentityFingerprint != fingerprint {
 		return false
 	}
 	auth.Selected = stored.SelectedCount
@@ -77,6 +74,17 @@ func applyStoredAuthRuntimeStats(auth *Auth, stored embeddedusage.AuthRuntimeSta
 		}
 	}
 	return true
+}
+
+func applyStoredAuthRuntimeStats(auth *Auth, stored embeddedusage.AuthRuntimeStats) bool {
+	if auth == nil {
+		return false
+	}
+	fingerprint := authRuntimeIdentityFingerprint(auth)
+	if stored.IdentityFingerprint != "" && fingerprint != "" && stored.IdentityFingerprint != fingerprint {
+		return false
+	}
+	return applyAuthRuntimeStats(auth, stored)
 }
 
 func authRuntimeStatsSnapshot(auth *Auth, now time.Time) embeddedusage.AuthRuntimeStats {
@@ -116,6 +124,82 @@ func queueAuthRuntimeStats(auth *Auth) {
 	embeddedusage.QueueAuthRuntimeStats(authRuntimeStatsSnapshot(auth, time.Now()))
 }
 
+const legacyRoundRobinCursorPrefix = prorouting.LegacyRoundRobinCursorPrefix
+
+func legacyRoundRobinCursorKey(provider, model string) string {
+	return prorouting.LegacyRoundRobinCursorKey(provider, canonicalModelKey(model))
+}
+
+func routingCursorAfterAuthID(auths []*Auth, lastAuthID string) int {
+	ids := make([]string, 0, len(auths))
+	for _, auth := range auths {
+		if auth != nil {
+			ids = append(ids, auth.ID)
+		}
+	}
+	return prorouting.CursorAfterID(ids, lastAuthID)
+}
+
+// restoreRoutingCursorLocked restores the legacy built-in round-robin selector.
+// The caller must hold s.mu and pass the already sorted available auth slice.
+func (s *RoundRobinSelector) restoreRoutingCursorLocked(provider, model, selectorKey string, auths []*Auth) {
+	if s == nil {
+		return
+	}
+	if s.routingCursorRestored == nil {
+		s.routingCursorRestored = make(map[string]bool)
+	}
+	if s.routingCursorRestored[selectorKey] {
+		return
+	}
+	if s.persistedRoutingCursors == nil {
+		s.persistedRoutingCursors = make(map[string]string)
+	}
+	stateKey := legacyRoundRobinCursorKey(provider, model)
+	lastAuthID := s.persistedRoutingCursors[stateKey]
+	if lastAuthID == "" {
+		if state, ok, err := embeddedusage.GetRoutingCursorState(context.Background(), stateKey); err == nil && ok {
+			lastAuthID = state.LastAuthID
+			s.persistedRoutingCursors[stateKey] = lastAuthID
+		}
+	}
+	s.cursors[selectorKey] = routingCursorAfterAuthID(auths, lastAuthID)
+	s.routingCursorRestored[selectorKey] = true
+}
+
+// persistRoutingCursorLocked records the legacy built-in round-robin selection.
+// The caller must hold s.mu.
+func (s *RoundRobinSelector) persistRoutingCursorLocked(provider, model string, picked *Auth) {
+	if s == nil || picked == nil || strings.TrimSpace(picked.ID) == "" {
+		return
+	}
+	if s.persistedRoutingCursors == nil {
+		s.persistedRoutingCursors = make(map[string]string)
+	}
+	stateKey := legacyRoundRobinCursorKey(provider, model)
+	s.persistedRoutingCursors[stateKey] = picked.ID
+	embeddedusage.QueueRoutingCursorState(embeddedusage.RoutingCursorState{
+		CursorKey: stateKey, LastAuthID: picked.ID, UpdatedAtMS: time.Now().UnixMilli(),
+	})
+}
+
+func (s *RoundRobinSelector) applyImportedRoutingCursors(cursors []embeddedusage.RoutingCursorState) {
+	if s == nil {
+		return
+	}
+	persisted := make(map[string]string)
+	for _, state := range cursors {
+		if strings.HasPrefix(state.CursorKey, legacyRoundRobinCursorPrefix) && strings.TrimSpace(state.LastAuthID) != "" {
+			persisted[state.CursorKey] = state.LastAuthID
+		}
+	}
+	s.mu.Lock()
+	s.cursors = make(map[string]int)
+	s.routingCursorRestored = make(map[string]bool)
+	s.persistedRoutingCursors = persisted
+	s.mu.Unlock()
+}
+
 func (m *Manager) recordAuthSelected(authID string) {
 	if m == nil || strings.TrimSpace(authID) == "" {
 		return
@@ -148,22 +232,37 @@ func (m *Manager) ApplyImportedRuntimeState(cursors []embeddedusage.RoutingCurso
 	}
 
 	snapshots := make([]*Auth, 0)
+	var selector Selector
 	m.mu.Lock()
 	for _, auth := range m.auths {
 		if auth == nil {
 			continue
 		}
-		item, ok := statsByIndex[strings.TrimSpace(auth.Index)]
-		if !ok {
+		item, matchedByIndex := statsByIndex[strings.TrimSpace(auth.Index)]
+		if matchedByIndex {
+			// An explicit backup import is authoritative when it targets the same
+			// stable auth index. Provider identity metadata can legitimately gain,
+			// lose, or rotate fields across a restart, so requiring the historical
+			// fingerprint here would silently leave the live account statistics at
+			// zero even though the imported database row was accepted.
+			applyAuthRuntimeStats(auth, item)
+		} else {
+			var ok bool
 			item, ok = statsByID[strings.TrimSpace(auth.ID)]
-		}
-		if ok {
-			applyStoredAuthRuntimeStats(auth, item)
+			if ok {
+				// ID-only fallback is less stable and keeps the fingerprint guard to
+				// prevent statistics from being attached to a replaced credential.
+				applyStoredAuthRuntimeStats(auth, item)
+			}
 		}
 		snapshots = append(snapshots, auth.Clone())
 	}
+	selector = m.selector
 	m.mu.Unlock()
 
+	if roundRobin, ok := selector.(*RoundRobinSelector); ok {
+		roundRobin.applyImportedRoutingCursors(cursors)
+	}
 	if m.scheduler != nil {
 		m.scheduler.applyImportedRuntimeState(cursors, snapshots)
 	}

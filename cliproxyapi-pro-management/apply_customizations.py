@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 import hashlib
 import json
-import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -10,6 +8,33 @@ CUSTOMIZATION_DIR = Path(__file__).resolve().parent
 OVERLAY_DIR = CUSTOMIZATION_DIR / 'overlay'
 LOCALES_FILE = CUSTOMIZATION_DIR / 'monitoring-locales.json'
 OVERLAY_REPLACEMENTS_FILE = CUSTOMIZATION_DIR / 'overlay-replacements.json'
+
+MANAGEMENT_UPDATE_LOCALE_KEYS = {
+    'en.json': {
+        'management_check_update_button': 'Check for updates',
+        'management_check_update_updated': 'Management Center updated. Reloading...',
+        'management_check_update_unchanged': 'Update check completed; no update was applied.',
+        'management_check_update_error': 'Failed to check Management Center update',
+    },
+    'ru.json': {
+        'management_check_update_button': 'Проверить обновления',
+        'management_check_update_updated': 'Центр управления обновлён. Перезагрузка...',
+        'management_check_update_unchanged': 'Проверка завершена; обновление не применялось.',
+        'management_check_update_error': 'Не удалось проверить обновление Центра управления',
+    },
+    'zh-CN.json': {
+        'management_check_update_button': '检查更新',
+        'management_check_update_updated': '管理中心已更新，正在重新加载...',
+        'management_check_update_unchanged': '检查完成，本次未进行更新。',
+        'management_check_update_error': '管理中心更新检查失败',
+    },
+    'zh-TW.json': {
+        'management_check_update_button': '檢查更新',
+        'management_check_update_updated': '管理中心已更新，正在重新載入...',
+        'management_check_update_unchanged': '檢查完成，本次未進行更新。',
+        'management_check_update_error': '管理中心更新檢查失敗',
+    },
+}
 
 QUOTA_LOCALE_KEYS = {
     'en.json': {
@@ -22,7 +47,7 @@ QUOTA_LOCALE_KEYS = {
         'days_ago': '{{count}} day ago',
         'days_ago_plural': '{{count}} days ago',
         'search_label': 'Search quota credentials',
-        'search_placeholder': 'Search config name, auth_index, type, provider, note, or plan. Use * as a wildcard',
+        'search_placeholder': 'Search name, auth_index, type, provider, note, or plan. Use * as a wildcard',
         'no_search_results': 'No matching quota credentials',
         'no_search_results_desc': 'No quota credential matches the current search.',
         'refresh_progress': 'Refreshing {{completed}} / {{total}}',
@@ -59,7 +84,7 @@ QUOTA_LOCALE_KEYS = {
         'hours_ago': '{{count}} 小时前',
         'days_ago': '{{count}} 天前',
         'search_label': '搜索配额配置文件',
-        'search_placeholder': '搜索配置文件名称、auth_index、类型、提供商、备注或套餐，支持 * 通配',
+        'search_placeholder': '搜索名称、auth_index、类型、提供商、备注或套餐，支持 * 通配',
         'no_search_results': '没有匹配的配额配置文件',
         'no_search_results_desc': '当前搜索条件下没有可显示的配额配置文件。',
         'refresh_progress': '正在刷新 {{completed}} / {{total}}',
@@ -76,7 +101,7 @@ QUOTA_LOCALE_KEYS = {
         'hours_ago': '{{count}} 小時前',
         'days_ago': '{{count}} 天前',
         'search_label': '搜尋配額設定檔',
-        'search_placeholder': '搜尋設定檔名稱、auth_index、類型、供應商、備註或套餐，支援 * 萬用字元',
+        'search_placeholder': '搜尋名稱、auth_index、類型、供應商、備註或套餐，支援 * 萬用字元',
         'no_search_results': '沒有符合的配額設定檔',
         'no_search_results_desc': '目前搜尋條件下沒有可顯示的配額設定檔。',
         'refresh_progress': '正在重新整理 {{completed}} / {{total}}',
@@ -185,6 +210,7 @@ GEMINI_CLI_LOCALE_KEYS = {
 
 XAI_QUOTA_LOCALE_KEYS = {
     'en.json': {
+        'plan_free': 'Free',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': 'Paid (unknown tier)',
         'free_quota': 'Free token quota',
@@ -192,6 +218,7 @@ XAI_QUOTA_LOCALE_KEYS = {
         'free_quota_window': 'Rolling 24 hours',
     },
     'ru.json': {
+        'plan_free': 'Бесплатный',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': 'Платный (неизвестный уровень)',
         'free_quota': 'Бесплатная квота токенов',
@@ -199,6 +226,7 @@ XAI_QUOTA_LOCALE_KEYS = {
         'free_quota_window': 'Скользящие 24 часа',
     },
     'zh-CN.json': {
+        'plan_free': '免费套餐',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': '付费版（未知档位）',
         'free_quota': '免费 Token 额度',
@@ -206,6 +234,7 @@ XAI_QUOTA_LOCALE_KEYS = {
         'free_quota_window': '滚动 24 小时',
     },
     'zh-TW.json': {
+        'plan_free': '免費套餐',
         'plan_x_premium_plus': 'X Premium+',
         'plan_paid_unknown': '付費版（未知級別）',
         'free_quota': '免費 Token 配額',
@@ -216,184 +245,9 @@ XAI_QUOTA_LOCALE_KEYS = {
 
 AUTH_FILES_SEARCH_PLACEHOLDER_KEYS = {
     'en.json': 'Filter by name, auth_index, type, provider, note, or plan. Use * as a wildcard',
-    'ru.json': 'Фильтр по имени, auth_index, типу, провайдеру, заметке или тарифу, поддерживается wildcard *',
+    'ru.json': 'Фильтр по имени, auth_index, типу, провайдеру, заметке или тарифу; поддерживается *',
     'zh-CN.json': '输入名称、auth_index、类型、提供方、备注或套餐关键字，支持 * 通配',
     'zh-TW.json': '輸入名稱、auth_index、類型、供應方、備註或套餐關鍵字，支援 * 萬用字元',
-}
-
-AUTH_FILES_BATCH_LOCALE_KEYS = {
-    'en.json': {
-        'batch_test': 'Test Selected',
-        'batch_clear_errors': 'Clear Errors',
-        'batch_test_title': 'Batch Test Results',
-        'batch_clear_errors_title': 'Clear Errors Results',
-        'batch_test_running': 'Testing...',
-        'batch_clear_errors_running': 'Clearing errors...',
-        'batch_no_auth_index': 'Missing auth_index',
-        'batch_unsupported_provider': 'Unsupported provider: {{provider}}',
-        'batch_clear_errors_failed': 'Failed to clear errors',
-        'batch_result_success': 'Success {{count}}',
-        'batch_result_failed': 'Failed {{count}}',
-        'batch_result_skipped': 'Skipped {{count}}',
-        'batch_result_total': 'Total {{count}}',
-        'batch_result_col_name': 'Name',
-        'batch_result_col_provider': 'Provider',
-        'batch_result_col_result': 'Result',
-        'batch_result_col_error': 'Error',
-        'batch_result_badge_success': 'Success',
-        'batch_result_badge_failed': 'Failed',
-        'batch_result_badge_skipped': 'Skipped',
-    },
-    'ru.json': {
-        'batch_test': 'Проверить выбранные',
-        'batch_clear_errors': 'Очистить ошибки',
-        'batch_test_title': 'Результаты проверки',
-        'batch_clear_errors_title': 'Результаты очистки ошибок',
-        'batch_test_running': 'Проверка...',
-        'batch_clear_errors_running': 'Очистка ошибок...',
-        'batch_no_auth_index': 'Отсутствует auth_index',
-        'batch_unsupported_provider': 'Неподдерживаемый провайдер: {{provider}}',
-        'batch_clear_errors_failed': 'Не удалось очистить ошибки',
-        'batch_result_success': 'Успешно {{count}}',
-        'batch_result_failed': 'Ошибка {{count}}',
-        'batch_result_skipped': 'Пропущено {{count}}',
-        'batch_result_total': 'Всего {{count}}',
-        'batch_result_col_name': 'Имя',
-        'batch_result_col_provider': 'Провайдер',
-        'batch_result_col_result': 'Результат',
-        'batch_result_col_error': 'Ошибка',
-        'batch_result_badge_success': 'Успешно',
-        'batch_result_badge_failed': 'Ошибка',
-        'batch_result_badge_skipped': 'Пропущено',
-    },
-    'zh-CN.json': {
-        'batch_test': '测试选中',
-        'batch_clear_errors': '清除错误',
-        'batch_test_title': '批量测试结果',
-        'batch_clear_errors_title': '清除错误结果',
-        'batch_test_running': '正在测试...',
-        'batch_clear_errors_running': '正在清除错误...',
-        'batch_no_auth_index': '缺少 auth_index',
-        'batch_unsupported_provider': '不支持的提供方：{{provider}}',
-        'batch_clear_errors_failed': '清除错误失败',
-        'batch_result_success': '成功 {{count}} 项',
-        'batch_result_failed': '失败 {{count}} 项',
-        'batch_result_skipped': '跳过 {{count}} 项',
-        'batch_result_total': '共 {{count}} 项',
-        'batch_result_col_name': '名称',
-        'batch_result_col_provider': '提供方',
-        'batch_result_col_result': '结果',
-        'batch_result_col_error': '错误',
-        'batch_result_badge_success': '成功',
-        'batch_result_badge_failed': '失败',
-        'batch_result_badge_skipped': '跳过',
-    },
-    'zh-TW.json': {
-        'batch_test': '測試選中',
-        'batch_clear_errors': '清除錯誤',
-        'batch_test_title': '批量測試結果',
-        'batch_clear_errors_title': '清除錯誤結果',
-        'batch_test_running': '正在測試...',
-        'batch_clear_errors_running': '正在清除錯誤...',
-        'batch_no_auth_index': '缺少 auth_index',
-        'batch_unsupported_provider': '不支援的供應方：{{provider}}',
-        'batch_clear_errors_failed': '清除錯誤失敗',
-        'batch_result_success': '成功 {{count}} 項',
-        'batch_result_failed': '失敗 {{count}} 項',
-        'batch_result_skipped': '跳過 {{count}} 項',
-        'batch_result_total': '共 {{count}} 項',
-        'batch_result_col_name': '名稱',
-        'batch_result_col_provider': '供應方',
-        'batch_result_col_result': '結果',
-        'batch_result_col_error': '錯誤',
-        'batch_result_badge_success': '成功',
-        'batch_result_badge_failed': '失敗',
-        'batch_result_badge_skipped': '跳過',
-    },
-}
-
-
-QUOTA_PAGE_SEARCH_LOCALE_KEYS = {
-    'en.json': {
-        'search_placeholder': 'Search by file name...',
-        'plan_filter_all': 'All Plans',
-        'status_filter_all': 'All Status',
-        'status_filter_abnormal': 'Abnormal accounts',
-        'status_filter_normal': 'Normal accounts',
-    },
-    'ru.json': {
-        'search_placeholder': 'Поиск по имени файла...',
-        'plan_filter_all': 'Все тарифы',
-        'status_filter_all': 'Все статусы',
-        'status_filter_abnormal': 'Проблемные аккаунты',
-        'status_filter_normal': 'Нормальные аккаунты',
-    },
-    'zh-CN.json': {
-        'search_placeholder': '按文件名搜索...',
-        'plan_filter_all': '全部套餐',
-        'status_filter_all': '全部状态',
-        'status_filter_abnormal': '异常账号',
-        'status_filter_normal': '正常账号',
-    },
-    'zh-TW.json': {
-        'search_placeholder': '按檔案名稱搜尋...',
-        'plan_filter_all': '全部套餐',
-        'status_filter_all': '全部狀態',
-        'status_filter_abnormal': '異常帳號',
-        'status_filter_normal': '正常帳號',
-    },
-}
-
-
-QUOTA_DELETE_LOCALE_KEYS = {
-    'en.json': {
-        'select_all': 'Select All',
-        'select_credential': 'Select {{name}}',
-        'delete_one': 'Delete',
-        'delete_one_title': 'Delete Credential',
-        'delete_one_confirm': 'Delete credential "{{name}}"? This action cannot be undone.',
-        'delete_selected': 'Delete Selected ({{count}})',
-        'delete_selected_title': 'Delete Selected Credentials',
-        'delete_selected_confirm': 'Delete {{count}} selected credential(s)? This action cannot be undone.',
-        'delete_success': 'Credentials deleted',
-        'delete_partial': 'Succeeded {{success}}, failed {{failed}}',
-    },
-    'ru.json': {
-        'select_all': 'Выбрать все',
-        'select_credential': 'Выбрать {{name}}',
-        'delete_one': 'Удалить',
-        'delete_one_title': 'Удалить учётные данные',
-        'delete_one_confirm': 'Удалить учётные данные «{{name}}»? Это действие нельзя отменить.',
-        'delete_selected': 'Удалить выбранные ({{count}})',
-        'delete_selected_title': 'Удалить выбранные учётные данные',
-        'delete_selected_confirm': 'Удалить {{count}} выбранных учётных данных? Это действие нельзя отменить.',
-        'delete_success': 'Учётные данные удалены',
-        'delete_partial': 'Успешно {{success}}, не удалось {{failed}}',
-    },
-    'zh-CN.json': {
-        'select_all': '全选',
-        'select_credential': '选择 {{name}}',
-        'delete_one': '删除',
-        'delete_one_title': '删除凭证',
-        'delete_one_confirm': '确定删除凭证 "{{name}}"？此操作不可撤销。',
-        'delete_selected': '删除已选（{{count}}）',
-        'delete_selected_title': '删除所选凭证',
-        'delete_selected_confirm': '确定删除选中的 {{count}} 个凭证？此操作不可撤销。',
-        'delete_success': '凭证已删除',
-        'delete_partial': '成功 {{success}}，失败 {{failed}}',
-    },
-    'zh-TW.json': {
-        'select_all': '全選',
-        'select_credential': '選擇 {{name}}',
-        'delete_one': '刪除',
-        'delete_one_title': '刪除憑證',
-        'delete_one_confirm': '確定刪除憑證 "{{name}}"？此操作無法復原。',
-        'delete_selected': '刪除已選（{{count}}）',
-        'delete_selected_title': '刪除所選憑證',
-        'delete_selected_confirm': '確定刪除選取的 {{count}} 個憑證？此操作無法復原。',
-        'delete_success': '憑證已刪除',
-        'delete_partial': '成功 {{success}}，失敗 {{failed}}',
-    },
 }
 
 AUTH_FILES_PLAN_SORT_LABEL_KEYS = {
@@ -417,43 +271,141 @@ AUTH_FILES_SELECTED_COUNT_LABEL_KEYS = {
     'zh-TW.json': '調度',
 }
 
+AUTH_FILES_BATCH_LOCALE_KEYS = {
+    'en.json': {
+        'batch_test': 'Test Selected', 'batch_clear_errors': 'Clear Errors',
+        'batch_test_title': 'Batch Test Results', 'batch_clear_errors_title': 'Clear Errors Results',
+        'batch_test_running': 'Testing...', 'batch_clear_errors_running': 'Clearing errors...',
+        'batch_no_auth_index': 'Missing auth_index',
+        'batch_unsupported_provider': 'Unsupported provider: {{provider}}',
+        'batch_clear_errors_failed': 'Failed to clear errors',
+        'batch_result_success': 'Success {{count}}', 'batch_result_failed': 'Failed {{count}}',
+        'batch_result_skipped': 'Skipped {{count}}', 'batch_result_total': 'Total {{count}}',
+        'batch_result_col_name': 'Name', 'batch_result_col_provider': 'Provider',
+        'batch_result_col_result': 'Result', 'batch_result_col_error': 'Error',
+        'batch_result_badge_success': 'Success', 'batch_result_badge_failed': 'Failed',
+        'batch_result_badge_skipped': 'Skipped',
+    },
+    'ru.json': {
+        'batch_test': 'Проверить выбранные', 'batch_clear_errors': 'Очистить ошибки',
+        'batch_test_title': 'Результаты проверки', 'batch_clear_errors_title': 'Результаты очистки ошибок',
+        'batch_test_running': 'Проверка...', 'batch_clear_errors_running': 'Очистка ошибок...',
+        'batch_no_auth_index': 'Отсутствует auth_index',
+        'batch_unsupported_provider': 'Неподдерживаемый провайдер: {{provider}}',
+        'batch_clear_errors_failed': 'Не удалось очистить ошибки',
+        'batch_result_success': 'Успешно {{count}}', 'batch_result_failed': 'Ошибка {{count}}',
+        'batch_result_skipped': 'Пропущено {{count}}', 'batch_result_total': 'Всего {{count}}',
+        'batch_result_col_name': 'Имя', 'batch_result_col_provider': 'Провайдер',
+        'batch_result_col_result': 'Результат', 'batch_result_col_error': 'Ошибка',
+        'batch_result_badge_success': 'Успешно', 'batch_result_badge_failed': 'Ошибка',
+        'batch_result_badge_skipped': 'Пропущено',
+    },
+    'zh-CN.json': {
+        'batch_test': '测试选中', 'batch_clear_errors': '清除错误',
+        'batch_test_title': '批量测试结果', 'batch_clear_errors_title': '清除错误结果',
+        'batch_test_running': '正在测试...', 'batch_clear_errors_running': '正在清除错误...',
+        'batch_no_auth_index': '缺少 auth_index',
+        'batch_unsupported_provider': '不支持的提供方：{{provider}}',
+        'batch_clear_errors_failed': '清除错误失败',
+        'batch_result_success': '成功 {{count}} 项', 'batch_result_failed': '失败 {{count}} 项',
+        'batch_result_skipped': '跳过 {{count}} 项', 'batch_result_total': '共 {{count}} 项',
+        'batch_result_col_name': '名称', 'batch_result_col_provider': '提供方',
+        'batch_result_col_result': '结果', 'batch_result_col_error': '错误',
+        'batch_result_badge_success': '成功', 'batch_result_badge_failed': '失败',
+        'batch_result_badge_skipped': '跳过',
+    },
+    'zh-TW.json': {
+        'batch_test': '測試選中', 'batch_clear_errors': '清除錯誤',
+        'batch_test_title': '批量測試結果', 'batch_clear_errors_title': '清除錯誤結果',
+        'batch_test_running': '正在測試...', 'batch_clear_errors_running': '正在清除錯誤...',
+        'batch_no_auth_index': '缺少 auth_index',
+        'batch_unsupported_provider': '不支援的供應方：{{provider}}',
+        'batch_clear_errors_failed': '清除錯誤失敗',
+        'batch_result_success': '成功 {{count}} 項', 'batch_result_failed': '失敗 {{count}} 項',
+        'batch_result_skipped': '跳過 {{count}} 項', 'batch_result_total': '共 {{count}} 項',
+        'batch_result_col_name': '名稱', 'batch_result_col_provider': '供應方',
+        'batch_result_col_result': '結果', 'batch_result_col_error': '錯誤',
+        'batch_result_badge_success': '成功', 'batch_result_badge_failed': '失敗',
+        'batch_result_badge_skipped': '跳過',
+    },
+}
+
+QUOTA_DELETE_LOCALE_KEYS = {
+    'en.json': {
+        'select_all': 'Select All', 'select_credential': 'Select {{name}}', 'delete_one': 'Delete',
+        'delete_one_title': 'Delete Credential',
+        'delete_one_confirm': 'Delete credential "{{name}}"? This action cannot be undone.',
+        'delete_selected': 'Delete Selected ({{count}})',
+        'delete_selected_title': 'Delete Selected Credentials',
+        'delete_selected_confirm': 'Delete {{count}} selected credential(s)? This action cannot be undone.',
+        'delete_success': 'Credentials deleted', 'delete_partial': 'Succeeded {{success}}, failed {{failed}}',
+    },
+    'ru.json': {
+        'select_all': 'Выбрать все', 'select_credential': 'Выбрать {{name}}', 'delete_one': 'Удалить',
+        'delete_one_title': 'Удалить учётные данные',
+        'delete_one_confirm': 'Удалить учётные данные «{{name}}»? Это действие нельзя отменить.',
+        'delete_selected': 'Удалить выбранные ({{count}})',
+        'delete_selected_title': 'Удалить выбранные учётные данные',
+        'delete_selected_confirm': 'Удалить {{count}} выбранных учётных данных? Это действие нельзя отменить.',
+        'delete_success': 'Учётные данные удалены', 'delete_partial': 'Успешно {{success}}, не удалось {{failed}}',
+    },
+    'zh-CN.json': {
+        'select_all': '全选', 'select_credential': '选择 {{name}}', 'delete_one': '删除',
+        'delete_one_title': '删除凭证', 'delete_one_confirm': '确定删除凭证 "{{name}}"？此操作不可撤销。',
+        'delete_selected': '删除已选（{{count}}）', 'delete_selected_title': '删除所选凭证',
+        'delete_selected_confirm': '确定删除选中的 {{count}} 个凭证？此操作不可撤销。',
+        'delete_success': '凭证已删除', 'delete_partial': '成功 {{success}}，失败 {{failed}}',
+    },
+    'zh-TW.json': {
+        'select_all': '全選', 'select_credential': '選擇 {{name}}', 'delete_one': '刪除',
+        'delete_one_title': '刪除憑證', 'delete_one_confirm': '確定刪除憑證 "{{name}}"？此操作無法復原。',
+        'delete_selected': '刪除已選（{{count}}）', 'delete_selected_title': '刪除所選憑證',
+        'delete_selected_confirm': '確定刪除選取的 {{count}} 個憑證？此操作無法復原。',
+        'delete_success': '憑證已刪除', 'delete_partial': '成功 {{success}}，失敗 {{failed}}',
+    },
+}
+
 CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS = {
     'en.json': {
         'title': 'Anthropic Client Compatibility',
         'description': 'Control how non-Claude model IDs are exposed to Anthropic-compatible clients.',
         'label': 'Anthropic model ID compatibility mode',
-        'hint': 'Only changes non-Claude IDs returned by /v1/models. Auto cloaks IDs for identified Claude Desktop clients, while Claude Code and other Anthropic clients keep the original IDs.',
-        'auto': 'Auto (Claude Desktop only)',
-        'always': 'Always cloak IDs',
-        'never': 'Keep original IDs',
+        'hint': 'Only changes non-Claude IDs returned by /v1/models. Auto cloaks IDs for identified Claude Desktop clients.',
+        'auto': 'Auto (Claude Desktop only)', 'always': 'Always cloak IDs', 'never': 'Keep original IDs',
     },
     'ru.json': {
         'title': 'Совместимость клиентов Anthropic',
-        'description': 'Управление отображением идентификаторов моделей не-Claude для Anthropic-совместимых клиентов.',
+        'description': 'Управление отображением идентификаторов моделей не-Claude.',
         'label': 'Режим совместимости идентификаторов моделей Anthropic',
-        'hint': 'Изменяет только идентификаторы моделей не-Claude в ответе /v1/models. Автоматический режим маскирует их только для распознанного Claude Desktop; Claude Code и другие клиенты Anthropic получают исходные идентификаторы.',
-        'auto': 'Авто (только Claude Desktop)',
-        'always': 'Всегда маскировать',
-        'never': 'Сохранять исходные ID',
+        'hint': 'Изменяет только идентификаторы моделей не-Claude в ответе /v1/models.',
+        'auto': 'Авто (только Claude Desktop)', 'always': 'Всегда маскировать', 'never': 'Сохранять исходные ID',
     },
     'zh-CN.json': {
-        'title': 'Anthropic 客户端兼容性',
-        'description': '控制非 Claude 模型 ID 向 Anthropic 兼容客户端的展示方式。',
+        'title': 'Anthropic 客户端兼容性', 'description': '控制非 Claude 模型 ID 的展示方式。',
         'label': 'Anthropic 模型 ID 兼容模式',
-        'hint': '仅影响 /v1/models 返回的非 Claude 模型 ID。自动模式仅对识别出的 Claude Desktop 进行伪装，Claude Code 和其他 Anthropic 客户端保留原始 ID。',
-        'auto': '自动（仅 Claude Desktop）',
-        'always': '始终伪装 ID',
-        'never': '保留原始 ID',
+        'hint': '仅影响 /v1/models 返回的非 Claude 模型 ID；自动模式仅对 Claude Desktop 伪装。',
+        'auto': '自动（仅 Claude Desktop）', 'always': '始终伪装 ID', 'never': '保留原始 ID',
     },
     'zh-TW.json': {
-        'title': 'Anthropic 用戶端相容性',
-        'description': '控制非 Claude 模型 ID 對 Anthropic 相容用戶端的顯示方式。',
+        'title': 'Anthropic 用戶端相容性', 'description': '控制非 Claude 模型 ID 的顯示方式。',
         'label': 'Anthropic 模型 ID 相容模式',
-        'hint': '僅影響 /v1/models 回傳的非 Claude 模型 ID。自動模式只對識別出的 Claude Desktop 進行偽裝，Claude Code 和其他 Anthropic 用戶端保留原始 ID。',
-        'auto': '自動（僅 Claude Desktop）',
-        'always': '一律偽裝 ID',
-        'never': '保留原始 ID',
+        'hint': '僅影響 /v1/models 回傳的非 Claude 模型 ID；自動模式只對 Claude Desktop 偽裝。',
+        'auto': '自動（僅 Claude Desktop）', 'always': '一律偽裝 ID', 'never': '保留原始 ID',
     },
+}
+
+PROXY_POOL_NAV_LOCALE_KEYS = {
+    'en.json': {'label': 'Proxy Management', 'meta': 'Rotating upstream proxy gateway'},
+    'ru.json': {'label': 'Управление прокси', 'meta': 'Шлюз ротации внешних прокси'},
+    'zh-CN.json': {'label': '代理管理', 'meta': '多节点轮询与故障转移'},
+    'zh-TW.json': {'label': '代理管理', 'meta': '多節點輪詢與故障轉移'},
+}
+
+OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS = {
+    'en.json': {'label': 'Model Policy', 'meta': 'Per-plan model availability rules'},
+    'ru.json': {'label': 'Политика моделей', 'meta': 'Правила доступности моделей по тарифам'},
+    'zh-CN.json': {'label': '模型策略', 'meta': '按账号套餐配置模型可用范围'},
+    'zh-TW.json': {'label': '模型策略', 'meta': '依帳號套餐設定模型可用範圍'},
 }
 
 def load_overlay_replacement_manifest(path: Path) -> dict[str, set[str]]:
@@ -505,10 +457,6 @@ def flush_writes() -> None:
     _writes.clear()
 
 
-def discard_writes() -> None:
-    _writes.clear()
-
-
 def replace_once(path: Path, old: str, new: str) -> None:
     text = read(path)
     if new in text:
@@ -538,28 +486,6 @@ def replace_all(path: Path, old: str, new: str) -> None:
     write(path, text.replace(old, new))
 
 
-def replace_once_in_quota_config(path: Path, store_setter: str, old: str, new: str) -> None:
-    text = read(path)
-    marker = f"  storeSetter: '{store_setter}',"
-    marker_start = text.find(marker)
-    if marker_start == -1:
-        raise RuntimeError(f'Pattern not found in {path}: {marker!r}')
-
-    success_start = text.find('  buildSuccessState:', marker_start)
-    error_start = text.find('  buildErrorState:', success_start)
-    if success_start == -1 or error_start == -1:
-        raise RuntimeError(f'Pattern not found in {path}: buildSuccessState block for {store_setter}')
-
-    block = text[success_start:error_start]
-    if new in block:
-        return
-    if old not in block:
-        raise RuntimeError(f'Pattern not found in {path}: {old[:120]!r}')
-
-    updated = block.replace(old, new, 1)
-    write(path, f'{text[:success_start]}{updated}{text[error_start:]}')
-
-
 def ensure_cached_at_in_quota_success_state(path: Path, store_setter: str) -> None:
     text = read(path)
     marker = f"  storeSetter: '{store_setter}',"
@@ -576,32 +502,36 @@ def ensure_cached_at_in_quota_success_state(path: Path, store_setter: str) -> No
     if 'cachedAt:' in block:
         return
 
-    inline_match = re.search(
-        r"(buildSuccessState:\s*\([^)]*\)\s*=>\s*\(\{)([^{}\n]*?)(\s*\}\),)",
-        block,
-    )
-    if inline_match:
-        content = inline_match.group(2).rstrip()
-        separator = '' if not content or content.endswith(',') else ','
-        replacement = (
-            f'{inline_match.group(1)}{content}{separator} cachedAt: Date.now()'
-            f'{inline_match.group(3)}'
-        )
-        updated = block[: inline_match.start()] + replacement + block[inline_match.end() :]
-        write(path, f'{text[:success_start]}{updated}{text[error_start:]}')
-        return
+    multiline_end = '\n  }),'
+    if multiline_end in block:
+        updated = block.replace(multiline_end, '\n    cachedAt: Date.now(),\n  }),', 1)
+    else:
+        inline_end = '}),'
+        inline_end_start = block.rfind(inline_end)
+        if inline_end_start == -1:
+            raise RuntimeError(f'Pattern not found in {path}: buildSuccessState return end for {store_setter}')
+        updated = f'{block[:inline_end_start].rstrip()}, cachedAt: Date.now() {block[inline_end_start:]}'
 
-    closing_match = re.search(r'\n([ \t]*)\}\),\s*$', block)
-    if not closing_match:
-        raise RuntimeError(f'Pattern not found in {path}: buildSuccessState closing for {store_setter}')
-
-    indent = closing_match.group(1)
-    updated = (
-        block[: closing_match.start()]
-        + f'\n{indent}  cachedAt: Date.now(),'
-        + block[closing_match.start() :]
-    )
     write(path, f'{text[:success_start]}{updated}{text[error_start:]}')
+
+
+def auth_files_page_path(target: Path) -> Path:
+    for relative in ('src/features/authFiles/AuthFilesPage.tsx', 'src/pages/AuthFilesPage.tsx'):
+        path = target / relative
+        if path.is_file():
+            return path
+    raise RuntimeError(f'AuthFilesPage.tsx not found under {target}')
+
+
+def auth_files_styles_path(target: Path) -> Path:
+    for relative in (
+        'src/features/authFiles/AuthFilesPage.module.scss',
+        'src/pages/AuthFilesPage.module.scss',
+    ):
+        path = target / relative
+        if path.is_file():
+            return path
+    raise RuntimeError(f'AuthFilesPage.module.scss not found under {target}')
 
 
 def insert_once(path: Path, marker: str, insertion: str, present: str) -> None:
@@ -913,13 +843,13 @@ def patch_routes(target: Path) -> None:
     path = target / 'src/router/MainRoutes.tsx'
     replace_once(
         path,
-        "import { QuotaPage } from '@/pages/QuotaPage';\n",
-        "import { QuotaPage } from '@/pages/QuotaPage';\nimport { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';\nimport { AccountInspectionPage } from '@/pages/AccountInspectionPage';\nimport { RoutingPolicyPage } from '@/pages/RoutingPolicyPage';\n",
+        "import { QuotaPage } from '@/features/quota/QuotaPage';\n",
+        "import { QuotaPage } from '@/features/quota/QuotaPage';\nimport { proRoutes } from '@/pro/registry';\n",
     )
     replace_once(
         path,
         "  { path: '/quota', element: <QuotaPage /> },\n",
-        "  { path: '/quota', element: <QuotaPage /> },\n  { path: '/monitoring', element: <MonitoringCenterPage /> },\n  { path: '/account-inspection', element: <AccountInspectionPage /> },\n  { path: '/routing', element: <RoutingPolicyPage /> },\n",
+        "  { path: '/quota', element: <QuotaPage /> },\n  ...proRoutes,\n",
     )
 
 
@@ -928,127 +858,19 @@ def patch_layout(target: Path) -> None:
     insert_once(
         path,
         "import {\n  IconSidebar",
-        "import { QuotaPersistenceBootstrap } from '@/extensions/quota/QuotaPersistenceBootstrap';\nimport {\n  IconSidebar",
-        "QuotaPersistenceBootstrap",
+        "import { ProBootstrap } from '@/pro/ProBootstrap';\nimport { proNavigationGroups } from '@/pro/registry';\nimport {\n  IconSidebar",
+        "proNavigationGroups",
     )
     insert_once(
         path,
-        "  IconSidebarProviders,\n",
-        "  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarRouting,\n  IconSidebarProviders,\n",
-        "  IconSidebarAccountInspection,\n",
+        "    {\n      id: 'control',\n",
+        "    ...proNavigationGroups,\n    {\n      id: 'control',\n",
+        "...proNavigationGroups",
     )
-    replace_once(
-        path,
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n",
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n  routing: <IconSidebarRouting size={18} />,\n",
-    )
-    text = read(path)
-    if "path: '/monitoring'" not in text:
-        flat_quota_item = "    { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },\n"
-        grouped_quota_item = (
-            "        {\n"
-            "          path: '/quota',\n"
-            "          labelKey: 'nav.quota_management',\n"
-            "          metaKey: 'nav_meta.quota_management',\n"
-            "          icon: sidebarIcons.quota,\n"
-            "        },\n"
-        )
-        if flat_quota_item in text:
-            write(
-                path,
-                text.replace(
-                    flat_quota_item,
-                    flat_quota_item
-                    + "    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },\n"
-                    + "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
-                    1,
-                ),
-            )
-        elif grouped_quota_item in text:
-            write(
-                path,
-                text.replace(
-                    grouped_quota_item,
-                    grouped_quota_item
-                    + "        {\n"
-                    + "          path: '/monitoring',\n"
-                    + "          labelKey: 'nav.monitoring_center',\n"
-                    + "          metaKey: 'nav_meta.monitoring_center',\n"
-                    + "          icon: sidebarIcons.monitoring,\n"
-                    + "        },\n"
-                    + "        {\n"
-                    + "          path: '/account-inspection',\n"
-                    + "          labelKey: 'nav.account_inspection',\n"
-                    + "          metaKey: 'nav_meta.account_inspection',\n"
-                    + "          icon: sidebarIcons.accountInspection,\n"
-                    + "        },\n",
-                    1,
-                ),
-            )
-        else:
-            raise RuntimeError(f'Pattern not found in {path}: quota navigation item')
-    replace_once_if_present(
-        path,
-        "        {\n"
-        "          path: '/account-inspection',\n"
-        "          labelKey: 'nav.account_inspection',\n"
-        "          metaKey: 'nav_meta.account_inspection',\n"
-        "          icon: sidebarIcons.monitoring,\n"
-        "        },\n",
-        "        {\n"
-        "          path: '/account-inspection',\n"
-        "          labelKey: 'nav.account_inspection',\n"
-        "          metaKey: 'nav_meta.account_inspection',\n"
-        "          icon: sidebarIcons.accountInspection,\n"
-        "        },\n",
-    )
-    replace_once_if_present(
-        path,
-        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
-        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
-    )
-    flat_routing_item = (
-        "    { path: '/routing', label: t('nav.routing_policy'), icon: sidebarIcons.routing },\n"
-    )
-    flat_account_inspection_item = (
-        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n"
-    )
-    grouped_routing_item = (
-        "        {\n"
-        "          path: '/routing',\n"
-        "          labelKey: 'nav.routing_policy',\n"
-        "          metaKey: 'nav_meta.routing_policy',\n"
-        "          icon: sidebarIcons.routing,\n"
-        "        },\n"
-    )
-    grouped_account_inspection_item = (
-        "        {\n"
-        "          path: '/account-inspection',\n"
-        "          labelKey: 'nav.account_inspection',\n"
-        "          metaKey: 'nav_meta.account_inspection',\n"
-        "          icon: sidebarIcons.accountInspection,\n"
-        "        },\n"
-    )
-    text = read(path).replace(flat_routing_item, '').replace(grouped_routing_item, '')
-    if flat_account_inspection_item in text:
-        text = text.replace(
-            flat_account_inspection_item,
-            flat_account_inspection_item + flat_routing_item,
-            1,
-        )
-    elif grouped_account_inspection_item in text:
-        text = text.replace(
-            grouped_account_inspection_item,
-            grouped_account_inspection_item + grouped_routing_item,
-            1,
-        )
-    else:
-        raise RuntimeError(f'Pattern not found in {path}: account inspection navigation item')
-    write(path, text)
     replace_once(
         path,
         "            <PageTransition\n",
-        "            <QuotaPersistenceBootstrap />\n            <PageTransition\n",
+        "            <ProBootstrap />\n            <PageTransition\n",
     )
 
 def patch_icons(target: Path) -> None:
@@ -1101,6 +923,21 @@ def patch_icons(target: Path) -> None:
         "  );\n"
         "}\n\n"
     )
+    proxy_pool_icon = (
+        "export function IconSidebarProxyPool({ size = 20, ...props }: IconProps) {\n"
+        "  return (\n"
+        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
+        "      <circle cx=\"6\" cy=\"7\" r=\"2.5\" />\n"
+        "      <circle cx=\"18\" cy=\"7\" r=\"2.5\" />\n"
+        "      <circle cx=\"12\" cy=\"18\" r=\"2.5\" />\n"
+        "      <path d=\"M8.5 7h7\" />\n"
+        "      <path d=\"m7.4 9 3.2 6.6\" />\n"
+        "      <path d=\"m16.6 9-3.2 6.6\" />\n"
+        "      <path d=\"m12.5 4.5 2 2.5-2 2.5\" />\n"
+        "    </svg>\n"
+        "  );\n"
+        "}\n\n"
+    )
     icons_to_insert = ""
     if "export function IconSidebarMonitor" not in text:
         icons_to_insert += monitor_icon
@@ -1108,6 +945,8 @@ def patch_icons(target: Path) -> None:
         icons_to_insert += account_inspection_icon
     if "export function IconSidebarRouting" not in text:
         icons_to_insert += routing_icon
+    if "export function IconSidebarProxyPool" not in text:
+        icons_to_insert += proxy_pool_icon
     if not icons_to_insert:
         return
     for marker in (
@@ -1120,1230 +959,6 @@ def patch_icons(target: Path) -> None:
             return
 
     write(path, text.rstrip() + "\n\n" + icons_to_insert)
-
-
-def patch_quota_types(target: Path) -> None:
-    path = target / 'src/types/quota.ts'
-    insert_once(
-        path,
-        "// API payload types\n",
-        "// API payload types\nexport interface GeminiCliQuotaBucket {\n  modelId?: string;\n  model_id?: string;\n  tokenType?: string;\n  token_type?: string;\n  remainingFraction?: number | string;\n  remaining_fraction?: number | string;\n  remainingAmount?: number | string;\n  remaining_amount?: number | string;\n  resetTime?: string;\n  reset_time?: string;\n}\n\nexport interface GeminiCliQuotaPayload {\n  buckets?: GeminiCliQuotaBucket[];\n}\n\nexport interface GeminiCliCredits {\n  creditType?: string;\n  credit_type?: string;\n  creditAmount?: string | number;\n  credit_amount?: string | number;\n}\n\nexport interface GeminiCliUserTier {\n  id?: string;\n  name?: string;\n  description?: string;\n  availableCredits?: GeminiCliCredits[];\n  available_credits?: GeminiCliCredits[];\n}\n\nexport interface GeminiCliCodeAssistPayload {\n  currentTier?: GeminiCliUserTier | null;\n  current_tier?: GeminiCliUserTier | null;\n  paidTier?: GeminiCliUserTier | null;\n  paid_tier?: GeminiCliUserTier | null;\n}\n\nexport interface GeminiCliParsedBucket {\n  modelId: string;\n  tokenType: string | null;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n}\n\n",
-        "export interface GeminiCliQuotaBucket",
-    )
-    insert_once(
-        path,
-        "export interface CodexQuotaWindow",
-        "export interface GeminiCliQuotaBucketState {\n  id: string;\n  label: string;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n  tokenType: string | null;\n  modelIds?: string[];\n}\n\nexport interface GeminiCliQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  buckets: GeminiCliQuotaBucketState[];\n  projectId?: string;\n  project_id?: string;\n  tierLabel?: string | null;\n  tierId?: string | null;\n  creditBalance?: number | null;\n  error?: string;\n  errorStatus?: number;\n  cachedAt?: number;\n}\n\nexport interface CodexQuotaWindow",
-        "export interface GeminiCliQuotaState",
-    )
-    insert_once(
-        path,
-        "export interface XaiBillingSummary {\n",
-        "export interface XaiFreeQuotaSummary {\n"
-        "  source?: 'rate_limit_headers' | 'free_usage_exhausted';\n"
-        "  windowKind?: 'rolling_24h' | string;\n"
-        "  usedTokens?: number | string;\n"
-        "  limitTokens?: number | string;\n"
-        "  remainingTokens?: number | string;\n"
-        "  limitRequests?: number | string;\n"
-        "  remainingRequests?: number | string;\n"
-        "  observedAt?: number | string;\n"
-        "  exhausted?: boolean;\n"
-        "  model?: string;\n"
-        "}\n\n"
-        "export interface XaiBillingSummary {\n",
-        "export interface XaiFreeQuotaSummary",
-    )
-    replace_once(
-        path,
-        "  planType?: 'paid';\n",
-        "  planType?: 'free' | 'supergrok' | 'x-premium-plus' | 'supergrok-heavy' | 'paid' | 'paid-unknown';\n",
-    )
-    replace_once(
-        path,
-        "  usedPercent: number | null;\n}\n\nexport interface XaiQuotaState",
-        "  usedPercent: number | null;\n  freeQuota?: XaiFreeQuotaSummary;\n}\n\nexport interface XaiQuotaState",
-    )
-    for old, new in [
-        (
-            "  errorStatus?: number;\n}\n\n// Quota state types",
-            "  errorStatus?: number;\n  cachedAt?: number;\n}\n\n// Quota state types",
-        ),
-        (
-            "  errorStatus?: number;\n}\n\nexport interface CodexQuotaWindow",
-            "  errorStatus?: number;\n  cachedAt?: number;\n}\n\nexport interface CodexQuotaWindow",
-        ),
-        (
-            "  errorStatus?: number;\n}\n\n// Kimi API payload types",
-            "  errorStatus?: number;\n  cachedAt?: number;\n}\n\n// Kimi API payload types",
-        ),
-        (
-            "export interface KimiQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  rows: KimiQuotaRow[];\n  error?: string;\n  errorStatus?: number;\n}",
-            "export interface KimiQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  rows: KimiQuotaRow[];\n  error?: string;\n  errorStatus?: number;\n  cachedAt?: number;\n}",
-        ),
-        (
-            "export interface XaiQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  billing: XaiBillingSummary | null;\n  error?: string;\n  errorStatus?: number;\n}",
-            "export interface XaiQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  billing: XaiBillingSummary | null;\n  error?: string;\n  errorStatus?: number;\n  cachedAt?: number;\n}",
-        ),
-    ]:
-        replace_once(path, old, new)
-
-
-def patch_quota_configs(target: Path) -> None:
-    path = target / 'src/components/quota/quotaConfigs.ts'
-    insert_once(
-        path,
-        "const fetchAntigravityQuota = async (\n",
-        "const ANTIGRAVITY_SUBSCRIPTION_RETRY_DELAYS_MS = [400, 1_200, 2_800] as const;\n"
-        "\n"
-        "const waitForAntigravitySubscriptionRetry = (delayMs: number) =>\n"
-        "  new Promise<void>((resolve) => {\n"
-        "    window.setTimeout(resolve, delayMs + Math.floor(Math.random() * delayMs));\n"
-        "  });\n"
-        "\n"
-        "const isRetryableAntigravitySubscriptionError = (error: unknown): boolean => {\n"
-        "  const status = getStatusFromError(error);\n"
-        "  return status === undefined || status === 408 || status === 425 || status === 429 || status >= 500;\n"
-        "};\n"
-        "\n"
-        "const fetchAntigravitySubscriptionWithRetry = async (authIndex: string) => {\n"
-        "  let lastError: unknown;\n"
-        "  for (let attempt = 0; attempt <= ANTIGRAVITY_SUBSCRIPTION_RETRY_DELAYS_MS.length; attempt += 1) {\n"
-        "    try {\n"
-        "      const subscription = toAntigravityQuotaSubscription(\n"
-        "        await antigravitySubscriptionApi.get(authIndex)\n"
-        "      );\n"
-        "      if (!subscription) throw new Error('Antigravity subscription response missing tier');\n"
-        "      return subscription;\n"
-        "    } catch (error: unknown) {\n"
-        "      lastError = error;\n"
-        "      if (attempt >= ANTIGRAVITY_SUBSCRIPTION_RETRY_DELAYS_MS.length ||\n"
-        "          !isRetryableAntigravitySubscriptionError(error)) {\n"
-        "        throw error;\n"
-        "      }\n"
-        "      await waitForAntigravitySubscriptionRetry(ANTIGRAVITY_SUBSCRIPTION_RETRY_DELAYS_MS[attempt]);\n"
-        "    }\n"
-        "  }\n"
-        "  throw lastError;\n"
-        "};\n"
-        "\n"
-        "const fetchAntigravityQuota = async (\n",
-        "fetchAntigravitySubscriptionWithRetry",
-    )
-    replace_once(
-        path,
-        "  const subscriptionPromise = antigravitySubscriptionApi\n"
-        "    .get(authIndex)\n"
-        "    .then(toAntigravityQuotaSubscription)\n"
-        "    .catch(() => null);\n",
-        "  const subscriptionPromise = fetchAntigravitySubscriptionWithRetry(authIndex);\n",
-    )
-    replace_once(
-        path,
-        "  CodexUsagePayload,\n  KimiQuotaRow,",
-        "  CodexUsagePayload,\n  GeminiCliQuotaState,\n  KimiQuotaRow,",
-    )
-    replace_once(
-        path,
-        "  XaiBillingSummary,\n  XaiQuotaState,",
-        "  XaiBillingSummary,\n  XaiFreeQuotaSummary,\n  XaiQuotaState,",
-    )
-    insert_once(
-        path,
-        "import type { QuotaRenderHelpers } from './QuotaCard';\n",
-        "import { useQuotaStore } from '@/stores';\n"
-        "import {\n"
-        "  XAI_FREE_QUOTA_PROBE_URL,\n"
-        "  mergeXaiBillingRuntimeState,\n"
-        "  parseXaiFreeQuotaProbe,\n"
-        "  resolveXaiPlanType,\n"
-        "  xaiFreeQuotaUsedPercent,\n"
-        "  type XaiNormalizedPlanType,\n"
-        "} from '@/extensions/quota/xaiQuota';\n"
-        "import type { QuotaRenderHelpers } from './QuotaCard';\n",
-        "mergeXaiBillingRuntimeState",
-    )
-    replace_once(
-        path,
-        "type QuotaType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai';",
-        "type QuotaType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';",
-    )
-    replace_once(
-        path,
-        "  codexQuota: Record<string, CodexQuotaState>;\n  kimiQuota: Record<string, KimiQuotaState>;",
-        "  codexQuota: Record<string, CodexQuotaState>;\n  geminiCliQuota: Record<string, GeminiCliQuotaState>;\n  kimiQuota: Record<string, KimiQuotaState>;",
-    )
-    replace_once(
-        path,
-        "  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;",
-        "  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setGeminiCliQuota: (updater: QuotaUpdater<Record<string, GeminiCliQuotaState>>) => void;\n  setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;",
-    )
-    for store_setter in [
-        'setClaudeQuota',
-        'setAntigravityQuota',
-        'setCodexQuota',
-        'setKimiQuota',
-        'setXaiQuota',
-    ]:
-        ensure_cached_at_in_quota_success_state(path, store_setter)
-    for old, new in [
-        (
-            "  const groups = quota.groups ?? [];\n",
-            "  const groups = Array.isArray(quota.groups) ? quota.groups : [];\n",
-        ),
-        (
-            "        ...group.buckets.map((bucket) => {\n",
-            "        ...(Array.isArray(group.buckets) ? group.buckets : []).map((bucket) => {\n",
-        ),
-    ]:
-        replace_once(path, old, new)
-
-    if 'billing.productUsage' not in read(path):
-        return
-
-    for old, new in [
-        (
-            "  const clampedUsed =\n",
-            "  const productUsageItems = Array.isArray(billing.productUsage) ? billing.productUsage : [];\n\n  const clampedUsed =\n",
-        ),
-        (
-            "    (weeklyUsed !== null || Boolean(billing.periodEnd) || billing.productUsage.length > 0);\n",
-            "    (weeklyUsed !== null || Boolean(billing.periodEnd) || productUsageItems.length > 0);\n",
-        ),
-        (
-            "    ...billing.productUsage.map((item) => {\n",
-            "    ...productUsageItems.map((item) => {\n",
-        ),
-    ]:
-        replace_once(path, old, new)
-
-    replace_once(
-        path,
-        "const requestXaiPaidHealth = async (authIndex: string): Promise<XaiBillingSummary> => {\n",
-        "const requestXaiFreeQuota = async (\n"
-        "  authIndex: string,\n"
-        "  t: TFunction\n"
-        "): Promise<XaiFreeQuotaSummary> => {\n"
-        "  const result = await apiCallApi.request(\n"
-        "    {\n"
-        "      authIndex,\n"
-        "      method: 'POST',\n"
-        "      url: XAI_FREE_QUOTA_PROBE_URL,\n"
-        "      header: {\n"
-        "        ...XAI_REQUEST_HEADERS,\n"
-        "        accept: 'text/event-stream',\n"
-        "        'Content-Type': 'application/json',\n"
-        "      },\n"
-        "      data: JSON.stringify({\n"
-        "        model: XAI_PAID_HEALTH_MODEL,\n"
-        "        input: [\n"
-        "          {\n"
-        "            role: 'user',\n"
-        "            content: [{ type: 'input_text', text: 'ping' }],\n"
-        "          },\n"
-        "        ],\n"
-        "        instructions: 'You are a helpful assistant. Reply briefly.',\n"
-        "        max_output_tokens: 1,\n"
-        "        stream: true,\n"
-        "        store: false,\n"
-        "      }),\n"
-        "      useExecutor: true,\n"
-        "    },\n"
-        "    { timeout: XAI_PAID_HEALTH_REQUEST_TIMEOUT_MS }\n"
-        "  );\n"
-        "  const quota = parseXaiFreeQuotaProbe(result, XAI_PAID_HEALTH_MODEL);\n"
-        "  if (quota) return quota;\n"
-        "  if (result.statusCode < 200 || result.statusCode >= 300) {\n"
-        "    throw createStatusError(getApiCallErrorMessage(result), result.statusCode);\n"
-        "  }\n"
-        "  throw new Error(t('xai_quota.empty_data'));\n"
-        "};\n\n"
-        "const requestXaiPaidHealth = async (authIndex: string): Promise<XaiBillingSummary> => {\n",
-    )
-    replace_once(
-        path,
-        "  if (isPaidXaiAuthFile(file)) {\n    return requestXaiPaidHealth(authIndex);\n  }\n",
-        "  const previousBilling = useQuotaStore.getState().xaiQuota[file.name]?.billing;\n"
-        "  const mergeRuntimeState = (billing: XaiBillingSummary): XaiBillingSummary =>\n"
-        "    mergeXaiBillingRuntimeState(\n"
-        "      billing,\n"
-        "      previousBilling\n"
-        "    );\n\n"
-        "  if (isPaidXaiAuthFile(file)) {\n"
-        "    return mergeRuntimeState(await requestXaiPaidHealth(authIndex));\n"
-        "  }\n",
-    )
-    replace_once(
-        path,
-        "  const summary = mergeXaiBillingSummaries(weeklySummary, monthlySummary);\n  if (summary) return summary;\n",
-        "  const summary = mergeXaiBillingSummaries(weeklySummary, monthlySummary);\n"
-        "  if (summary) {\n"
-        "    const planType = resolveXaiPlanType(\n"
-        "      summary.monthlyLimitCents,\n"
-        "      monthlyResult.status === 'fulfilled'\n"
-        "    );\n"
-        "    const effectivePlanType = planType ?? previousBilling?.planType;\n"
-        "    const freeQuota =\n"
-        "      effectivePlanType === 'free' ? await requestXaiFreeQuota(authIndex, t) : undefined;\n"
-        "    const billing = mergeRuntimeState({\n"
-        "      ...summary,\n"
-        "      planType,\n"
-        "    });\n"
-        "    return freeQuota ? { ...billing, freeQuota } : billing;\n"
-        "  }\n",
-    )
-    replace_once(
-        path,
-        "  try {\n    return await requestXaiPaidHealth(authIndex);\n  } catch {\n",
-        "  try {\n    return mergeRuntimeState(await requestXaiPaidHealth(authIndex));\n  } catch {\n",
-    )
-    replace_once(
-        path,
-        "const XAI_SUPERGROK_LIMIT_CENTS = 15_000;\n"
-        "const XAI_SUPERGROK_HEAVY_LIMIT_CENTS = 150_000;\n\n"
-        "const resolveXaiPlan = (\n"
-        "  monthlyLimitCents: number | null\n"
-        "): { labelKey: string; premium: boolean } | null => {\n"
-        "  if (monthlyLimitCents === XAI_SUPERGROK_LIMIT_CENTS) {\n"
-        "    return { labelKey: 'plan_supergrok', premium: false };\n"
-        "  }\n"
-        "  if (monthlyLimitCents === XAI_SUPERGROK_HEAVY_LIMIT_CENTS) {\n"
-        "    return { labelKey: 'plan_supergrok_heavy', premium: true };\n"
-        "  }\n"
-        "  return null;\n"
-        "};\n",
-        "const resolveXaiPlan = (\n"
-        "  billing: XaiBillingSummary\n"
-        "): { labelKey?: string; label?: string; premium: boolean } | null => {\n"
-        "  const planType = billing.planType ?? resolveXaiPlanType(\n"
-        "    billing.monthlyLimitCents,\n"
-        "    billing.monthlyLimitCents !== null\n"
-        "  );\n"
-        "  const plans: Partial<Record<XaiNormalizedPlanType, { labelKey?: string; label?: string; premium: boolean }>> = {\n"
-        "    free: { label: 'Free', premium: false },\n"
-        "    supergrok: { labelKey: 'plan_supergrok', premium: false },\n"
-        "    'x-premium-plus': { labelKey: 'plan_x_premium_plus', premium: true },\n"
-        "    'supergrok-heavy': { labelKey: 'plan_supergrok_heavy', premium: true },\n"
-        "    paid: { labelKey: 'plan_paid', premium: true },\n"
-        "    'paid-unknown': { labelKey: 'plan_paid_unknown', premium: true },\n"
-        "  };\n"
-        "  return planType ? plans[planType] ?? null : null;\n"
-        "};\n",
-    )
-    replace_once(
-        path,
-        "  const plan = resolveXaiPlan(billing.monthlyLimitCents);\n",
-        "  const plan = resolveXaiPlan(billing);\n"
-        "  const planType = billing.planType ?? resolveXaiPlanType(\n"
-        "    billing.monthlyLimitCents,\n"
-        "    billing.monthlyLimitCents !== null\n"
-        "  );\n"
-        "  const freeQuota = planType === 'free' ? billing.freeQuota : undefined;\n"
-        "  const freeQuotaUsed = freeQuota ? xaiFreeQuotaUsedPercent(billing) : null;\n"
-        "  const freeQuotaRemaining =\n"
-        "    freeQuotaUsed === null ? null : Math.max(0, Math.min(100, 100 - freeQuotaUsed));\n"
-        "  const freeQuotaLabel = freeQuota?.model\n"
-        "    ? `${t('xai_quota.free_quota')} · ${freeQuota.model}`\n"
-        "    : t('xai_quota.free_quota');\n",
-    )
-    replace_once(
-        path,
-        "            t(`xai_quota.${plan.labelKey}`)\n",
-        "            plan.label ?? t(`xai_quota.${plan.labelKey}`)\n",
-    )
-    replace_once(
-        path,
-        "    hasWeeklyData\n      ? h(\n",
-        "    freeQuota\n"
-        "      ? h(\n"
-        "          'div',\n"
-        "          { key: 'free-quota', className: styleMap.quotaRow },\n"
-        "          h(\n"
-        "            'div',\n"
-        "            { className: styleMap.quotaRowHeader },\n"
-        "            h('span', { className: styleMap.quotaModel }, freeQuotaLabel),\n"
-        "            h(\n"
-        "              'div',\n"
-        "              { className: styleMap.quotaMeta },\n"
-        "              h(\n"
-        "                'span',\n"
-        "                { className: styleMap.quotaPercent },\n"
-        "                freeQuota.exhausted\n"
-        "                  ? t('xai_quota.free_quota_exhausted')\n"
-        "                  : t('xai_quota.used_percent', { percent: formatXaiPercent(freeQuotaUsed) })\n"
-        "              ),\n"
-        "              h('span', { className: styleMap.quotaReset }, t('xai_quota.free_quota_window'))\n"
-        "            )\n"
-        "          ),\n"
-        "          h(QuotaProgressBar, {\n"
-        "            percent: freeQuotaRemaining,\n"
-        "            highThreshold: QUOTA_PROGRESS_HIGH_THRESHOLD,\n"
-        "            mediumThreshold: QUOTA_PROGRESS_MEDIUM_THRESHOLD,\n"
-        "          })\n"
-        "        )\n"
-        "      : null,\n"
-        "    hasWeeklyData\n      ? h(\n",
-    )
-
-
-def patch_quota_page(target: Path) -> None:
-    path = target / 'src/pages/QuotaPage.tsx'
-    insert_once(
-        path,
-        "export function QuotaPage() {\n",
-        "const QUOTA_SEARCH_FIELD_KEYS = [\n"
-        "  'name',\n  'type',\n  'provider',\n  'note',\n  'remark',\n  'remarks',\n"
-        "  'description',\n  'plan',\n  'plan_type',\n  'planType',\n  'package',\n"
-        "  'package_name',\n  'packageName',\n  'subscription',\n  'subscription_plan',\n"
-        "  'subscriptionPlan',\n  'tier',\n  'tier_id',\n  'tierId',\n  'tier_label',\n"
-        "  'tierLabel',\n  'product',\n  'product_name',\n  'productName',\n  'quota_plan',\n"
-        "  'quotaPlan',\n] as const;\n\n"
-        "const QUOTA_NESTED_SEARCH_KEY_PATTERN =\n"
-        "  /(note|remark|description|desc|plan|package|subscription|tier|product|quota)/i;\n\n"
-        "const escapeQuotaSearchSegment = (value: string): string =>\n"
-        "  value.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n\n"
-        "const buildQuotaWildcardSearch = (value: string): RegExp | null => {\n"
-        "  if (!value.includes('*')) return null;\n"
-        "  return new RegExp(value.split('*').map(escapeQuotaSearchSegment).join('.*'), 'i');\n"
-        "};\n\n"
-        "const collectQuotaSearchValues = (value: unknown, depth = 0): string[] => {\n"
-        "  if (value == null) return [];\n"
-        "  if (typeof value === 'string') return value.trim() ? [value] : [];\n"
-        "  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];\n"
-        "  if (depth >= 2 || typeof value !== 'object') return [];\n"
-        "  if (Array.isArray(value)) return value.flatMap((item) => collectQuotaSearchValues(item, depth + 1));\n"
-        "  return Object.entries(value as Record<string, unknown>).flatMap(([key, nestedValue]) =>\n"
-        "    QUOTA_NESTED_SEARCH_KEY_PATTERN.test(key)\n"
-        "      ? collectQuotaSearchValues(nestedValue, depth + 1)\n"
-        "      : []\n"
-        "  );\n"
-        "};\n\n"
-        "const buildQuotaSearchValues = (item: AuthFileItem): string[] =>\n"
-        "  QUOTA_SEARCH_FIELD_KEYS.flatMap((key) => collectQuotaSearchValues(item[key]));\n\n"
-        "export function QuotaPage() {\n",
-        "QUOTA_SEARCH_FIELD_KEYS",
-    )
-    insert_once(
-        path,
-        "import { useAuthStore } from '@/stores';\n",
-        "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\nimport { useAuthStore } from '@/stores';\n",
-        "GEMINI_CLI_CONFIG",
-    )
-    insert_once(
-        path,
-        "      <QuotaSection\n        config={KIMI_CONFIG}\n",
-        "      <QuotaSection\n        config={GEMINI_CLI_CONFIG}\n        files={files}\n        loading={loading}\n        disabled={disableControls}\n      />\n      <QuotaSection\n        config={KIMI_CONFIG}\n",
-        "config={GEMINI_CLI_CONFIG}",
-    )
-    replace_all(
-        path,
-        "import { FEATURES } from '@/config/features';\nimport { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n",
-        "",
-    )
-    if 'quotaPersistenceMiddleware' not in read(path):
-        store_import_with_quota = "import { useAuthStore, useQuotaStore } from '@/stores';\n"
-        if store_import_with_quota in read(path):
-            replace_once(
-                path,
-                store_import_with_quota,
-                "import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n"
-                f"{store_import_with_quota}",
-            )
-        else:
-            replace_once(
-                path,
-                "import { useAuthStore } from '@/stores';\n",
-                "import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n"
-                "import { useAuthStore } from '@/stores';\n",
-            )
-    replace_once(
-        path,
-        "  useEffect(() => {\n    loadFiles();\n  }, [loadFiles]);\n",
-        "  useEffect(() => {\n    loadFiles();\n    void quotaPersistenceMiddleware.ensureFresh();\n  }, [loadFiles]);\n",
-    )
-    replace_all(
-        path,
-        "\n  useEffect(() => {\n    if (!FEATURES.QUOTA_PERSISTENCE) return;\n    quotaPersistenceMiddleware.start();\n    return () => quotaPersistenceMiddleware.stop();\n  }, []);\n",
-        "",
-    )
-    replace_all(
-        path,
-        "\n  // Initialize persistence middleware\n  useEffect(() => {\n    if (FEATURES.QUOTA_PERSISTENCE) {\n      quotaPersistenceMiddleware.start();\n      return () => quotaPersistenceMiddleware.stop();\n    }\n  }, []);\n",
-        "",
-    )
-    replace_once(
-        path,
-        "import { useCallback, useEffect, useState } from 'react';\n",
-        "import { useCallback, useEffect, useMemo, useState } from 'react';\n",
-    )
-    replace_once(
-        path,
-        "import { useAuthStore } from '@/stores';\n",
-        "import { useAuthStore, useQuotaStore } from '@/stores';\n",
-    )
-    replace_once(
-        path,
-        "import type { AuthFileItem } from '@/types';\n",
-        "import type { AuthFileItem } from '@/types';\nimport { isAbnormalAuthFile, isQuotaStateAbnormal, resolveAuthProvider } from '@/utils/quota';\n",
-    )
-    insert_once(
-        path,
-        "  const [files, setFiles] = useState<AuthFileItem[]>([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState('');\n",
-        "  const [files, setFiles] = useState<AuthFileItem[]>([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState('');\n  const [searchText, setSearchText] = useState('');\n  const [planFilter, setPlanFilter] = useState('all');\n  const [statusFilter, setStatusFilter] = useState('all');\n",
-        "searchText",
-    )
-    insert_once(
-        path,
-        "  const disableControls = connectionStatus !== 'connected';\n",
-        "  const disableControls = connectionStatus !== 'connected';\n\n"
-        "  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);\n"
-        "  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n"
-        "  const codexQuota = useQuotaStore((state) => state.codexQuota);\n"
-        "  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n"
-        "  const kimiQuota = useQuotaStore((state) => state.kimiQuota);\n"
-        "  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n\n"
-        "  const resolveFilePlan = useCallback(\n"
-        "    (file: AuthFileItem): string => {\n"
-        "      const provider = resolveAuthProvider(file);\n"
-        "      const name = file.name;\n"
-        "      if (provider === 'antigravity') {\n"
-        "        return antigravityQuota[name]?.subscription?.plan ?? '';\n"
-        "      }\n"
-        "      if (provider === 'claude') {\n"
-        "        return claudeQuota[name]?.planType ?? '';\n"
-        "      }\n"
-        "      if (provider === 'codex') {\n"
-        "        return codexQuota[name]?.planType ?? '';\n"
-        "      }\n"
-        "      return '';\n"
-        "    },\n"
-        "    [antigravityQuota, claudeQuota, codexQuota]\n"
-        "  );\n\n"
-        "  const resolveFileQuota = useCallback(\n"
-        "    (file: AuthFileItem): unknown => {\n"
-        "      const provider = resolveAuthProvider(file);\n"
-        "      const name = file.name;\n"
-        "      if (provider === 'antigravity') return antigravityQuota[name];\n"
-        "      if (provider === 'claude') return claudeQuota[name];\n"
-        "      if (provider === 'codex') return codexQuota[name];\n"
-        "      if (provider === 'gemini-cli') return geminiCliQuota[name];\n"
-        "      if (provider === 'kimi') return kimiQuota[name];\n"
-        "      if (provider === 'xai') return xaiQuota[name];\n"
-        "      return undefined;\n"
-        "    },\n"
-        "    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n"
-        "  );\n\n"
-        "  const normalizedSearch = searchText.trim();\n"
-        "  const wildcardSearch = useMemo(\n"
-        "    () => buildQuotaWildcardSearch(normalizedSearch),\n"
-        "    [normalizedSearch]\n"
-        "  );\n"
-        "  const planOptions = useMemo(() => {\n"
-        "    const plans = new Set<string>();\n"
-        "    for (const file of files) {\n"
-        "      const plan = resolveFilePlan(file);\n"
-        "      if (plan) plans.add(plan);\n"
-        "    }\n"
-        "    return Array.from(plans).sort();\n"
-        "  }, [files, resolveFilePlan]);\n\n"
-        "  const filteredFiles = useMemo(() => {\n"
-        "    return files.filter((file) => {\n"
-        "      if (normalizedSearch) {\n"
-        "        const normalizedTerm = normalizedSearch.toLowerCase();\n"
-        "        const matchesSearch = buildQuotaSearchValues(file).some((value) =>\n"
-        "          wildcardSearch\n"
-        "            ? wildcardSearch.test(value)\n"
-        "            : value.toLowerCase().includes(normalizedTerm)\n"
-        "        );\n"
-        "        if (!matchesSearch) return false;\n"
-        "      }\n"
-        "      if (planFilter !== 'all') {\n"
-        "        const filePlan = resolveFilePlan(file);\n"
-        "        if (filePlan !== planFilter) return false;\n"
-        "      }\n"
-        "      if (statusFilter !== 'all') {\n"
-        "        const abnormal = isAbnormalAuthFile(file) || isQuotaStateAbnormal(resolveFileQuota(file));\n"
-        "        if (statusFilter === 'abnormal' && !abnormal) return false;\n"
-        "        if (statusFilter === 'normal' && abnormal) return false;\n"
-        "      }\n"
-        "      return true;\n"
-        "    });\n"
-        "  }, [files, normalizedSearch, wildcardSearch, planFilter, statusFilter, resolveFilePlan, resolveFileQuota]);\n",
-        "const filteredFiles",
-    )
-    replace_once(
-        path,
-        "      <div className={styles.pageHeader}>\n        <h1 className={styles.pageTitle}>{t('quota_management.title')}</h1>\n        <p className={styles.description}>{t('quota_management.description')}</p>\n      </div>\n",
-        "      <div className={styles.pageHeader}>\n        <h1 className={styles.pageTitle}>{t('quota_management.title')}</h1>\n        <p className={styles.description}>{t('quota_management.description')}</p>\n        <div className={styles.quotaFilterBar}>\n          <input\n            className={styles.quotaSearchInput}\n            type=\"text\"\n            placeholder={t('quota_management.search_placeholder')}\n            value={searchText}\n            onChange={(e) => setSearchText(e.target.value)}\n          />\n          <select\n            className={styles.quotaPlanSelect}\n            value={planFilter}\n            onChange={(e) => setPlanFilter(e.target.value)}\n          >\n            <option value=\"all\">{t('quota_management.plan_filter_all')}</option>\n            {planOptions.map((plan) => (\n              <option key={plan} value={plan}>{plan}</option>\n            ))}\n          </select>\n          <select\n            className={styles.quotaPlanSelect}\n            value={statusFilter}\n            onChange={(e) => setStatusFilter(e.target.value)}\n          >\n            <option value=\"all\">{t('quota_management.status_filter_all')}</option>\n            <option value=\"abnormal\">{t('quota_management.status_filter_abnormal')}</option>\n            <option value=\"normal\">{t('quota_management.status_filter_normal')}</option>\n          </select>\n        </div>\n      </div>\n",
-    )
-    replace_all(
-        path,
-        "        files={files}\n        loading={loading}\n        disabled={disableControls}\n",
-        "        files={filteredFiles}\n        cacheFiles={files}\n        loading={loading}\n        disabled={disableControls}\n",
-    )
-    replace_all(
-        path,
-        "        files={filteredFiles}\n        loading={loading}\n        disabled={disableControls}\n",
-        "        files={filteredFiles}\n        cacheFiles={files}\n        loading={loading}\n        disabled={disableControls}\n",
-    )
-    insert_once(
-        path,
-        "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\n",
-        "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\n"
-        "import { useQuotaSelection } from '@/extensions/quota/useQuotaSelection';\n",
-        "useQuotaSelection",
-    )
-    insert_once(
-        path,
-        "  useHeaderRefresh(loadFiles);\n",
-        "  useHeaderRefresh(loadFiles);\n  const quotaSelection = useQuotaSelection(loadFiles);\n",
-        "useQuotaSelection(loadFiles)",
-    )
-    replace_all(
-        path,
-        "        files={filteredFiles}\n        cacheFiles={files}\n        loading={loading}\n        disabled={disableControls}\n      />\n",
-        "        files={filteredFiles}\n        cacheFiles={files}\n        loading={loading}\n        disabled={disableControls}\n"
-        "        selectable\n"
-        "        selectedNames={quotaSelection.selectedNames}\n"
-        "        onToggleSelect={quotaSelection.toggleSelect}\n"
-        "        onDeleteFile={quotaSelection.deleteOne}\n"
-        "        onToggleSelectAll={quotaSelection.toggleSelectAll}\n"
-        "        areAllSelected={quotaSelection.areAllSelected}\n"
-        "        selectedCountIn={quotaSelection.selectedCountIn}\n"
-        "        onDeleteSelected={quotaSelection.deleteSelected}\n"
-        "      />\n",
-    )
-
-
-def patch_quota_section(target: Path) -> None:
-    path = target / 'src/components/quota/QuotaSection.tsx'
-    replace_once(
-        path,
-        "  files: AuthFileItem[];\n  loading: boolean;\n",
-        "  files: AuthFileItem[];\n  cacheFiles?: AuthFileItem[];\n  loading: boolean;\n",
-    )
-    replace_once(
-        path,
-        "  files,\n  loading,\n  disabled,\n}: QuotaSectionProps<TState, TData>) {",
-        "  files,\n  cacheFiles,\n  loading,\n  disabled,\n"
-        "  selectable,\n"
-        "  selectedNames,\n"
-        "  onToggleSelect,\n"
-        "  onDeleteFile,\n"
-        "  onToggleSelectAll,\n"
-        "  areAllSelected,\n"
-        "  selectedCountIn,\n"
-        "  onDeleteSelected,\n"
-        "}: QuotaSectionProps<TState, TData>) {",
-    )
-    insert_once(
-        path,
-        "  const filteredFiles = useMemo(\n    () => files.filter((file) => config.filterFn(file)),\n    [files, config]\n  );\n",
-        "  const filteredFiles = useMemo(\n    () => files.filter((file) => config.filterFn(file)),\n    [files, config]\n  );\n  const cacheSourceFiles = cacheFiles ?? files;\n  const cacheFilesForProvider = useMemo(\n    () => cacheSourceFiles.filter((file) => config.filterFn(file)),\n    [cacheSourceFiles, config]\n  );\n",
-        "cacheFilesForProvider",
-    )
-    replace_once(
-        path,
-        "  useEffect(() => {\n    if (loading) return;\n    if (filteredFiles.length === 0) {\n      setQuota({});\n      return;\n    }\n    setQuota((prev) => {\n      const nextState: Record<string, TState> = {};\n      filteredFiles.forEach((file) => {\n        const cached = prev[file.name];\n        if (cached) {\n          nextState[file.name] = cached;\n        }\n      });\n      return nextState;\n    });\n  }, [filteredFiles, loading, setQuota]);\n",
-        "  useEffect(() => {\n    if (loading) return;\n    if (cacheFilesForProvider.length === 0) {\n      setQuota({});\n      return;\n    }\n    setQuota((prev) => {\n      const nextState: Record<string, TState> = {};\n      cacheFilesForProvider.forEach((file) => {\n        const cached = prev[file.name];\n        if (cached) {\n          nextState[file.name] = cached;\n        }\n      });\n      return nextState;\n    });\n  }, [cacheFilesForProvider, loading, setQuota]);\n",
-    )
-    replace_once(
-        path,
-        "  files: AuthFileItem[];\n  cacheFiles?: AuthFileItem[];\n  loading: boolean;\n",
-        "  files: AuthFileItem[];\n  cacheFiles?: AuthFileItem[];\n  loading: boolean;\n"
-        "  selectable?: boolean;\n"
-        "  selectedNames?: Set<string>;\n"
-        "  onToggleSelect?: (name: string) => void;\n"
-        "  onDeleteFile?: (name: string) => void;\n"
-        "  onToggleSelectAll?: (names: string[]) => void;\n"
-        "  areAllSelected?: (names: string[]) => boolean;\n"
-        "  selectedCountIn?: (names: string[]) => number;\n"
-        "  onDeleteSelected?: (names: string[]) => void;\n",
-    )
-    replace_once(
-        path,
-        "        <>\n          <div ref={gridRef} className={config.gridClassName}>\n",
-        "        <>\n"
-        "          {selectable && (\n"
-        "            <div className={styles.quotaSelectionBar}>\n"
-        "              <label className={styles.quotaSelectAllLabel}>\n"
-        "                <input\n"
-        "                  type=\"checkbox\"\n"
-        "                  checked={areAllSelected?.(filteredFiles.map((file) => file.name)) ?? false}\n"
-        "                  onChange={() => onToggleSelectAll?.(filteredFiles.map((file) => file.name))}\n"
-        "                  disabled={disabled || filteredFiles.length === 0}\n"
-        "                />\n"
-        "                <span>{t('quota_management.select_all')}</span>\n"
-        "              </label>\n"
-        "              <Button\n"
-        "                type=\"button\"\n"
-        "                variant=\"danger\"\n"
-        "                size=\"sm\"\n"
-        "                onClick={() => onDeleteSelected?.(filteredFiles.map((file) => file.name))}\n"
-        "                disabled={disabled || (selectedCountIn?.(filteredFiles.map((file) => file.name)) ?? 0) === 0}\n"
-        "              >\n"
-        "                {t('quota_management.delete_selected', { count: selectedCountIn?.(filteredFiles.map((file) => file.name)) ?? 0 })}\n"
-        "              </Button>\n"
-        "            </div>\n"
-        "          )}\n"
-        "          <div ref={gridRef} className={config.gridClassName}>\n",
-    )
-    replace_once(
-        path,
-        "                  renderQuotaItems={config.renderQuotaItems}\n",
-        "                  renderQuotaItems={config.renderQuotaItems}\n"
-        "                  selectable={selectable}\n"
-        "                  selected={selectedNames?.has(item.name) ?? false}\n"
-        "                  onToggleSelect={onToggleSelect}\n"
-        "                  onDeleteFile={onDeleteFile}\n",
-    )
-
-
-def patch_quota_refresh_all(target: Path) -> None:
-    path = target / 'src/components/quota/QuotaSection.tsx'
-    replace_once(
-        path,
-        "import { useCallback, useEffect, useMemo, useRef, useState } from 'react';\n",
-        "import { useCallback, useEffect, useMemo, useState } from 'react';\n",
-    )
-    replace_once(
-        path,
-        "import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
-        "import { useBackendQuotaRefresh } from '@/extensions/quota/useBackendQuotaRefresh';\n",
-    )
-    replace_once(
-        path,
-        "    goToNext,\n    loading: sectionLoading,\n    setLoading,\n  } = useQuotaPagination(filteredFiles);\n",
-        "    goToNext,\n  } = useQuotaPagination(filteredFiles);\n",
-    )
-    replace_once(
-        path,
-        "  const { quota, loadQuota } = useQuotaLoader(config);\n"
-        "\n"
-        "  const pendingQuotaRefreshRef = useRef(false);\n"
-        "  const prevFilesLoadingRef = useRef(loading);\n"
-        "\n"
-        "  const handleRefresh = useCallback(() => {\n"
-        "    pendingQuotaRefreshRef.current = true;\n"
-        "    void triggerHeaderRefresh();\n"
-        "  }, []);\n"
-        "\n"
-        "  useEffect(() => {\n"
-        "    const wasLoading = prevFilesLoadingRef.current;\n"
-        "    prevFilesLoadingRef.current = loading;\n"
-        "\n"
-        "    if (!pendingQuotaRefreshRef.current) return;\n"
-        "    if (loading) return;\n"
-        "    if (!wasLoading) return;\n"
-        "\n"
-        "    pendingQuotaRefreshRef.current = false;\n"
-        "    const targets = effectiveViewMode === 'all' ? filteredFiles : pageItems;\n"
-        "    if (targets.length === 0) return;\n"
-        "    loadQuota(targets, setLoading);\n"
-        "  }, [loading, effectiveViewMode, filteredFiles, pageItems, loadQuota, setLoading]);\n",
-        "  const { quota } = useQuotaLoader(config);\n"
-        "  const backendRefresh = useBackendQuotaRefresh(config.type);\n",
-    )
-    replace_once(
-        path,
-        "  const isRefreshing = sectionLoading || loading;\n",
-        "  const isRefreshing = backendRefresh.isRefreshing || loading;\n"
-        "  const refreshLabel =\n"
-        "    backendRefresh.isRefreshing && backendRefresh.total > 0\n"
-        "      ? t('quota_management.refresh_progress', {\n"
-        "          completed: backendRefresh.completed,\n"
-        "          total: backendRefresh.total,\n"
-        "        })\n"
-        "      : t('quota_management.refresh_all_credentials');\n",
-    )
-    replace_once(
-        path,
-        "            onClick={handleRefresh}\n",
-        "            onClick={() => void backendRefresh.start()}\n",
-    )
-    replace_once(
-        path,
-        "            {t('quota_management.refresh_all_credentials')}\n",
-        "            {refreshLabel}\n",
-    )
-
-
-def patch_quota_page_search(target: Path) -> None:
-    page_path = target / 'src/pages/QuotaPage.tsx'
-    if 'const QUOTA_SEARCH_FIELD_KEYS' in read(page_path):
-        return
-    replace_once(
-        page_path,
-        "import { useCallback, useEffect, useState } from 'react';\n",
-        "import { useCallback, useEffect, useMemo, useState } from 'react';\n",
-    )
-    insert_once(
-        page_path,
-        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
-        "import { EmptyState } from '@/components/ui/EmptyState';\n"
-        "import { Input } from '@/components/ui/Input';\n"
-        "import { IconSearch } from '@/components/ui/icons';\n"
-        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
-        "quota_management.search_label",
-    )
-    replace_once(
-        page_path,
-        "import { useAuthStore } from '@/stores';\n",
-        "import { useAuthStore, useQuotaStore } from '@/stores';\n",
-    )
-    insert_once(
-        page_path,
-        "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\n",
-        "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\n"
-        "import { resolveXaiPlanType } from '@/extensions/quota/xaiQuota';\n",
-        "resolveXaiPlanType",
-    )
-    insert_once(
-        page_path,
-        "export function QuotaPage() {\n",
-        "const QUOTA_SEARCH_FIELD_KEYS = [\n"
-        "  'name',\n"
-        "  'auth_index',\n"
-        "  'authIndex',\n"
-        "  'auth-index',\n"
-        "  'type',\n"
-        "  'provider',\n"
-        "  'note',\n"
-        "  'remark',\n"
-        "  'remarks',\n"
-        "  'description',\n"
-        "  'plan',\n"
-        "  'plan_type',\n"
-        "  'planType',\n"
-        "  'package',\n"
-        "  'package_name',\n"
-        "  'packageName',\n"
-        "  'subscription',\n"
-        "  'subscription_plan',\n"
-        "  'subscriptionPlan',\n"
-        "  'tier',\n"
-        "  'tier_id',\n"
-        "  'tierId',\n"
-        "  'tier_label',\n"
-        "  'tierLabel',\n"
-        "  'product',\n"
-        "  'product_name',\n"
-        "  'productName',\n"
-        "  'quota_plan',\n"
-        "  'quotaPlan',\n"
-        "] as const;\n"
-        "\n"
-        "const PREMIUM_QUOTA_CODEX_PLAN_TYPES = new Set(['pro', 'prolite', 'pro-lite', 'pro_lite']);\n"
-        "type QuotaSearchTranslate = (key: string) => string;\n"
-        "type QuotaSearchStore = Pick<\n"
-        "  ReturnType<typeof useQuotaStore.getState>,\n"
-        "  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'xaiQuota'\n"
-        ">;\n"
-        "\n"
-        "const QUOTA_NESTED_SEARCH_KEY_PATTERN =\n"
-        "  /(note|remark|description|desc|plan|package|subscription|tier|product|quota)/i;\n"
-        "\n"
-        "const escapeQuotaSearchSegment = (value: string): string =>\n"
-        "  value.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n"
-        "\n"
-        "const buildQuotaWildcardSearch = (value: string): RegExp | null => {\n"
-        "  if (!value.includes('*')) return null;\n"
-        "  const pattern = value.split('*').map(escapeQuotaSearchSegment).join('.*');\n"
-        "  return new RegExp(pattern, 'i');\n"
-        "};\n"
-        "\n"
-        "const addQuotaSearchValue = (values: string[], value: unknown) => {\n"
-        "  if (value == null) return;\n"
-        "  if (typeof value === 'string') {\n"
-        "    const trimmed = value.trim();\n"
-        "    if (trimmed) values.push(trimmed);\n"
-        "    return;\n"
-        "  }\n"
-        "  if (typeof value === 'number' || typeof value === 'boolean') {\n"
-        "    values.push(String(value));\n"
-        "  }\n"
-        "};\n"
-        "\n"
-        "const toQuotaSearchRecord = (value: unknown): Record<string, unknown> | null =>\n"
-        "  value && typeof value === 'object' && !Array.isArray(value)\n"
-        "    ? (value as Record<string, unknown>)\n"
-        "    : null;\n"
-        "\n"
-        "const normalizeQuotaSearchPlan = (value: unknown): string =>\n"
-        "  typeof value === 'string' ? value.trim().toLowerCase().replace(/_/g, '-') : '';\n"
-        "\n"
-        "const addQuotaCodexPlanSearchValues = (\n"
-        "  values: string[],\n"
-        "  planType: unknown,\n"
-        "  t: QuotaSearchTranslate\n"
-        ") => {\n"
-        "  const normalized = normalizeQuotaSearchPlan(planType);\n"
-        "  if (!normalized) return;\n"
-        "  values.push(normalized, normalized.replace(/-/g, ' '));\n"
-        "  if (normalized === 'pro') values.push(t('codex_quota.plan_pro'));\n"
-        "  else if (PREMIUM_QUOTA_CODEX_PLAN_TYPES.has(normalized)) values.push(t('codex_quota.plan_prolite'));\n"
-        "  else if (normalized === 'plus') values.push(t('codex_quota.plan_plus'));\n"
-        "  else if (normalized === 'team') values.push(t('codex_quota.plan_team'));\n"
-        "  else if (normalized === 'free') values.push(t('codex_quota.plan_free'));\n"
-        "};\n"
-        "\n"
-        "const addQuotaClaudePlanSearchValues = (\n"
-        "  values: string[],\n"
-        "  planType: unknown,\n"
-        "  t: QuotaSearchTranslate\n"
-        ") => {\n"
-        "  const raw = typeof planType === 'string' ? planType.trim() : '';\n"
-        "  if (!raw) return;\n"
-        "  values.push(raw, raw.replace(/^plan[_-]/i, '').replace(/[_-]/g, ' '));\n"
-        "  values.push(t(`claude_quota.${raw}`));\n"
-        "};\n"
-        "\n"
-        "const addQuotaAntigravityPlanSearchValues = (\n"
-        "  values: string[],\n"
-        "  subscription: unknown,\n"
-        "  t: QuotaSearchTranslate\n"
-        ") => {\n"
-        "  const record = toQuotaSearchRecord(subscription);\n"
-        "  if (!record) return;\n"
-        "  const plan = normalizeQuotaSearchPlan(record.plan);\n"
-        "  addQuotaSearchValue(values, record.plan);\n"
-        "  addQuotaSearchValue(values, record.tierName);\n"
-        "  addQuotaSearchValue(values, record.tierId);\n"
-        "  if (plan === 'free') values.push(t('antigravity_subscription.plan_free'));\n"
-        "  else if (plan === 'pro') values.push(t('antigravity_subscription.plan_pro'));\n"
-        "  else if (plan === 'ultra') values.push(t('antigravity_subscription.plan_ultra'));\n"
-        "  else if (plan === 'ultra-lite') values.push(t('antigravity_subscription.plan_ultra_lite'));\n"
-        "};\n"
-        "\n"
-        "const normalizeQuotaSearchCents = (value: unknown): number | null => {\n"
-        "  const source = toQuotaSearchRecord(value)?.val ?? value;\n"
-        "  if (typeof source === 'number' && Number.isFinite(source)) return source;\n"
-        "  if (typeof source !== 'string') return null;\n"
-        "  const parsed = Number(source.trim());\n"
-        "  return Number.isFinite(parsed) ? parsed : null;\n"
-        "};\n"
-        "\n"
-        "const addQuotaXaiPlanSearchValues = (\n"
-        "  values: string[],\n"
-        "  billing: unknown,\n"
-        "  t: QuotaSearchTranslate\n"
-        ") => {\n"
-        "  const record = toQuotaSearchRecord(billing);\n"
-        "  if (!record) return;\n"
-        "  const monthlyLimitCents = normalizeQuotaSearchCents(record.monthlyLimitCents);\n"
-        "  const storedPlanType = normalizeQuotaSearchPlan(record.planType ?? record.plan_type);\n"
-        "  const planType = storedPlanType || resolveXaiPlanType(monthlyLimitCents, monthlyLimitCents !== null);\n"
-        "  if (!planType) return;\n"
-        "  values.push(planType, planType.replace(/-/g, ' '));\n"
-        "  if (planType === 'free') values.push('Free');\n"
-        "  else if (planType === 'supergrok') values.push(t('xai_quota.plan_supergrok'), 'supergrok');\n"
-        "  else if (planType === 'x-premium-plus') values.push(t('xai_quota.plan_x_premium_plus'), 'x premium+');\n"
-        "  else if (planType === 'supergrok-heavy') values.push(t('xai_quota.plan_supergrok_heavy'), 'supergrok heavy');\n"
-        "  else if (planType === 'paid') values.push(t('xai_quota.plan_paid'));\n"
-        "  else if (planType === 'paid-unknown') values.push(t('xai_quota.plan_paid_unknown'));\n"
-        "};\n"
-        "\n"
-        "const buildQuotaStateSearchValues = (\n"
-        "  item: AuthFileItem,\n"
-        "  quotaStore: QuotaSearchStore,\n"
-        "  t: QuotaSearchTranslate\n"
-        "): string[] => {\n"
-        "  const values: string[] = [];\n"
-        "  const name = typeof item.name === 'string' ? item.name : '';\n"
-        "  if (!name) return values;\n"
-        "  addQuotaAntigravityPlanSearchValues(values, quotaStore.antigravityQuota[name]?.subscription, t);\n"
-        "  addQuotaClaudePlanSearchValues(values, quotaStore.claudeQuota[name]?.planType, t);\n"
-        "  addQuotaCodexPlanSearchValues(values, quotaStore.codexQuota[name]?.planType, t);\n"
-        "  addQuotaSearchValue(values, quotaStore.geminiCliQuota[name]?.tierLabel);\n"
-        "  addQuotaSearchValue(values, quotaStore.geminiCliQuota[name]?.tierId);\n"
-        "  addQuotaSearchValue(values, quotaStore.geminiCliQuota[name]?.creditBalance);\n"
-        "  addQuotaXaiPlanSearchValues(values, quotaStore.xaiQuota[name]?.billing, t);\n"
-        "  return values;\n"
-        "};\n"
-        "\n"
-        "const collectQuotaSearchValues = (value: unknown, depth = 0): string[] => {\n"
-        "  if (value == null) return [];\n"
-        "  if (typeof value === 'string') return value.trim() ? [value] : [];\n"
-        "  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];\n"
-        "  if (depth >= 2) return [];\n"
-        "  if (Array.isArray(value)) {\n"
-        "    return value.flatMap((item) => collectQuotaSearchValues(item, depth + 1));\n"
-        "  }\n"
-        "  if (typeof value !== 'object') return [];\n"
-        "\n"
-        "  return Object.entries(value as Record<string, unknown>).flatMap(([key, nestedValue]) =>\n"
-        "    QUOTA_NESTED_SEARCH_KEY_PATTERN.test(key)\n"
-        "      ? collectQuotaSearchValues(nestedValue, depth + 1)\n"
-        "      : []\n"
-        "  );\n"
-        "};\n"
-        "\n"
-        "const buildQuotaSearchValues = (\n"
-        "  item: AuthFileItem,\n"
-        "  quotaStore: QuotaSearchStore,\n"
-        "  t: QuotaSearchTranslate\n"
-        "): string[] => [\n"
-        "  ...QUOTA_SEARCH_FIELD_KEYS.flatMap((key) => collectQuotaSearchValues(item[key])),\n"
-        "  ...buildQuotaStateSearchValues(item, quotaStore, t),\n"
-        "];\n"
-        "\n"
-        "export function QuotaPage() {\n",
-        "QUOTA_SEARCH_FIELD_KEYS",
-    )
-    replace_once(
-        page_path,
-        "  const { t } = useTranslation();\n  const connectionStatus = useAuthStore((state) => state.connectionStatus);\n\n  const [files, setFiles] = useState<AuthFileItem[]>([]);",
-        "  const { t } = useTranslation();\n"
-        "  const connectionStatus = useAuthStore((state) => state.connectionStatus);\n"
-        "  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);\n"
-        "  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n"
-        "  const codexQuota = useQuotaStore((state) => state.codexQuota);\n"
-        "  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n"
-        "  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n"
-        "  const quotaSearchStore = useMemo(\n"
-        "    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, xaiQuota }),\n"
-        "    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, xaiQuota]\n"
-        "  );\n"
-        "\n"
-        "  const [files, setFiles] = useState<AuthFileItem[]>([]);",
-    )
-    replace_once(
-        page_path,
-        "  const [error, setError] = useState('');\n\n  const disableControls",
-        "  const [error, setError] = useState('');\n"
-        "  const [search, setSearch] = useState('');\n"
-        "\n"
-        "  const normalizedSearch = search.trim();\n"
-        "  const wildcardSearch = useMemo(\n"
-        "    () => buildQuotaWildcardSearch(normalizedSearch),\n"
-        "    [normalizedSearch]\n"
-        "  );\n"
-        "  const searchFileNames = useMemo(() => {\n"
-        "    if (!normalizedSearch) return null;\n"
-        "    const normalizedTerm = normalizedSearch.toLowerCase();\n"
-        "    return new Set(\n"
-        "      files\n"
-        "        .filter((item) =>\n"
-        "          buildQuotaSearchValues(item, quotaSearchStore, t).some((value) =>\n"
-        "            wildcardSearch\n"
-        "              ? wildcardSearch.test(value)\n"
-        "              : value.toLowerCase().includes(normalizedTerm)\n"
-        "          )\n"
-        "        )\n"
-        "        .map((item) => item.name)\n"
-        "    );\n"
-        "  }, [files, normalizedSearch, quotaSearchStore, t, wildcardSearch]);\n"
-        "  const hasQuotaSearchResults = useMemo(() => {\n"
-        "    if (!searchFileNames) return true;\n"
-        "    const filters = [\n"
-        "      CLAUDE_CONFIG.filterFn,\n"
-        "      ANTIGRAVITY_CONFIG.filterFn,\n"
-        "      CODEX_CONFIG.filterFn,\n"
-        "      GEMINI_CLI_CONFIG.filterFn,\n"
-        "      XAI_CONFIG.filterFn,\n"
-        "      KIMI_CONFIG.filterFn,\n"
-        "    ];\n"
-        "    return files.some(\n"
-        "      (file) => searchFileNames.has(file.name) && filters.some((filterFn) => filterFn(file))\n"
-        "    );\n"
-        "  }, [files, searchFileNames]);\n"
-        "\n"
-        "  const disableControls",
-    )
-    insert_once(
-        page_path,
-        "      {error && <div className={styles.errorBox}>{error}</div>}\n",
-        "      <div className={styles.searchBar}>\n"
-        "        <Input\n"
-        "          className={styles.searchInput}\n"
-        "          type=\"search\"\n"
-        "          value={search}\n"
-        "          onChange={(event) => setSearch(event.target.value)}\n"
-        "          placeholder={t('quota_management.search_placeholder')}\n"
-        "          aria-label={t('quota_management.search_label')}\n"
-        "          rightElement={<IconSearch className={styles.searchIcon} size={18} />}\n"
-        "        />\n"
-        "      </div>\n"
-        "\n"
-        "      {error && <div className={styles.errorBox}>{error}</div>}\n"
-        "\n"
-        "      {normalizedSearch && !hasQuotaSearchResults && (\n"
-        "        <EmptyState\n"
-        "          title={t('quota_management.no_search_results')}\n"
-        "          description={t('quota_management.no_search_results_desc')}\n"
-        "        />\n"
-        "      )}\n",
-        "quota_management.no_search_results",
-    )
-    replace_all(
-        page_path,
-        "        disabled={disableControls}\n      />",
-        "        disabled={disableControls}\n"
-        "        searchFileNames={searchFileNames}\n"
-        "        hideWhenEmpty={Boolean(normalizedSearch)}\n"
-        "      />",
-    )
-
-    section_path = target / 'src/components/quota/QuotaSection.tsx'
-    replace_once(
-        section_path,
-        "  disabled: boolean;\n}",
-        "  disabled: boolean;\n"
-        "  searchFileNames?: ReadonlySet<string> | null;\n"
-        "  hideWhenEmpty?: boolean;\n"
-        "}",
-    )
-    replace_once(
-        section_path,
-        "  loading,\n  disabled,\n}: QuotaSectionProps<TState, TData>)",
-        "  loading,\n"
-        "  disabled,\n"
-        "  searchFileNames = null,\n"
-        "  hideWhenEmpty = false,\n"
-        "}: QuotaSectionProps<TState, TData>)",
-    )
-    replace_once(
-        section_path,
-        "  const filteredFiles = useMemo(\n"
-        "    () => files.filter((file) => config.filterFn(file)),\n"
-        "    [files, config]\n"
-        "  );\n",
-        "  const providerFiles = useMemo(\n"
-        "    () => files.filter((file) => config.filterFn(file)),\n"
-        "    [files, config]\n"
-        "  );\n"
-        "  const filteredFiles = useMemo(\n"
-        "    () =>\n"
-        "      searchFileNames\n"
-        "        ? providerFiles.filter((file) => searchFileNames.has(file.name))\n"
-        "        : providerFiles,\n"
-        "    [providerFiles, searchFileNames]\n"
-        "  );\n",
-    )
-    replace_once(
-        section_path,
-        "    if (filteredFiles.length === 0) {\n"
-        "      setQuota({});\n"
-        "      return;\n"
-        "    }\n"
-        "    setQuota((prev) => {\n"
-        "      const nextState: Record<string, TState> = {};\n"
-        "      filteredFiles.forEach((file) => {\n",
-        "    if (providerFiles.length === 0) {\n"
-        "      setQuota({});\n"
-        "      return;\n"
-        "    }\n"
-        "    setQuota((prev) => {\n"
-        "      const nextState: Record<string, TState> = {};\n"
-        "      providerFiles.forEach((file) => {\n",
-    )
-    replace_once(
-        section_path,
-        "  }, [filteredFiles, loading, setQuota]);\n",
-        "  }, [loading, providerFiles, setQuota]);\n",
-    )
-    insert_once(
-        section_path,
-        "  return (\n    <Card\n",
-        "  if (hideWhenEmpty && filteredFiles.length === 0) return null;\n\n"
-        "  return (\n    <Card\n",
-        "hideWhenEmpty && filteredFiles.length",
-    )
-
-    styles_path = target / 'src/pages/QuotaPage.module.scss'
-    insert_once(
-        styles_path,
-        ".errorBox {\n",
-        ".searchBar {\n"
-        "  width: min(100%, 560px);\n"
-        "\n"
-        "  :global(.form-group) {\n"
-        "    margin: 0;\n"
-        "  }\n"
-        "}\n"
-        "\n"
-        ".searchInput {\n"
-        "  width: 100%;\n"
-        "  min-height: 42px;\n"
-        "  padding-right: 40px;\n"
-        "}\n"
-        "\n"
-        ".searchIcon {\n"
-        "  display: block;\n"
-        "  color: var(--text-tertiary);\n"
-        "  pointer-events: none;\n"
-        "}\n"
-        "\n"
-        ".errorBox {\n",
-        ".searchBar",
-    )
-
-
-def patch_quota_card(target: Path) -> None:
-    path = target / 'src/components/quota/QuotaCard.tsx'
-    replace_once(
-        path,
-        "import { TYPE_COLORS } from '@/utils/quota';\n",
-        "import { QuotaCachedTime } from '@/extensions/quota/QuotaCardExtras';\nimport { TYPE_COLORS } from '@/utils/quota';\n",
-    )
-    replace_once(path, "  errorStatus?: number;\n}", "  errorStatus?: number;\n  cachedAt?: number;\n}")
-    replace_once(
-        path,
-        "        ) : quota ? (\n          renderQuotaItems(quota, t, { styles, QuotaProgressBar })\n        ) : (",
-        "        ) : quota ? (\n          <>\n            {renderQuotaItems(quota, t, { styles, QuotaProgressBar })}\n            <QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />\n          </>\n        ) : (",
-    )
-    replace_once(
-        path,
-        "  renderQuotaItems: (quota: TState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;\n}",
-        "  renderQuotaItems: (quota: TState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;\n"
-        "  selectable?: boolean;\n"
-        "  selected?: boolean;\n"
-        "  onToggleSelect?: (name: string) => void;\n"
-        "  onDeleteFile?: (name: string) => void;\n}",
-    )
-    replace_once(
-        path,
-        "  renderQuotaItems,\n}: QuotaCardProps<TState>) {",
-        "  renderQuotaItems,\n"
-        "  selectable = false,\n"
-        "  selected = false,\n"
-        "  onToggleSelect,\n"
-        "  onDeleteFile,\n}: QuotaCardProps<TState>) {",
-    )
-    replace_once(
-        path,
-        "      <div className={styles.cardHeader}>\n        <span\n          className={styles.typeBadge}\n",
-        "      <div className={styles.cardHeader}>\n"
-        "        {selectable && (\n"
-        "          <input\n"
-        "            type=\"checkbox\"\n"
-        "            className={styles.quotaCardCheckbox}\n"
-        "            checked={selected}\n"
-        "            onChange={() => onToggleSelect?.(item.name)}\n"
-        "            aria-label={t('quota_management.select_credential', { name: item.name })}\n"
-        "          />\n"
-        "        )}\n"
-        "        <span\n          className={styles.typeBadge}\n",
-    )
-    replace_once(
-        path,
-        "      {(resetQuotaAction || (onRefresh && quotaStatus !== 'idle')) && (\n        <div className={styles.quotaCardActions}>\n",
-        "      {(selectable || resetQuotaAction || (onRefresh && quotaStatus !== 'idle')) && (\n"
-        "        <div className={styles.quotaCardActions}>\n"
-        "          {selectable && (\n"
-        "            <Button\n"
-        "              type=\"button\"\n"
-        "              variant=\"danger\"\n"
-        "              size=\"sm\"\n"
-        "              className={styles.quotaDeleteButton}\n"
-        "              onClick={() => onDeleteFile?.(item.name)}\n"
-        "              title={t('quota_management.delete_one')}\n"
-        "              aria-label={t('quota_management.delete_one')}\n"
-        "            >\n"
-        "              {t('quota_management.delete_one')}\n"
-        "            </Button>\n"
-        "          )}\n",
-    )
 
 
 def patch_quota_store(target: Path) -> None:
@@ -2408,52 +1023,15 @@ def patch_antigravity_quota_builders(target: Path) -> None:
         "        description: normalizeStringValue(group.description) ?? undefined,\n",
         "        description,\n",
     )
-    replace_once_if_present(
+    replace_once(
         path,
         "    productUsage: primary.productUsage.length > 0 ? primary.productUsage : fallback.productUsage,\n",
         "    productUsage: Array.isArray(primary.productUsage) && primary.productUsage.length > 0\n      ? primary.productUsage\n      : Array.isArray(fallback.productUsage)\n        ? fallback.productUsage\n        : [],\n",
     )
 
 
-def patch_quota_styles(target: Path) -> None:
-    path = target / 'src/pages/QuotaPage.module.scss'
-    replace_once(
-        path,
-        ".codexGrid,\n.kimiGrid,",
-        ".codexGrid,\n.geminiCliGrid,\n.kimiGrid,",
-    )
-    replace_once_if_present(
-        path,
-        ".codexControls,\n.kimiControls,",
-        ".codexControls,\n.geminiCliControls,\n.kimiControls,",
-    )
-    replace_once_if_present(
-        path,
-        ".codexControl,\n.kimiControl,",
-        ".codexControl,\n.geminiCliControl,\n.kimiControl,",
-    )
-    insert_once(
-        path,
-        ".kimiCard {\n",
-        ".geminiCliCard {\n  background-image: linear-gradient(180deg, rgba(224, 232, 255, 0.2), rgba(224, 232, 255, 0));\n}\n\n.kimiCard {\n",
-        ".geminiCliCard",
-    )
-    insert_once(
-        path,
-        ".pageHeader {\n",
-        ".quotaFilterBar {\n  display: flex;\n  gap: $spacing-sm;\n  margin-top: $spacing-md;\n  flex-wrap: wrap;\n}\n\n.quotaSearchInput {\n  flex: 1;\n  min-width: 200px;\n  padding: $spacing-sm $spacing-md;\n  border: 1px solid var(--border-color);\n  border-radius: $radius-md;\n  background-color: var(--bg-secondary);\n  color: var(--text-primary);\n  font-size: 13px;\n  outline: none;\n  transition: border-color 0.15s ease;\n\n  &:focus {\n    border-color: var(--primary-color);\n  }\n\n  &::placeholder {\n    color: var(--text-secondary);\n  }\n}\n\n.quotaPlanSelect {\n  min-width: 140px;\n  padding: $spacing-sm $spacing-md;\n  border: 1px solid var(--border-color);\n  border-radius: $radius-md;\n  background-color: var(--bg-secondary);\n  color: var(--text-primary);\n  font-size: 13px;\n  cursor: pointer;\n  outline: none;\n  transition: border-color 0.15s ease;\n\n  &:focus {\n    border-color: var(--primary-color);\n  }\n}\n\n.pageHeader {\n",
-        ".quotaFilterBar",
-    )
-    insert_once(
-        path,
-        ".quotaFilterBar {\n",
-        ".quotaSelectionBar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: $spacing-sm;\n  margin-bottom: $spacing-md;\n  padding: $spacing-sm $spacing-md;\n  background-color: var(--bg-secondary);\n  border-radius: $radius-md;\n}\n\n.quotaSelectAllLabel {\n  display: flex;\n  align-items: center;\n  gap: $spacing-xs;\n  font-size: 13px;\n  color: var(--text-primary);\n  cursor: pointer;\n}\n\n.quotaCardCheckbox {\n  margin-right: $spacing-xs;\n  cursor: pointer;\n  flex-shrink: 0;\n}\n\n.quotaDeleteButton {\n  margin-right: auto;\n}\n\n.quotaFilterBar {\n",
-        ".quotaSelectionBar",
-    )
-
-
 def patch_account_inspection_page(target: Path) -> None:
-    path = target / 'src/pages/AccountInspectionPage.tsx'
+    path = target / 'src/pro/modules/inspection/AccountInspectionPage.tsx'
     replace_once_if_present(
         path,
         "  const used = normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent);\n"
@@ -2466,476 +1044,10 @@ def patch_account_inspection_page(target: Path) -> None:
     )
 
 
-def patch_auth_files_page_search(target: Path) -> None:
-    path = target / 'src/pages/AuthFilesPage.tsx'
-    replace_once(
-        path,
-        "import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';\n",
-        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
-    )
-    insert_once(
-        path,
-        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
-        "import { resolveXaiPlanType } from '@/extensions/quota/xaiQuota';\n"
-        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
-        "resolveXaiPlanType",
-    )
-    insert_once(
-        path,
-        "const buildWildcardSearch = (value: string): RegExp | null => {\n"
-        "  if (!value.includes('*')) return null;\n"
-        "  const pattern = value.split('*').map(escapeWildcardSearchSegment).join('.*');\n"
-        "  return new RegExp(pattern, 'i');\n"
-        "};\n",
-        "const buildWildcardSearch = (value: string): RegExp | null => {\n"
-        "  if (!value.includes('*')) return null;\n"
-        "  const pattern = value.split('*').map(escapeWildcardSearchSegment).join('.*');\n"
-        "  return new RegExp(pattern, 'i');\n"
-        "};\n"
-        "\n"
-        "const AUTH_FILE_SEARCH_FIELD_KEYS = [\n"
-        "  'name',\n"
-        "  'auth_index',\n"
-        "  'authIndex',\n"
-        "  'auth-index',\n"
-        "  'type',\n"
-        "  'provider',\n"
-        "  'note',\n"
-        "  'remark',\n"
-        "  'remarks',\n"
-        "  'description',\n"
-        "  'plan',\n"
-        "  'plan_type',\n"
-        "  'planType',\n"
-        "  'package',\n"
-        "  'package_name',\n"
-        "  'packageName',\n"
-        "  'subscription',\n"
-        "  'subscription_plan',\n"
-        "  'subscriptionPlan',\n"
-        "  'tier',\n"
-        "  'tier_id',\n"
-        "  'tierId',\n"
-        "  'tier_label',\n"
-        "  'tierLabel',\n"
-        "  'product',\n"
-        "  'product_name',\n"
-        "  'productName',\n"
-        "  'quota_plan',\n"
-        "  'quotaPlan',\n"
-        "] as const;\n"
-        "\n"
-        "const PREMIUM_CODEX_SEARCH_PLAN_TYPES = new Set(['pro', 'prolite', 'pro-lite', 'pro_lite']);\n"
-        "\n"
-        "type AuthFileSearchTranslate = (key: string) => string;\n"
-        "type AuthFileSearchQuotaStore = Pick<\n"
-        "  ReturnType<typeof useQuotaStore.getState>,\n"
-        "  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'kimiQuota' | 'xaiQuota'\n"
-        ">;\n"
-        "\n"
-        "const AUTH_FILE_NESTED_SEARCH_KEY_PATTERN =\n"
-        "  /(note|remark|description|desc|plan|package|subscription|tier|product|quota)/i;\n"
-        "\n"
-        "const addAuthFileSearchValue = (values: string[], value: unknown) => {\n"
-        "  if (value == null) return;\n"
-        "  if (typeof value === 'string') {\n"
-        "    const trimmed = value.trim();\n"
-        "    if (trimmed) values.push(trimmed);\n"
-        "    return;\n"
-        "  }\n"
-        "  if (typeof value === 'number' || typeof value === 'boolean') {\n"
-        "    values.push(String(value));\n"
-        "  }\n"
-        "};\n"
-        "\n"
-        "const toAuthFileSearchRecord = (value: unknown): Record<string, unknown> | null =>\n"
-        "  value && typeof value === 'object' && !Array.isArray(value)\n"
-        "    ? (value as Record<string, unknown>)\n"
-        "    : null;\n"
-        "\n"
-        "const normalizeAuthFileSearchPlan = (value: unknown): string =>\n"
-        "  typeof value === 'string' ? value.trim().toLowerCase().replace(/_/g, '-') : '';\n"
-        "\n"
-        "const addCodexPlanSearchValues = (\n"
-        "  values: string[],\n"
-        "  planType: unknown,\n"
-        "  t: AuthFileSearchTranslate\n"
-        ") => {\n"
-        "  const normalized = normalizeAuthFileSearchPlan(planType);\n"
-        "  if (!normalized) return;\n"
-        "  values.push(normalized, normalized.replace(/-/g, ' '));\n"
-        "  if (normalized === 'pro') values.push(t('codex_quota.plan_pro'));\n"
-        "  else if (PREMIUM_CODEX_SEARCH_PLAN_TYPES.has(normalized)) values.push(t('codex_quota.plan_prolite'));\n"
-        "  else if (normalized === 'plus') values.push(t('codex_quota.plan_plus'));\n"
-        "  else if (normalized === 'team') values.push(t('codex_quota.plan_team'));\n"
-        "  else if (normalized === 'free') values.push(t('codex_quota.plan_free'));\n"
-        "};\n"
-        "\n"
-        "const addClaudePlanSearchValues = (\n"
-        "  values: string[],\n"
-        "  planType: unknown,\n"
-        "  t: AuthFileSearchTranslate\n"
-        ") => {\n"
-        "  const raw = typeof planType === 'string' ? planType.trim() : '';\n"
-        "  if (!raw) return;\n"
-        "  values.push(raw, raw.replace(/^plan[_-]/i, '').replace(/[_-]/g, ' '));\n"
-        "  values.push(t(`claude_quota.${raw}`));\n"
-        "};\n"
-        "\n"
-        "const addAntigravityPlanSearchValues = (\n"
-        "  values: string[],\n"
-        "  subscription: unknown,\n"
-        "  t: AuthFileSearchTranslate\n"
-        ") => {\n"
-        "  const record = toAuthFileSearchRecord(subscription);\n"
-        "  if (!record) return;\n"
-        "  const plan = normalizeAuthFileSearchPlan(record.plan);\n"
-        "  addAuthFileSearchValue(values, record.plan);\n"
-        "  addAuthFileSearchValue(values, record.tierName);\n"
-        "  addAuthFileSearchValue(values, record.tierId);\n"
-        "  if (plan === 'free') values.push(t('antigravity_subscription.plan_free'));\n"
-        "  else if (plan === 'pro') values.push(t('antigravity_subscription.plan_pro'));\n"
-        "  else if (plan === 'ultra') values.push(t('antigravity_subscription.plan_ultra'));\n"
-        "  else if (plan === 'ultra-lite') values.push(t('antigravity_subscription.plan_ultra_lite'));\n"
-        "};\n"
-        "\n"
-        "const normalizeAuthFileSearchCents = (value: unknown): number | null => {\n"
-        "  const source = toAuthFileSearchRecord(value)?.val ?? value;\n"
-        "  if (typeof source === 'number' && Number.isFinite(source)) return source;\n"
-        "  if (typeof source !== 'string') return null;\n"
-        "  const parsed = Number(source.trim());\n"
-        "  return Number.isFinite(parsed) ? parsed : null;\n"
-        "};\n"
-        "\n"
-        "const addXaiPlanSearchValues = (\n"
-        "  values: string[],\n"
-        "  billing: unknown,\n"
-        "  t: AuthFileSearchTranslate\n"
-        ") => {\n"
-        "  const record = toAuthFileSearchRecord(billing);\n"
-        "  if (!record) return;\n"
-        "  const monthlyLimitCents = normalizeAuthFileSearchCents(record.monthlyLimitCents);\n"
-        "  const storedPlanType = normalizeAuthFileSearchPlan(record.planType ?? record.plan_type);\n"
-        "  const planType = storedPlanType || resolveXaiPlanType(monthlyLimitCents, monthlyLimitCents !== null);\n"
-        "  if (!planType) return;\n"
-        "  values.push(planType, planType.replace(/-/g, ' '));\n"
-        "  if (planType === 'free') values.push('Free');\n"
-        "  else if (planType === 'supergrok') values.push(t('xai_quota.plan_supergrok'), 'supergrok');\n"
-        "  else if (planType === 'x-premium-plus') values.push(t('xai_quota.plan_x_premium_plus'), 'x premium+');\n"
-        "  else if (planType === 'supergrok-heavy') values.push(t('xai_quota.plan_supergrok_heavy'), 'supergrok heavy');\n"
-        "  else if (planType === 'paid-unknown') values.push(t('xai_quota.plan_paid_unknown'));\n"
-        "};\n"
-        "\n"
-        "const buildAuthFileQuotaSearchValues = (\n"
-        "  item: Record<string, unknown>,\n"
-        "  quotaStore: AuthFileSearchQuotaStore,\n"
-        "  t: AuthFileSearchTranslate\n"
-        "): string[] => {\n"
-        "  const name = typeof item.name === 'string' ? item.name : '';\n"
-        "  if (!name) return [];\n"
-        "  const values: string[] = [];\n"
-        "  addAntigravityPlanSearchValues(values, quotaStore.antigravityQuota[name]?.subscription, t);\n"
-        "  addClaudePlanSearchValues(values, quotaStore.claudeQuota[name]?.planType, t);\n"
-        "  addCodexPlanSearchValues(values, quotaStore.codexQuota[name]?.planType, t);\n"
-        "  addAuthFileSearchValue(values, quotaStore.geminiCliQuota[name]?.tierLabel);\n"
-        "  addAuthFileSearchValue(values, quotaStore.geminiCliQuota[name]?.tierId);\n"
-        "  addAuthFileSearchValue(values, quotaStore.geminiCliQuota[name]?.creditBalance);\n"
-        "  addXaiPlanSearchValues(values, quotaStore.xaiQuota[name]?.billing, t);\n"
-        "  return values;\n"
-        "};\n"
-        "\n"
-        "const collectAuthFileSearchValues = (value: unknown, depth = 0): string[] => {\n"
-        "  if (value == null) return [];\n"
-        "  if (typeof value === 'string') return value.trim() ? [value] : [];\n"
-        "  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];\n"
-        "  if (depth >= 2) return [];\n"
-        "  if (Array.isArray(value)) {\n"
-        "    return value.flatMap((item) => collectAuthFileSearchValues(item, depth + 1));\n"
-        "  }\n"
-        "  if (typeof value !== 'object') return [];\n"
-        "\n"
-        "  return Object.entries(value as Record<string, unknown>).flatMap(([key, nestedValue]) =>\n"
-        "    AUTH_FILE_NESTED_SEARCH_KEY_PATTERN.test(key)\n"
-        "      ? collectAuthFileSearchValues(nestedValue, depth + 1)\n"
-        "      : []\n"
-        "  );\n"
-        "};\n"
-        "\n"
-        "const buildAuthFileSearchValues = (\n"
-        "  item: Record<string, unknown>,\n"
-        "  quotaStore: AuthFileSearchQuotaStore,\n"
-        "  t: AuthFileSearchTranslate\n"
-        "): string[] => [\n"
-        "  ...AUTH_FILE_SEARCH_FIELD_KEYS.flatMap((key) => collectAuthFileSearchValues(item[key])),\n"
-        "  ...buildAuthFileQuotaSearchValues(item, quotaStore, t),\n"
-        "];\n",
-        "AUTH_FILE_SEARCH_FIELD_KEYS",
-    )
-    insert_once(
-        path,
-        "  const statusBarCache = useAuthFilesStatusBarCache(files);\n",
-        "  const statusBarCache = useAuthFilesStatusBarCache(files);\n"
-        "\n"
-        "  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);\n"
-        "  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n"
-        "  const codexQuota = useQuotaStore((state) => state.codexQuota);\n"
-        "  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n"
-        "  const kimiQuota = useQuotaStore((state) => state.kimiQuota);\n"
-        "  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n"
-        "  const quotaSearchStore = useMemo(\n"
-        "    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n"
-        "    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n"
-        "  );\n",
-        "quotaSearchStore",
-    )
-    replace_once(
-        path,
-        "        [item.name, item.type, item.provider].some((value) => {\n"
-        "          const content = (value || '').toString();\n"
-        "          return wildcardSearch\n"
-        "            ? wildcardSearch.test(content)\n"
-        "            : content.toLowerCase().includes(normalizedTerm);\n"
-        "        });\n",
-        "        buildAuthFileSearchValues(item, quotaSearchStore, t).some((value) => {\n"
-        "          const content = value.toString();\n"
-        "          return wildcardSearch\n"
-        "            ? wildcardSearch.test(content)\n"
-        "            : content.toLowerCase().includes(normalizedTerm);\n"
-        "        });\n",
-    )
-    replace_once(
-        path,
-        "  }, [filesMatchingStatusFilters, normalizedFilter, normalizedSearch, wildcardSearch]);\n",
-        "  }, [filesMatchingStatusFilters, normalizedFilter, normalizedSearch, quotaSearchStore, t, wildcardSearch]);\n",
-    )
-
-
-def patch_auth_files_page_sorting(target: Path) -> None:
-    page_path = target / 'src/pages/AuthFilesPage.tsx'
-    ui_state_path = target / 'src/features/authFiles/uiState.ts'
-
-    replace_once(
-        ui_state_path,
-        "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority'] as const;\n",
-        "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority', 'plan', 'quota'] as const;\n",
-    )
-
-    insert_once(
-        page_path,
-        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
-        "import {\n"
-        "  compareAuthFilesByPlanDescending,\n"
-        "  isAuthFilePlanSortProvider,\n"
-        "} from '@/features/authFiles/planSort';\n"
-        "import {\n"
-        "  compareAuthFilesByAvailableQuotaDescending,\n"
-        "  isAuthFileQuotaSortProvider,\n"
-        "} from '@/features/authFiles/quotaSort';\n"
-        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
-        "from '@/features/authFiles/quotaSort'",
-    )
-
-    insert_once(
-        page_path,
-        "  const enabledOnly = statusFilterMode === 'enabled';\n",
-        "  const enabledOnly = statusFilterMode === 'enabled';\n"
-        "  const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter);\n"
-        "  const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter);\n"
-        "  const selectedSortModeAvailable =\n"
-        "    (sortMode !== 'plan' || planSortAvailable)\n"
-        "    && (sortMode !== 'quota' || quotaSortAvailable);\n"
-        "  const effectiveSortMode: AuthFilesSortMode =\n"
-        "    selectedSortModeAvailable ? sortMode : 'default';\n",
-        'effectiveSortMode',
-    )
-
-    insert_once(
-        page_path,
-        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
-        "  useEffect(() => {\n"
-        "    if (selectedSortModeAvailable) return;\n"
-        "    setSortMode('default');\n"
-        "    setPage(1);\n"
-        "  }, [selectedSortModeAvailable]);\n"
-        "\n"
-        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
-        "if (selectedSortModeAvailable) return;",
-    )
-
-    replace_once(
-        page_path,
-        "  const sortOptions = useMemo(\n"
-        "    () => [\n"
-        "      { value: 'default', label: t('auth_files.sort_default') },\n"
-        "      { value: 'az', label: t('auth_files.sort_az') },\n"
-        "      { value: 'priority', label: t('auth_files.sort_priority') },\n"
-        "    ],\n"
-        "    [t]\n"
-        "  );\n",
-        "  const sortOptions = useMemo(() => {\n"
-        "    const options: Array<{ value: AuthFilesSortMode; label: string }> = [\n"
-        "      { value: 'default', label: t('auth_files.sort_default') },\n"
-        "      { value: 'az', label: t('auth_files.sort_az') },\n"
-        "      { value: 'priority', label: t('auth_files.sort_priority') },\n"
-        "    ];\n"
-        "    if (planSortAvailable) {\n"
-        "      options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') });\n"
-        "    }\n"
-        "    if (quotaSortAvailable) {\n"
-        "      options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') });\n"
-        "    }\n"
-        "    return options;\n"
-        "  }, [planSortAvailable, quotaSortAvailable, t]);\n",
-    )
-    replace_once(
-        page_path,
-        "  const sorted = useMemo(() => {\n"
-        "    const copy = [...filtered];\n"
-        "    if (sortMode === 'default') {\n"
-        "      copy.sort((a, b) => {\n"
-        "        const providerA = normalizeProviderKey(String(a.provider ?? a.type ?? 'unknown'));\n"
-        "        const providerB = normalizeProviderKey(String(b.provider ?? b.type ?? 'unknown'));\n"
-        "        const providerCompare = providerA.localeCompare(providerB);\n"
-        "        if (providerCompare !== 0) return providerCompare;\n"
-        "        return a.name.localeCompare(b.name);\n"
-        "      });\n"
-        "    } else if (sortMode === 'az') {\n"
-        "      copy.sort((a, b) => a.name.localeCompare(b.name));\n"
-        "    } else if (sortMode === 'priority') {\n"
-        "      copy.sort((a, b) => {\n"
-        "        const pa = parsePriorityValue(a.priority) ?? 0;\n"
-        "        const pb = parsePriorityValue(b.priority) ?? 0;\n"
-        "        return pb - pa; // 高优先级排前面\n"
-        "      });\n"
-        "    }\n"
-        "    return copy;\n"
-        "  }, [filtered, sortMode]);\n",
-        "  const sorted = useMemo(() => {\n"
-        "    const copy = [...filtered];\n"
-        "    if (effectiveSortMode === 'default') {\n"
-        "      copy.sort((a, b) => {\n"
-        "        const providerA = normalizeProviderKey(String(a.provider ?? a.type ?? 'unknown'));\n"
-        "        const providerB = normalizeProviderKey(String(b.provider ?? b.type ?? 'unknown'));\n"
-        "        const providerCompare = providerA.localeCompare(providerB);\n"
-        "        if (providerCompare !== 0) return providerCompare;\n"
-        "        return a.name.localeCompare(b.name);\n"
-        "      });\n"
-        "    } else if (effectiveSortMode === 'az') {\n"
-        "      copy.sort((a, b) => a.name.localeCompare(b.name));\n"
-        "    } else if (effectiveSortMode === 'priority') {\n"
-        "      copy.sort((a, b) => {\n"
-        "        const pa = parsePriorityValue(a.priority) ?? 0;\n"
-        "        const pb = parsePriorityValue(b.priority) ?? 0;\n"
-        "        return pb - pa; // 高优先级排前面\n"
-        "      });\n"
-        "    } else if (effectiveSortMode === 'plan') {\n"
-        "      copy.sort((a, b) => compareAuthFilesByPlanDescending(a, b, quotaSearchStore));\n"
-        "    } else if (effectiveSortMode === 'quota') {\n"
-        "      copy.sort((a, b) => compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore));\n"
-        "    }\n"
-        "    return copy;\n"
-        "  }, [effectiveSortMode, filtered, quotaSearchStore]);\n",
-    )
-
-    replace_once(
-        page_path,
-        "                value={sortMode}\n"
-        "                options={sortOptions}\n"
-        "                onChange={handleSortModeChange}\n",
-        "                value={effectiveSortMode}\n"
-        "                options={sortOptions}\n"
-        "                onChange={handleSortModeChange}\n",
-    )
-
-
-def patch_auth_files_gemini_quota(target: Path) -> None:
-    constants_path = target / 'src/features/authFiles/constants.ts'
-    quota_section_path = target / 'src/features/authFiles/components/AuthFileQuotaSection.tsx'
-    card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
-    styles_path = target / 'src/pages/AuthFilesPage.module.scss'
-
-    replace_once(
-        constants_path,
-        "export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai';",
-        "export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';",
-    )
-    replace_once(
-        constants_path,
-        "export const QUOTA_PROVIDER_TYPES = new Set<QuotaProviderType>([\n"
-        "  'antigravity',\n"
-        "  'claude',\n"
-        "  'codex',\n"
-        "  'kimi',\n"
-        "  'xai',\n"
-        "]);",
-        "export const QUOTA_PROVIDER_TYPES = new Set<QuotaProviderType>([\n"
-        "  'antigravity',\n"
-        "  'claude',\n"
-        "  'codex',\n"
-        "  'gemini-cli',\n"
-        "  'kimi',\n"
-        "  'xai',\n"
-        "]);",
-    )
-
-    insert_once(
-        quota_section_path,
-        "} from '@/components/quota';\n",
-        "} from '@/components/quota';\n"
-        "import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';\n",
-        "GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig'",
-    )
-    replace_once(
-        quota_section_path,
-        "  if (type === 'codex') return CODEX_CONFIG;\n  if (type === 'kimi') return KIMI_CONFIG;",
-        "  if (type === 'codex') return CODEX_CONFIG;\n"
-        "  if (type === 'gemini-cli') return GEMINI_CLI_CONFIG;\n"
-        "  if (type === 'kimi') return KIMI_CONFIG;",
-    )
-    replace_once(
-        quota_section_path,
-        "    if (quotaType === 'codex') return state.codexQuota[file.name] as QuotaState;\n"
-        "    if (quotaType === 'kimi') return state.kimiQuota[file.name] as QuotaState;",
-        "    if (quotaType === 'codex') return state.codexQuota[file.name] as QuotaState;\n"
-        "    if (quotaType === 'gemini-cli') return state.geminiCliQuota[file.name] as QuotaState;\n"
-        "    if (quotaType === 'kimi') return state.kimiQuota[file.name] as QuotaState;",
-    )
-    replace_once(
-        quota_section_path,
-        "    if (quotaType === 'codex') return state.setCodexQuota as unknown as (updater: unknown) => void;\n"
-        "    if (quotaType === 'kimi') return state.setKimiQuota as unknown as (updater: unknown) => void;",
-        "    if (quotaType === 'codex') return state.setCodexQuota as unknown as (updater: unknown) => void;\n"
-        "    if (quotaType === 'gemini-cli')\n"
-        "      return state.setGeminiCliQuota as unknown as (updater: unknown) => void;\n"
-        "    if (quotaType === 'kimi') return state.setKimiQuota as unknown as (updater: unknown) => void;",
-    )
-
-    replace_once(
-        card_path,
-        "        : quotaType === 'codex'\n"
-        "          ? styles.codexCard\n"
-        "          : quotaType === 'kimi'",
-        "        : quotaType === 'codex'\n"
-        "          ? styles.codexCard\n"
-        "          : quotaType === 'gemini-cli'\n"
-        "            ? styles.geminiCliCard\n"
-        "            : quotaType === 'kimi'",
-    )
-    insert_once(
-        styles_path,
-        ".kimiCard {\n",
-        ".geminiCliCard {\n"
-        "  background-image: linear-gradient(180deg, rgba(224, 232, 255, 0.08), transparent);\n"
-        "}\n\n"
-        ".kimiCard {\n",
-        '.geminiCliCard {',
-    )
-
-
 def patch_auth_files_runtime_state(target: Path) -> None:
     type_path = target / 'src/types/authFile.ts'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
-    page_path = target / 'src/pages/AuthFilesPage.tsx'
+    page_path = auth_files_page_path(target)
 
     insert_once(
         type_path,
@@ -2943,50 +1055,81 @@ def patch_auth_files_runtime_state(target: Path) -> None:
         "  selected?: unknown;\n  success?: unknown;\n",
         "selected?: unknown;",
     )
-    replace_once(
-        card_path,
-        "  const fileStats = {\n    success: normalizeUsageTotal(file.success),\n    failure: normalizeUsageTotal(file.failed),\n  };\n",
-        "  const fileStats = {\n    selected: normalizeUsageTotal(file.selected),\n    success: normalizeUsageTotal(file.success),\n    failure: normalizeUsageTotal(file.failed),\n  };\n",
+    card_text = read(card_path)
+    legacy_stats = (
+        "  const fileStats = {\n    success: normalizeUsageTotal(file.success),\n"
+        "    failure: normalizeUsageTotal(file.failed),\n  };\n"
     )
-    insert_once(
-        card_path,
-        "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n",
-        "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n"
-        "              <div className={styles.statPill}>\n"
-        "                <span className={styles.statLabel}>{t('auth_files.selected_count')}</span>\n"
-        "                <span className={styles.statValue}>{fileStats.selected}</span>\n"
-        "              </div>\n",
-        "t('auth_files.selected_count')",
-    )
+    if legacy_stats in card_text:
+        write(
+            card_path,
+            card_text.replace(
+                legacy_stats,
+                "  const fileStats = {\n    selected: normalizeUsageTotal(file.selected),\n"
+                "    success: normalizeUsageTotal(file.success),\n"
+                "    failure: normalizeUsageTotal(file.failed),\n  };\n",
+                1,
+            ),
+        )
+        insert_once(
+            card_path,
+            "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n",
+            "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n"
+            "              <div className={styles.statPill}>\n"
+            "                <span className={styles.statLabel}>{t('auth_files.selected_count')}</span>\n"
+            "                <span className={styles.statValue}>{fileStats.selected}</span>\n"
+            "              </div>\n",
+            "t('auth_files.selected_count')",
+        )
+    elif 'const selectedCount =' not in card_text and 'const successCount = file.successCount ?? 0;' in card_text:
+        write(
+            card_path,
+            card_text.replace(
+                '  const successCount = file.successCount ?? 0;\n',
+                "  const selectedCount = Math.max(0, Number(file.selected) || 0);\n"
+                "  const successCount = file.successCount ?? 0;\n",
+                1,
+            ),
+        )
+        insert_once(
+            card_path,
+            "          <span className={styles.healthCounts}>\n",
+            "          <span className={styles.healthCounts}>\n"
+            "            <span className={styles.countOk} title={t('auth_files.selected_count')}>\n"
+            "              {t('auth_files.selected_count')} {selectedCount}\n"
+            "            </span>\n",
+            "{t('auth_files.selected_count')} {selectedCount}",
+        )
+    elif "t('auth_files.selected_count')" not in card_text:
+        raise RuntimeError(f'Pattern not found in {card_path}: auth runtime counters')
 
     insert_once(
         page_path,
         "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
         "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n"
-        "import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware';\n",
-        "quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddleware'",
+        "import { quotaPersistenceMiddleware } from '@/pro/modules/quota';\n",
+        "quotaPersistenceMiddleware } from '@/pro/modules/quota'",
     )
-    replace_once(
-        page_path,
-        "  const handleHeaderRefresh = useCallback(async () => {\n"
-        "    await Promise.all([loadFiles(), loadExcluded(), loadModelAlias()]);\n"
-        "  }, [loadFiles, loadExcluded, loadModelAlias]);\n",
-        "  const handleHeaderRefresh = useCallback(async () => {\n"
-        "    await Promise.all([\n"
-        "      loadFiles(),\n"
-        "      loadExcluded(),\n"
-        "      loadModelAlias(),\n"
-        "      quotaPersistenceMiddleware.ensureFresh(),\n"
-        "    ]);\n"
-        "  }, [loadFiles, loadExcluded, loadModelAlias]);\n",
-    )
+    text = read(page_path)
+    if 'quotaPersistenceMiddleware.ensureFresh()' not in text:
+        refresh_variants = (
+            "    await Promise.all([loadFiles(), loadExcluded(), loadModelAlias()]);\n",
+            "    await Promise.all([loadFiles({ background: true }), loadExcluded(), loadModelAlias()]);\n",
+        )
+        for refresh in refresh_variants:
+            if refresh in text:
+                replacement = refresh.replace(']);\n', ', quotaPersistenceMiddleware.ensureFresh()]);\n')
+                write(page_path, text.replace(refresh, replacement, 1))
+                break
+        else:
+            raise RuntimeError(f'Pattern not found in {page_path}: header refresh')
 
 
 def patch_account_usage_feature(target: Path) -> None:
     icons_path = target / 'src/components/ui/icons.tsx'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
-    page_path = target / 'src/pages/AuthFilesPage.tsx'
-    styles_path = target / 'src/pages/AuthFilesPage.module.scss'
+    page_path = auth_files_page_path(target)
+    styles_path = auth_files_styles_path(target)
 
     insert_once(
         icons_path,
@@ -3023,10 +1166,10 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
         '    onShowModels,\n    onDownload,\n',
         '    onShowModels,\n    onShowUsage,\n    onDownload,\n',
     )
-    insert_once(
-        card_path,
-        '            </div>\n          </div>\n\n          <div className={`${styles.cardMeta}',
-        '''            </div>
+    card_text = read(card_path)
+    legacy_usage_marker = '            </div>\n          </div>\n\n          <div className={`${styles.cardMeta}'
+    if "onClick={() => onShowUsage(file)}" not in card_text and legacy_usage_marker in card_text:
+        write(card_path, card_text.replace(legacy_usage_marker, '''            </div>
             {authIndexKey && (
               <Button
                 variant="secondary"
@@ -3043,12 +1186,11 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
           </div>
 
           <div className={`${styles.cardMeta}''',
-        "onClick={() => onShowUsage(file)}",
-    )
-    insert_once(
-        styles_path,
-        '.modelsActionButton:global(.btn.btn-sm) {\n',
-        '''.usageCornerButton:global(.btn.btn-sm) {
+        1))
+        insert_once(
+            styles_path,
+            '.modelsActionButton:global(.btn.btn-sm) {\n',
+            '''.usageCornerButton:global(.btn.btn-sm) {
   flex: 0 0 auto;
   align-self: flex-start;
   width: 34px;
@@ -3079,15 +1221,34 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
 
 .modelsActionButton:global(.btn.btn-sm) {
 ''',
-        '.usageCornerButton:global(.btn.btn-sm)',
-    )
+            '.usageCornerButton:global(.btn.btn-sm)',
+        )
+    elif "onClick={() => onShowUsage(file)}" not in card_text:
+        actions_marker = '        <div className={styles.actionsMain}>\n'
+        if actions_marker not in card_text:
+            raise RuntimeError(f'Pattern not found in {card_path}: auth file actions')
+        write(
+            card_path,
+            card_text.replace(
+                actions_marker,
+                actions_marker
+                + "          {authIndexKey && (\n"
+                + "            <Button variant=\"secondary\" size=\"sm\" onClick={() => onShowUsage(file)}\n"
+                + "              title={t('account_usage.card_action')} disabled={disableControls}>\n"
+                + "              <IconChartColumnIncreasing size={14} />\n"
+                + "              {t('account_usage.card_action')}\n"
+                + "            </Button>\n"
+                + "          )}\n",
+                1,
+            ),
+        )
 
     insert_once(
         page_path,
         "import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';\n",
         "import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';\n"
-        "import { AccountUsageModal } from '@/features/monitoring/components/AccountUsageModal';\n",
-        "AccountUsageModal } from '@/features/monitoring/components/AccountUsageModal'",
+        "import { AccountUsageModal } from '@/pro/modules/monitoring';\n",
+        "AccountUsageModal } from '@/pro/modules/monitoring'",
     )
     insert_once(
         page_path,
@@ -3096,20 +1257,44 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
         "import type { AuthFileItem } from '@/types';\n",
         "import type { AuthFileItem } from '@/types';",
     )
-    insert_once(
-        page_path,
-        "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n",
-        "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n"
-        "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n",
-        'const [accountUsageFile, setAccountUsageFile]',
-    )
-    replace_once(
-        page_path,
-        "                  onShowModels={showModels}\n                  onDownload={handleDownload}\n",
-        "                  onShowModels={showModels}\n"
-        "                  onShowUsage={setAccountUsageFile}\n"
-        "                  onDownload={handleDownload}\n",
-    )
+    page_text = read(page_path)
+    if 'const [accountUsageFile, setAccountUsageFile]' not in page_text:
+        state_markers = (
+            "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n",
+            "  const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');\n",
+        )
+        for marker in state_markers:
+            if marker in page_text:
+                write(
+                    page_path,
+                    page_text.replace(
+                        marker,
+                        marker
+                        + "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n",
+                        1,
+                    ),
+                )
+                break
+        else:
+            raise RuntimeError(f'Pattern not found in {page_path}: account usage state')
+    page_text = read(page_path)
+    if 'onShowUsage={setAccountUsageFile}' not in page_text:
+        for indent in ('                  ', '                '):
+            marker = f'{indent}onShowModels={{showModels}}\n{indent}onDownload={{handleDownload}}\n'
+            if marker in page_text:
+                write(
+                    page_path,
+                    page_text.replace(
+                        marker,
+                        f'{indent}onShowModels={{showModels}}\n'
+                        f'{indent}onShowUsage={{setAccountUsageFile}}\n'
+                        f'{indent}onDownload={{handleDownload}}\n',
+                        1,
+                    ),
+                )
+                break
+        else:
+            raise RuntimeError(f'Pattern not found in {page_path}: auth card usage callback')
     insert_once(
         page_path,
         "      <AuthFileModelsModal\n",
@@ -3210,6 +1395,97 @@ def patch_runtime_detection(target: Path) -> None:
     )
 
 
+def patch_management_update_check(target: Path) -> None:
+    version_path = target / 'src/services/api/version.ts'
+    insert_once(
+        version_path,
+        "  checkLatest: () => apiClient.get<Record<string, unknown>>('/latest-version'),\n",
+        "  checkLatest: () => apiClient.get<Record<string, unknown>>('/latest-version'),\n"
+        "  checkManagementPanelUpdate: () =>\n"
+        "    apiClient.post<{ status: string; updated: boolean; sha256: string }>(\n"
+        "      '/management-panel/check-update'\n"
+        "    ),\n",
+        'checkManagementPanelUpdate:',
+    )
+
+    page_path = target / 'src/pages/SystemPage.tsx'
+    insert_once(
+        page_path,
+        "  const [checkingVersion, setCheckingVersion] = useState(false);\n",
+        "  const [checkingVersion, setCheckingVersion] = useState(false);\n"
+        "  const [checkingManagementUpdate, setCheckingManagementUpdate] = useState(false);\n",
+        'const [checkingManagementUpdate, setCheckingManagementUpdate]',
+    )
+    insert_once(
+        page_path,
+        "  useEffect(() => {\n    fetchConfig().catch(() => {\n",
+        "  const handleManagementUpdateCheck = useCallback(async () => {\n"
+        "    setCheckingManagementUpdate(true);\n"
+        "    try {\n"
+        "      const result = await versionApi.checkManagementPanelUpdate();\n"
+        "      if (result.updated) {\n"
+        "        showNotification(t('system_info.management_check_update_updated'), 'success');\n"
+        "        window.setTimeout(() => {\n"
+        "          const nextUrl = new URL(window.location.href);\n"
+        "          nextUrl.searchParams.set('_management_updated', Date.now().toString());\n"
+        "          window.location.replace(nextUrl.toString());\n"
+        "        }, 500);\n"
+        "      } else {\n"
+        "        showNotification(t('system_info.management_check_update_unchanged'), 'success');\n"
+        "      }\n"
+        "    } catch (error: unknown) {\n"
+        "      const message =\n"
+        "        error instanceof Error ? error.message : typeof error === 'string' ? error : '';\n"
+        "      showNotification(\n"
+        "        `${t('system_info.management_check_update_error')}${message ? `: ${message}` : ''}`,\n"
+        "        'error'\n"
+        "      );\n"
+        "    } finally {\n"
+        "      setCheckingManagementUpdate(false);\n"
+        "    }\n"
+        "  }, [showNotification, t]);\n\n"
+        "  useEffect(() => {\n    fetchConfig().catch(() => {\n",
+        'const handleManagementUpdateCheck = useCallback',
+    )
+    replace_once(
+        page_path,
+        "            <button\n"
+        "              type=\"button\"\n"
+        "              className={`${styles.infoTile} ${styles.tapTile}`}\n"
+        "              onClick={handleInfoVersionTap}\n"
+        "            >\n"
+        "              <div className={styles.tileHeader}>\n"
+        "                <div className={styles.tileLabel}>{t('footer.version')}</div>\n"
+        "              </div>\n"
+        "              <div className={styles.tileValue}>{appVersion}</div>\n"
+        "            </button>\n",
+        "            <div\n"
+        "              className={`${styles.infoTile} ${styles.tapTile}`}\n"
+        "              onClick={handleInfoVersionTap}\n"
+        "            >\n"
+        "              <div className={styles.tileHeader}>\n"
+        "                <div className={styles.tileLabel}>{t('footer.version')}</div>\n"
+        "                <Button\n"
+        "                  type=\"button\"\n"
+        "                  variant=\"ghost\"\n"
+        "                  size=\"sm\"\n"
+        "                  className={styles.tileAction}\n"
+        "                  onClick={(event) => {\n"
+        "                    event.stopPropagation();\n"
+        "                    void handleManagementUpdateCheck();\n"
+        "                  }}\n"
+        "                  loading={checkingManagementUpdate}\n"
+        "                  title={t('system_info.management_check_update_button')}\n"
+        "                  aria-label={t('system_info.management_check_update_button')}\n"
+        "                >\n"
+        "                  {t('system_info.management_check_update_button')}\n"
+        "                </Button>\n"
+        "              </div>\n"
+        "              <div className={styles.tileValue}>{appVersion}</div>\n"
+        "            </div>\n",
+    )
+
+
 def patch_supporting_api_and_types(target: Path) -> None:
     config_path = target / 'src/types/config.ts'
     replace_once(
@@ -3248,6 +1524,11 @@ def patch_supporting_api_and_types(target: Path) -> None:
     )
 
     auth_files_path = target / 'src/services/api/authFiles.ts'
+    auth_files_normalizer = (
+        'normalizeAuthFilesResponse'
+        if 'normalizeAuthFilesResponse' in read(auth_files_path)
+        else 'dedupeAuthFilesResponse'
+    )
     replace_once(
         auth_files_path,
         "type AuthFileStatusResponse = { status: string; disabled: boolean };\n",
@@ -3259,11 +1540,31 @@ def patch_supporting_api_and_types(target: Path) -> None:
         "const AUTH_FILES_LIST_CACHE_TTL_MS = 2000;\nlet authFilesListCache: { expiresAt: number; response: AuthFilesResponse } | null = null;\nlet authFilesListRequest: Promise<AuthFilesResponse> | null = null;\nlet authFilesListVersion = 0;\n\nconst cloneAuthFilesResponse = (response: AuthFilesResponse): AuthFilesResponse => ({\n  ...response,\n  files: Array.isArray(response.files) ? [...response.files] : [],\n});\n\nconst invalidateAuthFilesListCache = () => {\n  authFilesListVersion += 1;\n  authFilesListCache = null;\n  authFilesListRequest = null;\n};\n\nconst fetchAuthFilesList = async (): Promise<AuthFilesResponse> => {\n  const now = Date.now();\n  if (authFilesListCache && authFilesListCache.expiresAt > now) {\n    return cloneAuthFilesResponse(authFilesListCache.response);\n  }\n  if (!authFilesListRequest) {\n    const requestVersion = authFilesListVersion;\n    authFilesListRequest = apiClient.get<AuthFilesResponse>('/auth-files')\n      .then(dedupeAuthFilesResponse)\n      .then((response) => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListCache = {\n            expiresAt: Date.now() + AUTH_FILES_LIST_CACHE_TTL_MS,\n            response: cloneAuthFilesResponse(response),\n          };\n        }\n        return response;\n      })\n      .finally(() => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListRequest = null;\n        }\n      });\n  }\n  return cloneAuthFilesResponse(await authFilesListRequest);\n};\n\nexport const authFilesApi = {\n",
         "AUTH_FILES_LIST_CACHE_TTL_MS",
     )
-    replace_once(
+    replace_once_if_present(
         auth_files_path,
-        "  list: async () => dedupeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),\n\n  setStatus: (name: string, disabled: boolean) =>\n    apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),\n\n",
-        "  list: fetchAuthFilesList,\n\n  patchFile: async (payload: AuthFilePatchPayload) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files', payload);\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n  setStatus: async (name: string, disabled: boolean) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n",
+        '      .then(dedupeAuthFilesResponse)\n',
+        f'      .then({auth_files_normalizer})\n',
     )
+    text = read(auth_files_path)
+    list_variants = (
+        "  list: async () => dedupeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),\n\n"
+        "  setStatus: (name: string, disabled: boolean) =>\n"
+        "    apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),\n\n",
+        "  list: async () =>\n"
+        "    normalizeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),\n\n"
+        "  setStatus: (name: string, disabled: boolean) =>\n"
+        "    apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),\n\n",
+    )
+    list_replacement = (
+        "  list: fetchAuthFilesList,\n\n  patchFile: async (payload: AuthFilePatchPayload) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files', payload);\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n  setStatus: async (name: string, disabled: boolean) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n"
+    )
+    if '  list: fetchAuthFilesList,\n' not in text:
+        for list_variant in list_variants:
+            if list_variant in text:
+                write(auth_files_path, text.replace(list_variant, list_replacement, 1))
+                break
+        else:
+            raise RuntimeError(f'Pattern not found in {auth_files_path}: auth files list method')
     replace_once(
         auth_files_path,
         "  patchFields: (name: string, fields: AuthFileFieldsPatch) =>\n    apiClient.patch('/auth-files/fields', { name, ...fields }),\n\n",
@@ -3282,14 +1583,7 @@ def patch_supporting_api_and_types(target: Path) -> None:
     replace_once(
         auth_files_path,
         "  deleteAll: () => apiClient.delete('/auth-files', { params: { all: true } }),\n",
-        "  deleteAll: async () => {\n    const response = await apiClient.delete('/auth-files', { params: { all: true } });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n  resetQuota: (authIndex: string) =>\n    apiClient.post<{ status: string; auth_index: string; models?: string[] }>('/reset-quota', {\n      auth_index: authIndex,\n    }),\n",
-    )
-
-    api_index_path = target / 'src/services/api/index.ts'
-    replace_once(
-        api_index_path,
-        "export * from './apiCall';\n",
-        "export * from './apiCall';\nexport * from './accountInspection';\nexport * from './routingPolicy';\n",
+        "  deleteAll: async () => {\n    const response = await apiClient.delete('/auth-files', { params: { all: true } });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n",
     )
 
     format_path = target / 'src/utils/format.ts'
@@ -3357,248 +1651,6 @@ def patch_supporting_api_and_types(target: Path) -> None:
             raise RuntimeError(f'Pattern not found in {select_path}: Select trigger className')
 
 
-def patch_auth_files_batch_actions(target: Path) -> None:
-    hook_path = target / 'src/features/authFiles/hooks/useAuthFilesData.ts'
-    replace_once(
-        hook_path,
-        "  batchDownload: (names: string[]) => Promise<void>;\n  batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;\n  batchDelete: (names: string[]) => void;\n};\n",
-        "  batchDownload: (names: string[]) => Promise<void>;\n  batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;\n  batchDelete: (names: string[]) => void;\n  batchTest: (files: AuthFileItem[]) => Promise<import('@/features/authFiles/hooks/useAuthFilesBatchActions').BatchActionSummary>;\n  batchClearErrors: (files: AuthFileItem[]) => Promise<import('@/features/authFiles/hooks/useAuthFilesBatchActions').BatchActionSummary>;\n  batchTestRunning: boolean;\n  batchClearErrorsRunning: boolean;\n  batchResultType: 'test' | 'clear' | null;\n  batchResult: import('@/features/authFiles/hooks/useAuthFilesBatchActions').BatchActionSummary | null;\n  clearBatchResult: () => void;\n};\n",
-    )
-    replace_once(
-        hook_path,
-        "import { MAX_AUTH_FILE_SIZE } from '@/utils/constants';\n",
-        "import { useAuthFilesBatchActions } from '@/features/authFiles/hooks/useAuthFilesBatchActions';\nimport { MAX_AUTH_FILE_SIZE } from '@/utils/constants';\n",
-    )
-    replace_once(
-        hook_path,
-        "  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());\n",
-        "  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());\n  const batchActions = useAuthFilesBatchActions();\n",
-    )
-    replace_once(
-        hook_path,
-        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n  };\n}\n",
-        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n    batchTest: batchActions.batchTest,\n    batchClearErrors: batchActions.batchClearErrors,\n    batchTestRunning: batchActions.batchTestRunning,\n    batchClearErrorsRunning: batchActions.batchClearErrorsRunning,\n    batchResultType: batchActions.batchResultType,\n    batchResult: batchActions.batchResult,\n    clearBatchResult: batchActions.clearBatchResult,\n  };\n}\n",
-    )
-
-    page_path = target / 'src/pages/AuthFilesPage.tsx'
-    insert_once(
-        page_path,
-        "import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';\n",
-        "import { BatchActionResultDialog } from '@/features/authFiles/components/BatchActionResultDialog';\nimport { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';\n",
-        "BatchActionResultDialog",
-    )
-    replace_once(
-        page_path,
-        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n  } = useAuthFilesData();\n",
-        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n    batchTest,\n    batchClearErrors,\n    batchTestRunning,\n    batchClearErrorsRunning,\n    batchResultType,\n    batchResult,\n    clearBatchResult,\n  } = useAuthFilesData();\n",
-    )
-    replace_once(
-        page_path,
-        "                <div className={styles.batchActionRight}>\n                  <Button\n                    variant=\"secondary\"\n                    size=\"sm\"\n                    onClick={() => void batchDownload(selectedNames)}\n                    disabled={disableControls || selectedNames.length === 0}\n                  >\n                    {t('auth_files.batch_download')}\n                  </Button>\n",
-        "                <div className={styles.batchActionRight}>\n                  <Button\n                    variant=\"secondary\"\n                    size=\"sm\"\n                    onClick={() => void batchTest(selectedFileItems)}\n                    disabled={disableControls || selectedNames.length === 0 || batchTestRunning}\n                  >\n                    {batchTestRunning ? t('auth_files.batch_test_running') : t('auth_files.batch_test')}\n                  </Button>\n                  <Button\n                    variant=\"secondary\"\n                    size=\"sm\"\n                    onClick={() => void batchClearErrors(selectedFileItems).then(() => loadFiles())}\n                    disabled={disableControls || selectedNames.length === 0 || batchClearErrorsRunning}\n                  >\n                    {batchClearErrorsRunning ? t('auth_files.batch_clear_errors_running') : t('auth_files.batch_clear_errors')}\n                  </Button>\n                  <Button\n                    variant=\"secondary\"\n                    size=\"sm\"\n                    onClick={() => void batchDownload(selectedNames)}\n                    disabled={disableControls || selectedNames.length === 0}\n                  >\n                    {t('auth_files.batch_download')}\n                  </Button>\n",
-    )
-    replace_once(
-        page_path,
-        "  const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);\n",
-        "  const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);\n  const selectedFileItems = useMemo(\n    () => files.filter((file) => selectedFiles.has(file.name)),\n    [files, selectedFiles]\n  );\n",
-    )
-    replace_once(
-        page_path,
-        "        : null}\n    </div>\n  );\n}\n",
-        "        : null}\n        <BatchActionResultDialog\n          open={batchResult !== null}\n          title={batchResultType === 'clear'\n            ? t('auth_files.batch_clear_errors_title')\n            : t('auth_files.batch_test_title')}\n          summary={batchResult}\n          onClose={clearBatchResult}\n        />\n    </div>\n  );\n}\n",
-    )
-
-    scss_path = target / 'src/pages/AuthFilesPage.module.scss'
-    insert_once(
-        scss_path,
-        ".pageInfo {\n  font-size: 13px;\n  color: var(--text-secondary);\n",
-        ".batchResultSummary {\n  display: flex;\n  flex-wrap: wrap;\n  gap: $spacing-md;\n  margin-bottom: $spacing-md;\n  font-size: 13px;\n}\n\n.batchResultSuccess {\n  color: #16a34a;\n  font-weight: 600;\n}\n\n.batchResultFailed {\n  color: #dc2626;\n  font-weight: 600;\n}\n\n.batchResultSkipped {\n  color: var(--text-secondary);\n  font-weight: 600;\n}\n\n.batchResultTotal {\n  color: var(--text-primary);\n  font-weight: 600;\n}\n\n.batchResultTableWrapper {\n  max-height: 400px;\n  overflow-y: auto;\n  border: 1px solid var(--border-color);\n  border-radius: $radius-md;\n}\n\n.batchResultTable {\n  width: 100%;\n  border-collapse: collapse;\n  font-size: 13px;\n\n  thead {\n    position: sticky;\n    top: 0;\n    background-color: var(--bg-secondary);\n    z-index: 1;\n\n    th {\n      padding: $spacing-sm $spacing-md;\n      text-align: left;\n      font-weight: 600;\n      color: var(--text-secondary);\n      border-bottom: 1px solid var(--border-color);\n    }\n  }\n\n  tbody td {\n    padding: $spacing-sm $spacing-md;\n    border-bottom: 1px solid var(--border-color);\n    vertical-align: top;\n  }\n}\n\n.batchResultCellName {\n  font-weight: 500;\n  word-break: break-all;\n}\n\n.batchResultCellError {\n  color: var(--text-secondary);\n  word-break: break-word;\n  max-width: 280px;\n}\n\n.batchResultBadgeSuccess {\n  display: inline-block;\n  padding: 2px 8px;\n  border-radius: $radius-full;\n  background-color: rgba(22, 163, 74, 0.12);\n  color: #16a34a;\n  font-size: 12px;\n  font-weight: 600;\n}\n\n.batchResultBadgeFailed {\n  display: inline-block;\n  padding: 2px 8px;\n  border-radius: $radius-full;\n  background-color: rgba(220, 38, 38, 0.12);\n  color: #dc2626;\n  font-size: 12px;\n  font-weight: 600;\n}\n\n.batchResultBadgeSkipped {\n  display: inline-block;\n  padding: 2px 8px;\n  border-radius: $radius-full;\n  background-color: var(--bg-secondary);\n  color: var(--text-secondary);\n  font-size: 12px;\n  font-weight: 600;\n}\n\n.batchResultActions {\n  display: flex;\n  justify-content: flex-end;\n  gap: $spacing-sm;\n  margin-top: $spacing-md;\n}\n\n.batchResultCloseButton {\n  padding: $spacing-sm $spacing-lg;\n  border-radius: $radius-md;\n  background-color: var(--bg-secondary);\n  color: var(--text-primary);\n  border: 1px solid var(--border-color);\n  cursor: pointer;\n  font-size: 13px;\n  font-weight: 500;\n  transition: background-color 0.15s ease;\n\n  &:hover {\n    background-color: var(--bg-tertiary);\n  }\n}\n\n.pageInfo {\n  font-size: 13px;\n  color: var(--text-secondary);\n",
-        ".batchResultSummary {",
-    )
-
-def patch_claude_model_id_cloak_setting(target: Path) -> None:
-    visual_types = target / 'src/types/visualConfig.ts'
-    disable_image_generation_type = (
-        "export type DisableImageGenerationMode = 'false' | 'true' | 'chat' | 'passthrough';\n"
-        if "'passthrough'" in read(visual_types)
-        else "export type DisableImageGenerationMode = 'false' | 'true' | 'chat';\n"
-    )
-    replace_once(
-        visual_types,
-        disable_image_generation_type,
-        disable_image_generation_type + "export type ClaudeModelIDCloakMode = 'auto' | 'always' | 'never';\n",
-    )
-    replace_once(
-        visual_types,
-        "  forceModelPrefix: boolean;\n  passthroughHeaders: boolean;\n",
-        "  forceModelPrefix: boolean;\n  claudeModelIDCloakMode: ClaudeModelIDCloakMode;\n  passthroughHeaders: boolean;\n",
-    )
-    replace_once(
-        visual_types,
-        "  forceModelPrefix: false,\n  passthroughHeaders: false,\n",
-        "  forceModelPrefix: false,\n  claudeModelIDCloakMode: 'auto',\n  passthroughHeaders: false,\n",
-    )
-
-    visual_hook = target / 'src/hooks/useVisualConfig.ts'
-    replace_once(
-        visual_hook,
-        "  DisableImageGenerationMode,\n",
-        "  ClaudeModelIDCloakMode,\n  DisableImageGenerationMode,\n",
-    )
-    parse_disable_image_generation_signature = (
-        "export function parseDisableImageGenerationMode(raw: unknown): DisableImageGenerationMode {\n"
-        if "export function parseDisableImageGenerationMode" in read(visual_hook)
-        else "function parseDisableImageGenerationMode(raw: unknown): DisableImageGenerationMode {\n"
-    )
-    replace_once(
-        visual_hook,
-        parse_disable_image_generation_signature,
-        "export function parseClaudeModelIDCloakMode(raw: unknown): ClaudeModelIDCloakMode {\n"
-        "  if (typeof raw === 'string') {\n"
-        "    const normalized = raw.trim().toLowerCase();\n"
-        "    if (normalized === 'always' || normalized === 'never') return normalized;\n"
-        "  }\n"
-        "  return 'auto';\n"
-        "}\n\n" + parse_disable_image_generation_signature,
-    )
-    replace_once(
-        visual_hook,
-        "      'forceModelPrefix',\n      'requestRetry',\n",
-        "      'forceModelPrefix',\n      'claudeModelIDCloakMode',\n      'requestRetry',\n",
-    )
-    replace_once(
-        visual_hook,
-        "        forceModelPrefix: Boolean(parsed['force-model-prefix']),\n        passthroughHeaders: Boolean(parsed['passthrough-headers']),\n",
-        "        forceModelPrefix: Boolean(parsed['force-model-prefix']),\n"
-        "        claudeModelIDCloakMode: parseClaudeModelIDCloakMode(\n"
-        "          parsed['claude-model-id-cloak-mode']\n"
-        "        ),\n"
-        "        passthroughHeaders: Boolean(parsed['passthrough-headers']),\n",
-    )
-    if "if (dirtyFields.has('forceModelPrefix'))" in read(visual_hook):
-        replace_once(
-            visual_hook,
-            "        if (dirtyFields.has('forceModelPrefix')) {\n"
-            "          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
-            "        }\n"
-            "        if (dirtyFields.has('passthroughHeaders')) {\n",
-            "        if (dirtyFields.has('forceModelPrefix')) {\n"
-            "          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
-            "        }\n"
-            "        if (dirtyFields.has('claudeModelIDCloakMode')) {\n"
-            "          setStringInDoc(doc, ['claude-model-id-cloak-mode'], values.claudeModelIDCloakMode);\n"
-            "        }\n"
-            "        if (dirtyFields.has('passthroughHeaders')) {\n",
-        )
-    else:
-        replace_once(
-            visual_hook,
-            "        setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
-            "        setBooleanInDoc(doc, ['passthrough-headers'], values.passthroughHeaders);\n",
-            "        setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
-            "        setStringInDoc(\n"
-            "          doc,\n"
-            "          ['claude-model-id-cloak-mode'],\n"
-            "          values.claudeModelIDCloakMode\n"
-            "        );\n"
-            "        setBooleanInDoc(doc, ['passthrough-headers'], values.passthroughHeaders);\n",
-        )
-
-    visual_editor = target / 'src/components/config/VisualConfigEditor.tsx'
-    replace_once(
-        visual_editor,
-        "  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;\n"
-        "  const keepaliveInputId = useId();\n",
-        "  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;\n"
-        "  const claudeModelIDCloakModeLabelId = useId();\n"
-        "  const claudeModelIDCloakModeHintId = `${claudeModelIDCloakModeLabelId}-hint`;\n"
-        "  const keepaliveInputId = useId();\n",
-    )
-    replace_once(
-        visual_editor,
-        "  const countErrors = useCallback(\n",
-        "  const claudeModelIDCloakModeOptions = useMemo(\n"
-        "    () => [\n"
-        "      {\n"
-        "        value: 'auto',\n"
-        "        label: t('config_management.visual.sections.advanced.claude_model_id_cloak_auto'),\n"
-        "      },\n"
-        "      {\n"
-        "        value: 'always',\n"
-        "        label: t('config_management.visual.sections.advanced.claude_model_id_cloak_always'),\n"
-        "      },\n"
-        "      {\n"
-        "        value: 'never',\n"
-        "        label: t('config_management.visual.sections.advanced.claude_model_id_cloak_never'),\n"
-        "      },\n"
-        "    ],\n"
-        "    [t]\n"
-        "  );\n\n"
-        "  const countErrors = useCallback(\n",
-    )
-    replace_once(
-        visual_editor,
-        "                <Collapsible\n"
-        "                  label={t('config_management.visual.sections.headers.title')}\n",
-        "                <Collapsible\n"
-        "                  label={t(\n"
-        "                    'config_management.visual.sections.advanced.claude_model_id_cloak_title'\n"
-        "                  )}\n"
-        "                  hint={t(\n"
-        "                    'config_management.visual.sections.advanced.claude_model_id_cloak_description'\n"
-        "                  )}\n"
-        "                  defaultOpen={false}\n"
-        "                >\n"
-        "                  <SectionGrid>\n"
-        "                    <FieldAnchor fieldId=\"claudeModelIDCloakMode\">\n"
-        "                      <FieldShell\n"
-        "                        label={t(\n"
-        "                          'config_management.visual.sections.advanced.claude_model_id_cloak_label'\n"
-        "                        )}\n"
-        "                        labelId={claudeModelIDCloakModeLabelId}\n"
-        "                        hint={t(\n"
-        "                          'config_management.visual.sections.advanced.claude_model_id_cloak_hint'\n"
-        "                        )}\n"
-        "                        hintId={claudeModelIDCloakModeHintId}\n"
-        "                      >\n"
-        "                        <Select\n"
-        "                          value={values.claudeModelIDCloakMode}\n"
-        "                          options={claudeModelIDCloakModeOptions}\n"
-        "                          id={`${claudeModelIDCloakModeLabelId}-select`}\n"
-        "                          disabled={disabled}\n"
-        "                          ariaLabelledBy={claudeModelIDCloakModeLabelId}\n"
-        "                          ariaDescribedBy={claudeModelIDCloakModeHintId}\n"
-        "                          onChange={(nextValue) =>\n"
-        "                            onChange({\n"
-        "                              claudeModelIDCloakMode:\n"
-        "                                nextValue as VisualConfigValues['claudeModelIDCloakMode'],\n"
-        "                            })\n"
-        "                          }\n"
-        "                        />\n"
-        "                      </FieldShell>\n"
-        "                    </FieldAnchor>\n"
-        "                  </SectionGrid>\n"
-        "                </Collapsible>\n\n"
-        "                <Collapsible\n"
-        "                  label={t('config_management.visual.sections.headers.title')}\n",
-    )
-
-    search_index = target / 'src/components/config/configSearchIndex.ts'
-    replace_once(
-        search_index,
-        "  // Claude header defaults — qualifierKey disambiguates the shared \"User-Agent\" label.\n",
-        "  {\n"
-        "    fieldId: 'claudeModelIDCloakMode',\n"
-        "    sectionId: 'advanced',\n"
-        "    labelKey: L('sections.advanced.claude_model_id_cloak_label'),\n"
-        "    hintKey: L('sections.advanced.claude_model_id_cloak_hint'),\n"
-        "    yamlKeys: ['claude-model-id-cloak-mode'],\n"
-        "    keywords: ['anthropic', 'claude desktop', 'claude code', 'model id', 'cloak'],\n"
-        "  },\n"
-        "  // Claude header defaults — qualifierKey disambiguates the shared \"User-Agent\" label.\n",
-    )
-
-
 def patch_locales(target: Path) -> None:
     monitoring = json.loads(LOCALES_FILE.read_text())
     locales_dir = target / 'src/i18n/locales'
@@ -3606,6 +1658,17 @@ def patch_locales(target: Path) -> None:
         data = json.loads(read(locale_path))
         additions = monitoring.get(locale_path.name, {})
         data.setdefault('nav', {}).update(additions.get('nav', {}))
+        proxy_pool_nav = PROXY_POOL_NAV_LOCALE_KEYS.get(
+            locale_path.name,
+            PROXY_POOL_NAV_LOCALE_KEYS['en.json'],
+        )
+        data.setdefault('nav', {})['proxy_pool'] = proxy_pool_nav['label']
+        oauth_model_policy_nav = OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS.get(
+            locale_path.name,
+            OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS['en.json'],
+        )
+        data.setdefault('nav', {})['oauth_model_policy'] = oauth_model_policy_nav['label']
+        data.setdefault('nav_groups', {})['pro'] = 'PRO'
         nav_additions = additions.get('nav', {})
         data.setdefault('nav_meta', {}).update(
             additions.get(
@@ -3617,10 +1680,23 @@ def patch_locales(target: Path) -> None:
                 },
             )
         )
+        data.setdefault('nav_meta', {})['proxy_pool'] = proxy_pool_nav['meta']
+        data.setdefault('nav_meta', {})['oauth_model_policy'] = oauth_model_policy_nav['meta']
         data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
         data['account_usage'] = additions.get('account_usage', data.get('account_usage', {}))
         data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
         data['routing_policy'] = additions.get('routing_policy', data.get('routing_policy', {}))
+        data['proxy_pool'] = additions.get(
+            'proxy_pool',
+            monitoring.get('en.json', {}).get('proxy_pool', data.get('proxy_pool', {})),
+        )
+        data['oauth_model_policy'] = additions.get(
+            'oauth_model_policy',
+            monitoring.get('en.json', {}).get(
+                'oauth_model_policy',
+                data.get('oauth_model_policy', {}),
+            ),
+        )
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
         gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(locale_path.name, GEMINI_CLI_LOCALE_KEYS['en.json'])
         data.setdefault('auth_files', {})['filter_gemini-cli'] = gemini_cli_locale['auth_filter']
@@ -3640,15 +1716,27 @@ def patch_locales(target: Path) -> None:
             locale_path.name,
             AUTH_FILES_SELECTED_COUNT_LABEL_KEYS['en.json'],
         )
+        data.setdefault('auth_files', {}).update(
+            AUTH_FILES_BATCH_LOCALE_KEYS.get(
+                locale_path.name,
+                AUTH_FILES_BATCH_LOCALE_KEYS['en.json'],
+            )
+        )
+        data.setdefault('quota_management', {}).update(
+            QUOTA_DELETE_LOCALE_KEYS.get(
+                locale_path.name,
+                QUOTA_DELETE_LOCALE_KEYS['en.json'],
+            )
+        )
         data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
-        batch_locale = AUTH_FILES_BATCH_LOCALE_KEYS.get(locale_path.name, AUTH_FILES_BATCH_LOCALE_KEYS['en.json'])
-        data.setdefault('auth_files', {}).update(batch_locale)
-        quota_search_locale = QUOTA_PAGE_SEARCH_LOCALE_KEYS.get(locale_path.name, QUOTA_PAGE_SEARCH_LOCALE_KEYS['en.json'])
-        data.setdefault('quota_management', {}).update(quota_search_locale)
-        quota_delete_locale = QUOTA_DELETE_LOCALE_KEYS.get(locale_path.name, QUOTA_DELETE_LOCALE_KEYS['en.json'])
-        data.setdefault('quota_management', {}).update(quota_delete_locale)
         data.setdefault('xai_quota', {}).update(
             XAI_QUOTA_LOCALE_KEYS.get(locale_path.name, XAI_QUOTA_LOCALE_KEYS['en.json'])
+        )
+        data.setdefault('system_info', {}).update(
+            MANAGEMENT_UPDATE_LOCALE_KEYS.get(
+                locale_path.name,
+                MANAGEMENT_UPDATE_LOCALE_KEYS['en.json'],
+            )
         )
         cloak_locale = CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS.get(
             locale_path.name,
@@ -3674,6 +1762,751 @@ def patch_locales(target: Path) -> None:
         write(locale_path, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
 
+def _ensure_interface_field(path: Path, interface_name: str, field: str) -> None:
+    text = read(path)
+    start = text.find(f'export interface {interface_name} {{')
+    if start == -1:
+        raise RuntimeError(f'Interface not found in {path}: {interface_name}')
+    end = text.find('\n}', start)
+    if end == -1:
+        raise RuntimeError(f'Interface end not found in {path}: {interface_name}')
+    block = text[start:end]
+    if field.strip() in block:
+        return
+    write(path, f'{text[:end]}\n{field}{text[end:]}')
+
+
+def patch_quota_types_latest(target: Path) -> None:
+    path = target / 'src/types/quota.ts'
+    insert_once(
+        path,
+        '// API payload types\n',
+        "// API payload types\nexport interface GeminiCliQuotaBucket {\n  modelId?: string;\n  model_id?: string;\n  tokenType?: string;\n  token_type?: string;\n  remainingFraction?: number | string;\n  remaining_fraction?: number | string;\n  remainingAmount?: number | string;\n  remaining_amount?: number | string;\n  resetTime?: string;\n  reset_time?: string;\n}\n\nexport interface GeminiCliQuotaPayload {\n  buckets?: GeminiCliQuotaBucket[];\n}\n\nexport interface GeminiCliParsedBucket {\n  modelId: string;\n  tokenType: string | null;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n}\n\n",
+        'export interface GeminiCliQuotaBucket',
+    )
+    insert_once(
+        path,
+        'export interface CodexQuotaWindow',
+        "export interface GeminiCliQuotaBucketState {\n  id: string;\n  label: string;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n  tokenType: string | null;\n  modelIds?: string[];\n  resetAtMs?: number | null;\n  periodHours?: number | null;\n}\n\nexport interface GeminiCliQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  buckets: GeminiCliQuotaBucketState[];\n  projectId?: string;\n  project_id?: string;\n  tierLabel?: string | null;\n  tierId?: string | null;\n  creditBalance?: number | null;\n  quotaProviderSnapshot?: boolean;\n  error?: string;\n  errorStatus?: number;\n  cachedAt?: number;\n}\n\nexport interface CodexQuotaWindow",
+        'export interface GeminiCliQuotaState',
+    )
+    insert_once(
+        path,
+        'export interface XaiBillingSummary {\n',
+        "export interface XaiFreeQuotaSummary {\n  source?: 'rate_limit_headers' | 'free_usage_exhausted';\n  windowKind?: 'rolling_24h' | string;\n  usedTokens?: number | string;\n  limitTokens?: number | string;\n  remainingTokens?: number | string;\n  limitRequests?: number | string;\n  remainingRequests?: number | string;\n  observedAt?: number | string;\n  exhausted?: boolean;\n  model?: string;\n}\n\nexport interface XaiBillingSummary {\n",
+        'export interface XaiFreeQuotaSummary',
+    )
+    replace_once(
+        path,
+        "  planType?: 'paid';\n",
+        "  planType?: 'free' | 'supergrok' | 'x-premium-plus' | 'supergrok-heavy' | 'paid' | 'paid-unknown';\n",
+    )
+    _ensure_interface_field(path, 'XaiBillingSummary', '  freeQuota?: XaiFreeQuotaSummary;')
+    for interface_name in (
+        'ClaudeQuotaState', 'AntigravityQuotaState', 'CodexQuotaState', 'KimiQuotaState', 'XaiQuotaState'
+    ):
+        _ensure_interface_field(path, interface_name, '  cachedAt?: number;')
+
+
+def patch_quota_provider_model_latest(target: Path) -> None:
+    types_path = target / 'src/features/quota/providers/types.ts'
+    replace_once(types_path, '  CodexQuotaState,\n  KimiQuotaState,', '  CodexQuotaState,\n  GeminiCliQuotaState,\n  KimiQuotaState,')
+    replace_once(types_path, "export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai';", "export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';")
+    replace_once(types_path, '  codexQuota: Record<string, CodexQuotaState>;\n  kimiQuota:', '  codexQuota: Record<string, CodexQuotaState>;\n  geminiCliQuota: Record<string, GeminiCliQuotaState>;\n  kimiQuota:')
+    replace_once(types_path, '  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setKimiQuota:', '  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setGeminiCliQuota: (updater: QuotaUpdater<Record<string, GeminiCliQuotaState>>) => void;\n  setKimiQuota:')
+
+    xai_paid_path = target / 'src/utils/quota/xaiPaid.ts'
+    replace_once(
+        xai_paid_path,
+        '''export const isPaidXaiAuthFile = (file: AuthFileItem | Record<string, unknown>): boolean => {
+  const records = collectAuthRecords(file);
+  const usesOfficialApi = records.some((record) =>
+    isTruthyValue(record.using_api ?? record.usingApi)
+  );
+  const prefixes = readStrings(records, ['prefix']);
+''',
+        '''export const isXaiUsingOfficialAPI = (file: AuthFileItem | Record<string, unknown>): boolean =>
+  collectAuthRecords(file).some((record) =>
+    isTruthyValue(record.using_api ?? record.usingApi)
+  );
+
+export const isPaidXaiAuthFile = (file: AuthFileItem | Record<string, unknown>): boolean => {
+  const records = collectAuthRecords(file);
+  const usesOfficialApi = isXaiUsingOfficialAPI(file);
+  const prefixes = readStrings(records, ['prefix']);
+''',
+    )
+    xai_data_path = target / 'src/features/quota/providers/xai/data.ts'
+    replace_once(
+        xai_data_path,
+        'const requestXaiPaidHealth = async (authIndex: string): Promise<XaiBillingSummary> => {',
+        'export const requestXaiPaidHealth = async (authIndex: string): Promise<XaiBillingSummary> => {',
+    )
+    replace_once(
+        xai_data_path,
+        '''    url,
+    header,
+  });
+''',
+        '''    url,
+    header,
+    useExecutor: true,
+  });
+''',
+    )
+    replace_once(
+        xai_data_path,
+        '''        url: XAI_API_ME_URL,
+        header: XAI_API_REQUEST_HEADERS,
+''',
+        '''        url: XAI_API_ME_URL,
+        header: XAI_API_REQUEST_HEADERS,
+        useExecutor: true,
+''',
+    )
+    replace_once(
+        xai_data_path,
+        '''          stream: false,
+        }),
+''',
+        '''          stream: false,
+        }),
+        useExecutor: true,
+''',
+    )
+
+    index_path = target / 'src/features/quota/providers/index.ts'
+    replace_once(index_path, "import { XAI_CONFIG } from './xai/data';\nimport { XaiQuotaBody } from './xai/XaiQuotaBody';", "import { GEMINI_CLI_CONFIG, GeminiCliQuotaBody, PRO_XAI_CONFIG, ProXaiQuotaBody } from '@/pro/modules/quota';")
+    replace_once(index_path, "  errorStatus?: number;\n}", "  errorStatus?: number;\n  cachedAt?: number;\n}")
+    replace_once(index_path, "  codex: { ...CODEX_CONFIG, Body: CodexQuotaBody } as unknown as QuotaAdapter,\n  kimi:", "  codex: { ...CODEX_CONFIG, Body: CodexQuotaBody } as unknown as QuotaAdapter,\n  'gemini-cli': { ...GEMINI_CLI_CONFIG, Body: GeminiCliQuotaBody } as unknown as QuotaAdapter,\n  kimi:")
+    replace_once(index_path, '  xai: { ...XAI_CONFIG, Body: XaiQuotaBody } as unknown as QuotaAdapter,', '  xai: { ...PRO_XAI_CONFIG, Body: ProXaiQuotaBody } as unknown as QuotaAdapter,')
+
+    constants_path = target / 'src/features/quota/constants.ts'
+    replace_once(constants_path, "  'codex',\n  'xai',", "  'codex',\n  'gemini-cli',\n  'xai',")
+
+    logic_path = target / 'src/features/quota/logic.ts'
+    replace_once(logic_path, "import { KIMI_CONFIG } from './providers/kimi/data';", "import { GEMINI_CLI_CONFIG } from '@/pro/modules/quota';\nimport { KIMI_CONFIG } from './providers/kimi/data';")
+    replace_once(logic_path, '  codex: CODEX_CONFIG.filterFn,\n  kimi:', "  codex: CODEX_CONFIG.filterFn,\n  'gemini-cli': GEMINI_CLI_CONFIG.filterFn,\n  kimi:")
+
+    test_path = target / 'tests/quotaPageLogic.test.ts'
+    replace_once(test_path, "      codex: 2,\n      xai: 1,", "      codex: 2,\n      'gemini-cli': 0,\n      xai: 1,")
+
+
+def patch_quota_page_cache_refresh(target: Path) -> None:
+    path = target / 'src/features/quota/QuotaPage.tsx'
+    insert_once(
+        path,
+        "import { readQuotaUiState, writeQuotaUiState } from './uiState';\n",
+        "import { readQuotaUiState, writeQuotaUiState } from './uiState';\n"
+        "import { quotaPersistenceMiddleware } from '@/pro/modules/quota';\n",
+        "quotaPersistenceMiddleware } from '@/pro/modules/quota'",
+    )
+    insert_once(
+        path,
+        "  useEffect(() => {\n    void loadFiles();\n  }, [loadFiles]);\n",
+        "  useEffect(() => {\n    void loadFiles();\n  }, [loadFiles]);\n\n"
+        "  useEffect(() => {\n"
+        "    void quotaPersistenceMiddleware.ensureFresh();\n"
+        "  }, []);\n",
+        'void quotaPersistenceMiddleware.ensureFresh();',
+    )
+
+
+def patch_quota_page_latest(target: Path) -> None:
+    path = target / 'src/features/quota/QuotaPage.tsx'
+    patch_quota_page_cache_refresh(target)
+    insert_once(path, "import { EmptyState } from '@/components/ui/EmptyState';\n", "import { EmptyState } from '@/components/ui/EmptyState';\nimport { Input } from '@/components/ui/Input';\nimport { IconSearch } from '@/components/ui/icons';\n", 'quota_management.search_label')
+    insert_once(path, "import { readQuotaUiState, writeQuotaUiState } from './uiState';\n", "import { readQuotaUiState, writeQuotaUiState } from './uiState';\nimport { buildQuotaSearchValues, matchesQuotaSearch, useBackendQuotaRefresh, useQuotaSelection } from '@/pro/modules/quota';\n", 'matchesQuotaSearch')
+    replace_once(path, '  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const kimiQuota', '  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n  const kimiQuota')
+    replace_once(path, "        codex: codexQuota,\n        kimi:", "        codex: codexQuota,\n        'gemini-cli': geminiCliQuota,\n        kimi:")
+    replace_once(path, '[antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota]', '[antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]')
+    marker = "  const getQuota = useCallback(\n"
+    search_state = "  const [search, setSearch] = useState('');\n  const quotaSearchStore = useMemo(\n    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n  );\n\n"
+    insert_once(path, marker, search_state + marker, 'const [search, setSearch]')
+    entries_marker = "  const entries = useMemo(() => classifyQuotaFiles(files), [files]);\n"
+    searched_entries = entries_marker + "  const searchedEntries = useMemo(\n    () => entries.filter(({ file }) => matchesQuotaSearch(buildQuotaSearchValues(file, quotaSearchStore, t), search)),\n    [entries, quotaSearchStore, search, t]\n  );\n"
+    insert_once(path, entries_marker, searched_entries, 'const searchedEntries = useMemo(')
+    replace_once(
+        path,
+        '  const tabCounts = useMemo(() => buildTabCounts(entries), [entries]);',
+        '  const tabCounts = useMemo(() => buildTabCounts(searchedEntries), [searchedEntries]);',
+    )
+    replace_once(
+        path,
+        '  const filteredEntries = useMemo(() => filterEntriesByTab(entries, tab), [entries, tab]);',
+        '  const filteredEntries = useMemo(() => filterEntriesByTab(searchedEntries, tab), [searchedEntries, tab]);',
+    )
+    insert_once(
+        path,
+        "  const handleRefreshAll = useCallback(() => {\n",
+        "  const backendRefresh = useBackendQuotaRefresh(tab === 'all' ? '' : tab);\n"
+        "  const selection = useQuotaSelection(loadFiles);\n"
+        "  const pageNames = useMemo(() => pageItems.map(({ file }) => file.name), [pageItems]);\n"
+        "  const selectedPageCount = selection.selectedCountIn(pageNames);\n\n"
+        "  const handleRefreshAll = useCallback(() => {\n",
+        'const backendRefresh = useBackendQuotaRefresh',
+    )
+    replace_once(
+        path,
+        "  const handleRefreshAll = useCallback(() => {\n"
+        "    if (disableControls) return;\n"
+        "    pendingRefreshRef.current = true;\n"
+        "    void loadFiles();\n"
+        "  }, [disableControls, loadFiles]);\n",
+        "  const handleRefreshAll = useCallback(() => {\n"
+        "    if (disableControls) return;\n"
+        "    if (tab !== 'all') {\n"
+        "      void backendRefresh.start();\n"
+        "      return;\n"
+        "    }\n"
+        "    pendingRefreshRef.current = true;\n"
+        "    void loadFiles();\n"
+        "  }, [backendRefresh, disableControls, loadFiles, tab]);\n",
+    )
+    replace_once(
+        path,
+        "        refreshing={loading || batchLoading}\n",
+        "        refreshing={loading || batchLoading || backendRefresh.isRefreshing}\n"
+        "        refreshProgress={backendRefresh.isRefreshing && backendRefresh.total > 0\n"
+        "          ? t('quota_management.refresh_progress', { completed: backendRefresh.completed, total: backendRefresh.total })\n"
+        "          : undefined}\n",
+    )
+    insert_once(
+        path,
+        "        {error && (\n",
+        "        {pageNames.length > 0 && (\n"
+        "          <div className={styles.selectionBar}>\n"
+        "            <label className={styles.selectAllLabel}>\n"
+        "              <input\n"
+        "                type=\"checkbox\"\n"
+        "                checked={selection.areAllSelected(pageNames)}\n"
+        "                onChange={() => selection.toggleSelectAll(pageNames)}\n"
+        "              />\n"
+        "              {t('quota_management.select_all')}\n"
+        "            </label>\n"
+        "            {selectedPageCount > 0 && (\n"
+        "              <Button\n"
+        "                variant=\"danger\"\n"
+        "                size=\"sm\"\n"
+        "                onClick={() => selection.deleteSelected(pageNames)}\n"
+        "                disabled={disableControls}\n"
+        "              >\n"
+        "                {t('quota_management.delete_selected', { count: selectedPageCount })}\n"
+        "              </Button>\n"
+        "            )}\n"
+        "          </div>\n"
+        "        )}\n\n"
+        "        {error && (\n",
+        'className={styles.selectionBar}',
+    )
+    replace_once(
+        path,
+        "                onReset={() => resetQuota(entry.file, QUOTA_ADAPTERS[entry.type])}\n",
+        "                selected={selection.selectedNames.has(entry.file.name)}\n"
+        "                onSelect={() => selection.toggleSelect(entry.file.name)}\n"
+        "                onDelete={() => selection.deleteOne(entry.file.name)}\n"
+        "                onReset={() => resetQuota(entry.file, QUOTA_ADAPTERS[entry.type])}\n",
+    )
+    insert_once(path, "        {error && (\n", "        <Input\n          type=\"search\"\n          value={search}\n          onChange={(event) => { setSearch(event.target.value); setPage(1); }}\n          placeholder={t('quota_management.search_placeholder')}\n          aria-label={t('quota_management.search_label')}\n          rightElement={<IconSearch size={18} />}\n        />\n\n        {error && (\n", 'rightElement={<IconSearch')
+
+
+def patch_quota_cards_latest(target: Path) -> None:
+    card_path = target / 'src/features/quota/components/QuotaCard.tsx'
+    insert_once(card_path, "import { resolveQuotaErrorMessage } from '@/utils/quota';\n", "import { resolveQuotaErrorMessage } from '@/utils/quota';\nimport { QuotaCachedTime } from '@/pro/modules/quota';\n", 'import { QuotaCachedTime }')
+    replace_once(card_path, "        ) : quota ? (\n          <adapter.Body quota={quota} classes={quotaClasses} />\n        ) : (", "        ) : quota ? (\n          <>\n            <adapter.Body quota={quota} classes={quotaClasses} />\n            <QuotaCachedTime quotaStatus={status} cachedAt={quota.cachedAt} />\n          </>\n        ) : (")
+    replace_once(card_path, "import { IconRefreshCw } from '@/components/ui/icons';", "import { IconRefreshCw, IconTrash2 } from '@/components/ui/icons';")
+    replace_once(
+        card_path,
+        "  resetting: boolean;\n  /** 首屏级联入场延迟；null = 不入场（切 tab / 翻页 / 刷新新挂载的卡片）。 */\n",
+        "  resetting: boolean;\n  selected: boolean;\n  onSelect: () => void;\n  onDelete?: () => void;\n  /** 首屏级联入场延迟；null = 不入场（切 tab / 翻页 / 刷新新挂载的卡片）。 */\n",
+    )
+    replace_once(
+        card_path,
+        "    resetting,\n    entranceDelayMs,\n",
+        "    resetting,\n    selected,\n    onSelect,\n    onDelete,\n    entranceDelayMs,\n",
+    )
+    replace_once(
+        card_path,
+        "        <span className={styles.fileName} title={file.name}>\n",
+        "        <input\n"
+        "          type=\"checkbox\"\n"
+        "          className={styles.selectCheckbox}\n"
+        "          checked={selected}\n"
+        "          onChange={onSelect}\n"
+        "          aria-label={t('quota_management.select_credential', { name: file.name })}\n"
+        "        />\n"
+        "        <span className={styles.fileName} title={file.name}>\n",
+    )
+    replace_once(card_path, "      {status !== 'idle' && (", "      {(status !== 'idle' || onDelete) && (")
+    replace_once(
+        card_path,
+        "        <footer className={styles.actionRow}>\n",
+        "        <footer className={styles.actionRow}>\n"
+        "          <button\n"
+        "            type=\"button\"\n"
+        "            className={styles.actionPill}\n"
+        "            onClick={onDelete}\n"
+        "            title={t('quota_management.delete_one')}\n"
+        "          >\n"
+        "            <IconTrash2 size={13} />\n"
+        "            {t('quota_management.delete_one')}\n"
+        "          </button>\n",
+    )
+
+    page_styles = target / 'src/features/quota/QuotaPage.module.scss'
+    insert_once(
+        page_styles,
+        ".errorBanner {\n",
+        ".selectionBar {\n"
+        "  display: flex;\n"
+        "  align-items: center;\n"
+        "  justify-content: space-between;\n"
+        "  gap: 12px;\n"
+        "  min-height: 36px;\n"
+        "}\n\n"
+        ".selectAllLabel {\n"
+        "  display: inline-flex;\n"
+        "  align-items: center;\n"
+        "  gap: 8px;\n"
+        "  color: var(--text-secondary);\n"
+        "  font-size: 13px;\n"
+        "  cursor: pointer;\n"
+        "}\n\n"
+        ".errorBanner {\n",
+        '.selectionBar {',
+    )
+    card_styles = target / 'src/features/quota/components/QuotaCard.module.scss'
+    insert_once(
+        card_styles,
+        ".fileName {\n",
+        ".selectCheckbox {\n"
+        "  flex: 0 0 auto;\n"
+        "  width: 16px;\n"
+        "  height: 16px;\n"
+        "  cursor: pointer;\n"
+        "}\n\n"
+        ".fileName {\n",
+        '.selectCheckbox {',
+    )
+
+    header_path = target / 'src/features/quota/components/QuotaHeader.tsx'
+    replace_once(header_path, "  refreshing: boolean;\n  disableControls: boolean;", "  refreshing: boolean;\n  refreshProgress?: string;\n  disableControls: boolean;")
+    replace_once(
+        header_path,
+        "  const { totalCount, loadedCount, attentionCount, refreshing, disableControls, onRefreshAll } =\n    props;\n",
+        "  const { totalCount, loadedCount, attentionCount, refreshing, refreshProgress, disableControls, onRefreshAll } =\n    props;\n",
+    )
+    replace_once(header_path, "          {t('quota_management.refresh_all_credentials')}\n", "          {refreshProgress || t('quota_management.refresh_all_credentials')}\n")
+
+    auth_path = target / 'src/features/authFiles/components/AuthFileQuotaSection.tsx'
+    insert_once(auth_path, "import { bindQuotaClasses } from '@/features/quota/types';\n", "import { bindQuotaClasses } from '@/features/quota/types';\nimport { QuotaCachedTime } from '@/pro/modules/quota';\n", 'import { QuotaCachedTime }')
+    replace_once(auth_path, "      ) : quota ? (\n        <adapter.Body quota={quota} classes={compactQuotaClasses} />\n      ) : (", "      ) : quota ? (\n        <>\n          <adapter.Body quota={quota} classes={compactQuotaClasses} />\n          <QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />\n        </>\n      ) : (")
+
+
+def patch_quota_provider_timestamps_latest(target: Path) -> None:
+    for provider, setter in (
+        ('antigravity', 'setAntigravityQuota'), ('claude', 'setClaudeQuota'),
+        ('codex', 'setCodexQuota'), ('kimi', 'setKimiQuota')
+    ):
+        ensure_cached_at_in_quota_success_state(
+            target / f'src/features/quota/providers/{provider}/data.ts', setter
+        )
+
+
+def patch_auth_files_gemini_quota_latest(target: Path) -> None:
+    path = target / 'src/features/authFiles/constants.ts'
+    replace_once(path, "export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai';", "export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';")
+    for marker in (
+        'export const QUOTA_PROVIDER_TYPES = new Set<QuotaProviderType>([',
+        'export const AUTH_FILE_MANUAL_REFRESH_PROVIDERS = new Set([',
+    ):
+        text = read(path)
+        start = text.find(marker)
+        end = text.find('\n]);' if 'Set' in marker or 'PROVIDERS' in marker else '\n];', start)
+        if start == -1 or end == -1:
+            raise RuntimeError(f'Provider list not found in {path}: {marker}')
+        block = text[start:end]
+        if "'gemini-cli'" in block:
+            continue
+        updated = block.replace("  'codex',\n", "  'codex',\n  'gemini-cli',\n", 1)
+        write(path, f'{text[:start]}{updated}{text[end:]}')
+    quota_section_path = target / 'src/features/authFiles/components/AuthFileQuotaSection.tsx'
+    replace_once(
+        quota_section_path,
+        "    if (quotaType === 'codex') return state.codexQuota[file.name] as QuotaCardState | undefined;\n    if (quotaType === 'kimi')",
+        "    if (quotaType === 'codex') return state.codexQuota[file.name] as QuotaCardState | undefined;\n    if (quotaType === 'gemini-cli') return state.geminiCliQuota[file.name] as QuotaCardState | undefined;\n    if (quotaType === 'kimi')",
+    )
+
+
+def patch_auth_files_page_search_latest(target: Path) -> None:
+    path = target / 'src/features/authFiles/AuthFilesPage.tsx'
+    replace_once(path, "import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';", "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';")
+    insert_once(path, "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n", "import { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';\nimport { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n", 'buildQuotaSearchValues')
+    insert_once(
+        path,
+        '  const statusBarCache = useAuthFilesStatusBarCache(files);\n',
+        "  const statusBarCache = useAuthFilesStatusBarCache(files);\n\n  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);\n  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n  const kimiQuota = useQuotaStore((state) => state.kimiQuota);\n  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n  const quotaSearchStore = useMemo(\n    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n  );\n",
+        'const quotaSearchStore',
+    )
+    replace_once(
+        path,
+        '        return matchType && matchesAuthFileSearch(item, normalizedSearch, wildcardSearch);',
+        '        return matchType && (\n          matchesAuthFileSearch(item, normalizedSearch, wildcardSearch) ||\n          matchesQuotaSearch(buildQuotaSearchValues(item, quotaSearchStore, t), normalizedSearch)\n        );',
+    )
+    replace_once(path, '[filesMatchingStatusFilters, normalizedFilter, normalizedSearch, wildcardSearch]', '[filesMatchingStatusFilters, normalizedFilter, normalizedSearch, quotaSearchStore, t, wildcardSearch]')
+
+
+def patch_auth_files_page_sorting_latest(target: Path) -> None:
+    page_path = target / 'src/features/authFiles/AuthFilesPage.tsx'
+    ui_state_path = target / 'src/features/authFiles/uiState.ts'
+    replace_once(ui_state_path, "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority'] as const;", "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority', 'plan', 'quota'] as const;")
+    insert_once(
+        page_path,
+        "import { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';\n",
+        "import {\n"
+        "  buildQuotaSearchValues,\n"
+        "  compareAuthFilesByAvailableQuotaDescending,\n"
+        "  compareAuthFilesByPlanDescending,\n"
+        "  isAuthFilePlanSortProvider,\n"
+        "  isAuthFileQuotaSortProvider,\n"
+        "  matchesQuotaSearch,\n"
+        "} from '@/pro/modules/quota';\n",
+        'compareAuthFilesByPlanDescending',
+    )
+    insert_once(
+        page_path,
+        "  const enabledOnly = statusFilterMode === 'enabled';\n",
+        "  const enabledOnly = statusFilterMode === 'enabled';\n"
+        "  const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter);\n"
+        "  const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter);\n"
+        "  const selectedSortModeAvailable =\n"
+        "    (sortMode !== 'plan' || planSortAvailable) &&\n"
+        "    (sortMode !== 'quota' || quotaSortAvailable);\n",
+        'const planSortAvailable',
+    )
+    insert_once(
+        page_path,
+        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
+        "  useEffect(() => {\n"
+        "    if (selectedSortModeAvailable) return;\n"
+        "    setSortMode('default');\n"
+        "    setPage(1);\n"
+        "  }, [selectedSortModeAvailable]);\n\n"
+        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
+        'if (selectedSortModeAvailable) return;',
+    )
+    replace_once(
+        page_path,
+        "  const sortOptions = useMemo(\n"
+        "    () => [\n"
+        "      { value: 'default', label: t('auth_files.sort_default') },\n"
+        "      { value: 'az', label: t('auth_files.sort_az') },\n"
+        "      { value: 'priority', label: t('auth_files.sort_priority') },\n"
+        "    ],\n"
+        "    [t]\n"
+        "  );\n",
+        "  const sortOptions = useMemo(() => {\n"
+        "    const options: Array<{ value: AuthFilesSortMode; label: string }> = [\n"
+        "      { value: 'default', label: t('auth_files.sort_default') },\n"
+        "      { value: 'az', label: t('auth_files.sort_az') },\n"
+        "      { value: 'priority', label: t('auth_files.sort_priority') },\n"
+        "    ];\n"
+        "    if (planSortAvailable) {\n"
+        "      options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') });\n"
+        "    }\n"
+        "    if (quotaSortAvailable) {\n"
+        "      options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') });\n"
+        "    }\n"
+        "    return options;\n"
+        "  }, [planSortAvailable, quotaSortAvailable, t]);\n",
+    )
+    insert_once(
+        page_path,
+        '  const sorted = useMemo(() => sortAuthFiles(filtered, sortMode), [filtered, sortMode]);\n',
+        "  const effectiveSortMode: AuthFilesSortMode =\n    selectedSortModeAvailable ? sortMode : 'default';\n  const sorted = useMemo(() => {\n    if (effectiveSortMode === 'plan') {\n      return [...filtered].sort((a, b) => compareAuthFilesByPlanDescending(a, b, quotaSearchStore));\n    }\n    if (effectiveSortMode === 'quota') {\n      return [...filtered].sort((a, b) => compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore));\n    }\n    return sortAuthFiles(filtered, effectiveSortMode);\n  }, [effectiveSortMode, filtered, quotaSearchStore]);\n",
+        'const effectiveSortMode',
+    )
+    replace_once(page_path, '          sortMode={sortMode}\n', '          sortMode={effectiveSortMode}\n')
+
+
+def patch_auth_files_batch_actions_latest(target: Path) -> None:
+    hook_path = target / 'src/features/authFiles/hooks/useAuthFilesData.ts'
+    replace_once(
+        hook_path,
+        "  batchDownload: (names: string[]) => Promise<void>;\n"
+        "  batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;\n"
+        "  batchDelete: (names: string[]) => void;\n"
+        "};\n",
+        "  batchDownload: (names: string[]) => Promise<void>;\n"
+        "  batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;\n"
+        "  batchDelete: (names: string[]) => void;\n"
+        "  batchTest: (files: AuthFileItem[]) => Promise<import('./useAuthFilesBatchActions').BatchActionSummary>;\n"
+        "  batchClearErrors: (files: AuthFileItem[]) => Promise<import('./useAuthFilesBatchActions').BatchActionSummary>;\n"
+        "  batchTestRunning: boolean;\n"
+        "  batchClearErrorsRunning: boolean;\n"
+        "  batchResultType: 'test' | 'clear' | null;\n"
+        "  batchResult: import('./useAuthFilesBatchActions').BatchActionSummary | null;\n"
+        "  clearBatchResult: () => void;\n"
+        "};\n",
+    )
+    insert_once(
+        hook_path,
+        "import { notifyAuthFilesChanged } from '@/features/authFiles/authFilesEvents';\n",
+        "import { notifyAuthFilesChanged } from '@/features/authFiles/authFilesEvents';\n"
+        "import { useAuthFilesBatchActions } from './useAuthFilesBatchActions';\n",
+        "import { useAuthFilesBatchActions } from './useAuthFilesBatchActions';",
+    )
+    replace_once(
+        hook_path,
+        "  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());\n",
+        "  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());\n"
+        "  const batchActions = useAuthFilesBatchActions();\n",
+    )
+    replace_once(
+        hook_path,
+        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n  };\n}\n",
+        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n"
+        "    batchTest: batchActions.batchTest,\n"
+        "    batchClearErrors: batchActions.batchClearErrors,\n"
+        "    batchTestRunning: batchActions.batchTestRunning,\n"
+        "    batchClearErrorsRunning: batchActions.batchClearErrorsRunning,\n"
+        "    batchResultType: batchActions.batchResultType,\n"
+        "    batchResult: batchActions.batchResult,\n"
+        "    clearBatchResult: batchActions.clearBatchResult,\n"
+        "  };\n}\n",
+    )
+
+    page_path = auth_files_page_path(target)
+    insert_once(
+        page_path,
+        "import { BatchActionBar } from '@/features/authFiles/components/BatchActionBar';\n",
+        "import { BatchActionBar } from '@/features/authFiles/components/BatchActionBar';\n"
+        "import { BatchActionResultDialog } from '@/features/authFiles/components/BatchActionResultDialog';\n",
+        'BatchActionResultDialog',
+    )
+    replace_once(
+        page_path,
+        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n  } = useAuthFilesData({ onFilesMutated: invalidateDerivedCaches });\n",
+        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n"
+        "    batchTest,\n    batchClearErrors,\n"
+        "    batchTestRunning,\n    batchClearErrorsRunning,\n"
+        "    batchResultType,\n    batchResult,\n    clearBatchResult,\n"
+        "  } = useAuthFilesData({ onFilesMutated: invalidateDerivedCaches });\n",
+    )
+    replace_once(
+        page_path,
+        "  const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);\n",
+        "  const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);\n"
+        "  const selectedFileItems = useMemo(\n"
+        "    () => files.filter((file) => selectedFiles.has(file.name)),\n"
+        "    [files, selectedFiles]\n"
+        "  );\n",
+    )
+    replace_once(
+        page_path,
+        "      <BatchActionBar\n",
+        "      <BatchActionResultDialog\n"
+        "        open={batchResult !== null}\n"
+        "        title={batchResultType === 'clear'\n"
+        "          ? t('auth_files.batch_clear_errors_title')\n"
+        "          : t('auth_files.batch_test_title')}\n"
+        "        summary={batchResult}\n"
+        "        onClose={clearBatchResult}\n"
+        "      />\n\n"
+        "      <BatchActionBar\n",
+    )
+    replace_once(
+        page_path,
+        "        onDownload={() => void batchDownload(selectedNames)}\n",
+        "        onTest={() => void batchTest(selectedFileItems)}\n"
+        "        onClearErrors={() => void batchClearErrors(selectedFileItems).then(() => loadFiles({ background: true }))}\n"
+        "        testRunning={batchTestRunning}\n"
+        "        clearErrorsRunning={batchClearErrorsRunning}\n"
+        "        onDownload={() => void batchDownload(selectedNames)}\n",
+    )
+
+    bar_path = target / 'src/features/authFiles/components/BatchActionBar.tsx'
+    replace_once(
+        bar_path,
+        "  onDownload: () => void;\n",
+        "  onTest: () => void;\n"
+        "  onClearErrors: () => void;\n"
+        "  testRunning: boolean;\n"
+        "  clearErrorsRunning: boolean;\n"
+        "  onDownload: () => void;\n",
+    )
+    replace_once(
+        bar_path,
+        "    onDownload,\n",
+        "    onTest,\n"
+        "    onClearErrors,\n"
+        "    testRunning,\n"
+        "    clearErrorsRunning,\n"
+        "    onDownload,\n",
+    )
+    replace_once(
+        bar_path,
+        "        <div className={styles.right}>\n"
+        "          <Button\n"
+        "            variant=\"secondary\"\n"
+        "            size=\"sm\"\n"
+        "            onClick={onDownload}\n",
+        "        <div className={styles.right}>\n"
+        "          <Button variant=\"secondary\" size=\"sm\" onClick={onTest} disabled={disableControls || testRunning}>\n"
+        "            {testRunning ? t('auth_files.batch_test_running') : t('auth_files.batch_test')}\n"
+        "          </Button>\n"
+        "          <Button variant=\"secondary\" size=\"sm\" onClick={onClearErrors} disabled={disableControls || clearErrorsRunning}>\n"
+        "            {clearErrorsRunning ? t('auth_files.batch_clear_errors_running') : t('auth_files.batch_clear_errors')}\n"
+        "          </Button>\n"
+        "          <Button\n"
+        "            variant=\"secondary\"\n"
+        "            size=\"sm\"\n"
+        "            onClick={onDownload}\n",
+    )
+
+
+def patch_claude_model_id_cloak_setting(target: Path) -> None:
+    visual_types = target / 'src/types/visualConfig.ts'
+    replace_once(
+        visual_types,
+        "export type DisableImageGenerationMode = 'false' | 'true' | 'chat' | 'passthrough';\n",
+        "export type DisableImageGenerationMode = 'false' | 'true' | 'chat' | 'passthrough';\n"
+        "export type ClaudeModelIDCloakMode = 'auto' | 'always' | 'never';\n",
+    )
+    replace_once(
+        visual_types,
+        "  forceModelPrefix: boolean;\n  passthroughHeaders: boolean;\n",
+        "  forceModelPrefix: boolean;\n  claudeModelIDCloakMode: ClaudeModelIDCloakMode;\n  passthroughHeaders: boolean;\n",
+    )
+    replace_once(
+        visual_types,
+        "  forceModelPrefix: false,\n  passthroughHeaders: false,\n",
+        "  forceModelPrefix: false,\n  claudeModelIDCloakMode: 'auto',\n  passthroughHeaders: false,\n",
+    )
+
+    visual_hook = target / 'src/hooks/useVisualConfig.ts'
+    replace_once(
+        visual_hook,
+        "  DisableImageGenerationMode,\n",
+        "  ClaudeModelIDCloakMode,\n  DisableImageGenerationMode,\n",
+    )
+    replace_once(
+        visual_hook,
+        "export function parseDisableImageGenerationMode(raw: unknown): DisableImageGenerationMode {\n",
+        "export function parseClaudeModelIDCloakMode(raw: unknown): ClaudeModelIDCloakMode {\n"
+        "  if (typeof raw === 'string') {\n"
+        "    const normalized = raw.trim().toLowerCase();\n"
+        "    if (normalized === 'always' || normalized === 'never') return normalized;\n"
+        "  }\n"
+        "  return 'auto';\n"
+        "}\n\n"
+        "export function parseDisableImageGenerationMode(raw: unknown): DisableImageGenerationMode {\n",
+    )
+    replace_once(
+        visual_hook,
+        "      'forceModelPrefix',\n      'requestRetry',\n",
+        "      'forceModelPrefix',\n      'claudeModelIDCloakMode',\n      'requestRetry',\n",
+    )
+    replace_once(
+        visual_hook,
+        "        forceModelPrefix: Boolean(parsed['force-model-prefix']),\n"
+        "        passthroughHeaders: Boolean(parsed['passthrough-headers']),\n",
+        "        forceModelPrefix: Boolean(parsed['force-model-prefix']),\n"
+        "        claudeModelIDCloakMode: parseClaudeModelIDCloakMode(\n"
+        "          parsed['claude-model-id-cloak-mode']\n"
+        "        ),\n"
+        "        passthroughHeaders: Boolean(parsed['passthrough-headers']),\n",
+    )
+    replace_once(
+        visual_hook,
+        "        if (dirtyFields.has('forceModelPrefix')) {\n"
+        "          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
+        "        }\n"
+        "        if (dirtyFields.has('passthroughHeaders')) {\n",
+        "        if (dirtyFields.has('forceModelPrefix')) {\n"
+        "          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
+        "        }\n"
+        "        if (dirtyFields.has('claudeModelIDCloakMode')) {\n"
+        "          setStringInDoc(doc, ['claude-model-id-cloak-mode'], values.claudeModelIDCloakMode);\n"
+        "        }\n"
+        "        if (dirtyFields.has('passthroughHeaders')) {\n",
+    )
+
+    visual_editor = target / 'src/components/config/VisualConfigEditor.tsx'
+    replace_once(
+        visual_editor,
+        "  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;\n"
+        "  const keepaliveInputId = useId();\n",
+        "  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;\n"
+        "  const claudeModelIDCloakModeLabelId = useId();\n"
+        "  const claudeModelIDCloakModeHintId = `${claudeModelIDCloakModeLabelId}-hint`;\n"
+        "  const keepaliveInputId = useId();\n",
+    )
+    replace_once(
+        visual_editor,
+        "  const countErrors = useCallback(\n",
+        "  const claudeModelIDCloakModeOptions = useMemo(\n"
+        "    () => [\n"
+        "      { value: 'auto', label: t('config_management.visual.sections.advanced.claude_model_id_cloak_auto') },\n"
+        "      { value: 'always', label: t('config_management.visual.sections.advanced.claude_model_id_cloak_always') },\n"
+        "      { value: 'never', label: t('config_management.visual.sections.advanced.claude_model_id_cloak_never') },\n"
+        "    ],\n"
+        "    [t]\n"
+        "  );\n\n"
+        "  const countErrors = useCallback(\n",
+    )
+    replace_once(
+        visual_editor,
+        "                <Collapsible\n"
+        "                  label={t('config_management.visual.sections.headers.title')}\n",
+        "                <Collapsible\n"
+        "                  label={t('config_management.visual.sections.advanced.claude_model_id_cloak_title')}\n"
+        "                  hint={t('config_management.visual.sections.advanced.claude_model_id_cloak_description')}\n"
+        "                  defaultOpen={false}\n"
+        "                >\n"
+        "                  <SectionGrid>\n"
+        "                    <FieldAnchor fieldId=\"claudeModelIDCloakMode\">\n"
+        "                      <FieldShell\n"
+        "                        label={t('config_management.visual.sections.advanced.claude_model_id_cloak_label')}\n"
+        "                        labelId={claudeModelIDCloakModeLabelId}\n"
+        "                        hint={t('config_management.visual.sections.advanced.claude_model_id_cloak_hint')}\n"
+        "                        hintId={claudeModelIDCloakModeHintId}\n"
+        "                      >\n"
+        "                        <Select\n"
+        "                          value={values.claudeModelIDCloakMode}\n"
+        "                          options={claudeModelIDCloakModeOptions}\n"
+        "                          id={`${claudeModelIDCloakModeLabelId}-select`}\n"
+        "                          disabled={disabled}\n"
+        "                          ariaLabelledBy={claudeModelIDCloakModeLabelId}\n"
+        "                          ariaDescribedBy={claudeModelIDCloakModeHintId}\n"
+        "                          onChange={(nextValue) => onChange({\n"
+        "                            claudeModelIDCloakMode: nextValue as VisualConfigValues['claudeModelIDCloakMode'],\n"
+        "                          })}\n"
+        "                        />\n"
+        "                      </FieldShell>\n"
+        "                    </FieldAnchor>\n"
+        "                  </SectionGrid>\n"
+        "                </Collapsible>\n\n"
+        "                <Collapsible\n"
+        "                  label={t('config_management.visual.sections.headers.title')}\n",
+    )
+
+    search_index = target / 'src/components/config/configSearchIndex.ts'
+    replace_once(
+        search_index,
+        '  // Claude header defaults — qualifierKey disambiguates the shared "User-Agent" label.\n',
+        "  {\n"
+        "    fieldId: 'claudeModelIDCloakMode',\n"
+        "    sectionId: 'advanced',\n"
+        "    labelKey: L('sections.advanced.claude_model_id_cloak_label'),\n"
+        "    hintKey: L('sections.advanced.claude_model_id_cloak_hint'),\n"
+        "    yamlKeys: ['claude-model-id-cloak-mode'],\n"
+        "    keywords: ['anthropic', 'claude desktop', 'claude code', 'model id', 'cloak'],\n"
+        "  },\n"
+        '  // Claude header defaults — qualifierKey disambiguates the shared "User-Agent" label.\n',
+    )
+
+
 def main() -> None:
     if len(sys.argv) > 2:
         raise SystemExit('Usage: apply_customizations.py [target_dir]')
@@ -3690,25 +2523,23 @@ def main() -> None:
     patch_routes(target)
     patch_layout(target)
     patch_icons(target)
-    patch_quota_types(target)
+    patch_quota_types_latest(target)
     patch_quota_store(target)
     patch_quota_constants(target)
-    patch_quota_configs(target)
+    patch_quota_provider_model_latest(target)
+    patch_quota_provider_timestamps_latest(target)
     patch_antigravity_quota_builders(target)
-    patch_quota_page(target)
-    patch_quota_section(target)
-    patch_quota_refresh_all(target)
-    patch_quota_page_search(target)
-    patch_quota_card(target)
-    patch_quota_styles(target)
+    patch_quota_page_latest(target)
+    patch_quota_cards_latest(target)
     patch_account_inspection_page(target)
-    patch_auth_files_page_search(target)
-    patch_auth_files_batch_actions(target)
-    patch_auth_files_page_sorting(target)
-    patch_auth_files_gemini_quota(target)
+    patch_auth_files_page_search_latest(target)
+    patch_auth_files_page_sorting_latest(target)
+    patch_auth_files_batch_actions_latest(target)
+    patch_auth_files_gemini_quota_latest(target)
     patch_auth_files_runtime_state(target)
     patch_account_usage_feature(target)
     patch_runtime_detection(target)
+    patch_management_update_check(target)
     patch_api_client_connection_isolation(target)
     patch_supporting_api_and_types(target)
     patch_claude_model_id_cloak_setting(target)

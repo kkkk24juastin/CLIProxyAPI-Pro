@@ -4,8 +4,8 @@ import {
   buildUsageTrendAnalytics,
   createMonitoringSummaryAccumulator,
   finalizeMonitoringSummary,
-} from '../src/features/monitoring/monitoringAnalytics';
-import type { MonitoringEventRow } from '../src/features/monitoring/hooks/useMonitoringData';
+} from '../src/pro/modules/monitoring/features/monitoringAnalytics';
+import type { MonitoringEventRow } from '../src/pro/modules/monitoring/features/hooks/useMonitoringData';
 
 const event = (overrides: Partial<MonitoringEventRow> = {}): MonitoringEventRow => ({
   id: 'event-1',

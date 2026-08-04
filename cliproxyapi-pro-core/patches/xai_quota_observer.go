@@ -12,7 +12,7 @@ import (
 )
 
 func observeXAIQuotaResponse(ctx context.Context, auth *cliproxyauth.Auth, model string, status int, header http.Header, body []byte) {
-	if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "xai") {
+	if !shouldObserveXAIQuota(auth) {
 		return
 	}
 	fileName := filepath.Base(strings.TrimSpace(auth.FileName))
@@ -30,6 +30,15 @@ func observeXAIQuotaResponse(ctx context.Context, auth *cliproxyauth.Auth, model
 		Body:       body,
 		ObservedAt: time.Now(),
 	})
+}
+
+func shouldObserveXAIQuota(auth *cliproxyauth.Auth) bool {
+	if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "xai") {
+		return false
+	}
+	// Free-usage quota is a Grok CLI chat-proxy concept. Official API and
+	// custom-gateway rate-limit headers must not contaminate this cache.
+	return !xaiUsingAPI(auth) && xaiIsCLIChatProxyBaseURL(xaiChatBaseURL(auth))
 }
 
 func firstXAIQuotaMetadataString(metadata map[string]any, keys ...string) string {

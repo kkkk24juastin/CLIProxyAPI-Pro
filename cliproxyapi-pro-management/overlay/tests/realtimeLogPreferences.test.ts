@@ -3,7 +3,7 @@ import {
   clampRealtimeLogColumnWidth,
   createDefaultRealtimeLogColumns,
   normalizeRealtimeLogColumns,
-} from '../src/features/monitoring/realtimeLogPreferences';
+} from '../src/pro/modules/monitoring/features/realtimeLogPreferences';
 
 describe('realtime log column preferences', () => {
   test('migrates legacy usage and inserts new columns beside the model column', () => {

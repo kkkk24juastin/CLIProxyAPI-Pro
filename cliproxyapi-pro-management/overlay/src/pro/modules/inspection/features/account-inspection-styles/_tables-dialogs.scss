@@ -1,0 +1,875 @@
+.tableWrap {
+  min-width: 0;
+  max-width: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--inspect-line);
+  border-radius: 8px;
+  background: var(--inspect-surface);
+}
+
+.resultsTableViewport {
+  max-height: min(620px, 68vh);
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.tableWrap::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.tableWrap::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--inspect-muted) 34%, transparent);
+  background-clip: padding-box;
+}
+
+.tableWrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.table {
+  min-width: 1040px;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.accountColumn {
+  width: 27%;
+}
+
+.planColumn {
+  width: 18%;
+}
+
+.healthColumn {
+  width: 18%;
+}
+
+.quotaColumn {
+  width: 10%;
+}
+
+.tokenColumn {
+  width: 11%;
+}
+
+.operationColumn {
+  width: 16%;
+}
+
+.table th,
+.table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--inspect-line);
+  text-align: left;
+  vertical-align: middle;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--inspect-surface-muted);
+  color: var(--inspect-ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.table tbody tr:nth-child(2n) td {
+  background: color-mix(in srgb, var(--inspect-surface-muted) 72%, var(--inspect-surface));
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr:hover td {
+  background: color-mix(in srgb, var(--inspect-accent) 5%, var(--inspect-surface));
+}
+
+.accountHeaderCell,
+.accountCellLayout {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.accountHeaderCell {
+  gap: 10px;
+}
+
+.accountCellLayout {
+  gap: 9px;
+}
+
+.accountHeaderCell input,
+.accountCellLayout input {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--inspect-accent);
+  cursor: pointer;
+}
+
+.primaryCell {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+
+.primaryCell > strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.primaryCell small {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planCell {
+  display: block;
+  overflow: hidden;
+  color: var(--inspect-ink);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusCell,
+.probeCell,
+.diagnosisCell,
+.quotaCell,
+.tokenRefreshCell,
+.verdictCell {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.statusCell small,
+.probeCell small,
+.diagnosisCell small,
+.quotaCell small,
+.tokenRefreshCell small,
+.verdictCell small {
+  color: var(--inspect-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.quotaCell span,
+.probeCell span {
+  color: var(--inspect-ink);
+  font-weight: 650;
+}
+
+.quotaCell small,
+.probeCell span {
+  font-variant-numeric: tabular-nums;
+}
+
+.verdictCell strong {
+  color: var(--inspect-ink);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resultDetailButton {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.resultDetailButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--inspect-accent) 42%, transparent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.errorDetailsPanel {
+  display: grid;
+  gap: 14px;
+  padding: 2px 0 4px;
+}
+
+.errorModalActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.errorOverview {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--inspect-red) 24%, var(--inspect-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--inspect-red) 7%, var(--inspect-surface));
+}
+
+.errorOverview strong {
+  color: var(--inspect-ink);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.errorDetailsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  border: 1px solid color-mix(in srgb, var(--inspect-line) 82%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.errorDetailItem {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 9px 12px;
+  background: var(--inspect-surface);
+}
+
+.errorDetailItem + .errorDetailItem {
+  border-top: 1px solid color-mix(in srgb, var(--inspect-line) 72%, transparent);
+}
+
+.errorDetailItem span,
+.errorMessageBlock > span {
+  color: var(--inspect-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.errorDetailItem strong {
+  min-width: 0;
+  max-width: 72%;
+  text-align: right;
+  overflow-wrap: anywhere;
+  color: var(--inspect-ink);
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.errorMessageBlock {
+  display: grid;
+  gap: 6px;
+}
+
+.errorMessage {
+  max-height: min(440px, 48vh);
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--inspect-line) 86%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--inspect-surface-muted) 58%, var(--inspect-surface));
+  color: var(--inspect-ink);
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stateText,
+.stateTextGood,
+.stateTextMuted,
+.stateTextWarn,
+.stateTextBad {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.stateText,
+.stateTextGood {
+  color: var(--inspect-green);
+}
+
+.stateTextMuted {
+  color: var(--inspect-muted);
+}
+
+.stateTextWarn {
+  color: var(--inspect-amber);
+}
+
+.stateTextBad {
+  color: var(--inspect-red);
+}
+
+.statePill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.statePillGood {
+  background: color-mix(in srgb, var(--inspect-green) 12%, var(--inspect-surface));
+  color: var(--inspect-green);
+}
+
+.statePillMuted {
+  background: var(--inspect-surface-muted);
+  color: var(--inspect-muted);
+}
+
+.statePillWarn {
+  background: color-mix(in srgb, var(--inspect-amber) 12%, var(--inspect-surface));
+  color: var(--inspect-amber);
+}
+
+.statePillBad {
+  background: color-mix(in srgb, var(--inspect-red) 12%, var(--inspect-surface));
+  color: var(--inspect-red);
+}
+
+.diagnosisCell span {
+  overflow-wrap: anywhere;
+}
+
+.compactCell,
+.numericCell {
+  color: var(--inspect-ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.numericCell {
+  text-align: right;
+}
+
+.reasonCell,
+.errorCell {
+  max-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.errorCell {
+  font-size: 12px;
+}
+
+.operationCell {
+  vertical-align: middle;
+}
+
+.operationCell .operationActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.operationCell .operationActions :global(.btn) {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 34px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.operationCell .operationActions :global(.btn + .btn) {
+  margin-left: 0;
+}
+
+.iconActionButton {
+  display: inline-grid;
+  flex: 0 0 30px;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--inspect-line) 86%, transparent);
+  border-radius: 7px;
+  background: var(--inspect-surface-muted);
+  color: var(--inspect-ink);
+  cursor: pointer;
+}
+
+.iconActionButton:hover:not(:disabled),
+.iconActionButton:focus-visible {
+  border-color: color-mix(in srgb, var(--inspect-accent) 36%, var(--inspect-line));
+  background: color-mix(in srgb, var(--inspect-accent) 7%, var(--inspect-surface));
+}
+
+.iconActionButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--inspect-accent) 30%, transparent);
+  outline-offset: 2px;
+}
+
+.iconActionButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spinningIcon {
+  animation: inspection-result-spin 0.8s linear infinite;
+}
+
+@keyframes inspection-result-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.monoCell {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  word-break: break-all;
+}
+
+.operationActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.operationActions :global(.btn) {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 8px;
+}
+
+.emptyState {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  min-height: 220px;
+  padding: 28px;
+  border: 1px dashed color-mix(in srgb, var(--inspect-line-strong) 72%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--inspect-surface-muted) 68%, transparent);
+  text-align: center;
+}
+
+.emptyState strong {
+  max-width: 620px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.emptyState span {
+  max-width: 560px;
+  color: var(--inspect-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.confirmationBody {
+  display: grid;
+  gap: 12px;
+}
+
+.confirmationBatchBody {
+  min-width: 0;
+}
+
+:global(.modal):has(.confirmationBatchBody) {
+  width: min(720px, calc(100vw - 32px)) !important;
+  max-height: min(88vh, 820px);
+}
+
+:global(.modal-body):has(.confirmationBatchBody) {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  max-height: min(74vh, 680px);
+  padding: 0;
+  overflow: hidden;
+}
+
+:global(.modal-body):has(.confirmationBatchBody) > div:first-child {
+  min-height: 0;
+  margin: 0 !important;
+  padding: 20px 24px 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+:global(.modal-body):has(.confirmationBatchBody) > div:last-child {
+  margin: 0 !important;
+  padding: 14px 24px 18px;
+  border-top: 1px solid var(--inspect-line);
+  background: var(--inspect-surface);
+}
+
+.confirmationBody p {
+  margin: 0;
+  color: var(--inspect-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.confirmationBatchLead {
+  display: grid;
+  gap: 5px;
+}
+
+.confirmationBatchLead strong {
+  color: var(--inspect-ink);
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.confirmationBatchLead span {
+  color: var(--inspect-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.confirmationLead {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--inspect-accent) 18%, var(--inspect-line));
+  border-radius: 12px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--inspect-accent) 7%, var(--inspect-surface)), var(--inspect-surface));
+}
+
+.confirmationLead strong {
+  color: var(--inspect-ink);
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.confirmationLead span {
+  color: var(--inspect-muted);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.confirmationLeadDanger {
+  border-color: color-mix(in srgb, var(--inspect-red) 28%, var(--inspect-line));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--inspect-red) 8%, var(--inspect-surface)), var(--inspect-surface));
+}
+
+.confirmationAccountCard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--inspect-line);
+  border-radius: 12px;
+  background: var(--inspect-surface-muted);
+}
+
+.confirmationAccountCard div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.confirmationAccountCard span {
+  color: var(--inspect-ink);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.confirmationAccountCard small {
+  color: var(--inspect-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.confirmationAccountCard strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--inspect-accent) 10%, var(--inspect-surface));
+  color: var(--inspect-accent);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.confirmationNotice {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--inspect-amber) 24%, var(--inspect-line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--inspect-amber) 9%, var(--inspect-surface));
+  color: var(--inspect-amber);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.confirmationNoticeDanger {
+  border-color: color-mix(in srgb, var(--inspect-red) 28%, var(--inspect-line));
+  background: color-mix(in srgb, var(--inspect-red) 9%, var(--inspect-surface));
+  color: var(--inspect-red);
+}
+
+.confirmationBatchNotice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.confirmationNoticeIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--inspect-red) 14%, var(--inspect-surface));
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.confirmationBatchNotice > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.confirmationBatchNotice strong {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.confirmationBatchNotice > div > span {
+  color: color-mix(in srgb, var(--inspect-red) 82%, var(--inspect-ink));
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.confirmationStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.confirmationStats > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--inspect-line) 84%, transparent);
+  border-radius: 10px;
+  background: var(--inspect-surface-muted);
+  color: var(--inspect-ink);
+}
+
+.confirmationStats span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.confirmationStats strong {
+  font-size: 18px;
+  font-weight: 780;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.confirmationDangerStat {
+  border-color: color-mix(in srgb, var(--inspect-red) 24%, var(--inspect-line)) !important;
+  background: color-mix(in srgb, var(--inspect-red) 12%, var(--inspect-surface)) !important;
+  color: var(--inspect-red) !important;
+}
+
+.confirmationPreview {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--inspect-line);
+  border-radius: 12px;
+  background: var(--inspect-surface);
+  overflow: hidden;
+}
+
+.confirmationPreviewHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--inspect-line);
+  background: var(--inspect-surface-muted);
+}
+
+.confirmationPreviewHeading strong {
+  color: var(--inspect-ink);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.confirmationPreviewHeading span {
+  color: var(--inspect-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.confirmationPreviewHeader,
+.confirmationPreviewRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) 90px 76px minmax(0, 1.5fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.confirmationPreviewHeader {
+  padding: 7px 13px;
+  border-bottom: 1px solid color-mix(in srgb, var(--inspect-line) 78%, transparent);
+  color: var(--inspect-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.confirmationPreviewList {
+  display: grid;
+  max-height: 240px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.confirmationPreviewRow {
+  min-height: 40px;
+  padding: 7px 13px;
+  border-bottom: 1px solid color-mix(in srgb, var(--inspect-line) 62%, transparent);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.confirmationPreviewRow:last-child {
+  border-bottom: 0;
+}
+
+.confirmationPreviewRow:nth-child(2n) {
+  background: color-mix(in srgb, var(--inspect-surface-muted) 52%, var(--inspect-surface));
+}
+
+.confirmationCompactRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.confirmationCompactRow small {
+  color: var(--inspect-muted);
+}
+
+.confirmationPreviewRow span,
+.confirmationPreviewRow em,
+.confirmationCompactRow span {
+  min-width: 0;
+}
+
+.confirmationPreviewRow small {
+  color: var(--inspect-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirmationPreviewRow em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--inspect-muted);
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirmationPreviewAccount {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--inspect-ink);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.errorText {
+  color: var(--inspect-red);
+  word-break: break-word;
+}
+
+.emptyBlock,
+.emptyBlockSmall {
+  display: grid;
+  place-items: center;
+  color: var(--inspect-muted);
+  text-align: center;
+}
+
+.emptyBlock {
+  min-height: 140px;
+}
+
+.emptyBlockSmall {
+  min-height: 70px;
+}

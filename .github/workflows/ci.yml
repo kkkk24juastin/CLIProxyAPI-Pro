@@ -116,13 +116,22 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Install Staticcheck
+        env:
+          GOBIN: ${{ runner.temp }}/validation-bin
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+          echo "${GOBIN}" >> "${GITHUB_PATH}"
+
       - name: Validate Core customization
         env:
           VALIDATION_RACE: "1"
+          VALIDATION_STATICCHECK: "1"
         run: bash customizations-repo/scripts/validation/core.sh upstream-core
 
   source-image-build:
     needs: resolve-upstream
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -144,7 +153,8 @@ jobs:
             --build-arg "CLIPROXY_BUILD_VERSION=${CORE_TAG}-pro-review" \
             --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}" \
             --tag cli-proxy-api-pro:review \
-            cliproxyapi-pro-core
+            --file cliproxyapi-pro-core/Dockerfile \
+            .
 
   management-baseline:
     needs: resolve-upstream

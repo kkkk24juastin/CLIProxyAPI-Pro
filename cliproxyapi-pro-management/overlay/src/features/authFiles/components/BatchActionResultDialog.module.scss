@@ -1,0 +1,102 @@
+.batchResultSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-md;
+  margin-bottom: $spacing-md;
+  font-size: 13px;
+}
+
+.batchResultSuccess,
+.batchResultFailed,
+.batchResultSkipped,
+.batchResultTotal {
+  font-weight: 600;
+}
+
+.batchResultSuccess { color: #16a34a; }
+.batchResultFailed { color: #dc2626; }
+.batchResultSkipped { color: var(--text-secondary); }
+.batchResultTotal { color: var(--text-primary); }
+
+.batchResultTableWrapper {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+}
+
+.batchResultTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+
+  thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: var(--bg-secondary);
+  }
+
+  th,
+  td {
+    padding: $spacing-sm $spacing-md;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: top;
+  }
+}
+
+.batchResultCellName {
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.batchResultCellError {
+  max-width: 280px;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.batchResultBadgeSuccess,
+.batchResultBadgeFailed,
+.batchResultBadgeSkipped {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: $radius-full;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.batchResultBadgeSuccess {
+  color: #16a34a;
+  background-color: rgba(22, 163, 74, 0.12);
+}
+
+.batchResultBadgeFailed {
+  color: #dc2626;
+  background-color: rgba(220, 38, 38, 0.12);
+}
+
+.batchResultBadgeSkipped {
+  color: var(--text-secondary);
+  background-color: var(--bg-secondary);
+}
+
+.batchResultActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: $spacing-md;
+}
+
+.batchResultCloseButton {
+  padding: $spacing-sm $spacing-lg;
+  color: var(--text-primary);
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+
+  &:hover { background-color: var(--bg-tertiary); }
+}

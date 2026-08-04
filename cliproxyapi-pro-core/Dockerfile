@@ -11,6 +11,7 @@ ARG CLIPROXY_REPO=router-for-me/CLIProxyAPI
 ARG CLIPROXY_VERSION=""
 ARG CLIPROXY_COMMIT=""
 ARG CLIPROXY_BUILD_VERSION=""
+ARG PRO_MANAGEMENT_REPO=ssfun/CLIProxyAPI-Pro
 ARG SOURCE_DATE_EPOCH=""
 ARG GITHUB_TOKEN=""
 ARG TARGETOS
@@ -32,10 +33,18 @@ RUN set -eux; \
     curl -fsSL "https://github.com/${CLIPROXY_REPO}/archive/${source_ref}.tar.gz" -o /tmp/cliproxy.tar.gz; \
     tar -xzf /tmp/cliproxy.tar.gz --strip-components=1 -C /src/CLIProxyAPI; \
     rm /tmp/cliproxy.tar.gz; \
+    if [ -n "$auth_header" ]; then \
+      management_asset_api="$(curl -fsSL -H "$auth_header" "https://api.github.com/repos/${PRO_MANAGEMENT_REPO}/releases/latest" | jq -er '[.assets[] | select(.name == "management.html") | .url][0]')"; \
+      curl -fsSL -H "$auth_header" -H "Accept: application/octet-stream" "$management_asset_api" -o /tmp/pro-management.html; \
+    else \
+      management_asset_api="$(curl -fsSL "https://api.github.com/repos/${PRO_MANAGEMENT_REPO}/releases/latest" | jq -er '[.assets[] | select(.name == "management.html") | .url][0]')"; \
+      curl -fsSL -H "Accept: application/octet-stream" "$management_asset_api" -o /tmp/pro-management.html; \
+    fi; \
+    test -s /tmp/pro-management.html; \
     echo "$CLIPROXY_VERSION" > /tmp/cliproxy-version
 
-COPY embeddedusage /tmp/embeddedusage
-COPY patches /tmp/patches
+COPY cliproxyapi-pro-core/embeddedusage /tmp/embeddedusage
+COPY cliproxyapi-pro-core/patches /tmp/patches
 
 RUN python3 /tmp/patches/apply_upstream_patches.py
 
@@ -56,7 +65,9 @@ RUN set -eux; \
 
 FROM debian:bookworm@sha256:9344f8b8992482f80cba753f323adeaf17690076c095ccff6cc9536be98185dc
 
-RUN mkdir -p /CLIProxyAPI/usage
+ARG TARGETARCH
+
+RUN mkdir -p /CLIProxyAPI/usage /CLIProxyAPI/static
 
 COPY --from=ghcr.io/komari-monitor/komari-agent:latest /app/komari-agent /CLIProxyAPI/komari-agent
 
@@ -69,9 +80,11 @@ WORKDIR /CLIProxyAPI
 
 COPY --from=builder /out/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
 COPY --from=builder /src/CLIProxyAPI/config.example.yaml /CLIProxyAPI/config.example.yaml
-COPY entrypoint.sh /CLIProxyAPI/entrypoint.sh
+COPY --from=builder /tmp/pro-management.html /CLIProxyAPI/static/management.html
+COPY cliproxyapi-pro-core/entrypoint.sh /CLIProxyAPI/entrypoint.sh
 
 ENV TZ=Asia/Shanghai
+ENV MANAGEMENT_STATIC_PATH=/CLIProxyAPI/static/management.html
 ENV USAGE_DATA_DIR=/CLIProxyAPI/usage
 ENV USAGE_DB_PATH=/CLIProxyAPI/usage/usage.sqlite
 ENV USAGE_BATCH_SIZE=100

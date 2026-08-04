@@ -1,0 +1,1 @@
+export { routingModule } from './manifest';

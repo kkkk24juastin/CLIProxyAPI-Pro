@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildZipArchive,
   mapWithConcurrency,
-} from '../src/features/monitoring/accountInspectionExport';
+} from '../src/pro/modules/inspection/features/accountInspectionExport';
 
 const readZipEntryNames = async (archive: Blob) => {
   const bytes = new Uint8Array(await archive.arrayBuffer());

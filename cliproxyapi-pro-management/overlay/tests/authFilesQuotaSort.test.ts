@@ -4,7 +4,7 @@ import {
   compareAuthFilesByAvailableQuotaDescending,
   isAuthFileQuotaSortProvider,
   resolveAuthFileAvailablePercent,
-} from '@/features/authFiles/quotaSort';
+} from '@/pro/modules/quota/quotaSort';
 
 type QuotaSortStore = Parameters<typeof compareAuthFilesByAvailableQuotaDescending>[2];
 

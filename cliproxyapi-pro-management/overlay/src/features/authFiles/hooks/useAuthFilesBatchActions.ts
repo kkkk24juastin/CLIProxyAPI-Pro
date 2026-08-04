@@ -1,14 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import {
-  ANTIGRAVITY_CONFIG,
-  CLAUDE_CONFIG,
-  CODEX_CONFIG,
-  KIMI_CONFIG,
-  XAI_CONFIG,
-  type QuotaConfig,
-} from '@/components/quota';
+import { QUOTA_ADAPTERS, type QuotaAdapter } from '@/features/quota/providers';
 import { apiClient } from '@/services/api/client';
 import type { AuthFileItem } from '@/types';
 import { normalizeAuthIndex } from '@/utils/authIndex';
@@ -31,14 +24,6 @@ export type BatchActionSummary = {
 };
 
 const BATCH_CONCURRENCY = 5;
-
-const QUOTA_CONFIG_BY_PROVIDER: Record<string, QuotaConfig<unknown, unknown> | undefined> = {
-  antigravity: ANTIGRAVITY_CONFIG as unknown as QuotaConfig<unknown, unknown>,
-  claude: CLAUDE_CONFIG as unknown as QuotaConfig<unknown, unknown>,
-  codex: CODEX_CONFIG as unknown as QuotaConfig<unknown, unknown>,
-  kimi: KIMI_CONFIG as unknown as QuotaConfig<unknown, unknown>,
-  xai: XAI_CONFIG as unknown as QuotaConfig<unknown, unknown>,
-};
 
 async function runWithConcurrency<T>(
   items: T[],
@@ -84,7 +69,9 @@ async function batchTestCredentials(
       return;
     }
 
-    const config = QUOTA_CONFIG_BY_PROVIDER[provider];
+    const config = QUOTA_ADAPTERS[provider as keyof typeof QUOTA_ADAPTERS] as
+      | QuotaAdapter
+      | undefined;
     if (!config?.fetchQuota) {
       item.skipped = true;
       item.error = t('auth_files.batch_unsupported_provider', { provider });

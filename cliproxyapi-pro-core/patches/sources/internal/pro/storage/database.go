@@ -1,0 +1,147 @@
+// Package storage owns the shared Pro SQLite connection and exposes explicit
+// domain repositories. Business modules share one database without sharing
+// lifecycle or transaction implementation details.
+package storage
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+type Domain string
+
+const (
+	DomainUsage           Domain = "usage"
+	DomainModelPrice      Domain = "model_price"
+	DomainQuota           Domain = "quota"
+	DomainSettings        Domain = "settings"
+	DomainRoutingState    Domain = "routing_state"
+	DomainInspectionState Domain = "inspection_state"
+)
+
+type Database struct {
+	mu sync.RWMutex
+	db *sql.DB
+}
+
+func OpenSQLite(path string) (*Database, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, errors.New("sqlite path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return &Database{db: db}, nil
+}
+
+func (d *Database) SQL() *sql.DB {
+	if d == nil {
+		return nil
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.db
+}
+
+func (d *Database) Close() error {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	db := d.db
+	d.db = nil
+	d.mu.Unlock()
+	if db == nil {
+		return nil
+	}
+	return db.Close()
+}
+
+func (d *Database) Repository(domain Domain) Repository {
+	return Repository{database: d, domain: domain}
+}
+
+func (d *Database) Usage() Repository           { return d.Repository(DomainUsage) }
+func (d *Database) ModelPrice() Repository      { return d.Repository(DomainModelPrice) }
+func (d *Database) Quota() Repository           { return d.Repository(DomainQuota) }
+func (d *Database) Settings() Repository        { return d.Repository(DomainSettings) }
+func (d *Database) RoutingState() Repository    { return d.Repository(DomainRoutingState) }
+func (d *Database) InspectionState() Repository { return d.Repository(DomainInspectionState) }
+
+type Repository struct {
+	database *Database
+	domain   Domain
+}
+
+func (r Repository) Domain() Domain { return r.domain }
+
+func (r Repository) SQL() *sql.DB {
+	if r.database == nil {
+		return nil
+	}
+	return r.database.SQL()
+}
+
+func (r Repository) Transaction(ctx context.Context, run func(*sql.Tx) error) error {
+	if run == nil {
+		return nil
+	}
+	db := r.SQL()
+	if db == nil {
+		return sql.ErrConnDone
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := run(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// RetryBusy centralizes the retry contract used by state and quota writes.
+func RetryBusy(ctx context.Context, operation func() error) error {
+	if operation == nil {
+		return nil
+	}
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if err = operation(); err == nil || !IsBusy(err) {
+			return err
+		}
+		delay := time.Duration(attempt+1) * 100 * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	return err
+}
+
+func IsBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "database table is locked") ||
+		strings.Contains(message, "sqlite_busy") ||
+		strings.Contains(message, "sqlite_locked")
+}

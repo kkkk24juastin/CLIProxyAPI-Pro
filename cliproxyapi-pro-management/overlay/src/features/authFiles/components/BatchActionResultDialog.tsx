@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Modal } from '@/components/ui/Modal';
 import type { BatchActionSummary } from '@/features/authFiles/hooks/useAuthFilesBatchActions';
-import styles from '@/pages/AuthFilesPage.module.scss';
+import styles from './BatchActionResultDialog.module.scss';
 
 export type BatchActionResultDialogProps = {
   open: boolean;

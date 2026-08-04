@@ -1,0 +1,41 @@
+package management
+
+import (
+	"github.com/gin-gonic/gin"
+	proapp "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/app"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool"
+)
+
+func (h *Handler) SetProApp(application *proapp.App) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.proApp = application
+	h.mu.Unlock()
+}
+
+func (h *Handler) proApplication() *proapp.App {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.proApp
+}
+
+// RegisterProFeatureRoutes delegates transport ownership to each static module.
+func (h *Handler) RegisterProFeatureRoutes(group *gin.RouterGroup) {
+	if h == nil || group == nil {
+		return
+	}
+	application := h.proApplication()
+	if application == nil {
+		proxypool.RegisterManagementRoutes(group, nil)
+		modelpolicy.RegisterManagementRoutes(group, nil)
+		return
+	}
+	proxypool.RegisterManagementRoutes(group, application.ProxyPool())
+	modelpolicy.RegisterManagementRoutes(group, application.ModelPolicy())
+}

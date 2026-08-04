@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   parseUsageSseMessage,
   processUsageSseBlocks,
-} from '../src/features/monitoring/usageStream';
+} from '../src/pro/modules/monitoring/features/usageStream';
 
 describe('usage SSE contract', () => {
   test('parses CRLF frames and multi-line data', () => {

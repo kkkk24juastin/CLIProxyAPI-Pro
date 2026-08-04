@@ -23,6 +23,9 @@ fi
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-${TMPDIR:-/tmp}/cliproxyapi-pro-pycache}"
 export SRC_ROOT="${upstream_root}"
 
+validation_tmp="$(mktemp -d "${TMPDIR:-/tmp}/cliproxyapi-pro-core-validation.XXXXXX")"
+trap 'rm -rf "${validation_tmp}"' EXIT
+
 guarded_source='internal/logging/requestid.go'
 preflight_log="$(mktemp "${TMPDIR:-/tmp}/cliproxyapi-pro-preflight.XXXXXX")"
 printf '\n' >> "${upstream_root}/${guarded_source}"
@@ -81,6 +84,18 @@ rm -f "${late_preflight_log}"
 python3 "${repo_root}/cliproxyapi-pro-core/patches/apply_upstream_patches.py"
 git -C "${upstream_root}" diff --check
 
+if [[ "${VALIDATION_STATICCHECK:-0}" == "1" ]]; then
+  if ! command -v staticcheck >/dev/null 2>&1; then
+    echo "VALIDATION_STATICCHECK=1 requires staticcheck" >&2
+    exit 1
+  fi
+  (
+    cd "${upstream_root}"
+    staticcheck -checks=SA4011 ./internal/api/handlers/management
+    staticcheck -checks=U1000 ./internal/pro/...
+  )
+fi
+
 git -C "${upstream_root}" add -N .
 patched_diff_hash="$(git -C "${upstream_root}" diff --binary | git hash-object --stdin)"
 reapply_log="$(mktemp "${TMPDIR:-/tmp}/cliproxyapi-pro-reapply.XXXXXX")"
@@ -109,12 +124,18 @@ go -C "${upstream_root}" test "${test_flags[@]}" ./internal/embeddedusage/...
 go -C "${upstream_root}" test "${test_flags[@]}" \
   ./internal/client/claude/models \
   ./internal/api/handlers/management \
+  ./internal/managementasset \
   ./internal/pluginhost \
   ./internal/pluginstore \
   ./internal/redisqueue \
+  ./internal/requestmeta \
+  ./internal/pro/... \
+  ./sdk/api/handlers \
   ./sdk/api/handlers/claude \
   ./sdk/cliproxy/auth
+go -C "${upstream_root}" test "${test_flags[@]}" ./sdk/cliproxy
 
-build_dir="$(mktemp -d "${TMPDIR:-/tmp}/cliproxyapi-pro-build.XXXXXX")"
-trap 'rm -rf "${build_dir}"' EXIT
+build_dir="${validation_tmp}/server"
+mkdir -p "${build_dir}"
 go -C "${upstream_root}" build -buildvcs=false -o "${build_dir}/cli-proxy-api" ./cmd/server/
+CGO_ENABLED=0 go -C "${upstream_root}" build -buildvcs=false -o "${build_dir}/cli-proxy-api-no-plugin" ./cmd/server/

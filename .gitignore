@@ -1,6 +1,7 @@
 # Local upstream checkouts and scratch work
 upstreamcode/
 .tmp/
+.tmp-*
 tmp/
 temp/
 work/

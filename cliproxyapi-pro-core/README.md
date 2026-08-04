@@ -4,6 +4,8 @@
 
 本目录不维护 upstream 的完整 fork。Docker 构建时会下载指定 upstream release，复制本地 `embeddedusage/` 包，执行 `patches/` 中的补丁脚本，然后构建 Pro 部署使用的多架构镜像。
 
+代理池和 OAuth 模型策略直接编译到 Core 二进制中，所有 Pro 构建（包括 `_no-plugin`）都具备这两项能力。配置保存在 usage SQLite 的 `pro_settings`，不会写入 `config.yaml`。
+
 ## 定制内容
 
 ### 内嵌 usage service
@@ -33,7 +35,7 @@ internal/embeddedusage
 - `usage-statistics-enabled: true`
 - `remote-management.panel-github-repository: https://github.com/kkkk24juastin/CLIProxyAPI-Pro`
 
-加载后的内存配置始终会被修正。只有当加载到的值不一致时才会更新 `config.yaml`，文件已经正确时不会重复落盘。
+加载后的内存配置始终会被修正。运行时只允许修改 `config.yaml` 中已经存在的键；缺失键不会被 Pro 自动新增。
 
 ### Usage API
 
@@ -62,6 +64,8 @@ internal/embeddedusage
 
 `/usage/events` 和 `/usage/stream` 的 detail 会携带稳定事件 `id`，管理端用它进行增量去重和断线追平。usage 响应还会返回持久化的 `generation`；手动重置或保留期清理推进版本后，SSE 会发送 `reset` 事件，已打开页面据此替换完整快照。SSE 在事件成功写入 SQLite 后由进程内通知立即唤醒，仅保留低频 keepalive，不再为每个连接每秒轮询数据库。
 
+detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_forwarded_for` 和 `user_agent`。其中 `client_ip` 是直连 peer 地址，`x_forwarded_for` 是未经可信代理校验的原始转发链，只用于请求诊断与搜索，不参与访问控制、路由或请求保护判断。这些字段受日志保留策略管理，也会进入 usage JSONL/WebDAV 备份。
+
 历史 `/usage/events` 分页支持 `from_ms`、`to_ms`、`provider`、`model`、`auth_index`、`api_key_hash`、`status` 和 `search`。可选的逗号分隔 `search_auth_indexes` 会与原始事件文本 `search` 按 OR 联合，其他结构化过滤条件仍按 AND 叠加；首个响应返回的稳定快照 cursor 会在后续页面保留完整过滤范围。
 
 `/usage/aggregates` 支持 `from_ms`、`to_ms`、`interval=minute|hour|day|all`、`group_by=provider,model,endpoint,api_key_hash`、`api_key_hash` 和 `timezone_offset_minutes`。响应同时返回 `latest_id`、`snapshot_at_ms` 和逐事件累加的 `estimatedCost`，避免使用聚合 Token 错选上下文价格阶梯。
@@ -77,12 +81,13 @@ internal/embeddedusage
 - `model_prices` — 基础价格兼容数据和完整的全局 model 价格规则。
 - `quota_cache` — 配额卡片和账号级刷新使用的 SQLite-backed quota snapshots。
 - `monitoring_settings` — 监控日志保留时间、WebDAV 备份配置和 models.dev 定期同步配置。
+- `pro_settings` — Pro 私有设置；当前包含请求状态保护、代理池和 OAuth 模型策略。
 - `routing_cursor_state` — 账号路由轮转游标。
 - `auth_runtime_stats` — 账号选择、成功/失败和近期请求桶统计。
 - `account_inspection_schedule` — 后端账号巡检调度设置。
 - `account_inspection_snapshot` — 最近一次已结束的账号巡检结果，包含运行设置、汇总、健康统计、完整结果和原始错误详情，不包含巡检日志。
 
-`/usage/import` 接受同样的 JSONL 格式。导入时会先完整读取和校验请求，再导入 usage events，恢复模型价格、quota cache entries、运行时路由状态、监控设置、账号巡检调度和最近一次巡检结果快照。路由游标与账号运行统计在同一个 SQLite 事务中恢复。恢复的结果快照为只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。无 manifest 的旧版 event-only 或混合 JSONL 默认拒绝，因为它们无法获得文件级完整性校验；可信旧备份可显式使用 `?allow_legacy=1` 或 `X-CLIProxy-Allow-Legacy-Backup: true` 请求头导入，管理端会在启用兼容模式前要求确认。
+`/usage/import` 接受同样的 JSONL 格式。导入时会先完整读取和校验请求，再在一个 SQLite 事务中导入 usage events、模型价格、quota cache entries、运行时路由状态、监控设置和 Pro 设置；Pro 设置的 live 配置会在提交前应用，应用失败会回滚数据库，提交失败则恢复导入前配置。提交成功后再按固定顺序恢复其余运行态、账号巡检调度和最近一次巡检结果快照。整个导入由独占写屏障保护；同步管理写会等待导入结束，高频路由/账号运行态快照会在导入窗口内丢弃，避免旧快照覆盖恢复结果。恢复的结果快照为只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。无 manifest 的旧版 event-only 或混合 JSONL 默认拒绝，因为它们无法获得文件级完整性校验；可信旧备份可显式使用 `?allow_legacy=1` 或 `X-CLIProxy-Allow-Legacy-Backup: true` 请求头导入，管理端会在启用兼容模式前要求确认。
 
 导入响应示例字段：
 
@@ -131,6 +136,12 @@ internal/embeddedusage
 套餐信息的 last-known-good 保留。当前 Gemini CLI 插件无需修改：Core 会通过插件已有的
 `Executor.HttpRequest` 提供兼容适配；插件未来原生实现协议后会自动优先使用原生能力。
 协议字段与兼容策略见 [QUOTA_PROVIDER.md](QUOTA_PROVIDER.md)。
+
+### 内建代理池与 OAuth 套餐模型策略
+
+Core 内建回环 SOCKS5 代理池以及 xAI、Codex、Claude、Gemini CLI、Antigravity、Kimi 的 OAuth 套餐模型策略。代理接管只在运行时替换全局传输路径，不改写 `config.yaml`，凭证级代理和显式 `direct` 不受影响。模型处理顺序为 upstream `excluded_models`、内建套餐过滤、OAuth alias/prefix、模型注册，最终结果同时约束 `/v1/models` 聚合和请求调度候选账号。
+
+首次启动会读取旧 `plugins.configs.proxy-pool` 和 `plugins.configs.oauth-model-policy`，校验并写入 SQLite，回读确认成功后再原子清除旧 YAML。旧代理接管若处于启用状态，会先把根 `proxy-url` 恢复为旧 `restore-proxy-url`；其他第三方插件配置保持不变。
 
 ### 后端账号巡检调度器
 
@@ -181,10 +192,12 @@ internal/embeddedusage
 补丁层在 management API 下增加统一路由策略接口：
 
 - `GET /v0/management/routing-policy`
-- `PUT|PATCH /v0/management/routing-policy`
+- `PATCH /v0/management/routing-policy/upstream`
+- `PUT /v0/management/routing-policy/request-protection`
+- `PUT|PATCH /v0/management/routing-policy`（旧管理端兼容入口）
 - `POST /v0/management/routing-policy/release`
 
-接口聚合 upstream 的路由策略、会话粘性、请求重试、账号切换、冷却、配额回退和 Codex 身份混淆配置，并增加 `routing.request-protection` 请求状态保护配置。内置 provider 支持 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi。
+接口聚合 upstream 的路由策略、会话粘性、请求重试、账号切换、冷却、配额回退和 Codex 身份混淆配置，并增加请求状态保护配置。上游字段只修改 `config.yaml` 中已经存在的键；请求保护保存在 `usage.sqlite` 的 `pro_settings`，不会写入上游配置。旧版 `routing.request-protection` 会在首次启动时迁移到 SQLite 并从 YAML 删除。内置 provider 支持 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi。
 
 请求状态保护默认关闭，模式默认为 `observe`。接口通过 `availableProviders` 返回当前已有 API 配置或凭据的受支持 provider。启用后可按 provider 配置 HTTP 状态码、连续确认次数、确认窗口、429 配额证据、自动解除和兜底禁用时长。`enforce` 模式达到门槛后会禁用对应认证记录，并写入 `request_protection` 归属元数据；自动解除和管理端手动解除只处理由该策略禁用的账号，不会重新启用用户手动禁用或由其他模块禁用的账号。
 
@@ -207,6 +220,12 @@ https://github.com/kkkk24juastin/CLIProxyAPI-Pro
 
 该修改会同时影响内置默认配置、`config.example.yaml`，以及 management asset updater 的默认 latest-release API 地址。
 
+发布流水线会把同一次构建生成的 Pro `management.html` 放入 Docker 镜像的 `/CLIProxyAPI/static/management.html`，并通过 `MANAGEMENT_STATIC_PATH` 固定为本地面板。GitHub Release API 或制品下载失败时，上游 updater 会保留并继续使用该本地文件。Core 二进制及非 Docker 发行包不再内嵌 management，也不改变 upstream 原有回退实现。
+
+设置 `GITSTORE_GIT_TOKEN` 后，token 会自动用于 `api.github.com` 上的 management 和插件 GitHub Release 元数据、API 制品下载，以及启动时插件自动安装。匹配仅限 HTTPS GitHub API release 路径；显式的 `plugins.store-auth` 规则优先，其中 `type: none` 可禁止指定范围使用该环境变量。
+
+管理中心的“检查更新”按钮调用 `POST /v0/management/management-panel/check-update`。该接口复用 updater 的 30 秒节流、远端摘要校验和本地 SHA-256 比较；只有 latest release 的 `management.html` 与本地文件哈希不同才原子替换。因此既能处理新版本，也能处理同一 release 下重新上传但内容不同的面板文件；哈希相同不会重复下载。
+
 ### 运行时辅助进程
 
 当以下变量同时配置时，`entrypoint.sh` 会在主 API 进程前启动内置 Komari agent：
@@ -221,13 +240,30 @@ https://github.com/kkkk24juastin/CLIProxyAPI-Pro
 - `Dockerfile` — 下载 upstream CLIProxyAPI，应用定制层，并构建最终镜像。
 - `Dockerfile.runtime` — GitHub Actions 使用预构建 Linux 二进制组装运行时镜像。
 - `QUOTA_PROVIDER.md` — QuotaProvider 插件协议和兼容策略。
+- `patches/sources/internal/pro/app/` — 静态 Pro 模块的 composition root、生命周期和旧配置迁移。
+- `patches/sources/internal/pro/host/` — 最终代理传输、模型注册和认证对象等 upstream 易变边界适配。
+- `patches/sources/internal/pro/proxypool/` — 独立的代理池配置、运行服务、节点池和 SOCKS5 实现。
+- `patches/sources/internal/pro/modelpolicy/` — 独立的 OAuth 套餐识别、模型过滤和配置服务。
+- `patches/sources/internal/pro/settings/` — 模块使用的版本化设置持久化端口。
+- `patches/sources/internal/pro/storage/` — 单一 SQLite 生命周期、幂等 schema、领域仓储和事务边界。
+- `patches/sources/internal/pro/state/` — 路由游标、账号运行统计的稳定契约及合并写入器。
+- `patches/sources/internal/pro/observability/` — usage、留存、价格同步、WebDAV 后台任务，以及普通状态写入的备份协调适配。
+- `patches/sources/internal/pro/quota/` — Quota snapshot 规范化/最大使用率、cache 成功态与响应 shape 指纹、Gemini CLI/xAI billing、plan、request-path 配额解析与合并策略。
+- `patches/sources/internal/pro/routing/` — 稳定选路游标和 request-protection 所有权规则。
+- `patches/sources/internal/pro/inspection/` — 巡检配置、候选过滤/抽样/worker 策略、状态/日志/流与手动操作 DTO、结果分类/过滤/分页/汇总与合并状态机、provider 决策与错误码、操作去重/汇总、结果快照 schema/codec、自动操作决策、Antigravity/Claude/Codex/Kimi 响应解析，以及 Antigravity/xAI deep-probe 请求与响应协议；provider 探测 transport、并发闸门、Gin/WebSocket、快照/quota cache/observation I/O 与 Auth 写回仍位于 Management host adapter。
+- `patches/sources/internal/pro/backup/` — JSONL 导出、导入独占/普通写共享屏障，以及“暂停、flush、导入、恢复运行态、恢复巡检、清理旧缓存、resume”的跨模块协调器。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
-- `embeddedusage/` — 内嵌 SQLite usage service 和 management routes。
+- `embeddedusage/` — 保留 upstream 导入路径、公开类型和函数签名的薄兼容 façade；实现位于 `pro/observability`。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。
-- `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
+- `patches/account_inspection_{runtime,http,accounts,transport,quota}.go` — 按生命周期/API、账号宿主能力、auth-bound transport 和 quota 状态边界拆分，并注入 upstream management handlers 的后端账号巡检 adapter；测试按相同边界拆分。
+- `patches/account_inspection_host.go`、`patches/pro_auth_mutation.go` — Inspection quota port 与共享 Auth mutation/file persistence host adapter。
+- `patches/pro_management_runtime.go` — 组合随 Management Handler 启停的 inspection、routing 后台生命周期。
 - 生成后的 API Server 会在 `Stop` 时关闭 management Handler；直接通过 SDK 创建 Handler 的嵌入方也必须调用其 `Shutdown()`，以释放巡检、路由保护、登录清理及全局回调。
 - `patches/routing_policy.go` — 注入统一路由配置和请求状态保护 handlers、usage plugin 与自动解除任务。
-- `patches/routing_protection_config.go` — 注入 `routing.request-protection` 配置类型。
+- 核心不变量：账号巡检状态优先于 request protection；导入的 `routing_cursor_state` 和 `auth_runtime_stats` 必须立即应用到 live manager；原 DB 表、JSONL record type 和 `/v0/management/usage*` API 保持兼容。
+
+静态模块按实际宿主生命周期组合：`pro/app` 管理请求路径上的 proxy-pool 与 model-policy 服务；`pro/observability` 随进程 context 启停；inspection 与 routing 控制器随 Management Handler 启停。跨生命周期备份端口使用 owner-scoped 注册和逆序注销，旧 Handler 或旧 Service 关闭时不会清除新实例的回调。`internal/embeddedusage` 只允许出现在 upstream/SDK 兼容边界，`internal/pro` 业务模块不反向依赖该 façade。
+- `patches/config_existing_updates.go` — 只修改已存在 YAML 标量、禁止补键的配置写入辅助层。
 - `.github/workflows/release-core.yml` — 多架构镜像和 `management.html` 发布、测试门禁及 workflow 清理。
 
 ## Docker 构建
@@ -241,7 +277,7 @@ docker pull sfun/cliproxyapi-pro:latest
 构建 upstream 最新 release：
 
 ```bash
-docker build -t cliproxyapi-pro ./cliproxyapi-pro-core
+docker build -t cliproxyapi-pro -f cliproxyapi-pro-core/Dockerfile .
 ```
 
 构建指定 upstream release，并写入 Pro runtime 版本：
@@ -262,12 +298,16 @@ docker build \
 - `CLIPROXY_VERSION` — upstream release tag。为空时 Dockerfile 自动解析 latest release。
 - `CLIPROXY_COMMIT` — 可选 upstream commit SHA；设置后按该提交下载源码，同时保留 `CLIPROXY_VERSION` 作为版本标识。
 - `CLIPROXY_BUILD_VERSION` — 可选 runtime 版本号。为空时使用 `CLIPROXY_VERSION` 解析到的 upstream 版本。
+- `PRO_MANAGEMENT_REPO` — Source Docker 构建用于取得镜像内 Pro management 的仓库，默认 `ssfun/CLIProxyAPI-Pro`。
 - `SOURCE_DATE_EPOCH` — 可选 Unix 时间戳，用于写入确定的构建时间；与不可变 upstream commit 一起设置可获得确定的 source binary。
 - `GITHUB_TOKEN` — 可选 GitHub API token。
 
 Release workflow 会从 Core、models 和定制层三个不可变提交中取最新时间作为 `SOURCE_DATE_EPOCH`。Core 归档统一规范文件顺序、时间戳、属主和权限，Go 构建同时启用 `-trimpath`。
 
 ## 运行时环境变量
+
+- `GITSTORE_GIT_TOKEN` — 可选 GitHub token；用于 management 和插件的 GitHub Release API 元数据及 API 制品下载，可避免匿名 API 限流导致的 403。
+- `MANAGEMENT_STATIC_PATH` — Docker 镜像固定为 `/CLIProxyAPI/static/management.html`，指向镜像打包的 Pro 面板。
 
 ### Usage service
 

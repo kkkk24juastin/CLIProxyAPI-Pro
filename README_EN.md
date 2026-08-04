@@ -15,6 +15,8 @@ This project does not maintain a full fork of either upstream project. Instead, 
 - Optional automatic enable, disable, delete, and token-refresh actions.
 - Optional deep probes for Antigravity soft bans and xAI availability anomalies.
 - A routing-policy page for upstream routing behavior and provider-scoped request-state protection.
+- A statically linked proxy pool that aggregates HTTP/SOCKS nodes behind one fixed loopback SOCKS5 endpoint with rotation, health isolation, and failover.
+- A statically linked OAuth model policy that removes unavailable models per provider and account plan, constraining both model listing and auth scheduling.
 
 ## Repository layout
 
@@ -53,15 +55,17 @@ Main capabilities:
 - Builds and publishes Pro Docker images for `linux/amd64` and `linux/arm64`.
 - Embeds a SQLite usage service.
 - Exposes `/v0/management/usage` API routes, including status, incremental event polling, and SSE streaming.
-- Supports usage JSONL/NDJSON import and export, including usage events, model prices, quota cache, routing runtime state, account-inspection schedules, and the latest inspection-result snapshot.
+- Supports usage JSONL/NDJSON import and export, including usage events, model prices, quota cache, Pro settings, routing runtime state, account-inspection schedules, and the latest inspection-result snapshot.
 - Supports WebDAV usage backup restore.
 - Supports SQLite-backed quota cache.
 - Supports model price persistence.
 - Supports the QuotaProvider plugin protocol and a Gemini CLI legacy adapter.
+- Includes an OAuth model policy for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi account plans.
 - Forces required upstream startup config: `usage-statistics-enabled=true` and the Pro management panel repository.
 - Adds a backend account-inspection scheduler and executor with token refresh before probing.
 - Adds unified routing-policy and request-state-protection APIs.
 - Optionally starts the Komari agent.
+- Links the proxy pool and OAuth model policy into every Pro binary, including `_no-plugin` assets; their settings live in the usage SQLite database and are never written to `config.yaml`.
 - Redirects `/` to `/management.html`.
 - Enhances the `/healthz` response.
 
@@ -79,6 +83,8 @@ Main capabilities:
 - Adds the `/monitoring` request monitoring page.
 - Adds the `/account-inspection` account inspection page.
 - Adds the `/routing` routing-policy page.
+- Adds the `/proxy-pool` page for node configuration, connectivity tests, runtime statistics, and global-proxy takeover/restoration.
+- Adds the `/oauth-model-policy` visual editor for provider-specific OAuth plan rules, custom plans, fallback policies, and plan-discovery caching.
 - Shows request count, success rate, latency, token, and cost metrics.
 - Persists model prices through SQLite.
 - Persists quota cache through SQLite.
@@ -142,7 +148,7 @@ The top-level Routing Policy page combines upstream routing, session stickiness,
 
 During backend inspection, eligible auth records are refreshed before quota/account probing when they are already in their normal refresh window. The inspection refresh path skips API-key accounts, accounts not yet due for refresh, and accounts still blocked by `NextRefreshAfter`; disabled accounts are allowed to refresh. If refresh succeeds, probing uses the refreshed auth. If refresh fails, the account is kept and probing is skipped for that account.
 
-The backend forces `usage-statistics-enabled=true` and `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro` at startup, then writes those values back to `config.yaml` only when the loaded config differs.
+The backend forces `usage-statistics-enabled=true` and `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro` in memory at startup. It only changes a YAML key when that key already exists and differs; missing keys are never added. Request-protection settings live in `usage.sqlite`, not upstream `config.yaml`.
 
 If the management UI is used with the unmodified upstream backend, request monitoring, SQLite persistence, model prices, backend account inspection, and routing protection will show errors or empty data.
 
@@ -222,7 +228,7 @@ docker pull sfun/cliproxyapi-pro:latest
 Build locally:
 
 ```bash
-docker build -t cliproxyapi-pro ./cliproxyapi-pro-core
+docker build -t cliproxyapi-pro -f cliproxyapi-pro-core/Dockerfile .
 ```
 
 Build a specific upstream release:
@@ -282,8 +288,9 @@ It stores:
 - quota cache
 - model prices
 - monitoring settings
+- Pro settings
 
-Usage export/import uses NDJSON metadata records for model prices, quota cache, monitoring settings, the account-inspection schedule, and the latest finished inspection-result snapshot, so WebDAV backup restore can recover the monitoring-related state together with usage events. Restored inspection snapshots are read-only for migration and troubleshooting; a new full inspection must run before rechecking accounts, refreshing tokens, or changing account state. Inspection logs are not included. Monitoring log retention runs daily at 02:00 server local time and also runs once immediately when settings are saved; WebDAV backups can use separate retention days, deleting expired `usage-export-*.jsonl` files after successful backups.
+Usage export/import uses NDJSON metadata records for model prices, quota cache, monitoring settings, Pro settings, the account-inspection schedule, and the latest finished inspection-result snapshot, so WebDAV backup restore can recover the monitoring-related state together with usage events. Restored inspection snapshots are read-only for migration and troubleshooting; a new full inspection must run before rechecking accounts, refreshing tokens, or changing account state. Inspection logs are not included. Monitoring log retention runs daily at 02:00 server local time and also runs once immediately when settings are saved; WebDAV backups can use separate retention days, deleting expired `usage-export-*.jsonl` files after successful backups.
 
 New exports include an integrity manifest. Management API and UI imports reject or require confirmation for manifest-free legacy backups; during the compatibility transition, Docker WebDAV restore force-enables legacy import while continuing to verify manifest-backed backups strictly.
 

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
+	proquota "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/quota"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
@@ -31,8 +31,6 @@ func quotaUpstreamStatus(err error) int {
 	}
 	return 0
 }
-
-const quotaObservationFutureSkew = 5 * time.Minute
 
 func (h *Host) HasQuotaProvider(provider string) bool {
 	provider = normalizeProviderID(provider)
@@ -92,7 +90,7 @@ func (h *Host) quotaResultFromResponse(pluginID, provider string, auth *coreauth
 			resp.Snapshot.SchemaVersion, pluginapi.QuotaSnapshotSchemaVersion,
 		)}
 	}
-	snapshot := normalizeQuotaSnapshot(resp.Snapshot, provider, previous, resp.PlanUnavailable, resp.PlanError)
+	snapshot := proquota.NormalizeSnapshot(resp.Snapshot, provider, previous, resp.PlanUnavailable, resp.PlanError)
 	path := ""
 	if auth.Attributes != nil {
 		path = auth.Attributes["path"]
@@ -157,78 +155,8 @@ func (h *Host) callFetchQuota(ctx context.Context, record capabilityRecord, prov
 		StorageJSON:  storageJSONFromAuth(auth),
 		Metadata:     cloneAnyMap(auth.Metadata),
 		Attributes:   cloneStringMap(auth.Attributes),
-		Previous:     cloneQuotaSnapshot(previous),
+		Previous:     proquota.CloneSnapshot(previous),
 		Host:         h.hostConfigSummary(),
 		HTTPClient:   h.newHTTPClient(auth, auth.Provider),
 	})
-}
-
-func normalizeQuotaSnapshot(snapshot pluginapi.QuotaSnapshot, provider string, previous *pluginapi.QuotaSnapshot, planUnavailable bool, planError string) pluginapi.QuotaSnapshot {
-	if snapshot.SchemaVersion <= 0 {
-		snapshot.SchemaVersion = pluginapi.QuotaSnapshotSchemaVersion
-	}
-	snapshot.Provider = provider
-	now := time.Now().UnixMilli()
-	if snapshot.ObservedAtMS <= 0 || snapshot.ObservedAtMS > now+quotaObservationFutureSkew.Milliseconds() {
-		snapshot.ObservedAtMS = now
-	}
-	if snapshot.Items == nil {
-		snapshot.Items = []pluginapi.QuotaItem{}
-	}
-	for index := range snapshot.Items {
-		item := &snapshot.Items[index]
-		item.ID = strings.TrimSpace(item.ID)
-		item.Label = strings.TrimSpace(item.Label)
-		item.RemainingFraction = clampFloatPointer(item.RemainingFraction, 0, 1)
-		item.UsedPercent = clampFloatPointer(item.UsedPercent, 0, 100)
-	}
-	planError = strings.TrimSpace(planError)
-	if planUnavailable && snapshot.Plan == nil && previous != nil && previous.Plan != nil {
-		retained := *previous.Plan
-		retained.Metadata = cloneAnyMap(previous.Plan.Metadata)
-		retained.Stale = true
-		retained.Error = planError
-		snapshot.Plan = &retained
-	}
-	if planUnavailable && planError != "" {
-		snapshot.Warnings = append(snapshot.Warnings, pluginapi.QuotaWarning{Code: "plan_unavailable", Message: planError, Retryable: true})
-	}
-	if snapshot.Plan != nil && snapshot.Plan.ObservedAtMS > now+quotaObservationFutureSkew.Milliseconds() {
-		snapshot.Plan.ObservedAtMS = snapshot.ObservedAtMS
-	}
-	return snapshot
-}
-
-func cloneQuotaSnapshot(snapshot *pluginapi.QuotaSnapshot) *pluginapi.QuotaSnapshot {
-	if snapshot == nil {
-		return nil
-	}
-	clone := *snapshot
-	clone.Items = append([]pluginapi.QuotaItem(nil), snapshot.Items...)
-	for index := range clone.Items {
-		clone.Items[index].ModelIDs = append([]string(nil), snapshot.Items[index].ModelIDs...)
-		clone.Items[index].Metadata = cloneAnyMap(snapshot.Items[index].Metadata)
-	}
-	clone.Warnings = append([]pluginapi.QuotaWarning(nil), snapshot.Warnings...)
-	clone.Metadata = cloneAnyMap(snapshot.Metadata)
-	if snapshot.Plan != nil {
-		plan := *snapshot.Plan
-		plan.Metadata = cloneAnyMap(snapshot.Plan.Metadata)
-		clone.Plan = &plan
-	}
-	return &clone
-}
-
-func clampFloatPointer(value *float64, min, max float64) *float64 {
-	if value == nil {
-		return nil
-	}
-	clamped := *value
-	if clamped < min {
-		clamped = min
-	}
-	if clamped > max {
-		clamped = max
-	}
-	return &clamped
 }

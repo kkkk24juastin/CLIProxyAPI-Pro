@@ -129,7 +129,7 @@ class OverlayCollisionCustomizationTest(unittest.TestCase):
                 CUSTOMIZATIONS.replace_once(upstream_file, 'missing anchor', 'replacement')
 
             self.assertFalse((target / 'src/new.ts').exists())
-            CUSTOMIZATIONS.discard_writes()
+            CUSTOMIZATIONS._writes.clear()
 
 
 if __name__ == '__main__':

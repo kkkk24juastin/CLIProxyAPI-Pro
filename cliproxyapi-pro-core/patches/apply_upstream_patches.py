@@ -182,18 +182,38 @@ def replace_go_call_block(path: Path, call_start: str, new_block: str, present: 
 
 
 MODULE_PATH = module_path()
+ACCOUNT_INSPECTION_SOURCE_FILES = (
+    'account_inspection_runtime.go',
+    'account_inspection_http.go',
+    'account_inspection_accounts.go',
+    'account_inspection_transport.go',
+    'account_inspection_quota.go',
+    'account_inspection_runtime_test.go',
+    'account_inspection_http_test.go',
+    'account_inspection_accounts_test.go',
+    'account_inspection_transport_test.go',
+    'account_inspection_quota_test.go',
+)
 customization_sentinel = ROOT / 'internal/embeddedusage'
 if customization_sentinel.exists():
     raise SystemExit(f'target already contains CLIProxyAPI Pro customizations: {customization_sentinel}')
 
 new_customization_paths = (
-    'internal/api/handlers/management/account_inspection_scheduler.go',
-    'internal/api/handlers/management/account_inspection_scheduler_test.go',
+    'internal/pro',
+    'internal/api/handlers/management/account_inspection_host.go',
+    *[
+        f'internal/api/handlers/management/{name}'
+        for name in ACCOUNT_INSPECTION_SOURCE_FILES
+    ],
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
+    'internal/api/handlers/management/pro_auth_mutation.go',
+    'internal/api/handlers/management/pro_features.go',
+    'internal/api/handlers/management/pro_management_runtime.go',
     'internal/api/handlers/management/routing_policy.go',
     'internal/api/handlers/management/routing_policy_test.go',
-    'internal/config/routing_protection_config.go',
+    'internal/config/config_existing_updates.go',
+    'internal/config/config_existing_updates_test.go',
     'internal/pluginhost/gemini_cli_quota_legacy.go',
     'internal/pluginhost/gemini_cli_quota_legacy_test.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',
@@ -202,17 +222,496 @@ new_customization_paths = (
     'internal/pluginhost/quota_provider_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
+    'internal/pluginstore/gitstore_auth_test.go',
+    'internal/managementasset/gitstore_token_test.go',
+    'internal/requestmeta/client.go',
+    'internal/requestmeta/client_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
     'sdk/cliproxy/auth/inspection_refresh.go',
+    'sdk/cliproxy/pro_features_service_test.go',
 )
 for relative_path in new_customization_paths:
     target_path = ROOT / relative_path
     if target_path.exists():
         raise SystemExit(f'upstream path collides with a Pro customization: {target_path}')
+
+queue_tree(PATCH_SOURCE_DIR / 'internal/pro', ROOT / 'internal/pro')
+queue_tree(PATCH_SOURCE_DIR / 'sdk/proxyutil', ROOT / 'sdk/proxyutil')
+
+codex_filename = ROOT / 'internal/auth/codex/filename.go'
+replace_once(
+    codex_filename,
+    '''// The account hash is included when available to keep accounts with the same email
+// and plan distinct. The legacy email-based format remains the fallback.
+''',
+    '''// The account hash is included when available to keep accounts with the same email
+// distinct without treating the mutable subscription plan as identity.
+''',
+    'mutable subscription plan as identity',
+)
+replace_go_function(
+    codex_filename,
+    'func CredentialFileName(',
+    '''func CredentialFileName(email, planType, hashAccountID string, includeProviderPrefix bool) string {
+	email = strings.TrimSpace(email)
+	plan := normalizePlanTypeForFilename(planType)
+	hashAccountID = strings.TrimSpace(hashAccountID)
+
+	prefix := ""
+	if includeProviderPrefix {
+		prefix = "codex"
+	}
+
+	// The account hash is the strong identity. A subscription plan is mutable
+	// metadata and must not create a second credential when the same account is
+	// upgraded or downgraded.
+	if hashAccountID != "" {
+		return fmt.Sprintf("%s-%s-%s.json", prefix, hashAccountID, email)
+	}
+
+	// Keep the existing weak-identity fallback when an account ID is unavailable.
+	// Without a strong identity, automatically collapsing credentials is unsafe.
+	if plan == "" {
+		return fmt.Sprintf("%s-%s.json", prefix, email)
+	}
+	return fmt.Sprintf("%s-%s-%s.json", prefix, email, plan)
+}
+''',
+    'A subscription plan is mutable',
+)
+
+codex_filename_test = ROOT / 'internal/auth/codex/filename_test.go'
+for old, new in (
+    ('codex-abc12345-user@example.com-team.json', 'codex-abc12345-user@example.com.json'),
+    ('codex-def67890-user@example.com-k12.json', 'codex-def67890-user@example.com.json'),
+    ('codex-abc12345-user@example.com-plus.json', 'codex-abc12345-user@example.com.json'),
+    ('codex-abc12345-user@example.com-team-plan.json', 'codex-abc12345-user@example.com.json'),
+):
+    text = read(codex_filename_test)
+    if text.count(old) != 1:
+        raise SystemExit(f'expected one Codex filename test value in {codex_filename_test}: {old!r}')
+    write(codex_filename_test, text.replace(old, new, 1))
+if 'func TestCredentialFileNameIgnoresPlanForStrongIdentity' not in read(codex_filename_test):
+    write(
+        codex_filename_test,
+        read(codex_filename_test) + '''
+func TestCredentialFileNameIgnoresPlanForStrongIdentity(t *testing.T) {
+	free := CredentialFileName("user@example.com", "free", "abc12345", true)
+	plus := CredentialFileName("user@example.com", "plus", "abc12345", true)
+	if free != plus {
+		t.Fatalf("plan change altered strong credential identity: %q != %q", free, plus)
+	}
+}
+''',
+    )
+
+codex_device = ROOT / 'sdk/auth/codex_device.go'
+replace_once(
+    codex_device,
+    '''	metadata := map[string]any{
+		"email": tokenStorage.Email,
+	}
+''',
+    '''	metadata := map[string]any{
+		"email":      tokenStorage.Email,
+		"account_id": tokenStorage.AccountID,
+	}
+''',
+    '"account_id": tokenStorage.AccountID',
+)
+
+file_token_store = ROOT / 'sdk/auth/filestore.go'
+replace_once(
+    file_token_store,
+    '''	path, err := s.resolveAuthPath(auth)
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", fmt.Errorf("auth filestore: missing file path attribute for %s", auth.ID)
+	}
+
+	if auth.Disabled {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+			return "", nil
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+''',
+    '''	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.reuseExistingProviderIdentity(auth); err != nil {
+		return "", err
+	}
+	path, err := s.resolveAuthPath(auth)
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", fmt.Errorf("auth filestore: missing file path attribute for %s", auth.ID)
+	}
+
+	if auth.Disabled {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+			return "", nil
+		}
+	}
+''',
+    's.reuseExistingProviderIdentity(auth)',
+)
+insert_before(
+    file_token_store,
+    'func (s *FileTokenStore) resolveAuthPath(auth *cliproxyauth.Auth) (string, error) {\n',
+    '''const reusedExistingAuthIdentityAttribute = "reused_existing_auth_identity"
+
+// TakeReusedExistingAuthIdentity reports and consumes the transient marker set
+// when Save updates an existing strong provider identity in place.
+func TakeReusedExistingAuthIdentity(auth *cliproxyauth.Auth) bool {
+	if auth == nil || auth.Attributes == nil {
+		return false
+	}
+	reused := strings.EqualFold(strings.TrimSpace(auth.Attributes[reusedExistingAuthIdentityAttribute]), "true")
+	delete(auth.Attributes, reusedExistingAuthIdentityAttribute)
+	return reused
+}
+
+func authMetadataString(metadata map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := metadata[key].(string); ok {
+			if value = strings.TrimSpace(value); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+type providerFileIdentity struct {
+	provider  string
+	strongKey string
+	companion string
+}
+
+func resolveProviderFileIdentity(provider string, metadata map[string]any) (providerFileIdentity, bool) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" || metadata == nil {
+		return providerFileIdentity{}, false
+	}
+	email := strings.ToLower(authMetadataString(metadata, "email", "client_email"))
+	identity := providerFileIdentity{provider: provider}
+	switch provider {
+	case "codex":
+		identity.strongKey = authMetadataString(metadata, "account_id", "chatgpt_account_id", "chatgptAccountId")
+		identity.companion = email
+	case "claude":
+		identity.strongKey = authMetadataString(metadata, "account_uuid", "account_id")
+		identity.companion = email
+	case "xai":
+		identity.strongKey = authMetadataString(metadata, "sub", "subject", "user_id")
+		identity.companion = email
+	case "antigravity":
+		// Google userinfo supplies a verified account email and the current
+		// upstream already treats it as the credential filename identity.
+		identity.strongKey = email
+	case "gemini-cli", "gemini", "vertex":
+		identity.strongKey = authMetadataString(metadata, "project_id")
+		identity.companion = email
+	default:
+		// Providers such as Kimi currently expose only device/token material.
+		// Treating those values as account identity would merge unrelated users.
+		return providerFileIdentity{}, false
+	}
+	if identity.strongKey == "" {
+		return providerFileIdentity{}, false
+	}
+	return identity, true
+}
+
+func authProviderFileIdentity(auth *cliproxyauth.Auth) (providerFileIdentity, bool) {
+	if auth == nil {
+		return providerFileIdentity{}, false
+	}
+	provider := strings.TrimSpace(auth.Provider)
+	if provider == "" && auth.Metadata != nil {
+		provider = authMetadataString(auth.Metadata, "type")
+	}
+	return resolveProviderFileIdentity(provider, auth.Metadata)
+}
+
+func storedProviderFileIdentity(path string) (providerFileIdentity, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil || len(raw) == 0 {
+		return providerFileIdentity{}, false
+	}
+	metadata := make(map[string]any)
+	if err = json.Unmarshal(raw, &metadata); err != nil {
+		return providerFileIdentity{}, false
+	}
+	return resolveProviderFileIdentity(authMetadataString(metadata, "type"), metadata)
+}
+
+// reuseExistingProviderIdentity follows an active-account upsert model: strong
+// identity is only used to find the existing credential, while its file-backed
+// ID and stable index remain the canonical history/runtime keys.
+func (s *FileTokenStore) reuseExistingProviderIdentity(auth *cliproxyauth.Auth) error {
+	if auth == nil {
+		return nil
+	}
+	if auth.Attributes != nil {
+		delete(auth.Attributes, reusedExistingAuthIdentityAttribute)
+		if strings.TrimSpace(auth.Attributes[cliproxyauth.AttributePath]) != "" ||
+			strings.TrimSpace(auth.Attributes[cliproxyauth.AttributeSource]) != "" {
+			return nil
+		}
+	}
+	identity, ok := authProviderFileIdentity(auth)
+	if !ok {
+		return nil
+	}
+	baseDir := s.baseDirSnapshot()
+	if baseDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(baseDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("auth filestore: list provider identities: %w", err)
+	}
+
+	matches := make([]string, 0, 1)
+	for _, entry := range entries {
+		if entry == nil || entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
+			continue
+		}
+		path := filepath.Join(baseDir, entry.Name())
+		existing, exists := storedProviderFileIdentity(path)
+		if !exists || existing.provider != identity.provider || existing.strongKey != identity.strongKey {
+			continue
+		}
+		if identity.companion != "" && existing.companion != "" &&
+			!strings.EqualFold(identity.companion, existing.companion) {
+			continue
+		}
+		matches = append(matches, path)
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	if len(matches) > 1 {
+		return fmt.Errorf("auth filestore: multiple %s credentials match the same strong identity", identity.provider)
+	}
+
+	path := matches[0]
+	id := s.idFor(path, baseDir)
+	auth.ID = id
+	auth.Index = ""
+	auth.FileName = id
+	if auth.Attributes == nil {
+		auth.Attributes = make(map[string]string)
+	}
+	auth.Attributes[cliproxyauth.AttributePath] = path
+	auth.Attributes[cliproxyauth.AttributeSource] = path
+	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceFile
+	auth.Attributes[reusedExistingAuthIdentityAttribute] = "true"
+	return nil
+}
+
+''',
+    'func (s *FileTokenStore) reuseExistingProviderIdentity',
+)
+
+file_token_store_test = ROOT / 'sdk/auth/filestore_test.go'
+if 'func TestFileTokenStoreSaveReusesExistingCodexStrongIdentity' not in read(file_token_store_test):
+    write(
+        file_token_store_test,
+        read(file_token_store_test) + '''
+
+func TestFileTokenStoreSaveReusesExistingCodexStrongIdentity(t *testing.T) {
+	baseDir := t.TempDir()
+	oldName := "codex-abc12345-user@example.com-free.json"
+	oldPath := filepath.Join(baseDir, oldName)
+	if err := os.WriteFile(oldPath, []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com","access_token":"old"}`), 0o600); err != nil {
+		t.Fatalf("write old auth: %v", err)
+	}
+
+	store := NewFileTokenStore()
+	store.SetBaseDir(baseDir)
+	auth := &cliproxyauth.Auth{
+		ID:       "codex-abc12345-user@example.com.json",
+		FileName: "codex-abc12345-user@example.com.json",
+		Provider: "codex",
+		Metadata: map[string]any{
+			"type":         "codex",
+			"account_id":   "acct-1",
+			"email":        "user@example.com",
+			"access_token": "new",
+		},
+	}
+
+	savedPath, err := store.Save(context.Background(), auth)
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if savedPath != oldPath || auth.ID != oldName || auth.FileName != oldName {
+		t.Fatalf("reused identity = path:%q id:%q file:%q, want %q", savedPath, auth.ID, auth.FileName, oldName)
+	}
+	if !TakeReusedExistingAuthIdentity(auth) || TakeReusedExistingAuthIdentity(auth) {
+		t.Fatal("reused identity marker was not consumed exactly once")
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "codex-abc12345-user@example.com.json")); !os.IsNotExist(err) {
+		t.Fatalf("Save() created a duplicate credential: %v", err)
+	}
+	persisted, err := os.ReadFile(oldPath)
+	if err != nil {
+		t.Fatalf("read reused auth: %v", err)
+	}
+	if !jsonEqual(persisted, []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com","access_token":"new","disabled":false}`)) {
+		t.Fatalf("reused auth content = %s", persisted)
+	}
+}
+
+func TestFileTokenStoreSaveDoesNotMergeCodexIdentityWithoutGuardedEmail(t *testing.T) {
+	baseDir := t.TempDir()
+	oldPath := filepath.Join(baseDir, "codex-old.json")
+	if err := os.WriteFile(oldPath, []byte(`{"type":"codex","account_id":"acct-1","email":"first@example.com"}`), 0o600); err != nil {
+		t.Fatalf("write old auth: %v", err)
+	}
+
+	store := NewFileTokenStore()
+	store.SetBaseDir(baseDir)
+	auth := &cliproxyauth.Auth{
+		ID: "codex-new.json", FileName: "codex-new.json", Provider: "codex",
+		Metadata: map[string]any{"type": "codex", "account_id": "acct-1", "email": "second@example.com"},
+	}
+	savedPath, err := store.Save(context.Background(), auth)
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if savedPath != filepath.Join(baseDir, "codex-new.json") || TakeReusedExistingAuthIdentity(auth) {
+		t.Fatalf("conflicting email reused old identity: path=%q", savedPath)
+	}
+}
+
+func TestFileTokenStoreSaveReusesProviderScopedStrongIdentities(t *testing.T) {
+	tests := []struct {
+		provider string
+		oldJSON  string
+		metadata map[string]any
+	}{
+		{
+			provider: "claude",
+			oldJSON:  `{"type":"claude","account_uuid":"account-1","email":"user@example.com"}`,
+			metadata: map[string]any{"type": "claude", "account_uuid": "account-1", "email": "user@example.com"},
+		},
+		{
+			provider: "xai",
+			oldJSON:  `{"type":"xai","sub":"subject-1","email":"user@example.com"}`,
+			metadata: map[string]any{"type": "xai", "sub": "subject-1", "email": "user@example.com"},
+		},
+		{
+			provider: "antigravity",
+			oldJSON:  `{"type":"antigravity","email":"user@example.com","project_id":"old-project"}`,
+			metadata: map[string]any{"type": "antigravity", "email": "user@example.com", "project_id": "new-project"},
+		},
+		{
+			provider: "vertex",
+			oldJSON:  `{"type":"vertex","project_id":"project-1","email":"service@example.com"}`,
+			metadata: map[string]any{"type": "vertex", "project_id": "project-1", "email": "service@example.com"},
+		},
+		{
+			provider: "gemini-cli",
+			oldJSON:  `{"type":"gemini-cli","project_id":"project-1","email":"user@example.com"}`,
+			metadata: map[string]any{"type": "gemini-cli", "project_id": "project-1", "email": "user@example.com"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			baseDir := t.TempDir()
+			oldPath := filepath.Join(baseDir, tt.provider+"-old.json")
+			if err := os.WriteFile(oldPath, []byte(tt.oldJSON), 0o600); err != nil {
+				t.Fatalf("write old auth: %v", err)
+			}
+			store := NewFileTokenStore()
+			store.SetBaseDir(baseDir)
+			auth := &cliproxyauth.Auth{
+				ID: tt.provider + "-new.json", FileName: tt.provider + "-new.json",
+				Provider: tt.provider, Metadata: tt.metadata,
+			}
+			savedPath, err := store.Save(context.Background(), auth)
+			if err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			if savedPath != oldPath || !TakeReusedExistingAuthIdentity(auth) {
+				t.Fatalf("provider identity was not reused: path=%q", savedPath)
+			}
+		})
+	}
+}
+
+func TestFileTokenStoreSaveDoesNotGuessUnsupportedProviderIdentity(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "kimi-old.json"), []byte(`{"type":"kimi","device_id":"device-1"}`), 0o600); err != nil {
+		t.Fatalf("write old auth: %v", err)
+	}
+	store := NewFileTokenStore()
+	store.SetBaseDir(baseDir)
+	auth := &cliproxyauth.Auth{
+		ID: "kimi-new.json", FileName: "kimi-new.json", Provider: "kimi",
+		Metadata: map[string]any{"type": "kimi", "device_id": "device-1"},
+	}
+	savedPath, err := store.Save(context.Background(), auth)
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if savedPath != filepath.Join(baseDir, "kimi-new.json") || TakeReusedExistingAuthIdentity(auth) {
+		t.Fatalf("unsupported provider identity was guessed: path=%q", savedPath)
+	}
+}
+
+func TestFileTokenStoreSaveRejectsAmbiguousCodexStrongIdentity(t *testing.T) {
+	baseDir := t.TempDir()
+	for _, name := range []string{"codex-old-free.json", "codex-old-plus.json"} {
+		if err := os.WriteFile(filepath.Join(baseDir, name), []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com"}`), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	store := NewFileTokenStore()
+	store.SetBaseDir(baseDir)
+	auth := &cliproxyauth.Auth{
+		ID: "codex-new.json", FileName: "codex-new.json", Provider: "codex",
+		Metadata: map[string]any{"type": "codex", "account_id": "acct-1", "email": "user@example.com"},
+	}
+	if _, err := store.Save(context.Background(), auth); err == nil {
+		t.Fatal("Save() accepted an ambiguous strong identity")
+	}
+}
+''',
+    )
+
+proxyutil_source = ROOT / 'sdk/proxyutil/proxy.go'
+replace_once(
+    proxyutil_source,
+    'func BuildHTTPTransport(raw string) (*http.Transport, Mode, error) {\n\tsetting, errParse := Parse(raw)\n',
+    'func BuildHTTPTransport(raw string) (*http.Transport, Mode, error) {\n\traw = resolveRuntimeProxyOverride(raw)\n\tsetting, errParse := Parse(raw)\n',
+    'raw = resolveRuntimeProxyOverride(raw)',
+)
+replace_once(
+    proxyutil_source,
+    'func BuildDialer(raw string) (proxy.Dialer, Mode, error) {\n\tsetting, errParse := Parse(raw)\n',
+    'func BuildDialer(raw string) (proxy.Dialer, Mode, error) {\n\traw = resolveRuntimeProxyOverride(raw)\n\tsetting, errParse := Parse(raw)\n',
+    'func BuildDialer(raw string) (proxy.Dialer, Mode, error) {\n\traw = resolveRuntimeProxyOverride(raw)',
+)
 
 write(
     ROOT / 'internal/runtime/executor/xai_quota_observer.go',
@@ -221,6 +720,39 @@ write(
         MODULE_PATH,
         read_text(Path(__file__).resolve().parent / 'xai_quota_observer.go'),
     ),
+)
+write(
+    ROOT / 'internal/runtime/executor/xai_pro_bridge.go',
+    re.sub(
+        r'github\.com/router-for-me/CLIProxyAPI/v\d+',
+        MODULE_PATH,
+        read_text(Path(__file__).resolve().parent / 'xai_upstream_bridge.go'),
+    ),
+)
+write(
+    ROOT / 'internal/runtime/executor/xai_pro_bridge_test.go',
+    re.sub(
+        r'github\.com/router-for-me/CLIProxyAPI/v\d+',
+        MODULE_PATH,
+        read_text(Path(__file__).resolve().parent / 'xai_upstream_bridge_test.go'),
+    ),
+)
+
+xai_executor = ROOT / 'internal/runtime/executor/xai_executor.go'
+replace_once(
+    xai_executor,
+    '''\tif strings.TrimSpace(token) != "" {
+\t\treq.Header.Set("Authorization", "Bearer "+token)
+\t}
+\tvar attrs map[string]string
+''',
+    '''\tif strings.TrimSpace(token) != "" {
+\t\treq.Header.Set("Authorization", "Bearer "+token)
+\t}
+\tapplyProXAIHTTPRequestIdentity(req, auth)
+\tvar attrs map[string]string
+''',
+    'applyProXAIHTTPRequestIdentity(req, auth)',
 )
 
 xai_executor_sources = (
@@ -319,7 +851,7 @@ require_source_hash(
 )
 require_source_hash(
     ROOT / 'internal/logging/requestmeta.go',
-    {'aa13ac5136573dba6a4feb9243cad2663b300053288c3b0f6eeaaee26ca09c28'},
+    {'276db8481b85d9909073ed823062a2c83fcbf38b68952486fb86712cfb99ce9d'},
 )
 
 # Add the optional QuotaProvider capability without changing ABI/schema v1.
@@ -336,7 +868,6 @@ insert_before(
     read_text(Path(__file__).resolve().parent / 'plugin_quota_api.go'),
     'type QuotaProvider interface',
 )
-
 pluginabi_types = ROOT / 'sdk/pluginabi/types.go'
 replace_once(
     pluginabi_types,
@@ -433,7 +964,6 @@ func (p rpcQuotaProvider) FetchQuota(ctx context.Context, req pluginapi.QuotaFet
 ''',
     'func (p rpcQuotaProvider) FetchQuota',
 )
-
 plugin_host = ROOT / 'internal/pluginhost/host.go'
 replace_once(
     plugin_host,
@@ -499,6 +1029,58 @@ quota_provider_test_source = Path(__file__).resolve().parent / 'plugin_quota_pro
 quota_provider_test_target = ROOT / 'internal/pluginhost/quota_provider_test.go'
 write(quota_provider_test_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(quota_provider_test_source)))
 
+service_models = ROOT / 'sdk/cliproxy/service_models.go'
+replace_once(
+    service_models,
+    '''\tif ctx.Err() != nil {
+\t\treturn
+\t}
+\tmodels = applyOAuthModelAliasForAuth(s.cfg, provider, authKind, a.Attributes, models)
+''',
+    '''\tif ctx.Err() != nil {
+\t\treturn
+\t}
+\tmodels = s.applyOAuthModelPolicy(ctx, a, models)
+\tmodels = applyOAuthModelAliasForAuth(s.cfg, provider, authKind, a.Attributes, models)
+''',
+    'models = s.applyOAuthModelPolicy(ctx, a, models)',
+)
+insert_before(
+    service_models,
+    'func (s *Service) oauthExcludedModels(provider, authKind string) []string {\n',
+    '''func (s *Service) applyOAuthModelPolicy(ctx context.Context, auth *coreauth.Auth, models []*ModelInfo) []*ModelInfo {
+\tif s == nil || s.proApp == nil || auth == nil || len(models) == 0 {
+\t\treturn models
+\t}
+\treturn s.proApp.FilterModels(ctx, s.cfg, auth, models)
+}
+
+''',
+    'func (s *Service) applyOAuthModelPolicy',
+)
+
+service_executors = ROOT / 'sdk/cliproxy/service_executors.go'
+replace_once(
+    service_executors,
+    '''\tmodels := applyExcludedModels(result.Models, activeExcluded)
+\tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
+''',
+    '''\tmodels := applyExcludedModels(result.Models, activeExcluded)
+\tmodels = s.applyOAuthModelPolicy(ctx, activeAuth, models)
+\tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
+''',
+    'models = s.applyOAuthModelPolicy(ctx, activeAuth, models)',
+)
+
+write(
+    ROOT / 'sdk/cliproxy/pro_features_service_test.go',
+    re.sub(
+        r'github\.com/router-for-me/CLIProxyAPI/v\d+',
+        MODULE_PATH,
+        read_text(Path(__file__).resolve().parent / 'pro_features_service_test.go'),
+    ),
+)
+
 legacy_gemini_quota_source = Path(__file__).resolve().parent / 'plugin_gemini_cli_quota_legacy.go'
 legacy_gemini_quota_target = ROOT / 'internal/pluginhost/gemini_cli_quota_legacy.go'
 write(legacy_gemini_quota_target, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(legacy_gemini_quota_source)))
@@ -511,8 +1093,150 @@ write(plugin_quota_management, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\
 plugin_quota_management_test = ROOT / 'internal/api/handlers/management/plugin_quota_test.go'
 write(plugin_quota_management_test, read_text(Path(__file__).resolve().parent / 'plugin_quota_management_test.go'))
 
+for source_name, target_name in (
+    ('account_inspection_host.go', 'account_inspection_host.go'),
+    ('pro_auth_mutation.go', 'pro_auth_mutation.go'),
+    ('pro_management_runtime.go', 'pro_management_runtime.go'),
+):
+    write(
+        ROOT / 'internal/api/handlers/management' / target_name,
+        re.sub(
+            r'github\.com/router-for-me/CLIProxyAPI/v\d+',
+            MODULE_PATH,
+            read_text(Path(__file__).resolve().parent / source_name),
+        ),
+    )
+
+pro_features_management = ROOT / 'internal/api/handlers/management/pro_features.go'
+write(pro_features_management, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'pro_features_management.go')))
+
+server_options_source = ROOT / 'internal/api/server_options.go'
+add_go_import(server_options_source, '"' + import_path('internal/pluginhost') + '"\n', '\tproapp "' + import_path('internal/pro/app') + '"\n')
+replace_once(
+    server_options_source,
+    '\tpluginHost            *pluginhost.Host\n',
+    '\tpluginHost            *pluginhost.Host\n\tproApp               *proapp.App\n',
+    'proApp               *proapp.App',
+)
+insert_before(
+    server_options_source,
+    '// WithConfigReloadHook registers a callback used after management saves config changes.\n',
+    '''// WithProApp registers the statically linked Pro module composition root.
+func WithProApp(application *proapp.App) ServerOption {
+\treturn func(cfg *serverOptionConfig) {
+\t\tcfg.proApp = application
+\t}
+}
+
+''',
+    'func WithProApp(application *proapp.App)',
+)
+
+management_handler_source = ROOT / 'internal/api/handlers/management/handler.go'
+add_go_import(management_handler_source, '"' + import_path('internal/pluginhost') + '"\n', '\tproapp "' + import_path('internal/pro/app') + '"\n')
+replace_once(
+    management_handler_source,
+    '\tpluginHost              *pluginhost.Host\n',
+    '\tpluginHost              *pluginhost.Host\n\tproApp                 *proapp.App\n',
+    'proApp                 *proapp.App',
+)
+
+server_source = ROOT / 'internal/api/server.go'
+replace_once(
+    server_source,
+    '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n',
+    '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n\ts.mgmt.SetProApp(optionState.proApp)\n',
+    's.mgmt.SetProApp(optionState.proApp)',
+)
+
+service_source = ROOT / 'sdk/cliproxy/service.go'
+add_go_import(service_source, '"' + import_path('internal/pluginhost') + '"\n', '\tproapp "' + import_path('internal/pro/app') + '"\n')
+replace_once(
+    service_source,
+    '\t// pluginHost owns dynamic plugin lifecycle and runtime capability adapters.\n\tpluginHost *pluginhost.Host\n',
+    '\t// pluginHost owns dynamic plugin lifecycle and runtime capability adapters.\n\tpluginHost *pluginhost.Host\n\n\t// proApp owns and wires the statically linked Pro modules.\n\tproApp *proapp.App\n',
+    'proApp *proapp.App',
+)
+
+builder_source = ROOT / 'sdk/cliproxy/builder.go'
+add_go_import(builder_source, '"' + import_path('internal/pluginhost') + '"\n', '\tproapp "' + import_path('internal/pro/app') + '"\n')
+replace_once(
+    builder_source,
+    '''\tconfigaccess.Register(&b.cfg.SDKConfig)
+\tpluginHost := b.pluginHost
+''',
+    '''\tproApplication, errProApp := proapp.New(context.Background(), b.configPath, b.cfg.ProxyURL)
+\tif errProApp != nil {
+\t\treturn nil, fmt.Errorf("cliproxy: initialize Pro features: %w", errProApp)
+\t}
+\tb.cfg.ProxyURL = proApplication.BaseProxyURL()
+
+\tconfigaccess.Register(&b.cfg.SDKConfig)
+\tpluginHost := b.pluginHost
+''',
+    'proApplication, errProApp := proapp.New',
+)
+replace_once(
+    builder_source,
+    '\t\tpluginHost:          pluginHost,\n',
+    '\t\tpluginHost:          pluginHost,\n\t\tproApp:         proApplication,\n',
+    'proApp:         proApplication',
+)
+replace_once(
+    builder_source,
+    '''\tif b.postAuthHook != nil {
+\t\tservice.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
+\t}
+''',
+    '''\tproApplication.SetModelPolicyChangeHandler(func(ctx context.Context) {
+\t\tif service.coreManager == nil {
+\t\t\treturn
+\t\t}
+\t\tservice.registerModelsForAuthBatch(coreauth.WithSkipPersist(ctx), service.coreManager.List())
+\t\tservice.coreManager.RefreshSchedulerAll()
+\t})
+\tif b.postAuthHook != nil {
+\t\tservice.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
+\t}
+''',
+    'proApplication.SetModelPolicyChangeHandler',
+)
+replace_once(
+    builder_source,
+    '\t\tapi.WithPluginHost(pluginHost),\n',
+    '\t\tapi.WithPluginHost(pluginHost),\n\t\tapi.WithProApp(proApplication),\n',
+    'api.WithProApp(proApplication)',
+)
+
+service_config_source = ROOT / 'sdk/cliproxy/service_config.go'
+replace_once(
+    service_config_source,
+    '''\troutingState := normalizedRoutingRuntimeState(commit.cfg)
+''',
+    '''\tif s.proApp != nil {
+\t\ts.proApp.SetBaseProxyURL(commit.cfg.ProxyURL)
+\t}
+\troutingState := normalizedRoutingRuntimeState(commit.cfg)
+''',
+    's.proApp.SetBaseProxyURL(commit.cfg.ProxyURL)',
+)
+
+service_lifecycle_source = ROOT / 'sdk/cliproxy/service_lifecycle.go'
+replace_once(
+    service_lifecycle_source,
+    '\t\tusage.StopDefault()\n',
+    '\t\tif s.proApp != nil {\n\t\t\ts.proApp.Close()\n\t\t}\n\t\tusage.StopDefault()\n',
+    's.proApp.Close()',
+)
+
 usage_manager = ROOT / 'sdk/cliproxy/usage/manager.go'
 add_go_import(usage_manager, '"net/http"\n', '\t"reflect"\n')
+replace_once(
+    usage_manager,
+    '\tnamed     map[string]int\n',
+    '\tnamed       map[string]int\n\tnamedOwners map[string][]Plugin\n',
+    'namedOwners map[string][]Plugin',
+)
 replace_once(
     usage_manager,
     'type serviceTierContextKey struct{}\n',
@@ -610,6 +1334,33 @@ func AttemptIndexFromContext(ctx context.Context) (int64, bool) {
 )
 replace_once(
     usage_manager,
+    '''\tif index, exists := m.named[name]; exists && index >= 0 && index < len(m.plugins) {
+\t\tm.plugins[index] = plugin
+\t\tm.pluginsMu.Unlock()
+\t\treturn
+\t}
+''',
+    '''\tif index, exists := m.named[name]; exists && index >= 0 && index < len(m.plugins) {
+\t\tcurrent := m.plugins[index]
+\t\tif samePlugin(current, plugin) {
+\t\t\tm.pluginsMu.Unlock()
+\t\t\treturn
+\t\t}
+\t\tif current != nil {
+\t\t\tif m.namedOwners == nil {
+\t\t\t\tm.namedOwners = make(map[string][]Plugin)
+\t\t\t}
+\t\t\tm.namedOwners[name] = append(m.namedOwners[name], current)
+\t\t}
+\t\tm.plugins[index] = plugin
+\t\tm.pluginsMu.Unlock()
+\t\treturn
+\t}
+''',
+    'm.namedOwners[name] = append(m.namedOwners[name], current)',
+)
+replace_once(
+    usage_manager,
     '''\tm.named[name] = len(m.plugins)
 \tm.plugins = append(m.plugins, plugin)
 \tm.pluginsMu.Unlock()
@@ -649,10 +1400,42 @@ func (m *Manager) UnregisterNamed(name string, plugin Plugin) {
 \t}
 \tcurrent := m.plugins[index]
 \tif plugin != nil && !samePlugin(current, plugin) {
+\t\towners := removeNamedOwner(m.namedOwners[name], plugin)
+\t\tif len(owners) == 0 {
+\t\t\tdelete(m.namedOwners, name)
+\t\t} else {
+\t\t\tm.namedOwners[name] = owners
+\t\t}
+\t\treturn
+\t}
+\tif plugin == nil {
+\t\tm.plugins[index] = nil
+\t\tdelete(m.named, name)
+\t\tdelete(m.namedOwners, name)
+\t\treturn
+\t}
+\towners := m.namedOwners[name]
+\tif count := len(owners); count > 0 {
+\t\tm.plugins[index] = owners[count-1]
+\t\towners = owners[:count-1]
+\t\tif len(owners) == 0 {
+\t\t\tdelete(m.namedOwners, name)
+\t\t} else {
+\t\t\tm.namedOwners[name] = owners
+\t\t}
 \t\treturn
 \t}
 \tm.plugins[index] = nil
 \tdelete(m.named, name)
+}
+
+func removeNamedOwner(owners []Plugin, plugin Plugin) []Plugin {
+\tfor index := len(owners) - 1; index >= 0; index-- {
+\t\tif samePlugin(owners[index], plugin) {
+\t\t\treturn append(owners[:index], owners[index+1:]...)
+\t\t}
+\t}
+\treturn owners
 }
 
 func samePlugin(left, right Plugin) bool {
@@ -714,6 +1497,24 @@ func TestUnregisterNamedPreservesReplacement(t *testing.T) {
 \tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
 \tif first.calls != 1 {
 \t\tt.Fatalf("re-registered plugin calls = %d, want 1", first.calls)
+\t}
+}
+''')
+
+if 'func TestUnregisterNamedRestoresOlderLiveOwner' not in read(usage_manager_test):
+    write(usage_manager_test, read(usage_manager_test).rstrip() + '''
+
+func TestUnregisterNamedRestoresOlderLiveOwner(t *testing.T) {
+\tmanager := NewManager(1)
+\tfirst := &namedLifecycleUsagePlugin{}
+\treplacement := &namedLifecycleUsagePlugin{}
+\tmanager.RegisterNamed("lifecycle", first)
+\tmanager.RegisterNamed("lifecycle", replacement)
+
+\tmanager.UnregisterNamed("lifecycle", replacement)
+\tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
+\tif first.calls != 1 || replacement.calls != 0 {
+\t\tt.Fatalf("restored owner calls = first:%d replacement:%d", first.calls, replacement.calls)
 \t}
 }
 ''')
@@ -799,12 +1600,6 @@ for target, old_call, new_call, marker in (
         'ctx = coreusage.NextAttemptContext(ctx)\n\t\t\t\t\tretryStream, retryErr := executor.ExecuteStream',
     ),
     (
-        auth_conductor_home_execution,
-        '\t\t\t\tresponse, errExecute = selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
-        '\t\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\tresponse, errExecute = selection.Executor.CountTokens(execCtx, preparedAuth, execReq, execOpts)\n',
-        'execCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\t\tresponse, errExecute = selection.Executor.CountTokens',
-    ),
-    (
         auth_conductor,
         '\t\t\tresp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)\n',
         '\t\t\texecCtx = coreusage.NextAttemptContext(execCtx)\n\t\t\tresp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)\n',
@@ -836,6 +1631,34 @@ for target, old_call, new_call, marker in (
     ),
 ):
     replace_once(target, old_call, new_call, marker)
+
+home_attempt_marker = '\t\t\t\tattemptCtx := coreusage.NextAttemptContext(execCtx)\n'
+closure_execution = '''\t\t\texecutorCtx := execCtx
+\t\t\tif countTokens {
+\t\t\t\texecutorCtx = withAccessTokenFingerprintObserver(execCtx, setEffectiveAuth)
+\t\t\t}
+\t\t\texecute := func() (cliproxyexecutor.Response, error) {
+\t\t\t\tif countTokens {
+\t\t\t\t\treturn selection.Executor.CountTokens(executorCtx, preparedAuth, execReq, execOpts)
+\t\t\t\t}
+\t\t\t\treturn selection.Executor.Execute(execCtx, preparedAuth, execReq, execOpts)
+\t\t\t}
+'''
+tracked_closure_execution = '''\t\t\texecute := func() (cliproxyexecutor.Response, error) {
+\t\t\t\tattemptCtx := coreusage.NextAttemptContext(execCtx)
+\t\t\t\tif countTokens {
+\t\t\t\t\tattemptCtx = withAccessTokenFingerprintObserver(attemptCtx, setEffectiveAuth)
+\t\t\t\t\treturn selection.Executor.CountTokens(attemptCtx, preparedAuth, execReq, execOpts)
+\t\t\t\t}
+\t\t\t\treturn selection.Executor.Execute(attemptCtx, preparedAuth, execReq, execOpts)
+\t\t\t}
+'''
+replace_once(
+    auth_conductor_home_execution,
+    closure_execution,
+    tracked_closure_execution,
+    home_attempt_marker,
+)
 
 usage_helpers = ROOT / 'internal/runtime/executor/helps/usage_helpers.go'
 replace_once(
@@ -890,9 +1713,8 @@ replace_once(
 ''',
     '''\tForceModelPrefix bool `yaml:"force-model-prefix" json:"force-model-prefix"`
 
-\t// ClaudeModelIDCloakMode controls whether non-Claude model IDs are disguised in
-\t// Anthropic-compatible model listings. Supported values are auto, always, and never.
-\t// Empty and invalid values use auto, which cloaks only identified Claude Desktop clients.
+\t// ClaudeModelIDCloakMode controls model ID cloaking in Anthropic-compatible
+\t// model listings. Supported values are auto, always, and never.
 \tClaudeModelIDCloakMode string `yaml:"claude-model-id-cloak-mode,omitempty" json:"claude-model-id-cloak-mode,omitempty"`
 
 \t// RequestLog enables or disables detailed request logging functionality.
@@ -910,16 +1732,19 @@ insert_before(
 \tClaudeModelIDCloakModeNever  = "never"
 )
 
-// ShouldCloakClaudeModelIDs reports whether an Anthropic-compatible model listing
-// should disguise non-Claude model IDs for the current client.
-func ShouldCloakClaudeModelIDs(mode string, headers http.Header) bool {
+// ShouldDisableClaudeModelIDCloaking combines the Pro three-state mode with the
+// upstream explicit disable switch. An explicit upstream disable always wins.
+func ShouldDisableClaudeModelIDCloaking(mode string, headers http.Header, upstreamDisable bool) bool {
+\tif upstreamDisable {
+\t\treturn true
+\t}
 \tswitch strings.ToLower(strings.TrimSpace(mode)) {
 \tcase ClaudeModelIDCloakModeAlways:
-\t\treturn true
-\tcase ClaudeModelIDCloakModeNever:
 \t\treturn false
+\tcase ClaudeModelIDCloakModeNever:
+\t\treturn true
 \tdefault:
-\t\treturn isClaudeDesktopModelClient(headers)
+\t\treturn !isClaudeDesktopModelClient(headers)
 \t}
 }
 
@@ -941,59 +1766,30 @@ func isClaudeDesktopModelClient(headers http.Header) bool {
 }
 
 ''',
-    'func ShouldCloakClaudeModelIDs(mode string, headers http.Header) bool',
-)
-replace_once(
-    claude_models,
-    'func BuildResponse(availableModels []map[string]any) map[string]any {\n',
-    '''func BuildResponse(availableModels []map[string]any) map[string]any {
-\treturn BuildResponseWithCloak(availableModels, true)
-}
-
-// BuildResponseWithCloak builds an Anthropic model response with optional model ID cloaking.
-func BuildResponseWithCloak(availableModels []map[string]any, cloakModelIDs bool) map[string]any {
-''',
-    'func BuildResponseWithCloak(availableModels []map[string]any, cloakModelIDs bool)',
-)
-replace_once(
-    claude_models,
-    '''\tfor i, model := range availableModels {
-\t\tmodels[i] = cloneModel(model)
-\t\tif id, ok := models[i]["id"].(string); ok {
-\t\t\tmodels[i]["id"] = EnsureClaudeModelIDPrefix(id)
-\t\t}
-\t}
-''',
-    '''\tfor i, model := range availableModels {
-\t\tmodels[i] = cloneModel(model)
-\t\tif cloakModelIDs {
-\t\t\tif id, ok := models[i]["id"].(string); ok {
-\t\t\t\tmodels[i]["id"] = EnsureClaudeModelIDPrefix(id)
-\t\t\t}
-\t\t}
-\t}
-''',
-    'if cloakModelIDs {',
+    'func ShouldDisableClaudeModelIDCloaking(',
 )
 
 claude_handler = ROOT / 'sdk/api/handlers/claude/code_handlers.go'
 replace_once(
     claude_handler,
     '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
-\tc.JSON(http.StatusOK, claudemodels.BuildResponse(h.Models()))
+\tdisableCloaking := h.Cfg != nil && h.Cfg.ClaudeCode.DisableCloakingModelList
+\tc.JSON(http.StatusOK, claudemodels.BuildResponse(h.Models(), disableCloaking))
 }
 ''',
     '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
 \tmode := ""
+\tupstreamDisable := false
 \tif h != nil && h.BaseAPIHandler != nil && h.Cfg != nil {
 \t\tmode = h.Cfg.ClaudeModelIDCloakMode
+\t\tupstreamDisable = h.Cfg.ClaudeCode.DisableCloakingModelList
 \t}
 \tvar headers http.Header
 \tif c != nil && c.Request != nil {
 \t\theaders = c.Request.Header
 \t}
-\tcloakModelIDs := claudemodels.ShouldCloakClaudeModelIDs(mode, headers)
-\tc.JSON(http.StatusOK, claudemodels.BuildResponseWithCloak(h.Models(), cloakModelIDs))
+\tdisableCloaking := claudemodels.ShouldDisableClaudeModelIDCloaking(mode, headers, upstreamDisable)
+\tc.JSON(http.StatusOK, claudemodels.BuildResponse(h.Models(), disableCloaking))
 }
 ''',
 )
@@ -1008,48 +1804,29 @@ replace_once(
 )
 ''',
 )
-if 'func TestShouldCloakClaudeModelIDs' not in read(claude_models_test):
+if 'func TestShouldDisableClaudeModelIDCloaking' not in read(claude_models_test):
     write(claude_models_test, read(claude_models_test).rstrip() + '''
 
-func TestBuildResponseWithCloakDisabled(t *testing.T) {
-\tresponse := BuildResponseWithCloak([]map[string]any{{
-\t\t"id": "gpt-4o", "display_name": "GPT-4o",
-\t}}, false)
-\tmodels, ok := response["data"].([]map[string]any)
-\tif !ok || len(models) != 1 {
-\t\tt.Fatalf("data = %T %v, want one model", response["data"], response["data"])
-\t}
-\tif got, _ := models[0]["id"].(string); got != "gpt-4o" {
-\t\tt.Fatalf("id = %q, want gpt-4o", got)
-\t}
-\tif got := response["first_id"]; got != "gpt-4o" {
-\t\tt.Fatalf("first_id = %v, want gpt-4o", got)
-\t}
-\tif got := response["last_id"]; got != "gpt-4o" {
-\t\tt.Fatalf("last_id = %v, want gpt-4o", got)
-\t}
-}
-
-func TestShouldCloakClaudeModelIDs(t *testing.T) {
+func TestShouldDisableClaudeModelIDCloaking(t *testing.T) {
 \ttests := []struct {
-\t\tname    string
-\t\tmode    string
-\t\theaders http.Header
-\t\twant    bool
+\t\tname            string
+\t\tmode            string
+\t\theaders         http.Header
+\t\tupstreamDisable bool
+\t\twant            bool
 \t}{
-\t\t{name: "auto detects desktop user agent", mode: "auto", headers: http.Header{"User-Agent": []string{"Claude-Desktop/1.0"}}, want: true},
-\t\t{name: "auto detects desktop client header", mode: "auto", headers: http.Header{"X-Client-Name": []string{"Claude Desktop"}}, want: true},
-\t\t{name: "auto leaves claude code unchanged", mode: "auto", headers: http.Header{"User-Agent": []string{"claude-cli/2.1.44"}}, want: false},
-\t\t{name: "auto leaves generic anthropic client unchanged", mode: "auto", headers: http.Header{"User-Agent": []string{"Zed/1.0"}}, want: false},
-\t\t{name: "empty defaults to auto", headers: http.Header{"User-Agent": []string{"ClaudeDesktop/1.0"}}, want: true},
-\t\t{name: "always cloaks generic clients", mode: "always", headers: http.Header{"User-Agent": []string{"Zed/1.0"}}, want: true},
-\t\t{name: "never leaves desktop unchanged", mode: "never", headers: http.Header{"User-Agent": []string{"Claude-Desktop/1.0"}}, want: false},
+\t\t{name: "auto cloaks desktop", mode: "auto", headers: http.Header{"User-Agent": []string{"Claude-Desktop/1.0"}}, want: false},
+\t\t{name: "auto detects desktop header", mode: "auto", headers: http.Header{"X-Client-Name": []string{"Claude Desktop"}}, want: false},
+\t\t{name: "auto leaves claude code raw", mode: "auto", headers: http.Header{"User-Agent": []string{"claude-cli/2.1.44"}}, want: true},
+\t\t{name: "empty defaults to auto", headers: http.Header{"User-Agent": []string{"Zed/1.0"}}, want: true},
+\t\t{name: "always cloaks generic clients", mode: "always", headers: http.Header{"User-Agent": []string{"Zed/1.0"}}, want: false},
+\t\t{name: "never leaves desktop raw", mode: "never", headers: http.Header{"User-Agent": []string{"Claude-Desktop/1.0"}}, want: true},
+\t\t{name: "upstream disable wins over always", mode: "always", upstreamDisable: true, want: true},
 \t}
-
 \tfor _, tt := range tests {
 \t\tt.Run(tt.name, func(t *testing.T) {
-\t\t\tif got := ShouldCloakClaudeModelIDs(tt.mode, tt.headers); got != tt.want {
-\t\t\t\tt.Fatalf("ShouldCloakClaudeModelIDs(%q, %v) = %t, want %t", tt.mode, tt.headers, got, tt.want)
+\t\t\tif got := ShouldDisableClaudeModelIDCloaking(tt.mode, tt.headers, tt.upstreamDisable); got != tt.want {
+\t\t\t\tt.Fatalf("ShouldDisableClaudeModelIDCloaking(%q, %v, %t) = %t, want %t", tt.mode, tt.headers, tt.upstreamDisable, got, tt.want)
 \t\t\t}
 \t\t})
 \t}
@@ -1058,7 +1835,6 @@ func TestShouldCloakClaudeModelIDs(t *testing.T) {
 
 claude_handler_test = ROOT / 'sdk/api/handlers/claude/code_handlers_model_test.go'
 add_go_import(claude_handler_test, '"encoding/json"\n', '\t"net/http"\n')
-add_go_import(claude_handler_test, '"' + import_path('internal/registry') + '"\n', '\t"' + import_path('internal/config') + '"\n')
 if 'func TestClaudeModelsCloakMode' not in read(claude_handler_test):
     write(claude_handler_test, read(claude_handler_test).rstrip() + '''
 
@@ -1068,54 +1844,38 @@ func TestClaudeModelsCloakMode(t *testing.T) {
 \tregistryRef.RegisterClient(clientID, "claude", []*registry.ModelInfo{{
 \t\tID: "gpt-4o", Object: "model", OwnedBy: "openai", DisplayName: "GPT-4o",
 \t}})
-\tt.Cleanup(func() {
-\t\tregistryRef.UnregisterClient(clientID)
-\t})
+\tt.Cleanup(func() { registryRef.UnregisterClient(clientID) })
 
 \ttests := []struct {
-\t\tname       string
-\t\tmode       string
-\t\tuserAgent  string
-\t\tclientName string
-\t\twantID     string
+\t\tname            string
+\t\tmode            string
+\t\tuserAgent       string
+\t\tupstreamDisable bool
+\t\twantID          string
 \t}{
 \t\t{name: "auto cloaks desktop", mode: "auto", userAgent: "Claude-Desktop/1.0", wantID: "claude-fable-5-dd-o4-tpg"},
-\t\t{name: "auto cloaks desktop client header", mode: "auto", clientName: "Claude Desktop", wantID: "claude-fable-5-dd-o4-tpg"},
-\t\t{name: "auto keeps claude code raw", mode: "auto", userAgent: "claude-cli/2.1.44", wantID: "gpt-4o"},
-\t\t{name: "auto keeps generic client raw", mode: "auto", userAgent: "Zed/1.0", wantID: "gpt-4o"},
-\t\t{name: "always cloaks generic client", mode: "always", userAgent: "Zed/1.0", wantID: "claude-fable-5-dd-o4-tpg"},
+\t\t{name: "auto keeps generic raw", mode: "auto", userAgent: "Zed/1.0", wantID: "gpt-4o"},
+\t\t{name: "always cloaks generic", mode: "always", userAgent: "Zed/1.0", wantID: "claude-fable-5-dd-o4-tpg"},
 \t\t{name: "never keeps desktop raw", mode: "never", userAgent: "Claude-Desktop/1.0", wantID: "gpt-4o"},
+\t\t{name: "upstream disable wins", mode: "always", upstreamDisable: true, wantID: "gpt-4o"},
 \t}
-
 \tfor _, tt := range tests {
 \t\tt.Run(tt.name, func(t *testing.T) {
 \t\t\trecorder := httptest.NewRecorder()
 \t\t\tctx, _ := gin.CreateTestContext(recorder)
 \t\t\tctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-\t\t\tif tt.userAgent != "" {
-\t\t\t\tctx.Request.Header.Set("User-Agent", tt.userAgent)
-\t\t\t}
-\t\t\tif tt.clientName != "" {
-\t\t\t\tctx.Request.Header.Set("X-Client-Name", tt.clientName)
-\t\t\t}
-
-\t\t\thandler := NewClaudeCodeAPIHandler(&handlers.BaseAPIHandler{
-\t\t\t\tCfg: &config.SDKConfig{ClaudeModelIDCloakMode: tt.mode},
-\t\t\t})
+\t\t\tctx.Request.Header.Set("User-Agent", tt.userAgent)
+\t\t\thandler := NewClaudeCodeAPIHandler(&handlers.BaseAPIHandler{Cfg: &sdkconfig.SDKConfig{
+\t\t\t\tClaudeModelIDCloakMode: tt.mode,
+\t\t\t\tClaudeCode: sdkconfig.ClaudeCodeConfig{DisableCloakingModelList: tt.upstreamDisable},
+\t\t\t}})
 \t\t\thandler.ClaudeModels(ctx)
-
-\t\t\tvar response struct {
-\t\t\t\tData []struct {
-\t\t\t\t\tID string `json:"id"`
-\t\t\t\t} `json:"data"`
-\t\t\t}
+\t\t\tvar response struct { Data []struct { ID string `json:"id"` } `json:"data"` }
 \t\t\tif errUnmarshal := json.Unmarshal(recorder.Body.Bytes(), &response); errUnmarshal != nil {
 \t\t\t\tt.Fatalf("decode response: %v", errUnmarshal)
 \t\t\t}
 \t\t\tfor _, model := range response.Data {
-\t\t\t\tif model.ID == tt.wantID {
-\t\t\t\t\treturn
-\t\t\t\t}
+\t\t\t\tif model.ID == tt.wantID { return }
 \t\t\t}
 \t\t\tt.Fatalf("model %q not found in response: %s", tt.wantID, recorder.Body.String())
 \t\t})
@@ -1123,21 +1883,10 @@ func TestClaudeModelsCloakMode(t *testing.T) {
 }
 ''' + '\n')
 
-routing_protection_config = ROOT / 'internal/config/routing_protection_config.go'
-write(routing_protection_config, read_text(Path(__file__).resolve().parent / 'routing_protection_config.go'))
-config_types = ROOT / 'internal/config/config_types.go'
-replace_once(
-    config_types,
-    '''\tSessionAffinityTTL string `yaml:"session-affinity-ttl,omitempty" json:"session-affinity-ttl,omitempty"`
-}
-''',
-    '''\tSessionAffinityTTL string `yaml:"session-affinity-ttl,omitempty" json:"session-affinity-ttl,omitempty"`
-
-\t// RequestProtection controls request-driven provider credential disabling.
-\tRequestProtection RequestProtectionConfig `yaml:"request-protection,omitempty" json:"request-protection,omitempty"`
-}
-''',
-)
+config_existing_updates = ROOT / 'internal/config/config_existing_updates.go'
+write(config_existing_updates, read_text(Path(__file__).resolve().parent / 'config_existing_updates.go'))
+config_existing_updates_test = ROOT / 'internal/config/config_existing_updates_test.go'
+write(config_existing_updates_test, read_text(Path(__file__).resolve().parent / 'config_existing_updates_test.go'))
 
 config_example = ROOT / 'config.example.yaml'
 replace_once(
@@ -1150,39 +1899,64 @@ replace_once(
     '''# "auto" behavior (cloak only non-Claude-Code clients).
 disable-claude-cloak-mode: false
 
-# disable-image-generation supports: false (default), true, "chat", or "passthrough".
+# Claude Code compatibility settings.
 ''',
     '''# "auto" behavior (cloak only non-Claude-Code clients).
 disable-claude-cloak-mode: false
 
-# Controls whether non-Claude model IDs are disguised in Anthropic-compatible /v1/models responses.
-# - "auto" (default): disguise IDs only for identified Claude Desktop clients.
-# - "always": disguise IDs for every Anthropic-compatible model-list request (upstream legacy behavior).
-# - "never": always return the original model IDs.
+# Controls model ID cloaking in Anthropic-compatible /v1/models responses.
+# - "auto" (default): cloak only identified Claude Desktop clients.
+# - "always": cloak every Anthropic-compatible model-list response.
+# - "never": always return original model IDs.
 claude-model-id-cloak-mode: "auto"
 
-# disable-image-generation supports: false (default), true, "chat", or "passthrough".
+# Claude Code compatibility settings.
 ''',
 )
 
 config_diff = ROOT / 'internal/watcher/diff/config_diff.go'
 replace_once(
     config_diff,
-    '''\tif oldCfg.DisableClaudeCloakMode != newCfg.DisableClaudeCloakMode {
-\t\tchanges = append(changes, fmt.Sprintf("disable-claude-cloak-mode: %t -> %t", oldCfg.DisableClaudeCloakMode, newCfg.DisableClaudeCloakMode))
+    '''\tif oldCfg.ClaudeCode.DisableCloakingModelList != newCfg.ClaudeCode.DisableCloakingModelList {
+\t\tchanges = append(changes, fmt.Sprintf("claude-code.disable-cloaking-model-list: %t -> %t", oldCfg.ClaudeCode.DisableCloakingModelList, newCfg.ClaudeCode.DisableCloakingModelList))
 \t}
-\tif oldCfg.DisableImageGeneration != newCfg.DisableImageGeneration {
 ''',
-    '''\tif oldCfg.DisableClaudeCloakMode != newCfg.DisableClaudeCloakMode {
-\t\tchanges = append(changes, fmt.Sprintf("disable-claude-cloak-mode: %t -> %t", oldCfg.DisableClaudeCloakMode, newCfg.DisableClaudeCloakMode))
+    '''\tif oldCfg.ClaudeCode.DisableCloakingModelList != newCfg.ClaudeCode.DisableCloakingModelList {
+\t\tchanges = append(changes, fmt.Sprintf("claude-code.disable-cloaking-model-list: %t -> %t", oldCfg.ClaudeCode.DisableCloakingModelList, newCfg.ClaudeCode.DisableCloakingModelList))
 \t}
 \tif strings.TrimSpace(oldCfg.ClaudeModelIDCloakMode) != strings.TrimSpace(newCfg.ClaudeModelIDCloakMode) {
 \t\tchanges = append(changes, fmt.Sprintf("claude-model-id-cloak-mode: %s -> %s", strings.TrimSpace(oldCfg.ClaudeModelIDCloakMode), strings.TrimSpace(newCfg.ClaudeModelIDCloakMode)))
 \t}
-\tif oldCfg.DisableImageGeneration != newCfg.DisableImageGeneration {
 ''',
 )
+replace_once(
+    config_example,
+    '''      mode: "safe" # enum example: safe, fast
 
+# When true, disable high-overhead request logging and HTTP middleware features to reduce per-request memory usage under high concurrency.
+''',
+    '''      mode: "safe" # enum example: safe, fast
+
+    # Optional Pro plugin: subtract xAI OAuth models by detected account plan.
+    # oauth-model-policy:
+    #   enabled: true
+    #   priority: 10
+    #   cache-ttl: 30m
+    #   resolve-timeout: 15s
+    #   providers:
+    #     xai:
+    #       plans:
+    #         free:
+    #           excluded-models: ["grok-pro-*"]
+    #         supergrok:
+    #           excluded-models: ["grok-4.5-*"]
+    #         _unknown:
+    #           excluded-models: ["grok-pro-*"]
+
+# When true, disable high-overhead request logging and HTTP middleware features to reduce per-request memory usage under high concurrency.
+''',
+    'Optional Pro plugin: subtract xAI OAuth models by detected account plan.',
+)
 config_yaml = ROOT / 'internal/config/config_yaml.go'
 insert_before(
     config_yaml,
@@ -1190,11 +1964,32 @@ insert_before(
     '// SaveConfigPreserveCommentsUpdateNestedBoolScalar updates a nested bool scalar while preserving comments and positions.\nfunc SaveConfigPreserveCommentsUpdateNestedBoolScalar(configFile string, path []string, value bool) error {\n\tdata, err := os.ReadFile(configFile)\n\tif err != nil {\n\t\treturn err\n\t}\n\tvar root yaml.Node\n\tif err = yaml.Unmarshal(data, &root); err != nil {\n\t\treturn err\n\t}\n\tif root.Kind != yaml.DocumentNode || len(root.Content) == 0 {\n\t\treturn fmt.Errorf("invalid yaml document structure")\n\t}\n\tnode := root.Content[0]\n\tfor i, key := range path {\n\t\tif i == len(path)-1 {\n\t\t\tv := getOrCreateMapValue(node, key)\n\t\t\tv.Kind = yaml.ScalarNode\n\t\t\tv.Tag = "!!bool"\n\t\t\tif value {\n\t\t\t\tv.Value = "true"\n\t\t\t} else {\n\t\t\t\tv.Value = "false"\n\t\t\t}\n\t\t} else {\n\t\t\tnext := getOrCreateMapValue(node, key)\n\t\t\tif next.Kind != yaml.MappingNode {\n\t\t\t\tnext.Kind = yaml.MappingNode\n\t\t\t\tnext.Tag = "!!map"\n\t\t\t}\n\t\t\tnode = next\n\t\t}\n\t}\n\tf, err := os.Create(configFile)\n\tif err != nil {\n\t\treturn err\n\t}\n\tdefer func() { _ = f.Close() }()\n\tvar buf bytes.Buffer\n\tenc := yaml.NewEncoder(&buf)\n\tenc.SetIndent(2)\n\tif err = enc.Encode(&root); err != nil {\n\t\t_ = enc.Close()\n\t\treturn err\n\t}\n\tif err = enc.Close(); err != nil {\n\t\treturn err\n\t}\n\tdata = NormalizeCommentIndentation(buf.Bytes())\n\t_, err = f.Write(data)\n\treturn err\n}\n\n',
     'func SaveConfigPreserveCommentsUpdateNestedBoolScalar',
 )
+replace_go_function(
+    config_yaml,
+    'func SaveConfigPreserveCommentsUpdateNestedBoolScalar',
+    '// SaveConfigPreserveCommentsUpdateNestedBoolScalar updates an existing bool scalar without creating missing keys.\nfunc SaveConfigPreserveCommentsUpdateNestedBoolScalar(configFile string, path []string, value bool) error {\n\t_, err := SaveConfigPreserveCommentsUpdateExistingScalars(configFile, []ExistingScalarUpdate{{Path: path, Value: value}})\n\treturn err\n}\n',
+    'SaveConfigPreserveCommentsUpdateExistingScalars(configFile, []ExistingScalarUpdate',
+)
 insert_before(
     config_yaml,
     '// NormalizeCommentIndentation removes indentation from standalone YAML comment lines to keep them left aligned.\n',
     '// PluginAutoInstallProxyURL returns the proxy URL used by plugin store auto-install requests.\nfunc (cfg *Config) PluginAutoInstallProxyURL() string {\n\tif cfg == nil {\n\t\treturn ""\n\t}\n\treturn cfg.ProxyURL\n}\n\n// PluginAutoInstallEnabled reports whether dynamic plugins are enabled.\nfunc (cfg *Config) PluginAutoInstallEnabled() bool {\n\treturn cfg != nil && cfg.Plugins.Enabled\n}\n\n// PluginAutoInstallDir returns the normalized plugin discovery directory.\nfunc (cfg *Config) PluginAutoInstallDir() string {\n\tif cfg == nil {\n\t\treturn ""\n\t}\n\treturn cfg.Plugins.Dir\n}\n\n// PluginAutoInstallStoreSources returns configured third-party plugin registry URLs.\nfunc (cfg *Config) PluginAutoInstallStoreSources() []string {\n\tif cfg == nil || len(cfg.Plugins.StoreSources) == 0 {\n\t\treturn nil\n\t}\n\treturn append([]string(nil), cfg.Plugins.StoreSources...)\n}\n\n// PluginAutoInstallEnabledIDs returns configured plugin IDs that should be present at startup.\nfunc (cfg *Config) PluginAutoInstallEnabledIDs() []string {\n\tif cfg == nil || len(cfg.Plugins.Configs) == 0 {\n\t\treturn nil\n\t}\n\tids := make([]string, 0, len(cfg.Plugins.Configs))\n\tfor id, item := range cfg.Plugins.Configs {\n\t\tif item.Enabled == nil || !*item.Enabled {\n\t\t\tcontinue\n\t\t}\n\t\tids = append(ids, id)\n\t}\n\treturn ids\n}\n\n',
     'func (cfg *Config) PluginAutoInstallProxyURL',
+)
+config_normalization = ROOT / 'internal/config/config_normalization.go'
+insert_before(
+    config_normalization,
+    '// SanitizeCodexHeaderDefaults trims surrounding whitespace from the\n',
+    '''// PluginAutoInstallStoreAuth returns normalized plugin store authentication rules.
+func (cfg *Config) PluginAutoInstallStoreAuth() []sdkpluginstore.AuthConfig {
+\tif cfg == nil || len(cfg.Plugins.StoreAuth) == 0 {
+\t\treturn nil
+\t}
+\treturn append([]sdkpluginstore.AuthConfig(nil), cfg.Plugins.StoreAuth...)
+}
+
+''',
+    'func (cfg *Config) PluginAutoInstallStoreAuth()',
 )
 
 updater = ROOT / 'internal/managementasset/updater.go'
@@ -1203,28 +1998,133 @@ replace_once(
     'defaultManagementReleaseURL  = "https://api.github.com/repos/router-for-me/Cli-Proxy-API-Management-Center/releases/latest"',
     f'defaultManagementReleaseURL  = "{PRO_PANEL_RELEASE_API}"',
 )
-add_go_import(updater, '"net/http"\n', '\t"net/url"\n')
-replace_once(
-    updater,
-    '\tgitURL := strings.ToLower(strings.TrimSpace(os.Getenv("GITSTORE_GIT_URL")))\n',
-    '',
-    'func isGitHubReleaseURL(releaseURL string) bool',
-)
-replace_once(updater, 'tok != "" && strings.Contains(gitURL, "github.com")', 'tok != "" && isGitHubReleaseURL(releaseURL)')
+replace_once(updater, '\tgitURL := strings.ToLower(strings.TrimSpace(os.Getenv("GITSTORE_GIT_URL")))\n', '')
+replace_once(updater, 'tok != "" && strings.Contains(gitURL, "github.com")', 'tok != "" && isGitHubAPIURL(releaseURL)')
 insert_before(
     updater,
     'func fetchLatestAsset(ctx context.Context, client *http.Client, releaseURL string) (*releaseAsset, string, error) {\n',
-    '''func isGitHubReleaseURL(releaseURL string) bool {
-\tparsed, err := url.Parse(strings.TrimSpace(releaseURL))
-\tif err != nil || parsed.Host == "" {
+    '''func isGitHubAPIURL(requestURL string) bool {
+\tparsed, err := url.Parse(strings.TrimSpace(requestURL))
+\tif err != nil || parsed.Host == "" || parsed.User != nil {
 \t\treturn false
 \t}
-\treturn strings.Contains(strings.ToLower(parsed.Host), "github.com")
+\treturn strings.EqualFold(parsed.Scheme, "https") && strings.EqualFold(parsed.Hostname(), "api.github.com")
 }
 
 ''',
-    'func isGitHubReleaseURL(releaseURL string) bool',
+    'func isGitHubAPIURL(requestURL string) bool',
 )
+replace_once(
+    updater,
+    '\tName               string `json:"name"`\n',
+    '\tAPIURL             string `json:"url"`\n\tName               string `json:"name"`\n',
+    'APIURL             string `json:"url"`',
+)
+replace_once(
+    updater,
+    'downloadAsset(ctx, client, asset.BrowserDownloadURL)',
+    'downloadReleaseAsset(ctx, client, asset)',
+)
+insert_before(
+    updater,
+    'func downloadAsset(ctx context.Context, client *http.Client, downloadURL string) ([]byte, string, error) {\n',
+    '''func downloadReleaseAsset(ctx context.Context, client *http.Client, asset *releaseAsset) ([]byte, string, error) {
+\tif asset == nil {
+\t\treturn nil, "", fmt.Errorf("nil management release asset")
+\t}
+\tif tok := strings.TrimSpace(os.Getenv("GITSTORE_GIT_TOKEN")); tok != "" && isGitHubAPIURL(asset.APIURL) {
+\t\tdownloadURL := strings.TrimSpace(asset.APIURL)
+\t\theaders := map[string]string{
+\t\t\t"Accept":        "application/octet-stream",
+\t\t\t"Authorization": "Bearer " + tok,
+\t\t\t"User-Agent":    httpUserAgent,
+\t\t}
+
+\t\tdata, err := httpfetch.GetBytes(ctx, client, downloadURL, headers, maxAssetDownloadSize)
+\t\tif err != nil {
+\t\t\treturn nil, "", fmt.Errorf("download asset: %w", err)
+\t\t}
+
+\t\tsum := sha256.Sum256(data)
+\t\treturn data, hex.EncodeToString(sum[:]), nil
+\t}
+\treturn downloadAsset(ctx, client, asset.BrowserDownloadURL)
+}
+
+''',
+    'func downloadReleaseAsset',
+)
+queue_go_source('internal/managementasset/gitstore_token_test.go')
+queue_go_source('internal/api/handlers/management/management_panel.go')
+queue_go_source('internal/api/handlers/management/management_panel_test.go')
+
+pluginstore_auth = ROOT / 'internal/pluginstore/auth.go'
+insert_before(
+    pluginstore_auth,
+    'func AuthConfigured(auth []AuthConfig, requestURL string, kind string) bool {\n',
+    '''func gitStoreGitHubToken(requestURL string, kind string) (string, bool) {
+\tswitch strings.ToLower(strings.TrimSpace(kind)) {
+\tcase RequestKindMetadata, RequestKindArtifact:
+\tdefault:
+\t\treturn "", false
+\t}
+\tparsed, err := url.Parse(strings.TrimSpace(requestURL))
+\tif err != nil || parsed.User != nil || !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Hostname(), "api.github.com") {
+\t\treturn "", false
+\t}
+\tpath := strings.ToLower(parsed.Path)
+\tif !strings.HasPrefix(path, "/repos/") || !strings.Contains(path, "/releases/") {
+\t\treturn "", false
+\t}
+\ttoken := strings.TrimSpace(os.Getenv("GITSTORE_GIT_TOKEN"))
+\treturn token, token != ""
+}
+
+func gitStoreGitHubTokenConfigured(requestURL string, kind string) bool {
+\t_, configured := gitStoreGitHubToken(requestURL, kind)
+\treturn configured
+}
+
+''',
+    'func gitStoreGitHubToken(requestURL string, kind string)',
+)
+replace_once(
+    pluginstore_auth,
+    '''func AuthConfigured(auth []AuthConfig, requestURL string, kind string) bool {
+\titem, ok := matchingAuthConfig(auth, requestURL, kind)
+\tif !ok {
+\t\treturn false
+\t}
+''',
+    '''func AuthConfigured(auth []AuthConfig, requestURL string, kind string) bool {
+\titem, ok := matchingAuthConfig(auth, requestURL, kind)
+\tif !ok {
+\t\treturn gitStoreGitHubTokenConfigured(requestURL, kind)
+\t}
+''',
+    'return gitStoreGitHubTokenConfigured(requestURL, kind)',
+)
+replace_once(
+    pluginstore_auth,
+    '''\titem, ok := matchingAuthConfig(auth, requestURL, kind)
+\tif !ok {
+\t\treturn false, nil
+\t}
+\tswitch strings.ToLower(strings.TrimSpace(item.Type)) {
+''',
+    '''\titem, ok := matchingAuthConfig(auth, requestURL, kind)
+\tif !ok {
+\t\tif token, configured := gitStoreGitHubToken(requestURL, kind); configured {
+\t\t\theaders.Set("Authorization", "Bearer "+token)
+\t\t\treturn true, nil
+\t\t}
+\t\treturn false, nil
+\t}
+\tswitch strings.ToLower(strings.TrimSpace(item.Type)) {
+''',
+    'if token, configured := gitStoreGitHubToken(requestURL, kind); configured',
+)
+queue_go_source('internal/pluginstore/gitstore_auth_test.go')
 
 server_main = ROOT / 'cmd/server/main.go'
 add_go_import(server_main, '"' + import_path('internal/pluginhost') + '"\n', '\t"' + import_path('internal/pluginstore') + '"\n')
@@ -1339,36 +2239,45 @@ server_management = ROOT / 'internal/api/server_management.go'
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 auth_files_fields = ROOT / 'internal/api/handlers/management/auth_files_fields.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
-management_scheduler = ROOT / 'internal/api/handlers/management/account_inspection_scheduler.go'
-management_scheduler_test = ROOT / 'internal/api/handlers/management/account_inspection_scheduler_test.go'
 routing_policy = ROOT / 'internal/api/handlers/management/routing_policy.go'
 routing_policy_test = ROOT / 'internal/api/handlers/management/routing_policy_test.go'
-scheduler_source = Path(__file__).resolve().parent / 'account_inspection_scheduler.go'
-write(management_scheduler, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(scheduler_source)))
-scheduler_test_source = Path(__file__).resolve().parent / 'account_inspection_scheduler_test.go'
-if scheduler_test_source.is_file():
-    write(management_scheduler_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(scheduler_test_source)))
+replace_once(
+    server_management,
+    '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n',
+    '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n\t\tmgmt.POST("/management-panel/check-update", s.mgmt.PostCheckManagementPanelUpdate)\n',
+)
+for source_name in ACCOUNT_INSPECTION_SOURCE_FILES:
+    source = Path(__file__).resolve().parent / source_name
+    write(
+        ROOT / 'internal/api/handlers/management' / source_name,
+        re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(source)),
+    )
 write(routing_policy, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy.go')))
 write(routing_policy_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy_test.go')))
 
 replace_once(
     server_routes,
     '''\tif isClaude {
-\t\tc.JSON(http.StatusOK, claudemodels.BuildResponse(formatHomeClaudeModels(entries)))
+\t\tdisableCloaking := s.cfg != nil && s.cfg.ClaudeCode.DisableCloakingModelList
+\t\tc.JSON(http.StatusOK, claudemodels.BuildResponse(formatHomeClaudeModels(entries), disableCloaking))
 \t\treturn
+\t}
 ''',
     '''\tif isClaude {
 \t\tmode := ""
+\t\tupstreamDisable := false
 \t\tif s != nil && s.cfg != nil {
 \t\t\tmode = s.cfg.ClaudeModelIDCloakMode
+\t\t\tupstreamDisable = s.cfg.ClaudeCode.DisableCloakingModelList
 \t\t}
 \t\tvar headers http.Header
 \t\tif c != nil && c.Request != nil {
 \t\t\theaders = c.Request.Header
 \t\t}
-\t\tcloakModelIDs := claudemodels.ShouldCloakClaudeModelIDs(mode, headers)
-\t\tc.JSON(http.StatusOK, claudemodels.BuildResponseWithCloak(formatHomeClaudeModels(entries), cloakModelIDs))
+\t\tdisableCloaking := claudemodels.ShouldDisableClaudeModelIDCloaking(mode, headers, upstreamDisable)
+\t\tc.JSON(http.StatusOK, claudemodels.BuildResponse(formatHomeClaudeModels(entries), disableCloaking))
 \t\treturn
+\t}
 ''',
 )
 
@@ -1739,10 +2648,10 @@ replace_once(
 )
 replace_once(
     redisqueue_plugin,
-    '''\t\tAuthIndex:       record.AuthIndex,
+    '''\t\tUserAgent:       clientRequestMetadata.UserAgent,
 \t\tTokens:          tokens,
 ''',
-    '''\t\tAuthIndex:       record.AuthIndex,
+    '''\t\tUserAgent:       clientRequestMetadata.UserAgent,
 \t\tAttemptIndex:    record.AttemptIndex,
 \t\tTokens:          tokens,
 ''',
@@ -1784,6 +2693,10 @@ if redisqueue_plugin_test.exists():
     text = text.replace('internallogging.', 'requestmeta.')
     write(redisqueue_plugin_test, text)
 
+queue_go_source('internal/requestmeta/client.go')
+
+queue_go_source('internal/requestmeta/client_test.go')
+
 queue_go_source('internal/requestmeta/requestid.go')
 
 queue_go_source('internal/requestmeta/response.go')
@@ -1819,7 +2732,7 @@ replace_once(
 replace_once(
     server_management,
     '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n''',
-    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n''',
+    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n\t\ts.mgmt.RegisterProFeatureRoutes(mgmt)\n''',
 )
 
 handler = ROOT / 'internal/api/handlers/management/handler.go'
@@ -1933,7 +2846,7 @@ replace_once(
     '''\th.startAttemptCleanup()
 \treturn h
 ''',
-    '''\th.startAccountInspectionScheduler()
+    '''\th.startProManagementRuntime()
 \th.startAttemptCleanup()
 \treturn h
 ''',
@@ -1961,7 +2874,7 @@ add_go_import(run, '"' + import_path('internal/config') + '"\n', '\t"' + import_
 insert_before(
     run,
     '// StartService builds and runs the proxy service using the exported SDK.\n',
-    'func applyProRequiredStartupConfig(cfg *config.Config, configPath string) {\n\tif cfg == nil {\n\t\treturn\n\t}\n\tshouldPersistUsageStatistics := !cfg.UsageStatisticsEnabled\n\tshouldPersistPanelRepository := cfg.RemoteManagement.PanelGitHubRepository != config.DefaultPanelGitHubRepository\n\tcfg.UsageStatisticsEnabled = true\n\tcfg.RemoteManagement.PanelGitHubRepository = config.DefaultPanelGitHubRepository\n\tif configPath == "" {\n\t\treturn\n\t}\n\tif shouldPersistUsageStatistics {\n\t\tif err := config.SaveConfigPreserveCommentsUpdateNestedBoolScalar(configPath, []string{"usage-statistics-enabled"}, true); err != nil {\n\t\t\tlog.Warnf("failed to persist usage statistics config: %v", err)\n\t\t}\n\t}\n\tif shouldPersistPanelRepository {\n\t\tif err := config.SaveConfigPreserveCommentsUpdateNestedScalar(configPath, []string{"remote-management", "panel-github-repository"}, config.DefaultPanelGitHubRepository); err != nil {\n\t\t\tlog.Warnf("failed to persist panel repository config: %v", err)\n\t\t}\n\t}\n}\n\n',
+    'func applyProRequiredStartupConfig(cfg *config.Config, configPath string) {\n\tif cfg == nil {\n\t\treturn\n\t}\n\tshouldPersistUsageStatistics := !cfg.UsageStatisticsEnabled\n\tshouldPersistPanelRepository := cfg.RemoteManagement.PanelGitHubRepository != config.DefaultPanelGitHubRepository\n\tcfg.UsageStatisticsEnabled = true\n\tcfg.RemoteManagement.PanelGitHubRepository = config.DefaultPanelGitHubRepository\n\tif configPath == "" {\n\t\treturn\n\t}\n\tif shouldPersistUsageStatistics {\n\t\tif _, err := config.SaveConfigPreserveCommentsUpdateExistingScalars(configPath, []config.ExistingScalarUpdate{{Path: []string{"usage-statistics-enabled"}, Value: true}}); err != nil {\n\t\t\tlog.Warnf("failed to update existing usage statistics config: %v", err)\n\t\t}\n\t}\n\tif shouldPersistPanelRepository {\n\t\tif _, err := config.SaveConfigPreserveCommentsUpdateExistingScalars(configPath, []config.ExistingScalarUpdate{{Path: []string{"remote-management", "panel-github-repository"}, Value: config.DefaultPanelGitHubRepository}}); err != nil {\n\t\t\tlog.Warnf("failed to update existing panel repository config: %v", err)\n\t\t}\n\t}\n}\n\n',
     'func applyProRequiredStartupConfig',
 )
 insert_before_nth(
@@ -2011,6 +2924,62 @@ replace_once(
 \tFailed   int64 `json:"-"`
 ''',
     'Selected int64',
+)
+
+auth_selector = ROOT / 'sdk/cliproxy/auth/selector.go'
+replace_once(
+    auth_selector,
+    '''type RoundRobinSelector struct {
+\tmu      sync.Mutex
+\tcursors map[string]int
+\tmaxKeys int
+}''',
+    '''type RoundRobinSelector struct {
+\tmu                      sync.Mutex
+\tcursors                 map[string]int
+\tmaxKeys                  int
+\troutingCursorRestored    map[string]bool
+\tpersistedRoutingCursors map[string]string
+}''',
+    'persistedRoutingCursors map[string]string',
+)
+replace_once(
+    auth_selector,
+    '''\ts.ensureCursorKey(key, limit)
+\tindex := s.cursors[key]
+\tif index >= 2_147_483_640 {
+\t\tindex = 0
+\t}
+\ts.cursors[key] = index + 1
+\ts.mu.Unlock()
+\treturn available[index%len(available)], nil
+}''',
+    '''\ts.ensureCursorKey(key, limit)
+\ts.restoreRoutingCursorLocked(provider, model, key, available)
+\tindex := s.cursors[key]
+\tif index >= 2_147_483_640 {
+\t\tindex = 0
+\t}
+\ts.cursors[key] = index + 1
+\tpicked := available[index%len(available)]
+\ts.persistRoutingCursorLocked(provider, model, picked)
+\ts.mu.Unlock()
+\treturn picked, nil
+}''',
+    's.restoreRoutingCursorLocked(provider, model, key, available)',
+)
+replace_once(
+    auth_selector,
+    '''\tif _, ok := s.cursors[key]; !ok && len(s.cursors) >= limit {
+\t\ts.cursors = make(map[string]int)
+\t}
+}''',
+    '''\tif _, ok := s.cursors[key]; !ok && len(s.cursors) >= limit {
+\t\ts.cursors = make(map[string]int)
+\t\ts.routingCursorRestored = make(map[string]bool)
+\t}
+}''',
+    's.routingCursorRestored = make(map[string]bool)',
 )
 
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_lifecycle.go'
@@ -2093,18 +3062,16 @@ replace_once(
 )
 replace_once(
     auth_conductor,
-    '''\t\treturn authCopy, executor, nil
-\t}
+    '''\treturn authCopy, executor, nil
 }
 
 func (m *Manager) pickNextMixedLegacy''',
-    '''\t\tm.recordAuthSelected(authCopy.ID)
-\t\treturn authCopy, executor, nil
-\t}
+    '''\tm.recordAuthSelected(authCopy.ID)
+\treturn authCopy, executor, nil
 }
 
 func (m *Manager) pickNextMixedLegacy''',
-    'm.recordAuthSelected(authCopy.ID)\n\t\treturn authCopy, executor, nil',
+    'm.recordAuthSelected(authCopy.ID)\n\treturn authCopy, executor, nil',
 )
 replace_once(
     auth_conductor,
@@ -2186,10 +3153,38 @@ replace_once(
 
 auth_files_handler = ROOT / 'internal/api/handlers/management/auth_files.go'
 auth_files_crud_handler = ROOT / 'internal/api/handlers/management/auth_files_crud.go'
+auth_files_fields_handler = ROOT / 'internal/api/handlers/management/auth_files_fields.go'
 add_go_import(
     auth_files_crud_handler,
     '"github.com/gin-gonic/gin"\n',
     '\t"' + import_path('internal/embeddedusage') + '"\n',
+)
+add_go_import(
+    auth_files_fields_handler,
+    f'\t"{import_path("internal/credentialweight")}"\n',
+    f'\t"{import_path("internal/embeddedusage")}"\n',
+)
+replace_once(
+    auth_files_fields_handler,
+    '''\tsavedPath, errSave := store.Save(ctx, record)
+\tif errSave != nil {
+\t\treturn savedPath, errSave
+\t}
+\tif h.postAuthPersistHook != nil {
+''',
+    '''\tsavedPath, errSave := store.Save(ctx, record)
+\tif errSave != nil {
+\t\treturn savedPath, errSave
+\t}
+\tif sdkAuth.TakeReusedExistingAuthIdentity(record) {
+\t\t// The stable auth ID/index and runtime statistics remain attached to the
+\t\t// existing file. Only quota is invalidated because credential or
+\t\t// entitlement changes make the previous snapshot unsafe to reuse.
+\t\t_ = embeddedusage.DeleteQuotaCache(ctx, record.Provider, record.FileName)
+\t}
+\tif h.postAuthPersistHook != nil {
+''',
+    'sdkAuth.TakeReusedExistingAuthIdentity(record)',
 )
 replace_once(
     auth_files_handler,
@@ -2368,11 +3363,13 @@ add_go_import(auth_scheduler, '"context"\n', '\t"fmt"\n')
 add_go_import(auth_scheduler, '"time"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
 replace_once(
     auth_scheduler,
-    '''\tmixedCursors  map[string]int
+    '''\tmixedCursors        map[string]int
+\tmixedWeightedStates map[string]*smoothWeightedState
 }''',
-    '''\tmixedCursors     map[string]int
-\tmixedRestored    map[string]bool
-\tpersistedCursors map[string]string
+    '''\tmixedCursors        map[string]int
+\tmixedWeightedStates map[string]*smoothWeightedState
+\tmixedRestored       map[string]bool
+\tpersistedCursors    map[string]string
 }''',
     'persistedCursors map[string]string',
 )
@@ -2398,15 +3395,17 @@ replace_once(
 replace_once(
     auth_scheduler,
     '''type readyView struct {
-\tflat   []*scheduledAuth
-\tcursor int
+\tflat          []*scheduledAuth
+\tcursor        int
+\tweightedState smoothWeightedState
 }''',
     '''type readyView struct {
-\tflat       []*scheduledAuth
-\tcursor     int
-\tcursorKey  string
-\tlastAuthID string
-\tpersisted  map[string]string
+\tflat          []*scheduledAuth
+\tcursor        int
+\tweightedState smoothWeightedState
+\tcursorKey     string
+\tlastAuthID    string
+\tpersisted     map[string]string
 }''',
     'cursorKey  string',
 )
@@ -2414,10 +3413,11 @@ replace_once(
     auth_scheduler,
     '''func newAuthScheduler(selector Selector) *authScheduler {
 \treturn &authScheduler{
-\t\tstrategy:      selectorStrategy(selector),
-\t\tproviders:     make(map[string]*providerScheduler),
-\t\tauthProviders: make(map[string]string),
-\t\tmixedCursors:  make(map[string]int),
+\t\tstrategy:            selectorStrategy(selector),
+\t\tproviders:           make(map[string]*providerScheduler),
+\t\tauthProviders:       make(map[string]string),
+\t\tmixedCursors:        make(map[string]int),
+\t\tmixedWeightedStates: make(map[string]*smoothWeightedState),
 \t}
 }''',
     '''func newAuthScheduler(selector Selector) *authScheduler {
@@ -2428,12 +3428,13 @@ replace_once(
 \t\t}
 \t}
 \treturn &authScheduler{
-\t\tstrategy:         selectorStrategy(selector),
-\t\tproviders:        make(map[string]*providerScheduler),
-\t\tauthProviders:    make(map[string]string),
-\t\tmixedCursors:     make(map[string]int),
-\t\tmixedRestored:    make(map[string]bool),
-\t\tpersistedCursors: persistedCursors,
+\t\tstrategy:            selectorStrategy(selector),
+\t\tproviders:           make(map[string]*providerScheduler),
+\t\tauthProviders:       make(map[string]string),
+\t\tmixedCursors:        make(map[string]int),
+\t\tmixedWeightedStates: make(map[string]*smoothWeightedState),
+\t\tmixedRestored:       make(map[string]bool),
+\t\tpersistedCursors:    persistedCursors,
 \t}
 }''',
     'persistedCursors := make(map[string]string)',
@@ -2457,6 +3458,7 @@ insert_before(
 \ts.providers = make(map[string]*providerScheduler)
 \ts.authProviders = make(map[string]string)
 \ts.mixedCursors = make(map[string]int)
+\ts.mixedWeightedStates = make(map[string]*smoothWeightedState)
 \ts.mixedRestored = make(map[string]bool)
 \tnow := time.Now()
 \tfor _, auth := range auths {
@@ -2470,19 +3472,23 @@ insert_before(
 replace_once(
     auth_scheduler,
     '''\ts.mixedCursors = make(map[string]int)
+\ts.mixedWeightedStates = make(map[string]*smoothWeightedState)
 \tnow := time.Now()''',
     '''\ts.mixedCursors = make(map[string]int)
+\ts.mixedWeightedStates = make(map[string]*smoothWeightedState)
 \ts.mixedRestored = make(map[string]bool)
 \tnow := time.Now()''',
-    's.mixedRestored = make(map[string]bool)',
+    's.mixedWeightedStates = make(map[string]*smoothWeightedState)\n\ts.mixedRestored = make(map[string]bool)\n\tnow := time.Now()',
 )
 replace_once(
     auth_scheduler,
     '''\ts.strategy = selectorStrategy(selector)
 \tclear(s.mixedCursors)
+\tclear(s.mixedWeightedStates)
 ''',
     '''\ts.strategy = selectorStrategy(selector)
 \tclear(s.mixedCursors)
+\tclear(s.mixedWeightedStates)
 \tclear(s.mixedRestored)
 ''',
     'clear(s.mixedRestored)',
@@ -2526,6 +3532,26 @@ replace_once(
 \t\tbucket := buildReadyBucket(entries, cursorPrefix, m.persistedCursors)
 ''',
     'cursorPrefix := fmt.Sprintf("single|%s|%s|%d"',
+)
+replace_once(
+    auth_scheduler,
+    '''\t\tif cursorState, ok := cursorStates[priority]; ok && bucket != nil {
+\t\t\trestoreReadyViewCursors(&bucket.all, cursorState.all)
+\t\t\trestoreReadyViewCursors(&bucket.ws, cursorState.ws)
+\t\t}
+\t\tm.readyByPriority[priority] = bucket
+''',
+    '''\t\tif cursorState, ok := cursorStates[priority]; ok && bucket != nil {
+\t\t\trestoreReadyViewCursors(&bucket.all, cursorState.all)
+\t\t\trestoreReadyViewCursors(&bucket.ws, cursorState.ws)
+\t\t}
+\t\tif bucket != nil {
+\t\t\tbucket.all.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|all"])
+\t\t\tbucket.ws.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|ws"])
+\t\t}
+\t\tm.readyByPriority[priority] = bucket
+''',
+    'bucket.all.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|all"])',
 )
 replace_once(
     auth_scheduler,
@@ -2667,15 +3693,29 @@ subprocess.run([
     'cmd/server/main.go',
     'internal/api/server.go',
     'internal/api/server_test.go',
-    'internal/api/handlers/management/account_inspection_scheduler.go',
-    'internal/api/handlers/management/account_inspection_scheduler_test.go',
+    'internal/api/server_options.go',
+    *[
+        f'internal/api/handlers/management/{name}'
+        for name in ACCOUNT_INSPECTION_SOURCE_FILES
+    ],
+    'internal/api/handlers/management/account_inspection_host.go',
+    'internal/api/handlers/management/auth_files_fields.go',
     'internal/api/handlers/management/auth_files.go',
     'internal/api/handlers/management/auth_files_delete_missing_test.go',
     'internal/api/handlers/management/handler.go',
+    'internal/api/handlers/management/management_panel.go',
+    'internal/api/handlers/management/management_panel_test.go',
+    'internal/managementasset/updater.go',
+    'internal/managementasset/gitstore_token_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
+    'internal/api/handlers/management/pro_auth_mutation.go',
+    'internal/api/handlers/management/pro_features.go',
+    'internal/api/handlers/management/pro_management_runtime.go',
     'internal/client/claude/models/models.go',
     'internal/client/claude/models/models_test.go',
+    'internal/auth/codex/filename.go',
+    'internal/auth/codex/filename_test.go',
     'internal/config/sdk_config.go',
     'internal/logging/requestid.go',
     'internal/logging/requestmeta.go',
@@ -2684,7 +3724,11 @@ subprocess.run([
     'internal/watcher/diff/config_diff.go',
     'internal/api/handlers/management/routing_policy.go',
     'internal/api/handlers/management/routing_policy_test.go',
-    'internal/config/routing_protection_config.go',
+    'internal/config/config_existing_updates.go',
+    'internal/config/config_existing_updates_test.go',
+    'internal/config/config_normalization.go',
+    'internal/embeddedusage/facade.go',
+    'internal/embeddedusage/internalusage/facade.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
     'internal/pluginhost/gemini_cli_quota_legacy.go',
@@ -2696,23 +3740,124 @@ subprocess.run([
     'internal/pluginhost/snapshot.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
+    'internal/pluginstore/auth.go',
+    'internal/pluginstore/gitstore_auth_test.go',
     'internal/redisqueue/plugin.go',
     'internal/redisqueue/plugin_test.go',
+    'internal/requestmeta/client.go',
+    'internal/requestmeta/client_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
+    'internal/pro/modelpolicy/config/config.go',
+    'internal/pro/modelpolicy/config/config_test.go',
+    'internal/pro/modelpolicy/policy/engine.go',
+    'internal/pro/modelpolicy/policy/engine_test.go',
+    'internal/pro/app/migration.go',
+    'internal/pro/app/migration_test.go',
+    'internal/pro/app/app.go',
+    'internal/pro/app/app_test.go',
+    'internal/pro/backup/coordinator.go',
+    'internal/pro/backup/coordinator_test.go',
+    'internal/pro/host/model_policy.go',
+    'internal/pro/host/proxy.go',
+    'internal/pro/modelpolicy/service.go',
+    'internal/pro/modelpolicy/management.go',
+    'internal/pro/proxypool/management.go',
+    'internal/pro/proxypool/service.go',
+    'internal/pro/settings/store.go',
+    'internal/pro/state/types.go',
+    'internal/pro/state/writer.go',
+    'internal/pro/state/writer_test.go',
+    'internal/pro/storage/database.go',
+    'internal/pro/storage/database_test.go',
+    'internal/pro/storage/schema.go',
+    'internal/pro/quota/xai.go',
+    'internal/pro/quota/xai_test.go',
+    'internal/pro/quota/xai_billing.go',
+    'internal/pro/quota/xai_billing_test.go',
+    'internal/pro/quota/cache.go',
+    'internal/pro/quota/cache_test.go',
+    'internal/pro/quota/gemini_cli.go',
+    'internal/pro/quota/snapshot.go',
+    'internal/pro/quota/snapshot_test.go',
+    'internal/pro/routing/runtime.go',
+    'internal/pro/routing/runtime_test.go',
+    'internal/pro/inspection/lifecycle.go',
+    'internal/pro/inspection/lifecycle_test.go',
+    'internal/pro/inspection/confirmations.go',
+    'internal/pro/inspection/confirmations_test.go',
+    'internal/pro/inspection/policy.go',
+    'internal/pro/inspection/policy_test.go',
+    'internal/pro/inspection/ports.go',
+    'internal/pro/inspection/schedule.go',
+    'internal/pro/inspection/schedule_test.go',
+    'internal/pro/inspection/workers.go',
+    'internal/pro/inspection/workers_test.go',
+    'internal/pro/inspection/results.go',
+    'internal/pro/inspection/results_test.go',
+    'internal/pro/inspection/providers.go',
+    'internal/pro/inspection/providers_test.go',
+    'internal/pro/inspection/probes.go',
+    'internal/pro/inspection/probes_test.go',
+    'internal/pro/inspection/snapshot.go',
+    'internal/pro/inspection/snapshot_test.go',
+    'internal/pro/inspection/status.go',
+    'internal/pro/inspection/status_test.go',
+    'internal/pro/inspection/actions.go',
+    'internal/pro/inspection/actions_test.go',
+    'internal/pro/inspection/selection.go',
+    'internal/pro/inspection/selection_test.go',
+    'internal/pro/observability/module.go',
+    'internal/pro/observability/module_test.go',
+    'internal/pro/observability/config.go',
+    'internal/pro/observability/global.go',
+    'internal/pro/observability/pricing.go',
+    'internal/pro/observability/pricing_sync.go',
+    'internal/pro/observability/pricing_test.go',
+    'internal/pro/observability/pro_settings.go',
+    'internal/pro/observability/server.go',
+    'internal/pro/observability/server_test.go',
+    'internal/pro/observability/settings_store.go',
+    'internal/pro/observability/service.go',
+    'internal/pro/observability/service_test.go',
+    'internal/pro/observability/store.go',
+    'internal/pro/observability/store_test.go',
+    'internal/pro/observability/xai_quota.go',
+    'internal/pro/observability/xai_quota_test.go',
+    'internal/pro/observability/internalusage/event.go',
+    'internal/pro/observability/internalusage/event_test.go',
+    'internal/pro/proxypool/config/config.go',
+    'internal/pro/proxypool/config/config_test.go',
+    'internal/pro/proxypool/engine/engine.go',
+    'internal/pro/proxypool/engine/engine_test.go',
+    'internal/pro/proxypool/pool/pool.go',
+    'internal/pro/proxypool/pool/pool_test.go',
+    'internal/pro/proxypool/socks5/server.go',
     'internal/runtime/executor/xai_executor.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'internal/runtime/executor/xai_websockets_executor.go',
     'sdk/api/handlers/claude/code_handlers.go',
     'sdk/api/handlers/claude/code_handlers_model_test.go',
+    'sdk/auth/codex_device.go',
+    'sdk/auth/filestore.go',
+    'sdk/auth/filestore_test.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
     'sdk/cliproxy/auth/conductor.go',
     'sdk/cliproxy/auth/scheduler.go',
     'sdk/cliproxy/auth/types.go',
+    'sdk/cliproxy/builder.go',
+    'sdk/cliproxy/service.go',
+    'sdk/cliproxy/service_config.go',
+    'sdk/cliproxy/service_executors.go',
+    'sdk/cliproxy/service_lifecycle.go',
+    'sdk/cliproxy/service_models.go',
     'sdk/cliproxy/usage/manager.go',
     'sdk/cliproxy/usage/manager_test.go',
     'sdk/pluginabi/types.go',
     'sdk/pluginapi/types.go',
+    'sdk/proxyutil/proxy.go',
+    'sdk/proxyutil/runtime_override.go',
+    'sdk/proxyutil/runtime_override_test.go',
 ], cwd=ROOT, check=True)
 subprocess.run(['go', 'mod', 'tidy'], cwd=ROOT, check=True)

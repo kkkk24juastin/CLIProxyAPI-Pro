@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   normalizePersistedQuotaState,
   selectPreferredQuotaCacheEntries,
-} from '../src/extensions/quota/normalizedQuotaSnapshot';
-import type { QuotaCacheEntry } from '../src/extensions/quota/sqliteQuotaCache';
+} from '../src/pro/modules/quota/extensions/normalizedQuotaSnapshot';
+import type { QuotaCacheEntry } from '../src/pro/modules/quota/extensions/sqliteQuotaCache';
 
 const cacheEntry = (
   id: string,

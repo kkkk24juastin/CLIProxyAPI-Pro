@@ -43,6 +43,7 @@ type fakeAutoInstallConfig struct {
 	Enabled      bool
 	Dir          string
 	StoreSources []string
+	StoreAuth    []AuthConfig
 	Configs      map[string]fakeAutoInstallPlugin
 }
 
@@ -93,6 +94,13 @@ func (cfg *fakeAutoInstallConfig) PluginAutoInstallStoreSources() []string {
 		return nil
 	}
 	return append([]string(nil), cfg.StoreSources...)
+}
+
+func (cfg *fakeAutoInstallConfig) PluginAutoInstallStoreAuth() []AuthConfig {
+	if cfg == nil || len(cfg.StoreAuth) == 0 {
+		return nil
+	}
+	return append([]AuthConfig(nil), cfg.StoreAuth...)
 }
 
 func (cfg *fakeAutoInstallConfig) PluginAutoInstallEnabledIDs() []string {
@@ -192,6 +200,10 @@ func TestEnsureConfiguredPluginsInstalledInstallsUniqueRegistryMatch(t *testing.
 	cfg := &fakeAutoInstallConfig{
 		Enabled: true,
 		Dir:     root,
+		StoreAuth: []AuthConfig{{
+			Match: "https://api.github.com/repos/",
+			Type:  AuthTypeGitHubToken,
+		}},
 		Configs: map[string]fakeAutoInstallPlugin{
 			"sample-provider": {Enabled: enabledBoolPtr(true)},
 		},
@@ -205,9 +217,12 @@ func TestEnsureConfiguredPluginsInstalledInstallsUniqueRegistryMatch(t *testing.
 		HTTPClient: fakeHTTP,
 		GOOS:       "linux",
 		GOARCH:     "amd64",
-		Install: func(_ context.Context, _ Client, plugin Plugin, options InstallOptions) (InstallResult, error) {
+		Install: func(_ context.Context, client Client, plugin Plugin, options InstallOptions) (InstallResult, error) {
 			gotPlugin = plugin
 			gotOptions = options
+			if len(client.Auth) != 1 || client.Auth[0].Type != AuthTypeGitHubToken {
+				t.Fatalf("installer client auth = %#v, want configured GitHub token rule", client.Auth)
+			}
 			return InstallResult{ID: plugin.ID, Version: "1.2.3", Path: filepath.Join(options.PluginsDir, options.GOOS, options.GOARCH, plugin.ID+".so")}, nil
 		},
 	})

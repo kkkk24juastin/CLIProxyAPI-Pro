@@ -6,6 +6,16 @@ This directory does not vendor the upstream application. It keeps overlay files 
 
 ## What this customization adds
 
+### Proxy pool page
+
+Adds a top-level `/proxy-pool` page for Core's statically linked proxy pool. It manages HTTP/HTTPS/SOCKS5/SOCKS5H nodes, selection strategy, weights, health checks, isolation, and failover. It also supports batch paste, node search, filtered enable/disable, quick duplication, unsaved-draft tests, and manual isolation recovery. Runtime details include success rate, failures, active tunnels, last success/failure, config generation, and health-cycle timestamps.
+
+Adds a top-level `/oauth-model-policy` page for Core's statically linked model policy. Provider tabs edit plan-specific model exclusions for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi, including custom plan keys, while keeping `_unknown` plan-discovery failures separate from the `_default` fallback for recognized plans without a dedicated rule. The page also controls cache TTL and provider resolve timeout.
+
+The page toggles runtime proxy takeover through native management APIs without changing `config.yaml` or the root `proxy-url`. Credentials with their own `proxy-url` are listed explicitly as bypasses. Both feature configurations persist in the usage SQLite `pro_settings` table, while health state and connection counters remain process-local runtime data.
+
+Rotation is per SOCKS5 TCP tunnel, not necessarily per multiplexed HTTP request. `fail-open=false` is the default to prevent silent direct traffic leakage.
+
 ### Request monitoring page
 
 Adds a top-level monitoring route:
@@ -60,8 +70,6 @@ The UI starts `QuotaPersistenceBootstrap` from the main layout. It preloads save
 
 “Refresh all credentials” in each provider section starts a persistent backend `account-inspection/quota-refresh` job instead of issuing unbounded browser requests. The button shows progress, reconnects to an active job after the page is reopened, and reloads SQLite snapshots by quota-cache generation when the job finishes. Only enabled credentials for that provider are included.
 
-“Refresh all credentials” in each provider section starts a persistent backend `account-inspection/quota-refresh` job instead of issuing unbounded browser requests. The button shows progress, reconnects to an active job after the page is reopened, and reloads SQLite snapshots by quota-cache generation when the job finishes. Only enabled credentials for that provider are included.
-
 Supported quota providers:
 
 - Antigravity
@@ -71,7 +79,7 @@ Supported quota providers:
 - Kimi
 - xAI
 
-Quota cards also show cache timestamps and support single-card refresh when the feature flags in `src/config/features.ts` are enabled.
+Quota cards also show cache timestamps and support single-card refresh when the feature flags in `src/pro/modules/quota/features.ts` are enabled.
 
 ### Account inspection page
 
@@ -154,24 +162,25 @@ Protection is disabled by default. `observe` records matches; only `enforce` dis
 - `Select` `triggerClassName` and `dropdownClassName` props.
 - `maskSensitiveText` utility.
 - `cachedAt` fields for quota state types and success states.
+- a “Check for updates” action on the Management Center version tile; it calls `POST /management-panel/check-update`, replaces the panel only when the latest-release asset hash changes, and reloads only after an actual update.
 
 Request Monitoring uses an initial snapshot plus SSE increments and cursor catch-up, with event-ID deduplication. Trends, model rankings, and API-key rankings prefer server-side `/usage/aggregates` data and automatically fall back to local detail calculations when unavailable. Hidden tabs pause SSE and React incremental updates, then catch up by cursor when visible again; the page header shows live, reconnecting, background-paused, error, and latest-event states.
 
 ## Repository layout
 
 - `overlay/` — files copied directly into the upstream checkout.
-- `overlay/src/pages/MonitoringCenterPage.tsx` — request monitoring UI.
-- `overlay/src/pages/AccountInspectionPage.tsx` — account inspection UI.
-- `overlay/src/pages/RoutingPolicyPage.tsx` — routing policy and request-state-protection UI.
-- `overlay/src/features/monitoring/` — monitoring and inspection logic.
-- `overlay/src/extensions/quota/` — SQLite quota persistence integration.
+- `overlay/src/pro/modules/monitoring/` — request monitoring, usage analytics, and backup UI.
+- `overlay/src/pro/modules/inspection/` — account inspection page, state, and actions.
+- `overlay/src/pro/modules/routing/` — routing policy and request-state-protection UI.
+- `overlay/src/pro/modules/proxyPool/` and `modelPolicy/` — independent module pages and APIs.
+- `overlay/src/pro/modules/quota/` — SQLite quota persistence, sorting, and provider extensions.
+- `overlay/src/pro/modules/*/manifest.tsx` — each business module declares its route, navigation, and startup effects; `registry.tsx` keeps only the module list and derives host projections, while `ProBootstrap.tsx` mounts them after authentication.
+- `overlay/src/pro/shared/` — domain-neutral shared UI models; business modules depend on another module only through its `index.ts` public surface and never through internal `features/` or style files.
 - `overlay/src/services/api/` — added API clients.
 - `overlay-replacements.json` — reviewed upstream SHA-256 values and reasons for full-file replacements that intentionally collide with upstream paths.
 - `monitoring-locales.json` — locale additions merged into upstream locale files.
 - `apply_customizations.py` — applies all customizations to a target upstream checkout.
 - `apply.sh` — shell wrapper around `apply_customizations.py`.
-- `quota-persistence.patch` — legacy patch artifact kept for reference; current builds use `apply_customizations.py`.
-
 Overlay collision preflight validates the upstream side of every reviewed replacement. Upstream file changes must update `overlay-replacements.json` explicitly; local replacements are reviewed through normal PR diffs and behavior tests, and new unreviewed path collisions are rejected before any overlay file is copied.
 
 ## Applying locally
