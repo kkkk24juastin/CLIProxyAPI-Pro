@@ -1883,6 +1883,52 @@ func TestClaudeModelsCloakMode(t *testing.T) {
 }
 ''' + '\n')
 
+server_test = ROOT / 'internal/api/server_test.go'
+replace_once(
+    server_test,
+    '''\t\treq.Header.Set("Authorization", "Bearer test-key")
+\t\treq.Header.Set("Anthropic-Version", "2023-06-01")
+
+\t\trecorder := httptest.NewRecorder()
+''',
+    '''\t\treq.Header.Set("Authorization", "Bearer test-key")
+\t\treq.Header.Set("Anthropic-Version", "2023-06-01")
+\t\treq.Header.Set("User-Agent", "Claude-Desktop/1.0")
+
+\t\trecorder := httptest.NewRecorder()
+''',
+    'req.Header.Set("User-Agent", "Claude-Desktop/1.0")',
+)
+
+claude_executor_test = ROOT / 'internal/runtime/executor/claude_executor_test.go'
+replace_once(
+    claude_executor_test,
+    '''\tapplyClaudeHeaders(thirdPartyReq, auth, "key-disable-stability", false, nil, nil, cfg, nil, false)
+\tassertClaudeFingerprint(t, thirdPartyReq.Header, "claude-cli/2.1.60 (external, cli)", "0.70.0", "v22.0.0", helps.MapStainlessOS(), helps.MapStainlessArch())
+''',
+    '''\tapplyClaudeHeaders(thirdPartyReq, auth, "key-disable-stability", false, nil, nil, cfg, nil, false)
+\tassertClaudeFingerprint(t, thirdPartyReq.Header, "claude-cli/2.1.60 (external, cli)", "0.70.0", "v22.0.0", "MacOS", "arm64")
+''',
+    '"key-disable-stability", false, nil, nil, cfg, nil, false)\n\tassertClaudeFingerprint(t, thirdPartyReq.Header, "claude-cli/2.1.60 (external, cli)", "0.70.0", "v22.0.0", "MacOS", "arm64")',
+)
+replace_once(
+    claude_executor_test,
+    '''\tassertClaudeFingerprint(t, req.Header, "config-ua/1.0", "0.70.0", "v22.0.0", helps.MapStainlessOS(), helps.MapStainlessArch())
+''',
+    '''\tassertClaudeFingerprint(t, req.Header, "config-ua/1.0", "0.70.0", "v22.0.0", "MacOS", "arm64")
+''',
+)
+replace_once(
+    claude_executor_test,
+    '''\tassertClaudeFingerprint(t, seenHeaders, "claude-cli/2.1.220 (external, cli)", "0.94.0", "v26.3.0", helps.MapStainlessOS(), helps.MapStainlessArch())
+\tif got := seenHeaders.Get("X-App"); got != "cli" {
+''',
+    '''\tassertClaudeFingerprint(t, seenHeaders, "claude-cli/2.1.220 (external, cli)", "0.94.0", "v26.3.0", "MacOS", "arm64")
+\tif got := seenHeaders.Get("X-App"); got != "cli" {
+''',
+    '"v26.3.0", "MacOS", "arm64")\n\tif got := seenHeaders.Get("X-App"); got != "cli"',
+)
+
 config_existing_updates = ROOT / 'internal/config/config_existing_updates.go'
 write(config_existing_updates, read_text(Path(__file__).resolve().parent / 'config_existing_updates.go'))
 config_existing_updates_test = ROOT / 'internal/config/config_existing_updates_test.go'
