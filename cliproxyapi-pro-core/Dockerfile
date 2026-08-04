@@ -11,7 +11,7 @@ ARG CLIPROXY_REPO=router-for-me/CLIProxyAPI
 ARG CLIPROXY_VERSION=""
 ARG CLIPROXY_COMMIT=""
 ARG CLIPROXY_BUILD_VERSION=""
-ARG PRO_MANAGEMENT_REPO=ssfun/CLIProxyAPI-Pro
+ARG PRO_MANAGEMENT_REPO=kkkk24juastin/CLIProxyAPI-Pro
 ARG SOURCE_DATE_EPOCH=""
 ARG GITHUB_TOKEN=""
 ARG TARGETOS
@@ -33,18 +33,29 @@ RUN set -eux; \
     curl -fsSL "https://github.com/${CLIPROXY_REPO}/archive/${source_ref}.tar.gz" -o /tmp/cliproxy.tar.gz; \
     tar -xzf /tmp/cliproxy.tar.gz --strip-components=1 -C /src/CLIProxyAPI; \
     rm /tmp/cliproxy.tar.gz; \
-    if [ -n "$auth_header" ]; then \
-      management_asset_api="$(curl -fsSL -H "$auth_header" "https://api.github.com/repos/${PRO_MANAGEMENT_REPO}/releases/latest" | jq -er '[.assets[] | select(.name == "management.html") | .url][0]')"; \
-      curl -fsSL -H "$auth_header" -H "Accept: application/octet-stream" "$management_asset_api" -o /tmp/pro-management.html; \
-    else \
-      management_asset_api="$(curl -fsSL "https://api.github.com/repos/${PRO_MANAGEMENT_REPO}/releases/latest" | jq -er '[.assets[] | select(.name == "management.html") | .url][0]')"; \
-      curl -fsSL -H "Accept: application/octet-stream" "$management_asset_api" -o /tmp/pro-management.html; \
-    fi; \
-    test -s /tmp/pro-management.html; \
     echo "$CLIPROXY_VERSION" > /tmp/cliproxy-version
 
 COPY cliproxyapi-pro-core/embeddedusage /tmp/embeddedusage
 COPY cliproxyapi-pro-core/patches /tmp/patches
+# The CI workflow places the management artifact here. Keeping the whole
+# directory copyable also preserves a network fallback for standalone builds.
+COPY cliproxyapi-pro-management /tmp/pro-management-input
+
+RUN if [ -s /tmp/pro-management-input/.ci-artifacts/management.html ]; then \
+      cp /tmp/pro-management-input/.ci-artifacts/management.html /tmp/pro-management.html; \
+    else \
+      set -eux; \
+      auth_header=""; \
+      if [ -n "$GITHUB_TOKEN" ]; then auth_header="Authorization: Bearer $GITHUB_TOKEN"; fi; \
+      if [ -n "$auth_header" ]; then \
+        management_asset_api="$(curl -fsSL -H "$auth_header" "https://api.github.com/repos/${PRO_MANAGEMENT_REPO}/releases/latest" | jq -er '[.assets[] | select(.name == "management.html") | .url][0]')"; \
+        curl -fsSL -H "$auth_header" -H "Accept: application/octet-stream" "$management_asset_api" -o /tmp/pro-management.html; \
+      else \
+        management_asset_api="$(curl -fsSL "https://api.github.com/repos/${PRO_MANAGEMENT_REPO}/releases/latest" | jq -er '[.assets[] | select(.name == "management.html") | .url][0]')"; \
+        curl -fsSL -H "Accept: application/octet-stream" "$management_asset_api" -o /tmp/pro-management.html; \
+      fi; \
+    fi; \
+    test -s /tmp/pro-management.html
 
 RUN python3 /tmp/patches/apply_upstream_patches.py
 
