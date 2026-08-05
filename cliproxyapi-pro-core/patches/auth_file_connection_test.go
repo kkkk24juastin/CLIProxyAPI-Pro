@@ -12,22 +12,25 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
 type authFileConnectionExecutor struct {
-	lastAuthID string
-	lastModel  string
-	response   []byte
-	err        error
+	lastAuthID  string
+	lastModel   string
+	response    []byte
+	err         error
+	skipMonitor bool
 }
 
 func (e *authFileConnectionExecutor) Identifier() string { return "codex" }
 
-func (e *authFileConnectionExecutor) Execute(_ context.Context, auth *coreauth.Auth, req coreexecutor.Request, _ coreexecutor.Options) (coreexecutor.Response, error) {
+func (e *authFileConnectionExecutor) Execute(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, _ coreexecutor.Options) (coreexecutor.Response, error) {
 	if auth != nil {
 		e.lastAuthID = auth.ID
 	}
 	e.lastModel = req.Model
+	e.skipMonitor = coreusage.SkipMonitoringFromContext(ctx)
 	return coreexecutor.Response{Payload: e.response}, e.err
 }
 
@@ -100,6 +103,9 @@ func TestAuthFileConnectionUsesExactAuthAndReturnsOutput(t *testing.T) {
 	}
 	if executor.lastAuthID != auth.ID || executor.lastModel != testModel {
 		t.Fatalf("executor received auth=%q model=%q", executor.lastAuthID, executor.lastModel)
+	}
+	if !executor.skipMonitor {
+		t.Fatal("connection test execution did not carry skip-monitoring context")
 	}
 	if updated, ok := manager.GetByID(auth.ID); !ok || updated == nil || !updated.Disabled {
 		t.Fatalf("connection test changed the operator-disabled state: %#v", updated)

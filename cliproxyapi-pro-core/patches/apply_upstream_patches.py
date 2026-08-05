@@ -1256,6 +1256,7 @@ type generateContextKey struct{}
 type attemptTrackerContextKey struct{}
 type attemptIndexContextKey struct{}
 type generateContextKey struct{}
+type skipMonitoringContextKey struct{}
 
 type attemptTracker struct {
 \tmu   sync.Mutex
@@ -1336,6 +1337,32 @@ func AttemptIndexFromContext(ctx context.Context) (int64, bool) {
 
 ''',
     'func WithAttemptTracking(ctx context.Context) context.Context',
+)
+insert_before(
+    usage_manager,
+    '// Plugin consumes usage records emitted by the proxy runtime.\n',
+    '''// WithSkipMonitoring marks an internal diagnostic request whose usage must
+// not be persisted by the request-monitoring sink. Other usage consumers still
+// receive the record so this flag does not change executor or auth semantics.
+func WithSkipMonitoring(ctx context.Context) context.Context {
+\tif ctx == nil {
+\t\tctx = context.Background()
+\t}
+\treturn context.WithValue(ctx, skipMonitoringContextKey{}, true)
+}
+
+// SkipMonitoringFromContext reports whether request-monitoring persistence
+// should ignore usage emitted from ctx.
+func SkipMonitoringFromContext(ctx context.Context) bool {
+\tif ctx == nil {
+\t\treturn false
+\t}
+\tskip, _ := ctx.Value(skipMonitoringContextKey{}).(bool)
+\treturn skip
+}
+
+''',
+    'func WithSkipMonitoring(ctx context.Context)',
 )
 replace_once(
     usage_manager,
@@ -2344,6 +2371,21 @@ elif 'requestmeta.' not in redisqueue_plugin_text:
     raise SystemExit(f'request metadata calls not found in {redisqueue_plugin}')
 replace_once(
     redisqueue_plugin,
+    '''\tif p == nil {
+\t\treturn
+\t}
+''',
+    '''\tif p == nil {
+\t\treturn
+\t}
+\tif coreusage.SkipMonitoringFromContext(ctx) {
+\t\treturn
+\t}
+''',
+    'coreusage.SkipMonitoringFromContext(ctx)',
+)
+replace_once(
+    redisqueue_plugin,
     '\trequestID := strings.TrimSpace(requestmeta.GetRequestID(ctx))\n\treasoningEffort :=',
     '\trequestID := strings.TrimSpace(requestmeta.GetRequestID(ctx))\n\tstream := coreusage.StreamFromContext(ctx)\n\treasoningEffort :=',
     'stream := coreusage.StreamFromContext(ctx)',
@@ -2400,6 +2442,43 @@ if redisqueue_plugin_test.exists():
     )
     text = text.replace('internallogging.', 'requestmeta.')
     write(redisqueue_plugin_test, text)
+    insert_before(
+        redisqueue_plugin_test,
+        'func TestUsageQueuePluginNormalizesDirectSDKUsageByProvider(t *testing.T) {\n',
+        '''func TestUsageQueuePluginSkipsMonitoringContext(t *testing.T) {
+\twithEnabledQueue(t, func() {
+\t\tctx := coreusage.WithSkipMonitoring(context.Background())
+\t\t(&usageQueuePlugin{}).HandleUsage(ctx, coreusage.Record{
+\t\t\tProvider: "codex",
+\t\t\tModel:    "gpt-test",
+\t\t\tDetail:   coreusage.Detail{InputTokens: 1, TotalTokens: 1},
+\t\t})
+\t\tif items := PopOldest(10); len(items) != 0 {
+\t\t\tt.Fatalf("PopOldest() items = %d, want 0 for skipped monitoring", len(items))
+\t\t}
+\t})
+}
+
+''',
+        'func TestUsageQueuePluginSkipsMonitoringContext',
+    )
+
+usage_manager_test = ROOT / 'sdk/cliproxy/usage/manager_test.go'
+insert_before(
+    usage_manager_test,
+    'func TestRecordOmittedGenerateIsEnabled(t *testing.T) {\n',
+    '''func TestSkipMonitoringContext(t *testing.T) {
+\tif SkipMonitoringFromContext(context.Background()) {
+\t\tt.Fatal("SkipMonitoringFromContext(background) = true, want false")
+\t}
+\tif !SkipMonitoringFromContext(WithSkipMonitoring(context.Background())) {
+\t\tt.Fatal("SkipMonitoringFromContext(marked) = false, want true")
+\t}
+}
+
+''',
+    'func TestSkipMonitoringContext',
+)
 
 queue_go_source('internal/requestmeta/client.go')
 

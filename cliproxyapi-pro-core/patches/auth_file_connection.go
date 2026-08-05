@@ -13,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
@@ -81,6 +82,7 @@ func (h *Handler) TestAuthFileConnection(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), authFileConnectionTestTimeout)
 	defer cancel()
+	ctx = coreusage.WithSkipMonitoring(ctx)
 	startedAt := time.Now()
 	response, errExecute := h.authManager.ExecutePinnedAuth(
 		ctx,
