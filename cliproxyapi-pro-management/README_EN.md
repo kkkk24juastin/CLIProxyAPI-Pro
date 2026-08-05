@@ -39,7 +39,7 @@ The page consumes the customized `cliproxyapi-pro-core` backend usage API. It lo
 - realtime request table with recent success/failure pattern bars
 - masking for sensitive token-like text in request metadata
 
-Auth-file account cards also expose a connection test. The dialog loads text models registered for that credential and calls `POST /v0/management/auth-files/test` with its exact `auth_index`. It shows model output and latency on success, or the upstream HTTP status, error code, and masked failure details on failure. Disabled and cooling-down credentials can be tested without changing the operator-controlled disabled switch.
+Auth-file account cards also expose a connection test. The dialog reuses upstream `GET /v0/management/auth-files/models`; when upstream no longer registers models for a disabled credential, the Pro backend makes that endpoint fall back to the matching provider's static definitions. It then calls `POST /v0/management/auth-files/test` with the exact `auth_index`. The dialog shows model output and latency on success, or the upstream HTTP status, error code, and masked failure details on failure. Disabled and cooling-down credentials can be tested without changing the operator-controlled disabled switch.
 
 Large account and realtime tables scroll inside their panels, so long histories do not stretch the whole page.
 

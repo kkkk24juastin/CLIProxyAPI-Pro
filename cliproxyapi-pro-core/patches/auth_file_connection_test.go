@@ -2,6 +2,7 @@ package management
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -61,13 +62,35 @@ func TestAuthFileConnectionUsesExactAuthAndReturnsOutput(t *testing.T) {
 	if errRegister != nil {
 		t.Fatalf("Register() error = %v", errRegister)
 	}
-	registry.GetGlobalRegistry().RegisterClient(auth.ID, "codex", []*registry.ModelInfo{{ID: "gpt-test", Type: "openai"}})
-	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
+	if registered := registry.GetGlobalRegistry().GetModelsForClient(auth.ID); len(registered) != 0 {
+		t.Fatalf("disabled auth unexpectedly has registered models: %#v", registered)
+	}
+	testModels := authFileConnectionTestModels(auth)
+	if len(testModels) == 0 {
+		t.Fatal("disabled auth did not receive fallback test models")
+	}
+	testModel := testModels[0].ID
 
 	handler := &Handler{authManager: manager}
+	modelsRecorder := httptest.NewRecorder()
+	modelsContext, _ := gin.CreateTestContext(modelsRecorder)
+	modelsContext.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v0/management/auth-files/models?name=account.json",
+		nil,
+	)
+	handler.GetAuthFileModels(modelsContext)
+	if modelsRecorder.Code != http.StatusOK || !strings.Contains(modelsRecorder.Body.String(), `"id":"`+testModel+`"`) {
+		t.Fatalf("test models status = %d, body = %s", modelsRecorder.Code, modelsRecorder.Body.String())
+	}
+
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v0/management/auth-files/test", strings.NewReader(`{"name":"account.json","auth_index":"`+auth.EnsureIndex()+`","model":"gpt-test"}`))
+	ctx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/auth-files/test",
+		strings.NewReader(fmt.Sprintf(`{"name":"account.json","auth_index":"%s","model":"%s"}`, auth.EnsureIndex(), testModel)),
+	)
 	ctx.Request.Header.Set("Content-Type", "application/json")
 
 	handler.TestAuthFileConnection(ctx)
@@ -75,7 +98,7 @@ func TestAuthFileConnectionUsesExactAuthAndReturnsOutput(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	if executor.lastAuthID != auth.ID || executor.lastModel != "gpt-test" {
+	if executor.lastAuthID != auth.ID || executor.lastModel != testModel {
 		t.Fatalf("executor received auth=%q model=%q", executor.lastAuthID, executor.lastModel)
 	}
 	if updated, ok := manager.GetByID(auth.ID); !ok || updated == nil || !updated.Disabled {

@@ -141,7 +141,7 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 
 - `POST /v0/management/auth-files/test` — 传入 `name`、可选的 `auth_index` 和 `model`，将一次最小 OpenAI Chat 格式的真实文本生成请求固定到该认证记录。
 
-后端只允许使用该认证记录已注册的文本模型，并沿用 upstream 执行器的请求翻译、账号代理、401 刷新、模型别名和结果统计路径。诊断执行会绕过正常调度的 disabled、cooldown 和 unavailable 可用性门槛，因此可验证异常账号是否已经恢复；结果不会清除用户设置的 `disabled` 开关。响应包含 `success`、`model`、`latency_ms`、模型 `output`，或 `error`、`error_code`、`http_status`。
+Pro 扩展了上游 `GET /v0/management/auth-files/models`：优先使用该认证记录已注册的模型；上游因账号禁用而注销模型时，改用对应提供商的静态模型定义，Codex 会按账号套餐选择目录。因此模型查看和连接测试可以共用同一个接口。测试沿用 upstream 执行器的请求翻译、账号代理、401 刷新、模型别名和结果统计路径。诊断执行会绕过正常调度的 disabled、cooldown 和 unavailable 可用性门槛，因此可验证异常账号是否已经恢复；结果不会清除用户设置的 `disabled` 开关。响应包含 `success`、`model`、`latency_ms`、模型 `output`，或 `error`、`error_code`、`http_status`。
 
 ### 内建代理池与 OAuth 套餐模型策略
 

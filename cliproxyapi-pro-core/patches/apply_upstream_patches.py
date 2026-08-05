@@ -2440,7 +2440,54 @@ replace_once(
 replace_once(
     server_management,
     '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n''',
-    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\tmgmt.POST("/auth-files/test", s.mgmt.TestAuthFileConnection)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n\t\ts.mgmt.RegisterProFeatureRoutes(mgmt)\n''',
+	'''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\tmgmt.POST("/auth-files/test", s.mgmt.TestAuthFileConnection)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n\t\ts.mgmt.RegisterProFeatureRoutes(mgmt)\n''',
+)
+
+auth_files_handler = ROOT / 'internal/api/handlers/management/auth_files.go'
+replace_once(
+    auth_files_handler,
+    '''\t// Try to find auth ID via authManager
+\tvar authID string
+\tif h.authManager != nil {
+\t\tauths := h.authManager.List()
+\t\tfor _, auth := range auths {
+\t\t\tif auth.FileName == name || auth.ID == name {
+\t\t\t\tauthID = auth.ID
+\t\t\t\tbreak
+\t\t\t}
+\t\t}
+\t}
+''',
+    '''\t// Try to find the exact auth record via authManager. Disabled auths are
+\t// intentionally absent from the upstream model registry, but their provider
+\t// metadata is still needed for the static model fallback below.
+\tvar authID string
+\tvar selectedAuth *coreauth.Auth
+\tif h.authManager != nil {
+\t\tauths := h.authManager.List()
+\t\tfor _, auth := range auths {
+\t\t\tif auth.FileName == name || auth.ID == name {
+\t\t\t\tauthID = auth.ID
+\t\t\t\tselectedAuth = auth
+\t\t\t\tbreak
+\t\t\t}
+\t\t}
+\t}
+''',
+)
+replace_once(
+    auth_files_handler,
+    '''\tmodels := reg.GetModelsForClient(authID)
+
+\tresult := make([]gin.H, 0, len(models))
+''',
+    '''\tmodels := reg.GetModelsForClient(authID)
+\tif len(models) == 0 && selectedAuth != nil {
+\t\tmodels = authFileManagementFallbackModels(selectedAuth)
+\t}
+
+\tresult := make([]gin.H, 0, len(models))
+''',
 )
 
 handler = ROOT / 'internal/api/handlers/management/handler.go'

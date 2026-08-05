@@ -60,7 +60,7 @@ func (h *Handler) TestAuthFileConnection(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "auth file not found"})
 		return
 	}
-	model, errModel := resolveAuthFileConnectionTestModel(auth.ID, body.Model)
+	model, errModel := resolveAuthFileConnectionTestModel(auth, body.Model)
 	if errModel != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": errModel.Error()})
 		return
@@ -135,13 +135,10 @@ func (h *Handler) TestAuthFileConnection(c *gin.Context) {
 	})
 }
 
-func resolveAuthFileConnectionTestModel(authID string, requested string) (string, error) {
-	models := registry.GetGlobalRegistry().GetModelsForClient(strings.TrimSpace(authID))
+func resolveAuthFileConnectionTestModel(auth *coreauth.Auth, requested string) (string, error) {
+	models := authFileConnectionTestModels(auth)
 	textModels := make([]string, 0, len(models))
 	for _, model := range models {
-		if model == nil || !isAuthFileConnectionTextModel(model) {
-			continue
-		}
 		textModels = append(textModels, strings.TrimSpace(model.ID))
 	}
 	if len(textModels) == 0 {
@@ -156,6 +153,81 @@ func resolveAuthFileConnectionTestModel(authID string, requested string) (string
 		}
 	}
 	return "", fmt.Errorf("auth file does not support test model %q", requested)
+}
+
+func authFileConnectionTestModels(auth *coreauth.Auth) []*registry.ModelInfo {
+	if auth == nil {
+		return nil
+	}
+	models := registry.GetGlobalRegistry().GetModelsForClient(strings.TrimSpace(auth.ID))
+	if len(models) == 0 {
+		models = authFileManagementFallbackModels(auth)
+	}
+
+	result := make([]*registry.ModelInfo, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		if model == nil || !isAuthFileConnectionTextModel(model) {
+			continue
+		}
+		id := strings.TrimSpace(model.ID)
+		key := strings.ToLower(id)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, model)
+	}
+	return result
+}
+
+// authFileManagementFallbackModels supplies model metadata when upstream has
+// unregistered a disabled auth record from the per-client model registry.
+// It is shared by the ordinary auth-file models endpoint and connection tests.
+func authFileManagementFallbackModels(auth *coreauth.Auth) []*registry.ModelInfo {
+	provider := strings.ToLower(strings.TrimSpace(auth.Provider))
+	switch provider {
+	case "codex":
+		switch strings.ToLower(authFileConnectionAuthValue(auth, "plan_type", "plan")) {
+		case "free":
+			return registry.GetCodexFreeModels()
+		case "team", "business", "go":
+			return registry.GetCodexTeamModels()
+		case "plus":
+			return registry.GetCodexPlusModels()
+		default:
+			return registry.GetCodexProModels()
+		}
+	case "gemini-cli", "gemini_cli":
+		provider = "gemini"
+	case "claude-code", "claude_code":
+		provider = "claude"
+	}
+	if models := registry.GetStaticModelDefinitionsByChannel(provider); len(models) > 0 {
+		return models
+	}
+	return registry.GetGlobalRegistry().GetAvailableModelsByProvider(provider)
+}
+
+func authFileConnectionAuthValue(auth *coreauth.Auth, keys ...string) string {
+	if auth == nil {
+		return ""
+	}
+	for _, key := range keys {
+		if auth.Attributes != nil {
+			if value := strings.TrimSpace(auth.Attributes[key]); value != "" {
+				return value
+			}
+		}
+		if auth.Metadata != nil {
+			if value, exists := auth.Metadata[key]; exists && value != nil {
+				if normalized := strings.TrimSpace(fmt.Sprint(value)); normalized != "" {
+					return normalized
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func isAuthFileConnectionTextModel(model *registry.ModelInfo) bool {
