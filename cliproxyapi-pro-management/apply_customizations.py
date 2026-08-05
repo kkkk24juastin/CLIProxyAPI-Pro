@@ -36,6 +36,85 @@ MANAGEMENT_UPDATE_LOCALE_KEYS = {
     },
 }
 
+AUTH_FILE_CONNECTION_TEST_LOCALE_KEYS = {
+    'en.json': {
+        'connection_test_button': 'Test connection',
+        'connection_test_title': 'Test connection - {{account}}',
+        'connection_test_hint': 'Sends one minimal real text-generation request through this exact credential. The request may consume a small amount of quota.',
+        'connection_test_model': 'Test model',
+        'connection_test_select_model': 'Select a text model',
+        'connection_test_loading_models': 'Loading available models...',
+        'connection_test_load_models_failed': 'Failed to load available models',
+        'connection_test_no_models': 'This credential has no available text model to test.',
+        'connection_test_ready': 'Ready to test',
+        'connection_test_running': 'Sending test request...',
+        'connection_test_success': 'Connection test passed',
+        'connection_test_failed': 'Connection test failed',
+        'connection_test_start': 'Start test',
+        'connection_test_retry': 'Test again',
+        'connection_test_latency': '{{count}} ms',
+        'connection_test_output': 'Model output',
+        'connection_test_error_detail': 'Failure details',
+    },
+    'ru.json': {
+        'connection_test_button': 'Проверить подключение',
+        'connection_test_title': 'Проверка подключения - {{account}}',
+        'connection_test_hint': 'Отправляет один минимальный реальный запрос генерации текста через выбранные учётные данные. Запрос может израсходовать небольшую часть квоты.',
+        'connection_test_model': 'Тестовая модель',
+        'connection_test_select_model': 'Выберите текстовую модель',
+        'connection_test_loading_models': 'Загрузка доступных моделей...',
+        'connection_test_load_models_failed': 'Не удалось загрузить доступные модели',
+        'connection_test_no_models': 'Для этих учётных данных нет доступной текстовой модели.',
+        'connection_test_ready': 'Готово к проверке',
+        'connection_test_running': 'Отправка тестового запроса...',
+        'connection_test_success': 'Проверка подключения пройдена',
+        'connection_test_failed': 'Проверка подключения не пройдена',
+        'connection_test_start': 'Начать проверку',
+        'connection_test_retry': 'Проверить снова',
+        'connection_test_latency': '{{count}} мс',
+        'connection_test_output': 'Ответ модели',
+        'connection_test_error_detail': 'Сведения об ошибке',
+    },
+    'zh-CN.json': {
+        'connection_test_button': '测试连接',
+        'connection_test_title': '测试连接 - {{account}}',
+        'connection_test_hint': '使用当前选中的认证文件发送一次最小真实文本生成请求，测试会消耗少量额度。',
+        'connection_test_model': '测试模型',
+        'connection_test_select_model': '选择文本模型',
+        'connection_test_loading_models': '正在加载可用模型...',
+        'connection_test_load_models_failed': '加载可用模型失败',
+        'connection_test_no_models': '当前认证文件没有可用于测试的文本模型。',
+        'connection_test_ready': '等待开始测试',
+        'connection_test_running': '正在发送测试请求...',
+        'connection_test_success': '连接测试成功',
+        'connection_test_failed': '连接测试失败',
+        'connection_test_start': '开始测试',
+        'connection_test_retry': '重新测试',
+        'connection_test_latency': '{{count}} 毫秒',
+        'connection_test_output': '模型输出',
+        'connection_test_error_detail': '失败详情',
+    },
+    'zh-TW.json': {
+        'connection_test_button': '測試連線',
+        'connection_test_title': '測試連線 - {{account}}',
+        'connection_test_hint': '使用目前選取的驗證檔案傳送一次最小真實文字生成請求，測試會消耗少量配額。',
+        'connection_test_model': '測試模型',
+        'connection_test_select_model': '選擇文字模型',
+        'connection_test_loading_models': '正在載入可用模型...',
+        'connection_test_load_models_failed': '載入可用模型失敗',
+        'connection_test_no_models': '目前驗證檔案沒有可用於測試的文字模型。',
+        'connection_test_ready': '等待開始測試',
+        'connection_test_running': '正在傳送測試請求...',
+        'connection_test_success': '連線測試成功',
+        'connection_test_failed': '連線測試失敗',
+        'connection_test_start': '開始測試',
+        'connection_test_retry': '重新測試',
+        'connection_test_latency': '{{count}} 毫秒',
+        'connection_test_output': '模型輸出',
+        'connection_test_error_detail': '失敗詳情',
+    },
+}
+
 QUOTA_LOCALE_KEYS = {
     'en.json': {
         'cached_at': 'Updated',
@@ -1014,10 +1093,11 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
         '  onShowModels: (file: AuthFileItem) => void;\n',
         '  onShowModels: (file: AuthFileItem) => void;\n  onShowUsage: (file: AuthFileItem) => void;\n',
     )
-    replace_once(
+    insert_once(
         card_path,
         '    onShowModels,\n    onDownload,\n',
         '    onShowModels,\n    onShowUsage,\n    onDownload,\n',
+        '    onShowUsage,\n',
     )
     card_text = read(card_path)
     legacy_usage_marker = '            </div>\n          </div>\n\n          <div className={`${styles.cardMeta}'
@@ -1165,6 +1245,111 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
         "  }, [files, isCurrentLayer]);\n\n"
         "  const existingTypes = useMemo(() => {\n",
         "}, [files, isCurrentLayer]);",
+    )
+
+
+def patch_auth_file_connection_test(target: Path) -> None:
+    api_path = target / 'src/services/api/authFiles.ts'
+    card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
+    page_path = auth_files_page_path(target)
+
+    insert_once(
+        api_path,
+        "type AuthFileStatusResponse = { status: string; disabled: boolean };\n",
+        "type AuthFileStatusResponse = { status: string; disabled: boolean };\n"
+        "export type AuthFileConnectionTestResponse = {\n"
+        "  success: boolean;\n"
+        "  model?: string;\n"
+        "  latency_ms: number;\n"
+        "  output?: string;\n"
+        "  error?: string;\n"
+        "  error_code?: string;\n"
+        "  http_status?: number;\n"
+        "};\n"
+        "export type AuthFileConnectionTestRequest = {\n"
+        "  name: string;\n"
+        "  auth_index?: string;\n"
+        "  model: string;\n"
+        "};\n",
+        'export type AuthFileConnectionTestResponse',
+    )
+    insert_once(
+        api_path,
+        "  uploadFiles: async (files: File[]): Promise<AuthFileBatchUploadResult> => {\n",
+        "  testConnection: (payload: AuthFileConnectionTestRequest, signal?: AbortSignal) =>\n"
+        "    apiClient.post<AuthFileConnectionTestResponse>('/auth-files/test', payload, { signal }),\n\n"
+        "  uploadFiles: async (files: File[]): Promise<AuthFileBatchUploadResult> => {\n",
+        "testConnection: (payload: AuthFileConnectionTestRequest, signal?: AbortSignal)",
+    )
+
+    replace_once(
+        card_path,
+        "  IconModelCluster,\n  IconRefreshCw,\n",
+        "  IconModelCluster,\n  IconNetwork,\n  IconRefreshCw,\n",
+    )
+    replace_once(
+        card_path,
+        "  onShowUsage: (file: AuthFileItem) => void;\n  onDownload: (name: string) => void;\n",
+        "  onShowUsage: (file: AuthFileItem) => void;\n"
+        "  onTestConnection: (file: AuthFileItem) => void;\n"
+        "  onDownload: (name: string) => void;\n",
+    )
+    replace_once(
+        card_path,
+        "    onShowUsage,\n    onDownload,\n",
+        "    onShowUsage,\n    onTestConnection,\n    onDownload,\n",
+    )
+    insert_once(
+        card_path,
+        "              {showManualRefreshButton && (\n",
+        "              <Button\n"
+        "                variant=\"secondary\"\n"
+        "                size=\"sm\"\n"
+        "                onClick={() => onTestConnection(file)}\n"
+        "                className={styles.iconButton}\n"
+        "                title={t('auth_files.connection_test_button')}\n"
+        "                disabled={\n"
+        "                  disableControls ||\n"
+        "                  statusUpdating[file.name] === true ||\n"
+        "                  isManualRefreshing\n"
+        "                }\n"
+        "              >\n"
+        "                <IconNetwork size={15} />\n"
+        "              </Button>\n"
+        "              {showManualRefreshButton && (\n",
+        "onClick={() => onTestConnection(file)}",
+    )
+
+    insert_once(
+        page_path,
+        "import { AccountUsageModal } from '@/pro/modules/monitoring';\n",
+        "import { AccountUsageModal } from '@/pro/modules/monitoring';\n"
+        "import { AuthFileConnectionTestModal } from '@/pro/authFiles/AuthFileConnectionTestModal';\n",
+        "AuthFileConnectionTestModal } from '@/pro/authFiles/AuthFileConnectionTestModal'",
+    )
+    insert_once(
+        page_path,
+        "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n",
+        "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n"
+        "  const [connectionTestFile, setConnectionTestFile] = useState<AuthFileItem | null>(null);\n",
+        'const [connectionTestFile, setConnectionTestFile]',
+    )
+    insert_once(
+        page_path,
+        "                onShowUsage={setAccountUsageFile}\n",
+        "                onShowUsage={setAccountUsageFile}\n"
+        "                onTestConnection={setConnectionTestFile}\n",
+        "onTestConnection={setConnectionTestFile}",
+    )
+    insert_once(
+        page_path,
+        "      <AccountUsageModal file={accountUsageFile} onClose={() => setAccountUsageFile(null)} />\n",
+        "      <AuthFileConnectionTestModal\n"
+        "        file={connectionTestFile}\n"
+        "        onClose={() => setConnectionTestFile(null)}\n"
+        "      />\n\n"
+        "      <AccountUsageModal file={accountUsageFile} onClose={() => setAccountUsageFile(null)} />\n",
+        '<AuthFileConnectionTestModal',
     )
 
 
@@ -1569,6 +1754,12 @@ def patch_locales(target: Path) -> None:
             locale_path.name,
             AUTH_FILES_SELECTED_COUNT_LABEL_KEYS['en.json'],
         )
+        data.setdefault('auth_files', {}).update(
+            AUTH_FILE_CONNECTION_TEST_LOCALE_KEYS.get(
+                locale_path.name,
+                AUTH_FILE_CONNECTION_TEST_LOCALE_KEYS['en.json'],
+            )
+        )
         data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
         data.setdefault('xai_quota', {}).update(
             XAI_QUOTA_LOCALE_KEYS.get(locale_path.name, XAI_QUOTA_LOCALE_KEYS['en.json'])
@@ -1925,6 +2116,7 @@ def main() -> None:
     patch_auth_files_gemini_quota_latest(target)
     patch_auth_files_runtime_state(target)
     patch_account_usage_feature(target)
+    patch_auth_file_connection_test(target)
     patch_runtime_detection(target)
     patch_management_update_check(target)
     patch_api_client_connection_isolation(target)

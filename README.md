@@ -91,6 +91,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 配额卡片缓存时间显示和单卡刷新。
 - 对接后端账号巡检，负责运行控制、状态轮询、结果展示和操作确认。
 - 认证文件页面可显示巡检写入的 `last_error` 健康消息。
+- 认证文件账号卡片支持固定到当前 `auth_index` 的真实模型连接测试，展示模型输出、耗时和上游错误详情。
 - 账号巡检结果表格的刷新/重检操作会反馈令牌刷新结果或重检后的业务判定。
 - 账号禁用、启用、删除建议与执行。
 - 多语言文案补丁。
@@ -139,6 +140,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 /v0/management/usage
 /v0/management/usage/*
 /v0/management/quota/fetch
+/v0/management/auth-files/test
 /v0/management/account-inspection/*
 /v0/management/routing-policy
 /v0/management/routing-policy/*

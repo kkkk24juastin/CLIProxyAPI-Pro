@@ -137,6 +137,12 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 `Executor.HttpRequest` 提供兼容适配；插件未来原生实现协议后会自动优先使用原生能力。
 协议字段与兼容策略见 [QUOTA_PROVIDER.md](QUOTA_PROVIDER.md)。
 
+### 认证文件连接测试
+
+- `POST /v0/management/auth-files/test` — 传入 `name`、可选的 `auth_index` 和 `model`，将一次最小 OpenAI Chat 格式的真实文本生成请求固定到该认证记录。
+
+后端只允许使用该认证记录已注册的文本模型，并沿用 upstream 执行器的请求翻译、账号代理、401 刷新、模型别名和结果统计路径。诊断执行会绕过正常调度的 disabled、cooldown 和 unavailable 可用性门槛，因此可验证异常账号是否已经恢复；结果不会清除用户设置的 `disabled` 开关。响应包含 `success`、`model`、`latency_ms`、模型 `output`，或 `error`、`error_code`、`http_status`。
+
 ### 内建代理池与 OAuth 套餐模型策略
 
 Core 内建回环 SOCKS5 代理池以及 xAI、Codex、Claude、Gemini CLI、Antigravity、Kimi 的 OAuth 套餐模型策略。代理接管只在运行时替换全局传输路径，不改写 `config.yaml`，凭证级代理和显式 `direct` 不受影响。模型处理顺序为 upstream `excluded_models`、内建套餐过滤、OAuth alias/prefix、模型注册，最终结果同时约束 `/v1/models` 聚合和请求调度候选账号。

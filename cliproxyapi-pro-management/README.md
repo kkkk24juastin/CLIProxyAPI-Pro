@@ -77,6 +77,8 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - Kimi
 - xAI
 
+认证文件页的非运行时账号卡片还提供“测试连接”入口。弹窗先读取该认证文件注册的文本模型，再通过 `POST /v0/management/auth-files/test` 将一次最小真实生成请求固定到当前 `auth_index`；成功时展示模型输出和耗时，失败时展示上游 HTTP 状态、错误码与脱敏后的错误详情。被禁用或处于冷却状态的账号也可独立测试，测试不会改动用户设置的禁用开关。
+
 当 `src/pro/modules/quota/features.ts` 中的特性开关启用时，配额卡片还会显示缓存时间戳，并支持成功状态下的单卡刷新。
 
 ### 账号巡检页面

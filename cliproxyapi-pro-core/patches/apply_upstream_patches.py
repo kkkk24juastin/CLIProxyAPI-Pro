@@ -201,6 +201,8 @@ if customization_sentinel.exists():
 new_customization_paths = (
     'internal/pro',
     'internal/api/handlers/management/account_inspection_host.go',
+    'internal/api/handlers/management/auth_file_connection.go',
+    'internal/api/handlers/management/auth_file_connection_test.go',
     *[
         f'internal/api/handlers/management/{name}'
         for name in ACCOUNT_INSPECTION_SOURCE_FILES
@@ -232,6 +234,7 @@ new_customization_paths = (
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
     'sdk/cliproxy/auth/inspection_refresh.go',
+    'sdk/cliproxy/auth/pinned_execution.go',
     'sdk/cliproxy/pro_features_service_test.go',
 )
 for relative_path in new_customization_paths:
@@ -1095,6 +1098,8 @@ write(plugin_quota_management_test, read_text(Path(__file__).resolve().parent / 
 
 for source_name, target_name in (
     ('account_inspection_host.go', 'account_inspection_host.go'),
+    ('auth_file_connection.go', 'auth_file_connection.go'),
+    ('auth_file_connection_test.go', 'auth_file_connection_test.go'),
     ('pro_auth_mutation.go', 'pro_auth_mutation.go'),
     ('pro_management_runtime.go', 'pro_management_runtime.go'),
 ):
@@ -2435,7 +2440,7 @@ replace_once(
 replace_once(
     server_management,
     '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n''',
-    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n\t\ts.mgmt.RegisterProFeatureRoutes(mgmt)\n''',
+    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\tmgmt.POST("/auth-files/test", s.mgmt.TestAuthFileConnection)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n\t\ts.mgmt.RegisterProFeatureRoutes(mgmt)\n''',
 )
 
 handler = ROOT / 'internal/api/handlers/management/handler.go'
@@ -2615,6 +2620,7 @@ insert_before_nth(
 )
 
 queue_go_source('sdk/cliproxy/auth/inspection_refresh.go')
+queue_go_source('sdk/cliproxy/auth/pinned_execution.go')
 
 auth_types = ROOT / 'sdk/cliproxy/auth/types.go'
 replace_once(
@@ -3261,6 +3267,8 @@ subprocess.run([
         for name in ACCOUNT_INSPECTION_SOURCE_FILES
     ],
     'internal/api/handlers/management/account_inspection_host.go',
+    'internal/api/handlers/management/auth_file_connection.go',
+    'internal/api/handlers/management/auth_file_connection_test.go',
     'internal/api/handlers/management/auth_files_fields.go',
     'internal/api/handlers/management/auth_files.go',
     'internal/api/handlers/management/handler.go',
@@ -3404,6 +3412,7 @@ subprocess.run([
     'sdk/auth/filestore_test.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
+    'sdk/cliproxy/auth/pinned_execution.go',
     'sdk/cliproxy/auth/conductor.go',
     'sdk/cliproxy/auth/scheduler.go',
     'sdk/cliproxy/auth/types.go',

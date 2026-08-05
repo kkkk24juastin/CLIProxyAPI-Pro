@@ -138,6 +138,12 @@ changes: Core adapts its existing `Executor.HttpRequest`; a future native implem
 priority automatically. See [QUOTA_PROVIDER.md](QUOTA_PROVIDER.md) for the schema and compatibility
 rules.
 
+### Auth-file connection test
+
+- `POST /v0/management/auth-files/test` — accepts `name`, optional `auth_index`, and `model`, then pins one minimal real OpenAI Chat-format text-generation request to that auth record.
+
+The backend accepts only text models registered for the selected auth and reuses upstream request translation, credential proxying, 401 refresh, model aliasing, and result accounting. Diagnostic execution bypasses normal disabled, cooldown, and unavailable eligibility gates so an unhealthy credential can be rechecked, while preserving the operator-controlled `disabled` switch. The response contains `success`, `model`, `latency_ms`, and model `output`, or `error`, `error_code`, and `http_status`.
+
 ### Built-in proxy pool and OAuth plan model policy
 
 Core includes a loopback SOCKS5 proxy pool and OAuth plan policies for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi. Proxy takeover changes only the runtime global transport path; it does not rewrite `config.yaml`, credential-level proxies, or explicit `direct` settings. Model processing order is upstream `excluded_models`, built-in plan filtering, OAuth alias/prefix, then model registration. The result constrains both `/v1/models` aggregation and scheduler candidates.

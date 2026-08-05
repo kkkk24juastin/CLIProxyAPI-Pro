@@ -1,0 +1,108 @@
+.content {
+  display: grid;
+  gap: 16px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.modelRow {
+  display: grid;
+  gap: 8px;
+}
+
+.label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.loadingModels {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 46px;
+  padding: 11px 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.running {
+  border-color: color-mix(in srgb, #2563eb 32%, var(--border-color));
+  color: color-mix(in srgb, #2563eb 78%, var(--text-primary));
+}
+
+.success {
+  border-color: color-mix(in srgb, #059669 34%, var(--border-color));
+  background: color-mix(in srgb, #059669 8%, var(--bg-secondary));
+  color: color-mix(in srgb, #059669 78%, var(--text-primary));
+}
+
+.error {
+  border-color: color-mix(in srgb, #dc2626 34%, var(--border-color));
+  background: color-mix(in srgb, #dc2626 7%, var(--bg-secondary));
+  color: color-mix(in srgb, #dc2626 82%, var(--text-primary));
+}
+
+.latency {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.resultBlock {
+  display: grid;
+  gap: 7px;
+}
+
+.resultBlock pre,
+.errorBox {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  max-height: 260px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.errorBox,
+.errorResult pre {
+  border-color: color-mix(in srgb, #dc2626 32%, var(--border-color));
+  background: color-mix(in srgb, #dc2626 6%, var(--bg-secondary));
+  color: color-mix(in srgb, #dc2626 82%, var(--text-primary));
+}
+
+@media (max-width: 640px) {
+  .status {
+    flex-wrap: wrap;
+  }
+
+  .latency {
+    width: 100%;
+    margin-left: 27px;
+  }
+}

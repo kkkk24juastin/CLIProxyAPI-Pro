@@ -12,6 +12,7 @@ This project does not maintain a full fork of either upstream project. Instead, 
 - Persistent request data with import, export, and WebDAV backup.
 - Account inspection for Codex, Claude, Antigravity, Gemini CLI, Kimi, and xAI.
 - Persistent inspection quota and account-error state for quota management and auth-file health views.
+- A real-model connection test pinned to the selected auth-file `auth_index`, with output, latency, and upstream error details.
 - Optional automatic enable, disable, delete, and token-refresh actions.
 - Optional deep probes for Antigravity soft bans and xAI availability anomalies.
 - A routing-policy page for upstream routing behavior and provider-scoped request-state protection.
@@ -91,6 +92,7 @@ Main capabilities:
 - Shows quota-card cache timestamps and supports single-card refresh.
 - Integrates with backend account inspection for run control, polling, results, and actions.
 - Shows inspection-written `last_error` messages on the auth files page.
+- Adds a connection-test dialog to auth-file account cards.
 - Shows business-result toast messages for account-inspection refresh and recheck actions.
 - Supports suggested account disable, enable, and delete actions.
 - Adds locale patches.
