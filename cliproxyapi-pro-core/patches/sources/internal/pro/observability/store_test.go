@@ -304,7 +304,7 @@ func TestUsageSummaryUpdatesAfterDeleteEventsBefore(t *testing.T) {
 	}
 }
 
-func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
+func TestResetUsageStatisticsClearsUsageAndAuthRuntimeStats(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	settings := MonitoringSettings{RetentionDays: 30}
@@ -318,6 +318,17 @@ func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
 		testUsageEvent(0, false, 10),
 		testUsageEvent(1, true, 20),
 	)
+	if err := store.SetRoutingCursorState(ctx, RoutingCursorState{
+		CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "auth-reset", UpdatedAtMS: time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("SetRoutingCursorState() error = %v", err)
+	}
+	if err := store.SetAuthRuntimeStats(ctx, AuthRuntimeStats{
+		AuthIndex: "idx-reset", AuthID: "auth-reset", FileName: "reset.json",
+		SelectedCount: 9, SuccessCount: 7, FailureCount: 2, UpdatedAtMS: time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("SetAuthRuntimeStats() error = %v", err)
+	}
 	latestIDBefore, _, err := store.LatestCursor(ctx)
 	if err != nil {
 		t.Fatalf("LatestCursor() before reset error = %v", err)
@@ -334,6 +345,9 @@ func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
 	}
 	if result.DeletedEvents != 2 {
 		t.Fatalf("deleted events = %d, want 2", result.DeletedEvents)
+	}
+	if result.DeletedAuthRuntimeStats != 1 {
+		t.Fatalf("deleted auth runtime stats = %d, want 1", result.DeletedAuthRuntimeStats)
 	}
 	if result.Generation != stateBefore.Generation+1 || result.ResetAtMS <= 0 {
 		t.Fatalf("reset state = %+v, want generation %d and reset timestamp", result, stateBefore.Generation+1)
@@ -365,6 +379,13 @@ func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
 	if storedSettings.RetentionDays != settings.RetentionDays {
 		t.Fatalf("retention days after reset = %d, want %d", storedSettings.RetentionDays, settings.RetentionDays)
 	}
+	if stats, err := store.ListAuthRuntimeStats(ctx); err != nil || len(stats) != 0 {
+		t.Fatalf("auth runtime stats after reset = %+v err:%v, want empty", stats, err)
+	}
+	cursors, err := store.ListRoutingCursorStates(ctx)
+	if err != nil || len(cursors) != 1 || cursors[0].LastAuthID != "auth-reset" {
+		t.Fatalf("routing cursors after reset = %+v err:%v, want preserved auth-reset cursor", cursors, err)
+	}
 
 	insertTestUsageEvents(t, store, testUsageEvent(2, false, 30))
 	newEvents, err := store.EventsAfter(ctx, 0, 10)
@@ -380,6 +401,30 @@ func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
 	}
 	if stateAfter.Generation != result.Generation {
 		t.Fatalf("generation after new insert = %d, want %d", stateAfter.Generation, result.Generation)
+	}
+}
+
+func TestResetUsageStatisticsClearsAuthStatsWithoutUsageEvents(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.SetAuthRuntimeStats(ctx, AuthRuntimeStats{
+		AuthIndex: "idx-only", AuthID: "auth-only", SelectedCount: 3, UpdatedAtMS: time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("SetAuthRuntimeStats() error = %v", err)
+	}
+	stateBefore, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() error = %v", err)
+	}
+	result, err := store.ResetUsageStatistics(ctx)
+	if err != nil {
+		t.Fatalf("ResetUsageStatistics() error = %v", err)
+	}
+	if result.DeletedEvents != 0 || result.DeletedAuthRuntimeStats != 1 || result.Generation != stateBefore.Generation+1 {
+		t.Fatalf("reset result = %+v, want auth-only reset and advanced generation", result)
+	}
+	if stats, err := store.ListAuthRuntimeStats(ctx); err != nil || len(stats) != 0 {
+		t.Fatalf("auth runtime stats after reset = %+v err:%v, want empty", stats, err)
 	}
 }
 

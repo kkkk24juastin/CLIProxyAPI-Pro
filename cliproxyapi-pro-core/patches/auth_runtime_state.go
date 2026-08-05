@@ -253,6 +253,12 @@ func (m *Manager) ApplyImportedRuntimeState(cursors []embeddedusage.RoutingCurso
 				// ID-only fallback is less stable and keeps the fingerprint guard to
 				// prevent statistics from being attached to a replaced credential.
 				applyStoredAuthRuntimeStats(auth, item)
+			} else {
+				// Runtime-state application is authoritative. Accounts omitted from
+				// the supplied snapshot must not retain counters from the previous
+				// dataset; reset totals and recent buckets while preserving identity,
+				// availability, and routing cursor state.
+				applyAuthRuntimeStats(auth, embeddedusage.AuthRuntimeStats{})
 			}
 		}
 		snapshots = append(snapshots, auth.Clone())

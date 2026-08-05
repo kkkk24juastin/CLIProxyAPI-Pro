@@ -48,7 +48,7 @@ The embedded service exposes these management routes:
 - `GET /v0/management/usage/stream` — SSE stream for live usage updates.
 - `GET /v0/management/usage/export` — JSONL/NDJSON export.
 - `POST /v0/management/usage/import` — JSONL/NDJSON import.
-- `POST /v0/management/usage/reset` — atomically clear request events and derived statistics while preserving monitoring settings, model prices, quota cache, and backups.
+- `POST /v0/management/usage/reset` — clear request events, derived statistics, and account scheduling/success/failure counters behind an exclusive runtime-state barrier while preserving routing cursors, monitoring settings, model prices, quota cache, and backups.
 - `GET /v0/management/usage/status` — service status and record counts.
 - `GET /v0/management/usage/quota-cache` — read quota cache entries or stats.
 - `PUT /v0/management/usage/quota-cache` — write a quota cache entry.

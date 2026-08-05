@@ -33,9 +33,10 @@ type UsageDatasetState struct {
 }
 
 type UsageResetResult struct {
-	DeletedEvents int64 `json:"deletedEvents"`
-	Generation    int64 `json:"generation"`
-	ResetAtMS     int64 `json:"resetAtMs"`
+	DeletedEvents           int64 `json:"deletedEvents"`
+	DeletedAuthRuntimeStats int64 `json:"deletedAuthRuntimeStats"`
+	Generation              int64 `json:"generation"`
+	ResetAtMS               int64 `json:"resetAtMs"`
 }
 
 type UsageEventQueryOptions struct {
@@ -2151,6 +2152,10 @@ func (s *Store) ResetUsageStatistics(ctx context.Context) (UsageResetResult, err
 	if err := tx.QueryRowContext(ctx, `select count(*) from usage_events`).Scan(&deletedEvents); err != nil {
 		return UsageResetResult{}, err
 	}
+	var deletedAuthRuntimeStats int64
+	if err := tx.QueryRowContext(ctx, `select count(*) from auth_runtime_stats`).Scan(&deletedAuthRuntimeStats); err != nil {
+		return UsageResetResult{}, err
+	}
 
 	var generation, resetAtMS int64
 	if err := tx.QueryRowContext(ctx, `select generation, reset_at_ms from usage_summary where id = 1`).Scan(&generation, &resetAtMS); err != nil {
@@ -2160,10 +2165,21 @@ func (s *Store) ResetUsageStatistics(ctx context.Context) (UsageResetResult, err
 		generation = 1
 	}
 
+	resetRequired := deletedEvents > 0 || deletedAuthRuntimeStats > 0
 	if deletedEvents > 0 {
 		if _, err := tx.ExecContext(ctx, `delete from usage_events`); err != nil {
 			return UsageResetResult{}, err
 		}
+	}
+	if deletedAuthRuntimeStats > 0 {
+		if _, err := tx.ExecContext(ctx, `delete from auth_runtime_stats`); err != nil {
+			return UsageResetResult{}, err
+		}
+		if err := bumpRuntimeGenerationTx(ctx, tx, "auth_runtime_stats", time.Now().UnixMilli()); err != nil {
+			return UsageResetResult{}, err
+		}
+	}
+	if resetRequired {
 		generation++
 		resetAtMS = time.Now().UnixMilli()
 		if _, err := tx.ExecContext(ctx, `update usage_summary set
@@ -2183,11 +2199,16 @@ func (s *Store) ResetUsageStatistics(ctx context.Context) (UsageResetResult, err
 	if err := tx.Commit(); err != nil {
 		return UsageResetResult{}, err
 	}
-	if deletedEvents > 0 {
+	if resetRequired {
 		s.invalidateUsageSummaryCache()
 		s.notifyEventsChanged()
 	}
-	return UsageResetResult{DeletedEvents: deletedEvents, Generation: generation, ResetAtMS: resetAtMS}, nil
+	return UsageResetResult{
+		DeletedEvents:           deletedEvents,
+		DeletedAuthRuntimeStats: deletedAuthRuntimeStats,
+		Generation:              generation,
+		ResetAtMS:               resetAtMS,
+	}, nil
 }
 
 func (s *Store) ApplyRetention(ctx context.Context, now time.Time) (int64, error) {

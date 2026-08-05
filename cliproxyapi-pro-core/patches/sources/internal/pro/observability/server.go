@@ -150,7 +150,7 @@ func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
 	group.GET("", s.handleUsage)
 	group.GET("/export", s.handleUsageExport)
 	group.POST("/import", s.handleUsageImport)
-	group.POST("/reset", withBackupWriteBarrier(s.handleUsageReset))
+	group.POST("/reset", s.handleUsageReset)
 	group.GET("/status", s.handleStatus)
 	group.GET("/events", s.handleUsageEvents)
 	group.GET("/aggregates", s.handleUsageAggregates)
@@ -1087,7 +1087,29 @@ func (s *Server) handleUsageReset(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "reset confirmation is required"})
 		return
 	}
-	result, err := s.store.ResetUsageStatistics(c.Request.Context())
+	var result UsageResetResult
+	var preservedRoutingCursors []RoutingCursorState
+	err := probackup.Default.ExecuteImport(c.Request.Context(), probackup.ImportPlan{
+		FlushQueues: func(ctx context.Context) error {
+			if err := flushRuntimeStateWrites(ctx, s.store); err != nil {
+				return err
+			}
+			var err error
+			preservedRoutingCursors, err = s.store.ListRoutingCursorStates(ctx)
+			return err
+		},
+		ImportDatabase: func(ctx context.Context) error {
+			var err error
+			result, err = s.store.ResetUsageStatistics(ctx)
+			return err
+		},
+		ApplyRuntimeState: func(context.Context) error {
+			if !probackup.Default.HasRuntimeStateImporter() {
+				return nil
+			}
+			return probackup.Default.ImportRuntimeState(preservedRoutingCursors, nil)
+		},
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

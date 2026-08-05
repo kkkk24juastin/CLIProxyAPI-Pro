@@ -142,6 +142,37 @@ func TestApplyImportedRuntimeStateUpdatesRunningManager(t *testing.T) {
 	}
 }
 
+func TestApplyImportedRuntimeStateResetsOmittedStatsAndPreservesCursor(t *testing.T) {
+	manager := NewManager(nil, nil, nil)
+	registered, err := manager.Register(context.Background(), &Auth{
+		ID: "auth-reset", Provider: "codex", FileName: "auth-reset.json",
+		Selected: 9, Success: 7, Failed: 2,
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	key := legacyRoundRobinCursorKey("codex", "gpt-5")
+	cursors := []embeddedusage.RoutingCursorState{{
+		CursorKey: key, LastAuthID: registered.ID, UpdatedAtMS: time.Now().UnixMilli(),
+	}}
+	if err := manager.ApplyImportedRuntimeState(cursors, nil); err != nil {
+		t.Fatalf("ApplyImportedRuntimeState() error = %v", err)
+	}
+	got, ok := manager.GetByID(registered.ID)
+	if !ok || got == nil {
+		t.Fatal("reset auth not found")
+	}
+	if got.Selected != 0 || got.Success != 0 || got.Failed != 0 {
+		t.Fatalf("runtime totals after reset = selected:%d success:%d failed:%d, want zeros", got.Selected, got.Success, got.Failed)
+	}
+	manager.scheduler.mu.Lock()
+	lastAuthID := manager.scheduler.persistedCursors[key]
+	manager.scheduler.mu.Unlock()
+	if lastAuthID != registered.ID {
+		t.Fatalf("persisted cursor after reset = %q, want %q", lastAuthID, registered.ID)
+	}
+}
+
 func TestApplyImportedRuntimeStateExactIndexOverridesFingerprintDrift(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	registered, err := manager.Register(context.Background(), &Auth{

@@ -247,6 +247,7 @@ type UsageImportResult = {
 
 type UsageResetResult = {
   deletedEvents: number;
+  deletedAuthRuntimeStats: number;
   generation: number;
   resetAtMs: number;
 };
@@ -473,7 +474,10 @@ export function MonitoringCenterPage() {
       setSelectedRealtimeErrorRow(null);
       resetRealtimeLogs();
       await Promise.all([refreshUsage(), refreshRealtimeLogs(), refreshAggregates()]);
-      showNotification(t('usage_stats.monitoring_settings_reset_success', { count: result.deletedEvents }), 'success');
+      showNotification(t('usage_stats.monitoring_settings_reset_success', {
+        count: result.deletedEvents,
+        accounts: result.deletedAuthRuntimeStats,
+      }), 'success');
     } catch (error) {
       showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
     } finally {

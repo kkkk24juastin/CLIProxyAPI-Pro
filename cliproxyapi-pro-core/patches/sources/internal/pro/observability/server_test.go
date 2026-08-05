@@ -401,10 +401,31 @@ func TestUsageImportRestoresModelPriceRuleWhenOnlyNewerHistoryRemains(t *testing
 
 func TestHandleUsageResetClearsStatisticsAndReturnsGeneration(t *testing.T) {
 	store := openTestStore(t)
+	ctx := context.Background()
 	insertTestUsageEvents(t, store,
 		testUsageEvent(0, false, 10),
 		testUsageEvent(1, true, 20),
 	)
+	cursor := RoutingCursorState{
+		CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "auth-reset", UpdatedAtMS: time.Now().UnixMilli(),
+	}
+	if err := store.SetRoutingCursorState(ctx, cursor); err != nil {
+		t.Fatalf("SetRoutingCursorState() error = %v", err)
+	}
+	if err := store.SetAuthRuntimeStats(ctx, AuthRuntimeStats{
+		AuthIndex: "idx-reset", AuthID: cursor.LastAuthID, SelectedCount: 4, SuccessCount: 3, FailureCount: 1,
+		UpdatedAtMS: time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("SetAuthRuntimeStats() error = %v", err)
+	}
+	var appliedCursors []RoutingCursorState
+	var appliedStats []AuthRuntimeStats
+	SetAuthRuntimeStateImportHandler(func(cursors []RoutingCursorState, stats []AuthRuntimeStats) error {
+		appliedCursors = append([]RoutingCursorState(nil), cursors...)
+		appliedStats = append([]AuthRuntimeStats(nil), stats...)
+		return nil
+	})
+	defer SetAuthRuntimeStateImportHandler(nil)
 	router := testUsageRouter(store)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/usage/reset", strings.NewReader(`{"confirm":true}`))
@@ -417,8 +438,17 @@ func TestHandleUsageResetClearsStatisticsAndReturnsGeneration(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if result.DeletedEvents != 2 || result.Generation <= 1 || result.ResetAtMS <= 0 {
-		t.Fatalf("reset result = %+v, want two deleted events and advanced state", result)
+	if result.DeletedEvents != 2 || result.DeletedAuthRuntimeStats != 1 || result.Generation <= 1 || result.ResetAtMS <= 0 {
+		t.Fatalf("reset result = %+v, want usage and auth runtime statistics cleared", result)
+	}
+	if len(appliedCursors) != 1 || appliedCursors[0].CursorKey != cursor.CursorKey || appliedCursors[0].LastAuthID != cursor.LastAuthID {
+		t.Fatalf("applied cursors = %+v, want preserved cursor %+v", appliedCursors, cursor)
+	}
+	if len(appliedStats) != 0 {
+		t.Fatalf("applied auth runtime stats = %+v, want authoritative empty snapshot", appliedStats)
+	}
+	if storedStats, err := store.ListAuthRuntimeStats(ctx); err != nil || len(storedStats) != 0 {
+		t.Fatalf("stored auth runtime stats after reset = %+v err:%v, want empty", storedStats, err)
 	}
 
 	usageRecorder := httptest.NewRecorder()

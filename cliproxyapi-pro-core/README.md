@@ -48,7 +48,7 @@ internal/embeddedusage
 - `GET /v0/management/usage/stream` — usage 实时更新 SSE 流。
 - `GET /v0/management/usage/export` — JSONL/NDJSON 导出。
 - `POST /v0/management/usage/import` — JSONL/NDJSON 导入。
-- `POST /v0/management/usage/reset` — 原子清空请求事件和派生统计，保留监控设置、模型价格、配额缓存和备份。
+- `POST /v0/management/usage/reset` — 在独占运行态屏障内清空请求事件、派生统计和账号调度/成功/失败计数；保留路由轮询游标、监控设置、模型价格、配额缓存和备份。
 - `GET /v0/management/usage/status` — 服务状态和记录数量。
 - `GET /v0/management/usage/quota-cache` — 读取配额缓存或统计信息。
 - `PUT /v0/management/usage/quota-cache` — 写入配额缓存。
