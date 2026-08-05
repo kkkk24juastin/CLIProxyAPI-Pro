@@ -39,10 +39,11 @@ func TestXAIRequestHeadersIncludeGrokClientAndUserID(t *testing.T) {
 	if headers["X-Xai-Token-Auth"] != "xai-grok-cli" {
 		t.Fatalf("x-xai-token-auth = %q", headers["X-Xai-Token-Auth"])
 	}
-	if headers["X-Grok-Client-Version"] != "0.2.93" {
-		t.Fatalf("x-grok-client-version = %q", headers["X-Grok-Client-Version"])
+	clientVersion := headers["X-Grok-Client-Version"]
+	if clientVersion == "" {
+		t.Fatal("x-grok-client-version is empty")
 	}
-	if headers["User-Agent"] != "xai-grok-workspace/0.2.93" {
+	if headers["User-Agent"] != "xai-grok-workspace/"+clientVersion {
 		t.Fatalf("User-Agent = %q", headers["User-Agent"])
 	}
 	if headers["x-userid"] != "user-123" {

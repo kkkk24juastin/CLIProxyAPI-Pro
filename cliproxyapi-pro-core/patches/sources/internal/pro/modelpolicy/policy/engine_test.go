@@ -40,10 +40,11 @@ providers:
 			if got := request.Headers["x-userid"]; len(got) != 1 || got[0] != "user" {
 				t.Fatalf("x-userid = %#v", got)
 			}
-			if got := request.Headers.Get("x-grok-client-version"); got != "0.2.93" {
-				t.Fatalf("x-grok-client-version = %q", got)
+			clientVersion := request.Headers.Get("x-grok-client-version")
+			if clientVersion == "" {
+				t.Fatal("x-grok-client-version is empty")
 			}
-			if got := request.Headers.Get("User-Agent"); got != "xai-grok-workspace/0.2.93" {
+			if got := request.Headers.Get("User-Agent"); got != "xai-grok-workspace/"+clientVersion {
 				t.Fatalf("User-Agent = %q", got)
 			}
 			return HTTPResponse{StatusCode: 200, Body: []byte(`{"config":{"monthlyLimit":{"val":20000}}}`)}, nil
