@@ -394,7 +394,6 @@ func XAISummaryUsedPercent(summary map[string]any) *float64 {
 
 const (
 	xaiSuperGrokLimitCents      = 15_000
-	xaiXPremiumPlusLimitCents   = 20_000
 	xaiSuperGrokHeavyLimitCents = 150_000
 )
 
@@ -445,8 +444,6 @@ func XAIPlanTypeFromMonthlyLimit(limit float64, hasLimit bool) (string, bool) {
 	switch int64(math.Round(limit)) {
 	case xaiSuperGrokLimitCents:
 		return "supergrok", true
-	case xaiXPremiumPlusLimitCents:
-		return "x-premium-plus", true
 	case xaiSuperGrokHeavyLimitCents:
 		return "supergrok-heavy", true
 	default:

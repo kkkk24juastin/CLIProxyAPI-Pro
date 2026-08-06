@@ -38,7 +38,7 @@ describe("oauth model policy service", () => {
   it("serializes only explicitly configured rules", () => {
     const config = normalizeOAuthModelPolicyConfig({});
     config.enabled = true;
-    config.providers.xai.plans["x-premium-plus"] = {
+    config.providers.xai.plans["xai-custom"] = {
       configured: true,
       excludedModels: [],
     };
@@ -55,7 +55,7 @@ describe("oauth model policy service", () => {
       providers: {
         xai: {
           plans: {
-            "x-premium-plus": { "excluded-models": [] },
+            "xai-custom": { "excluded-models": [] },
             _default: { "excluded-models": ["grok-experimental-*"] },
           },
         },

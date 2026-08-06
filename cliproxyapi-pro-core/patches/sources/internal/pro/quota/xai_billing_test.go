@@ -45,7 +45,7 @@ func TestCacheParserVersionCoversCodexWindowClassification(t *testing.T) {
 
 func TestXAIPlanAndFreeQuotaSemantics(t *testing.T) {
 	plan, known := XAIPlanTypeFromBillingBody(200, `{"config":{"monthlyLimit":{"val":20000}}}`)
-	if !known || plan != "x-premium-plus" {
+	if !known || plan != "paid-unknown" {
 		t.Fatalf("plan = %q/%v", plan, known)
 	}
 	free := EmptyXAIBillingSummary()

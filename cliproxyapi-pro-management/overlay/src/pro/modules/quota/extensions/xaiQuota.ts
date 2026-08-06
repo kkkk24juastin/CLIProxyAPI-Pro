@@ -1,14 +1,12 @@
 import type { XaiBillingSummary, XaiFreeQuotaSummary } from '@/types';
 
 export const XAI_SUPERGROK_LIMIT_CENTS = 15_000;
-export const XAI_X_PREMIUM_PLUS_LIMIT_CENTS = 20_000;
 export const XAI_SUPERGROK_HEAVY_LIMIT_CENTS = 150_000;
 export const XAI_FREE_QUOTA_PROBE_URL = 'https://cli-chat-proxy.grok.com/v1/responses';
 
 export type XaiNormalizedPlanType =
   | 'free'
   | 'supergrok'
-  | 'x-premium-plus'
   | 'supergrok-heavy'
   | 'paid'
   | 'paid-unknown';
@@ -20,7 +18,6 @@ export const resolveXaiPlanType = (
   if (!monthlyBillingKnown) return undefined;
   if (monthlyLimitCents === null || monthlyLimitCents === 0) return 'free';
   if (monthlyLimitCents === XAI_SUPERGROK_LIMIT_CENTS) return 'supergrok';
-  if (monthlyLimitCents === XAI_X_PREMIUM_PLUS_LIMIT_CENTS) return 'x-premium-plus';
   if (monthlyLimitCents === XAI_SUPERGROK_HEAVY_LIMIT_CENTS) return 'supergrok-heavy';
   return monthlyLimitCents > 0 ? 'paid-unknown' : undefined;
 };

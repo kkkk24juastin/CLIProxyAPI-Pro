@@ -540,8 +540,6 @@ func normalizeProviderPlan(provider, value string) string {
 	switch provider {
 	case "xai":
 		switch value {
-		case "premium-plus", "x-premium+", "x-premium-plus":
-			return "x-premium-plus"
 		case "super-grok":
 			return "supergrok"
 		case "super-grok-heavy":

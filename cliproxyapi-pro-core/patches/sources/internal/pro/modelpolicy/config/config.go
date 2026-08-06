@@ -139,8 +139,6 @@ func normalizePlanKey(provider, value string) string {
 	switch provider {
 	case "xai":
 		switch key {
-		case "premium-plus", "x-premium+":
-			return "x-premium-plus"
 		case "super-grok":
 			return "supergrok"
 		case "super-grok-heavy":

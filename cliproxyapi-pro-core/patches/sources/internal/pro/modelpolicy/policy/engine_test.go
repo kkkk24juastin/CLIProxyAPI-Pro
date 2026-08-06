@@ -16,7 +16,7 @@ func TestFilterUsesXAIPlanFromBilling(t *testing.T) {
 providers:
   xai:
     plans:
-      x-premium-plus:
+      paid-unknown:
         excluded-models: ["grok-4.5-*"]
       _unknown:
         excluded-models: ["grok-*"]
@@ -53,7 +53,7 @@ providers:
 	if !result.Handled || len(result.ExcludedModelIDs) != 1 || result.ExcludedModelIDs[0] != "grok-4.5-reasoning" {
 		t.Fatalf("Filter() = %#v", result)
 	}
-	if result.Annotations["plan_key"] != "x-premium-plus" || result.Annotations["plan_source"] != "billing" {
+	if result.Annotations["plan_key"] != "paid-unknown" || result.Annotations["plan_source"] != "billing" {
 		t.Fatalf("annotations = %#v", result.Annotations)
 	}
 }

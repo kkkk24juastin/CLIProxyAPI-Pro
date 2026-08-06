@@ -230,7 +230,7 @@ describe('account inspection page model', () => {
     expect(isXaiQuotaLow({
       status: 'success',
       billing: {
-        planType: 'x-premium-plus',
+        planType: 'paid',
         usagePercent: 10,
         freeQuota: { exhausted: true },
       },
@@ -240,7 +240,7 @@ describe('account inspection page model', () => {
   test('resolves account plans from quota state with auth-file fallback', () => {
     const t = ((key: string) => ({
       'codex_quota.plan_pro': '专业版',
-      'xai_quota.plan_x_premium_plus': 'X Premium+',
+      'xai_quota.plan_paid_unknown': 'Paid (unknown tier)',
     }[key] ?? key)) as TFunction;
     const quotaStore = {
       antigravityQuota: {},
@@ -268,6 +268,6 @@ describe('account inspection page model', () => {
         },
       } as Parameters<typeof resolveAccountInspectionPlanLabel>[2],
       t
-    )).toBe('X Premium+');
+    )).toBe('Paid (unknown tier)');
   });
 });

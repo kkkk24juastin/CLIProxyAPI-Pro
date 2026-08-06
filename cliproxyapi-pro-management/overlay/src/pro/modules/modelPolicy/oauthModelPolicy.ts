@@ -75,12 +75,6 @@ export const OAUTH_MODEL_PROVIDER_DEFINITIONS: OAuthModelProviderDefinition[] =
           localeSuffix: "supergrok",
         },
         {
-          key: "x-premium-plus",
-          monthlyLimitCents: 20_000,
-          kind: "plan",
-          localeSuffix: "x_premium_plus",
-        },
-        {
           key: "supergrok-heavy",
           monthlyLimitCents: 150_000,
           kind: "plan",
@@ -148,8 +142,6 @@ export const normalizeOAuthModelPlanKey = (
   if (provider === "codex" && key === "prolite") return "pro-lite";
   const aliases: Record<string, Record<string, string>> = {
     xai: {
-      "premium-plus": "x-premium-plus",
-      "x-premium+": "x-premium-plus",
       "super-grok": "supergrok",
       "super-grok-heavy": "supergrok-heavy",
     },

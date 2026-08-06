@@ -43,7 +43,7 @@ describe('xAI quota normalization', () => {
     expect(resolveXaiPlanType(null, true)).toBe('free');
     expect(resolveXaiPlanType(0, true)).toBe('free');
     expect(resolveXaiPlanType(15_000, true)).toBe('supergrok');
-    expect(resolveXaiPlanType(20_000, true)).toBe('x-premium-plus');
+    expect(resolveXaiPlanType(20_000, true)).toBe('paid-unknown');
     expect(resolveXaiPlanType(150_000, true)).toBe('supergrok-heavy');
     expect(resolveXaiPlanType(99_000, true)).toBe('paid-unknown');
   });
@@ -88,7 +88,7 @@ describe('xAI quota normalization', () => {
       onDemandUsedCents: null,
       onDemandUsedPercent: null,
       usedPercent: null,
-      planType: 'x-premium-plus' as const,
+      planType: 'paid-unknown' as const,
     };
     const previous = {
       ...billing,
@@ -161,14 +161,14 @@ describe('xAI quota normalization', () => {
       usedPercent: null,
       freeQuota: { model: 'grok-4.5', usedTokens: 25, limitTokens: 100 },
     };
-    const render = (planType: 'free' | 'x-premium-plus') =>
+    const render = (planType: 'free' | 'paid-unknown') =>
       renderToStaticMarkup(createElement(ProXaiQuotaBody, {
         quota: { status: 'success', billing: { ...billing, planType } },
         classes: quotaClasses,
       }));
 
     expect(render('free')).toContain('grok-4.5');
-    expect(render('x-premium-plus')).not.toContain('grok-4.5');
+    expect(render('paid-unknown')).not.toContain('grok-4.5');
   });
 });
 

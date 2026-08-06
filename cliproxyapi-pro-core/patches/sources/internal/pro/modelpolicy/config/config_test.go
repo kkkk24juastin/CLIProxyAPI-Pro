@@ -8,7 +8,7 @@ cache-ttl: 10m
 providers:
   XAI:
     plans:
-      X_PREMIUM_PLUS:
+      SUPER_GROK:
         excluded-models: [" GROK-4-* ", "grok-4-*"]
       _unknown:
         excluded-models: ["grok-pro-*"]
@@ -16,7 +16,7 @@ providers:
 	if errParse != nil {
 		t.Fatalf("Parse() error = %v", errParse)
 	}
-	plan := cfg.Providers["xai"].Plans["x-premium-plus"]
+	plan := cfg.Providers["xai"].Plans["supergrok"]
 	if len(plan.ExcludedModels) != 1 || plan.ExcludedModels[0] != "grok-4-*" {
 		t.Fatalf("excluded models = %#v", plan.ExcludedModels)
 	}

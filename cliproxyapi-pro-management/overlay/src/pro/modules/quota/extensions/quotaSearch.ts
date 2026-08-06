@@ -50,7 +50,7 @@ export function buildQuotaSearchValues(
   append(values, gemini?.creditBalance);
 
   const xai = store.xaiQuota[name]?.billing;
-  const xaiPlan = xai?.planType ?? resolveXaiPlanType(xai?.monthlyLimitCents ?? null, Boolean(xai));
+  const xaiPlan = resolveXaiPlanType(xai?.monthlyLimitCents ?? null, Boolean(xai)) ?? xai?.planType;
   append(values, xaiPlan);
   if (xaiPlan) append(values, t(`xai_quota.plan_${String(xaiPlan).replace(/-/g, '_')}`));
   return values;

@@ -76,17 +76,17 @@ describe('auth-file plan sorting', () => {
     const items = [
       file('free.json', 'xai'),
       file('supergrok.json', 'xai'),
-      file('premium-plus.json', 'xai'),
       file('heavy.json', 'xai'),
       file('paid.json', 'xai'),
+      file('unknown-paid.json', 'xai'),
     ];
     const store = quotaStore({
       xaiQuota: {
         'free.json': { billing: { monthlyLimitCents: null, planType: 'free' } },
         'supergrok.json': { billing: { monthlyLimitCents: 15_000 } },
-        'premium-plus.json': { billing: { monthlyLimitCents: 20_000 } },
         'heavy.json': { billing: { monthlyLimitCents: 150_000 } },
         'paid.json': { billing: { monthlyLimitCents: null, planType: 'paid' } },
+        'unknown-paid.json': { billing: { monthlyLimitCents: 20_000 } },
       },
     } as unknown as Partial<PlanSortQuotaStore>);
 
@@ -94,9 +94,9 @@ describe('auth-file plan sorting', () => {
 
     expect(items.map((item) => item.name)).toEqual([
       'heavy.json',
-      'premium-plus.json',
       'supergrok.json',
       'paid.json',
+      'unknown-paid.json',
       'free.json',
     ]);
   });
