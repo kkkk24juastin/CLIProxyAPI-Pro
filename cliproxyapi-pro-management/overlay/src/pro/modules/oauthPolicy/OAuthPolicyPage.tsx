@@ -154,6 +154,7 @@ function PatternEditor({
       </div>
       <div className={styles.patternInputRow}>
         <input
+          className={styles.patternInput}
           value={value}
           disabled={disabled}
           onChange={(event) => setValue(event.target.value)}
@@ -883,7 +884,7 @@ export function OAuthPolicyPage() {
                             <label>
                               <span>{t("oauth_policy.prefix", { defaultValue: "Prefix" })}</span>
                               <input
-                                className={styles.accountPolicyInput}
+                                className={styles.patternInput}
                                 value={rule.prefix ?? ""}
                                 disabled={saving}
                                 spellCheck={false}
@@ -897,7 +898,7 @@ export function OAuthPolicyPage() {
                             <label>
                               <span>{t("oauth_policy.priority", { defaultValue: "Priority" })}</span>
                               <input
-                                className={styles.accountPolicyInput}
+                                className={styles.patternInput}
                                 type="number"
                                 value={rule.priority ?? ""}
                                 disabled={saving}
@@ -912,7 +913,7 @@ export function OAuthPolicyPage() {
                             <label>
                               <span>{t("oauth_policy.weight", { defaultValue: "Weight" })}</span>
                               <input
-                                className={styles.accountPolicyInput}
+                                className={styles.patternInput}
                                 type="number"
                                 min={0}
                                 max={1_000_000}
