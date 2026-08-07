@@ -8,8 +8,8 @@ import (
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/host"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy"
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/observability"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool"
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
@@ -24,7 +24,7 @@ import (
 // with the shared backup coordinator.
 type App struct {
 	proxyPool   *proxypool.Service
-	modelPolicy *modelpolicy.Service
+	oauthPolicy *oauthpolicy.Service
 	closeOnce   sync.Once
 }
 
@@ -44,12 +44,12 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 	if err != nil {
 		return nil, fmt.Errorf("initialize proxy pool module: %w", err)
 	}
-	modelPolicy, err := modelpolicy.New(ctx, store)
+	oauthPolicy, err := oauthpolicy.New(ctx, store)
 	if err != nil {
 		proxyPool.Close()
-		return nil, fmt.Errorf("initialize model policy module: %w", err)
+		return nil, fmt.Errorf("initialize account policy module: %w", err)
 	}
-	return &App{proxyPool: proxyPool, modelPolicy: modelPolicy}, nil
+	return &App{proxyPool: proxyPool, oauthPolicy: oauthPolicy}, nil
 }
 
 func (a *App) Close() {
@@ -57,8 +57,8 @@ func (a *App) Close() {
 		return
 	}
 	a.closeOnce.Do(func() {
-		if a.modelPolicy != nil {
-			a.modelPolicy.Close()
+		if a.oauthPolicy != nil {
+			a.oauthPolicy.Close()
 		}
 		if a.proxyPool != nil {
 			a.proxyPool.Close()
@@ -73,11 +73,11 @@ func (a *App) ProxyPool() *proxypool.Service {
 	return a.proxyPool
 }
 
-func (a *App) ModelPolicy() *modelpolicy.Service {
+func (a *App) OAuthPolicy() *oauthpolicy.Service {
 	if a == nil {
 		return nil
 	}
-	return a.modelPolicy
+	return a.oauthPolicy
 }
 
 func (a *App) SetBaseProxyURL(value string) {
@@ -93,9 +93,9 @@ func (a *App) BaseProxyURL() string {
 	return a.proxyPool.BaseProxyURL()
 }
 
-func (a *App) SetModelPolicyChangeHandler(handler func(context.Context)) {
-	if a != nil && a.modelPolicy != nil {
-		a.modelPolicy.SetChangeHandler(handler)
+func (a *App) SetOAuthPolicyChangeHandler(handler func(context.Context)) {
+	if a != nil && a.oauthPolicy != nil {
+		a.oauthPolicy.SetChangeHandler(handler)
 	}
 }
 
@@ -147,31 +147,41 @@ func (a *App) ResetProxyStats() {
 	}
 }
 
-func (a *App) ModelConfig() modelconfig.Config {
-	if a == nil || a.modelPolicy == nil {
+func (a *App) OAuthConfig() modelconfig.Config {
+	if a == nil || a.oauthPolicy == nil {
 		cfg, _ := modelconfig.Parse(nil)
 		return cfg
 	}
-	return a.modelPolicy.Config()
+	return a.oauthPolicy.Config()
 }
 
-func (a *App) UpdateModelConfig(ctx context.Context, cfg modelconfig.Config) error {
-	if a == nil || a.modelPolicy == nil {
-		return fmt.Errorf("model policy module is unavailable")
+func (a *App) UpdateOAuthConfig(ctx context.Context, cfg modelconfig.Config) error {
+	if a == nil || a.oauthPolicy == nil {
+		return fmt.Errorf("account policy module is unavailable")
 	}
-	return a.modelPolicy.UpdateConfig(ctx, cfg)
+	return a.oauthPolicy.UpdateConfig(ctx, cfg)
 }
 
-func (a *App) ModelStatus() modelpolicy.Status {
-	if a == nil || a.modelPolicy == nil {
-		return modelpolicy.Status{LastError: "model policy module is unavailable"}
+func (a *App) OAuthStatus() oauthpolicy.Status {
+	if a == nil || a.oauthPolicy == nil {
+		return oauthpolicy.Status{LastError: "account policy module is unavailable"}
 	}
-	return a.modelPolicy.Status()
+	return a.oauthPolicy.Status()
 }
 
 func (a *App) FilterModels(ctx context.Context, hostCfg *internalconfig.Config, auth *coreauth.Auth, models []*registry.ModelInfo) []*registry.ModelInfo {
-	if a == nil || a.modelPolicy == nil {
+	if a == nil || a.oauthPolicy == nil {
 		return models
 	}
-	return host.FilterModels(ctx, hostCfg, auth, models, a.modelPolicy)
+	return host.FilterModels(ctx, hostCfg, auth, models, a.oauthPolicy)
+}
+
+func (a *App) ApplyCachedAccountPolicy(auth *coreauth.Auth) *coreauth.Auth {
+	if a == nil || a.oauthPolicy == nil {
+		if auth == nil {
+			return nil
+		}
+		return auth.Clone()
+	}
+	return host.ApplyCachedAccountPolicy(auth, a.oauthPolicy)
 }

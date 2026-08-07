@@ -4,7 +4,7 @@
 
 本目录不维护 upstream 的完整 fork。Docker 构建时会下载指定 upstream release，复制本地 `embeddedusage/` 包，执行 `patches/` 中的补丁脚本，然后构建 Pro 部署使用的多架构镜像。
 
-代理池和 OAuth 模型策略直接编译到 Core 二进制中，所有 Pro 构建（包括 `_no-plugin`）都具备这两项能力。配置保存在 usage SQLite 的 `pro_settings`，不会写入 `config.yaml`。
+代理池和 OAuth 账号策略直接编译到 Core 二进制中，所有 Pro 构建（包括 `_no-plugin`）都具备这两项能力。配置保存在 usage SQLite 的 `pro_settings`，不会写入 `config.yaml` 或认证文件。
 
 ## 定制内容
 
@@ -81,7 +81,7 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 - `model_prices` — 基础价格兼容数据和完整的全局 model 价格规则。
 - `quota_cache` — 配额卡片和账号级刷新使用的 SQLite-backed quota snapshots。
 - `monitoring_settings` — 监控日志保留时间、WebDAV 备份配置和 models.dev 定期同步配置。
-- `pro_settings` — Pro 私有设置；当前包含请求状态保护、代理池和 OAuth 模型策略。
+- `pro_settings` — Pro 私有设置；当前包含请求状态保护、代理池和 OAuth 账号策略。账号策略 namespace 为 `oauth-policy`。
 - `routing_cursor_state` — 账号路由轮转游标。
 - `auth_runtime_stats` — 账号选择、成功/失败和近期请求桶统计。
 - `account_inspection_schedule` — 后端账号巡检调度设置。
@@ -143,9 +143,9 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 
 Pro 扩展了上游 `GET /v0/management/auth-files/models`：优先使用该认证记录已注册的模型；上游因账号禁用而注销模型时，改用对应提供商的静态模型定义，Codex 会按账号套餐选择目录。因此模型查看和连接测试可以共用同一个接口。测试沿用 upstream 执行器的请求翻译、账号代理、401 刷新、模型别名和结果统计路径，但不会写入请求监控。诊断执行会绕过正常调度的 disabled、cooldown 和 unavailable 可用性门槛，因此可验证异常账号是否已经恢复；结果不会清除用户设置的 `disabled` 开关。响应包含 `success`、`model`、`latency_ms`、模型 `output`，或 `error`、`error_code`、`http_status`。
 
-### 内建代理池与 OAuth 套餐模型策略
+### 内建代理池与 OAuth 套餐账号策略
 
-Core 内建回环 SOCKS5 代理池以及 xAI、Codex、Claude、Gemini CLI、Antigravity、Kimi 的 OAuth 套餐模型策略。代理接管只在运行时替换全局传输路径，不改写 `config.yaml`，凭证级代理和显式 `direct` 不受影响。模型处理顺序为 upstream `excluded_models`、内建套餐过滤、OAuth alias/prefix、模型注册，最终结果同时约束 `/v1/models` 聚合和请求调度候选账号。
+Core 内建回环 SOCKS5 代理池以及 xAI、Codex、Claude、Gemini CLI、Antigravity、Kimi 的 OAuth 套餐账号策略。账号规则可配置 `excluded-models`、`prefix`、`priority` 和 `weight`；策略仅生成运行时覆盖，不改写 `config.yaml` 或认证文件。模型处理顺序为 upstream `excluded_models`、内建套餐过滤、OAuth alias、套餐 prefix、模型注册，最终结果同时约束 `/v1/models` 聚合和请求调度候选账号。
 
 首次启动会读取旧 `plugins.configs.proxy-pool` 和 `plugins.configs.oauth-model-policy`，校验并写入 SQLite，回读确认成功后再原子清除旧 YAML。旧代理接管若处于启用状态，会先把根 `proxy-url` 恢复为旧 `restore-proxy-url`；其他第三方插件配置保持不变。
 
@@ -246,7 +246,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `patches/sources/internal/pro/app/` — 静态 Pro 模块的 composition root、生命周期和旧配置迁移。
 - `patches/sources/internal/pro/host/` — 最终代理传输、模型注册和认证对象等 upstream 易变边界适配。
 - `patches/sources/internal/pro/proxypool/` — 独立的代理池配置、运行服务、节点池和 SOCKS5 实现。
-- `patches/sources/internal/pro/modelpolicy/` — 独立的 OAuth 套餐识别、模型过滤和配置服务。
+- `patches/sources/internal/pro/oauthpolicy/` — 独立的 OAuth 套餐识别、模型过滤和配置服务。
 - `patches/sources/internal/pro/settings/` — 模块使用的版本化设置持久化端口。
 - `patches/sources/internal/pro/storage/` — 单一 SQLite 生命周期、幂等 schema、领域仓储和事务边界。
 - `patches/sources/internal/pro/state/` — 路由游标、账号运行统计的稳定契约及合并写入器。
@@ -265,7 +265,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `patches/routing_policy.go` — 注入统一路由配置和请求状态保护 handlers、usage plugin 与自动解除任务。
 - 核心不变量：账号巡检状态优先于 request protection；导入的 `routing_cursor_state` 和 `auth_runtime_stats` 必须立即应用到 live manager；原 DB 表、JSONL record type 和 `/v0/management/usage*` API 保持兼容。
 
-静态模块按实际宿主生命周期组合：`pro/app` 管理请求路径上的 proxy-pool 与 model-policy 服务；`pro/observability` 随进程 context 启停；inspection 与 routing 控制器随 Management Handler 启停。跨生命周期备份端口使用 owner-scoped 注册和逆序注销，旧 Handler 或旧 Service 关闭时不会清除新实例的回调。`internal/embeddedusage` 只允许出现在 upstream/SDK 兼容边界，`internal/pro` 业务模块不反向依赖该 façade。
+静态模块按实际宿主生命周期组合：`pro/app` 管理请求路径上的 proxy-pool 与 oauth-policy 服务；`pro/observability` 随进程 context 启停；inspection 与 routing 控制器随 Management Handler 启停。跨生命周期备份端口使用 owner-scoped 注册和逆序注销，旧 Handler 或旧 Service 关闭时不会清除新实例的回调。`internal/embeddedusage` 只允许出现在 upstream/SDK 兼容边界，`internal/pro` 业务模块不反向依赖该 façade。
 - `patches/config_existing_updates.go` — 只修改已存在 YAML 标量、禁止补键的配置写入辅助层。
 - `.github/workflows/release-core.yml` — 镜像发布、Pro 二进制资产、management.html 发布、usage 备份、Render 部署触发、Telegram 通知和 workflow 清理。
 

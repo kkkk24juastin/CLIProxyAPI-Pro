@@ -903,6 +903,7 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return
 		}
 	}
+	proSettings = normalizeOAuthPolicySettings(proSettings)
 	result := InsertResult{}
 	batchSize := s.cfg.BatchSize
 	if batchSize <= 0 {

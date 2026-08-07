@@ -30,6 +30,10 @@ func (SettingsStore) Put(ctx context.Context, item settings.Item) error {
 	})
 }
 
+func (SettingsStore) Delete(ctx context.Context, namespace string) error {
+	return DeleteProSetting(ctx, namespace)
+}
+
 func (SettingsStore) Subscribe(namespace string, apply func(context.Context, settings.Item) error) func() {
 	if apply == nil {
 		return func() {}

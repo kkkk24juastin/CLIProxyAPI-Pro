@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
 )
 
 func TestFilterUsesXAIPlanFromBilling(t *testing.T) {
@@ -55,6 +55,35 @@ providers:
 	}
 	if result.Annotations["plan_key"] != "paid-unknown" || result.Annotations["plan_source"] != "billing" {
 		t.Fatalf("annotations = %#v", result.Annotations)
+	}
+}
+
+func TestFilterReturnsAccountRoutingOverrides(t *testing.T) {
+	cfg, err := modelconfig.Parse([]byte(`
+providers:
+  codex:
+    plans:
+      pro:
+        excluded-models: [blocked-*]
+        prefix: codex-pro
+        priority: 80
+        weight: 5
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := New()
+	engine.ApplyConfig(cfg)
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "codex-1", AuthProvider: "codex", AuthKind: "oauth",
+		Attributes: map[string]string{"plan_type": "pro"},
+		Models:     []ModelInfo{{ID: "gpt-5"}, {ID: "blocked-model"}},
+	})
+	if !result.Handled || result.Prefix == nil || *result.Prefix != "codex-pro" || result.Priority == nil || *result.Priority != 80 || result.Weight == nil || *result.Weight != 5 {
+		t.Fatalf("account policy result = %#v", result)
+	}
+	if len(result.ExcludedModelIDs) != 1 || result.ExcludedModelIDs[0] != "blocked-model" {
+		t.Fatalf("excluded models = %#v", result.ExcludedModelIDs)
 	}
 }
 

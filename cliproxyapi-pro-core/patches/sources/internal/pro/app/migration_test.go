@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
 )
 
@@ -95,7 +95,7 @@ plugins:
 	if err != nil || !proxyCfg.Enabled || !proxyCfg.TakeoverEnabled || len(proxyCfg.Nodes) != 1 {
 		t.Fatalf("proxy config = %#v err:%v", proxyCfg, err)
 	}
-	modelItem, found, err := embeddedusage.GetProSetting(ctx, embeddedusage.ProSettingNamespaceOAuthModelPolicy)
+	modelItem, found, err := embeddedusage.GetProSetting(ctx, embeddedusage.ProSettingNamespaceOAuthPolicy)
 	if err != nil || !found {
 		t.Fatalf("model setting = found:%v err:%v", found, err)
 	}

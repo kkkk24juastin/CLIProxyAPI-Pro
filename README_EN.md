@@ -17,7 +17,7 @@ This project does not maintain a full fork of either upstream project. Instead, 
 - Optional deep probes for Antigravity soft bans and xAI availability anomalies.
 - A routing-policy page for upstream routing behavior and provider-scoped request-state protection.
 - A statically linked proxy pool that aggregates HTTP/SOCKS nodes behind one fixed loopback SOCKS5 endpoint with rotation, health isolation, and failover.
-- A statically linked OAuth model policy that removes unavailable models per provider and account plan, constraining both model listing and auth scheduling.
+- A statically linked OAuth account policy that controls model exclusions, prefixes, priorities, and scheduler weights per provider and account plan.
 
 ## Repository layout
 
@@ -61,12 +61,12 @@ Main capabilities:
 - Supports SQLite-backed quota cache.
 - Supports model price persistence.
 - Supports the QuotaProvider plugin protocol and a Gemini CLI legacy adapter.
-- Includes an OAuth model policy for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi account plans.
+- Includes an OAuth account policy for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi account plans.
 - Forces required upstream startup config: `usage-statistics-enabled=true` and the Pro management panel repository.
 - Adds a backend account-inspection scheduler and executor with token refresh before probing.
 - Adds unified routing-policy and request-state-protection APIs.
 - Optionally starts the Komari agent.
-- Links the proxy pool and OAuth model policy into every Pro binary, including `_no-plugin` assets; their settings live in the usage SQLite database and are never written to `config.yaml`.
+- Links the proxy pool and OAuth account policy into every Pro binary, including `_no-plugin` assets; settings live in usage SQLite and are never written to `config.yaml` or auth files.
 - Redirects `/` to `/management.html`.
 - Enhances the `/healthz` response.
 
@@ -85,7 +85,7 @@ Main capabilities:
 - Adds the `/account-inspection` account inspection page.
 - Adds the `/routing` routing-policy page.
 - Adds the `/proxy-pool` page for node configuration, connectivity tests, runtime statistics, and global-proxy takeover/restoration.
-- Adds the `/oauth-model-policy` visual editor for provider-specific OAuth plan rules, custom plans, fallback policies, and plan-discovery caching.
+- Adds the `/oauth-policy` visual editor for provider-specific OAuth account rules covering model exclusions, prefixes, priorities, weights, custom plans, fallbacks, and effective runtime previews; the legacy route redirects.
 - Shows request count, success rate, latency, token, and cost metrics.
 - Persists model prices through SQLite.
 - Persists quota cache through SQLite.

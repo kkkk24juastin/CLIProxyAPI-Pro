@@ -101,7 +101,7 @@ class ProModuleBoundaryTests(unittest.TestCase):
         self.assertIn("import { proBootstraps } from '@/pro/registry'", bootstrap)
         self.assertNotIn('QuotaPersistenceBootstrap', bootstrap)
 
-        for module in ('monitoring', 'inspection', 'routing', 'proxyPool', 'modelPolicy', 'quota'):
+        for module in ('monitoring', 'inspection', 'routing', 'proxyPool', 'oauthPolicy', 'quota'):
             index = (MODULES / module / 'index.ts').read_text(encoding='utf-8')
             self.assertIn("from './manifest'", index)
 

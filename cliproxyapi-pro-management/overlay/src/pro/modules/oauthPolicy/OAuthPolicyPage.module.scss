@@ -8,7 +8,7 @@
 
 .pageWithSave {
   padding-bottom: calc(
-    var(--oauth-model-policy-action-bar-height, 46px) + 38px
+    var(--oauth-policy-action-bar-height, 46px) + 38px
   );
 }
 
@@ -653,7 +653,7 @@
 
   .pageWithSave {
     padding-bottom: calc(
-      var(--oauth-model-policy-action-bar-height, 46px) + 28px
+      var(--oauth-policy-action-bar-height, 46px) + 28px
     );
   }
 
@@ -728,4 +728,84 @@
     width: 100%;
   }
 
+}
+
+.accountPolicyFields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.accountPolicyFields label {
+  display: grid;
+  gap: 6px;
+}
+
+.accountPolicyFields span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.accountPolicyFields input {
+  min-width: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: 8px 9px;
+}
+
+.accountPolicyFields small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.effectivePanel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+
+.effectiveTableWrap {
+  overflow-x: auto;
+}
+
+.effectiveTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.effectiveTable th,
+.effectiveTable td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border-color);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.effectiveTable th {
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.effectiveTable td small {
+  display: block;
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 720px) {
+  .accountPolicyFields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .effectivePanel {
+    padding: 13px;
+  }
 }

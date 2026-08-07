@@ -233,6 +233,8 @@ new_customization_paths = (
     'internal/runtime/executor/xai_quota_observer.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
+	'sdk/cliproxy/auth/auth_account_policy.go',
+	'sdk/cliproxy/auth/auth_account_policy_test.go',
     'sdk/cliproxy/auth/inspection_refresh.go',
     'sdk/cliproxy/auth/pinned_execution.go',
     'sdk/cliproxy/pro_features_service_test.go',
@@ -1043,15 +1045,15 @@ replace_once(
     '''\tif ctx.Err() != nil {
 \t\treturn
 \t}
-\tmodels = s.applyOAuthModelPolicy(ctx, a, models)
+\tmodels = s.applyOAuthPolicy(ctx, a, models)
 \tmodels = applyOAuthModelAliasForAuth(s.cfg, provider, authKind, a.Attributes, models)
 ''',
-    'models = s.applyOAuthModelPolicy(ctx, a, models)',
+    'models = s.applyOAuthPolicy(ctx, a, models)',
 )
 insert_before(
     service_models,
     'func (s *Service) oauthExcludedModels(provider, authKind string) []string {\n',
-    '''func (s *Service) applyOAuthModelPolicy(ctx context.Context, auth *coreauth.Auth, models []*ModelInfo) []*ModelInfo {
+    '''func (s *Service) applyOAuthPolicy(ctx context.Context, auth *coreauth.Auth, models []*ModelInfo) []*ModelInfo {
 \tif s == nil || s.proApp == nil || auth == nil || len(models) == 0 {
 \t\treturn models
 \t}
@@ -1059,7 +1061,7 @@ insert_before(
 }
 
 ''',
-    'func (s *Service) applyOAuthModelPolicy',
+    'func (s *Service) applyOAuthPolicy',
 )
 
 service_executors = ROOT / 'sdk/cliproxy/service_executors.go'
@@ -1069,10 +1071,10 @@ replace_once(
 \tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
 ''',
     '''\tmodels := applyExcludedModels(result.Models, activeExcluded)
-\tmodels = s.applyOAuthModelPolicy(ctx, activeAuth, models)
+\tmodels = s.applyOAuthPolicy(ctx, activeAuth, models)
 \tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
 ''',
-    'models = s.applyOAuthModelPolicy(ctx, activeAuth, models)',
+    'models = s.applyOAuthPolicy(ctx, activeAuth, models)',
 )
 
 write(
@@ -1193,18 +1195,19 @@ replace_once(
 \t\tservice.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
 \t}
 ''',
-    '''\tproApplication.SetModelPolicyChangeHandler(func(ctx context.Context) {
+    '''\tproApplication.SetOAuthPolicyChangeHandler(func(ctx context.Context) {
 \t\tif service.coreManager == nil {
 \t\t\treturn
 \t\t}
-\t\tservice.registerModelsForAuthBatch(coreauth.WithSkipPersist(ctx), service.coreManager.List())
-\t\tservice.coreManager.RefreshSchedulerAll()
+\t\tpolicyCtx := coreauth.WithSkipPersist(ctx)
+\t\tservice.registerModelsForAuthBatch(policyCtx, service.coreManager.List())
 \t})
+\tservice.coreManager.SetAccountPolicyResolver(proApplication.ApplyCachedAccountPolicy)
 \tif b.postAuthHook != nil {
 \t\tservice.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
 \t}
 ''',
-    'proApplication.SetModelPolicyChangeHandler',
+    'proApplication.SetOAuthPolicyChangeHandler',
 )
 replace_once(
     builder_source,
@@ -1556,6 +1559,20 @@ replace_once(
     auth_conductor,
     '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n',
     '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n\tctx = coreusage.WithStream(ctx, opts.Stream)\n',
+)
+
+auth_conductor_base = ROOT / 'sdk/cliproxy/auth/conductor.go'
+replace_once(
+    auth_conductor_base,
+    '''	// pluginScheduler runs outside m.mu before falling back to native selection.
+	pluginScheduler PluginScheduler
+''',
+    '''	// pluginScheduler runs outside m.mu before falling back to native selection.
+	pluginScheduler PluginScheduler
+	// accountPolicyResolver derives execution-only OAuth policy overlays.
+	accountPolicyResolver AccountPolicyResolver
+''',
+    'accountPolicyResolver AccountPolicyResolver',
 )
 replace_once(
     auth_conductor,
@@ -2356,6 +2373,14 @@ write(
     ROOT / 'sdk/cliproxy/auth/auth_runtime_state_test.go',
     re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(patch_dir / 'auth_runtime_state_test.go')),
 )
+write(
+    ROOT / 'sdk/cliproxy/auth/auth_account_policy.go',
+    read_text(patch_dir / 'auth_account_policy.go'),
+)
+write(
+    ROOT / 'sdk/cliproxy/auth/auth_account_policy_test.go',
+    re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(patch_dir / 'auth_account_policy_test.go')),
+)
 
 redisqueue_plugin = ROOT / 'internal/redisqueue/plugin.go'
 replace_once(
@@ -2820,6 +2845,44 @@ replace_once(
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_lifecycle.go'
 replace_once(
     auth_conductor,
+    '''func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil {
+		return nil, nil
+	}
+''',
+    '''func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil {
+		return nil, nil
+	}
+	RestoreAccountPolicyBase(auth)
+''',
+    '''func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil {
+		return nil, nil
+	}
+	RestoreAccountPolicyBase(auth)''',
+)
+replace_once(
+    auth_conductor,
+    '''func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil || auth.ID == "" {
+		return nil, nil
+	}
+''',
+    '''func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil || auth.ID == "" {
+		return nil, nil
+	}
+	RestoreAccountPolicyBase(auth)
+''',
+    '''func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil || auth.ID == "" {
+		return nil, nil
+	}
+	RestoreAccountPolicyBase(auth)''',
+)
+replace_once(
+    auth_conductor,
     '''\tauth.EnsureIndex()
 \tauthClone := auth.Clone()
 \tm.mu.Lock()
@@ -2866,6 +2929,49 @@ replace_once(
 )
 
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_selection.go'
+replace_once(
+    auth_conductor,
+    '''func (m *Manager) snapshotAuths() []*Auth {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*Auth, 0, len(m.auths))
+	for _, a := range m.auths {
+		out = append(out, a.Clone())
+	}
+	return out
+}''',
+    '''func (m *Manager) snapshotAuths() []*Auth {
+	m.mu.RLock()
+	resolver := m.accountPolicyResolver
+	out := make([]*Auth, 0, len(m.auths))
+	for _, a := range m.auths {
+		out = append(out, resolveAccountPolicy(a, resolver))
+	}
+	m.mu.RUnlock()
+	return out
+}''',
+    'out = append(out, resolveAccountPolicy(a, resolver))',
+)
+replace_once(
+    auth_conductor,
+    '''	snapshot := auth.Clone()
+	m.mu.RUnlock()
+	m.scheduler.upsertAuth(snapshot)
+''',
+    '''	resolver := m.accountPolicyResolver
+	snapshot := resolveAccountPolicy(auth, resolver)
+	m.mu.RUnlock()
+	m.scheduler.upsertAuth(snapshot)
+''',
+    'snapshot := resolveAccountPolicy(auth, resolver)',
+)
+auth_conductor_text = read(auth_conductor)
+candidate_append = '\t\tcandidates = append(candidates, candidate)\n'
+policy_candidate_append = '\t\tcandidates = append(candidates, resolveAccountPolicy(candidate, m.accountPolicyResolver))\n'
+if policy_candidate_append not in auth_conductor_text:
+    if auth_conductor_text.count(candidate_append) < 2:
+        raise SystemExit(f'expected at least two legacy candidate appends in {auth_conductor}')
+    write(auth_conductor, auth_conductor_text.replace(candidate_append, policy_candidate_append))
 replace_once(
     auth_conductor,
     '''\tif m.HomeEnabled() {
@@ -3443,20 +3549,20 @@ subprocess.run([
     'internal/requestmeta/client_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
-    'internal/pro/modelpolicy/config/config.go',
-    'internal/pro/modelpolicy/config/config_test.go',
-    'internal/pro/modelpolicy/policy/engine.go',
-    'internal/pro/modelpolicy/policy/engine_test.go',
+    'internal/pro/oauthpolicy/config/config.go',
+    'internal/pro/oauthpolicy/config/config_test.go',
+    'internal/pro/oauthpolicy/policy/engine.go',
+    'internal/pro/oauthpolicy/policy/engine_test.go',
     'internal/pro/app/migration.go',
     'internal/pro/app/migration_test.go',
     'internal/pro/app/app.go',
     'internal/pro/app/app_test.go',
     'internal/pro/backup/coordinator.go',
     'internal/pro/backup/coordinator_test.go',
-    'internal/pro/host/model_policy.go',
+    'internal/pro/host/oauth_policy.go',
     'internal/pro/host/proxy.go',
-    'internal/pro/modelpolicy/service.go',
-    'internal/pro/modelpolicy/management.go',
+    'internal/pro/oauthpolicy/service.go',
+    'internal/pro/oauthpolicy/management.go',
     'internal/pro/proxypool/management.go',
     'internal/pro/proxypool/service.go',
     'internal/pro/settings/store.go',
@@ -3538,6 +3644,8 @@ subprocess.run([
     'sdk/auth/filestore_test.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
+	'sdk/cliproxy/auth/auth_account_policy.go',
+	'sdk/cliproxy/auth/auth_account_policy_test.go',
     'sdk/cliproxy/auth/pinned_execution.go',
     'sdk/cliproxy/auth/conductor.go',
     'sdk/cliproxy/auth/scheduler.go',

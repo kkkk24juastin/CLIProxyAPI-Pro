@@ -10,7 +10,7 @@ This directory does not vendor the upstream application. It keeps overlay files 
 
 Adds a top-level `/proxy-pool` page for Core's statically linked proxy pool. It manages HTTP/HTTPS/SOCKS5/SOCKS5H nodes, selection strategy, weights, health checks, isolation, and failover. It also supports batch paste, node search, filtered enable/disable, quick duplication, unsaved-draft tests, and manual isolation recovery. Runtime details include success rate, failures, active tunnels, last success/failure, config generation, and health-cycle timestamps.
 
-Adds a top-level `/oauth-model-policy` page for Core's statically linked model policy. Provider tabs edit plan-specific model exclusions for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi, including custom plan keys, while keeping `_unknown` plan-discovery failures separate from the `_default` fallback for recognized plans without a dedicated rule. The page also controls cache TTL and provider resolve timeout.
+Adds a top-level `/oauth-policy` page for Core's statically linked OAuth account policy. Provider tabs edit plan-specific model exclusions, prefixes, priorities, and scheduler weights for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi, including custom plans, `_unknown`/`_default` fallbacks, and effective runtime previews. The legacy `/oauth-model-policy` route redirects to the new page.
 
 The page toggles runtime proxy takeover through native management APIs without changing `config.yaml` or the root `proxy-url`. Credentials with their own `proxy-url` are listed explicitly as bypasses. Both feature configurations persist in the usage SQLite `pro_settings` table, while health state and connection counters remain process-local runtime data.
 
@@ -172,7 +172,7 @@ Request Monitoring uses an initial snapshot plus SSE increments and cursor catch
 - `overlay/src/pro/modules/monitoring/` — request monitoring, usage analytics, and backup UI.
 - `overlay/src/pro/modules/inspection/` — account inspection page, state, and actions.
 - `overlay/src/pro/modules/routing/` — routing policy and request-state-protection UI.
-- `overlay/src/pro/modules/proxyPool/` and `modelPolicy/` — independent module pages and APIs.
+- `overlay/src/pro/modules/proxyPool/` and `oauthPolicy/` — independent module pages and APIs.
 - `overlay/src/pro/modules/quota/` — SQLite quota persistence, sorting, and provider extensions.
 - `overlay/src/pro/modules/*/manifest.tsx` — each business module declares its route, navigation, and startup effects; `registry.tsx` keeps only the module list and derives host projections, while `ProBootstrap.tsx` mounts them after authentication.
 - `overlay/src/pro/shared/` — domain-neutral shared UI models; business modules depend on another module only through its `index.ts` public surface and never through internal `features/` or style files.

@@ -12,7 +12,7 @@ const OAUTH_MODEL_PROVIDER_KEYS = [
 
 export type OAuthModelProviderKey = (typeof OAUTH_MODEL_PROVIDER_KEYS)[number];
 export type OAuthModelPlanKey = string;
-export type OAuthModelPolicyDurationUnit = "s" | "m";
+export type OAuthPolicyDurationUnit = "s" | "m";
 
 export interface OAuthModelPlanDefinition {
   key: OAuthModelPlanKey;
@@ -29,9 +29,25 @@ export interface OAuthModelProviderDefinition {
 export interface OAuthModelPlanRule {
   configured: boolean;
   excludedModels: string[];
+  prefix?: string;
+  priority?: number;
+  weight?: number;
 }
 
-export interface OAuthModelPolicyConfig {
+export interface OAuthPolicyEffectiveItem {
+  authId: string;
+  provider: string;
+  planKey: string;
+  planSource: string;
+  matchedRule: string;
+  prefix?: string;
+  priority?: number;
+  weight?: number;
+  excludedModelCount: number;
+  planError?: string;
+}
+
+export interface OAuthPolicyConfig {
   enabled: boolean;
   cacheTTL: string;
   resolveTimeout: string;
@@ -41,8 +57,8 @@ export interface OAuthModelPolicyConfig {
   >;
 }
 
-export interface OAuthModelPolicySnapshot {
-  config: OAuthModelPolicyConfig;
+export interface OAuthPolicySnapshot {
+  config: OAuthPolicyConfig;
   status: {
     enabled: boolean;
     cacheTTL: string;
@@ -50,6 +66,7 @@ export interface OAuthModelPolicySnapshot {
     providers: number;
     lastError?: string;
   };
+  effective: OAuthPolicyEffectiveItem[];
 }
 
 const fallbackPlans: OAuthModelPlanDefinition[] = [
@@ -186,6 +203,11 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 const asString = (value: unknown, fallback = ""): string =>
   typeof value === "string" ? value : value == null ? fallback : String(value);
 
+export const normalizeOAuthPolicyPrefix = (value: unknown): string | undefined => {
+  const prefix = asString(value).trim().replace(/^\/+|\/+$/g, "");
+  return prefix || undefined;
+};
+
 const hasOwn = (source: Record<string, unknown>, key: string): boolean =>
   Object.prototype.hasOwnProperty.call(source, key);
 
@@ -201,7 +223,7 @@ const normalizeModelPatterns = (value: unknown): string[] => {
     });
 };
 
-export const defaultOAuthModelPolicyConfig = (): OAuthModelPolicyConfig => ({
+export const defaultOAuthPolicyConfig = (): OAuthPolicyConfig => ({
   enabled: false,
   cacheTTL: "30m",
   resolveTimeout: "15s",
@@ -220,11 +242,11 @@ export const defaultOAuthModelPolicyConfig = (): OAuthModelPolicyConfig => ({
   ),
 });
 
-export const normalizeOAuthModelPolicyConfig = (
+export const normalizeOAuthPolicyConfig = (
   value: unknown,
-): OAuthModelPolicyConfig => {
+): OAuthPolicyConfig => {
   const source = asRecord(value);
-  const defaults = defaultOAuthModelPolicyConfig();
+  const defaults = defaultOAuthPolicyConfig();
   const providers = asRecord(source.providers);
   const providerDefinitions = new Map(
     OAUTH_MODEL_PROVIDER_DEFINITIONS.map((provider) => [
@@ -262,13 +284,22 @@ export const normalizeOAuthModelPolicyConfig = (
             {
               configured,
               excludedModels: normalizeModelPatterns(plan["excluded-models"]),
+              ...(hasOwn(plan, "prefix") && normalizeOAuthPolicyPrefix(plan.prefix) !== undefined
+                ? { prefix: normalizeOAuthPolicyPrefix(plan.prefix) }
+                : {}),
+              ...(hasOwn(plan, "priority") && Number.isInteger(Number(plan.priority))
+                ? { priority: Number(plan.priority) }
+                : {}),
+              ...(hasOwn(plan, "weight") && Number.isInteger(Number(plan.weight))
+                ? { weight: Math.min(1_000_000, Math.max(0, Number(plan.weight))) }
+                : {}),
             },
           ];
         }),
       );
       return [providerKey, { plans: normalizedPlans }];
     }),
-  ) as OAuthModelPolicyConfig["providers"];
+  ) as OAuthPolicyConfig["providers"];
   return {
     enabled: source.enabled === true,
     cacheTTL:
@@ -281,16 +312,22 @@ export const normalizeOAuthModelPolicyConfig = (
   };
 };
 
-export const serializeOAuthModelPolicyConfig = (
-  config: OAuthModelPolicyConfig,
+export const serializeOAuthPolicyConfig = (
+  config: OAuthPolicyConfig,
 ): Record<string, unknown> => {
   const providers = Object.fromEntries(
     Object.entries(config.providers).map(([providerKey, provider]) => {
       const plans: Record<string, unknown> = {};
       Object.entries(provider.plans).forEach(([key, rule]) => {
         if (!rule.configured) return;
+        const prefix = normalizeOAuthPolicyPrefix(rule.prefix);
         plans[key] = {
           "excluded-models": normalizeModelPatterns(rule.excludedModels),
+          ...(prefix !== undefined ? { prefix } : {}),
+          ...(rule.priority !== undefined ? { priority: Math.trunc(rule.priority) } : {}),
+          ...(rule.weight !== undefined
+            ? { weight: Math.min(1_000_000, Math.max(0, Math.trunc(rule.weight))) }
+            : {}),
         };
       });
       return [providerKey, { plans }];
@@ -304,37 +341,41 @@ export const serializeOAuthModelPolicyConfig = (
   };
 };
 
-export const oauthModelPolicyDurationValue = (
+export const oauthPolicyDurationValue = (
   value: string,
-  targetUnit: OAuthModelPolicyDurationUnit,
+  targetUnit: OAuthPolicyDurationUnit,
 ): number | null => parsePositiveGoDuration(value, targetUnit);
 
-export const serializeOAuthModelPolicyDuration = (
+export const serializeOAuthPolicyDuration = (
   value: number,
-  unit: OAuthModelPolicyDurationUnit,
+  unit: OAuthPolicyDurationUnit,
 ): string => serializeGoDuration(value, unit);
 
 export const isPositiveDuration = (value: string): boolean =>
-  oauthModelPolicyDurationValue(value, "s") !== null;
+  oauthPolicyDurationValue(value, "s") !== null;
 
-export const oauthModelPolicyApi = {
-  async load(): Promise<OAuthModelPolicySnapshot> {
-    const [rawConfig, status] = await Promise.all([
-      apiClient.get('/pro/oauth-model-policy/config'),
-      apiClient.get('/pro/oauth-model-policy/status'),
+export const oauthPolicyApi = {
+  async load(): Promise<OAuthPolicySnapshot> {
+    const [rawConfig, status, effective] = await Promise.all([
+      apiClient.get('/pro/oauth-policy/config'),
+      apiClient.get('/pro/oauth-policy/status'),
+      apiClient.get('/pro/oauth-policy/effective'),
     ]);
     return {
-      config: normalizeOAuthModelPolicyConfig(rawConfig),
-      status: status as OAuthModelPolicySnapshot['status'],
+      config: normalizeOAuthPolicyConfig(rawConfig),
+      status: status as OAuthPolicySnapshot['status'],
+      effective: Array.isArray((effective as { items?: unknown }).items)
+        ? ((effective as { items: OAuthPolicyEffectiveItem[] }).items)
+        : [],
     };
   },
 
   async save(
-    config: OAuthModelPolicyConfig,
-  ): Promise<OAuthModelPolicySnapshot> {
+    config: OAuthPolicyConfig,
+  ): Promise<OAuthPolicySnapshot> {
     await apiClient.patch(
-      '/pro/oauth-model-policy/config',
-      serializeOAuthModelPolicyConfig({ ...config, enabled: true }),
+      '/pro/oauth-policy/config',
+      serializeOAuthPolicyConfig({ ...config, enabled: true }),
     );
     return this.load();
   },

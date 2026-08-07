@@ -28,6 +28,9 @@ type Provider struct {
 
 type Plan struct {
 	ExcludedModels []string `yaml:"excluded-models" json:"excluded-models"`
+	Prefix         *string  `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+	Priority       *int     `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Weight         *int64   `yaml:"weight,omitempty" json:"weight,omitempty"`
 }
 
 type rawConfig struct {
@@ -41,7 +44,7 @@ func Parse(raw []byte) (Config, error) {
 	decoded := rawConfig{}
 	if len(raw) > 0 {
 		if errUnmarshal := yaml.Unmarshal(raw, &decoded); errUnmarshal != nil {
-			return Config{}, fmt.Errorf("parse oauth model policy config: %w", errUnmarshal)
+			return Config{}, fmt.Errorf("parse oauth account policy config: %w", errUnmarshal)
 		}
 	}
 	cfg := Config{Enabled: len(decoded.Providers) > 0, CacheTTL: DefaultCacheTTL, ResolveTimeout: DefaultResolveTimeout, Providers: map[string]Provider{}}
@@ -88,7 +91,25 @@ func Parse(raw []byte) (Config, error) {
 				seen[pattern] = struct{}{}
 				patterns = append(patterns, pattern)
 			}
-			clean.Plans[planKey] = Plan{ExcludedModels: patterns}
+			cleanPlan := Plan{ExcludedModels: patterns, Priority: plan.Priority, Weight: plan.Weight}
+			if plan.Prefix != nil {
+				prefix := strings.Trim(strings.TrimSpace(*plan.Prefix), "/")
+				if prefix != "" && strings.Contains(prefix, "/") {
+					return Config{}, fmt.Errorf("providers.%s.plans.%s.prefix must be one path segment", providerKey, planKey)
+				}
+				cleanPlan.Prefix = &prefix
+			}
+			if plan.Weight != nil {
+				weight := *plan.Weight
+				if weight <= 0 {
+					weight = 0
+				}
+				if weight > 1_000_000 {
+					return Config{}, fmt.Errorf("providers.%s.plans.%s.weight must not exceed 1000000", providerKey, planKey)
+				}
+				cleanPlan.Weight = &weight
+			}
+			clean.Plans[planKey] = cleanPlan
 		}
 		cfg.Providers[providerKey] = clean
 	}

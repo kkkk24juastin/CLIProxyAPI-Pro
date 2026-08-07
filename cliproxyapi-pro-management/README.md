@@ -10,7 +10,7 @@
 
 新增 `/proxy-pool` 顶级页面，管理 Core 二进制内建代理池。页面可配置 HTTP/HTTPS/SOCKS5/SOCKS5H 节点、轮询策略、权重、健康检查、隔离和故障转移，并提供批量粘贴导入、节点搜索、筛选结果批量启停、快速复制、未保存草稿测试和手动解除隔离。运行区展示成功率、失败数、活动连接、最近成功/失败、配置代次和健康检查时间。
 
-新增 `/oauth-model-policy` 顶级页面，管理 Core 二进制内建模型策略。页面按 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi 标签页编辑套餐模型排除规则，支持自定义套餐，并区分套餐识别失败使用的 `_unknown` 与已识别套餐缺少专属规则时使用的 `_default`。同时可配置缓存时间和提供商探测超时。
+新增 `/oauth-policy` 顶级页面，管理 Core 二进制内建 OAuth 账号策略。页面按 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi 标签页编辑套餐模型排除、前缀、优先级与调度权重，支持自定义套餐、`_unknown`/`_default` 回退和账号有效策略预览。旧 `/oauth-model-policy` 地址自动重定向。
 
 页面通过原生管理 API 开关运行时代理接管，不修改 `config.yaml` 或根 `proxy-url`；带独立 `proxy-url` 的凭证会作为绕过项明确列出。两项功能配置均持久化到 usage SQLite 的 `pro_settings`，健康状态和连接统计仍属于进程级运行数据。
 
@@ -172,7 +172,7 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - `overlay/src/pro/modules/monitoring/` — 请求监控、用量分析与备份 UI。
 - `overlay/src/pro/modules/inspection/` — 账号巡检页面、状态与操作逻辑。
 - `overlay/src/pro/modules/routing/` — 路由策略和请求状态保护 UI。
-- `overlay/src/pro/modules/proxyPool/` 与 `modelPolicy/` — 独立业务模块页面及 API。
+- `overlay/src/pro/modules/proxyPool/` 与 `oauthPolicy/` — 独立业务模块页面及 API。
 - `overlay/src/pro/modules/quota/` — SQLite 配额持久化、排序与 provider 扩展。
 - `overlay/src/pro/modules/*/manifest.tsx` — 各业务模块声明自己的路由、导航和启动副作用；`registry.tsx` 只维护模块清单并派生宿主投影，`ProBootstrap.tsx` 负责认证后挂载。
 - `overlay/src/pro/shared/` — 与业务域无关的共享 UI 模型；业务模块只能通过其他模块的 `index.ts` 公开面依赖，禁止 monitoring/inspection 等模块互相引用内部 `features/` 或样式文件。

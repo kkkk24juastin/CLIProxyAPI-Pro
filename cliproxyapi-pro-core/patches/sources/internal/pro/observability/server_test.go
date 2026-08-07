@@ -286,7 +286,7 @@ func TestUsageBackupRestoresAllNamespacedProSettingsAndConsumers(t *testing.T) {
 	wants := []ProSetting{
 		{Namespace: ProSettingNamespaceRoutingRequestProtection, SchemaVersion: 1, Settings: json.RawMessage(`{"enabled":true,"mode":"enforce"}`), UpdatedAtMS: 123},
 		{Namespace: ProSettingNamespaceProxyPool, SchemaVersion: 1, Settings: json.RawMessage(`{"enabled":false}`), UpdatedAtMS: 124},
-		{Namespace: ProSettingNamespaceOAuthModelPolicy, SchemaVersion: 1, Settings: json.RawMessage(`{"enabled":true}`), UpdatedAtMS: 125},
+		{Namespace: ProSettingNamespaceOAuthPolicy, SchemaVersion: 1, Settings: json.RawMessage(`{"enabled":true}`), UpdatedAtMS: 125},
 	}
 	for _, want := range wants {
 		if err := sourceStore.SetProSetting(ctx, want); err != nil {
@@ -332,6 +332,22 @@ func TestUsageBackupRestoresAllNamespacedProSettingsAndConsumers(t *testing.T) {
 		if item, ok := seen[want.Namespace]; !ok || string(item.Settings) != string(want.Settings) {
 			t.Fatalf("applied pro setting %q = %+v, found:%v", want.Namespace, item, ok)
 		}
+	}
+}
+
+func TestNormalizeOAuthPolicySettingsPrefersCurrentNamespace(t *testing.T) {
+	items := normalizeOAuthPolicySettings([]ProSetting{
+		{Namespace: LegacyProSettingNamespaceOAuthModelPolicy, SchemaVersion: 1, Settings: json.RawMessage(`{"legacy":true}`)},
+		{Namespace: ProSettingNamespaceOAuthPolicy, SchemaVersion: 1, Settings: json.RawMessage(`{"current":true}`)},
+	})
+	if len(items) != 1 || items[0].Namespace != ProSettingNamespaceOAuthPolicy || !strings.Contains(string(items[0].Settings), "current") {
+		t.Fatalf("normalized settings = %#v", items)
+	}
+	legacyOnly := normalizeOAuthPolicySettings([]ProSetting{{
+		Namespace: LegacyProSettingNamespaceOAuthModelPolicy, SchemaVersion: 1, Settings: json.RawMessage(`{"enabled":true}`),
+	}})
+	if len(legacyOnly) != 1 || legacyOnly[0].Namespace != ProSettingNamespaceOAuthPolicy {
+		t.Fatalf("legacy settings = %#v", legacyOnly)
 	}
 }
 

@@ -329,11 +329,11 @@ PROXY_POOL_NAV_LOCALE_KEYS = {
     'zh-TW.json': {'label': '代理管理', 'meta': '多節點輪詢與故障轉移'},
 }
 
-OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS = {
-    'en.json': {'label': 'Model Policy', 'meta': 'Per-plan model availability rules'},
-    'ru.json': {'label': 'Политика моделей', 'meta': 'Правила доступности моделей по тарифам'},
-    'zh-CN.json': {'label': '模型策略', 'meta': '按账号套餐配置模型可用范围'},
-    'zh-TW.json': {'label': '模型策略', 'meta': '依帳號套餐設定模型可用範圍'},
+OAUTH_POLICY_NAV_LOCALE_KEYS = {
+    'en.json': {'label': 'Account Policy', 'meta': 'Per-plan OAuth account routing rules'},
+    'ru.json': {'label': 'Политика аккаунтов', 'meta': 'Правила маршрутизации OAuth по тарифам'},
+    'zh-CN.json': {'label': '账号策略', 'meta': '按套餐配置 OAuth 账号路由规则'},
+    'zh-TW.json': {'label': '帳號策略', 'meta': '依套餐設定 OAuth 帳號路由規則'},
 }
 
 def load_overlay_replacement_manifest(path: Path) -> dict[str, set[str]]:
@@ -1697,11 +1697,11 @@ def patch_locales(target: Path) -> None:
             PROXY_POOL_NAV_LOCALE_KEYS['en.json'],
         )
         data.setdefault('nav', {})['proxy_pool'] = proxy_pool_nav['label']
-        oauth_model_policy_nav = OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS.get(
+        oauth_policy_nav = OAUTH_POLICY_NAV_LOCALE_KEYS.get(
             locale_path.name,
-            OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS['en.json'],
+            OAUTH_POLICY_NAV_LOCALE_KEYS['en.json'],
         )
-        data.setdefault('nav', {})['oauth_model_policy'] = oauth_model_policy_nav['label']
+        data.setdefault('nav', {})['oauth_policy'] = oauth_policy_nav['label']
         data.setdefault('nav_groups', {})['pro'] = 'PRO'
         nav_additions = additions.get('nav', {})
         data.setdefault('nav_meta', {}).update(
@@ -1715,7 +1715,7 @@ def patch_locales(target: Path) -> None:
             )
         )
         data.setdefault('nav_meta', {})['proxy_pool'] = proxy_pool_nav['meta']
-        data.setdefault('nav_meta', {})['oauth_model_policy'] = oauth_model_policy_nav['meta']
+        data.setdefault('nav_meta', {})['oauth_policy'] = oauth_policy_nav['meta']
         data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
         data['account_usage'] = additions.get('account_usage', data.get('account_usage', {}))
         data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
@@ -1724,11 +1724,11 @@ def patch_locales(target: Path) -> None:
             'proxy_pool',
             monitoring.get('en.json', {}).get('proxy_pool', data.get('proxy_pool', {})),
         )
-        data['oauth_model_policy'] = additions.get(
-            'oauth_model_policy',
+        data['oauth_policy'] = additions.get(
+            'oauth_policy',
             monitoring.get('en.json', {}).get(
-                'oauth_model_policy',
-                data.get('oauth_model_policy', {}),
+                'oauth_policy',
+                data.get('oauth_policy', {}),
             ),
         )
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))

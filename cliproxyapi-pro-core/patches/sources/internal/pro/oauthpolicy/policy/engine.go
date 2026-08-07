@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
 	proquota "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/quota"
 	upstreamexecutor "github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -51,6 +51,7 @@ type Input struct {
 	StorageJSON  []byte
 	Metadata     map[string]any
 	Attributes   map[string]string
+	AuthPrefix   string
 	Models       []ModelInfo
 	HTTPDo       HTTPDo
 }
@@ -58,7 +59,23 @@ type Input struct {
 type Result struct {
 	Handled          bool
 	ExcludedModelIDs []string
+	Prefix           *string
+	Priority         *int
+	Weight           *int64
 	Annotations      map[string]string
+}
+
+type EffectivePolicy struct {
+	AuthID        string `json:"authId"`
+	Provider      string `json:"provider"`
+	PlanKey       string `json:"planKey"`
+	PlanSource    string `json:"planSource"`
+	MatchedRule   string `json:"matchedRule"`
+	Prefix        string `json:"prefix"`
+	Priority      int    `json:"priority"`
+	Weight        int64  `json:"weight"`
+	ExcludedCount int    `json:"excludedModelCount"`
+	PlanError     string `json:"planError,omitempty"`
 }
 
 type cacheEntry struct {
@@ -111,7 +128,11 @@ func (e *Engine) Filter(ctx context.Context, input Input) Result {
 	if resolveErr != nil {
 		annotations["plan_error"] = resolveErr.Error()
 	}
-	return Result{Handled: true, ExcludedModelIDs: excluded, Annotations: annotations}
+	return Result{
+		Handled: true, ExcludedModelIDs: excluded,
+		Prefix: rule.Prefix, Priority: rule.Priority, Weight: rule.Weight,
+		Annotations: annotations,
+	}
 }
 
 func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconfig.Config, input Input) (string, string, error) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/observability"
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/settings"
@@ -80,7 +80,7 @@ func migrateLegacySettings(ctx context.Context, configFilePath string) (bool, er
 		if errParse != nil {
 			return false, errParse
 		}
-		if err := migrateSettingIfMissing(ctx, settings.NamespaceOAuthModelPolicy, func() ([]byte, error) {
+		if err := migrateSettingIfMissing(ctx, settings.NamespaceOAuthPolicy, func() ([]byte, error) {
 			return modelconfig.Marshal(modelCfg)
 		}); err != nil {
 			return false, err

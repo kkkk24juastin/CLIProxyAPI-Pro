@@ -22,26 +22,27 @@ import {
   IconX,
 } from "@/components/ui/icons";
 import {
-  defaultOAuthModelPolicyConfig,
+  defaultOAuthPolicyConfig,
   isPositiveDuration,
+  normalizeOAuthPolicyPrefix,
   normalizeOAuthModelPlanKey,
-  oauthModelPolicyDurationValue,
-  oauthModelPolicyApi,
+  oauthPolicyDurationValue,
+  oauthPolicyApi,
   OAUTH_MODEL_PROVIDER_DEFINITIONS,
   planDefinitionsForProvider,
-  serializeOAuthModelPolicyDuration,
+  serializeOAuthPolicyDuration,
   type OAuthModelPlanKey,
   type OAuthModelPlanRule,
-  type OAuthModelPolicyConfig,
-  type OAuthModelPolicyDurationUnit,
-  type OAuthModelPolicySnapshot,
+  type OAuthPolicyConfig,
+  type OAuthPolicyDurationUnit,
+  type OAuthPolicySnapshot,
   type OAuthModelProviderKey,
-} from "@/pro/modules/modelPolicy/oauthModelPolicy";
+} from "@/pro/modules/oauthPolicy/oauthPolicy";
 import { useActionBarHeightVar } from "@/hooks/useActionBarHeightVar";
 import { useAuthStore, useNotificationStore } from "@/stores";
 import { DurationInput, type DurationFieldProps } from '@/pro/shared/DurationInput';
 import configStyles from "@/pro/shared/FloatingActionBar.module.scss";
-import styles from "./OAuthModelPolicyPage.module.scss";
+import styles from "./OAuthPolicyPage.module.scss";
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error || "Unknown error");
@@ -67,7 +68,7 @@ const isLikelyValidGlob = (value: string): boolean => {
   return !escaped;
 };
 
-function OAuthDurationInput(props: DurationFieldProps<OAuthModelPolicyDurationUnit>) {
+function OAuthDurationInput(props: DurationFieldProps<OAuthPolicyDurationUnit>) {
   return (
     <DurationInput
       {...props}
@@ -75,9 +76,9 @@ function OAuthDurationInput(props: DurationFieldProps<OAuthModelPolicyDurationUn
       min={1}
       step={1}
       inputMode="numeric"
-      parse={oauthModelPolicyDurationValue}
+      parse={oauthPolicyDurationValue}
       normalize={(value) => Math.max(1, Math.round(value))}
-      serialize={serializeOAuthModelPolicyDuration}
+      serialize={serializeOAuthPolicyDuration}
     />
   );
 }
@@ -120,7 +121,7 @@ function PatternEditor({
       <div className={styles.patternList}>
         {patterns.length === 0 ? (
           <span className={styles.patternEmpty}>
-            {t("oauth_model_policy.no_exclusions", {
+            {t("oauth_policy.no_exclusions", {
               defaultValue: "No excluded models",
             })}
           </span>
@@ -139,7 +140,7 @@ function PatternEditor({
                 onClick={() =>
                   onChange(patterns.filter((item) => item !== pattern))
                 }
-                aria-label={t("oauth_model_policy.remove_pattern", {
+                aria-label={t("oauth_policy.remove_pattern", {
                   defaultValue: "Remove {{pattern}}",
                   pattern,
                 })}
@@ -156,10 +157,10 @@ function PatternEditor({
           disabled={disabled}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={t("oauth_model_policy.pattern_placeholder", {
+          placeholder={t("oauth_policy.pattern_placeholder", {
             defaultValue: "e.g. grok-pro-*",
           })}
-          aria-label={t("oauth_model_policy.pattern_input", {
+          aria-label={t("oauth_policy.pattern_input", {
             defaultValue: "Model pattern for {{plan}}",
             plan: planKey,
           })}
@@ -175,7 +176,7 @@ function PatternEditor({
         </Button>
       </div>
       <p className={styles.patternHint}>
-        {t("oauth_model_policy.pattern_hint", {
+        {t("oauth_policy.pattern_hint", {
           defaultValue:
             "Supports *, ?, and character ranges. Enter or commas add multiple rules.",
         })}
@@ -184,17 +185,17 @@ function PatternEditor({
   );
 }
 
-export function OAuthModelPolicyPage() {
+export function OAuthPolicyPage() {
   const { t } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore(
     (state) => state.showNotification,
   );
-  const [snapshot, setSnapshot] = useState<OAuthModelPolicySnapshot | null>(
+  const [snapshot, setSnapshot] = useState<OAuthPolicySnapshot | null>(
     null,
   );
-  const [draft, setDraft] = useState<OAuthModelPolicyConfig>(
-    defaultOAuthModelPolicyConfig,
+  const [draft, setDraft] = useState<OAuthPolicyConfig>(
+    defaultOAuthPolicyConfig,
   );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -206,7 +207,7 @@ export function OAuthModelPolicyPage() {
   const actionBarRef = useRef<HTMLDivElement>(null);
   useActionBarHeightVar(
     actionBarRef,
-    "--oauth-model-policy-action-bar-height",
+    "--oauth-policy-action-bar-height",
     dirty,
   );
 
@@ -218,7 +219,7 @@ export function OAuthModelPolicyPage() {
       }
       setLoading(true);
       try {
-        const next = await oauthModelPolicyApi.load();
+        const next = await oauthPolicyApi.load();
         setSnapshot(next);
         if (!dirty || replaceDraft) setDraft(next.config);
         setLoadError("");
@@ -238,8 +239,8 @@ export function OAuthModelPolicyPage() {
   const updateDraft = useCallback(
     (
       next:
-        | OAuthModelPolicyConfig
-        | ((current: OAuthModelPolicyConfig) => OAuthModelPolicyConfig),
+        | OAuthPolicyConfig
+        | ((current: OAuthPolicyConfig) => OAuthPolicyConfig),
     ) => {
       setDraft((current) =>
         typeof next === "function" ? next(current) : next,
@@ -274,7 +275,7 @@ export function OAuthModelPolicyPage() {
     const plans = draft.providers[activeProvider].plans;
     if (plans[key]) {
       showNotification(
-        t("oauth_model_policy.plan_exists", {
+        t("oauth_policy.plan_exists", {
           defaultValue: "Plan key already exists: {{plan}}",
           plan: key,
         }),
@@ -343,32 +344,40 @@ export function OAuthModelPolicyPage() {
     const plans = activePlans;
     if (plans[key].configured) return "";
     if (key === "_default")
-      return t("oauth_model_policy.no_rule", { defaultValue: "No rule" });
+      return t("oauth_policy.no_rule", { defaultValue: "No rule" });
     if (key === "_unknown" && plans._unknown.configured) return "";
     if (!key.startsWith("_") && plans._default.configured)
-      return t("oauth_model_policy.inherits_default", {
+      return t("oauth_policy.inherits_default", {
         defaultValue: "Uses _default",
       });
-    return t("oauth_model_policy.no_rule", { defaultValue: "No policy rule" });
+    return t("oauth_policy.no_rule", { defaultValue: "No policy rule" });
   };
 
   const validate = (): string => {
     if (!isPositiveDuration(draft.cacheTTL))
-      return t("oauth_model_policy.invalid_cache_ttl", {
+      return t("oauth_policy.invalid_cache_ttl", {
         defaultValue: "Cache TTL must be a positive Go duration, such as 30m.",
       });
     if (!isPositiveDuration(draft.resolveTimeout))
-      return t("oauth_model_policy.invalid_resolve_timeout", {
+      return t("oauth_policy.invalid_resolve_timeout", {
         defaultValue:
           "Resolve timeout must be a positive Go duration, such as 15s.",
       });
     for (const provider of Object.values(draft.providers)) {
       for (const rule of Object.values(provider.plans)) {
+		if (rule.prefix?.includes("/"))
+		  return t("oauth_policy.invalid_prefix", {
+		    defaultValue: "Prefix must be one path segment without a slash.",
+		  });
+		if (rule.weight !== undefined && (!Number.isInteger(rule.weight) || rule.weight < 0 || rule.weight > 1_000_000))
+		  return t("oauth_policy.invalid_weight", {
+		    defaultValue: "Weight must be an integer from 0 to 1,000,000.",
+		  });
         const invalid = rule.excludedModels.find(
           (pattern) => !isLikelyValidGlob(pattern),
         );
         if (invalid)
-          return t("oauth_model_policy.invalid_pattern", {
+          return t("oauth_policy.invalid_pattern", {
             defaultValue: "Invalid model pattern: {{pattern}}",
             pattern: invalid,
           });
@@ -385,20 +394,20 @@ export function OAuthModelPolicyPage() {
     }
     setSaving(true);
     try {
-      const next = await oauthModelPolicyApi.save(draft);
+      const next = await oauthPolicyApi.save(draft);
       setSnapshot(next);
       setDraft(next.config);
       setDirty(false);
       setLoadError("");
       showNotification(
-        t("oauth_model_policy.save_success", {
-          defaultValue: "OAuth model policy saved",
+        t("oauth_policy.save_success", {
+          defaultValue: "OAuth account policy saved",
         }),
         "success",
       );
     } catch (error) {
       showNotification(
-        t("oauth_model_policy.save_failed", {
+        t("oauth_policy.save_failed", {
           defaultValue: "Save failed: {{message}}",
           message: errorMessage(error),
         }),
@@ -410,7 +419,7 @@ export function OAuthModelPolicyPage() {
   };
 
   const discard = () => {
-    setDraft(snapshot?.config ?? defaultOAuthModelPolicyConfig());
+    setDraft(snapshot?.config ?? defaultOAuthPolicyConfig());
     setDirty(false);
   };
 
@@ -428,15 +437,15 @@ export function OAuthModelPolicyPage() {
           <div>
             <div className={styles.titleLine}>
               <h1>
-                {t("oauth_model_policy.title", {
-                  defaultValue: "OAuth Model Policy",
+                {t("oauth_policy.title", {
+                  defaultValue: "OAuth Account Policy",
                 })}
               </h1>
             </div>
             <p>
-              {t("oauth_model_policy.subtitle", {
+              {t("oauth_policy.subtitle", {
                 defaultValue:
-                  "Filter each OAuth account model set by provider and detected plan.",
+                  "Apply model availability and routing attributes by provider and detected OAuth plan.",
               })}
             </p>
           </div>
@@ -463,17 +472,17 @@ export function OAuthModelPolicyPage() {
           <div>
             <strong>
               {loading
-                ? t("oauth_model_policy.loading", {
-                    defaultValue: "Loading model policy...",
+                ? t("oauth_policy.loading", {
+                    defaultValue: "Loading account policy...",
                   })
-                : t("oauth_model_policy.load_unavailable", {
-                    defaultValue: "Model policy is unavailable",
+                : t("oauth_policy.load_unavailable", {
+                    defaultValue: "Account policy is unavailable",
                   })}
             </strong>
             <p>
-              {t("oauth_model_policy.loading_hint", {
+              {t("oauth_policy.loading_hint", {
                 defaultValue:
-                  "Reading built-in model policy configuration.",
+                  "Reading built-in account policy configuration.",
               })}
             </p>
           </div>
@@ -496,14 +505,14 @@ export function OAuthModelPolicyPage() {
                   )}
                 </span>
                 <small>
-                  {t("oauth_model_policy.runtime", { defaultValue: "Runtime" })}
+                  {t("oauth_policy.runtime", { defaultValue: "Runtime" })}
                 </small>
                 <strong>
                   {snapshot.status.enabled
-                    ? t("oauth_model_policy.running", {
+                    ? t("oauth_policy.running", {
                         defaultValue: "Enabled",
                       })
-                    : t("oauth_model_policy.stopped", {
+                    : t("oauth_policy.stopped", {
                         defaultValue: "Disabled",
                       })}
                 </strong>
@@ -511,12 +520,12 @@ export function OAuthModelPolicyPage() {
               <div>
                 <span className={styles.statusAccent}>{configuredCount}</span>
                 <small>
-                  {t("oauth_model_policy.configured_plans", {
+                  {t("oauth_policy.configured_plans", {
                     defaultValue: "Plan rules",
                   })}
                 </small>
                 <strong>
-                  {t("oauth_model_policy.configured_count", {
+                  {t("oauth_policy.configured_count", {
                     defaultValue: "{{count}} configured",
                     count: configuredCount,
                   })}
@@ -525,12 +534,12 @@ export function OAuthModelPolicyPage() {
               <div>
                 <span className={styles.statusAccent}>{excludedCount}</span>
                 <small>
-                  {t("oauth_model_policy.model_patterns", {
+                  {t("oauth_policy.model_patterns", {
                     defaultValue: "Model patterns",
                   })}
                 </small>
                 <strong>
-                  {t("oauth_model_policy.pattern_count", {
+                  {t("oauth_policy.pattern_count", {
                     defaultValue: "{{count}} exclusions",
                     count: excludedCount,
                   })}
@@ -541,12 +550,12 @@ export function OAuthModelPolicyPage() {
                   {OAUTH_MODEL_PROVIDER_DEFINITIONS.length}
                 </span>
                 <small>
-                  {t("oauth_model_policy.providers", {
+                  {t("oauth_policy.providers", {
                     defaultValue: "Providers",
                   })}
                 </small>
                 <strong>
-                  {t("oauth_model_policy.oauth_accounts", {
+                  {t("oauth_policy.oauth_accounts", {
                     defaultValue: "OAuth accounts",
                   })}
                 </strong>
@@ -560,12 +569,12 @@ export function OAuthModelPolicyPage() {
                 </span>
                 <div>
                   <h2>
-                    {t("oauth_model_policy.discovery_settings", {
+                    {t("oauth_policy.discovery_settings", {
                       defaultValue: "Plan discovery",
                     })}
                   </h2>
                   <p>
-                    {t("oauth_model_policy.discovery_hint", {
+                    {t("oauth_policy.discovery_hint", {
                       defaultValue:
                         "Auth metadata is preferred; supported provider APIs are queried only when the plan is missing.",
                     })}
@@ -574,12 +583,12 @@ export function OAuthModelPolicyPage() {
               </div>
               <div className={styles.settingsGrid}>
                 <OAuthDurationInput
-                  label={t("oauth_model_policy.cache_ttl", {
+                  label={t("oauth_policy.cache_ttl", {
                     defaultValue: "Plan cache TTL",
                   })}
                   value={draft.cacheTTL}
                   unit="m"
-                  unitLabel={t("oauth_model_policy.unit_minutes", {
+                  unitLabel={t("oauth_policy.unit_minutes", {
                     defaultValue: "minutes",
                   })}
                   fallback={30}
@@ -587,12 +596,12 @@ export function OAuthModelPolicyPage() {
                   onChange={(cacheTTL) => updateDraft({ ...draft, cacheTTL })}
                 />
                 <OAuthDurationInput
-                  label={t("oauth_model_policy.resolve_timeout", {
+                  label={t("oauth_policy.resolve_timeout", {
                     defaultValue: "Provider resolve timeout",
                   })}
                   value={draft.resolveTimeout}
                   unit="s"
-                  unitLabel={t("oauth_model_policy.unit_seconds", {
+                  unitLabel={t("oauth_policy.unit_seconds", {
                     defaultValue: "seconds",
                   })}
                   fallback={15}
@@ -608,7 +617,7 @@ export function OAuthModelPolicyPage() {
               <div
                 className={styles.providerTabs}
                 role="tablist"
-                aria-label={t("oauth_model_policy.providers", {
+                aria-label={t("oauth_policy.providers", {
                   defaultValue: "Providers",
                 })}
               >
@@ -634,7 +643,7 @@ export function OAuthModelPolicyPage() {
                     >
                       <span>
                         {t(
-                          `oauth_model_policy.provider_${provider.key.replace(/-/g, "_")}`,
+                          `oauth_policy.provider_${provider.key.replace(/-/g, "_")}`,
                           { defaultValue: provider.key },
                         )}
                       </span>
@@ -646,17 +655,17 @@ export function OAuthModelPolicyPage() {
               <div className={styles.policyHeader}>
                 <div>
                   <h2>
-                    {t("oauth_model_policy.provider_rules", {
+                    {t("oauth_policy.provider_rules", {
                       defaultValue: "{{provider}} plan rules",
                       provider: t(
-                        `oauth_model_policy.provider_${activeProvider.replace(/-/g, "_")}`,
+                        `oauth_policy.provider_${activeProvider.replace(/-/g, "_")}`,
                         { defaultValue: activeProvider },
                       ),
                     })}
                   </h2>
                   <p>
                     {t(
-                      `oauth_model_policy.provider_${activeProvider.replace(/-/g, "_")}_hint`,
+                      `oauth_policy.provider_${activeProvider.replace(/-/g, "_")}_hint`,
                       {
                         defaultValue:
                           "Each enabled rule subtracts matching model IDs from that account only.",
@@ -665,7 +674,7 @@ export function OAuthModelPolicyPage() {
                   </p>
                 </div>
                 <span className={styles.flowBadge}>
-                  {t("oauth_model_policy.processing_order", {
+                  {t("oauth_policy.processing_order", {
                     defaultValue:
                       "excluded_models → plan policy → alias / prefix",
                   })}
@@ -674,12 +683,12 @@ export function OAuthModelPolicyPage() {
               <div className={styles.customPlanRow}>
                 <div>
                   <strong>
-                    {t("oauth_model_policy.custom_plan", {
+                    {t("oauth_policy.custom_plan", {
                       defaultValue: "Custom plan key",
                     })}
                   </strong>
                   <span>
-                    {t("oauth_model_policy.custom_plan_hint", {
+                    {t("oauth_policy.custom_plan_hint", {
                       defaultValue:
                         "Add a provider plan value observed in auth metadata or a provider API.",
                     })}
@@ -696,12 +705,12 @@ export function OAuthModelPolicyPage() {
                       addCustomPlan();
                     }}
                     placeholder={t(
-                      "oauth_model_policy.custom_plan_placeholder",
+                      "oauth_policy.custom_plan_placeholder",
                       {
                         defaultValue: "e.g. enterprise",
                       },
                     )}
-                    aria-label={t("oauth_model_policy.custom_plan", {
+                    aria-label={t("oauth_policy.custom_plan", {
                       defaultValue: "Custom plan key",
                     })}
                   />
@@ -732,11 +741,11 @@ export function OAuthModelPolicyPage() {
                           <div className={styles.ruleTitleLine}>
                             <h3>
                               {definition.kind === "custom"
-                                ? t("oauth_model_policy.plan_custom", {
+                                ? t("oauth_policy.plan_custom", {
                                     defaultValue: "Custom plan",
                                   })
                                 : t(
-                                    `oauth_model_policy.plan_${definition.localeSuffix}`,
+                                    `oauth_policy.plan_${definition.localeSuffix}`,
                                     { defaultValue: definition.key },
                                   )}
                             </h3>
@@ -748,13 +757,13 @@ export function OAuthModelPolicyPage() {
                                 disabled={saving}
                                 onClick={() => removeCustomPlan(definition.key)}
                                 title={t(
-                                  "oauth_model_policy.remove_custom_plan",
+                                  "oauth_policy.remove_custom_plan",
                                   {
                                     defaultValue: "Remove custom plan",
                                   },
                                 )}
                                 aria-label={t(
-                                  "oauth_model_policy.remove_custom_plan_label",
+                                  "oauth_policy.remove_custom_plan_label",
                                   {
                                     defaultValue: "Remove {{plan}}",
                                     plan: definition.key,
@@ -767,7 +776,7 @@ export function OAuthModelPolicyPage() {
                           </div>
                           <p>
                             {t(
-                              `oauth_model_policy.plan_${definition.localeSuffix}_hint`,
+                              `oauth_policy.plan_${definition.localeSuffix}_hint`,
                               {
                                 defaultValue:
                                   definition.kind === "fallback"
@@ -781,10 +790,10 @@ export function OAuthModelPolicyPage() {
                           {definition.monthlyLimitCents !== undefined && (
                             <small>
                               {definition.monthlyLimitCents === 0
-                                ? t("oauth_model_policy.no_paid_limit", {
+                                ? t("oauth_policy.no_paid_limit", {
                                     defaultValue: "Free plan",
                                   })
-                                : t("oauth_model_policy.monthly_limit", {
+                                : t("oauth_policy.monthly_limit", {
                                     defaultValue:
                                       "{{count}} cents monthly limit",
                                     count: definition.monthlyLimitCents,
@@ -799,23 +808,65 @@ export function OAuthModelPolicyPage() {
                               configured,
                             })
                           }
-                          ariaLabel={t("oauth_model_policy.configure_plan", {
+                          ariaLabel={t("oauth_policy.configure_plan", {
                             defaultValue: "Configure {{plan}} rule",
                             plan: definition.key,
                           })}
                         />
                       </div>
                       {rule.configured ? (
-                        <PatternEditor
-                          planKey={definition.key}
-                          disabled={saving}
-                          patterns={rule.excludedModels}
-                          onChange={(excludedModels) =>
-                            patchPlan(activeProvider, definition.key, {
-                              excludedModels,
-                            })
-                          }
-                        />
+                        <>
+                          <div className={styles.accountPolicyFields}>
+                            <label>
+                              <span>{t("oauth_policy.prefix", { defaultValue: "Prefix" })}</span>
+                              <input
+                                value={rule.prefix ?? ""}
+                                disabled={saving}
+                                placeholder={t("oauth_policy.inherit", { defaultValue: "Inherit account value" })}
+                                onChange={(event) => patchPlan(activeProvider, definition.key, {
+                                  prefix: normalizeOAuthPolicyPrefix(event.target.value),
+                                })}
+                              />
+                              <small>{t("oauth_policy.prefix_hint", { defaultValue: "Namespaces this plan's exposed model IDs." })}</small>
+                            </label>
+                            <label>
+                              <span>{t("oauth_policy.priority", { defaultValue: "Priority" })}</span>
+                              <input
+                                type="number"
+                                value={rule.priority ?? ""}
+                                disabled={saving}
+                                placeholder={t("oauth_policy.inherit", { defaultValue: "Inherit account value" })}
+                                onChange={(event) => patchPlan(activeProvider, definition.key, {
+                                  priority: event.target.value === "" ? undefined : Math.trunc(Number(event.target.value)),
+                                })}
+                              />
+                              <small>{t("oauth_policy.priority_hint", { defaultValue: "Higher values form the preferred routing tier." })}</small>
+                            </label>
+                            <label>
+                              <span>{t("oauth_policy.weight", { defaultValue: "Weight" })}</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={1_000_000}
+                                value={rule.weight ?? ""}
+                                disabled={saving}
+                                placeholder={t("oauth_policy.inherit", { defaultValue: "Inherit account value" })}
+                                onChange={(event) => patchPlan(activeProvider, definition.key, {
+                                  weight: event.target.value === "" ? undefined : Math.trunc(Number(event.target.value)),
+                                })}
+                              />
+                              <small>{t("oauth_policy.weight_hint", { defaultValue: "Used only by weighted round robin within the same priority." })}</small>
+                            </label>
+                          </div>
+                          <PatternEditor
+                            planKey={definition.key}
+                            disabled={saving}
+                            patterns={rule.excludedModels}
+                            onChange={(excludedModels) =>
+                              patchPlan(activeProvider, definition.key, { excludedModels })
+                            }
+                          />
+                        </>
                       ) : (
                         <div className={styles.inheritedRule}>
                           <IconInfo size={15} />
@@ -829,12 +880,49 @@ export function OAuthModelPolicyPage() {
               <div className={styles.behaviorNote}>
                 <IconInfo size={18} />
                 <p>
-                  {t("oauth_model_policy.empty_rule_behavior", {
+                  {t("oauth_policy.empty_rule_behavior", {
                     defaultValue:
                       "An enabled rule with no patterns explicitly allows the full current model set and stops fallback matching.",
                   })}
                 </p>
               </div>
+            </section>
+            <section className={styles.effectivePanel}>
+              <div className={styles.sectionHeading}>
+                <span><IconCheckCircle2 size={19} /></span>
+                <div>
+                  <h2>{t("oauth_policy.effective_title", { defaultValue: "Effective account policies" })}</h2>
+                  <p>{t("oauth_policy.effective_hint", { defaultValue: "Runtime-only values resolved from the latest account plan. Authentication files are not modified." })}</p>
+                </div>
+              </div>
+              {snapshot.effective.length === 0 ? (
+                <div className={styles.inheritedRule}>
+                  <IconInfo size={15} />
+                  <span>{t("oauth_policy.effective_empty", { defaultValue: "No account has matched a configured policy yet." })}</span>
+                </div>
+              ) : (
+                <div className={styles.effectiveTableWrap}>
+                  <table className={styles.effectiveTable}>
+                    <thead><tr>
+                      <th>{t("oauth_policy.account", { defaultValue: "Account" })}</th>
+                      <th>{t("oauth_policy.provider", { defaultValue: "Provider" })}</th>
+                      <th>{t("oauth_policy.plan", { defaultValue: "Plan" })}</th>
+                      <th>{t("oauth_policy.matched_rule", { defaultValue: "Matched rule" })}</th>
+                      <th>{t("oauth_policy.prefix", { defaultValue: "Prefix" })}</th>
+                      <th>{t("oauth_policy.priority", { defaultValue: "Priority" })}</th>
+                      <th>{t("oauth_policy.weight", { defaultValue: "Weight" })}</th>
+                    </tr></thead>
+                    <tbody>{snapshot.effective.map((item) => (
+                      <tr key={item.authId}>
+                        <td><code>{item.authId}</code></td><td>{item.provider}</td>
+                        <td>{item.planKey}<small>{item.planSource}</small></td>
+                        <td><code>{item.matchedRule}</code></td>
+                        <td>{item.prefix ?? "—"}</td><td>{item.priority ?? "—"}</td><td>{item.weight ?? "—"}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              )}
             </section>
           </>
       )}
@@ -862,10 +950,10 @@ export function OAuthModelPolicyPage() {
                 className={configStyles.floatingActionButton}
                 onClick={discard}
                 disabled={saving}
-                title={t("oauth_model_policy.discard", {
+                title={t("oauth_policy.discard", {
                   defaultValue: "Discard changes",
                 })}
-                aria-label={t("oauth_model_policy.discard", {
+                aria-label={t("oauth_policy.discard", {
                   defaultValue: "Discard changes",
                 })}
               >

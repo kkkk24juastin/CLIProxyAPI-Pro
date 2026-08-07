@@ -130,6 +130,7 @@ func RegisterProSettingConsumer(namespace string, apply func(context.Context, Pr
 }
 
 func ApplyImportedProSettings(ctx context.Context, settings []ProSetting) error {
+	settings = normalizeOAuthPolicySettings(settings)
 	for _, item := range settings {
 		globalStateMu.RLock()
 		registrations := proSettingConsumers[item.Namespace]
@@ -194,6 +195,17 @@ func SetProSetting(ctx context.Context, item ProSetting) error {
 			return fmt.Errorf("usage service is not available")
 		}
 		return globalService.store.SetProSetting(ctx, item)
+	})
+}
+
+func DeleteProSetting(ctx context.Context, namespace string) error {
+	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		globalStateMu.RLock()
+		defer globalStateMu.RUnlock()
+		if globalService == nil || globalService.store == nil {
+			return fmt.Errorf("usage service is not available")
+		}
+		return globalService.store.DeleteProSetting(ctx, namespace)
 	})
 }
 

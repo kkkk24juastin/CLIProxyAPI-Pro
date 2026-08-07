@@ -3,7 +3,7 @@ import { monitoringModule } from '@/pro/modules/monitoring';
 import { inspectionModule } from '@/pro/modules/inspection';
 import { routingModule } from '@/pro/modules/routing';
 import { proxyPoolModule } from '@/pro/modules/proxyPool';
-import { modelPolicyModule } from '@/pro/modules/modelPolicy';
+import { oauthPolicyModule } from '@/pro/modules/oauthPolicy';
 import { quotaModule } from '@/pro/modules/quota';
 
 export interface ProRouteEntry {
@@ -30,13 +30,13 @@ const proModules = [
   monitoringModule,
   inspectionModule,
   routingModule,
-  modelPolicyModule,
+  oauthPolicyModule,
   proxyPoolModule,
   quotaModule,
 ];
 
 export const proRoutes: ProRouteEntry[] = proModules.flatMap((module) =>
-  module.route ? [module.route] : []
+  [...(module.route ? [module.route] : []), ...(module.routes ?? [])]
 );
 
 const navigationGroups = new Map<string, ProNavigationGroup>();

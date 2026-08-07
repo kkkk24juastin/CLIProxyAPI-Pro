@@ -3,7 +3,7 @@ package management
 import (
 	"github.com/gin-gonic/gin"
 	proapp "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/app"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool"
 )
 
@@ -33,9 +33,9 @@ func (h *Handler) RegisterProFeatureRoutes(group *gin.RouterGroup) {
 	application := h.proApplication()
 	if application == nil {
 		proxypool.RegisterManagementRoutes(group, nil)
-		modelpolicy.RegisterManagementRoutes(group, nil)
+		oauthpolicy.RegisterManagementRoutes(group, nil)
 		return
 	}
 	proxypool.RegisterManagementRoutes(group, application.ProxyPool())
-	modelpolicy.RegisterManagementRoutes(group, application.ModelPolicy())
+	oauthpolicy.RegisterManagementRoutes(group, application.OAuthPolicy())
 }

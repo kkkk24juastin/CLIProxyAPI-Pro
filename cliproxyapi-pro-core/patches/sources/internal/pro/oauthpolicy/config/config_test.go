@@ -38,6 +38,31 @@ providers:
 	}
 }
 
+func TestParseNormalizesAccountRoutingFields(t *testing.T) {
+	cfg, err := Parse([]byte(`
+providers:
+  codex:
+    plans:
+      pro:
+        prefix: " /team-pro/ "
+        priority: 50
+        weight: -2
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := cfg.Providers["codex"].Plans["pro"]
+	if plan.Prefix == nil || *plan.Prefix != "team-pro" || plan.Priority == nil || *plan.Priority != 50 || plan.Weight == nil || *plan.Weight != 0 {
+		t.Fatalf("normalized account policy = %#v", plan)
+	}
+	if _, err := Parse([]byte(`providers: {codex: {plans: {pro: {prefix: "bad/path"}}}}`)); err == nil {
+		t.Fatal("accepted multi-segment prefix")
+	}
+	if _, err := Parse([]byte(`providers: {codex: {plans: {pro: {weight: 1000001}}}}`)); err == nil {
+		t.Fatal("accepted oversized weight")
+	}
+}
+
 func TestParseCanonicalizesProviderPlanAliases(t *testing.T) {
 	cfg, errParse := Parse([]byte(`
 providers:

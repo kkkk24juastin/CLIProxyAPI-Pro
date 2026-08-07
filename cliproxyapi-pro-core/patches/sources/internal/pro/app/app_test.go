@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
-	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/modelpolicy/config"
+	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
 )
 
@@ -36,7 +36,7 @@ func TestAppModulesPersistSettingsOnlyToSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proApp.UpdateModelConfig(ctx, modelCfg); err != nil {
+	if err := proApp.UpdateOAuthConfig(ctx, modelCfg); err != nil {
 		t.Fatal(err)
 	}
 
@@ -55,7 +55,7 @@ func TestAppModulesPersistSettingsOnlyToSQLite(t *testing.T) {
 	if err != nil || !persistedProxy.TakeoverEnabled {
 		t.Fatalf("persisted proxy config = %#v err:%v", persistedProxy, err)
 	}
-	modelItem, modelFound, err := embeddedusage.GetProSetting(ctx, embeddedusage.ProSettingNamespaceOAuthModelPolicy)
+	modelItem, modelFound, err := embeddedusage.GetProSetting(ctx, embeddedusage.ProSettingNamespaceOAuthPolicy)
 	if err != nil || !modelFound {
 		t.Fatalf("model setting = found:%v err:%v", modelFound, err)
 	}

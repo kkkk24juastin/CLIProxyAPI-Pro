@@ -9,7 +9,8 @@ import proobservability "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/ob
 const (
 	ProSettingNamespaceRoutingRequestProtection = proobservability.ProSettingNamespaceRoutingRequestProtection
 	ProSettingNamespaceProxyPool                = proobservability.ProSettingNamespaceProxyPool
-	ProSettingNamespaceOAuthModelPolicy         = proobservability.ProSettingNamespaceOAuthModelPolicy
+	ProSettingNamespaceOAuthPolicy              = proobservability.ProSettingNamespaceOAuthPolicy
+	LegacyProSettingNamespaceOAuthModelPolicy   = proobservability.LegacyProSettingNamespaceOAuthModelPolicy
 	XAIQuotaParserVersion                       = proobservability.XAIQuotaParserVersion
 )
 

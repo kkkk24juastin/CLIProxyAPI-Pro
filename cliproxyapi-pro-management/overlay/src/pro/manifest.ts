@@ -17,6 +17,7 @@ export interface ProModuleNavigation {
 export interface ProModuleManifest {
   id: string;
   route?: ProModuleRoute;
+  routes?: ProModuleRoute[];
   navigation?: ProModuleNavigation;
   bootstrap?: ReactNode;
 }

@@ -10,7 +10,8 @@ const (
 
 	NamespaceRoutingRequestProtection = "routing.request-protection"
 	NamespaceProxyPool                = "proxy.pool"
-	NamespaceOAuthModelPolicy         = "model.oauth-policy"
+	NamespaceOAuthPolicy              = "oauth-policy"
+	LegacyNamespaceOAuthModelPolicy   = "model.oauth-policy"
 )
 
 // Item is the module-facing representation of one versioned Pro setting.
@@ -27,5 +28,6 @@ type Item struct {
 type Store interface {
 	Get(context.Context, string) (Item, bool, error)
 	Put(context.Context, Item) error
+	Delete(context.Context, string) error
 	Subscribe(string, func(context.Context, Item) error) func()
 }

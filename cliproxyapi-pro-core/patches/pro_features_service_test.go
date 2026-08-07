@@ -14,7 +14,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
-func TestBuiltInOAuthModelPolicyConstrainsRegistrationAndSelection(t *testing.T) {
+func TestBuiltInOAuthPolicyConstrainsRegistrationAndSelection(t *testing.T) {
 	t.Setenv("USAGE_DB_PATH", filepath.Join(t.TempDir(), "usage.sqlite"))
 	t.Setenv("USAGE_SERVICE_ENABLED", "true")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -37,7 +37,7 @@ func TestBuiltInOAuthModelPolicyConstrainsRegistrationAndSelection(t *testing.T)
 		}}}
 	}`)
 	if err := embeddedusage.SetProSetting(ctx, embeddedusage.ProSetting{
-		Namespace: embeddedusage.ProSettingNamespaceOAuthModelPolicy, SchemaVersion: 1, Settings: settings,
+		Namespace: embeddedusage.ProSettingNamespaceOAuthPolicy, SchemaVersion: 1, Settings: settings,
 	}); err != nil {
 		t.Fatal(err)
 	}

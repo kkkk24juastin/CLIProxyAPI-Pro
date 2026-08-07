@@ -1,24 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   isPositiveDuration,
-  normalizeOAuthModelPolicyConfig,
-  oauthModelPolicyDurationValue,
+  normalizeOAuthPolicyPrefix,
+  normalizeOAuthPolicyConfig,
+  oauthPolicyDurationValue,
   OAUTH_MODEL_PROVIDER_DEFINITIONS,
   planDefinitionsForProvider,
-  serializeOAuthModelPolicyDuration,
-  serializeOAuthModelPolicyConfig,
-} from "@/pro/modules/modelPolicy/oauthModelPolicy";
+  serializeOAuthPolicyDuration,
+  serializeOAuthPolicyConfig,
+} from "@/pro/modules/oauthPolicy/oauthPolicy";
 
-describe("oauth model policy service", () => {
+describe("oauth account policy service", () => {
   it("normalizes known plans and preserves fallback distinction", () => {
-    const config = normalizeOAuthModelPolicyConfig({
+    const config = normalizeOAuthPolicyConfig({
       enabled: true,
       "cache-ttl": "45m",
       "resolve-timeout": "8s",
       providers: {
         xai: {
           plans: {
-            free: { "excluded-models": [" GROK-PRO-* ", "grok-pro-*"] },
+            free: { "excluded-models": [" GROK-PRO-* ", "grok-pro-*"], prefix: "pro", priority: 10, weight: 5 },
             _unknown: { "excluded-models": ["grok-preview-*"] },
           },
         },
@@ -30,13 +31,16 @@ describe("oauth model policy service", () => {
     expect(config.providers.xai.plans.free).toEqual({
       configured: true,
       excludedModels: ["grok-pro-*"],
+      prefix: "pro",
+      priority: 10,
+      weight: 5,
     });
     expect(config.providers.xai.plans._unknown.configured).toBe(true);
     expect(config.providers.xai.plans._default.configured).toBe(false);
   });
 
   it("serializes only explicitly configured rules", () => {
-    const config = normalizeOAuthModelPolicyConfig({});
+    const config = normalizeOAuthPolicyConfig({});
     config.enabled = true;
     config.providers.xai.plans["xai-custom"] = {
       configured: true,
@@ -47,7 +51,7 @@ describe("oauth model policy service", () => {
       excludedModels: ["grok-experimental-*"],
     };
 
-    const serialized = serializeOAuthModelPolicyConfig(config);
+    const serialized = serializeOAuthPolicyConfig(config);
     expect(serialized).toMatchObject({
       enabled: true,
       "cache-ttl": "30m",
@@ -78,15 +82,29 @@ describe("oauth model policy service", () => {
     expect(isPositiveDuration("30")).toBe(false);
   });
 
+  it("treats a cleared prefix as inheriting the account value", () => {
+    expect(normalizeOAuthPolicyPrefix(" /team/ ")).toBe("team");
+    expect(normalizeOAuthPolicyPrefix("  ")).toBeUndefined();
+
+    const config = normalizeOAuthPolicyConfig({
+      providers: { codex: { plans: { pro: { prefix: "" } } } },
+    });
+    expect(config.providers.codex.plans.pro.prefix).toBeUndefined();
+    const serialized = serializeOAuthPolicyConfig(config) as {
+      providers: Record<string, { plans: Record<string, Record<string, unknown>> }>;
+    };
+    expect(serialized.providers.codex.plans.pro).not.toHaveProperty("prefix");
+  });
+
   it("converts duration values for fixed-unit controls", () => {
-    expect(oauthModelPolicyDurationValue("1h30m", "m")).toBe(90);
-    expect(oauthModelPolicyDurationValue("1500ms", "s")).toBe(1.5);
-    expect(oauthModelPolicyDurationValue("invalid", "s")).toBeNull();
-    expect(serializeOAuthModelPolicyDuration(12.3456, "s")).toBe("12.346s");
+    expect(oauthPolicyDurationValue("1h30m", "m")).toBe(90);
+    expect(oauthPolicyDurationValue("1500ms", "s")).toBe(1.5);
+    expect(oauthPolicyDurationValue("invalid", "s")).toBeNull();
+    expect(serializeOAuthPolicyDuration(12.3456, "s")).toBe("12.346s");
   });
 
   it("normalizes every provider and preserves custom plan keys", () => {
-    const config = normalizeOAuthModelPolicyConfig({
+    const config = normalizeOAuthPolicyConfig({
       providers: {
         codex: { plans: { plus: { "excluded-models": ["gpt-5-pro"] } } },
         claude: {
@@ -124,7 +142,7 @@ describe("oauth model policy service", () => {
       ),
     ).toEqual(["enterprise", "_unknown", "_default"]);
 
-    const serialized = serializeOAuthModelPolicyConfig(config) as {
+    const serialized = serializeOAuthPolicyConfig(config) as {
       providers: Record<string, { plans: Record<string, unknown> }>;
     };
     expect(serialized.providers.kimi.plans.enterprise).toEqual({
