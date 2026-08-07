@@ -32,6 +32,10 @@ type Service struct {
 	decisions  map[string]modelengine.Result
 	onChange   func(context.Context)
 	unregister func()
+	changeCtx  context.Context
+	changeStop context.CancelFunc
+	changeRun  bool
+	changeNext bool
 	closed     bool
 }
 
@@ -43,7 +47,12 @@ func New(ctx context.Context, store settings.Store) (*Service, error) {
 		return nil, fmt.Errorf("account policy settings store is required")
 	}
 	cfg, loadErr := loadConfig(ctx, store)
-	service := &Service{store: store, config: cfg, engine: modelengine.New(), effective: make(map[string]modelengine.EffectivePolicy), decisions: make(map[string]modelengine.Result)}
+	changeCtx, changeStop := context.WithCancel(context.Background())
+	service := &Service{
+		store: store, config: cfg, engine: modelengine.New(),
+		effective: make(map[string]modelengine.EffectivePolicy), decisions: make(map[string]modelengine.Result),
+		changeCtx: changeCtx, changeStop: changeStop,
+	}
 	if loadErr != nil {
 		service.configErr = loadErr.Error()
 	}
@@ -105,7 +114,12 @@ func (s *Service) Close() {
 	unregister := s.unregister
 	s.unregister = nil
 	s.onChange = nil
+	changeStop := s.changeStop
+	s.changeStop = nil
 	s.mu.Unlock()
+	if changeStop != nil {
+		changeStop()
+	}
 	if unregister != nil {
 		unregister()
 	}
@@ -158,15 +172,12 @@ func (s *Service) UpdateConfig(ctx context.Context, cfg modelconfig.Config) erro
 	s.effective = make(map[string]modelengine.EffectivePolicy)
 	s.decisions = make(map[string]modelengine.Result)
 	s.engine.ApplyConfig(normalized)
-	handler := s.onChange
 	s.mu.Unlock()
-	if handler != nil {
-		handler(ctx)
-	}
+	s.queueChange()
 	return nil
 }
 
-func (s *Service) applyImportedSetting(ctx context.Context, item settings.Item) error {
+func (s *Service) applyImportedSetting(_ context.Context, item settings.Item) error {
 	if item.SchemaVersion != settings.SchemaVersionOne {
 		return fmt.Errorf("unsupported OAuth account policy schema version %d", item.SchemaVersion)
 	}
@@ -184,12 +195,50 @@ func (s *Service) applyImportedSetting(ctx context.Context, item settings.Item) 
 	s.effective = make(map[string]modelengine.EffectivePolicy)
 	s.decisions = make(map[string]modelengine.Result)
 	s.engine.ApplyConfig(cfg)
-	handler := s.onChange
 	s.mu.Unlock()
-	if handler != nil {
-		handler(ctx)
-	}
+	s.queueChange()
 	return nil
+}
+
+// queueChange applies saved policy changes outside the management request. A
+// refresh may resolve remote account plans, so waiting here would make a
+// successful SQLite write look like a failed save when the client times out.
+// Concurrent updates are coalesced into at most one additional refresh.
+func (s *Service) queueChange() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.closed || s.onChange == nil || s.changeCtx == nil {
+		s.mu.Unlock()
+		return
+	}
+	s.changeNext = true
+	if s.changeRun {
+		s.mu.Unlock()
+		return
+	}
+	s.changeRun = true
+	ctx := s.changeCtx
+	s.mu.Unlock()
+	go s.runChanges(ctx)
+}
+
+func (s *Service) runChanges(ctx context.Context) {
+	for {
+		s.mu.Lock()
+		if s.closed || !s.changeNext || ctx.Err() != nil {
+			s.changeRun = false
+			s.mu.Unlock()
+			return
+		}
+		s.changeNext = false
+		handler := s.onChange
+		s.mu.Unlock()
+		if handler != nil {
+			handler(ctx)
+		}
+	}
 }
 
 func (s *Service) Status() Status {

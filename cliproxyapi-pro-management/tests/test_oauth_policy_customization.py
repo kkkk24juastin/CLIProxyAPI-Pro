@@ -38,6 +38,9 @@ class OAuthPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('useActionBarHeightVar', source)
         self.assertIn('createPortal(', source)
         self.assertIn('document.body', source)
+        self.assertIn('filteredEffectivePolicies.map', source)
+        self.assertIn('effectiveProviderOptions', source)
+        self.assertIn('effectivePlanOptions', source)
 
     def test_service_preserves_explicit_empty_rules_and_uses_native_runtime(self) -> None:
         source = SERVICE.read_text()
@@ -83,6 +86,10 @@ class OAuthPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('.providerTabs', styles)
         self.assertIn('.customPlanRow', styles)
         self.assertIn('.durationControl', styles)
+        self.assertIn('max-height: min(430px, 52vh)', styles)
+        self.assertIn('position: sticky', styles)
+        self.assertIn('grid-column: 1 / -1', styles)
+        self.assertIn('repeat(auto-fit, minmax(min(220px, 100%), 1fr))', styles)
         self.assertIn('--oauth-policy-action-bar-height', styles)
 
     def test_shared_action_bar_is_owned_by_the_pro_overlay(self) -> None:

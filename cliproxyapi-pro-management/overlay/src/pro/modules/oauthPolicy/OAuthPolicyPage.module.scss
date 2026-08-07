@@ -433,6 +433,7 @@
 }
 
 .ruleCardActive {
+  grid-column: 1 / -1;
   border-color: color-mix(
     in srgb,
     var(--primary-color) 44%,
@@ -732,13 +733,16 @@
 
 .accountPolicyFields {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  align-items: start;
+  gap: 12px;
+  margin-top: 16px;
 }
 
 .accountPolicyFields label {
   display: grid;
+  min-width: 0;
+  grid-template-rows: auto 40px minmax(32px, auto);
   gap: 6px;
 }
 
@@ -749,12 +753,16 @@
 }
 
 .accountPolicyFields input {
+  width: 100%;
   min-width: 0;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 8px 10px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  background: var(--bg-primary);
   color: var(--text-primary);
-  padding: 8px 9px;
+  background: var(--input-bg, var(--bg-primary));
+  font: inherit;
 }
 
 .accountPolicyFields small {
@@ -765,15 +773,53 @@
 
 .effectivePanel {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   padding: 18px;
   border: 1px solid var(--border-color);
   border-radius: 12px;
   background: var(--bg-secondary);
 }
 
+.effectiveHeader {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.effectiveHeader .sectionHeading {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.effectiveCount {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--muted-bg, rgba(148, 163, 184, 0.12));
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.effectiveFilters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 220px));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--muted-bg, rgba(148, 163, 184, 0.06));
+}
+
 .effectiveTableWrap {
-  overflow-x: auto;
+  max-height: min(430px, 52vh);
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  scrollbar-gutter: stable;
 }
 
 .effectiveTable {
@@ -791,8 +837,16 @@
 }
 
 .effectiveTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   color: var(--text-secondary);
+  background: var(--bg-secondary);
   font-weight: 700;
+}
+
+.effectiveTable tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .effectiveTable td small {
@@ -807,5 +861,18 @@
 
   .effectivePanel {
     padding: 13px;
+  }
+
+  .effectiveHeader {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .effectiveFilters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .effectiveTableWrap {
+    max-height: min(380px, 58vh);
   }
 }

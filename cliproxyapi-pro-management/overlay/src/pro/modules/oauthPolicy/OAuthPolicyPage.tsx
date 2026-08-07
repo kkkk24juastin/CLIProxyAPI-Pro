@@ -9,6 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   IconAlertTriangle,
@@ -204,6 +205,8 @@ export function OAuthPolicyPage() {
   const [activeProvider, setActiveProvider] =
     useState<OAuthModelProviderKey>("xai");
   const [customPlan, setCustomPlan] = useState("");
+  const [effectiveProvider, setEffectiveProvider] = useState("all");
+  const [effectivePlan, setEffectivePlan] = useState("all");
   const actionBarRef = useRef<HTMLDivElement>(null);
   useActionBarHeightVar(
     actionBarRef,
@@ -338,6 +341,66 @@ export function OAuthPolicyPage() {
         0,
       ),
     [draft.providers],
+  );
+
+  const effectiveProviderOptions = useMemo(
+    () => [
+      {
+        value: "all",
+        label: t("oauth_policy.filter_all_providers", {
+          defaultValue: "All providers",
+        }),
+      },
+      ...Array.from(
+        new Set(snapshot?.effective.map((item) => item.provider).filter(Boolean)),
+      )
+        .sort((left, right) => left.localeCompare(right))
+        .map((provider) => ({ value: provider, label: provider })),
+    ],
+    [snapshot?.effective, t],
+  );
+
+  const effectivePlanOptions = useMemo(
+    () => [
+      {
+        value: "all",
+        label: t("oauth_policy.filter_all_plans", {
+          defaultValue: "All plans",
+        }),
+      },
+      ...Array.from(
+        new Set(
+          snapshot?.effective
+            .filter(
+              (item) =>
+                effectiveProvider === "all" ||
+                item.provider === effectiveProvider,
+            )
+            .map((item) => item.planKey)
+            .filter(Boolean),
+        ),
+      )
+        .sort((left, right) => left.localeCompare(right))
+        .map((plan) => ({ value: plan, label: plan })),
+    ],
+    [effectiveProvider, snapshot?.effective, t],
+  );
+
+  useEffect(() => {
+    if (!effectivePlanOptions.some((option) => option.value === effectivePlan)) {
+      setEffectivePlan("all");
+    }
+  }, [effectivePlan, effectivePlanOptions]);
+
+  const filteredEffectivePolicies = useMemo(
+    () =>
+      (snapshot?.effective ?? []).filter(
+        (item) =>
+          (effectiveProvider === "all" ||
+            item.provider === effectiveProvider) &&
+          (effectivePlan === "all" || item.planKey === effectivePlan),
+      ),
+    [effectivePlan, effectiveProvider, snapshot?.effective],
   );
 
   const inheritedRule = (key: OAuthModelPlanKey): string => {
@@ -888,17 +951,56 @@ export function OAuthPolicyPage() {
               </div>
             </section>
             <section className={styles.effectivePanel}>
-              <div className={styles.sectionHeading}>
-                <span><IconCheckCircle2 size={19} /></span>
-                <div>
-                  <h2>{t("oauth_policy.effective_title", { defaultValue: "Effective account policies" })}</h2>
-                  <p>{t("oauth_policy.effective_hint", { defaultValue: "Runtime-only values resolved from the latest account plan. Authentication files are not modified." })}</p>
+              <div className={styles.effectiveHeader}>
+                <div className={styles.sectionHeading}>
+                  <span><IconCheckCircle2 size={19} /></span>
+                  <div>
+                    <h2>{t("oauth_policy.effective_title", { defaultValue: "Effective account policies" })}</h2>
+                    <p>{t("oauth_policy.effective_hint", { defaultValue: "Runtime-only values resolved from the latest account plan. Authentication files are not modified." })}</p>
+                  </div>
                 </div>
+                <span className={styles.effectiveCount}>
+                  {t("oauth_policy.filter_result_count", {
+                    defaultValue: "{{visible}} / {{total}} accounts",
+                    visible: filteredEffectivePolicies.length,
+                    total: snapshot.effective.length,
+                  })}
+                </span>
               </div>
+              {snapshot.effective.length > 0 && (
+                <div className={styles.effectiveFilters}>
+                  <Select
+                    value={effectiveProvider}
+                    options={effectiveProviderOptions}
+                    onChange={(value) => {
+                      setEffectiveProvider(value);
+                      setEffectivePlan("all");
+                    }}
+                    size="sm"
+                    ariaLabel={t("oauth_policy.filter_provider", {
+                      defaultValue: "Filter by provider",
+                    })}
+                  />
+                  <Select
+                    value={effectivePlan}
+                    options={effectivePlanOptions}
+                    onChange={setEffectivePlan}
+                    size="sm"
+                    ariaLabel={t("oauth_policy.filter_plan", {
+                      defaultValue: "Filter by plan",
+                    })}
+                  />
+                </div>
+              )}
               {snapshot.effective.length === 0 ? (
                 <div className={styles.inheritedRule}>
                   <IconInfo size={15} />
                   <span>{t("oauth_policy.effective_empty", { defaultValue: "No account has matched a configured policy yet." })}</span>
+                </div>
+              ) : filteredEffectivePolicies.length === 0 ? (
+                <div className={styles.inheritedRule}>
+                  <IconInfo size={15} />
+                  <span>{t("oauth_policy.filter_empty", { defaultValue: "No account matches the selected filters." })}</span>
                 </div>
               ) : (
                 <div className={styles.effectiveTableWrap}>
@@ -912,7 +1014,7 @@ export function OAuthPolicyPage() {
                       <th>{t("oauth_policy.priority", { defaultValue: "Priority" })}</th>
                       <th>{t("oauth_policy.weight", { defaultValue: "Weight" })}</th>
                     </tr></thead>
-                    <tbody>{snapshot.effective.map((item) => (
+                    <tbody>{filteredEffectivePolicies.map((item) => (
                       <tr key={item.authId}>
                         <td><code>{item.authId}</code></td><td>{item.provider}</td>
                         <td>{item.planKey}<small>{item.planSource}</small></td>
