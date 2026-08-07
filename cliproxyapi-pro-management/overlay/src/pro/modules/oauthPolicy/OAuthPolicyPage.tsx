@@ -883,9 +883,11 @@ export function OAuthPolicyPage() {
                             <label>
                               <span>{t("oauth_policy.prefix", { defaultValue: "Prefix" })}</span>
                               <input
+                                className={styles.accountPolicyInput}
                                 value={rule.prefix ?? ""}
                                 disabled={saving}
-                                placeholder={t("oauth_policy.inherit", { defaultValue: "Inherit account value" })}
+                                spellCheck={false}
+                                placeholder={t("oauth_policy.prefix_placeholder", { defaultValue: "e.g. grok (empty = inherit)" })}
                                 onChange={(event) => patchPlan(activeProvider, definition.key, {
                                   prefix: normalizeOAuthPolicyPrefix(event.target.value),
                                 })}
@@ -895,10 +897,12 @@ export function OAuthPolicyPage() {
                             <label>
                               <span>{t("oauth_policy.priority", { defaultValue: "Priority" })}</span>
                               <input
+                                className={styles.accountPolicyInput}
                                 type="number"
                                 value={rule.priority ?? ""}
                                 disabled={saving}
-                                placeholder={t("oauth_policy.inherit", { defaultValue: "Inherit account value" })}
+                                inputMode="numeric"
+                                placeholder={t("oauth_policy.priority_placeholder", { defaultValue: "e.g. 100 (empty = inherit)" })}
                                 onChange={(event) => patchPlan(activeProvider, definition.key, {
                                   priority: event.target.value === "" ? undefined : Math.trunc(Number(event.target.value)),
                                 })}
@@ -908,12 +912,14 @@ export function OAuthPolicyPage() {
                             <label>
                               <span>{t("oauth_policy.weight", { defaultValue: "Weight" })}</span>
                               <input
+                                className={styles.accountPolicyInput}
                                 type="number"
                                 min={0}
                                 max={1_000_000}
                                 value={rule.weight ?? ""}
                                 disabled={saving}
-                                placeholder={t("oauth_policy.inherit", { defaultValue: "Inherit account value" })}
+                                inputMode="numeric"
+                                placeholder={t("oauth_policy.weight_placeholder", { defaultValue: "e.g. 1 (empty = inherit)" })}
                                 onChange={(event) => patchPlan(activeProvider, definition.key, {
                                   weight: event.target.value === "" ? undefined : Math.trunc(Number(event.target.value)),
                                 })}

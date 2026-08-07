@@ -41,6 +41,10 @@ class OAuthPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('filteredEffectivePolicies.map', source)
         self.assertIn('effectiveProviderOptions', source)
         self.assertIn('effectivePlanOptions', source)
+        self.assertIn('accountPolicyInput', source)
+        self.assertIn('prefix_placeholder', source)
+        self.assertIn('priority_placeholder', source)
+        self.assertIn('weight_placeholder', source)
 
     def test_service_preserves_explicit_empty_rules_and_uses_native_runtime(self) -> None:
         source = SERVICE.read_text()
@@ -91,6 +95,8 @@ class OAuthPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('grid-column: 1 / -1', styles)
         self.assertIn('repeat(auto-fit, minmax(min(220px, 100%), 1fr))', styles)
         self.assertIn('--oauth-policy-action-bar-height', styles)
+        self.assertIn('.accountPolicyInput:focus', styles)
+        self.assertIn('cursor: text', styles)
 
     def test_shared_action_bar_is_owned_by_the_pro_overlay(self) -> None:
         source = ACTION_BAR_STYLE.read_text()
