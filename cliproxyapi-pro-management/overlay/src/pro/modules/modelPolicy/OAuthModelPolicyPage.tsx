@@ -40,7 +40,7 @@ import {
 import { useActionBarHeightVar } from "@/hooks/useActionBarHeightVar";
 import { useAuthStore, useNotificationStore } from "@/stores";
 import { DurationInput, type DurationFieldProps } from '@/pro/shared/DurationInput';
-import configStyles from "@/pages/ConfigPage.module.scss";
+import configStyles from "@/pro/shared/FloatingActionBar.module.scss";
 import styles from "./OAuthModelPolicyPage.module.scss";
 
 const errorMessage = (error: unknown): string =>

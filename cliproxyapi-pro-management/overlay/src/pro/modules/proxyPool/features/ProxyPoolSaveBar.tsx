@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IconCheck, IconRefreshCw } from '@/components/ui/icons';
 import { useActionBarHeightVar } from '@/hooks/useActionBarHeightVar';
-import configStyles from '@/pages/ConfigPage.module.scss';
+import configStyles from '@/pro/shared/FloatingActionBar.module.scss';
 
 interface ProxyPoolSaveBarProps {
   visible: boolean;

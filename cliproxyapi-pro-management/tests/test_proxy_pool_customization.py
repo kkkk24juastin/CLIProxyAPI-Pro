@@ -37,7 +37,7 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('useActionBarHeightVar(actionBarRef', features)
         self.assertIn('--proxy-pool-action-bar-height', features)
         self.assertIn('createPortal(content, document.body)', features)
-        self.assertIn('@/pages/ConfigPage.module.scss', features)
+        self.assertIn('@/pro/shared/FloatingActionBar.module.scss', features)
         self.assertIn('proxy_pool.load_unavailable', source)
         self.assertIn('disabled={loading || !snapshot}', features)
         self.assertIn('await load(true, true)', source)

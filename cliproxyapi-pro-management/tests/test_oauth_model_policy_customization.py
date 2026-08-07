@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / 'overlay/src/pro/modules/modelPolicy/OAuthModelPolicyPage.tsx'
 STYLE = ROOT / 'overlay/src/pro/modules/modelPolicy/OAuthModelPolicyPage.module.scss'
+ACTION_BAR_STYLE = ROOT / 'overlay/src/pro/shared/FloatingActionBar.module.scss'
 SERVICE = ROOT / 'overlay/src/pro/modules/modelPolicy/oauthModelPolicy.ts'
 CUSTOMIZER = ROOT / 'apply_customizations.py'
 REGISTRY = ROOT / 'overlay/src/pro/registry.tsx'
@@ -32,6 +33,7 @@ class OAuthModelPolicyCustomizationTest(unittest.TestCase):
         self.assertNotIn('step={0.1}', source)
         self.assertIn('oauthModelPolicyApi.save', source)
         self.assertIn('configStyles.floatingActionContainer', source)
+        self.assertIn('@/pro/shared/FloatingActionBar.module.scss', source)
         self.assertIn('useActionBarHeightVar', source)
         self.assertIn('createPortal(', source)
         self.assertIn('document.body', source)
@@ -78,6 +80,21 @@ class OAuthModelPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('.customPlanRow', styles)
         self.assertIn('.durationControl', styles)
         self.assertIn('--oauth-model-policy-action-bar-height', styles)
+
+    def test_shared_action_bar_is_owned_by_the_pro_overlay(self) -> None:
+        source = ACTION_BAR_STYLE.read_text()
+        for class_name in (
+            '.floatingActionContainer',
+            '.floatingActionList',
+            '.floatingStatus',
+            '.floatingStatusCompact',
+            '.floatingActionButton',
+            '.dirtyDot',
+            '.modified',
+            '.saved',
+            '.error',
+        ):
+            self.assertIn(class_name, source)
 
 
 if __name__ == '__main__':

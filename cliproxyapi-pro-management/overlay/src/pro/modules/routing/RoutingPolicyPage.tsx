@@ -23,7 +23,7 @@ import {
   type RoutingRequestProtectionConfig,
 } from '@/pro/modules/routing/routingPolicy';
 import { useAuthStore, useNotificationStore } from '@/stores';
-import configActionStyles from '@/pages/ConfigPage.module.scss';
+import configActionStyles from '@/pro/shared/FloatingActionBar.module.scss';
 import styles from './RoutingPolicyPage.module.scss';
 
 type RoutingPolicyView = 'global' | 'providers' | 'runtime';
