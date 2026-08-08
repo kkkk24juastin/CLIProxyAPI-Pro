@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -11,6 +12,30 @@ import (
 
 type runtimeStateTestStore struct {
 	saved *Auth
+}
+
+type runtimeStateTestExecutor struct{}
+
+func (*runtimeStateTestExecutor) Identifier() string { return "gemini" }
+
+func (*runtimeStateTestExecutor) Execute(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{}, nil
+}
+
+func (*runtimeStateTestExecutor) ExecuteStream(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	return nil, nil
+}
+
+func (*runtimeStateTestExecutor) Refresh(_ context.Context, auth *Auth) (*Auth, error) {
+	return auth, nil
+}
+
+func (*runtimeStateTestExecutor) CountTokens(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{}, nil
+}
+
+func (*runtimeStateTestExecutor) HttpRequest(context.Context, *Auth, *http.Request) (*http.Response, error) {
+	return nil, nil
 }
 
 func (s *runtimeStateTestStore) List(context.Context) ([]*Auth, error) {
@@ -33,6 +58,36 @@ func runtimeStateTestEntries(ids ...string) []*scheduledAuth {
 		entries = append(entries, &scheduledAuth{auth: auth})
 	}
 	return entries
+}
+
+func TestPickNextMixedFastPathRecordsSelectedAuth(t *testing.T) {
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	manager.RegisterExecutor(&runtimeStateTestExecutor{})
+	if _, err := manager.Register(context.Background(), &Auth{ID: "auth-a", Provider: "gemini"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	selected, _, provider, err := manager.pickNextMixed(
+		context.Background(),
+		[]string{"gemini"},
+		"",
+		cliproxyexecutor.Options{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("pickNextMixed() error = %v", err)
+	}
+	if selected == nil || selected.ID != "auth-a" || provider != "gemini" {
+		t.Fatalf("pickNextMixed() = auth:%#v provider:%q, want auth-a/gemini", selected, provider)
+	}
+
+	runtimeAuth, ok := manager.GetByID("auth-a")
+	if !ok || runtimeAuth == nil {
+		t.Fatal("selected auth missing from manager")
+	}
+	if runtimeAuth.Selected != 1 {
+		t.Fatalf("runtime selected count = %d, want 1", runtimeAuth.Selected)
+	}
 }
 
 func TestReadyViewRestoresSuccessorOfLastSelectedAuth(t *testing.T) {

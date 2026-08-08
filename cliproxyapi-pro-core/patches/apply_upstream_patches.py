@@ -3092,6 +3092,26 @@ replace_once(
     'm.mu.RUnlock()\n\t\t\t\tauth, exec, providerKey, err := m.pickNextMixedLegacy',
 )
 
+# The normal Execute/ExecuteCount/ExecuteStream path always selects through
+# pickNextMixed. Keep this scoped to that function so the fast scheduler return
+# cannot be confused with the structurally similar pickNextMixedLegacy return.
+auth_conductor_text = read(auth_conductor)
+mixed_start = auth_conductor_text.find('func (m *Manager) pickNextMixed(')
+if mixed_start < 0:
+    raise SystemExit(f'function not found in {auth_conductor}: pickNextMixed')
+mixed_text = auth_conductor_text[mixed_start:]
+mixed_return = '\treturn authCopy, executor, providerKey, nil\n}'
+mixed_recorded_return = '\tm.recordAuthSelected(authCopy.ID)\n' + mixed_return
+if mixed_recorded_return not in mixed_text:
+    if mixed_text.count(mixed_return) != 1:
+        raise SystemExit(
+            f'expected one fast mixed return in {auth_conductor}, found {mixed_text.count(mixed_return)}'
+        )
+    write(
+        auth_conductor,
+        auth_conductor_text[:mixed_start] + mixed_text.replace(mixed_return, mixed_recorded_return, 1),
+    )
+
 auth_files_handler = ROOT / 'internal/api/handlers/management/auth_files.go'
 auth_files_crud_handler = ROOT / 'internal/api/handlers/management/auth_files_crud.go'
 auth_files_fields_handler = ROOT / 'internal/api/handlers/management/auth_files_fields.go'
