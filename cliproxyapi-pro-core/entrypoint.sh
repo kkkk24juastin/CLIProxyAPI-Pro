@@ -31,6 +31,8 @@ stop_child() {
     fi
 }
 
+# Invoked indirectly by the TERM/INT traps below.
+# shellcheck disable=SC2317
 shutdown() {
     signal_name="$1"
     trap - TERM INT

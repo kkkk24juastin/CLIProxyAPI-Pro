@@ -35,7 +35,7 @@ python3 -m json.tool \
 python3 "${repo_root}/scripts/validation/check_workflow_actions.py" \
   "${repo_root}/.github/workflows"
 
-if rg -n --glob '!**/*_test.go' 'internal/embeddedusage' \
+if grep -RIn --exclude='*_test.go' 'internal/embeddedusage' \
   "${repo_root}/cliproxyapi-pro-core/patches/sources/internal/pro"; then
   echo "internal/pro modules must not depend on the embeddedusage compatibility facade" >&2
   exit 1
