@@ -92,7 +92,7 @@ class OAuthPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('.durationControl', styles)
         self.assertIn('max-height: min(430px, 52vh)', styles)
         self.assertIn('position: sticky', styles)
-        self.assertIn('grid-column: 1 / -1', styles)
+        self.assertNotIn('grid-column: 1 / -1', styles)
         self.assertIn('repeat(auto-fit, minmax(min(220px, 100%), 1fr))', styles)
         self.assertIn('--oauth-policy-action-bar-height', styles)
         self.assertIn('.patternInput:focus', styles)
