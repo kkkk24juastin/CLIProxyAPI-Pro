@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
@@ -16,6 +17,8 @@ import (
 )
 
 var autoInstallPluginIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+const autoInstallTimeout = 2 * time.Minute
 
 // AutoInstallWarning describes a non-fatal plugin auto-install issue.
 type AutoInstallWarning struct {
@@ -56,6 +59,8 @@ type autoInstallSourcePlugin struct {
 
 // EnsureConfiguredPluginsInstalled downloads missing enabled plugins before the plugin host scans local binaries.
 func EnsureConfiguredPluginsInstalled(ctx context.Context, cfg AutoInstallConfig) AutoInstallReport {
+	ctx, cancel := autoInstallContext(ctx)
+	defer cancel()
 	report := ensureConfiguredPluginsInstalled(ctx, cfg, autoInstallOptions{})
 	for _, warning := range report.Warnings {
 		fields := log.Fields{}
@@ -78,6 +83,16 @@ func EnsureConfiguredPluginsInstalled(ctx context.Context, cfg AutoInstallConfig
 		}).Info("pluginstore: plugin auto installed")
 	}
 	return report
+}
+
+func autoInstallContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, autoInstallTimeout)
 }
 
 func ensureConfiguredPluginsInstalled(ctx context.Context, cfg AutoInstallConfig, options autoInstallOptions) AutoInstallReport {
@@ -327,7 +342,7 @@ func autoInstallCPUVariant() string {
 }
 
 func autoInstallHTTPClient(proxyURL string) HTTPDoer {
-	client := &http.Client{}
+	client := &http.Client{Timeout: autoInstallTimeout}
 	proxyURL = strings.TrimSpace(proxyURL)
 	if proxyURL == "" {
 		return client

@@ -3,11 +3,77 @@ package observability
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/redisqueue"
 )
+
+type webDAVRoundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (fn webDAVRoundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func TestWebDAVHTTPClientHasRequestTimeout(t *testing.T) {
+	client := newWebDAVHTTPClient()
+	if client.Timeout != webDAVRequestTimeout {
+		t.Fatalf("newWebDAVHTTPClient() timeout = %v, want %v", client.Timeout, webDAVRequestTimeout)
+	}
+}
+
+func TestWebDAVContextAddsBoundedDeadline(t *testing.T) {
+	ctx, cancel := webDAVContext(context.Background())
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("webDAVContext() did not add a deadline")
+	}
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > webDAVRequestTimeout {
+		t.Fatalf("webDAVContext() remaining deadline = %v, want within %v", remaining, webDAVRequestTimeout)
+	}
+}
+
+func TestWebDAVContextPreservesEarlierCallerDeadline(t *testing.T) {
+	parent, parentCancel := context.WithTimeout(context.Background(), time.Second)
+	defer parentCancel()
+	want, _ := parent.Deadline()
+	ctx, cancel := webDAVContext(parent)
+	defer cancel()
+	got, ok := ctx.Deadline()
+	if !ok || !got.Equal(want) {
+		t.Fatalf("webDAVContext() deadline = %v, %v; want %v, true", got, ok, want)
+	}
+}
+
+func TestWebDAVBackupHonorsHTTPClientTimeout(t *testing.T) {
+	store := openTestStore(t)
+	client := &http.Client{
+		Timeout: 20 * time.Millisecond,
+		Transport: webDAVRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}),
+	}
+	service := &Service{
+		store:        store,
+		server:       NewServer(Config{BatchSize: 10}, store),
+		webDAVClient: client,
+	}
+	startedAt := time.Now()
+	err := service.backupToWebDAV(context.Background(), MonitoringWebDAVBackupConfig{
+		Enabled: true,
+		URL:     "https://webdav.example/backups",
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("backupToWebDAV() error = %v, want context deadline exceeded", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("backupToWebDAV() elapsed = %v, want bounded request", elapsed)
+	}
+}
 
 func TestCollectorRetriesPoppedBatchAfterSQLiteFailure(t *testing.T) {
 	store := openTestStore(t)

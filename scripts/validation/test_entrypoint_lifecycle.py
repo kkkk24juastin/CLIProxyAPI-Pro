@@ -1,0 +1,73 @@
+import os
+from pathlib import Path
+import signal
+import subprocess
+import tempfile
+import time
+import unittest
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ENTRYPOINT = REPO_ROOT / "cliproxyapi-pro-core" / "entrypoint.sh"
+
+
+class EntrypointLifecycleTests(unittest.TestCase):
+    def test_term_is_forwarded_to_main_process(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            ready_path = root / "ready"
+            term_path = root / "term"
+            main_path = root / "main.sh"
+            main_path.write_text(
+                "#!/bin/sh\n"
+                f"trap 'printf received > {term_path}; exit 0' TERM\n"
+                f"printf ready > {ready_path}\n"
+                "while :; do sleep 1; done\n"
+            )
+            main_path.chmod(0o755)
+
+            entrypoint_path = root / "entrypoint.sh"
+            entrypoint_path.write_text(
+                ENTRYPOINT.read_text().replace("/CLIProxyAPI/CLIProxyAPI", str(main_path))
+            )
+            entrypoint_path.chmod(0o755)
+
+            environment = os.environ.copy()
+            for name in (
+                "KOMARI_SERVER",
+                "KOMARI_SECRET",
+                "WEBDAV_URL",
+                "WEBDAV_USERNAME",
+                "WEBDAV_PASSWORD",
+                "MANAGEMENT_PASSWORD",
+            ):
+                environment.pop(name, None)
+
+            process = subprocess.Popen(
+                ["/bin/sh", str(entrypoint_path)],
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and not ready_path.exists():
+                    if process.poll() is not None:
+                        self.fail(f"entrypoint exited before main became ready: {process.stdout.read()}")
+                    time.sleep(0.02)
+                self.assertTrue(ready_path.exists(), "fake main process did not start")
+
+                process.send_signal(signal.SIGTERM)
+                output, _ = process.communicate(timeout=5)
+                self.assertEqual(process.returncode, 0, output)
+                self.assertEqual(term_path.read_text(), "received")
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -96,6 +96,8 @@ if [[ "${VALIDATION_STATICCHECK:-0}" == "1" ]]; then
   )
 fi
 
+go -C "${upstream_root}" vet ./internal/pluginhost
+
 git -C "${upstream_root}" add -N .
 patched_diff_hash="$(git -C "${upstream_root}" diff --binary | git hash-object --stdin)"
 reapply_log="$(mktemp "${TMPDIR:-/tmp}/cliproxyapi-pro-reapply.XXXXXX")"

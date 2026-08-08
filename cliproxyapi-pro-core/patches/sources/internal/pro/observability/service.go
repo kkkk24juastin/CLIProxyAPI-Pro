@@ -22,10 +22,13 @@ type Service struct {
 	cfg              Config
 	store            *Store
 	server           *Server
+	webDAVClient     *http.Client
 	workers          sync.WaitGroup
 	module           *Module
 	backupUnregister func()
 }
+
+const webDAVRequestTimeout = 2 * time.Minute
 
 func Start(ctx context.Context) (*Service, error) {
 	cfg := LoadConfig()
@@ -43,10 +46,11 @@ func Start(ctx context.Context) (*Service, error) {
 	redisqueue.SetUsageStatisticsEnabled(true)
 
 	service := &Service{
-		ctx:    ctx,
-		cfg:    cfg,
-		store:  store,
-		module: New(),
+		ctx:          ctx,
+		cfg:          cfg,
+		store:        store,
+		webDAVClient: newWebDAVHTTPClient(),
+		module:       New(),
 	}
 	service.backupUnregister = probackup.Default.RegisterLifecycle(probackup.Lifecycle{
 		Pause: service.module.Pause, Resume: service.module.Resume,
@@ -258,6 +262,8 @@ func shouldRunWebDAVBackup(settings MonitoringSettings, lastBackup time.Time) bo
 }
 
 func (s *Service) backupToWebDAV(ctx context.Context, cfg MonitoringWebDAVBackupConfig) error {
+	ctx, cancel := webDAVContext(ctx)
+	defer cancel()
 	cfg = normalizeMonitoringSettings(MonitoringSettings{WebDAV: cfg}).WebDAV
 	if !cfg.Enabled || cfg.URL == "" {
 		return nil
@@ -274,7 +280,8 @@ func (s *Service) backupToWebDAV(ctx context.Context, cfg MonitoringWebDAVBackup
 	}
 	req.Header.Set("Content-Type", "application/x-ndjson")
 	setWebDAVAuth(req, cfg)
-	response, err := http.DefaultClient.Do(req)
+	client := s.webDAVHTTPClient()
+	response, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -284,13 +291,34 @@ func (s *Service) backupToWebDAV(ctx context.Context, cfg MonitoringWebDAVBackup
 	}
 	log.Infof("embedded usage backup uploaded to WebDAV: %s", url)
 	if cfg.RetentionDays > 0 {
-		if deleted, err := pruneWebDAVBackups(ctx, baseURL, cfg, time.Now().UTC()); err != nil {
+		if deleted, err := pruneWebDAVBackups(ctx, client, baseURL, cfg, time.Now().UTC()); err != nil {
 			log.WithError(err).Warn("failed to prune embedded usage WebDAV backups")
 		} else if deleted > 0 {
 			log.Infof("embedded usage WebDAV retention deleted %d backups", deleted)
 		}
 	}
 	return nil
+}
+
+func newWebDAVHTTPClient() *http.Client {
+	return &http.Client{Timeout: webDAVRequestTimeout}
+}
+
+func webDAVContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, webDAVRequestTimeout)
+}
+
+func (s *Service) webDAVHTTPClient() *http.Client {
+	if s != nil && s.webDAVClient != nil {
+		return s.webDAVClient
+	}
+	return newWebDAVHTTPClient()
 }
 
 func setWebDAVAuth(req *http.Request, cfg MonitoringWebDAVBackupConfig) {
@@ -316,14 +344,17 @@ type webDAVProp struct {
 	LastModified string `xml:"getlastmodified"`
 }
 
-func pruneWebDAVBackups(ctx context.Context, baseURL string, cfg MonitoringWebDAVBackupConfig, now time.Time) (int, error) {
+func pruneWebDAVBackups(ctx context.Context, client *http.Client, baseURL string, cfg MonitoringWebDAVBackupConfig, now time.Time) (int, error) {
+	if client == nil {
+		client = newWebDAVHTTPClient()
+	}
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", baseURL+"/", nil)
 	if err != nil {
 		return 0, err
 	}
 	req.Header.Set("Depth", "1")
 	setWebDAVAuth(req, cfg)
-	response, err := http.DefaultClient.Do(req)
+	response, err := client.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -352,7 +383,7 @@ func pruneWebDAVBackups(ctx context.Context, baseURL string, cfg MonitoringWebDA
 			return deleted, err
 		}
 		setWebDAVAuth(deleteReq, cfg)
-		deleteResponse, err := http.DefaultClient.Do(deleteReq)
+		deleteResponse, err := client.Do(deleteReq)
 		if err != nil {
 			return deleted, err
 		}

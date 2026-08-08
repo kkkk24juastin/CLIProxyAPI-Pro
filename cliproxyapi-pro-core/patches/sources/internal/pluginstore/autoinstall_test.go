@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 type autoInstallFakeDoer map[string]string
@@ -32,6 +33,41 @@ func (d autoInstallFakeDoer) Do(req *http.Request) (*http.Response, error) {
 
 func enabledBoolPtr(value bool) *bool {
 	return &value
+}
+
+func TestAutoInstallContextAddsBoundedDeadline(t *testing.T) {
+	startedAt := time.Now()
+	ctx, cancel := autoInstallContext(context.Background())
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("autoInstallContext() did not add a deadline")
+	}
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > autoInstallTimeout || deadline.Before(startedAt) {
+		t.Fatalf("autoInstallContext() deadline = %v, want within %v", deadline, autoInstallTimeout)
+	}
+}
+
+func TestAutoInstallContextPreservesEarlierCallerDeadline(t *testing.T) {
+	parent, parentCancel := context.WithTimeout(context.Background(), time.Second)
+	defer parentCancel()
+	want, _ := parent.Deadline()
+	ctx, cancel := autoInstallContext(parent)
+	defer cancel()
+	got, ok := ctx.Deadline()
+	if !ok || !got.Equal(want) {
+		t.Fatalf("autoInstallContext() deadline = %v, %v; want %v, true", got, ok, want)
+	}
+}
+
+func TestAutoInstallHTTPClientHasRequestTimeout(t *testing.T) {
+	client, ok := autoInstallHTTPClient("").(*http.Client)
+	if !ok {
+		t.Fatalf("autoInstallHTTPClient() type = %T, want *http.Client", autoInstallHTTPClient(""))
+	}
+	if client.Timeout != autoInstallTimeout {
+		t.Fatalf("autoInstallHTTPClient() timeout = %v, want %v", client.Timeout, autoInstallTimeout)
+	}
 }
 
 type fakeAutoInstallPlugin struct {

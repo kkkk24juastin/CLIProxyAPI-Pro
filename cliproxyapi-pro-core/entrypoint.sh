@@ -20,12 +20,44 @@ WEBDAV_USERNAME="${WEBDAV_USERNAME:-}"
 WEBDAV_PASSWORD="${WEBDAV_PASSWORD:-}"
 MANAGEMENT_PASSWORD="${MANAGEMENT_PASSWORD:-}"
 
+KOMARI_PID=""
+MAIN_PID=""
+
+stop_child() {
+    child_pid="$1"
+    signal_name="$2"
+    if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
+        kill -s "$signal_name" "$child_pid" 2>/dev/null || true
+    fi
+}
+
+shutdown() {
+    signal_name="$1"
+    trap - TERM INT
+    log "Entrypoint" "INFO" "Forwarding $signal_name and waiting for child processes..."
+    stop_child "$MAIN_PID" "$signal_name"
+    stop_child "$KOMARI_PID" "$signal_name"
+
+    main_status=0
+    if [ -n "$MAIN_PID" ]; then
+        wait "$MAIN_PID" || main_status=$?
+    fi
+    if [ -n "$KOMARI_PID" ]; then
+        wait "$KOMARI_PID" 2>/dev/null || true
+    fi
+    exit "$main_status"
+}
+
+trap 'shutdown TERM' TERM
+trap 'shutdown INT' INT
+
 # ==========================================
 # 1. 启动 komari-agent
 # ==========================================
 if [ -n "$KOMARI_SERVER" ] && [ -n "$KOMARI_SECRET" ]; then
     log "Komari" "INFO" "Starting agent..."
     /CLIProxyAPI/komari-agent -e "$KOMARI_SERVER" -t "$KOMARI_SECRET" --disable-auto-update >/dev/null 2>&1 &
+    KOMARI_PID=$!
 else
     log "Komari" "WARN" "Skipped."
 fi
@@ -94,4 +126,10 @@ else
 fi
 
 # 等待主进程
-wait $MAIN_PID
+MAIN_STATUS=0
+wait "$MAIN_PID" || MAIN_STATUS=$?
+stop_child "$KOMARI_PID" TERM
+if [ -n "$KOMARI_PID" ]; then
+    wait "$KOMARI_PID" 2>/dev/null || true
+fi
+exit "$MAIN_STATUS"

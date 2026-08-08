@@ -226,7 +226,7 @@ This affects the built-in default config, `config.example.yaml`, and the managem
 
 The release workflow places the Pro `management.html` produced by the same build at `/CLIProxyAPI/static/management.html` in the Docker image and pins it with `MANAGEMENT_STATIC_PATH`. If the GitHub Release API or asset download fails, upstream's updater keeps using this local file. Core binaries and non-Docker archives no longer embed management or change upstream's fallback implementation.
 
-When `GITSTORE_GIT_TOKEN` is set, it is automatically used for management and plugin GitHub Release metadata, authenticated API asset downloads, and startup plugin auto-install. Matching is restricted to HTTPS GitHub API release paths. Explicit `plugins.store-auth` rules take precedence, and a matching `type: none` rule can suppress this environment fallback.
+When `GITSTORE_GIT_TOKEN` is set, it is automatically used for management and plugin GitHub Release metadata, authenticated API asset downloads, and startup plugin auto-install. Matching is restricted to HTTPS GitHub API release paths. Explicit `plugins.store-auth` rules take precedence, and a matching `type: none` rule can suppress this environment fallback. Startup auto-install and its HTTP requests are bounded to two minutes, so an unhealthy registry or asset service cannot block process startup indefinitely.
 
 The Management Center's “Check for updates” action calls `POST /v0/management/management-panel/check-update`. The endpoint keeps the updater's 30-second throttle, remote digest verification, and local SHA-256 comparison; it atomically replaces `management.html` only when the latest-release asset differs. This covers both a new release and a same-release asset replacement without re-downloading identical content.
 
@@ -237,7 +237,7 @@ The Management Center's “Check for updates” action calls `POST /v0/managemen
 - `KOMARI_SERVER`
 - `KOMARI_SECRET`
 
-It then starts `CLIProxyAPI` and optionally restores the latest usage backup from WebDAV.
+It then starts `CLIProxyAPI` and optionally restores the latest usage backup from WebDAV. On `TERM` or `INT`, the entrypoint forwards the signal to the main process and Komari agent, waits for both, and preserves the main process exit status.
 
 ## Repository layout
 
@@ -345,6 +345,8 @@ usage-export-YYYYMMDD_HHMMSS.jsonl
 
 During the compatibility transition, Docker WebDAV restore always calls `/usage/import?allow_legacy=1`. Manifest-backed backups are still verified strictly; manifest-free legacy backups are imported with an explicit warning that integrity cannot be verified. Normal management API imports still reject manifest-free files by default.
 
+The service's scheduled WebDAV upload, directory listing, and retention deletion requests have a two-minute total timeout, preventing an unhealthy endpoint from permanently holding the backup lifecycle or the usage-import pause barrier.
+
 The import request uses:
 
 ```text
@@ -442,7 +444,7 @@ Example:
 
 ## Local validation
 
-Validate a clean upstream checkout with the repository script. It checks guarded-source preflight, rejected reapplication, the relevant Go packages, and the server build:
+Validate a clean upstream checkout with the repository script. It checks guarded-source preflight, rejected reapplication, `go vet` for `internal/pluginhost`, the relevant Go packages, and the server build:
 
 ```bash
 bash scripts/validation/core.sh /path/to/clean/CLIProxyAPI

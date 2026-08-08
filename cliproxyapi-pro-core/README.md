@@ -225,7 +225,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 
 发布流水线会把同一次构建生成的 Pro `management.html` 放入 Docker 镜像的 `/CLIProxyAPI/static/management.html`，并通过 `MANAGEMENT_STATIC_PATH` 固定为本地面板。GitHub Release API 或制品下载失败时，上游 updater 会保留并继续使用该本地文件。Core 二进制及非 Docker 发行包不再内嵌 management，也不改变 upstream 原有回退实现。
 
-设置 `GITSTORE_GIT_TOKEN` 后，token 会自动用于 `api.github.com` 上的 management 和插件 GitHub Release 元数据、API 制品下载，以及启动时插件自动安装。匹配仅限 HTTPS GitHub API release 路径；显式的 `plugins.store-auth` 规则优先，其中 `type: none` 可禁止指定范围使用该环境变量。
+设置 `GITSTORE_GIT_TOKEN` 后，token 会自动用于 `api.github.com` 上的 management 和插件 GitHub Release 元数据、API 制品下载，以及启动时插件自动安装。匹配仅限 HTTPS GitHub API release 路径；显式的 `plugins.store-auth` 规则优先，其中 `type: none` 可禁止指定范围使用该环境变量。启动时插件自动安装和单次 HTTP 请求都有 2 分钟上限，注册表或制品服务异常不会无限阻塞主程序启动。
 
 管理中心的“检查更新”按钮调用 `POST /v0/management/management-panel/check-update`。该接口复用 updater 的 30 秒节流、远端摘要校验和本地 SHA-256 比较；只有 latest release 的 `management.html` 与本地文件哈希不同才原子替换。因此既能处理新版本，也能处理同一 release 下重新上传但内容不同的面板文件；哈希相同不会重复下载。
 
@@ -236,7 +236,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `KOMARI_SERVER`
 - `KOMARI_SECRET`
 
-随后启动 `CLIProxyAPI`，并按需从 WebDAV 恢复最新 usage 备份。
+随后启动 `CLIProxyAPI`，并按需从 WebDAV 恢复最新 usage 备份。容器收到 `TERM` 或 `INT` 时，entrypoint 会把信号转发给主程序和 Komari agent，等待它们退出，并保留主程序退出码。
 
 ## 目录结构
 
@@ -344,6 +344,8 @@ usage-export-YYYYMMDD_HHMMSS.jsonl
 
 Docker WebDAV 自动恢复在过渡阶段固定调用 `/usage/import?allow_legacy=1`。带 manifest 的新备份仍会严格校验完整性；无 manifest 的旧版备份会强制导入，并在日志中明确记录正在使用未经完整性校验的兼容路径。管理 API 的普通导入仍默认拒绝无 manifest 文件。
 
+服务内置的 WebDAV 定时备份、目录读取和旧文件删除请求均有 2 分钟总超时，异常端点不会永久占用备份生命周期或阻塞 usage 导入暂停屏障。
+
 导入请求使用：
 
 ```text
@@ -441,7 +443,7 @@ CLIPROXY_RENDER_DEPLOY_HOOKS
 
 ## 本地验证
 
-使用仓库验证脚本检查干净的 upstream checkout。脚本会验证 source hash 预检、拒绝重复应用、相关 Go packages 和 server build：
+使用仓库验证脚本检查干净的 upstream checkout。脚本会验证 source hash 预检、拒绝重复应用、`internal/pluginhost` 的 `go vet`、相关 Go packages 和 server build：
 
 ```bash
 bash scripts/validation/core.sh /path/to/clean/CLIProxyAPI
