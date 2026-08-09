@@ -329,6 +329,7 @@ jobs:
       - validate-core
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
 
     defaults:
       run:

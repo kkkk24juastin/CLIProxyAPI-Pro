@@ -2,6 +2,7 @@
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(os.environ.get('SRC_ROOT', '/src/CLIProxyAPI'))
@@ -50,18 +51,20 @@ def flush_writes() -> None:
 
 
 def format_go_writes(relative_paths: list[str]) -> None:
-    for relative_path in relative_paths:
-        path = ROOT / relative_path
-        if path not in _writes:
-            raise SystemExit(f'gofmt target was not changed by the patch: {relative_path}')
-        result = subprocess.run(
-            ['gofmt'],
-            input=read(path),
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        write(path, result.stdout)
+    with tempfile.TemporaryDirectory(prefix='cliproxyapi-pro-gofmt-') as temp_dir:
+        temp_root = Path(temp_dir)
+        for relative_path in relative_paths:
+            path = ROOT / relative_path
+            if path not in _writes:
+                raise SystemExit(f'gofmt target was not changed by the patch: {relative_path}')
+            temp_path = temp_root / relative_path
+            temp_path.parent.mkdir(parents=True, exist_ok=True)
+            write_text(temp_path, read(path))
+
+        subprocess.run(['gofmt', '-w', *relative_paths], cwd=temp_root, check=True)
+
+        for relative_path in relative_paths:
+            write(ROOT / relative_path, read_text(temp_root / relative_path))
 
 
 def queue_tree(source: Path, target: Path) -> None:

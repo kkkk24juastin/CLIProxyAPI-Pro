@@ -13,6 +13,47 @@ PRO_IMPORT_PATTERN = re.compile(
 
 
 class CoreModuleBoundaryTests(unittest.TestCase):
+    def test_go_formatter_batches_process_invocation(self):
+        generator_path = PATCHES / 'apply_upstream_patches.py'
+        generator_tree = ast.parse(generator_path.read_text(encoding='utf-8'))
+        formatter = next(
+            node
+            for node in generator_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == 'format_go_writes'
+        )
+        subprocess_runs = [
+            node
+            for node in ast.walk(formatter)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == 'subprocess'
+            and node.func.attr == 'run'
+        ]
+
+        self.assertEqual(1, len(subprocess_runs))
+        run_call = subprocess_runs[0]
+        loops = [
+            node
+            for node in ast.walk(formatter)
+            if isinstance(node, (ast.For, ast.AsyncFor, ast.While))
+        ]
+        self.assertFalse(
+            any(loop.lineno <= run_call.lineno <= loop.end_lineno for loop in loops),
+            'gofmt must be invoked once outside per-file loops',
+        )
+        command = run_call.args[0]
+        self.assertIsInstance(command, ast.List)
+        self.assertTrue(
+            any(
+                isinstance(item, ast.Starred)
+                and isinstance(item.value, ast.Name)
+                and item.value.id == 'relative_paths'
+                for item in command.elts
+            ),
+            'gofmt must receive all relative paths in one invocation',
+        )
+
     def test_foundation_modules_remain_leaf_layers(self):
         allowed_dependencies = {
             'settings': set(),
