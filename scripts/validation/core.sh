@@ -114,7 +114,8 @@ go -C "${upstream_root}" test "${test_flags[@]}" \
   ./sdk/api/handlers \
   ./sdk/api/handlers/claude \
   ./sdk/cliproxy/auth
-go -C "${upstream_root}" test -count=1 ./internal/runtime/executor
+go -C "${upstream_root}" test "${test_flags[@]}" ./internal/runtime/executor \
+  -run '^(TestProXAI|TestShouldObserveXAI|TestWithXAIQuotaObserver)'
 go -C "${upstream_root}" test "${test_flags[@]}" ./sdk/cliproxy
 
 build_dir="${validation_tmp}/server"
