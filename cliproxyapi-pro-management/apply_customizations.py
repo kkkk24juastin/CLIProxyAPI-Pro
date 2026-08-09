@@ -395,54 +395,6 @@ def replace_once(path: Path, old: str, new: str) -> None:
     write(path, text.replace(old, new, 1))
 
 
-def replace_once_if_present(path: Path, old: str, new: str) -> None:
-    text = read(path)
-    if new in text:
-        return
-    match_count = text.count(old)
-    if match_count == 0:
-        return
-    if match_count != 1:
-        raise RuntimeError(f'Expected at most one pattern in {path}, found {match_count}: {old[:120]!r}')
-    write(path, text.replace(old, new, 1))
-
-
-def replace_all(path: Path, old: str, new: str) -> None:
-    text = read(path)
-    if old not in text:
-        return
-    write(path, text.replace(old, new))
-
-
-def ensure_cached_at_in_quota_success_state(path: Path, store_setter: str) -> None:
-    text = read(path)
-    marker = f"  storeSetter: '{store_setter}',"
-    marker_start = text.find(marker)
-    if marker_start == -1:
-        raise RuntimeError(f'Pattern not found in {path}: {marker!r}')
-
-    success_start = text.find('  buildSuccessState:', marker_start)
-    error_start = text.find('  buildErrorState:', success_start)
-    if success_start == -1 or error_start == -1:
-        raise RuntimeError(f'Pattern not found in {path}: buildSuccessState block for {store_setter}')
-
-    block = text[success_start:error_start]
-    if 'cachedAt:' in block:
-        return
-
-    multiline_end = '\n  }),'
-    if multiline_end in block:
-        updated = block.replace(multiline_end, '\n    cachedAt: Date.now(),\n  }),', 1)
-    else:
-        inline_end = '}),'
-        inline_end_start = block.rfind(inline_end)
-        if inline_end_start == -1:
-            raise RuntimeError(f'Pattern not found in {path}: buildSuccessState return end for {store_setter}')
-        updated = f'{block[:inline_end_start].rstrip()}, cachedAt: Date.now() {block[inline_end_start:]}'
-
-    write(path, f'{text[:success_start]}{updated}{text[error_start:]}')
-
-
 def auth_files_page_path(target: Path) -> Path:
     for relative in ('src/features/authFiles/AuthFilesPage.tsx', 'src/pages/AuthFilesPage.tsx'):
         path = target / relative
@@ -650,37 +602,50 @@ def patch_api_client_connection_isolation(target: Path) -> None:
         "  private connectionAbortController = new AbortController();\n",
         "private connectionGeneration: number",
     )
-    replace_once_if_present(
-        client,
-        "    this.apiBase = computeApiUrl(config.apiBase);\n"
-        "    this.managementKey = config.managementKey;\n"
-        "\n"
-        "    if (config.timeout) {\n",
-        "    const nextApiBase = computeApiUrl(config.apiBase);\n"
-        "    const connectionChanged =\n"
-        "      this.apiBase !== nextApiBase || this.managementKey !== config.managementKey;\n"
-        "    this.apiBase = nextApiBase;\n"
-        "    this.managementKey = config.managementKey;\n"
-        "    if (connectionChanged) {\n"
-        "      this.connectionAbortController.abort();\n"
-        "      this.connectionAbortController = new AbortController();\n"
-        "      this.connectionGeneration += 1;\n"
-        "    }\n"
-        "\n"
-        "    if (config.timeout) {\n",
-    )
-    replace_once_if_present(
-        client,
-        "    if (connectionChanged) {\n"
-        "      this.runtimeKind = 'unknown';\n"
-        "    }\n",
-        "    if (connectionChanged) {\n"
-        "      this.connectionAbortController.abort();\n"
-        "      this.connectionAbortController = new AbortController();\n"
-        "      this.connectionGeneration += 1;\n"
-        "      this.runtimeKind = 'unknown';\n"
-        "    }\n",
-    )
+    text = read(client)
+    if 'this.connectionGeneration += 1;' not in text:
+        current = (
+            "    this.apiBase = computeApiUrl(config.apiBase);\n"
+            "    this.managementKey = config.managementKey;\n"
+            "\n"
+            "    if (config.timeout) {\n"
+        )
+        current_replacement = (
+            "    const nextApiBase = computeApiUrl(config.apiBase);\n"
+            "    const connectionChanged =\n"
+            "      this.apiBase !== nextApiBase || this.managementKey !== config.managementKey;\n"
+            "    this.apiBase = nextApiBase;\n"
+            "    this.managementKey = config.managementKey;\n"
+            "    if (connectionChanged) {\n"
+            "      this.connectionAbortController.abort();\n"
+            "      this.connectionAbortController = new AbortController();\n"
+            "      this.connectionGeneration += 1;\n"
+            "    }\n"
+            "\n"
+            "    if (config.timeout) {\n"
+        )
+        legacy = (
+            "    if (connectionChanged) {\n"
+            "      this.runtimeKind = 'unknown';\n"
+            "    }\n"
+        )
+        legacy_replacement = (
+            "    if (connectionChanged) {\n"
+            "      this.connectionAbortController.abort();\n"
+            "      this.connectionAbortController = new AbortController();\n"
+            "      this.connectionGeneration += 1;\n"
+            "      this.runtimeKind = 'unknown';\n"
+            "    }\n"
+        )
+        matches = text.count(current) + text.count(legacy)
+        if matches != 1:
+            raise RuntimeError(
+                f'Expected one supported connection-change shape in {client}, found {matches}'
+            )
+        if current in text:
+            write(client, text.replace(current, current_replacement, 1))
+        else:
+            write(client, text.replace(legacy, legacy_replacement, 1))
     if 'this.connectionGeneration += 1;' not in read(client):
         raise RuntimeError(f'Pattern not found in {client}: connection change handling')
     insert_once(
@@ -933,6 +898,89 @@ def patch_quota_constants(target: Path) -> None:
     )
 
 
+def patch_api_call_executor_contract(target: Path) -> None:
+    path = target / 'src/services/api/apiCall.ts'
+    replace_once(
+        path,
+        "  data?: string;\n}",
+        "  data?: string;\n  useExecutor?: boolean;\n  use_executor?: boolean;\n}",
+    )
+    replace_once(
+        path,
+        "export interface ApiCallResult<T = unknown> {\n  statusCode: number;\n",
+        "export interface ApiCallResult<T = unknown> {\n  statusCode: number;\n  hasStatusCode: boolean;\n",
+    )
+    replace_once(
+        path,
+        "    const statusCode = Number(response?.status_code ?? 0);\n"
+        "    const header = (response?.header ?? {}) as Record<string, string[]>;\n",
+        "    const rawStatusCode = response?.status_code ?? response?.statusCode;\n"
+        "    const hasStatusCode =\n"
+        "      rawStatusCode !== undefined &&\n"
+        "      rawStatusCode !== null &&\n"
+        "      String(rawStatusCode).trim() !== '';\n"
+        "    const statusCode = Number(rawStatusCode ?? 0);\n"
+        "    const header = (response?.header ?? response?.headers ?? {}) as Record<string, string[]>;\n",
+    )
+    replace_once(
+        path,
+        "    return {\n      statusCode,\n      header,\n",
+        "    return {\n      statusCode,\n      hasStatusCode,\n      header,\n",
+    )
+
+
+def patch_codex_account_id_resolver(target: Path) -> None:
+    path = target / 'src/utils/quota/resolvers.ts'
+    insert_once(
+        path,
+        'export function extractCodexChatgptAccountId(value: unknown): string | null {\n',
+        "const resolveAccountIdCandidate = (value: unknown): string | null => {\n"
+        "  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;\n"
+        "  const record = value as Record<string, unknown>;\n"
+        "  const candidates = [\n"
+        "    record.chatgpt_account_id,\n"
+        "    record.chatgptAccountId,\n"
+        "    record.account_id,\n"
+        "    record.accountId,\n"
+        "  ];\n"
+        "  for (const candidate of candidates) {\n"
+        "    const accountId = normalizeStringValue(candidate);\n"
+        "    if (accountId) return accountId;\n"
+        "  }\n"
+        "  return null;\n"
+        "};\n\n"
+        'export function extractCodexChatgptAccountId(value: unknown): string | null {\n',
+        'const resolveAccountIdCandidate',
+    )
+    replace_once(
+        path,
+        "export function extractCodexChatgptAccountId(value: unknown): string | null {\n"
+        "  const payload = parseIdTokenPayload(value);\n"
+        "  if (!payload) return null;\n"
+        "  return normalizeStringValue(payload.chatgpt_account_id ?? payload.chatgptAccountId);\n"
+        "}\n",
+        "export function extractCodexChatgptAccountId(value: unknown): string | null {\n"
+        "  const direct = resolveAccountIdCandidate(value);\n"
+        "  if (direct) return direct;\n\n"
+        "  const payload = parseIdTokenPayload(value);\n"
+        "  if (!payload) return null;\n"
+        "  return resolveAccountIdCandidate(payload);\n"
+        "}\n",
+    )
+    replace_once(
+        path,
+        "  const candidates = [file.id_token, metadata?.id_token, attributes?.id_token];\n",
+        "  const candidates = [\n"
+        "    file,\n"
+        "    metadata,\n"
+        "    attributes,\n"
+        "    file.id_token,\n"
+        "    metadata?.id_token,\n"
+        "    attributes?.id_token,\n"
+        "  ];\n",
+    )
+
+
 def patch_antigravity_quota_builders(target: Path) -> None:
     path = target / 'src/utils/quota/builders.ts'
     insert_once(
@@ -955,20 +1003,6 @@ def patch_antigravity_quota_builders(target: Path) -> None:
         path,
         "    productUsage: primary.productUsage.length > 0 ? primary.productUsage : fallback.productUsage,\n",
         "    productUsage: Array.isArray(primary.productUsage) && primary.productUsage.length > 0\n      ? primary.productUsage\n      : Array.isArray(fallback.productUsage)\n        ? fallback.productUsage\n        : [],\n",
-    )
-
-
-def patch_account_inspection_page(target: Path) -> None:
-    path = target / 'src/pro/modules/inspection/AccountInspectionPage.tsx'
-    replace_once_if_present(
-        path,
-        "  const used = normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent);\n"
-        "  return used !== null && used >= usedPercentThreshold;\n",
-        "  const used =\n"
-        "    normalizeNumberValue(quota.billing.usagePercent ?? quota.billing.usage_percent)\n"
-        "    ?? normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent)\n"
-        "    ?? maxAntigravityGroupUsedPercent(Array.isArray(quota.billing.productUsage) ? quota.billing.productUsage : []);\n"
-        "  return used !== null && used >= usedPercentThreshold;\n",
     )
 
 
@@ -1349,86 +1383,6 @@ def patch_auth_file_connection_test(target: Path) -> None:
     )
 
 
-def patch_runtime_detection(target: Path) -> None:
-    version_path = target / 'src/services/api/version.ts'
-    if "apiClient.get('/nodes')" not in read(version_path):
-        return
-
-    client_path = target / 'src/services/api/client.ts'
-    insert_once(
-        client_path,
-        "  private managementKey: string = '';\n",
-        "  private managementKey: string = '';\n  private runtimeKind: ServerRuntimeKind = 'unknown';\n",
-        "private runtimeKind: ServerRuntimeKind",
-    )
-    replace_once(
-        client_path,
-        "    this.apiBase = computeApiUrl(config.apiBase);\n"
-        "    this.managementKey = config.managementKey;\n"
-        "\n"
-        "    if (config.timeout) {\n",
-        "    const nextApiBase = computeApiUrl(config.apiBase);\n"
-        "    const connectionChanged =\n"
-        "      this.apiBase !== nextApiBase || this.managementKey !== config.managementKey;\n"
-        "    this.apiBase = nextApiBase;\n"
-        "    this.managementKey = config.managementKey;\n"
-        "    if (connectionChanged) {\n"
-        "      this.runtimeKind = 'unknown';\n"
-        "    }\n"
-        "\n"
-        "    if (config.timeout) {\n",
-    )
-    insert_once(
-        client_path,
-        "  private readHeader(headers: Record<string, unknown> | undefined, keys: string[]): string | null {\n",
-        "  getRuntimeKind(): ServerRuntimeKind {\n"
-        "    return this.runtimeKind;\n"
-        "  }\n"
-        "\n"
-        "  private readHeader(headers: Record<string, unknown> | undefined, keys: string[]): string | null {\n",
-        "getRuntimeKind(): ServerRuntimeKind",
-    )
-    replace_once(
-        client_path,
-        "        const runtimeKind: ServerRuntimeKind | null =\n"
-        "          homeVersion || homeBuildDate ? 'home' : cpaVersion || cpaBuildDate ? 'cpa' : null;\n"
-        "\n"
-        "        // 触发版本更新事件（后续通过 store 处理）\n",
-        "        const runtimeKind: ServerRuntimeKind | null =\n"
-        "          homeVersion || homeBuildDate ? 'home' : cpaVersion || cpaBuildDate ? 'cpa' : null;\n"
-        "        if (runtimeKind) {\n"
-        "          this.runtimeKind = runtimeKind;\n"
-        "        }\n"
-        "\n"
-        "        // 触发版本更新事件（后续通过 store 处理）\n",
-    )
-
-    replace_all(
-        version_path,
-        "import { isRecord } from '@/utils/helpers';\n",
-        "",
-    )
-    replace_once(
-        version_path,
-        "  async detectRuntimeKind(): Promise<ServerRuntimeKind> {\n"
-        "    try {\n"
-        "      const data = await apiClient.get('/nodes');\n"
-        "      return isRecord(data) && Array.isArray(data.nodes) ? 'home' : 'unknown';\n"
-        "    } catch (error: unknown) {\n"
-        "      const status = isRecord(error) ? error.status : undefined;\n"
-        "      if (status === 404 || status === 405) {\n"
-        "        return 'cpa';\n"
-        "      }\n"
-        "      return 'unknown';\n"
-        "    }\n"
-        "  },\n",
-        "  async detectRuntimeKind(): Promise<ServerRuntimeKind> {\n"
-        "    const runtimeKind = apiClient.getRuntimeKind();\n"
-        "    return runtimeKind === 'unknown' ? 'cpa' : runtimeKind;\n"
-        "  },\n",
-    )
-
-
 def patch_management_update_check(target: Path) -> None:
     version_path = target / 'src/services/api/version.ts'
     insert_once(
@@ -1558,11 +1512,6 @@ def patch_supporting_api_and_types(target: Path) -> None:
     )
 
     auth_files_path = target / 'src/services/api/authFiles.ts'
-    auth_files_normalizer = (
-        'normalizeAuthFilesResponse'
-        if 'normalizeAuthFilesResponse' in read(auth_files_path)
-        else 'dedupeAuthFilesResponse'
-    )
     replace_once(
         auth_files_path,
         "type AuthFileStatusResponse = { status: string; disabled: boolean };\n",
@@ -1571,34 +1520,20 @@ def patch_supporting_api_and_types(target: Path) -> None:
     insert_once(
         auth_files_path,
         "export const authFilesApi = {\n",
-        "const AUTH_FILES_LIST_CACHE_TTL_MS = 2000;\nlet authFilesListCache: { expiresAt: number; response: AuthFilesResponse } | null = null;\nlet authFilesListRequest: Promise<AuthFilesResponse> | null = null;\nlet authFilesListVersion = 0;\n\nconst cloneAuthFilesResponse = (response: AuthFilesResponse): AuthFilesResponse => ({\n  ...response,\n  files: Array.isArray(response.files) ? [...response.files] : [],\n});\n\nconst invalidateAuthFilesListCache = () => {\n  authFilesListVersion += 1;\n  authFilesListCache = null;\n  authFilesListRequest = null;\n};\n\nconst fetchAuthFilesList = async (): Promise<AuthFilesResponse> => {\n  const now = Date.now();\n  if (authFilesListCache && authFilesListCache.expiresAt > now) {\n    return cloneAuthFilesResponse(authFilesListCache.response);\n  }\n  if (!authFilesListRequest) {\n    const requestVersion = authFilesListVersion;\n    authFilesListRequest = apiClient.get<AuthFilesResponse>('/auth-files')\n      .then(dedupeAuthFilesResponse)\n      .then((response) => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListCache = {\n            expiresAt: Date.now() + AUTH_FILES_LIST_CACHE_TTL_MS,\n            response: cloneAuthFilesResponse(response),\n          };\n        }\n        return response;\n      })\n      .finally(() => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListRequest = null;\n        }\n      });\n  }\n  return cloneAuthFilesResponse(await authFilesListRequest);\n};\n\nexport const authFilesApi = {\n",
+        "const AUTH_FILES_LIST_CACHE_TTL_MS = 2000;\nlet authFilesListCache: { expiresAt: number; response: AuthFilesResponse } | null = null;\nlet authFilesListRequest: Promise<AuthFilesResponse> | null = null;\nlet authFilesListVersion = 0;\n\nconst cloneAuthFilesResponse = (response: AuthFilesResponse): AuthFilesResponse => ({\n  ...response,\n  files: Array.isArray(response.files) ? [...response.files] : [],\n});\n\nconst invalidateAuthFilesListCache = () => {\n  authFilesListVersion += 1;\n  authFilesListCache = null;\n  authFilesListRequest = null;\n};\n\nconst fetchAuthFilesList = async (): Promise<AuthFilesResponse> => {\n  const now = Date.now();\n  if (authFilesListCache && authFilesListCache.expiresAt > now) {\n    return cloneAuthFilesResponse(authFilesListCache.response);\n  }\n  if (!authFilesListRequest) {\n    const requestVersion = authFilesListVersion;\n    authFilesListRequest = apiClient.get<AuthFilesResponse>('/auth-files')\n      .then(normalizeAuthFilesResponse)\n      .then((response) => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListCache = {\n            expiresAt: Date.now() + AUTH_FILES_LIST_CACHE_TTL_MS,\n            response: cloneAuthFilesResponse(response),\n          };\n        }\n        return response;\n      })\n      .finally(() => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListRequest = null;\n        }\n      });\n  }\n  return cloneAuthFilesResponse(await authFilesListRequest);\n};\n\nexport const authFilesApi = {\n",
         "AUTH_FILES_LIST_CACHE_TTL_MS",
-    )
-    replace_once_if_present(
-        auth_files_path,
-        '      .then(dedupeAuthFilesResponse)\n',
-        f'      .then({auth_files_normalizer})\n',
-    )
-    text = read(auth_files_path)
-    list_variants = (
-        "  list: async () => dedupeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),\n\n"
-        "  setStatus: (name: string, disabled: boolean) =>\n"
-        "    apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),\n\n",
-        "  list: async () =>\n"
-        "    normalizeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),\n\n"
-        "  setStatus: (name: string, disabled: boolean) =>\n"
-        "    apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),\n\n",
     )
     list_replacement = (
         "  list: fetchAuthFilesList,\n\n  patchFile: async (payload: AuthFilePatchPayload) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files', payload);\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n  setStatus: async (name: string, disabled: boolean) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n"
     )
-    if '  list: fetchAuthFilesList,\n' not in text:
-        for list_variant in list_variants:
-            if list_variant in text:
-                write(auth_files_path, text.replace(list_variant, list_replacement, 1))
-                break
-        else:
-            raise RuntimeError(f'Pattern not found in {auth_files_path}: auth files list method')
+    replace_once(
+        auth_files_path,
+        "  list: async () =>\n"
+        "    normalizeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),\n\n"
+        "  setStatus: (name: string, disabled: boolean) =>\n"
+        "    apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),\n\n",
+        list_replacement,
+    )
     replace_once(
         auth_files_path,
         "  patchFields: (name: string, fields: AuthFileFieldsPatch) =>\n    apiClient.patch('/auth-files/fields', { name, ...fields }),\n\n",
@@ -1687,18 +1622,17 @@ def patch_supporting_api_and_types(target: Path) -> None:
 
 def patch_locales(target: Path) -> None:
     monitoring = json.loads(LOCALES_FILE.read_text())
-    locales_dir = target / 'src/i18n/locales'
-    for locale_path in sorted(locales_dir.glob('*.json')):
-        data = json.loads(read(locale_path))
-        additions = monitoring.get(locale_path.name, {})
-        data.setdefault('nav', {}).update(additions.get('nav', {}))
+    generated = {}
+    for locale_name in ('en.json', 'ru.json', 'zh-CN.json', 'zh-TW.json'):
+        additions = json.loads(json.dumps(monitoring.get(locale_name, {})))
+        data = additions
         proxy_pool_nav = PROXY_POOL_NAV_LOCALE_KEYS.get(
-            locale_path.name,
+            locale_name,
             PROXY_POOL_NAV_LOCALE_KEYS['en.json'],
         )
         data.setdefault('nav', {})['proxy_pool'] = proxy_pool_nav['label']
         oauth_policy_nav = OAUTH_POLICY_NAV_LOCALE_KEYS.get(
-            locale_path.name,
+            locale_name,
             OAUTH_POLICY_NAV_LOCALE_KEYS['en.json'],
         )
         data.setdefault('nav', {})['oauth_policy'] = oauth_policy_nav['label']
@@ -1716,60 +1650,57 @@ def patch_locales(target: Path) -> None:
         )
         data.setdefault('nav_meta', {})['proxy_pool'] = proxy_pool_nav['meta']
         data.setdefault('nav_meta', {})['oauth_policy'] = oauth_policy_nav['meta']
-        data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
-        data['account_usage'] = additions.get('account_usage', data.get('account_usage', {}))
-        data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
-        data['routing_policy'] = additions.get('routing_policy', data.get('routing_policy', {}))
         data['proxy_pool'] = additions.get(
             'proxy_pool',
-            monitoring.get('en.json', {}).get('proxy_pool', data.get('proxy_pool', {})),
+            monitoring.get('en.json', {}).get('proxy_pool', {}),
         )
         data['oauth_policy'] = additions.get(
             'oauth_policy',
-            monitoring.get('en.json', {}).get(
-                'oauth_policy',
-                data.get('oauth_policy', {}),
-            ),
+            monitoring.get('en.json', {}).get('oauth_policy', {}),
         )
-        data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
-        gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(locale_path.name, GEMINI_CLI_LOCALE_KEYS['en.json'])
+        data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_name, {}))
+        gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(
+            locale_name,
+            GEMINI_CLI_LOCALE_KEYS['en.json'],
+        )
         data.setdefault('auth_files', {})['filter_gemini-cli'] = gemini_cli_locale['auth_filter']
         data.setdefault('auth_files', {})['search_placeholder'] = AUTH_FILES_SEARCH_PLACEHOLDER_KEYS.get(
-            locale_path.name,
+            locale_name,
             AUTH_FILES_SEARCH_PLACEHOLDER_KEYS['en.json'],
         )
         data.setdefault('auth_files', {})['sort_plan_desc'] = AUTH_FILES_PLAN_SORT_LABEL_KEYS.get(
-            locale_path.name,
+            locale_name,
             AUTH_FILES_PLAN_SORT_LABEL_KEYS['en.json'],
         )
         data.setdefault('auth_files', {})['sort_quota_desc'] = AUTH_FILES_QUOTA_SORT_LABEL_KEYS.get(
-            locale_path.name,
+            locale_name,
             AUTH_FILES_QUOTA_SORT_LABEL_KEYS['en.json'],
         )
         data.setdefault('auth_files', {})['selected_count'] = AUTH_FILES_SELECTED_COUNT_LABEL_KEYS.get(
-            locale_path.name,
+            locale_name,
             AUTH_FILES_SELECTED_COUNT_LABEL_KEYS['en.json'],
         )
         data.setdefault('auth_files', {}).update(
             AUTH_FILE_CONNECTION_TEST_LOCALE_KEYS.get(
-                locale_path.name,
+                locale_name,
                 AUTH_FILE_CONNECTION_TEST_LOCALE_KEYS['en.json'],
             )
         )
         data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
-        xai_quota = data.setdefault('xai_quota', {})
-        xai_quota.pop('plan_x_premium_plus', None)
-        xai_quota.pop('plan_x_premium_plus_hint', None)
-        xai_quota.update(
-            XAI_QUOTA_LOCALE_KEYS.get(locale_path.name, XAI_QUOTA_LOCALE_KEYS['en.json'])
+        data.setdefault('xai_quota', {}).update(
+            XAI_QUOTA_LOCALE_KEYS.get(locale_name, XAI_QUOTA_LOCALE_KEYS['en.json'])
         )
         data.setdefault('system_info', {}).update(
             MANAGEMENT_UPDATE_LOCALE_KEYS.get(
-                locale_path.name,
+                locale_name,
                 MANAGEMENT_UPDATE_LOCALE_KEYS['en.json'],
             )
         )
-        write(locale_path, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+        generated[locale_name.removesuffix('.json')] = data
+    write(
+        target / 'src/pro/locales.generated.json',
+        json.dumps(generated, ensure_ascii=False, indent=2) + '\n',
+    )
 
 
 def _ensure_interface_field(path: Path, interface_name: str, field: str) -> None:
@@ -1797,7 +1728,7 @@ def patch_quota_types_latest(target: Path) -> None:
     insert_once(
         path,
         'export interface CodexQuotaWindow',
-        "export interface GeminiCliQuotaBucketState {\n  id: string;\n  label: string;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n  tokenType: string | null;\n  modelIds?: string[];\n  resetAtMs?: number | null;\n  periodHours?: number | null;\n}\n\nexport interface GeminiCliQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  buckets: GeminiCliQuotaBucketState[];\n  projectId?: string;\n  project_id?: string;\n  tierLabel?: string | null;\n  tierId?: string | null;\n  creditBalance?: number | null;\n  quotaProviderSnapshot?: boolean;\n  error?: string;\n  errorStatus?: number;\n  cachedAt?: number;\n}\n\nexport interface CodexQuotaWindow",
+        "export interface GeminiCliQuotaBucketState {\n  id: string;\n  label: string;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n  tokenType: string | null;\n  modelIds?: string[];\n  resetAtMs?: number | null;\n  periodHours?: number | null;\n}\n\nexport interface GeminiCliQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  buckets: GeminiCliQuotaBucketState[];\n  projectId?: string;\n  project_id?: string;\n  tierLabel?: string | null;\n  tierId?: string | null;\n  creditBalance?: number | null;\n  quotaProviderSnapshot?: boolean;\n  error?: string;\n  errorStatus?: number;\n}\n\nexport interface CodexQuotaWindow",
         'export interface GeminiCliQuotaState',
     )
     insert_once(
@@ -1812,12 +1743,6 @@ def patch_quota_types_latest(target: Path) -> None:
         "  planType?: 'free' | 'supergrok' | 'supergrok-heavy' | 'paid' | 'paid-unknown';\n",
     )
     _ensure_interface_field(path, 'XaiBillingSummary', '  freeQuota?: XaiFreeQuotaSummary;')
-    for interface_name in (
-        'ClaudeQuotaState', 'AntigravityQuotaState', 'CodexQuotaState', 'KimiQuotaState', 'XaiQuotaState'
-    ):
-        _ensure_interface_field(path, interface_name, '  cachedAt?: number;')
-
-
 def patch_quota_provider_model_latest(target: Path) -> None:
     types_path = target / 'src/features/quota/providers/types.ts'
     replace_once(types_path, '  CodexQuotaState,\n  KimiQuotaState,', '  CodexQuotaState,\n  GeminiCliQuotaState,\n  KimiQuotaState,')
@@ -1959,14 +1884,39 @@ def patch_quota_cards_latest(target: Path) -> None:
     replace_once(auth_path, "      ) : quota ? (\n        <adapter.Body quota={quota} classes={compactQuotaClasses} />\n      ) : (", "      ) : quota ? (\n        <>\n          <adapter.Body quota={quota} classes={compactQuotaClasses} />\n          <QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />\n        </>\n      ) : (")
 
 
-def patch_quota_provider_timestamps_latest(target: Path) -> None:
-    for provider, setter in (
-        ('antigravity', 'setAntigravityQuota'), ('claude', 'setClaudeQuota'),
-        ('codex', 'setCodexQuota'), ('kimi', 'setKimiQuota')
-    ):
-        ensure_cached_at_in_quota_success_state(
-            target / f'src/features/quota/providers/{provider}/data.ts', setter
-        )
+def patch_quota_success_timestamps(target: Path) -> None:
+    actions_path = target / 'src/features/quota/hooks/useQuotaActions.ts'
+    insert_once(
+        actions_path,
+        "import { getStatusFromError } from '@/utils/quota';\n",
+        "import { withQuotaCachedAt } from '@/pro/shared/quotaState';\n"
+        "import { getStatusFromError } from '@/utils/quota';\n",
+        "from '@/pro/shared/quotaState'",
+    )
+    actions_text = read(actions_path)
+    old_action = 'adapter.buildSuccessState(data)'
+    new_action = 'withQuotaCachedAt(adapter.buildSuccessState(data))'
+    if new_action not in actions_text:
+        if actions_text.count(old_action) != 2:
+            raise RuntimeError(
+                f'Expected two quota success commits in {actions_path}, '
+                f'found {actions_text.count(old_action)}'
+            )
+        write(actions_path, actions_text.replace(old_action, new_action))
+
+    batch_path = target / 'src/features/quota/hooks/useQuotaBatchLoader.ts'
+    insert_once(
+        batch_path,
+        "import { getStatusFromError } from '@/utils/quota';\n",
+        "import { withQuotaCachedAt } from '@/pro/shared/quotaState';\n"
+        "import { getStatusFromError } from '@/utils/quota';\n",
+        "from '@/pro/shared/quotaState'",
+    )
+    replace_once(
+        batch_path,
+        'adapter.buildSuccessState(result.data)',
+        'withQuotaCachedAt(adapter.buildSuccessState(result.data))',
+    )
 
 
 def patch_auth_files_gemini_quota_latest(target: Path) -> None:
@@ -2104,19 +2054,19 @@ def main() -> None:
     patch_quota_types_latest(target)
     patch_quota_store(target)
     patch_quota_constants(target)
+    patch_api_call_executor_contract(target)
+    patch_codex_account_id_resolver(target)
     patch_quota_provider_model_latest(target)
-    patch_quota_provider_timestamps_latest(target)
+    patch_quota_success_timestamps(target)
     patch_antigravity_quota_builders(target)
     patch_quota_page_latest(target)
     patch_quota_cards_latest(target)
-    patch_account_inspection_page(target)
     patch_auth_files_page_search_latest(target)
     patch_auth_files_page_sorting_latest(target)
     patch_auth_files_gemini_quota_latest(target)
     patch_auth_files_runtime_state(target)
     patch_account_usage_feature(target)
     patch_auth_file_connection_test(target)
-    patch_runtime_detection(target)
     patch_management_update_check(target)
     patch_api_client_connection_isolation(target)
     patch_supporting_api_and_types(target)

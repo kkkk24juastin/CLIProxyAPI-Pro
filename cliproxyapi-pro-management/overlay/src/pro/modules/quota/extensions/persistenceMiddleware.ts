@@ -4,14 +4,14 @@
  */
 
 import { useQuotaStore } from '@/stores';
+import { isRecordValue } from '@/pro/shared/value';
 import {
   getQuotaProviderMapName,
   getQuotaProviderSetterName,
-  isRecordValue,
-  isQuotaProviderType,
-  QUOTA_PROVIDER_TYPES,
-  type QuotaProviderType,
-} from '@/utils/quota';
+  isProQuotaProviderType,
+  PRO_QUOTA_PROVIDER_TYPES,
+  type ProQuotaProviderType,
+} from '../quotaStoreMetadata';
 import { sqliteQuotaCache, type QuotaCacheEntry } from './sqliteQuotaCache';
 import {
   normalizePersistedQuotaState,
@@ -41,8 +41,8 @@ class QuotaPersistenceMiddleware {
   private reloadRequested = false;
   private preloadPromise: Promise<void> | null = null;
   private ensureFreshPromise: Promise<void> | null = null;
-  private lastQuotaMaps = new Map<QuotaProviderType, Record<string, QuotaStatusState>>();
-  private hydratedKeys = new Map<QuotaProviderType, Set<string>>();
+  private lastQuotaMaps = new Map<ProQuotaProviderType, Record<string, QuotaStatusState>>();
+  private hydratedKeys = new Map<ProQuotaProviderType, Set<string>>();
 
   /**
    * Start the middleware
@@ -69,7 +69,7 @@ class QuotaPersistenceMiddleware {
     this.unsubscribe = useQuotaStore.subscribe((state) => {
       if (this.isPreloading) return;
 
-      QUOTA_PROVIDER_TYPES.forEach((provider) => {
+      PRO_QUOTA_PROVIDER_TYPES.forEach((provider) => {
         const quotaMap = this.getQuotaMap(state, provider);
         if (!quotaMap || this.lastQuotaMaps.get(provider) === quotaMap) return;
         this.lastQuotaMaps.set(provider, quotaMap);
@@ -105,8 +105,8 @@ class QuotaPersistenceMiddleware {
   private checkCompatibility(): boolean {
     const state = useQuotaStore.getState();
     const requiredFields = [
-      ...QUOTA_PROVIDER_TYPES.map(getQuotaProviderMapName),
-      ...QUOTA_PROVIDER_TYPES.map(getQuotaProviderSetterName),
+      ...PRO_QUOTA_PROVIDER_TYPES.map(getQuotaProviderMapName),
+      ...PRO_QUOTA_PROVIDER_TYPES.map(getQuotaProviderSetterName),
       'clearQuotaCache',
     ];
 
@@ -123,7 +123,7 @@ class QuotaPersistenceMiddleware {
    * Sync provider quota to SQLite quota cache.
    */
   private syncProvider(
-    provider: QuotaProviderType,
+    provider: ProQuotaProviderType,
     quotaMap: Record<string, QuotaStatusState>
   ) {
     let changed = false;
@@ -152,7 +152,7 @@ class QuotaPersistenceMiddleware {
     return JSON.stringify(state);
   }
 
-  private pruneSyncedVersions(provider: QuotaProviderType, activeKeys: Set<string>) {
+  private pruneSyncedVersions(provider: ProQuotaProviderType, activeKeys: Set<string>) {
     const prefix = `${provider}:`;
     Array.from(this.syncedVersions.keys()).forEach((key) => {
       if (key.startsWith(prefix) && !activeKeys.has(key)) {
@@ -177,7 +177,7 @@ class QuotaPersistenceMiddleware {
         const separatorIndex = key.indexOf(':');
         if (separatorIndex <= 0) continue;
 
-        const provider = key.slice(0, separatorIndex) as QuotaProviderType;
+        const provider = key.slice(0, separatorIndex) as ProQuotaProviderType;
         const fileName = key.slice(separatorIndex + 1);
         const state = useQuotaStore.getState();
         const quotaMap = this.getQuotaMap(state, provider);
@@ -255,16 +255,16 @@ class QuotaPersistenceMiddleware {
 
     try {
       const cachedEntries = await sqliteQuotaCache.getAll();
-      const entriesByProvider = new Map<QuotaProviderType, QuotaCacheEntry[]>();
+      const entriesByProvider = new Map<ProQuotaProviderType, QuotaCacheEntry[]>();
       cachedEntries.forEach((entry) => {
-        if (!isQuotaProviderType(entry.provider)) return;
+        if (!isProQuotaProviderType(entry.provider)) return;
         const provider = entry.provider;
         const entries = entriesByProvider.get(provider) ?? [];
         entries.push(entry);
         entriesByProvider.set(provider, entries);
       });
 
-      QUOTA_PROVIDER_TYPES.forEach((provider) => {
+      PRO_QUOTA_PROVIDER_TYPES.forEach((provider) => {
         this.preloadProvider(provider, entriesByProvider.get(provider) ?? []);
       });
       this.loadedGeneration = Math.max(this.loadedGeneration, generation);
@@ -278,7 +278,7 @@ class QuotaPersistenceMiddleware {
   /**
    * Preload single provider from SQLite quota cache
    */
-  private preloadProvider(provider: QuotaProviderType, cachedEntries: QuotaCacheEntry[]) {
+  private preloadProvider(provider: ProQuotaProviderType, cachedEntries: QuotaCacheEntry[]) {
     const cached = selectPreferredQuotaCacheEntries(provider, cachedEntries);
     const previouslyHydrated = this.hydratedKeys.get(provider) ?? new Set<string>();
 
@@ -316,7 +316,7 @@ class QuotaPersistenceMiddleware {
     }
   }
 
-  private isCacheEntryCompatible(provider: QuotaProviderType, data: unknown): data is QuotaStatusState {
+  private isCacheEntryCompatible(provider: ProQuotaProviderType, data: unknown): data is QuotaStatusState {
     if (!isRecordValue(data)) return false;
 
     const status = data.status;
@@ -349,7 +349,7 @@ class QuotaPersistenceMiddleware {
    */
   private getQuotaMap(
     state: QuotaStoreState,
-    provider: QuotaProviderType
+    provider: ProQuotaProviderType
   ): Record<string, QuotaStatusState> | null {
     const mapName = getQuotaProviderMapName(provider);
     return state[mapName] || null;

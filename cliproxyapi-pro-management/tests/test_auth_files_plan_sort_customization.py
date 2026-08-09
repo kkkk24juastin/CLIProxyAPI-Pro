@@ -92,22 +92,19 @@ class AuthFilesSortingCustomizationTest(unittest.TestCase):
     def test_adds_sort_locale_labels(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             target = Path(temp_dir)
-            locales_dir = target / 'src/i18n/locales'
-            locales_dir.mkdir(parents=True)
-            for name in ('en.json', 'ru.json', 'zh-CN.json', 'zh-TW.json'):
-                (locales_dir / name).write_text('{}')
 
             CUSTOMIZATIONS.patch_locales(target)
             CUSTOMIZATIONS.flush_writes()
 
             expected = {
-                'en.json': ('Plan: High to Low', 'Available Quota: High to Low'),
-                'ru.json': ('Тариф: по убыванию', 'Доступная квота: по убыванию'),
-                'zh-CN.json': ('套餐从高到低', '可用额度从高到低'),
-                'zh-TW.json': ('套餐由高到低', '可用額度由高到低'),
+                'en': ('Plan: High to Low', 'Available Quota: High to Low'),
+                'ru': ('Тариф: по убыванию', 'Доступная квота: по убыванию'),
+                'zh-CN': ('套餐从高到低', '可用额度从高到低'),
+                'zh-TW': ('套餐由高到低', '可用額度由高到低'),
             }
+            generated = json.loads((target / 'src/pro/locales.generated.json').read_text())
             for name, labels in expected.items():
-                data = json.loads((locales_dir / name).read_text())
+                data = generated[name]
                 self.assertEqual(labels[0], data['auth_files']['sort_plan_desc'])
                 self.assertEqual(labels[1], data['auth_files']['sort_quota_desc'])
                 self.assertNotIn('plan_x_premium_plus', data['xai_quota'])

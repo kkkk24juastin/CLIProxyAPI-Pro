@@ -8,6 +8,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/pluginapi"
 )
 
 type runtimeStateTestStore struct {
@@ -15,6 +16,12 @@ type runtimeStateTestStore struct {
 }
 
 type runtimeStateTestExecutor struct{}
+
+type runtimeStatePassthroughScheduler struct{}
+
+func (*runtimeStatePassthroughScheduler) PickAuth(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, bool, error) {
+	return pluginapi.SchedulerPickResponse{}, false, nil
+}
 
 func (*runtimeStateTestExecutor) Identifier() string { return "gemini" }
 
@@ -87,6 +94,68 @@ func TestPickNextMixedFastPathRecordsSelectedAuth(t *testing.T) {
 	}
 	if runtimeAuth.Selected != 1 {
 		t.Fatalf("runtime selected count = %d, want 1", runtimeAuth.Selected)
+	}
+}
+
+func TestPickNextMixedLegacyPathRecordsSelectedAuthOnce(t *testing.T) {
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	manager.RegisterExecutor(&runtimeStateTestExecutor{})
+	manager.SetPluginScheduler(&runtimeStatePassthroughScheduler{})
+	if _, err := manager.Register(context.Background(), &Auth{ID: "auth-a", Provider: "gemini"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	selected, _, provider, err := manager.pickNextMixed(
+		context.Background(),
+		[]string{"gemini"},
+		"",
+		cliproxyexecutor.Options{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("pickNextMixed() error = %v", err)
+	}
+	if selected == nil || selected.ID != "auth-a" || provider != "gemini" {
+		t.Fatalf("pickNextMixed() = auth:%#v provider:%q, want auth-a/gemini", selected, provider)
+	}
+
+	runtimeAuth, ok := manager.GetByID("auth-a")
+	if !ok || runtimeAuth == nil {
+		t.Fatal("selected auth missing from manager")
+	}
+	if runtimeAuth.Selected != 1 {
+		t.Fatalf("legacy selected count = %d, want 1", runtimeAuth.Selected)
+	}
+}
+
+func TestPickNextLegacyPathRecordsSelectedAuthOnce(t *testing.T) {
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	manager.RegisterExecutor(&runtimeStateTestExecutor{})
+	manager.SetPluginScheduler(&runtimeStatePassthroughScheduler{})
+	if _, err := manager.Register(context.Background(), &Auth{ID: "auth-a", Provider: "gemini"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	selected, _, err := manager.pickNext(
+		context.Background(),
+		"gemini",
+		"",
+		cliproxyexecutor.Options{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("pickNext() error = %v", err)
+	}
+	if selected == nil || selected.ID != "auth-a" {
+		t.Fatalf("pickNext() auth = %#v, want auth-a", selected)
+	}
+
+	runtimeAuth, ok := manager.GetByID("auth-a")
+	if !ok || runtimeAuth == nil {
+		t.Fatal("selected auth missing from manager")
+	}
+	if runtimeAuth.Selected != 1 {
+		t.Fatalf("legacy selected count = %d, want 1", runtimeAuth.Selected)
 	}
 }
 

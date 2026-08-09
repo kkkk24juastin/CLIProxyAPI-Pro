@@ -78,5 +78,5 @@ async function fetchProXaiQuota(file: AuthFileItem, t: TFunction): Promise<XaiBi
 export const PRO_XAI_CONFIG: QuotaProviderData<XaiQuotaState, XaiBillingSummary> = {
   ...XAI_CONFIG,
   fetchQuota: fetchProXaiQuota,
-  buildSuccessState: (billing) => ({ status: 'success', billing, cachedAt: Date.now() }),
+  buildSuccessState: (billing) => ({ status: 'success', billing }),
 };

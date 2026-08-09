@@ -26,29 +26,6 @@ export SRC_ROOT="${upstream_root}"
 validation_tmp="$(mktemp -d "${TMPDIR:-/tmp}/cliproxyapi-pro-core-validation.XXXXXX")"
 trap 'rm -rf "${validation_tmp}"' EXIT
 
-guarded_source='internal/logging/requestid.go'
-preflight_log="$(mktemp "${TMPDIR:-/tmp}/cliproxyapi-pro-preflight.XXXXXX")"
-printf '\n' >> "${upstream_root}/${guarded_source}"
-if python3 "${repo_root}/cliproxyapi-pro-core/patches/apply_upstream_patches.py" >"${preflight_log}" 2>&1; then
-  echo "Core customization unexpectedly accepted changed guarded upstream source" >&2
-  exit 1
-fi
-if ! grep -Fq 'upstream source changed before full-file replacement' "${preflight_log}"; then
-  cat "${preflight_log}" >&2
-  echo "Core customization did not fail with the expected upstream-drift error" >&2
-  exit 1
-fi
-if [[ -e "${upstream_root}/internal/embeddedusage" ]]; then
-  echo "Core customization wrote files before completing preflight" >&2
-  exit 1
-fi
-git -C "${upstream_root}" restore --worktree -- "${guarded_source}"
-rm -f "${preflight_log}"
-if [[ -n "$(git -C "${upstream_root}" status --porcelain)" ]]; then
-  echo "Core preflight regression did not restore a clean checkout" >&2
-  exit 1
-fi
-
 late_guarded_source='sdk/cliproxy/auth/scheduler.go'
 python3 - "${upstream_root}/${late_guarded_source}" <<'PY'
 from pathlib import Path
@@ -82,6 +59,7 @@ git -C "${upstream_root}" restore --worktree -- "${late_guarded_source}"
 rm -f "${late_preflight_log}"
 
 python3 "${repo_root}/cliproxyapi-pro-core/patches/apply_upstream_patches.py"
+go -C "${upstream_root}" mod tidy
 git -C "${upstream_root}" diff --check
 
 if [[ "${VALIDATION_STATICCHECK:-0}" == "1" ]]; then
@@ -131,6 +109,8 @@ go -C "${upstream_root}" test "${test_flags[@]}" \
   ./internal/pluginstore \
   ./internal/redisqueue \
   ./internal/requestmeta \
+  ./internal/runtime/executor \
+  ./internal/runtime/executor/helps \
   ./internal/pro/... \
   ./sdk/api/handlers \
   ./sdk/api/handlers/claude \

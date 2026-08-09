@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import { apiClient } from '@/services/api/client';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { computeApiUrl } from '@/utils/connection';
-import { isRecordValue } from '@/utils/quota';
+import { isRecordValue } from '@/pro/shared/value';
 import {
   loadLegacyModelPrices,
   loadModelPricesFromSqlite,

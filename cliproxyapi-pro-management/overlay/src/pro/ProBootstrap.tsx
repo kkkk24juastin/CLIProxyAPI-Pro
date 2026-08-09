@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import { proBootstraps } from '@/pro/registry';
+import '@/pro/registerLocales';
 
 // ProBootstrap is the single host insertion point for static module startup
 // effects that must follow the authenticated Management lifecycle.

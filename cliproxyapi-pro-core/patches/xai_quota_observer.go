@@ -8,8 +8,24 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/requestmeta"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
+
+func withXAIQuotaObserver(ctx context.Context, auth *cliproxyauth.Auth, model string) context.Context {
+	if !shouldObserveXAIQuota(auth) {
+		return ctx
+	}
+	authSnapshot := auth.Clone()
+	return requestmeta.WithUpstreamResponseObserver(ctx, func(
+		callCtx context.Context,
+		status int,
+		header http.Header,
+		body []byte,
+	) {
+		observeXAIQuotaResponse(callCtx, authSnapshot, model, status, header, body)
+	})
+}
 
 func observeXAIQuotaResponse(ctx context.Context, auth *cliproxyauth.Auth, model string, status int, header http.Header, body []byte) {
 	if !shouldObserveXAIQuota(auth) {

@@ -27,14 +27,13 @@ import type {
 import type { AuthFileItem } from '@/types';
 import {
   isDisabledAuthFile,
-  isQuotaLowState,
-  isRecordValue,
   normalizeNumberValue,
-  readStringValue,
   resolveAuthProvider,
 } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
+import { isRecordValue, readStringValue } from '@/pro/shared/value';
 import { resolveAccountPlanLabel, type AccountPlanQuotaStore } from '@/pro/modules/quota';
+import { isQuotaLowState } from './quotaHealth';
 import styles from './accountInspection.module.scss';
 
 export type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';

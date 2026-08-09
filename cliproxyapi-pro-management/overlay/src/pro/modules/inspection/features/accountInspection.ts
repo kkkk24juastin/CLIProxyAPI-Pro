@@ -1,5 +1,6 @@
 import type { Config, AuthFileItem } from '@/types';
-import { isRecordValue, normalizeNumberValue, readBooleanValue, readStringValue } from '@/utils/quota';
+import { normalizeNumberValue } from '@/utils/quota';
+import { isRecordValue, readBooleanValue, readStringValue } from '@/pro/shared/value';
 
 export type AccountInspectionLogLevel = 'info' | 'success' | 'warning' | 'error';
 export type AccountInspectionAction = 'keep' | 'delete' | 'disable' | 'enable';

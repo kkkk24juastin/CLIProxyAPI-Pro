@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import hashlib
 import os
 import re
 import subprocess
@@ -32,12 +31,6 @@ def write(path: Path, text: str) -> None:
     _writes[path] = text
 
 
-def require_source_hash(path: Path, allowed_hashes: set[str]) -> None:
-    digest = hashlib.sha256(read(path).encode('utf-8')).hexdigest()
-    if digest not in allowed_hashes:
-        raise SystemExit(f'upstream source changed before full-file replacement: {path} ({digest})')
-
-
 def module_path() -> str:
     match = re.search(r'^module\s+(\S+)', read_text(ROOT / 'go.mod'), re.MULTILINE)
     if not match:
@@ -54,6 +47,21 @@ def flush_writes() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         write_text(path, text)
     _writes.clear()
+
+
+def format_go_writes(relative_paths: list[str]) -> None:
+    for relative_path in relative_paths:
+        path = ROOT / relative_path
+        if path not in _writes:
+            raise SystemExit(f'gofmt target was not changed by the patch: {relative_path}')
+        result = subprocess.run(
+            ['gofmt'],
+            input=read(path),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        write(path, result.stdout)
 
 
 def queue_tree(source: Path, target: Path) -> None:
@@ -228,8 +236,11 @@ new_customization_paths = (
     'internal/managementasset/gitstore_token_test.go',
     'internal/requestmeta/client.go',
     'internal/requestmeta/client_test.go',
+    'internal/requestmeta/observer.go',
+    'internal/requestmeta/observer_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
+    'internal/runtime/executor/helps/response_observer_test.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
@@ -246,73 +257,6 @@ for relative_path in new_customization_paths:
 
 queue_tree(PATCH_SOURCE_DIR / 'internal/pro', ROOT / 'internal/pro')
 queue_tree(PATCH_SOURCE_DIR / 'sdk/proxyutil', ROOT / 'sdk/proxyutil')
-
-codex_filename = ROOT / 'internal/auth/codex/filename.go'
-replace_once(
-    codex_filename,
-    '''// The account hash is included when available to keep accounts with the same email
-// and plan distinct. The legacy email-based format remains the fallback.
-''',
-    '''// The account hash is included when available to keep accounts with the same email
-// distinct without treating the mutable subscription plan as identity.
-''',
-    'mutable subscription plan as identity',
-)
-replace_go_function(
-    codex_filename,
-    'func CredentialFileName(',
-    '''func CredentialFileName(email, planType, hashAccountID string, includeProviderPrefix bool) string {
-	email = strings.TrimSpace(email)
-	plan := normalizePlanTypeForFilename(planType)
-	hashAccountID = strings.TrimSpace(hashAccountID)
-
-	prefix := ""
-	if includeProviderPrefix {
-		prefix = "codex"
-	}
-
-	// The account hash is the strong identity. A subscription plan is mutable
-	// metadata and must not create a second credential when the same account is
-	// upgraded or downgraded.
-	if hashAccountID != "" {
-		return fmt.Sprintf("%s-%s-%s.json", prefix, hashAccountID, email)
-	}
-
-	// Keep the existing weak-identity fallback when an account ID is unavailable.
-	// Without a strong identity, automatically collapsing credentials is unsafe.
-	if plan == "" {
-		return fmt.Sprintf("%s-%s.json", prefix, email)
-	}
-	return fmt.Sprintf("%s-%s-%s.json", prefix, email, plan)
-}
-''',
-    'A subscription plan is mutable',
-)
-
-codex_filename_test = ROOT / 'internal/auth/codex/filename_test.go'
-for old, new in (
-    ('codex-abc12345-user@example.com-team.json', 'codex-abc12345-user@example.com.json'),
-    ('codex-def67890-user@example.com-k12.json', 'codex-def67890-user@example.com.json'),
-    ('codex-abc12345-user@example.com-plus.json', 'codex-abc12345-user@example.com.json'),
-    ('codex-abc12345-user@example.com-team-plan.json', 'codex-abc12345-user@example.com.json'),
-):
-    text = read(codex_filename_test)
-    if text.count(old) != 1:
-        raise SystemExit(f'expected one Codex filename test value in {codex_filename_test}: {old!r}')
-    write(codex_filename_test, text.replace(old, new, 1))
-if 'func TestCredentialFileNameIgnoresPlanForStrongIdentity' not in read(codex_filename_test):
-    write(
-        codex_filename_test,
-        read(codex_filename_test) + '''
-func TestCredentialFileNameIgnoresPlanForStrongIdentity(t *testing.T) {
-	free := CredentialFileName("user@example.com", "free", "abc12345", true)
-	plus := CredentialFileName("user@example.com", "plus", "abc12345", true)
-	if free != plus {
-		t.Fatalf("plan change altered strong credential identity: %q != %q", free, plus)
-	}
-}
-''',
-    )
 
 codex_device = ROOT / 'sdk/auth/codex_device.go'
 replace_once(
@@ -551,8 +495,8 @@ func TestFileTokenStoreSaveReusesExistingCodexStrongIdentity(t *testing.T) {
 	store := NewFileTokenStore()
 	store.SetBaseDir(baseDir)
 	auth := &cliproxyauth.Auth{
-		ID:       "codex-abc12345-user@example.com.json",
-		FileName: "codex-abc12345-user@example.com.json",
+		ID:       "codex-abc12345-user@example.com-plus.json",
+		FileName: "codex-abc12345-user@example.com-plus.json",
 		Provider: "codex",
 		Metadata: map[string]any{
 			"type":         "codex",
@@ -572,7 +516,7 @@ func TestFileTokenStoreSaveReusesExistingCodexStrongIdentity(t *testing.T) {
 	if !TakeReusedExistingAuthIdentity(auth) || TakeReusedExistingAuthIdentity(auth) {
 		t.Fatal("reused identity marker was not consumed exactly once")
 	}
-	if _, err := os.Stat(filepath.Join(baseDir, "codex-abc12345-user@example.com.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(baseDir, "codex-abc12345-user@example.com-plus.json")); !os.IsNotExist(err) {
 		t.Fatalf("Save() created a duplicate credential: %v", err)
 	}
 	persisted, err := os.ReadFile(oldPath)
@@ -742,6 +686,14 @@ write(
         read_text(Path(__file__).resolve().parent / 'xai_upstream_bridge_test.go'),
     ),
 )
+write(
+    ROOT / 'internal/runtime/executor/helps/response_observer_test.go',
+    re.sub(
+        r'github\.com/router-for-me/CLIProxyAPI/v\d+',
+        MODULE_PATH,
+        read_text(Path(__file__).resolve().parent / 'response_observer_test.go'),
+    ),
+)
 
 xai_executor = ROOT / 'internal/runtime/executor/xai_executor.go'
 replace_once(
@@ -760,103 +712,48 @@ replace_once(
     'applyProXAIHTTPRequestIdentity(req, auth)',
 )
 
-xai_executor_sources = (
-    ROOT / 'internal/runtime/executor/xai_executor_execute.go',
-    ROOT / 'internal/runtime/executor/xai_executor_stream.go',
-    ROOT / 'internal/runtime/executor/xai_executor_media.go',
+xai_executor_execute = ROOT / 'internal/runtime/executor/xai_executor_execute.go'
+replace_once(
+    xai_executor_execute,
+    '''func (e *XAIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+''',
+    '''func (e *XAIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+\tctx = withXAIQuotaObserver(ctx, auth, req.Model)
+''',
+    'ctx = withXAIQuotaObserver(ctx, auth, req.Model)',
 )
-xai_observation_marker = '\thelps.AppendAPIResponseChunk(ctx, e.cfg, data)\n'
-xai_executor_texts = {path: read(path) for path in xai_executor_sources}
-if not any(
-    'observeXAIQuotaResponse(ctx, auth, req.Model' in text
-    for text in xai_executor_texts.values()
-):
-    if sum(text.count(xai_observation_marker) for text in xai_executor_texts.values()) != 6:
-        raise SystemExit('unexpected xAI response chunk observation anchors')
-    xai_metadata_marker = '\thelps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())\n'
-    if sum(text.count(xai_metadata_marker) for text in xai_executor_texts.values()) != 5:
-        raise SystemExit('unexpected xAI response metadata observation anchors')
-    for path, text in xai_executor_texts.items():
-        text = text.replace(
-            xai_observation_marker,
-            xai_observation_marker + '\tobserveXAIQuotaResponse(ctx, auth, req.Model, httpResp.StatusCode, httpResp.Header.Clone(), data)\n',
-        )
-        text = text.replace(
-            xai_metadata_marker,
-            xai_metadata_marker + '\tobserveXAIQuotaResponse(ctx, auth, req.Model, httpResp.StatusCode, httpResp.Header.Clone(), nil)\n',
-        )
-        write(path, text)
-
+xai_executor_stream = ROOT / 'internal/runtime/executor/xai_executor_stream.go'
+replace_once(
+    xai_executor_stream,
+    '''func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
+''',
+    '''func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
+\tctx = withXAIQuotaObserver(ctx, auth, req.Model)
+''',
+    'ctx = withXAIQuotaObserver(ctx, auth, req.Model)',
+)
 xai_websocket_executor = ROOT / 'internal/runtime/executor/xai_websockets_executor.go'
 replace_once(
     xai_websocket_executor,
-    '''\t\tif respHS != nil && respHS.StatusCode > 0 {
-\t\t\tif sess != nil {
+    '''func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 ''',
-    '''\t\tif respHS != nil && respHS.StatusCode > 0 {
-\t\t\tobserveXAIQuotaResponse(ctx, auth, req.Model, respHS.StatusCode, respHS.Header.Clone(), bodyErr)
-\t\t\tif sess != nil {
+    '''func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
+\tctx = withXAIQuotaObserver(ctx, auth, req.Model)
 ''',
-    'observeXAIQuotaResponse(ctx, auth, req.Model, respHS.StatusCode',
+    'ctx = withXAIQuotaObserver(ctx, auth, req.Model)',
 )
 replace_once(
     xai_websocket_executor,
-    '''\t\t\t\tif respHSRetry != nil && respHSRetry.StatusCode > 0 {
-\t\t\t\t\treturn nil, xaiStatusErr(respHSRetry.StatusCode, bodyErrRetry)
+    '''\t\t\t\tbodyErrRetry := websocketHandshakeBody(respHSRetry)
+\t\t\t\tcloseHTTPResponseBody(respHSRetry, "xai websockets executor: close handshake response body error")
 ''',
-    '''\t\t\t\tif respHSRetry != nil && respHSRetry.StatusCode > 0 {
-\t\t\t\t\tobserveXAIQuotaResponse(ctx, auth, req.Model, respHSRetry.StatusCode, respHSRetry.Header.Clone(), bodyErrRetry)
-\t\t\t\t\treturn nil, xaiStatusErr(respHSRetry.StatusCode, bodyErrRetry)
+    '''\t\t\t\tbodyErrRetry := websocketHandshakeBody(respHSRetry)
+\t\t\t\tif respHSRetry != nil {
+\t\t\t\t\thelps.RecordAPIWebsocketUpgradeRejection(ctx, e.cfg, websocketUpgradeRequestLog(wsReqLog), respHSRetry.StatusCode, respHSRetry.Header.Clone(), bodyErrRetry)
+\t\t\t\t}
+\t\t\t\tcloseHTTPResponseBody(respHSRetry, "xai websockets executor: close handshake response body error")
 ''',
-    'observeXAIQuotaResponse(ctx, auth, req.Model, respHSRetry.StatusCode',
-)
-replace_once(
-    xai_websocket_executor,
-    '''\t\t\thelps.AppendAPIWebsocketResponse(ctx, e.cfg, payload)
-
-\t\t\tif wsErr, ok := parseXAIWebsocketError(payload); ok {
-''',
-    '''\t\t\thelps.AppendAPIWebsocketResponse(ctx, e.cfg, payload)
-\t\t\tobserveXAIQuotaResponse(ctx, auth, req.Model, 0, nil, payload)
-
-\t\t\tif wsErr, ok := parseXAIWebsocketError(payload); ok {
-''',
-    'observeXAIQuotaResponse(ctx, auth, req.Model, 0, nil, payload)',
-)
-replace_once(
-    xai_websocket_executor,
-    '''\trecordAPIWebsocketHandshake(ctx, e.cfg, respHS)
-\treporter.StartResponseTTFT()
-''',
-    '''\trecordAPIWebsocketHandshake(ctx, e.cfg, respHS)
-\tif respHS != nil {
-\t\tobserveXAIQuotaResponse(ctx, auth, req.Model, respHS.StatusCode, respHS.Header.Clone(), nil)
-\t}
-\treporter.StartResponseTTFT()
-''',
-    'observeXAIQuotaResponse(ctx, auth, req.Model, respHS.StatusCode, respHS.Header.Clone(), nil)',
-)
-replace_once(
-    xai_websocket_executor,
-    '''\t\t\trecordAPIWebsocketHandshake(ctx, e.cfg, respHSRetry)
-\t\t\treporter.StartResponseTTFT()
-''',
-    '''\t\t\trecordAPIWebsocketHandshake(ctx, e.cfg, respHSRetry)
-\t\t\tif respHSRetry != nil {
-\t\t\t\tobserveXAIQuotaResponse(ctx, auth, req.Model, respHSRetry.StatusCode, respHSRetry.Header.Clone(), nil)
-\t\t\t}
-\t\t\treporter.StartResponseTTFT()
-''',
-    'observeXAIQuotaResponse(ctx, auth, req.Model, respHSRetry.StatusCode, respHSRetry.Header.Clone(), nil)',
-)
-
-require_source_hash(
-    ROOT / 'internal/logging/requestid.go',
-    {'69d256ca4c4a75759395f6ed6640e9d2673c777e111fcae80faa7b6eea5b15ac'},
-)
-require_source_hash(
-    ROOT / 'internal/logging/requestmeta.go',
-    {'276db8481b85d9909073ed823062a2c83fcbf38b68952486fb86712cfb99ce9d'},
+    'helps.RecordAPIWebsocketUpgradeRejection(ctx, e.cfg, websocketUpgradeRequestLog(wsReqLog), respHSRetry.StatusCode',
 )
 
 # Add the optional QuotaProvider capability without changing ABI/schema v1.
@@ -2629,15 +2526,252 @@ queue_go_source('internal/requestmeta/client.go')
 
 queue_go_source('internal/requestmeta/client_test.go')
 
+queue_go_source('internal/requestmeta/observer.go')
+
+queue_go_source('internal/requestmeta/observer_test.go')
+
 queue_go_source('internal/requestmeta/requestid.go')
 
 queue_go_source('internal/requestmeta/response.go')
 
 logging_request_id = ROOT / 'internal/logging/requestid.go'
-queue_go_source('internal/logging/requestid.go')
+replace_once(
+    logging_request_id,
+    '\t"crypto/rand"\n\t"encoding/hex"\n\n\t"github.com/gin-gonic/gin"\n',
+    '\t"github.com/gin-gonic/gin"\n\t"' + import_path('internal/requestmeta') + '"\n',
+    import_path('internal/requestmeta'),
+)
+replace_once(
+    logging_request_id,
+    '// requestIDKey is the context key for storing/retrieving request IDs.\ntype requestIDKey struct{}\n\n',
+    '',
+    'return requestmeta.GenerateRequestID()',
+)
+replace_go_function(
+    logging_request_id,
+    'func GenerateRequestID()',
+    '''func GenerateRequestID() string {
+\treturn requestmeta.GenerateRequestID()
+}
+''',
+    'return requestmeta.GenerateRequestID()',
+)
+replace_go_function(
+    logging_request_id,
+    'func WithRequestID(',
+    '''func WithRequestID(ctx context.Context, requestID string) context.Context {
+\treturn requestmeta.WithRequestID(ctx, requestID)
+}
+''',
+    'return requestmeta.WithRequestID(ctx, requestID)',
+)
+replace_go_function(
+    logging_request_id,
+    'func GetRequestID(',
+    '''func GetRequestID(ctx context.Context) string {
+\treturn requestmeta.GetRequestID(ctx)
+}
+''',
+    'return requestmeta.GetRequestID(ctx)',
+)
 
 logging_request_meta = ROOT / 'internal/logging/requestmeta.go'
-queue_go_source('internal/logging/requestmeta.go')
+replace_once(
+    logging_request_meta,
+    '\t"net/http"\n\t"sync"\n\t"sync/atomic"\n',
+    '\t"net/http"\n\n\t"' + import_path('internal/requestmeta') + '"\n',
+    import_path('internal/requestmeta'),
+)
+replace_once(
+    logging_request_meta,
+    '''type endpointKey struct{}
+type responseStatusKey struct{}
+type responseHeadersKey struct{}
+type clientRequestMetadataKey struct{}
+
+// ClientRequestMetadata stores immutable downstream request metadata for asynchronous consumers.
+type ClientRequestMetadata struct {
+\tClientIP      string
+\tXForwardedFor string
+\tUserAgent     string
+}
+
+type responseStatusHolder struct {
+\tstatus atomic.Int32
+}
+
+type responseHeadersHolder struct {
+\tmu      sync.RWMutex
+\theaders http.Header
+}
+''',
+    'type ClientRequestMetadata = requestmeta.ClientRequestMetadata\n',
+    'type ClientRequestMetadata = requestmeta.ClientRequestMetadata',
+)
+for signature, replacement, present in (
+    (
+        'func WithEndpoint(',
+        '''func WithEndpoint(ctx context.Context, endpoint string) context.Context {
+\treturn requestmeta.WithEndpoint(ctx, endpoint)
+}
+''',
+        'return requestmeta.WithEndpoint(ctx, endpoint)',
+    ),
+    (
+        'func GetEndpoint(',
+        '''func GetEndpoint(ctx context.Context) string {
+\treturn requestmeta.GetEndpoint(ctx)
+}
+''',
+        'return requestmeta.GetEndpoint(ctx)',
+    ),
+    (
+        'func WithClientRequestMetadata(',
+        '''func WithClientRequestMetadata(ctx context.Context, metadata ClientRequestMetadata) context.Context {
+\treturn requestmeta.WithClientRequestMetadata(ctx, metadata)
+}
+''',
+        'return requestmeta.WithClientRequestMetadata(ctx, metadata)',
+    ),
+    (
+        'func GetClientRequestMetadata(',
+        '''func GetClientRequestMetadata(ctx context.Context) ClientRequestMetadata {
+\treturn requestmeta.GetClientRequestMetadata(ctx)
+}
+''',
+        'return requestmeta.GetClientRequestMetadata(ctx)',
+    ),
+    (
+        'func WithResponseStatusHolder(',
+        '''func WithResponseStatusHolder(ctx context.Context) context.Context {
+\treturn requestmeta.WithResponseStatusHolder(ctx)
+}
+''',
+        'return requestmeta.WithResponseStatusHolder(ctx)',
+    ),
+    (
+        'func WithResponseHeadersHolder(',
+        '''func WithResponseHeadersHolder(ctx context.Context) context.Context {
+\treturn requestmeta.WithResponseHeadersHolder(ctx)
+}
+''',
+        'return requestmeta.WithResponseHeadersHolder(ctx)',
+    ),
+    (
+        'func SetResponseStatus(',
+        '''func SetResponseStatus(ctx context.Context, status int) {
+\trequestmeta.SetResponseStatus(ctx, status)
+}
+''',
+        'requestmeta.SetResponseStatus(ctx, status)',
+    ),
+    (
+        'func SetResponseHeaders(',
+        '''func SetResponseHeaders(ctx context.Context, headers http.Header) {
+\trequestmeta.SetResponseHeaders(ctx, headers)
+}
+''',
+        'requestmeta.SetResponseHeaders(ctx, headers)',
+    ),
+    (
+        'func GetResponseStatus(',
+        '''func GetResponseStatus(ctx context.Context) int {
+\treturn requestmeta.GetResponseStatus(ctx)
+}
+''',
+        'return requestmeta.GetResponseStatus(ctx)',
+    ),
+    (
+        'func GetResponseHeaders(',
+        '''func GetResponseHeaders(ctx context.Context) http.Header {
+\treturn requestmeta.GetResponseHeaders(ctx)
+}
+''',
+        'return requestmeta.GetResponseHeaders(ctx)',
+    ),
+):
+    replace_go_function(logging_request_meta, signature, replacement, present)
+replace_go_function(
+    logging_request_meta,
+    'func cloneHTTPHeader(',
+    '',
+    '__pro_removed_cloneHTTPHeader__',
+)
+
+logging_helpers = ROOT / 'internal/runtime/executor/helps/logging_helpers.go'
+add_go_import(
+    logging_helpers,
+    '\t"' + import_path('internal/logging') + '"\n',
+    '\t"' + import_path('internal/requestmeta') + '"\n',
+)
+replace_once(
+    logging_helpers,
+    '''func RecordAPIResponseMetadata(ctx context.Context, cfg *config.Config, status int, headers http.Header) {
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    '''func RecordAPIResponseMetadata(ctx context.Context, cfg *config.Config, status int, headers http.Header) {
+\trequestmeta.ObserveUpstreamResponse(ctx, status, headers, nil)
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    'requestmeta.ObserveUpstreamResponse(ctx, status, headers, nil)',
+)
+replace_once(
+    logging_helpers,
+    '''func AppendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byte) {
+\tif !requestLogCaptureEnabled(cfg) {
+''',
+    '''func AppendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byte) {
+\trequestmeta.ObserveUpstreamResponse(ctx, 0, nil, chunk)
+\tif !requestLogCaptureEnabled(cfg) {
+''',
+    'requestmeta.ObserveUpstreamResponse(ctx, 0, nil, chunk)',
+)
+replace_once(
+    logging_helpers,
+    '''func RecordAPIWebsocketHandshake(ctx context.Context, cfg *config.Config, status int, headers http.Header) {
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    '''func RecordAPIWebsocketHandshake(ctx context.Context, cfg *config.Config, status int, headers http.Header) {
+\trequestmeta.ObserveUpstreamResponse(ctx, status, headers, nil)
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    'func RecordAPIWebsocketHandshake(ctx context.Context, cfg *config.Config, status int, headers http.Header) {\n\trequestmeta.ObserveUpstreamResponse',
+)
+replace_once(
+    logging_helpers,
+    '''func RecordAPIWebsocketUpgradeRejection(ctx context.Context, cfg *config.Config, info UpstreamRequestLog, status int, headers http.Header, body []byte) {
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    '''func RecordAPIWebsocketUpgradeRejection(ctx context.Context, cfg *config.Config, info UpstreamRequestLog, status int, headers http.Header, body []byte) {
+\trequestmeta.ObserveUpstreamResponse(ctx, status, headers, body)
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    'func RecordAPIWebsocketUpgradeRejection(ctx context.Context, cfg *config.Config, info UpstreamRequestLog, status int, headers http.Header, body []byte) {\n\trequestmeta.ObserveUpstreamResponse',
+)
+replace_once(
+    logging_helpers,
+    '''\tRecordAPIRequest(ctx, cfg, info)
+\tRecordAPIResponseMetadata(ctx, cfg, status, headers)
+\tAppendAPIResponseChunk(ctx, cfg, body)
+''',
+    '''\tRecordAPIRequest(ctx, cfg, info)
+\tlogOnlyCtx := requestmeta.WithoutUpstreamResponseObserver(ctx)
+\tRecordAPIResponseMetadata(logOnlyCtx, cfg, status, headers)
+\tAppendAPIResponseChunk(logOnlyCtx, cfg, body)
+''',
+    'logOnlyCtx := requestmeta.WithoutUpstreamResponseObserver(ctx)',
+)
+replace_once(
+    logging_helpers,
+    '''func AppendAPIWebsocketResponse(ctx context.Context, cfg *config.Config, payload []byte) {
+\tif !requestLogCaptureEnabled(cfg) {
+''',
+    '''func AppendAPIWebsocketResponse(ctx context.Context, cfg *config.Config, payload []byte) {
+\trequestmeta.ObserveUpstreamResponse(ctx, 0, nil, payload)
+\tif !requestLogCaptureEnabled(cfg) {
+''',
+    'func AppendAPIWebsocketResponse(ctx context.Context, cfg *config.Config, payload []byte) {\n\trequestmeta.ObserveUpstreamResponse',
+)
 
 add_go_import(server_management, '"github.com/gin-gonic/gin"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
 
@@ -3094,143 +3228,28 @@ if policy_candidate_append not in auth_conductor_text:
     write(auth_conductor, auth_conductor_text.replace(candidate_append, policy_candidate_append))
 replace_once(
     auth_conductor,
-    '''\tif m.HomeEnabled() {
-\t\tauth, exec, _, err := m.pickNextViaHome(ctx, model, opts, tried)
-\t\treturn auth, exec, err
-\t}
-
-\tif m.hasPluginScheduler() || !m.useSchedulerFastPath() {
-\t\treturn m.pickNextLegacy(ctx, provider, model, opts, tried)
-\t}
-''',
-    '''\tif m.HomeEnabled() {
-\t\tauth, exec, _, err := m.pickNextViaHome(ctx, model, opts, tried)
+    'func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, error) {\n',
+    '''func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (auth *Auth, executor ProviderExecutor, err error) {
+\tdefer func() {
 \t\tif err == nil && auth != nil {
 \t\t\tm.recordAuthSelected(auth.ID)
 \t\t}
-\t\treturn auth, exec, err
-\t}
-
-\tif m.hasPluginScheduler() || !m.useSchedulerFastPath() {
-\t\tauth, exec, err := m.pickNextLegacy(ctx, provider, model, opts, tried)
+\t}()
+''',
+    'func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (auth *Auth, executor ProviderExecutor, err error)',
+)
+replace_once(
+    auth_conductor,
+    'func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, string, error) {\n',
+    '''func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (auth *Auth, executor ProviderExecutor, providerKey string, err error) {
+\tdefer func() {
 \t\tif err == nil && auth != nil {
 \t\t\tm.recordAuthSelected(auth.ID)
 \t\t}
-\t\treturn auth, exec, err
-\t}
+\t}()
 ''',
-    'm.recordAuthSelected(auth.ID)',
+    'func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (auth *Auth, executor ProviderExecutor, providerKey string, err error)',
 )
-replace_once(
-    auth_conductor,
-    '''\treturn authCopy, executor, nil
-}
-
-func (m *Manager) pickNextMixedLegacy''',
-    '''\tm.recordAuthSelected(authCopy.ID)
-\treturn authCopy, executor, nil
-}
-
-func (m *Manager) pickNextMixedLegacy''',
-    'm.recordAuthSelected(authCopy.ID)\n\treturn authCopy, executor, nil',
-)
-replace_once(
-    auth_conductor,
-    '''\t\t\tif m.routeAwareSelectionRequired(candidate, model) {
-\t\t\t\tm.mu.RUnlock()
-\t\t\t\treturn m.pickNextLegacy(ctx, provider, model, opts, tried)
-\t\t\t}
-''',
-    '''\t\t\tif m.routeAwareSelectionRequired(candidate, model) {
-\t\t\t\tm.mu.RUnlock()
-\t\t\t\tauth, exec, err := m.pickNextLegacy(ctx, provider, model, opts, tried)
-\t\t\t\tif err == nil && auth != nil {
-\t\t\t\t\tm.recordAuthSelected(auth.ID)
-\t\t\t\t}
-\t\t\t\treturn auth, exec, err
-\t\t\t}
-''',
-    'm.mu.RUnlock()\n\t\t\t\tauth, exec, err := m.pickNextLegacy',
-)
-replace_once(
-    auth_conductor,
-    '''\tif m.HomeEnabled() {
-\t\treturn m.pickNextViaHome(ctx, model, opts, tried)
-\t}
-
-\tif m.hasPluginScheduler() || !m.useSchedulerFastPath() {
-\t\treturn m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
-\t}
-''',
-    '''\tif m.HomeEnabled() {
-\t\tauth, exec, providerKey, err := m.pickNextViaHome(ctx, model, opts, tried)
-\t\tif err == nil && auth != nil {
-\t\t\tm.recordAuthSelected(auth.ID)
-\t\t}
-\t\treturn auth, exec, providerKey, err
-\t}
-
-\tif m.hasPluginScheduler() || !m.useSchedulerFastPath() {
-\t\tauth, exec, providerKey, err := m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
-\t\tif err == nil && auth != nil {
-\t\t\tm.recordAuthSelected(auth.ID)
-\t\t}
-\t\treturn auth, exec, providerKey, err
-\t}
-''',
-    'auth, exec, providerKey, err := m.pickNextViaHome',
-)
-replace_once(
-    auth_conductor,
-    '''\treturn authCopy, executor, providerKey, nil
-}
-
-func (m *Manager) pickNextMixed(''',
-    '''\tm.recordAuthSelected(authCopy.ID)
-\treturn authCopy, executor, providerKey, nil
-}
-
-func (m *Manager) pickNextMixed(''',
-    'm.recordAuthSelected(authCopy.ID)\n\treturn authCopy, executor, providerKey, nil',
-)
-replace_once(
-    auth_conductor,
-    '''\t\t\tif m.routeAwareSelectionRequired(candidate, model) {
-\t\t\t\tm.mu.RUnlock()
-\t\t\t\treturn m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
-\t\t\t}
-''',
-    '''\t\t\tif m.routeAwareSelectionRequired(candidate, model) {
-\t\t\t\tm.mu.RUnlock()
-\t\t\t\tauth, exec, providerKey, err := m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
-\t\t\t\tif err == nil && auth != nil {
-\t\t\t\t\tm.recordAuthSelected(auth.ID)
-\t\t\t\t}
-\t\t\t\treturn auth, exec, providerKey, err
-\t\t\t}
-''',
-    'm.mu.RUnlock()\n\t\t\t\tauth, exec, providerKey, err := m.pickNextMixedLegacy',
-)
-
-# The normal Execute/ExecuteCount/ExecuteStream path always selects through
-# pickNextMixed. Keep this scoped to that function so the fast scheduler return
-# cannot be confused with the structurally similar pickNextMixedLegacy return.
-auth_conductor_text = read(auth_conductor)
-mixed_start = auth_conductor_text.find('func (m *Manager) pickNextMixed(')
-if mixed_start < 0:
-    raise SystemExit(f'function not found in {auth_conductor}: pickNextMixed')
-mixed_text = auth_conductor_text[mixed_start:]
-mixed_return = '\treturn authCopy, executor, providerKey, nil\n}'
-mixed_recorded_return = '\tm.recordAuthSelected(authCopy.ID)\n' + mixed_return
-if mixed_recorded_return not in mixed_text:
-    if mixed_text.count(mixed_return) != 1:
-        raise SystemExit(
-            f'expected one fast mixed return in {auth_conductor}, found {mixed_text.count(mixed_return)}'
-        )
-    write(
-        auth_conductor,
-        auth_conductor_text[:mixed_start] + mixed_text.replace(mixed_return, mixed_recorded_return, 1),
-    )
 
 auth_files_handler = ROOT / 'internal/api/handlers/management/auth_files.go'
 auth_files_crud_handler = ROOT / 'internal/api/handlers/management/auth_files_crud.go'
@@ -3626,13 +3645,9 @@ replace_once(
     's.persistedCursors[persistedCursorKey] = picked.ID',
 )
 
-flush_writes()
-subprocess.run([
-    'gofmt',
-    '-w',
+format_go_writes([
     'cmd/server/main.go',
     'internal/api/server.go',
-    'internal/api/server_test.go',
     'internal/api/server_options.go',
     *[
         f'internal/api/handlers/management/{name}'
@@ -3653,16 +3668,8 @@ subprocess.run([
     'internal/api/handlers/management/pro_auth_mutation.go',
     'internal/api/handlers/management/pro_features.go',
     'internal/api/handlers/management/pro_management_runtime.go',
-    'internal/client/claude/models/models.go',
-    'internal/client/claude/models/models_test.go',
-    'internal/auth/codex/filename.go',
-    'internal/auth/codex/filename_test.go',
-    'internal/config/sdk_config.go',
     'internal/logging/requestid.go',
     'internal/logging/requestmeta.go',
-    'internal/util/claude_model.go',
-    'internal/util/claude_model_test.go',
-    'internal/watcher/diff/config_diff.go',
     'internal/api/handlers/management/routing_policy.go',
     'internal/api/handlers/management/routing_policy_test.go',
     'internal/config/config_existing_updates.go',
@@ -3687,8 +3694,12 @@ subprocess.run([
     'internal/redisqueue/plugin_test.go',
     'internal/requestmeta/client.go',
     'internal/requestmeta/client_test.go',
+    'internal/requestmeta/observer.go',
+    'internal/requestmeta/observer_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
+    'internal/runtime/executor/helps/logging_helpers.go',
+    'internal/runtime/executor/helps/response_observer_test.go',
     'internal/pro/oauthpolicy/config/config.go',
     'internal/pro/oauthpolicy/config/config_test.go',
     'internal/pro/oauthpolicy/policy/engine.go',
@@ -3775,10 +3786,10 @@ subprocess.run([
     'internal/pro/proxypool/pool/pool_test.go',
     'internal/pro/proxypool/socks5/server.go',
     'internal/runtime/executor/xai_executor.go',
+    'internal/runtime/executor/xai_executor_execute.go',
+    'internal/runtime/executor/xai_executor_stream.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'internal/runtime/executor/xai_websockets_executor.go',
-    'sdk/api/handlers/claude/code_handlers.go',
-    'sdk/api/handlers/claude/code_handlers_model_test.go',
     'sdk/auth/codex_device.go',
     'sdk/auth/filestore.go',
     'sdk/auth/filestore_test.go',
@@ -3803,5 +3814,5 @@ subprocess.run([
     'sdk/proxyutil/proxy.go',
     'sdk/proxyutil/runtime_override.go',
     'sdk/proxyutil/runtime_override_test.go',
-], cwd=ROOT, check=True)
-subprocess.run(['go', 'mod', 'tidy'], cwd=ROOT, check=True)
+])
+flush_writes()
