@@ -109,12 +109,12 @@ go -C "${upstream_root}" test "${test_flags[@]}" \
   ./internal/pluginstore \
   ./internal/redisqueue \
   ./internal/requestmeta \
-  ./internal/runtime/executor \
   ./internal/runtime/executor/helps \
   ./internal/pro/... \
   ./sdk/api/handlers \
   ./sdk/api/handlers/claude \
   ./sdk/cliproxy/auth
+go -C "${upstream_root}" test -count=1 ./internal/runtime/executor
 go -C "${upstream_root}" test "${test_flags[@]}" ./sdk/cliproxy
 
 build_dir="${validation_tmp}/server"
