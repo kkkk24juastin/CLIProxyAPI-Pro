@@ -26,7 +26,12 @@ type accountInspectionAuthStore struct {
 }
 
 type xaiInspectionRoutingExecutor struct {
-	requests []*http.Request
+	requests        []*http.Request
+	responsesStatus int
+	responsesBody   string
+	responsesHeader http.Header
+	billingStatus   int
+	billingBody     string
 }
 
 func (e *xaiInspectionRoutingExecutor) Identifier() string { return "xai" }
@@ -50,14 +55,33 @@ func (e *xaiInspectionRoutingExecutor) CountTokens(context.Context, *coreauth.Au
 func (e *xaiInspectionRoutingExecutor) HttpRequest(_ context.Context, _ *coreauth.Auth, req *http.Request) (*http.Response, error) {
 	e.requests = append(e.requests, req.Clone(context.Background()))
 	body := `{"id":"chatcmpl-test","choices":[]}`
+	status := http.StatusOK
+	header := make(http.Header)
 	if strings.Contains(req.URL.RawQuery, "format=credits") {
 		body = `{"config":{"period_type":"weekly","usage_percent":10}}`
 	} else if strings.HasSuffix(req.URL.Path, "/billing") {
 		body = `{"config":{"monthly_limit":0,"used":0}}`
+	} else if strings.HasSuffix(req.URL.Path, "/responses") {
+		body = `data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}` + "\n\n"
+		header.Set("x-ratelimit-limit-tokens", "1000")
+		header.Set("x-ratelimit-remaining-tokens", "700")
+		if e.responsesStatus != 0 {
+			status = e.responsesStatus
+		}
+		if e.responsesBody != "" {
+			body = e.responsesBody
+		}
+		if e.responsesHeader != nil {
+			header = e.responsesHeader.Clone()
+		}
+	}
+	if strings.HasSuffix(req.URL.Path, "/billing") && e.billingStatus != 0 {
+		status = e.billingStatus
+		body = e.billingBody
 	}
 	return &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     make(http.Header),
+		StatusCode: status,
+		Header:     header,
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}, nil
 }

@@ -170,6 +170,33 @@ describe('xAI quota normalization', () => {
     expect(render('free')).toContain('grok-4.5');
     expect(render('paid-unknown')).not.toContain('grok-4.5');
   });
+
+  test('keeps a pending free-token row visible before the first trusted probe', () => {
+    const markup = renderToStaticMarkup(createElement(ProXaiQuotaBody, {
+      quota: {
+        status: 'success',
+        billing: {
+          mode: 'billing',
+          periodType: 'monthly',
+          usagePercent: null,
+          productUsage: [],
+          monthlyLimitCents: 0,
+          usedCents: null,
+          includedUsedCents: null,
+          onDemandCapCents: null,
+          onDemandUsedCents: null,
+          onDemandUsedPercent: null,
+          usedPercent: null,
+          planType: 'free',
+        },
+      },
+      classes: quotaClasses,
+    }));
+
+    expect(markup).toContain('xai_quota.free_quota');
+    expect(markup).toContain('grok-4.5');
+    expect(markup).toContain('xai_quota.free_quota_pending');
+  });
 });
 
 describe('xAI free quota forced refresh', () => {

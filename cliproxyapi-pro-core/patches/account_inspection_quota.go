@@ -124,7 +124,8 @@ func mergeCachedXAIFreeQuota(ctx context.Context, account accountInspectionAccou
 	return billing
 }
 
-func observeAccountXAIQuota(ctx context.Context, account accountInspectionAccount, model string, result accountInspectionHTTPResult) {
+func observeAccountXAIQuota(ctx context.Context, account accountInspectionAccount, model string, result accountInspectionHTTPResult) map[string]any {
+	observedAt := time.Now()
 	_ = embeddedusage.ObserveXAIQuotaResponse(ctx, embeddedusage.XAIQuotaObservation{
 		FileName:   account.FileName,
 		AuthIndex:  account.AuthIndex,
@@ -134,8 +135,49 @@ func observeAccountXAIQuota(ctx context.Context, account accountInspectionAccoun
 		Status:     result.StatusCode,
 		Header:     result.Header,
 		Body:       []byte(result.Body),
-		ObservedAt: time.Now(),
+		ObservedAt: observedAt,
 	})
+	var freeQuota map[string]any
+	if proquota.XAIHeadersStatus(result.StatusCode) {
+		freeQuota = proquota.XAIRateLimitSnapshot(result.Header, model, observedAt)
+	}
+	if proquota.XAIFreeQuotaExhausted([]byte(result.Body)) {
+		freeQuota = proquota.XAIExhaustedQuotaSnapshot([]byte(result.Body), model, observedAt)
+	}
+	return freeQuota
+}
+
+func xaiPlanTypeFromAccessToken(auth *coreauth.Auth) (string, bool) {
+	if auth == nil {
+		return "", false
+	}
+	token := firstNonEmptyAuthValue(auth, "access_token", "accessToken")
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return "", false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", false
+	}
+	claims := map[string]any{}
+	if json.Unmarshal(payload, &claims) != nil {
+		return "", false
+	}
+	tier, ok := floatFromAny(claims["tier"])
+	if !ok || tier < 0 || tier != float64(int64(tier)) {
+		return "", false
+	}
+	switch int64(tier) {
+	case 0:
+		return "free", true
+	case 1:
+		return "supergrok", true
+	case 5:
+		return "supergrok-heavy", true
+	default:
+		return "paid-unknown", true
+	}
 }
 
 func intFromAny(value any) (int, bool) {

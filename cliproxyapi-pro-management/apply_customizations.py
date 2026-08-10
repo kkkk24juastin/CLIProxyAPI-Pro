@@ -269,6 +269,7 @@ XAI_QUOTA_LOCALE_KEYS = {
         'plan_paid_unknown': 'Paid (unknown tier)',
         'free_quota': 'Free token quota',
         'free_quota_exhausted': 'Exhausted',
+        'free_quota_pending': 'Pending probe',
         'free_quota_window': 'Rolling 24 hours',
     },
     'ru.json': {
@@ -276,6 +277,7 @@ XAI_QUOTA_LOCALE_KEYS = {
         'plan_paid_unknown': 'Платный (неизвестный уровень)',
         'free_quota': 'Бесплатная квота токенов',
         'free_quota_exhausted': 'Исчерпана',
+        'free_quota_pending': 'Ожидает проверки',
         'free_quota_window': 'Скользящие 24 часа',
     },
     'zh-CN.json': {
@@ -283,6 +285,7 @@ XAI_QUOTA_LOCALE_KEYS = {
         'plan_paid_unknown': '付费版（未知档位）',
         'free_quota': '免费 Token 额度',
         'free_quota_exhausted': '已耗尽',
+        'free_quota_pending': '待探测',
         'free_quota_window': '滚动 24 小时',
     },
     'zh-TW.json': {
@@ -290,6 +293,7 @@ XAI_QUOTA_LOCALE_KEYS = {
         'plan_paid_unknown': '付費版（未知級別）',
         'free_quota': '免費 Token 配額',
         'free_quota_exhausted': '已用盡',
+        'free_quota_pending': '待探測',
         'free_quota_window': '滾動 24 小時',
     },
 }

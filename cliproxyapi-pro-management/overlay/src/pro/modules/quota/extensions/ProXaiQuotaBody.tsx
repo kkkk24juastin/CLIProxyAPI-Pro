@@ -3,6 +3,7 @@ import type { XaiQuotaState } from '@/types';
 import { XaiQuotaBody } from '@/features/quota/providers/xai/XaiQuotaBody';
 import { QuotaMeter } from '@/features/quota/components/QuotaMeter';
 import type { QuotaBodyProps } from '@/features/quota/types';
+import { XAI_PAID_HEALTH_MODEL } from '@/utils/quota';
 import {
   isXaiMonthlyBillingKnown,
   resolveXaiPlanType,
@@ -27,17 +28,17 @@ export function ProXaiQuotaBody(props: QuotaBodyProps<XaiQuotaState>) {
           <span className={classes.codexPlanValue}>{t('xai_quota.plan_free')}</span>
         </div>
       )}
-      {freeQuota && (
+      {planType === 'free' && (
         <div className={classes.quotaRow}>
           <div className={classes.quotaRowHeader}>
             <span className={classes.quotaModel}>
-              {freeQuota.model
-                ? `${t('xai_quota.free_quota')} · ${freeQuota.model}`
-                : t('xai_quota.free_quota')}
+              {`${t('xai_quota.free_quota')} · ${freeQuota?.model || XAI_PAID_HEALTH_MODEL}`}
             </span>
             <div className={classes.quotaMeta}>
               <span className={classes.quotaPercent}>
-                {freeQuota.exhausted
+                {!freeQuota
+                  ? t('xai_quota.free_quota_pending')
+                  : freeQuota.exhausted
                   ? t('xai_quota.free_quota_exhausted')
                   : remaining === null
                     ? '--'

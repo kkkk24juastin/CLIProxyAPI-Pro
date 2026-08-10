@@ -2,6 +2,7 @@ package management
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -76,6 +77,7 @@ func TestXAIInspectionRoutesByUsingAPI(t *testing.T) {
 			wantURLs: []string{
 				"https://cli-chat-proxy.grok.com/v1/billing?format=credits",
 				"https://cli-chat-proxy.grok.com/v1/billing",
+				"https://cli-chat-proxy.grok.com/v1/responses",
 			},
 			forbiddenPath: "/chat/completions",
 		},
@@ -99,7 +101,7 @@ func TestXAIInspectionRoutesByUsingAPI(t *testing.T) {
 				Provider:  "xai",
 				FileName:  tt.name + ".json",
 				AuthIndex: tt.name,
-			}, accountInspectionSettings{Timeout: 3_000, XAIDeepProbeModel: "grok-4.5"})
+			}, accountInspectionSettings{Timeout: 3_000, UsedPercentThreshold: 100, XAIDeepProbeModel: "grok-4.5"})
 			if err != nil || status == nil || *status != http.StatusOK || decision.Action != accountInspectionActionKeep {
 				t.Fatalf("inspectXAI() = decision:%#v status:%v err:%v", decision, status, err)
 			}
@@ -114,6 +116,184 @@ func TestXAIInspectionRoutesByUsingAPI(t *testing.T) {
 				t.Fatalf("inspectXAI() URLs = %#v, want %#v", gotURLs, tt.wantURLs)
 			}
 		})
+	}
+}
+
+func TestXAICLIFreeQuotaProbeRunsWithoutDeepProbeAndAffectsSameRun(t *testing.T) {
+	executor := &xaiInspectionRoutingExecutor{}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(executor)
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	decision, status, err := scheduler.inspectXAI(context.Background(), accountInspectionAccount{
+		Auth: &coreauth.Auth{Provider: "xai", Attributes: map[string]string{
+			"api_key": "test-token", "using_api": "false",
+		}},
+		Provider: "xai", FileName: "free.json", AuthIndex: "free",
+	}, accountInspectionSettings{
+		Timeout: 3_000, UsedPercentThreshold: 25, XAIDeepProbeModel: "grok-4.5",
+	})
+	if err != nil || status == nil || *status != http.StatusOK {
+		t.Fatalf("inspectXAI() = decision:%#v status:%v err:%v", decision, status, err)
+	}
+	if decision.Action != accountInspectionActionDisable || !decision.IsQuota || decision.UsedPercent == nil || *decision.UsedPercent != 30 {
+		t.Fatalf("same-run free quota decision = %#v, want 30%% quota disable", decision)
+	}
+	if decision.DeepProbeStatus != "" {
+		t.Fatalf("free quota sampling unexpectedly reported deep probe status %q", decision.DeepProbeStatus)
+	}
+	responses := 0
+	for _, request := range executor.requests {
+		if strings.HasSuffix(request.URL.Path, "/responses") {
+			responses++
+		}
+	}
+	if responses != 1 {
+		t.Fatalf("responses requests = %d, want 1", responses)
+	}
+}
+
+func TestXAICLIFreeQuotaProbeDoesNotRetryForDeepBodyWhenDeepProbeDisabled(t *testing.T) {
+	executor := &xaiInspectionRoutingExecutor{
+		responsesBody: `data: {"type":"response.created"}` + "\n\n",
+	}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(executor)
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	decision, _, err := scheduler.inspectXAI(context.Background(), accountInspectionAccount{
+		Auth: &coreauth.Auth{Provider: "xai", Attributes: map[string]string{
+			"api_key": "test-token", "using_api": "false",
+		}},
+		Provider: "xai", FileName: "free-nonterminal.json", AuthIndex: "free-nonterminal",
+	}, accountInspectionSettings{
+		Timeout: 3_000, UsedPercentThreshold: 100, XAIDeepProbeModel: "grok-4.5",
+	})
+	if err != nil || decision.UsedPercent == nil || *decision.UsedPercent != 30 {
+		t.Fatalf("quota-only inspectXAI() = decision:%#v err:%v", decision, err)
+	}
+	responses := 0
+	for _, request := range executor.requests {
+		if strings.HasSuffix(request.URL.Path, "/responses") {
+			responses++
+		}
+	}
+	if responses != 1 {
+		t.Fatalf("quota-only responses requests = %d, want 1 despite non-terminal body", responses)
+	}
+}
+
+func TestXAICLIFreeQuotaProbeReusesResponseWhenDeepProbeEnabled(t *testing.T) {
+	executor := &xaiInspectionRoutingExecutor{}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(executor)
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	decision, _, err := scheduler.inspectXAI(context.Background(), accountInspectionAccount{
+		Auth: &coreauth.Auth{Provider: "xai", Attributes: map[string]string{
+			"api_key": "test-token", "using_api": "false",
+		}},
+		Provider: "xai", FileName: "free-deep.json", AuthIndex: "free-deep",
+	}, accountInspectionSettings{
+		Timeout: 3_000, UsedPercentThreshold: 100, XAIDeepProbeEnabled: true, XAIDeepProbeModel: "grok-4.5",
+	})
+	if err != nil || decision.DeepProbeStatus != accountInspectionDeepProbeSuccess {
+		t.Fatalf("inspectXAI() = decision:%#v err:%v, want reused deep-probe success", decision, err)
+	}
+	responses := 0
+	for _, request := range executor.requests {
+		if strings.HasSuffix(request.URL.Path, "/responses") {
+			responses++
+		}
+	}
+	if responses != 1 {
+		t.Fatalf("responses requests = %d, want one shared quota/deep probe", responses)
+	}
+}
+
+func TestXAICLIFreeQuotaProbeAcceptsExhaustionWithoutDeepProbe(t *testing.T) {
+	executor := &xaiInspectionRoutingExecutor{
+		responsesStatus: http.StatusTooManyRequests,
+		responsesBody:   `{"code":"subscription:free-usage-exhausted","error":"used all the included free usage for model grok-4.5, tokens (actual/limit): 1000/1000"}`,
+	}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(executor)
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	decision, status, err := scheduler.inspectXAI(context.Background(), accountInspectionAccount{
+		Auth: &coreauth.Auth{Provider: "xai", Attributes: map[string]string{
+			"api_key": "test-token", "using_api": "false",
+		}},
+		Provider: "xai", FileName: "exhausted.json", AuthIndex: "exhausted",
+	}, accountInspectionSettings{Timeout: 3_000, UsedPercentThreshold: 100, XAIDeepProbeModel: "grok-4.5"})
+	if err != nil || status == nil || *status != http.StatusTooManyRequests {
+		t.Fatalf("inspectXAI() = decision:%#v status:%v err:%v", decision, status, err)
+	}
+	if decision.Action != accountInspectionActionDisable || !decision.IsQuota || decision.UsedPercent == nil || *decision.UsedPercent != 100 {
+		t.Fatalf("exhausted free quota decision = %#v", decision)
+	}
+}
+
+func TestXAIPlanTypePrefersAccessTokenTier(t *testing.T) {
+	token := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":0}`)) + ".signature"
+	plan, ok := xaiPlanTypeFromAccessToken(&coreauth.Auth{Metadata: map[string]any{"access_token": token}})
+	if !ok || plan != "free" {
+		t.Fatalf("xaiPlanTypeFromAccessToken(tier=0) = %q, %v", plan, ok)
+	}
+	token = "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":5}`)) + ".signature"
+	plan, ok = xaiPlanTypeFromAccessToken(&coreauth.Auth{Attributes: map[string]string{"access_token": token}})
+	if !ok || plan != "supergrok-heavy" {
+		t.Fatalf("xaiPlanTypeFromAccessToken(tier=5) = %q, %v", plan, ok)
+	}
+}
+
+func TestXAICLIPaidAccessTokenTierSkipsFreeQuotaProbe(t *testing.T) {
+	token := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":5}`)) + ".signature"
+	executor := &xaiInspectionRoutingExecutor{}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(executor)
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	decision, _, err := scheduler.inspectXAI(context.Background(), accountInspectionAccount{
+		Auth: &coreauth.Auth{
+			Provider:   "xai",
+			Attributes: map[string]string{"using_api": "false"},
+			Metadata:   map[string]any{"access_token": token},
+		},
+		Provider: "xai", FileName: "heavy.json", AuthIndex: "heavy",
+	}, accountInspectionSettings{Timeout: 3_000, UsedPercentThreshold: 100, XAIDeepProbeModel: "grok-4.5"})
+	if err != nil || decision.Action != accountInspectionActionKeep {
+		t.Fatalf("paid inspectXAI() = decision:%#v err:%v", decision, err)
+	}
+	for _, request := range executor.requests {
+		if strings.HasSuffix(request.URL.Path, "/responses") {
+			t.Fatalf("paid tier unexpectedly requested free quota URL %q", request.URL.String())
+		}
+	}
+}
+
+func TestXAIPlanTierDoesNotMaskBillingUnauthorized(t *testing.T) {
+	token := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":5}`)) + ".signature"
+	executor := &xaiInspectionRoutingExecutor{
+		billingStatus: http.StatusUnauthorized,
+		billingBody:   `{"error":"invalid token"}`,
+	}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(executor)
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	decision, status, err := scheduler.inspectXAI(context.Background(), accountInspectionAccount{
+		Auth: &coreauth.Auth{
+			Provider:   "xai",
+			Attributes: map[string]string{"using_api": "false"},
+			Metadata:   map[string]any{"access_token": token},
+		},
+		Provider: "xai", FileName: "unauthorized.json", AuthIndex: "unauthorized",
+	}, accountInspectionSettings{Timeout: 3_000, UsedPercentThreshold: 100, XAIDeepProbeModel: "grok-4.5"})
+	if err != nil || status == nil || *status != http.StatusUnauthorized {
+		t.Fatalf("unauthorized inspectXAI() = decision:%#v status:%v err:%v", decision, status, err)
+	}
+	if decision.Action != accountInspectionActionDisable || decision.IsQuota {
+		t.Fatalf("JWT tier masked billing authorization failure: %#v", decision)
+	}
+	for _, request := range executor.requests {
+		if strings.HasSuffix(request.URL.Path, "/responses") {
+			t.Fatalf("billing authorization failure unexpectedly continued to %q", request.URL.String())
+		}
 	}
 }
 
