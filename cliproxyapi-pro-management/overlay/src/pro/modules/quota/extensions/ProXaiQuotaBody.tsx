@@ -15,7 +15,12 @@ export function ProXaiQuotaBody(props: QuotaBodyProps<XaiQuotaState>) {
   const { t } = useTranslation();
   const billing = quota.billing;
   const planType = billing
-    ? billing.planType ?? resolveXaiPlanType(billing.monthlyLimitCents, isXaiMonthlyBillingKnown(billing))
+    ? billing.planType ?? resolveXaiPlanType(
+        billing.monthlyLimitCents,
+        isXaiMonthlyBillingKnown(billing),
+        billing.onDemandCapCents,
+        billing.onDemandUsedCents
+      )
     : undefined;
   const freeQuota = planType === 'free' ? billing?.freeQuota : undefined;
   const remaining = freeQuota ? xaiFreeQuotaRemainingPercent(billing) : null;

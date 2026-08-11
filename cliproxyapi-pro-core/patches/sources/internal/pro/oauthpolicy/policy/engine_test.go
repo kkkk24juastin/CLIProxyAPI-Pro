@@ -58,6 +58,33 @@ providers:
 	}
 }
 
+func TestFilterTreatsXAIOnDemandBillingAsPaid(t *testing.T) {
+	cfg, err := modelconfig.Parse([]byte(`
+providers:
+  xai:
+    plans:
+      free:
+        excluded-models: ["grok-4.2*"]
+      paid-unknown: {}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := New()
+	engine.ApplyConfig(cfg)
+	storage, _ := json.Marshal(map[string]any{"access_token": "token", "subject": "user"})
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "xai-on-demand", AuthProvider: "xai", AuthKind: "oauth", StorageJSON: storage,
+		Models: []ModelInfo{{ID: "grok-4.20-0309-reasoning"}},
+		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"config":{"monthlyLimit":{"val":0},"onDemandCap":{"val":50000},"used":{"val":0}}}`)}, nil
+		},
+	})
+	if !result.Handled || result.Annotations["plan_key"] != "paid-unknown" || len(result.ExcludedModelIDs) != 0 {
+		t.Fatalf("Filter() = %#v", result)
+	}
+}
+
 func TestFilterFreeXAIBlocksGrok420Wildcard(t *testing.T) {
 	cfg, err := modelconfig.Parse([]byte(`
 providers:

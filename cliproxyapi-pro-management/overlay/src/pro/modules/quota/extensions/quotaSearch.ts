@@ -10,7 +10,17 @@ export type QuotaSearchStore = {
   claudeQuota: Record<string, { planType?: unknown }>;
   codexQuota: Record<string, { planType?: unknown }>;
   geminiCliQuota: Record<string, { tierLabel?: unknown; tierId?: unknown; creditBalance?: unknown }>;
-  xaiQuota: Record<string, { billing?: { planType?: unknown; monthlyLimitCents?: number | null } | null }>;
+  xaiQuota: Record<
+    string,
+    {
+      billing?: {
+        planType?: unknown;
+        monthlyLimitCents?: number | null;
+        onDemandCapCents?: number | null;
+        onDemandUsedCents?: number | null;
+      } | null;
+    }
+  >;
 };
 
 const FILE_KEYS = [
@@ -50,7 +60,16 @@ export function buildQuotaSearchValues(
   append(values, gemini?.creditBalance);
 
   const xai = store.xaiQuota[name]?.billing;
-  const xaiPlan = resolveXaiPlanType(xai?.monthlyLimitCents ?? null, Boolean(xai)) ?? xai?.planType;
+  const xaiMonthlyBillingKnown =
+    xai?.monthlyLimitCents != null ||
+    xai?.onDemandCapCents != null ||
+    xai?.onDemandUsedCents != null;
+  const xaiPlan = resolveXaiPlanType(
+    xai?.monthlyLimitCents ?? null,
+    xaiMonthlyBillingKnown,
+    xai?.onDemandCapCents ?? null,
+    xai?.onDemandUsedCents ?? null
+  ) ?? xai?.planType;
   append(values, xaiPlan);
   if (xaiPlan) append(values, t(`xai_quota.plan_${String(xaiPlan).replace(/-/g, '_')}`));
   return values;

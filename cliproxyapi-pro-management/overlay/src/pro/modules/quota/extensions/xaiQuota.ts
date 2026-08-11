@@ -13,18 +13,27 @@ export type XaiNormalizedPlanType =
 
 export const resolveXaiPlanType = (
   monthlyLimitCents: number | null,
-  monthlyBillingKnown: boolean
+  monthlyBillingKnown: boolean,
+  onDemandCapCents: number | null = null,
+  onDemandUsedCents: number | null = null
 ): XaiNormalizedPlanType | undefined => {
   if (!monthlyBillingKnown) return undefined;
-  if (monthlyLimitCents === null || monthlyLimitCents === 0) return 'free';
   if (monthlyLimitCents === XAI_SUPERGROK_LIMIT_CENTS) return 'supergrok';
   if (monthlyLimitCents === XAI_SUPERGROK_HEAVY_LIMIT_CENTS) return 'supergrok-heavy';
-  return monthlyLimitCents > 0 ? 'paid-unknown' : undefined;
+  if ((monthlyLimitCents ?? 0) > 0) return 'paid-unknown';
+  // xAI can provide paid pay-as-you-go access with zero included monthly
+  // credits. A positive on-demand cap or usage is therefore paid evidence.
+  if ((onDemandCapCents ?? 0) > 0 || (onDemandUsedCents ?? 0) > 0) {
+    return 'paid-unknown';
+  }
+  return 'free';
 };
 
 export const isXaiMonthlyBillingKnown = (billing: XaiBillingSummary): boolean =>
   billing.monthlyLimitCents !== null ||
   billing.usedCents !== null ||
+  billing.onDemandCapCents !== null ||
+  billing.onDemandUsedCents !== null ||
   Boolean(billing.billingPeriodStart || billing.billingPeriodEnd);
 
 const observedAt = (billing: XaiBillingSummary | null | undefined): number => {
