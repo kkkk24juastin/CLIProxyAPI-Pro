@@ -8,6 +8,7 @@ import { ProXaiQuotaBody } from '@/pro/modules/quota/extensions/ProXaiQuotaBody'
 import {
   XAI_FREE_QUOTA_PROBE_URL,
   mergeXaiBillingRuntimeState,
+  normalizeXaiPlanType,
   parseXaiFreeQuotaProbe,
   resolveXaiPlanType,
   xaiFreeQuotaRemainingPercent,
@@ -46,6 +47,14 @@ describe('xAI quota normalization', () => {
     expect(resolveXaiPlanType(20_000, true)).toBe('paid-unknown');
     expect(resolveXaiPlanType(150_000, true)).toBe('supergrok-heavy');
     expect(resolveXaiPlanType(99_000, true)).toBe('paid-unknown');
+  });
+
+  test('normalizes every JWT-derived xAI plan', () => {
+    expect(normalizeXaiPlanType('x_basic')).toBe('x-basic');
+    expect(normalizeXaiPlanType('X-PREMIUM')).toBe('x-premium');
+    expect(normalizeXaiPlanType('x_premium_plus')).toBe('x-premium-plus');
+    expect(normalizeXaiPlanType('supergrok_lite')).toBe('supergrok-lite');
+    expect(normalizeXaiPlanType('future-plan')).toBeUndefined();
   });
 
   test('preserves the newest runtime free-quota observation', () => {
@@ -161,7 +170,7 @@ describe('xAI quota normalization', () => {
       usedPercent: null,
       freeQuota: { model: 'grok-4.5', usedTokens: 25, limitTokens: 100 },
     };
-    const render = (planType: 'free' | 'paid-unknown') =>
+    const render = (planType: 'free' | 'paid-unknown' | 'x-premium') =>
       renderToStaticMarkup(createElement(ProXaiQuotaBody, {
         quota: { status: 'success', billing: { ...billing, planType } },
         classes: quotaClasses,
@@ -169,6 +178,7 @@ describe('xAI quota normalization', () => {
 
     expect(render('free')).toContain('grok-4.5');
     expect(render('paid-unknown')).not.toContain('grok-4.5');
+    expect(render('x-premium')).toContain('xai_quota.plan_x_premium');
   });
 
   test('keeps a pending free-token row visible before the first trusted probe', () => {
@@ -301,6 +311,23 @@ describe('xAI free quota forced refresh', () => {
       healthStatus: 'chat-ok',
       userId: 'official-user',
     });
+  });
+
+  test('prefers the server-derived JWT plan over zero monthly billing', async () => {
+    installFreeBillingMock(result(500, 'free probe must not run'));
+
+    const summary = await PRO_XAI_CONFIG.fetchQuota(
+      {
+        name: 'premium.json',
+        type: 'xai',
+        auth_index: 'xai:premium',
+        plan_type: 'x-premium',
+      },
+      t
+    );
+
+    expect(summary).toMatchObject({ planType: 'x-premium', monthlyLimitCents: 0 });
+    expect(requests.some((request) => request.url === XAI_FREE_QUOTA_PROBE_URL)).toBe(false);
   });
 
   test('accepts a 429 exhaustion response as the current quota snapshot', async () => {

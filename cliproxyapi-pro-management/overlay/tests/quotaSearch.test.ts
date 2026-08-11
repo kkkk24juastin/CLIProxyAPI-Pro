@@ -31,4 +31,21 @@ describe('quota search', () => {
     expect(matchesQuotaSearch(values, 'USER@EXAMPLE')).toBe(true);
     expect(matchesQuotaSearch(values, 'user@*com')).toBe(true);
   });
+
+  test('keeps the JWT-derived xAI plan when monthly billing is zero', () => {
+    const values = buildQuotaSearchValues(
+      { name: 'premium.json', type: 'xai' },
+      {
+        ...emptyStore,
+        xaiQuota: {
+          'premium.json': { billing: { planType: 'x-premium', monthlyLimitCents: 0 } },
+        },
+      },
+      translate
+    );
+
+    expect(values).toContain('x-premium');
+    expect(values).toContain('xai_quota.plan_x_premium');
+    expect(values).not.toContain('free');
+  });
 });

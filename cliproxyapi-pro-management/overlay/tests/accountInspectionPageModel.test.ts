@@ -241,6 +241,7 @@ describe('account inspection page model', () => {
     const t = ((key: string) => ({
       'codex_quota.plan_pro': '专业版',
       'xai_quota.plan_paid_unknown': 'Paid (unknown tier)',
+      'xai_quota.plan_x_premium': 'X Premium',
     }[key] ?? key)) as TFunction;
     const quotaStore = {
       antigravityQuota: {},
@@ -269,5 +270,19 @@ describe('account inspection page model', () => {
       } as Parameters<typeof resolveAccountInspectionPlanLabel>[2],
       t
     )).toBe('Paid (unknown tier)');
+    expect(resolveAccountInspectionPlanLabel(
+      result({ provider: 'xai' }),
+      undefined,
+      {
+        ...quotaStore,
+        xaiQuota: {
+          'account.json': {
+            status: 'success',
+            billing: { monthlyLimitCents: 0, planType: 'x-premium' },
+          },
+        },
+      } as Parameters<typeof resolveAccountInspectionPlanLabel>[2],
+      t
+    )).toBe('X Premium');
   });
 });

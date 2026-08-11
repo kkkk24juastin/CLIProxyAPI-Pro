@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
@@ -55,46 +54,6 @@ providers:
 	}
 	if result.Annotations["plan_key"] != "paid-unknown" || result.Annotations["plan_source"] != "billing" {
 		t.Fatalf("annotations = %#v", result.Annotations)
-	}
-}
-
-func TestFilterPrefersXAIAccessTokenTierOverBilling(t *testing.T) {
-	cfg, errParse := modelconfig.Parse([]byte(`
-providers:
-  xai:
-    plans:
-      free:
-        excluded-models: ["grok-4.2*"]
-      supergrok-heavy: {}
-`))
-	if errParse != nil {
-		t.Fatal(errParse)
-	}
-	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"tier":0}`))
-	storage, _ := json.Marshal(map[string]any{
-		"access_token": "header." + payload + ".signature",
-		"plan_type":    "supergrok-heavy",
-		"subject":      "user",
-	})
-	called := false
-	engine := New()
-	engine.ApplyConfig(cfg)
-	result := engine.Filter(context.Background(), Input{
-		AuthID: "xai-free", AuthProvider: "xai", AuthKind: "oauth", StorageJSON: storage,
-		Models: []ModelInfo{{ID: "grok-4.20-0309-reasoning"}},
-		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
-			called = true
-			return HTTPResponse{StatusCode: 200, Body: []byte(`{"config":{"monthlyLimit":{"val":150000}}}`)}, nil
-		},
-	})
-	if called {
-		t.Fatal("xAI billing was queried despite a recognized access-token tier")
-	}
-	if !result.Handled || result.Annotations["plan_key"] != "free" || result.Annotations["plan_source"] != "auth" {
-		t.Fatalf("Filter() = %#v", result)
-	}
-	if len(result.ExcludedModelIDs) != 1 || result.ExcludedModelIDs[0] != "grok-4.20-0309-reasoning" {
-		t.Fatalf("excluded models = %#v", result.ExcludedModelIDs)
 	}
 }
 
@@ -177,7 +136,7 @@ providers:
 	}
 }
 
-func TestFilterFallsBackToStalePlanCache(t *testing.T) {
+func TestFilterDoesNotUseXAIPlanCacheBeforeBilling(t *testing.T) {
 	cfg, _ := modelconfig.Parse([]byte(`
 cache-ttl: 1s
 providers:
@@ -185,24 +144,24 @@ providers:
     plans:
       supergrok:
         excluded-models: ["grok-imagine-video"]
-      _unknown:
-        excluded-models: ["grok-pro-*"]
 `))
 	engine := New()
 	engine.ApplyConfig(cfg)
-	engine.cache["xai\x00xai-3"] = cacheEntry{Plan: "supergrok", ObservedAt: time.Now().Add(-time.Hour)}
-	storage, _ := json.Marshal(map[string]any{"access_token": "token"})
+	engine.cache["xai\x00xai-3"] = cacheEntry{Plan: "supergrok-heavy", ObservedAt: time.Now()}
+	storage, _ := json.Marshal(map[string]any{"access_token": "token", "plan_type": "supergrok-heavy"})
+	called := false
 	result := engine.Filter(context.Background(), Input{
 		AuthID: "xai-3", AuthProvider: "xai", AuthKind: "oauth", StorageJSON: storage,
-		Models: []ModelInfo{{ID: "grok-imagine-video"}, {ID: "grok-pro-1"}},
+		Models: []ModelInfo{{ID: "grok-imagine-video"}},
 		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
-			return HTTPResponse{}, errors.New("temporary billing failure")
+			called = true
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"config":{"monthlyLimit":{"val":15000}}}`)}, nil
 		},
 	})
-	if !result.Handled || len(result.ExcludedModelIDs) != 1 || result.ExcludedModelIDs[0] != "grok-imagine-video" {
+	if !called || !result.Handled || len(result.ExcludedModelIDs) != 1 || result.ExcludedModelIDs[0] != "grok-imagine-video" {
 		t.Fatalf("Filter() = %#v", result)
 	}
-	if result.Annotations["plan_source"] != "stale-cache" || result.Annotations["plan_key"] != "supergrok" {
+	if result.Annotations["plan_source"] != "billing" || result.Annotations["plan_key"] != "supergrok" {
 		t.Fatalf("annotations = %#v", result.Annotations)
 	}
 }

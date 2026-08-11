@@ -7,9 +7,33 @@ export const XAI_FREE_QUOTA_PROBE_URL = 'https://cli-chat-proxy.grok.com/v1/resp
 export type XaiNormalizedPlanType =
   | 'free'
   | 'supergrok'
+  | 'x-basic'
+  | 'x-premium'
+  | 'x-premium-plus'
   | 'supergrok-heavy'
+  | 'supergrok-lite'
   | 'paid'
   | 'paid-unknown';
+
+const XAI_PLAN_TYPES: readonly XaiNormalizedPlanType[] = [
+  'free',
+  'supergrok',
+  'x-basic',
+  'x-premium',
+  'x-premium-plus',
+  'supergrok-heavy',
+  'supergrok-lite',
+  'paid',
+  'paid-unknown',
+];
+
+export const normalizeXaiPlanType = (value: unknown): XaiNormalizedPlanType | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase().replace(/_/g, '-');
+  return XAI_PLAN_TYPES.includes(normalized as XaiNormalizedPlanType)
+    ? (normalized as XaiNormalizedPlanType)
+    : undefined;
+};
 
 export const resolveXaiPlanType = (
   monthlyLimitCents: number | null,

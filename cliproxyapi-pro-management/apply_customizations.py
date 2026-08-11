@@ -266,6 +266,10 @@ GEMINI_CLI_LOCALE_KEYS = {
 XAI_QUOTA_LOCALE_KEYS = {
     'en.json': {
         'plan_free': 'Free',
+        'plan_x_basic': 'X Basic',
+        'plan_x_premium': 'X Premium',
+        'plan_x_premium_plus': 'X Premium+',
+        'plan_supergrok_lite': 'SuperGrok Lite',
         'plan_paid_unknown': 'Paid (unknown tier)',
         'free_quota': 'Free token quota',
         'free_quota_exhausted': 'Exhausted',
@@ -274,6 +278,10 @@ XAI_QUOTA_LOCALE_KEYS = {
     },
     'ru.json': {
         'plan_free': 'Бесплатный',
+        'plan_x_basic': 'X Basic',
+        'plan_x_premium': 'X Premium',
+        'plan_x_premium_plus': 'X Premium+',
+        'plan_supergrok_lite': 'SuperGrok Lite',
         'plan_paid_unknown': 'Платный (неизвестный уровень)',
         'free_quota': 'Бесплатная квота токенов',
         'free_quota_exhausted': 'Исчерпана',
@@ -282,6 +290,10 @@ XAI_QUOTA_LOCALE_KEYS = {
     },
     'zh-CN.json': {
         'plan_free': '免费套餐',
+        'plan_x_basic': 'X Basic',
+        'plan_x_premium': 'X Premium',
+        'plan_x_premium_plus': 'X Premium+',
+        'plan_supergrok_lite': 'SuperGrok Lite',
         'plan_paid_unknown': '付费版（未知档位）',
         'free_quota': '免费 Token 额度',
         'free_quota_exhausted': '已耗尽',
@@ -290,6 +302,10 @@ XAI_QUOTA_LOCALE_KEYS = {
     },
     'zh-TW.json': {
         'plan_free': '免費套餐',
+        'plan_x_basic': 'X Basic',
+        'plan_x_premium': 'X Premium',
+        'plan_x_premium_plus': 'X Premium+',
+        'plan_supergrok_lite': 'SuperGrok Lite',
         'plan_paid_unknown': '付費版（未知級別）',
         'free_quota': '免費 Token 配額',
         'free_quota_exhausted': '已用盡',
@@ -1744,7 +1760,7 @@ def patch_quota_types_latest(target: Path) -> None:
     replace_once(
         path,
         "  planType?: 'paid';\n",
-        "  planType?: 'free' | 'supergrok' | 'supergrok-heavy' | 'paid' | 'paid-unknown';\n",
+        "  planType?: 'free' | 'supergrok' | 'x-basic' | 'x-premium' | 'x-premium-plus' | 'supergrok-heavy' | 'supergrok-lite' | 'paid' | 'paid-unknown';\n",
     )
     _ensure_interface_field(path, 'XaiBillingSummary', '  freeQuota?: XaiFreeQuotaSummary;')
 def patch_quota_provider_model_latest(target: Path) -> None:

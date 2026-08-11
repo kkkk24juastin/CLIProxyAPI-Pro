@@ -66,6 +66,36 @@ func TestListAuthFilesFromDiskIncludesInspectionAndCodexPlanMetadata(t *testing.
 	}
 }
 
+func TestListAuthFilesExposesXAIJWTPlanWithoutAccessToken(t *testing.T) {
+	authDir := t.TempDir()
+	token := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":4}`)) + ".signature"
+	raw, err := json.Marshal(map[string]any{
+		"type": "xai", "email": "xai@example.com", "access_token": token,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(authDir, "xai-user.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, nil)
+	entry := firstAuthFileEntry(t, h)
+	if entry["plan_type"] != "x-premium-plus" {
+		t.Fatalf("plan_type = %#v, want x-premium-plus", entry["plan_type"])
+	}
+	if _, exposed := entry["access_token"]; exposed {
+		t.Fatalf("auth file entry exposed access_token: %#v", entry)
+	}
+
+	liteToken := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":6}`)) + ".signature"
+	if plan := xaiAuthFilePlanType(&coreauth.Auth{
+		Provider: "xai", Attributes: map[string]string{"access_token": liteToken},
+	}); plan != "supergrok-lite" {
+		t.Fatalf("xaiAuthFilePlanType() = %q, want supergrok-lite", plan)
+	}
+}
+
 func TestQuotaSuccessStateIncludesParserMetadata(t *testing.T) {
 	state := quotaSuccessState(map[string]any{"rawShapeHash": proquota.JSONShapeHash(`{"a":1,"items":[{"b":true}]}`)})
 	if state["schemaVersion"] != 2 || state["parserVersion"] != accountInspectionQuotaParserVersion || state["status"] != "success" {

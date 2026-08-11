@@ -139,26 +139,29 @@ func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconf
 	if plan := localPlan(provider, input); plan != "" {
 		return plan, "auth", nil
 	}
+	useCache := provider != "xai"
 	now := time.Now()
 	cacheKey := provider + "\x00" + input.AuthID
 	e.mu.RLock()
 	cached, hasCache := e.cache[cacheKey]
 	e.mu.RUnlock()
-	if hasCache && now.Sub(cached.ObservedAt) <= cfg.CacheTTL {
+	if useCache && hasCache && now.Sub(cached.ObservedAt) <= cfg.CacheTTL {
 		return cached.Plan, "cache", nil
 	}
 	plan, errResolve := resolveProviderPlan(ctx, provider, cfg.ResolveTimeout, input)
 	if errResolve == nil && plan != "" {
-		e.mu.Lock()
-		e.cache[cacheKey] = cacheEntry{Plan: plan, ObservedAt: now}
-		e.mu.Unlock()
+		if useCache {
+			e.mu.Lock()
+			e.cache[cacheKey] = cacheEntry{Plan: plan, ObservedAt: now}
+			e.mu.Unlock()
+		}
 		source := "provider-api"
 		if provider == "xai" {
 			source = "billing"
 		}
 		return plan, source, nil
 	}
-	if hasCache && cached.Plan != "" {
+	if useCache && hasCache && cached.Plan != "" {
 		return cached.Plan, "stale-cache", errResolve
 	}
 	if errResolve == nil {
@@ -172,6 +175,7 @@ func localPlan(provider string, input Input) string {
 		if plan, known := proquota.XAIPlanTypeFromAccessToken(accessToken(input)); known {
 			return plan
 		}
+		return ""
 	}
 	sources := []map[string]any{input.Metadata, stringMapToAny(input.Attributes)}
 	storage := map[string]any{}

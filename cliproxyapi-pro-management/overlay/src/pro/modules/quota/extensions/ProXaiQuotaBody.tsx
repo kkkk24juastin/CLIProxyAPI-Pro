@@ -14,9 +14,16 @@ export function ProXaiQuotaBody(props: QuotaBodyProps<XaiQuotaState>) {
   const { quota, classes } = props;
   const { t } = useTranslation();
   const billing = quota.billing;
-  const planType = billing
-    ? billing.planType ?? resolveXaiPlanType(billing.monthlyLimitCents, isXaiMonthlyBillingKnown(billing))
+  const monthlyPlanType = billing
+    ? resolveXaiPlanType(billing.monthlyLimitCents, isXaiMonthlyBillingKnown(billing))
     : undefined;
+  const planType = billing?.planType ?? monthlyPlanType;
+  const nativePlanRendered =
+    (planType === 'supergrok' && billing?.monthlyLimitCents === 15_000) ||
+    (planType === 'supergrok-heavy' && billing?.monthlyLimitCents === 150_000);
+  const showProPlan = Boolean(
+    planType && billing?.mode !== 'paid-health' && planType !== 'free' && !nativePlanRendered
+  );
   const freeQuota = planType === 'free' ? billing?.freeQuota : undefined;
   const remaining = freeQuota ? xaiFreeQuotaRemainingPercent(billing) : null;
 
@@ -26,6 +33,20 @@ export function ProXaiQuotaBody(props: QuotaBodyProps<XaiQuotaState>) {
         <div className={classes.codexPlan}>
           <span className={classes.codexPlanLabel}>{t('xai_quota.plan_label')}</span>
           <span className={classes.codexPlanValue}>{t('xai_quota.plan_free')}</span>
+        </div>
+      )}
+      {showProPlan && planType && (
+        <div className={classes.codexPlan}>
+          <span className={classes.codexPlanLabel}>{t('xai_quota.plan_label')}</span>
+          <span
+            className={
+              planType === 'supergrok-heavy' || planType === 'x-premium-plus'
+                ? classes.premiumPlanValue
+                : classes.codexPlanValue
+            }
+          >
+            {t(`xai_quota.plan_${planType.replace(/-/g, '_')}`)}
+          </span>
         </div>
       )}
       {planType === 'free' && (

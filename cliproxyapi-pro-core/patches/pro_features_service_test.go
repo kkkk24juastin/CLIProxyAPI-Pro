@@ -2,6 +2,7 @@ package cliproxy
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -56,11 +57,13 @@ func TestBuiltInOAuthPolicyConstrainsRegistrationAndSelection(t *testing.T) {
 	service := &Service{cfg: cfg, proApp: runtime, coreManager: manager}
 	freeAuth := &coreauth.Auth{
 		ID: "xai-free-auth", Provider: "xai", Status: coreauth.StatusActive,
-		Attributes: map[string]string{"auth_kind": "oauth", "plan_type": "free"},
+		Attributes: map[string]string{"auth_kind": "oauth"},
+		Metadata:   map[string]any{"access_token": "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":0}`)) + ".signature"},
 	}
 	superGrokAuth := &coreauth.Auth{
 		ID: "xai-supergrok-auth", Provider: "xai", Status: coreauth.StatusActive,
-		Attributes: map[string]string{"auth_kind": "oauth", "plan_type": "supergrok"},
+		Attributes: map[string]string{"auth_kind": "oauth"},
+		Metadata:   map[string]any{"access_token": "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":1}`)) + ".signature"},
 	}
 
 	modelRegistry := internalregistry.GetGlobalRegistry()

@@ -2097,6 +2097,11 @@ api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
 routing_policy = ROOT / 'internal/api/handlers/management/routing_policy.go'
 routing_policy_test = ROOT / 'internal/api/handlers/management/routing_policy_test.go'
 replace_once(
+    auth_files,
+    f'\t"{MODULE_PATH}/internal/credentialweight"\n',
+    f'\t"{MODULE_PATH}/internal/credentialweight"\n\tproquota "{MODULE_PATH}/internal/pro/quota"\n',
+)
+replace_once(
     server_management,
     '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n',
     '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n\t\tmgmt.POST("/management-panel/check-update", s.mgmt.PostCheckManagementPanelUpdate)\n',
@@ -2163,6 +2168,22 @@ replace_once(
 	UseExecutorCamel *bool             `json:"useExecutor"`
 	UseExecutorPascal *bool            `json:"UseExecutor"`
 }
+''',
+)
+replace_once(
+    auth_files,
+    '''\tif claims := extractCodexIDTokenClaims(auth); claims != nil {
+\t\tentry["id_token"] = claims
+\t}
+\t// Expose priority from Attributes (set by synthesizer from JSON "priority" field).
+''',
+    '''\tif claims := extractCodexIDTokenClaims(auth); claims != nil {
+\t\tentry["id_token"] = claims
+\t}
+\tif plan := xaiAuthFilePlanType(auth); plan != "" {
+\t\tentry["plan_type"] = plan
+\t}
+\t// Expose priority from Attributes (set by synthesizer from JSON "priority" field).
 ''',
 )
 insert_before(
@@ -2312,12 +2333,48 @@ replace_once(
 						fileData["id_token"] = claims
 					}
 				}
+				if strings.EqualFold(strings.TrimSpace(typeValue), "xai") {
+					if plan := xaiAuthFilePlanTypeFromRaw(gjson.GetBytes(data, "access_token").String()); plan != "" {
+						fileData["plan_type"] = plan
+					}
+				}
 ''',
 )
 insert_before(
     auth_files,
     'func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {\n',
-    '''func extractCodexIDTokenClaimsFromRaw(idTokenRaw string) gin.H {
+    '''func xaiAuthFilePlanTypeFromRaw(accessToken string) string {
+	plan, known := proquota.XAIPlanTypeFromAccessToken(accessToken)
+	if !known {
+		return ""
+	}
+	return plan
+}
+
+func xaiAuthFilePlanType(auth *coreauth.Auth) string {
+	if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "xai") {
+		return ""
+	}
+	if auth.Metadata != nil {
+		for _, key := range []string{"access_token", "accessToken"} {
+			if token, ok := auth.Metadata[key].(string); ok {
+				if plan := xaiAuthFilePlanTypeFromRaw(token); plan != "" {
+					return plan
+				}
+			}
+		}
+	}
+	if auth.Attributes != nil {
+		for _, key := range []string{"access_token", "accessToken"} {
+			if plan := xaiAuthFilePlanTypeFromRaw(auth.Attributes[key]); plan != "" {
+				return plan
+			}
+		}
+	}
+	return ""
+}
+
+func extractCodexIDTokenClaimsFromRaw(idTokenRaw string) gin.H {
 	idToken := strings.TrimSpace(idTokenRaw)
 	if idToken == "" {
 		return nil
@@ -2330,7 +2387,7 @@ insert_before(
 }
 
 ''',
-    'func extractCodexIDTokenClaimsFromRaw',
+    'func xaiAuthFilePlanTypeFromRaw',
 )
 replace_go_function(
     auth_files,

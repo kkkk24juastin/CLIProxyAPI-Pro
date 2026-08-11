@@ -14,6 +14,7 @@ import { normalizeAuthIndex } from '@/utils/authIndex';
 import {
   XAI_FREE_QUOTA_PROBE_URL,
   mergeXaiBillingRuntimeState,
+  normalizeXaiPlanType,
   parseXaiFreeQuotaProbe,
   resolveXaiPlanType,
   isXaiMonthlyBillingKnown,
@@ -66,7 +67,9 @@ async function fetchProXaiQuota(file: AuthFileItem, t: TFunction): Promise<XaiBi
     return mergeXaiBillingRuntimeState({ ...billing, planType: 'paid' }, previous);
   }
 
-  const planType = resolveXaiPlanType(billing.monthlyLimitCents, isXaiMonthlyBillingKnown(billing));
+  const planType =
+    normalizeXaiPlanType(file.plan_type ?? file.planType) ??
+    resolveXaiPlanType(billing.monthlyLimitCents, isXaiMonthlyBillingKnown(billing));
   const merged = mergeXaiBillingRuntimeState({ ...billing, planType }, previous);
   if (planType !== 'free') return merged;
 

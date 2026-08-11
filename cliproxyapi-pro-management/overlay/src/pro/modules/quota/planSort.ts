@@ -46,8 +46,12 @@ const PLAN_RANKS: Record<string, Record<string, number>> = {
     'free-tier': 100,
   },
   xai: {
-    'supergrok-heavy': 500,
-    supergrok: 400,
+    'supergrok-heavy': 700,
+    'x-premium-plus': 600,
+    'x-premium': 500,
+    supergrok: 450,
+    'x-basic': 400,
+    'supergrok-lite': 350,
     paid: 300,
     'paid-unknown': 300,
     free: 100,
@@ -129,8 +133,8 @@ const resolvePlanSortKey = (item: AuthFileItem, quotaStore: PlanSortQuotaStore):
     const billing = quotaStore.xaiQuota[name]?.billing;
     const monthlyLimitCents = normalizeCents(billing?.monthlyLimitCents);
     rawPlan =
-      resolveXaiPlanType(monthlyLimitCents, monthlyLimitCents !== null) ??
       billing?.planType ??
+      resolveXaiPlanType(monthlyLimitCents, monthlyLimitCents !== null) ??
       readPlanField(item, 'planType', 'plan_type', 'plan', 'package');
   }
 

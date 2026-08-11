@@ -37,6 +37,20 @@ describe("oauth account policy service", () => {
     });
     expect(config.providers.xai.plans._unknown.configured).toBe(true);
     expect(config.providers.xai.plans._default.configured).toBe(false);
+
+    const xai = OAUTH_MODEL_PROVIDER_DEFINITIONS.find(({ key }) => key === "xai")!;
+    expect(xai.plans.map(({ key }) => key)).toEqual([
+      "free",
+      "supergrok",
+      "x-basic",
+      "x-premium",
+      "x-premium-plus",
+      "supergrok-heavy",
+      "supergrok-lite",
+      "paid-unknown",
+      "_unknown",
+      "_default",
+    ]);
   });
 
   it("serializes only explicitly configured rules", () => {
