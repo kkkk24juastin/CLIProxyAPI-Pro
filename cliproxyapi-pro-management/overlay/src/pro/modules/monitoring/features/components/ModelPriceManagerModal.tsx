@@ -155,7 +155,7 @@ export function ModelPriceManagerModal({
         open={isPriceModalOpen}
         onClose={() => setIsPriceModalOpen(false)}
         title={t('usage_stats.model_price_settings')}
-        width={960}
+        width={1200}
         className={`${styles.monitorModal} ${styles.priceManagerModal}`}
       >
         <div className={styles.priceManager}>
@@ -385,8 +385,14 @@ export function ModelPriceManagerModal({
                     <footer className={styles.priceRuleEditorFooter}>
                       <div>
                         {selectedPriceTarget.rule ? (
-                          <Button variant="secondary" size="sm" onClick={() => void handleDeletePrice(selectedPriceTarget.model)}>
-                            {t('common.delete')}
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className={styles.priceRuleDeleteButton}
+                            onClick={() => void handleDeletePrice(selectedPriceTarget.model)}
+                          >
+                            <IconTrash2 size={15} />
+                            <span className={styles.priceRuleDeleteLabel}>{t('common.delete')}</span>
                           </Button>
                         ) : null}
                       </div>
