@@ -111,7 +111,7 @@ func TestNormalizeRoutingRequestProtectionConfig(t *testing.T) {
 	}
 }
 
-func TestLegacyRoutingRequestProtectionMigrationRemovesOnlyProNode(t *testing.T) {
+func TestLegacyRoutingRequestProtectionReadLeavesConfigUnchanged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	original := "# keep\nrouting:\n  strategy: fill-first\n  request-protection:\n    enabled: true\n    mode: enforce\n    providers:\n      codex:\n        enabled: true\n        status-codes: [429]\n"
 	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
@@ -121,30 +121,12 @@ func TestLegacyRoutingRequestProtectionMigrationRemovesOnlyProNode(t *testing.T)
 	if err != nil || !found || !value.Enabled || value.Mode != "enforce" || !value.Providers["codex"].Enabled {
 		t.Fatalf("legacy config = %+v, %v, %v", value, found, err)
 	}
-	removed, err := removeLegacyRoutingRequestProtectionConfig(path)
-	if err != nil || !removed {
-		t.Fatalf("remove legacy config = %v, %v", removed, err)
-	}
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(got)
-	if strings.Contains(text, "request-protection") || !strings.Contains(text, "strategy: fill-first") || !strings.Contains(text, "# keep") {
-		t.Fatalf("unexpected migrated config:\n%s", text)
-	}
-}
-
-func TestRoutingPolicyExistingScalarUpdatesNeverIncludesUnchangedDefaults(t *testing.T) {
-	cfg := &config.Config{}
-	desired := routingPolicyGlobalSettingsFromConfig(cfg)
-	if updates := routingPolicyExistingScalarUpdates(cfg, desired); len(updates) != 0 {
-		t.Fatalf("default updates = %#v, want none", updates)
-	}
-	desired.Strategy = "fill-first"
-	updates := routingPolicyExistingScalarUpdates(cfg, desired)
-	if len(updates) != 1 || strings.Join(updates[0].Path, ".") != "routing.strategy" {
-		t.Fatalf("strategy updates = %#v", updates)
+	if string(got) != original {
+		t.Fatalf("legacy config was modified:\n%s", got)
 	}
 }
 

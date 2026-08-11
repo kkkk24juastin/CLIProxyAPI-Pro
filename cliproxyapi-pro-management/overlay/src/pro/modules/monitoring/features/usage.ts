@@ -26,7 +26,6 @@ export interface ModelPriceTier extends ModelPriceRate {
 
 export interface ModelPriceRule {
   id?: number;
-  provider: string;
   model: string;
   base: ModelPriceRate;
   tiers?: ModelPriceTier[];
@@ -104,6 +103,24 @@ export interface UsageTokens {
   total_tokens?: number;
 }
 
+export interface UsageTokenBreakdown {
+  schema_version: number;
+  quality: string;
+  total_tokens: number;
+  input: {
+    total_tokens: number;
+    uncached_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+  };
+  output: {
+    total_tokens: number;
+    non_reasoning_tokens: number;
+    reasoning_tokens: number;
+  };
+  unclassified_tokens: number;
+}
+
 export interface UsageCostBreakdown {
   ruleId: number;
   ruleVersion: number;
@@ -146,12 +163,16 @@ export interface UsageDetail {
   error_message?: string;
   upstream_request_id?: string;
   retry_after?: string;
+  attempt_index?: number;
   stream?: boolean;
   reasoning_effort?: string;
   service_tier?: string;
   estimated_cost?: number;
   price_rule_id?: number;
   cost_breakdown?: UsageCostBreakdown;
+  accounting_version?: number;
+  accounting_quality?: string;
+  token_breakdown?: UsageTokenBreakdown;
   tokens: UsageTokens;
   failed: boolean;
   __modelName?: string;
@@ -337,6 +358,35 @@ const readTokens = (detail: Record<string, unknown>): UsageTokens => {
   };
 };
 
+const normalizeUsageTokenBreakdown = (value: unknown): UsageTokenBreakdown | undefined => {
+  if (!isRecord(value)) return undefined;
+  const input = isRecord(value.input) ? value.input : {};
+  const output = isRecord(value.output) ? value.output : {};
+  const number = (snakeKey: string, camelKey: string, source: Record<string, unknown> = value) =>
+    toFiniteNumber(source[snakeKey] ?? source[camelKey]);
+  const schemaVersion = number('schema_version', 'schemaVersion');
+  const qualityRaw = value.quality;
+  const quality = typeof qualityRaw === 'string' ? qualityRaw.trim() : '';
+  if (schemaVersion <= 0 && !quality) return undefined;
+  return {
+    schema_version: schemaVersion,
+    quality,
+    total_tokens: number('total_tokens', 'totalTokens'),
+    input: {
+      total_tokens: number('total_tokens', 'totalTokens', input),
+      uncached_tokens: number('uncached_tokens', 'uncachedTokens', input),
+      cache_read_tokens: number('cache_read_tokens', 'cacheReadTokens', input),
+      cache_write_tokens: number('cache_write_tokens', 'cacheWriteTokens', input),
+    },
+    output: {
+      total_tokens: number('total_tokens', 'totalTokens', output),
+      non_reasoning_tokens: number('non_reasoning_tokens', 'nonReasoningTokens', output),
+      reasoning_tokens: number('reasoning_tokens', 'reasoningTokens', output),
+    },
+    unclassified_tokens: number('unclassified_tokens', 'unclassifiedTokens'),
+  };
+};
+
 const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undefined => {
   let raw = value;
   if (typeof raw === 'string') {
@@ -417,6 +467,8 @@ const buildUsageDetail = (
   const statusCode = extractNonNegativeNumberField(detailRaw, ['status_code']);
   const estimatedCost = extractNonNegativeNumberField(detailRaw, ['estimated_cost', 'estimatedCost']);
   const priceRuleID = extractNonNegativeNumberField(detailRaw, ['price_rule_id', 'priceRuleId']);
+  const attemptIndex = extractNonNegativeNumberField(detailRaw, ['attempt_index', 'attemptIndex']);
+  const accountingVersion = extractNonNegativeNumberField(detailRaw, ['accounting_version', 'accountingVersion']);
 
   const provider = typeof detailRaw.provider === 'string' ? detailRaw.provider.trim() : undefined;
   const executorType = typeof detailRaw.executor_type === 'string'
@@ -485,6 +537,7 @@ const buildUsageDetail = (
       : typeof detailRaw.retryAfter === 'string'
         ? detailRaw.retryAfter
         : undefined,
+    attempt_index: attemptIndex ?? undefined,
     stream: detailRaw.stream === true,
     reasoning_effort: typeof detailRaw.reasoning_effort === 'string'
       ? detailRaw.reasoning_effort
@@ -499,6 +552,15 @@ const buildUsageDetail = (
     estimated_cost: estimatedCost ?? undefined,
     price_rule_id: priceRuleID ?? undefined,
     cost_breakdown: normalizeUsageCostBreakdown(detailRaw.cost_breakdown ?? detailRaw.costBreakdown),
+    accounting_version: accountingVersion ?? undefined,
+    accounting_quality: typeof detailRaw.accounting_quality === 'string'
+      ? detailRaw.accounting_quality
+      : typeof detailRaw.accountingQuality === 'string'
+        ? detailRaw.accountingQuality
+        : undefined,
+    token_breakdown: normalizeUsageTokenBreakdown(
+      detailRaw.token_breakdown ?? detailRaw.tokenBreakdown
+    ),
     tokens: readTokens(detailRaw),
     failed: detailRaw.failed === true,
     __modelName: modelName,

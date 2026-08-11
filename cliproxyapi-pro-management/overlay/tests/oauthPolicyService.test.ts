@@ -3,9 +3,11 @@ import {
   isPositiveDuration,
   normalizeOAuthPolicyPrefix,
   normalizeOAuthPolicyConfig,
+  oauthModelProviderDefinitions,
   oauthPolicyDurationValue,
   OAUTH_MODEL_PROVIDER_DEFINITIONS,
   planDefinitionsForProvider,
+  resolveOAuthPolicyActiveProvider,
   serializeOAuthPolicyDuration,
   serializeOAuthPolicyConfig,
 } from "@/pro/modules/oauthPolicy/oauthPolicy";
@@ -88,6 +90,11 @@ describe("oauth account policy service", () => {
     ).toBeUndefined();
   });
 
+  it("preserves the disabled state when serializing", () => {
+    const config = normalizeOAuthPolicyConfig({ enabled: false });
+    expect(serializeOAuthPolicyConfig(config).enabled).toBe(false);
+  });
+
   it("validates positive Go duration fields", () => {
     expect(isPositiveDuration("30m")).toBe(true);
     expect(isPositiveDuration("1.5s")).toBe(true);
@@ -146,6 +153,12 @@ describe("oauth account policy service", () => {
     expect(config.providers["future-provider"].plans.premium.configured).toBe(
       true,
     );
+    expect(config.providers["future-provider"].plans._unknown.configured).toBe(
+      false,
+    );
+    expect(
+      oauthModelProviderDefinitions(config.providers).map(({ key }) => key),
+    ).toContain("future-provider");
 
     const kimi = OAUTH_MODEL_PROVIDER_DEFINITIONS.find(
       ({ key }) => key === "kimi",
@@ -165,5 +178,27 @@ describe("oauth account policy service", () => {
     expect(serialized.providers["future-provider"].plans.premium).toEqual({
       "excluded-models": ["future-pro-*"],
     });
+  });
+
+  it("falls back when the active custom provider is removed", () => {
+    const withCustomProvider = normalizeOAuthPolicyConfig({
+      providers: {
+        "future-provider": { plans: {} },
+      },
+    });
+    expect(
+      resolveOAuthPolicyActiveProvider(
+        "future-provider",
+        withCustomProvider.providers,
+      ),
+    ).toBe("future-provider");
+
+    const afterRemoval = normalizeOAuthPolicyConfig({ providers: {} });
+    expect(
+      resolveOAuthPolicyActiveProvider(
+        "future-provider",
+        afterRemoval.providers,
+      ),
+    ).toBe("xai");
   });
 });

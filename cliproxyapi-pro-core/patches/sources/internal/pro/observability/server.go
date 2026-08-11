@@ -1440,13 +1440,12 @@ func (s *Server) handleModelPriceRulesPut(c *gin.Context) {
 }
 
 func (s *Server) handleModelPriceRulesDelete(c *gin.Context) {
-	provider := strings.TrimSpace(c.Query("provider"))
 	model := strings.TrimSpace(c.Query("model"))
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
-	if err := s.store.DeleteModelPriceRule(c.Request.Context(), provider, model); err != nil {
+	if err := s.store.DeleteModelPriceRule(c.Request.Context(), model); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

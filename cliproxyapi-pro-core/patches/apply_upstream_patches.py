@@ -2879,17 +2879,15 @@ replace_once(
     '''\t// Try to find the exact auth record via authManager. Disabled auths are
 \t// intentionally absent from the upstream model registry, but their provider
 \t// metadata is still needed for the static model fallback below.
+\tauthIndex := strings.TrimSpace(c.Query("auth_index"))
+\tselectedAuth, foundAuth := h.lookupAuthFile(name, authIndex)
+\tif authIndex != "" && !foundAuth {
+\t\tc.JSON(404, gin.H{"error": "auth file not found"})
+\t\treturn
+\t}
 \tvar authID string
-\tvar selectedAuth *coreauth.Auth
-\tif h.authManager != nil {
-\t\tauths := h.authManager.List()
-\t\tfor _, auth := range auths {
-\t\t\tif auth.FileName == name || auth.ID == name {
-\t\t\t\tauthID = auth.ID
-\t\t\t\tselectedAuth = auth
-\t\t\t\tbreak
-\t\t\t}
-\t\t}
+\tif selectedAuth != nil {
+\t\tauthID = selectedAuth.ID
 \t}
 ''',
 )

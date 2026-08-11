@@ -10,7 +10,7 @@ const OAUTH_MODEL_PROVIDER_KEYS = [
   "kimi",
 ] as const;
 
-export type OAuthModelProviderKey = (typeof OAUTH_MODEL_PROVIDER_KEYS)[number];
+export type OAuthModelProviderKey = string;
 export type OAuthModelPlanKey = string;
 export type OAuthPolicyDurationUnit = "s" | "m";
 
@@ -22,7 +22,7 @@ export interface OAuthModelPlanDefinition {
 }
 
 export interface OAuthModelProviderDefinition {
-  key: OAuthModelProviderKey;
+  key: string;
   plans: OAuthModelPlanDefinition[];
 }
 
@@ -150,6 +150,29 @@ export const OAUTH_MODEL_PROVIDER_DEFINITIONS: OAuthModelProviderDefinition[] =
     { key: "kimi", plans: [...fallbackPlans] },
   ];
 
+export const oauthModelProviderDefinitions = (
+  providers: OAuthPolicyConfig["providers"],
+): OAuthModelProviderDefinition[] => {
+  const builtIn = new Set(
+    OAUTH_MODEL_PROVIDER_DEFINITIONS.map(({ key }) => key),
+  );
+  const custom = Object.keys(providers)
+    .filter((key) => !builtIn.has(key))
+    .sort((left, right) => left.localeCompare(right))
+    .map((key) => ({ key, plans: [...fallbackPlans] }));
+  return [...OAUTH_MODEL_PROVIDER_DEFINITIONS, ...custom];
+};
+
+export const resolveOAuthPolicyActiveProvider = (
+  activeProvider: string,
+  providers: OAuthPolicyConfig["providers"],
+): string => {
+  if (Object.prototype.hasOwnProperty.call(providers, activeProvider)) {
+    return activeProvider;
+  }
+  return oauthModelProviderDefinitions(providers)[0]?.key ?? "";
+};
+
 export const normalizeOAuthModelPlanKey = (
   value: string,
   provider?: string,
@@ -276,7 +299,7 @@ export const normalizeOAuthPolicyConfig = (
         ]),
       );
       const keys = new Set([
-        ...(provider?.plans.map(({ key }) => key) ?? []),
+        ...(provider?.plans.map(({ key }) => key) ?? fallbackPlans.map(({ key }) => key)),
         ...Object.keys(normalizedPlanSources),
       ]);
       const normalizedPlans = Object.fromEntries(
@@ -379,7 +402,7 @@ export const oauthPolicyApi = {
   ): Promise<OAuthPolicySnapshot> {
     await apiClient.patch(
       '/pro/oauth-policy/config',
-      serializeOAuthPolicyConfig({ ...config, enabled: true }),
+      serializeOAuthPolicyConfig(config),
     );
     return this.load();
   },

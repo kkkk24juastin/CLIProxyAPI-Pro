@@ -25,6 +25,16 @@ func testGPT56PriceRule() ModelPriceRule {
 	}
 }
 
+func TestModelPriceRulePublicJSONOmitsLegacyProvider(t *testing.T) {
+	raw, err := json.Marshal(testGPT56PriceRule())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"provider"`)) {
+		t.Fatalf("public model price rule exposed provider: %s", raw)
+	}
+}
+
 func assertCostClose(t *testing.T, got, want float64) {
 	t.Helper()
 	if math.Abs(got-want) > 0.000000001 {

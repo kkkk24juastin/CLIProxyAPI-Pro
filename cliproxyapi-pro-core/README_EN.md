@@ -191,17 +191,16 @@ Override it with `ACCOUNT_INSPECTION_SCHEDULE_PATH` if needed.
 
 The latest finished inspection result is persisted separately at `/CLIProxyAPI/usage/account-inspection-snapshot.json` with mode `0600`. A snapshot restored after process restart or usage import is read-only and is replaced when the next full inspection finishes. Override its path with `ACCOUNT_INSPECTION_SNAPSHOT_PATH` if needed.
 
-### Routing policy and request-state protection
+### Request-state protection
 
-The patch layer exposes a unified routing-policy API under the management prefix:
+The patch layer exposes request-state protection under the management prefix:
 
 - `GET /v0/management/routing-policy`
-- `PATCH /v0/management/routing-policy/upstream`
 - `PUT /v0/management/routing-policy/request-protection`
-- `PUT|PATCH /v0/management/routing-policy` (legacy management-client compatibility)
+- `PUT|PATCH /v0/management/routing-policy` (legacy compatibility; only `requestProtection` is handled)
 - `POST /v0/management/routing-policy/release`
 
-The API combines upstream routing mode, session stickiness, request retry, account switching, cooldown, quota fallback, and Codex identity-cloaking settings with Pro request protection. Upstream values can only update keys already present in `config.yaml`; request protection is stored in the `pro_settings` table in `usage.sqlite`. A legacy `routing.request-protection` node is migrated to SQLite and removed from YAML on first startup. Built-in protection supports Antigravity, xAI, Codex, Gemini CLI, Gemini, Gemini Interactions, Vertex AI, AI Studio, Claude, and Kimi.
+The API manages only Pro request-state protection and never reads or edits global routing values in `config.yaml`. Protection is stored in the `pro_settings` table in `usage.sqlite`. When SQLite has no setting yet, a legacy `routing.request-protection` node can be used as a one-time migration source; SQLite takes precedence afterward and the original YAML remains unchanged. Built-in protection supports Antigravity, xAI, Codex, Gemini CLI, Gemini, Gemini Interactions, Vertex AI, AI Studio, Claude, and Kimi.
 
 Protection is disabled by default and starts in `observe` mode. Per-provider settings cover HTTP statuses, consecutive-confirmation thresholds, confirmation windows, 429 quota evidence, automatic release, and fallback disable duration. `enforce` can disable matching auth records and records `request_protection` ownership; automatic or manual release affects only records owned by this policy, never user-disabled or differently owned accounts.
 

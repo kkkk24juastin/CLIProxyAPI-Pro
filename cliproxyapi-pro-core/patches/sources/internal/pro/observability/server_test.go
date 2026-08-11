@@ -403,7 +403,7 @@ func TestUsageImportRestoresModelPriceRuleWhenOnlyNewerHistoryRemains(t *testing
 	if _, changed, err := targetStore.UpsertModelPriceRule(ctx, targetRule, true); err != nil || !changed {
 		t.Fatalf("target second UpsertModelPriceRule() = changed:%v err:%v", changed, err)
 	}
-	if err := targetStore.DeleteModelPriceRule(ctx, "", targetRule.Model); err != nil {
+	if err := targetStore.DeleteModelPriceRule(ctx, targetRule.Model); err != nil {
 		t.Fatalf("DeleteModelPriceRule() error = %v", err)
 	}
 

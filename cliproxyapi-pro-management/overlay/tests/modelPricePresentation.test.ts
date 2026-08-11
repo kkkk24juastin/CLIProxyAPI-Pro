@@ -15,7 +15,6 @@ describe('model price presentation model', () => {
     const draft = createPriceDraft({
       id: 1,
       version: 2,
-      provider: '',
       model: 'gpt-test',
       source: 'manual',
       base: { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0.75, reasoning: 3 },
@@ -38,7 +37,6 @@ describe('model price presentation model', () => {
 
   test('copies base rates for a new service tier and clears removed overrides', () => {
     const draft = createPriceDraft({
-      provider: '',
       model: 'gpt-test',
       base: { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0.75, reasoning: 3 },
       serviceTiers: { priority: { input: 4, output: 5, cacheRead: 0.4, cacheWrite: 0.5 } },
@@ -61,7 +59,6 @@ describe('model price presentation model', () => {
 
   test('validates normalized duplicate service tiers and invalid rates', () => {
     const draft = createPriceDraft({
-      provider: '',
       model: 'gpt-test',
       base: { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0.75 },
       serviceTiers: {

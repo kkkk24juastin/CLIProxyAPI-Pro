@@ -1333,6 +1333,27 @@ def patch_auth_file_connection_test(target: Path) -> None:
     )
 
     replace_once(
+        api_path,
+        "  async getModelsForAuthFile(\n"
+        "    name: string\n"
+        "  ): Promise<{ id: string; display_name?: string; type?: string; owned_by?: string }[]> {\n"
+        "    const data = await apiClient.get<Record<string, unknown>>(\n"
+        "      `/auth-files/models?name=${encodeURIComponent(name)}`\n"
+        "    );\n",
+        "  async getModelsForAuthFile(\n"
+        "    name: string,\n"
+        "    authIndex?: string\n"
+        "  ): Promise<{ id: string; display_name?: string; type?: string; owned_by?: string }[]> {\n"
+        "    const normalizedAuthIndex = authIndex?.trim();\n"
+        "    const authIndexQuery = normalizedAuthIndex\n"
+        "      ? `&auth_index=${encodeURIComponent(normalizedAuthIndex)}`\n"
+        "      : '';\n"
+        "    const data = await apiClient.get<Record<string, unknown>>(\n"
+        "      `/auth-files/models?name=${encodeURIComponent(name)}${authIndexQuery}`\n"
+        "    );\n",
+    )
+
+    replace_once(
         card_path,
         "  IconModelCluster,\n  IconRefreshCw,\n",
         "  IconModelCluster,\n  IconNetwork,\n  IconRefreshCw,\n",

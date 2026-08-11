@@ -75,6 +75,27 @@ describe('realtime log presentation', () => {
     expect(text).toContain('User Agent: test-client/1.0');
   });
 
+  test('includes retry and token accounting fields in copied diagnostics', () => {
+    const t = ((key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key) as never;
+    const text = buildRealtimeDiagnosticClipboardText(event({
+      attemptIndex: 2,
+      accountingVersion: 2,
+      accountingQuality: 'complete',
+      tokenBreakdown: {
+        schema_version: 2,
+        quality: 'complete',
+        total_tokens: 12,
+        input: { total_tokens: 10, uncached_tokens: 7, cache_read_tokens: 2, cache_write_tokens: 1 },
+        output: { total_tokens: 2, non_reasoning_tokens: 1, reasoning_tokens: 1 },
+        unclassified_tokens: 0,
+      },
+    }), t, 'en');
+
+    expect(text).toContain('Attempt Index: 2');
+    expect(text).toContain('Accounting Quality: complete');
+    expect(text).toContain('Token Breakdown: total=12');
+  });
+
   test('keeps realtime badges and recent status bars styled', async () => {
     const styles = await Bun.file(
       new URL('../src/pro/modules/monitoring/features/styles/_realtime.scss', import.meta.url)

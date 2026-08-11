@@ -5,6 +5,7 @@ import {
   buildRealtimeMetaText,
   buildRealtimeStatusLabel,
   compactRealtimeErrorMessage,
+  formatRealtimeTokenBreakdown,
   translateRealtimeErrorCategory,
   translateRealtimeErrorText,
   type RealtimeLogRow,
@@ -42,6 +43,10 @@ export function RealtimeRequestDetailsPanel({
     { label: translateRealtimeErrorText('error_code', t, language), value: row.errorCode || '-' },
     { label: translateRealtimeErrorText('upstream_request_id', t, language), value: row.upstreamRequestId || '-' },
     { label: translateRealtimeErrorText('retry_after', t, language), value: row.retryAfter || '-' },
+    { label: translateRealtimeErrorText('attempt_index', t, language), value: row.attemptIndex !== null ? String(row.attemptIndex) : '-' },
+    { label: translateRealtimeErrorText('accounting_version', t, language), value: row.accountingVersion !== null ? String(row.accountingVersion) : '-' },
+    { label: translateRealtimeErrorText('accounting_quality', t, language), value: row.accountingQuality || '-' },
+    { label: translateRealtimeErrorText('token_breakdown', t, language), value: formatRealtimeTokenBreakdown(row.tokenBreakdown) || '-' },
   ].filter((item) => item.value !== '-');
 
   return (

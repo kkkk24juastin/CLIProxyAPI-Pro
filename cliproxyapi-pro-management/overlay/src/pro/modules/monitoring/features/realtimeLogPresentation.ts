@@ -27,8 +27,25 @@ const buildRealtimeDiagnosticText = (row: MonitoringEventRow) => {
   }
   if (row.errorCode) parts.push(row.errorCode);
   if (row.retryAfter) parts.push(`Retry ${row.retryAfter}`);
+  if (row.attemptIndex !== null) parts.push(`Attempt ${row.attemptIndex}`);
+  if (row.accountingQuality) parts.push(`Accounting ${row.accountingQuality}`);
   return maskSensitiveText(parts.join(' · '));
 };
+
+export const formatRealtimeTokenBreakdown = (
+  breakdown: MonitoringEventRow['tokenBreakdown']
+) => breakdown
+  ? [
+      `total=${breakdown.total_tokens}`,
+      `input=${breakdown.input.total_tokens}`,
+      `uncached=${breakdown.input.uncached_tokens}`,
+      `cache-read=${breakdown.input.cache_read_tokens}`,
+      `cache-write=${breakdown.input.cache_write_tokens}`,
+      `output=${breakdown.output.total_tokens}`,
+      `reasoning=${breakdown.output.reasoning_tokens}`,
+      `unclassified=${breakdown.unclassified_tokens}`,
+    ].join(', ')
+  : '';
 
 const buildRealtimeStatusCodeText = (
   row: Pick<MonitoringEventRow, 'statusCode' | 'errorCode'>
@@ -108,6 +125,10 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     client_ip: 'Direct Client IP',
     x_forwarded_for: 'Forwarded-For Chain',
     user_agent: 'User Agent',
+    attempt_index: 'Attempt Index',
+    accounting_version: 'Accounting Version',
+    accounting_quality: 'Accounting Quality',
+    token_breakdown: 'Token Breakdown',
   },
   ru: {
     request_details: 'Детали запроса',
@@ -138,6 +159,10 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     client_ip: 'Прямой IP клиента',
     x_forwarded_for: 'Цепочка Forwarded-For',
     user_agent: 'User Agent',
+    attempt_index: 'Номер попытки',
+    accounting_version: 'Версия учета',
+    accounting_quality: 'Качество учета',
+    token_breakdown: 'Разбивка токенов',
   },
   zhCN: {
     request_details: '请求详情',
@@ -168,6 +193,10 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     client_ip: '直连客户端 IP',
     x_forwarded_for: '转发 IP 链',
     user_agent: '用户代理',
+    attempt_index: '重试序号',
+    accounting_version: '计费口径版本',
+    accounting_quality: '计费数据质量',
+    token_breakdown: 'Token 明细',
   },
   zhTW: {
     request_details: '請求詳情',
@@ -198,6 +227,10 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     client_ip: '直連用戶端 IP',
     x_forwarded_for: '轉發 IP 鏈',
     user_agent: '使用者代理',
+    attempt_index: '重試序號',
+    accounting_version: '計費口徑版本',
+    accounting_quality: '計費資料品質',
+    token_breakdown: 'Token 明細',
   },
 } as const;
 
@@ -275,6 +308,10 @@ export const buildRealtimeDiagnosticClipboardText = (
     [translateRealtimeErrorText('client_ip', t, language), row.clientIP || '-'],
     [translateRealtimeErrorText('x_forwarded_for', t, language), row.xForwardedFor || '-'],
     [translateRealtimeErrorText('user_agent', t, language), row.userAgent || '-'],
+    [translateRealtimeErrorText('attempt_index', t, language), row.attemptIndex ?? '-'],
+    [translateRealtimeErrorText('accounting_version', t, language), row.accountingVersion ?? '-'],
+    [translateRealtimeErrorText('accounting_quality', t, language), row.accountingQuality || '-'],
+    [translateRealtimeErrorText('token_breakdown', t, language), formatRealtimeTokenBreakdown(row.tokenBreakdown) || '-'],
   ];
   return fields.map(([label, value]) => `${label}: ${maskSensitiveText(String(value ?? '-'))}`).join('\n');
 };

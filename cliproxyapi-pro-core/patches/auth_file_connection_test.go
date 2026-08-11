@@ -115,6 +115,56 @@ func TestAuthFileConnectionUsesExactAuthAndReturnsOutput(t *testing.T) {
 	}
 }
 
+func TestGetAuthFileModelsUsesAuthIndexForDuplicateFileNames(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	manager := coreauth.NewManager(nil, nil, nil)
+	first, errFirst := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "auth-models-first",
+		Index:    "auth-index-first",
+		Provider: "codex",
+		FileName: "duplicate.json",
+		Status:   coreauth.StatusActive,
+	})
+	if errFirst != nil {
+		t.Fatalf("register first auth: %v", errFirst)
+	}
+	second, errSecond := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "auth-models-second",
+		Index:    "auth-index-second",
+		Provider: "codex",
+		FileName: "duplicate.json",
+		Status:   coreauth.StatusActive,
+	})
+	if errSecond != nil {
+		t.Fatalf("register second auth: %v", errSecond)
+	}
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(first.ID, "codex", []*registry.ModelInfo{{ID: "model-first", Type: "openai"}})
+	reg.RegisterClient(second.ID, "codex", []*registry.ModelInfo{{ID: "model-second", Type: "openai"}})
+	t.Cleanup(func() {
+		reg.UnregisterClient(first.ID)
+		reg.UnregisterClient(second.ID)
+	})
+
+	handler := &Handler{authManager: manager}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v0/management/auth-files/models?name=duplicate.json&auth_index="+second.EnsureIndex(),
+		nil,
+	)
+	handler.GetAuthFileModels(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"id":"model-second"`) || strings.Contains(body, `"id":"model-first"`) {
+		t.Fatalf("models response did not select the indexed auth: %s", body)
+	}
+}
+
 func TestAuthFileConnectionRejectsUnsupportedModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	manager := coreauth.NewManager(nil, nil, nil)

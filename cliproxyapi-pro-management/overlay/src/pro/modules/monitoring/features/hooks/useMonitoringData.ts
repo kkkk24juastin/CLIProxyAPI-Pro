@@ -16,6 +16,7 @@ import {
   type ModelPrice,
   type UsageCostBreakdown,
   type UsageDetailWithEndpoint,
+  type UsageTokenBreakdown,
 } from '@/pro/modules/monitoring/features/usage';
 import {
   buildConfiguredApiKeyMap,
@@ -174,6 +175,10 @@ export type MonitoringEventRow = {
   errorMessage: string;
   upstreamRequestId: string;
   retryAfter: string;
+  attemptIndex: number | null;
+  accountingVersion: number | null;
+  accountingQuality: string;
+  tokenBreakdown: UsageTokenBreakdown | null;
   clientIP: string;
   xForwardedFor: string;
   userAgent: string;
@@ -541,6 +546,11 @@ const buildEventRows = (
       errorMessage: detail.error_message || '',
       upstreamRequestId: detail.upstream_request_id || '',
       retryAfter: detail.retry_after || '',
+      attemptIndex: typeof detail.attempt_index === 'number' ? detail.attempt_index : null,
+      accountingVersion:
+        typeof detail.accounting_version === 'number' ? detail.accounting_version : null,
+      accountingQuality: detail.accounting_quality || '',
+      tokenBreakdown: detail.token_breakdown ?? null,
       clientIP: detail.client_ip || '',
       xForwardedFor: detail.x_forwarded_for || '',
       userAgent: detail.user_agent || '',
@@ -571,6 +581,9 @@ const buildEventRows = (
         executorType,
         detail.upstream_request_id,
         detail.retry_after,
+        detail.attempt_index,
+        detail.accounting_version,
+        detail.accounting_quality,
         detail.client_ip,
         detail.x_forwarded_for,
         detail.user_agent,

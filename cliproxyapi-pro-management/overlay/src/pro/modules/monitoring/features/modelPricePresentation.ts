@@ -133,7 +133,6 @@ export const buildModelPriceRule = (model: string, draft: PriceDraft): ModelPric
     [tier.name.trim().toLowerCase(), parsePriceRateDraft(tier)]
   )));
   return {
-    provider: '',
     model,
     base: parsePriceRateDraft(draft),
     tiers: draft.tiers.map((tier) => ({

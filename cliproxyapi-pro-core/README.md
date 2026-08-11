@@ -55,7 +55,7 @@ internal/embeddedusage
 - `DELETE /v0/management/usage/quota-cache` — 删除配额缓存。
 - `GET /v0/management/usage/model-prices` — 读取模型价格设置。
 - `PUT /v0/management/usage/model-prices` — 写入模型价格设置。
-- `GET|PUT|DELETE /v0/management/usage/model-price-rules` — 管理按 model 全局生效的价格规则和上下文阶梯。
+- `GET|PUT|DELETE /v0/management/usage/model-price-rules` — 管理按 model 全局生效的价格规则和上下文阶梯；公共规则 JSON 和删除参数均不包含 provider。
 - `POST /v0/management/usage/model-prices/sync` — 从 models.dev 同步请求历史中出现过的模型。
 - `GET /v0/management/usage/model-prices/sync-status` — 读取同步状态。
 - `POST /v0/management/usage/model-prices/recalculate` — 显式重新估算历史成本。
@@ -190,17 +190,16 @@ Core 内建回环 SOCKS5 代理池以及 xAI、Codex、Claude、Gemini CLI、Ant
 
 最近一次已结束的巡检结果会单独持久化到 `/CLIProxyAPI/usage/account-inspection-snapshot.json`，文件权限为 `0600`。进程重启或 usage 导入恢复后，该快照会标记为只读；下一次完整巡检结束时覆盖。可通过 `ACCOUNT_INSPECTION_SNAPSHOT_PATH` 自定义路径。
 
-### 路由策略与请求状态保护
+### 请求状态保护
 
-补丁层在 management API 下增加统一路由策略接口：
+补丁层在 management API 下增加请求状态保护接口：
 
 - `GET /v0/management/routing-policy`
-- `PATCH /v0/management/routing-policy/upstream`
 - `PUT /v0/management/routing-policy/request-protection`
-- `PUT|PATCH /v0/management/routing-policy`（旧管理端兼容入口）
+- `PUT|PATCH /v0/management/routing-policy`（旧管理端兼容入口，仅处理 `requestProtection`）
 - `POST /v0/management/routing-policy/release`
 
-接口聚合 upstream 的路由策略、会话粘性、请求重试、账号切换、冷却、配额回退和 Codex 身份混淆配置，并增加请求状态保护配置。上游字段只修改 `config.yaml` 中已经存在的键；请求保护保存在 `usage.sqlite` 的 `pro_settings`，不会写入上游配置。旧版 `routing.request-protection` 会在首次启动时迁移到 SQLite 并从 YAML 删除。内置 provider 支持 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi。
+接口只管理 Pro 请求状态保护，不读取或修改 `config.yaml` 的全局路由配置。请求保护保存在 `usage.sqlite` 的 `pro_settings`。如果 SQLite 尚无设置，旧版 `routing.request-protection` 可作为一次性迁移来源；迁移后 SQLite 优先，原 YAML 保持不变。内置 provider 支持 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi。
 
 请求状态保护默认关闭，模式默认为 `observe`。接口通过 `availableProviders` 返回当前已有 API 配置或凭据的受支持 provider。启用后可按 provider 配置 HTTP 状态码、连续确认次数、确认窗口、429 配额证据、自动解除和兜底禁用时长。`enforce` 模式达到门槛后会禁用对应认证记录，并写入 `request_protection` 归属元数据；自动解除和管理端手动解除只处理由该策略禁用的账号，不会重新启用用户手动禁用或由其他模块禁用的账号。
 

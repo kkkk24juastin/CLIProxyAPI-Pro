@@ -35,8 +35,10 @@ type ModelPriceTier struct {
 }
 
 type ModelPriceRule struct {
-	ID             int64                     `json:"id"`
-	Provider       string                    `json:"provider"`
+	ID int64 `json:"id"`
+	// Provider is retained only as the legacy SQLite migration key. Public
+	// price-rule JSON is global by model and must not expose provider scoping.
+	Provider       string                    `json:"-"`
 	Model          string                    `json:"model"`
 	Base           ModelPriceRate            `json:"base"`
 	Tiers          []ModelPriceTier          `json:"tiers,omitempty"`
@@ -461,7 +463,7 @@ func (s *Store) UpsertModelPriceRule(ctx context.Context, rule ModelPriceRule, a
 	return rule, true, nil
 }
 
-func (s *Store) DeleteModelPriceRule(ctx context.Context, provider, model string) error {
+func (s *Store) DeleteModelPriceRule(ctx context.Context, model string) error {
 	_, err := s.executor(ctx).ExecContext(ctx, `delete from model_price_rules where model = ?`, strings.TrimSpace(model))
 	return err
 }

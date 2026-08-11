@@ -47,7 +47,7 @@
 
 - `GET /usage/model-prices`
 - `PUT /usage/model-prices`
-- `GET|PUT|DELETE /usage/model-price-rules`
+- `GET|PUT|DELETE /usage/model-price-rules`（按 model 全局生效，不传 provider）
 - `POST /usage/model-prices/sync`
 - `GET /usage/model-prices/sync-status`
 - `POST /usage/model-prices/recalculate`
@@ -135,16 +135,15 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 /routing
 ```
 
-页面集中管理 upstream 路由配置与 Pro 请求状态保护，包含三个视图：
+页面只管理 Pro 请求状态保护，不读取或修改 `config.yaml` 的全局路由配置，包含两个视图：
 
-- 全局路由：轮询/优先填满、会话粘性和 TTL、请求重试与账号切换、冷却和冷却状态持久化、瞬时错误冷却、配额回退、Codex 身份混淆。
 - 提供商保护：只展示当前已有 API 配置或凭据的受支持提供商，并分别配置开关、HTTP 状态码、连续确认门槛、确认窗口、429 配额证据、自动解除和兜底禁用时长。
 - 运行状态：查看当前由请求保护策略禁用的账号和最近事件；HTTP 状态以可点击徽章展示，完整原因和上下文收纳在详情弹窗中，并支持手动解除单个账号。
 
 页面使用：
 
 - `GET /routing-policy`
-- `PUT|PATCH /routing-policy`
+- `PUT /routing-policy/request-protection`
 - `POST /routing-policy/release`
 
 状态码由用户配置，后端会过滤到 `100-599`、去重并排序。保护功能默认关闭；`observe` 只记录匹配事件，`enforce` 才会实际禁用账号。自动解除只处理带有 request-protection 归属元数据的账号。

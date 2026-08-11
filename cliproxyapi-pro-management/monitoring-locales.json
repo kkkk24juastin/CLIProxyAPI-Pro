@@ -1309,7 +1309,7 @@
     },
     "routing_policy": {
       "title": "Routing Policy",
-      "subtitle": "Configure upstream routing and request-driven credential protection.",
+      "subtitle": "Configure request-driven credential protection by provider.",
       "load_failed": "Failed to load routing policy",
       "save_success": "Routing policy saved",
       "save_failed": "Failed to save routing policy",
@@ -2398,7 +2398,7 @@
     },
     "routing_policy": {
       "title": "Политика маршрутизации",
-      "subtitle": "Настройка upstream-маршрутизации и защиты credential по результатам запросов.",
+      "subtitle": "Настройка защиты credential по результатам запросов для каждого провайдера.",
       "load_failed": "Не удалось загрузить политику маршрутизации",
       "save_success": "Политика маршрутизации сохранена",
       "save_failed": "Не удалось сохранить политику маршрутизации",
@@ -3820,7 +3820,7 @@
     },
     "routing_policy": {
       "title": "路由策略",
-      "subtitle": "集中配置上游路由和基于请求结果的账号保护策略。",
+      "subtitle": "按提供商配置基于请求结果的账号保护策略。",
       "load_failed": "路由策略加载失败",
       "save_success": "路由策略已保存",
       "save_failed": "路由策略保存失败",
@@ -5242,7 +5242,7 @@
     },
     "routing_policy": {
       "title": "路由策略",
-      "subtitle": "集中設定上游路由與依請求結果執行的帳號保護策略。",
+      "subtitle": "按供應商設定依請求結果執行的帳號保護策略。",
       "load_failed": "路由策略載入失敗",
       "save_success": "路由策略已儲存",
       "save_failed": "路由策略儲存失敗",

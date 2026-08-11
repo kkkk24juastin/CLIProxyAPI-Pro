@@ -27,17 +27,17 @@ import {
   isPositiveDuration,
   normalizeOAuthPolicyPrefix,
   normalizeOAuthModelPlanKey,
+  oauthModelProviderDefinitions,
   oauthPolicyDurationValue,
   oauthPolicyApi,
-  OAUTH_MODEL_PROVIDER_DEFINITIONS,
   planDefinitionsForProvider,
+  resolveOAuthPolicyActiveProvider,
   serializeOAuthPolicyDuration,
   type OAuthModelPlanKey,
   type OAuthModelPlanRule,
   type OAuthPolicyConfig,
   type OAuthPolicyDurationUnit,
   type OAuthPolicySnapshot,
-  type OAuthModelProviderKey,
 } from "@/pro/modules/oauthPolicy/oauthPolicy";
 import { useActionBarHeightVar } from "@/hooks/useActionBarHeightVar";
 import { useAuthStore, useNotificationStore } from "@/stores";
@@ -203,8 +203,7 @@ export function OAuthPolicyPage() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const [activeProvider, setActiveProvider] =
-    useState<OAuthModelProviderKey>("xai");
+  const [activeProvider, setActiveProvider] = useState("xai");
   const [customPlan, setCustomPlan] = useState("");
   const [effectiveProvider, setEffectiveProvider] = useState("all");
   const [effectivePlan, setEffectivePlan] = useState("all");
@@ -255,7 +254,7 @@ export function OAuthPolicyPage() {
   );
 
   const patchPlan = (
-    provider: OAuthModelProviderKey,
+    provider: string,
     key: OAuthModelPlanKey,
     patch: Partial<OAuthModelPlanRule>,
   ) => {
@@ -274,9 +273,9 @@ export function OAuthPolicyPage() {
   };
 
   const addCustomPlan = () => {
-    const key = normalizeOAuthModelPlanKey(customPlan, activeProvider);
+    const key = normalizeOAuthModelPlanKey(customPlan, resolvedActiveProvider);
     if (!key || key.startsWith("_")) return;
-    const plans = draft.providers[activeProvider].plans;
+    const plans = draft.providers[resolvedActiveProvider].plans;
     if (plans[key]) {
       showNotification(
         t("oauth_policy.plan_exists", {
@@ -287,7 +286,7 @@ export function OAuthPolicyPage() {
       );
       return;
     }
-    patchPlan(activeProvider, key, {
+    patchPlan(resolvedActiveProvider, key, {
       configured: true,
       excludedModels: [],
     });
@@ -296,26 +295,40 @@ export function OAuthPolicyPage() {
 
   const removeCustomPlan = (key: OAuthModelPlanKey) => {
     updateDraft((current) => {
-      const plans = { ...current.providers[activeProvider].plans };
+      const plans = { ...current.providers[resolvedActiveProvider].plans };
       delete plans[key];
       return {
         ...current,
         providers: {
           ...current.providers,
-          [activeProvider]: { plans },
+          [resolvedActiveProvider]: { plans },
         },
       };
     });
   };
 
-  const activeProviderDefinition = OAUTH_MODEL_PROVIDER_DEFINITIONS.find(
-    ({ key }) => key === activeProvider,
-  )!;
-  const activePlans = draft.providers[activeProvider].plans;
+  const providerDefinitions = useMemo(
+    () => oauthModelProviderDefinitions(draft.providers),
+    [draft.providers],
+  );
+  const resolvedActiveProvider = resolveOAuthPolicyActiveProvider(
+    activeProvider,
+    draft.providers,
+  );
+  const activeProviderDefinition = providerDefinitions.find(
+    ({ key }) => key === resolvedActiveProvider,
+  ) ?? providerDefinitions[0];
+  const activePlans = draft.providers[resolvedActiveProvider].plans;
   const activePlanDefinitions = planDefinitionsForProvider(
     activeProviderDefinition,
     activePlans,
   );
+
+  useEffect(() => {
+    if (activeProvider === resolvedActiveProvider) return;
+    setActiveProvider(resolvedActiveProvider);
+    setCustomPlan("");
+  }, [activeProvider, resolvedActiveProvider]);
 
   const configuredCount = useMemo(
     () =>
@@ -611,7 +624,7 @@ export function OAuthPolicyPage() {
               </div>
               <div>
                 <span className={styles.statusMuted}>
-                  {OAUTH_MODEL_PROVIDER_DEFINITIONS.length}
+                  {snapshot.status.providers}
                 </span>
                 <small>
                   {t("oauth_policy.providers", {
@@ -646,6 +659,29 @@ export function OAuthPolicyPage() {
                 </div>
               </div>
               <div className={styles.settingsGrid}>
+                <div className={styles.enabledControl}>
+                  <div>
+                    <strong>
+                      {t("oauth_policy.enabled", {
+                        defaultValue: "Enable account policy",
+                      })}
+                    </strong>
+                    <span>
+                      {t("oauth_policy.enabled_hint", {
+                        defaultValue:
+                          "Apply configured plan rules to OAuth accounts.",
+                      })}
+                    </span>
+                  </div>
+                  <ToggleSwitch
+                    checked={draft.enabled}
+                    disabled={saving}
+                    onChange={(enabled) => updateDraft({ ...draft, enabled })}
+                    ariaLabel={t("oauth_policy.enabled", {
+                      defaultValue: "Enable account policy",
+                    })}
+                  />
+                </div>
                 <OAuthDurationInput
                   label={t("oauth_policy.cache_ttl", {
                     defaultValue: "Plan cache TTL",
@@ -685,7 +721,7 @@ export function OAuthPolicyPage() {
                   defaultValue: "Providers",
                 })}
               >
-                {OAUTH_MODEL_PROVIDER_DEFINITIONS.map((provider) => {
+                {providerDefinitions.map((provider) => {
                   const count = Object.values(
                     draft.providers[provider.key].plans,
                   ).filter(({ configured }) => configured).length;
@@ -694,9 +730,9 @@ export function OAuthPolicyPage() {
                       key={provider.key}
                       type="button"
                       role="tab"
-                      aria-selected={provider.key === activeProvider}
+                      aria-selected={provider.key === resolvedActiveProvider}
                       className={
-                        provider.key === activeProvider
+                        provider.key === resolvedActiveProvider
                           ? styles.providerTabActive
                           : ""
                       }
@@ -722,14 +758,14 @@ export function OAuthPolicyPage() {
                     {t("oauth_policy.provider_rules", {
                       defaultValue: "{{provider}} plan rules",
                       provider: t(
-                        `oauth_policy.provider_${activeProvider.replace(/-/g, "_")}`,
-                        { defaultValue: activeProvider },
+                        `oauth_policy.provider_${resolvedActiveProvider.replace(/-/g, "_")}`,
+                        { defaultValue: resolvedActiveProvider },
                       ),
                     })}
                   </h2>
                   <p>
                     {t(
-                      `oauth_policy.provider_${activeProvider.replace(/-/g, "_")}_hint`,
+                      `oauth_policy.provider_${resolvedActiveProvider.replace(/-/g, "_")}_hint`,
                       {
                         defaultValue:
                           "Each enabled rule subtracts matching model IDs from that account only.",
@@ -868,7 +904,7 @@ export function OAuthPolicyPage() {
                         <ToggleSwitch
                           checked={rule.configured}
                           onChange={(configured) =>
-                            patchPlan(activeProvider, definition.key, {
+                            patchPlan(resolvedActiveProvider, definition.key, {
                               configured,
                             })
                           }
@@ -889,7 +925,7 @@ export function OAuthPolicyPage() {
                                 disabled={saving}
                                 spellCheck={false}
                                 placeholder={t("oauth_policy.prefix_placeholder", { defaultValue: "e.g. grok (empty = inherit)" })}
-                                onChange={(event) => patchPlan(activeProvider, definition.key, {
+                                onChange={(event) => patchPlan(resolvedActiveProvider, definition.key, {
                                   prefix: normalizeOAuthPolicyPrefix(event.target.value),
                                 })}
                               />
@@ -904,7 +940,7 @@ export function OAuthPolicyPage() {
                                 disabled={saving}
                                 inputMode="numeric"
                                 placeholder={t("oauth_policy.priority_placeholder", { defaultValue: "e.g. 100 (empty = inherit)" })}
-                                onChange={(event) => patchPlan(activeProvider, definition.key, {
+                                onChange={(event) => patchPlan(resolvedActiveProvider, definition.key, {
                                   priority: event.target.value === "" ? undefined : Math.trunc(Number(event.target.value)),
                                 })}
                               />
@@ -921,7 +957,7 @@ export function OAuthPolicyPage() {
                                 disabled={saving}
                                 inputMode="numeric"
                                 placeholder={t("oauth_policy.weight_placeholder", { defaultValue: "e.g. 1 (empty = inherit)" })}
-                                onChange={(event) => patchPlan(activeProvider, definition.key, {
+                                onChange={(event) => patchPlan(resolvedActiveProvider, definition.key, {
                                   weight: event.target.value === "" ? undefined : Math.trunc(Number(event.target.value)),
                                 })}
                               />
@@ -933,7 +969,7 @@ export function OAuthPolicyPage() {
                             disabled={saving}
                             patterns={rule.excludedModels}
                             onChange={(excludedModels) =>
-                              patchPlan(activeProvider, definition.key, { excludedModels })
+                              patchPlan(resolvedActiveProvider, definition.key, { excludedModels })
                             }
                           />
                         </>

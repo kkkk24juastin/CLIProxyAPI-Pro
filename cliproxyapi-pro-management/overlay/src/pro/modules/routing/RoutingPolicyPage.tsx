@@ -14,7 +14,6 @@ import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import {
   ROUTING_POLICY_PROVIDERS,
   routingPolicyApi,
-  type RoutingPolicyGlobalSettings,
   type RoutingPolicyProvider,
   type RoutingPolicyResponse,
   type RoutingProtectedAccount,
@@ -26,12 +25,12 @@ import { useAuthStore, useNotificationStore } from '@/stores';
 import configActionStyles from '@/pro/shared/FloatingActionBar.module.scss';
 import styles from './RoutingPolicyPage.module.scss';
 
-type RoutingPolicyView = 'global' | 'providers' | 'runtime';
+type RoutingPolicyView = 'providers' | 'runtime';
 type RoutingRuntimeDetail =
   | { kind: 'active'; item: RoutingProtectedAccount }
   | { kind: 'event'; item: RoutingProtectionEvent };
 
-const VIEW_KEYS: RoutingPolicyView[] = ['global', 'providers', 'runtime'];
+const VIEW_KEYS: RoutingPolicyView[] = ['providers', 'runtime'];
 
 const parseStatusCodes = (value: string): number[] => {
   const result = new Set<number>();
@@ -166,9 +165,8 @@ export function RoutingPolicyPage() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
-  const [activeView, setActiveView] = useState<RoutingPolicyView>('global');
+  const [activeView, setActiveView] = useState<RoutingPolicyView>('providers');
   const [data, setData] = useState<RoutingPolicyResponse | null>(null);
-  const [globalSettings, setGlobalSettings] = useState<RoutingPolicyGlobalSettings | null>(null);
   const [requestProtection, setRequestProtection] =
     useState<RoutingRequestProtectionConfig | null>(null);
   const [statusCodeInputs, setStatusCodeInputs] = useState<Record<RoutingPolicyProvider, string>>(
@@ -213,7 +211,6 @@ export function RoutingPolicyPage() {
 
   const applyConfigResponse = useCallback((response: RoutingPolicyResponse) => {
     setData(response);
-    setGlobalSettings(response.global);
     setRequestProtection(response.requestProtection);
     setStatusCodeInputs(
       Object.fromEntries(
@@ -231,7 +228,6 @@ export function RoutingPolicyPage() {
     runtimeRequestIdRef.current = requestId;
     if (connectionStatus !== 'connected') {
       setData(null);
-      setGlobalSettings(null);
       setRequestProtection(null);
       setError('');
       setLoading(false);
@@ -284,17 +280,6 @@ export function RoutingPolicyPage() {
     };
   }, [activeView, connectionStatus, releasing, saving]);
 
-  const setGlobal = useCallback(
-    <Key extends keyof RoutingPolicyGlobalSettings>(
-      key: Key,
-      value: RoutingPolicyGlobalSettings[Key]
-    ) => {
-      setGlobalSettings((current) => (current ? { ...current, [key]: value } : current));
-      setDirty(true);
-    },
-    []
-  );
-
   const setProtection = useCallback(
     <Key extends keyof Omit<RoutingRequestProtectionConfig, 'providers'>>(
       key: Key,
@@ -328,7 +313,7 @@ export function RoutingPolicyPage() {
   );
 
   const handleSave = async () => {
-    if (!globalSettings || !requestProtection) return;
+    if (!requestProtection) return;
     const providers = { ...requestProtection.providers };
     for (const provider of ROUTING_POLICY_PROVIDERS) {
       const statusCodes = parseStatusCodes(statusCodeInputs[provider]);
@@ -349,7 +334,6 @@ export function RoutingPolicyPage() {
     const requestId = runtimeRequestIdRef.current + 1;
     runtimeRequestIdRef.current = requestId;
     try {
-      await routingPolicyApi.updateUpstream(globalSettings);
       const response = await routingPolicyApi.updateRequestProtection({
         ...requestProtection,
         providers,
@@ -496,7 +480,7 @@ export function RoutingPolicyPage() {
     </div>
   );
 
-  if (loading && !globalSettings) {
+  if (loading && !requestProtection) {
     return (
       <div className={styles.container}>
         <div className={styles.loading}>{t('common.loading')}</div>
@@ -507,7 +491,7 @@ export function RoutingPolicyPage() {
     );
   }
 
-  if (!globalSettings || !requestProtection) {
+  if (!requestProtection) {
     return (
       <div className={styles.container}>
         <div className={styles.emptyState}>
@@ -556,174 +540,6 @@ export function RoutingPolicyPage() {
           </button>
         ))}
       </nav>
-
-      {activeView === 'global' && (
-        <div className={styles.sectionStack}>
-          <section className={styles.panel}>
-            <div className={styles.sectionHeader}>
-              <h2>{t('routing_policy.global.routing_title')}</h2>
-            </div>
-            <div className={styles.fieldGrid}>
-              <div className={styles.fieldBlock}>
-                <label>{t('routing_policy.global.strategy')}</label>
-                <Select
-                  value={globalSettings.strategy}
-                  options={[
-                    { value: 'round-robin', label: t('routing_policy.global.round_robin') },
-                    { value: 'fill-first', label: t('routing_policy.global.fill_first') },
-                  ]}
-                  onChange={(value) =>
-                    setGlobal('strategy', value as RoutingPolicyGlobalSettings['strategy'])
-                  }
-                  disabled={disabled}
-                />
-              </div>
-              <div className={styles.fieldBlock}>
-                <label>{t('routing_policy.global.session_affinity_ttl')}</label>
-                <Input
-                  value={globalSettings.sessionAffinityTTL}
-                  onChange={(event) => setGlobal('sessionAffinityTTL', event.target.value)}
-                  disabled={disabled || !globalSettings.sessionAffinity}
-                  placeholder="1h"
-                />
-              </div>
-              <div className={styles.toggleField}>
-                <div>
-                  <strong>{t('routing_policy.global.session_affinity')}</strong>
-                  <span>{t('routing_policy.global.session_affinity_hint')}</span>
-                </div>
-                <ToggleSwitch
-                  checked={globalSettings.sessionAffinity}
-                  onChange={(value) => setGlobal('sessionAffinity', value)}
-                  disabled={disabled}
-                  ariaLabel={t('routing_policy.global.session_affinity')}
-                />
-              </div>
-              <div className={styles.toggleField}>
-                <div>
-                  <strong>{t('routing_policy.global.codex_identity_confuse')}</strong>
-                  <span>{t('routing_policy.global.codex_identity_confuse_hint')}</span>
-                </div>
-                <ToggleSwitch
-                  checked={globalSettings.codexIdentityConfuse}
-                  onChange={(value) => setGlobal('codexIdentityConfuse', value)}
-                  disabled={disabled}
-                  ariaLabel={t('routing_policy.global.codex_identity_confuse')}
-                />
-              </div>
-            </div>
-          </section>
-
-          <section className={styles.panel}>
-            <div className={styles.sectionHeader}>
-              <h2>{t('routing_policy.global.retry_title')}</h2>
-            </div>
-            <div className={styles.fieldGridThree}>
-              <Input
-                label={t('routing_policy.global.request_retry')}
-                type="number"
-                min={0}
-                max={10}
-                value={globalSettings.requestRetry}
-                onChange={(event) => setGlobal('requestRetry', toNumber(event.target.value))}
-                disabled={disabled}
-              />
-              <Input
-                label={t('routing_policy.global.max_retry_credentials')}
-                type="number"
-                min={0}
-                max={100}
-                value={globalSettings.maxRetryCredentials}
-                onChange={(event) => setGlobal('maxRetryCredentials', toNumber(event.target.value))}
-                disabled={disabled}
-              />
-              <Input
-                label={t('routing_policy.global.max_retry_interval')}
-                type="number"
-                min={0}
-                max={3600}
-                value={globalSettings.maxRetryInterval}
-                onChange={(event) => setGlobal('maxRetryInterval', toNumber(event.target.value))}
-                disabled={disabled}
-              />
-            </div>
-          </section>
-
-          <section className={styles.panel}>
-            <div className={styles.sectionHeader}>
-              <h2>{t('routing_policy.global.cooldown_title')}</h2>
-            </div>
-            <div className={styles.toggleGrid}>
-              <div className={styles.toggleField}>
-                <div>
-                  <strong>{t('routing_policy.global.cooling_enabled')}</strong>
-                  <span>{t('routing_policy.global.cooling_enabled_hint')}</span>
-                </div>
-                <ToggleSwitch
-                  checked={globalSettings.coolingEnabled}
-                  onChange={(value) => setGlobal('coolingEnabled', value)}
-                  disabled={disabled}
-                  ariaLabel={t('routing_policy.global.cooling_enabled')}
-                />
-              </div>
-              <div className={styles.toggleField}>
-                <div>
-                  <strong>{t('routing_policy.global.save_cooldown_status')}</strong>
-                  <span>{t('routing_policy.global.save_cooldown_status_hint')}</span>
-                </div>
-                <ToggleSwitch
-                  checked={globalSettings.saveCooldownStatus}
-                  onChange={(value) => setGlobal('saveCooldownStatus', value)}
-                  disabled={disabled}
-                  ariaLabel={t('routing_policy.global.save_cooldown_status')}
-                />
-              </div>
-            </div>
-            <div className={styles.singleField}>
-              <Input
-                label={t('routing_policy.global.transient_cooldown')}
-                hint={t('routing_policy.global.transient_cooldown_hint')}
-                type="number"
-                min={-1}
-                max={86400}
-                value={globalSettings.transientErrorCooldownSeconds}
-                onChange={(event) =>
-                  setGlobal('transientErrorCooldownSeconds', toNumber(event.target.value))
-                }
-                disabled={disabled}
-              />
-            </div>
-          </section>
-
-          <section className={styles.panel}>
-            <div className={styles.sectionHeader}>
-              <h2>{t('routing_policy.global.quota_title')}</h2>
-            </div>
-            <div className={styles.toggleGrid}>
-              {(
-                [
-                  ['quotaSwitchProject', 'quota_switch_project'],
-                  ['quotaSwitchPreviewModel', 'quota_switch_preview_model'],
-                  ['quotaAntigravityCredits', 'quota_antigravity_credits'],
-                ] as const
-              ).map(([key, label]) => (
-                <div className={styles.toggleField} key={key}>
-                  <div>
-                    <strong>{t(`routing_policy.global.${label}`)}</strong>
-                    <span>{t(`routing_policy.global.${label}_hint`)}</span>
-                  </div>
-                  <ToggleSwitch
-                    checked={globalSettings[key]}
-                    onChange={(value) => setGlobal(key, value)}
-                    disabled={disabled}
-                    ariaLabel={t(`routing_policy.global.${label}`)}
-                  />
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-      )}
 
       {activeView === 'providers' && (
         <div className={styles.sectionStack}>

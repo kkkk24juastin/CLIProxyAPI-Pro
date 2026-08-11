@@ -135,16 +135,15 @@ Adds a top-level routing-policy route:
 /routing
 ```
 
-The page combines upstream routing configuration with Pro request-state protection in three views:
+The page manages only Pro request-state protection, never global routing values in `config.yaml`, and has two views:
 
-- Global routing: round-robin/fill-first mode, session stickiness and TTL, retries and account switching, cooldown and cooldown persistence, transient-error cooldown, quota fallback, and Codex identity cloaking.
 - Provider protection: only supported providers with current API configuration or credentials, with per-provider enablement, HTTP statuses, confirmation thresholds and windows, 429 quota evidence, automatic release, and fallback disable duration.
 - Runtime status: accounts currently disabled by request protection plus recent events, detailed reason/context dialogs, and manual release for one account.
 
 The page uses:
 
 - `GET /routing-policy`
-- `PUT|PATCH /routing-policy`
+- `PUT /routing-policy/request-protection`
 - `POST /routing-policy/release`
 
 Protection is disabled by default. `observe` records matches; only `enforce` disables accounts. Automatic and manual release affect only accounts carrying request-protection ownership metadata.
