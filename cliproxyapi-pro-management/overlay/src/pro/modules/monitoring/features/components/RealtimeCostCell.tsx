@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 import type { TFunction } from 'i18next';
 import { IconInfo } from '@/components/ui/icons';
 import type { RealtimeLogRow } from '../realtimeLogPresentation';
+import { resolvePricingMode } from '../modelPricePresentation';
 import { formatCompactNumber, formatUsdPrecise } from '@/pro/modules/monitoring/features/usage';
 import styles from '../monitoring.module.scss';
 
@@ -86,11 +87,14 @@ export function RealtimeCostCell({ row, hasPrices, t }: {
   const actualTierLabel = actualTier
     ? formatCostTierLabel(actualTier)
     : t('monitoring.cost_detail_standard');
-  const billingMode = breakdown?.serviceTier
+  const resolvedPricingMode = breakdown ? resolvePricingMode(breakdown) : 'base';
+  const billingMode = resolvedPricingMode === 'service_tier'
     ? t('monitoring.cost_detail_service_tier_mode')
-    : breakdown && breakdown.contextTierSize > 0
-      ? t('monitoring.cost_detail_context_mode', { size: formatCompactNumber(breakdown.contextTierSize) })
-      : t('monitoring.cost_detail_standard');
+    : resolvedPricingMode === 'context'
+      ? t('monitoring.cost_detail_context_mode', { size: formatCompactNumber(breakdown?.contextTierSize ?? 0) })
+      : resolvedPricingMode === 'legacy_unknown'
+        ? t('monitoring.cost_detail_legacy_unknown_mode')
+        : t('monitoring.cost_detail_standard');
 
   return (
     <span

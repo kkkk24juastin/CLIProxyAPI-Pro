@@ -15,6 +15,12 @@ import (
 const modelPriceSourceManual = "manual"
 const modelPriceSourceModelsDev = "models.dev"
 
+const (
+	modelPriceModeBase        = "base"
+	modelPriceModeContext     = "context"
+	modelPriceModeServiceTier = "service_tier"
+)
+
 type ModelPriceRate struct {
 	Input      float64 `json:"input"`
 	Output     float64 `json:"output"`
@@ -55,6 +61,7 @@ type ModelPriceCostBreakdown struct {
 	ContextTokens    int64   `json:"contextTokens"`
 	ContextTierSize  int64   `json:"contextTierSize,omitempty"`
 	ServiceTier      string  `json:"serviceTier,omitempty"`
+	PricingMode      string  `json:"pricingMode"`
 	InputTokens      int64   `json:"inputTokens"`
 	OutputTokens     int64   `json:"outputTokens"`
 	CacheReadTokens  int64   `json:"cacheReadTokens"`
@@ -119,6 +126,21 @@ func validateModelPriceRate(rate ModelPriceRate) error {
 	return nil
 }
 
+func validateModelPriceServiceTierNames(serviceTiers map[string]ModelPriceRate) error {
+	seen := make(map[string]struct{}, len(serviceTiers))
+	for key := range serviceTiers {
+		name := strings.ToLower(strings.TrimSpace(key))
+		if name == "" {
+			return fmt.Errorf("service tier name is required")
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("duplicate service tier name %q", name)
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
+}
+
 func validateModelPriceRule(rule ModelPriceRule) error {
 	if strings.TrimSpace(rule.Model) == "" {
 		return fmt.Errorf("model is required")
@@ -151,30 +173,33 @@ func priceRuleLookupKey(_ string, model string) string {
 	return strings.TrimSpace(model)
 }
 
-func selectModelPriceRate(rule ModelPriceRule, event internalusage.Event) (ModelPriceRate, int64) {
+func selectModelPriceRate(rule ModelPriceRule, event internalusage.Event) (ModelPriceRate, int64, string) {
 	rate := rule.Base
 	contextTokens := event.InputTokens
 	if contextTokens <= 0 {
 		contextTokens = event.CacheReadTokens + event.CacheWriteTokens
 	}
 	selectedSize := int64(0)
+	pricingMode := modelPriceModeBase
 	for _, tier := range rule.Tiers {
 		if contextTokens >= tier.ContextSize {
 			rate = tier.ModelPriceRate
 			selectedSize = tier.ContextSize
+			pricingMode = modelPriceModeContext
 		}
 	}
 	if serviceTier := strings.ToLower(strings.TrimSpace(event.ServiceTier)); serviceTier != "" {
 		if override, ok := rule.ServiceTiers[serviceTier]; ok {
 			rate = override
 			selectedSize = 0
+			pricingMode = modelPriceModeServiceTier
 		}
 	}
-	return rate, selectedSize
+	return rate, selectedSize, pricingMode
 }
 
 func evaluateEventCost(event internalusage.Event, rule ModelPriceRule) (float64, ModelPriceCostBreakdown) {
-	rate, contextTierSize := selectModelPriceRate(rule, event)
+	rate, contextTierSize, pricingMode := selectModelPriceRate(rule, event)
 	cacheReadTokens := event.CacheReadTokens
 	if cacheReadTokens <= 0 {
 		cacheReadTokens = maxPricingInt64(event.CachedTokens, event.CacheTokens-event.CacheWriteTokens)
@@ -197,7 +222,7 @@ func evaluateEventCost(event internalusage.Event, rule ModelPriceRule) (float64,
 	breakdown := ModelPriceCostBreakdown{
 		RuleID: rule.ID, RuleVersion: rule.Version, Provider: normalizePriceProvider(event.Provider), Model: rule.Model,
 		Source: rule.Source, ContextTokens: event.InputTokens, ContextTierSize: contextTierSize,
-		ServiceTier: event.ServiceTier, InputTokens: uncachedInputTokens, OutputTokens: outputTokens,
+		ServiceTier: event.ServiceTier, PricingMode: pricingMode, InputTokens: uncachedInputTokens, OutputTokens: outputTokens,
 		CacheReadTokens: cacheReadTokens, CacheWriteTokens: cacheWriteTokens, ReasoningTokens: reasoningTokens,
 		InputCost:      float64(uncachedInputTokens) / unit * rate.Input,
 		OutputCost:     float64(outputTokens) / unit * rate.Output,
@@ -368,6 +393,9 @@ func findModelPriceRule(rules map[string]ModelPriceRule, provider, model string)
 }
 
 func (s *Store) UpsertModelPriceRule(ctx context.Context, rule ModelPriceRule, allowLockedOverride bool) (ModelPriceRule, bool, error) {
+	if err := validateModelPriceServiceTierNames(rule.ServiceTiers); err != nil {
+		return ModelPriceRule{}, false, err
+	}
 	rule = normalizePriceRule(rule)
 	rule.Provider = ""
 	if err := validateModelPriceRule(rule); err != nil {

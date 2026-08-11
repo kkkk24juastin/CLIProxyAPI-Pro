@@ -58,7 +58,7 @@ If the backend has no saved prices, the UI can migrate old `localStorage` price 
 
 Rules apply globally by model ID, so the same model shares one rule across providers. They support input, output, cache-read, cache-write, multiple context-size tiers, and service-tier overrides. Prices can be synchronized manually or periodically from models.dev; only models observed in request history are persisted, and locked manual rules are not overwritten.
 
-The backend selects pricing per request and snapshots the estimated cost on each usage event. Aggregate APIs sum those event costs. JSONL export/import preserves both complete rules and cost snapshots.
+The backend selects pricing per request and snapshots the estimated cost on each usage event. The cost breakdown `pricingMode` distinguishes base pricing, context tiers, and a service-tier override that actually matched; merely recording `service_tier` does not mean an override was applied. Aggregate APIs sum those event costs. JSONL export/import preserves both complete rules and cost snapshots.
 
 ### SQLite-backed quota persistence
 

@@ -64,13 +64,16 @@ import {
   type MonitoringSettingsDraft,
 } from '@/pro/modules/monitoring/features/monitoringSettings';
 import {
+  buildModelPriceRule,
+  createServiceTierDraft,
   createPriceDraft,
   formatDeltaPercent,
-  parsePriceContextSize,
-  parsePriceValue,
+  validatePriceDraft,
   type PriceDraft,
   type PriceManagementView,
+  type PriceRateDraft,
   type PriceRuleTarget,
+  type ServiceTierDraft,
   type PriceSyncChangeFilter,
   type PriceTierDraft,
 } from '@/pro/modules/monitoring/features/modelPricePresentation';
@@ -1402,7 +1405,7 @@ export function MonitoringCenterPage() {
     }
   }, [connectionStatus, fetchMonitoringSettings, priceModel, refreshPriceManagement, selectPriceTarget, showNotification, t]);
 
-  const handlePriceDraftChange = useCallback((field: Exclude<keyof PriceDraft, 'tiers'>, value: string) => {
+  const handlePriceDraftChange = useCallback((field: keyof PriceRateDraft, value: string) => {
     setPriceDraft((previous) => ({ ...previous, [field]: value }));
   }, []);
 
@@ -1416,12 +1419,33 @@ export function MonitoringCenterPage() {
 	const addPriceTier = useCallback(() => {
 		setPriceDraft((previous) => ({
 			...previous,
-			tiers: [...previous.tiers, { contextSize: '', input: '', output: '', cacheRead: '', cacheWrite: '' }],
+			tiers: [...previous.tiers, { contextSize: '', input: '', output: '', cacheRead: '', cacheWrite: '', reasoning: '' }],
 		}));
 	}, []);
 
 	const removePriceTier = useCallback((index: number) => {
 		setPriceDraft((previous) => ({ ...previous, tiers: previous.tiers.filter((_, tierIndex) => tierIndex !== index) }));
+	}, []);
+
+	const handleServiceTierChange = useCallback((index: number, field: keyof ServiceTierDraft, value: string) => {
+		setPriceDraft((previous) => ({
+			...previous,
+			serviceTiers: previous.serviceTiers.map((tier, tierIndex) => tierIndex === index ? { ...tier, [field]: value } : tier),
+		}));
+	}, []);
+
+	const addServiceTier = useCallback(() => {
+		setPriceDraft((previous) => ({
+			...previous,
+			serviceTiers: [...previous.serviceTiers, createServiceTierDraft(previous)],
+		}));
+	}, []);
+
+	const removeServiceTier = useCallback((index: number) => {
+		setPriceDraft((previous) => ({
+			...previous,
+			serviceTiers: previous.serviceTiers.filter((_, tierIndex) => tierIndex !== index),
+		}));
 	}, []);
 
 	const resetPriceEditor = useCallback(() => {
@@ -1433,25 +1457,12 @@ export function MonitoringCenterPage() {
 		if (!priceModel) {
 			return;
 		}
-		const rule: ModelPriceRule = {
-			provider: '',
-			model: priceModel,
-			base: {
-				input: parsePriceValue(priceDraft.input),
-				output: parsePriceValue(priceDraft.output),
-				cacheRead: parsePriceValue(priceDraft.cacheRead),
-				cacheWrite: parsePriceValue(priceDraft.cacheWrite),
-			},
-			tiers: priceDraft.tiers
-				.map((tier) => ({
-					contextSize: parsePriceContextSize(tier.contextSize),
-					input: parsePriceValue(tier.input),
-					output: parsePriceValue(tier.output),
-					cacheRead: parsePriceValue(tier.cacheRead),
-					cacheWrite: parsePriceValue(tier.cacheWrite),
-				}))
-				.filter((tier) => tier.contextSize > 0),
-		};
+		const validationError = validatePriceDraft(priceDraft);
+		if (validationError) {
+			showNotification(t(`usage_stats.model_price_validation_${validationError}`), 'warning');
+			return;
+		}
+		const rule = buildModelPriceRule(priceModel, priceDraft);
 		setIsPriceSaving(true);
 		try {
 			await saveModelPriceRule(rule);
@@ -1981,6 +1992,9 @@ export function MonitoringCenterPage() {
         handlePriceTierChange={handlePriceTierChange}
         addPriceTier={addPriceTier}
         removePriceTier={removePriceTier}
+        handleServiceTierChange={handleServiceTierChange}
+        addServiceTier={addServiceTier}
+        removeServiceTier={removeServiceTier}
         handleDeletePrice={handleDeletePrice}
         handleSavePrice={handleSavePrice}
         isPriceSaving={isPriceSaving}

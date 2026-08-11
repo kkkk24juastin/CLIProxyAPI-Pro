@@ -113,6 +113,7 @@ export interface UsageCostBreakdown {
   contextTokens: number;
   contextTierSize: number;
   serviceTier: string;
+  pricingMode?: 'base' | 'context' | 'service_tier';
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -355,6 +356,10 @@ const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undef
   const hasCostFields = ['totalCost', 'total_cost', 'inputCost', 'input_cost', 'outputCost', 'output_cost']
     .some((key) => raw[key] !== undefined);
   if (!hasCostFields) return undefined;
+  const rawPricingMode = readString('pricingMode', 'pricing_mode');
+  const pricingMode = rawPricingMode === 'base' || rawPricingMode === 'context' || rawPricingMode === 'service_tier'
+    ? rawPricingMode
+    : undefined;
 
   return {
     ruleId: readNumber('ruleId', 'rule_id'),
@@ -365,6 +370,7 @@ const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undef
     contextTokens: readNumber('contextTokens', 'context_tokens'),
     contextTierSize: readNumber('contextTierSize', 'context_tier_size'),
     serviceTier: readString('serviceTier', 'service_tier'),
+    pricingMode,
     inputTokens: readNumber('inputTokens', 'input_tokens'),
     outputTokens: readNumber('outputTokens', 'output_tokens'),
     cacheReadTokens: readNumber('cacheReadTokens', 'cache_read_tokens'),

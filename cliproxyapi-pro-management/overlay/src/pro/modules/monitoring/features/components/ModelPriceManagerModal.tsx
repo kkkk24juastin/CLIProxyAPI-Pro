@@ -7,11 +7,14 @@ import { IconRefreshCw, IconSearch, IconTrash2 } from '@/components/ui/icons';
 import { formatShortDateTime } from '../hooks/useMonitoringData';
 import {
   MODEL_PRICE_SYNC_RATE_FIELDS,
+  collectServiceTierChanges,
   createPriceDraft,
   formatModelPriceRate,
   type PriceDraft,
   type PriceManagementView,
+  type PriceRateDraft,
   type PriceRuleTarget,
+  type ServiceTierDraft,
   type PriceSyncChangeFilter,
   type PriceTierDraft,
 } from '../modelPricePresentation';
@@ -40,6 +43,9 @@ export function ModelPriceManagerModal({
   handlePriceTierChange,
   addPriceTier,
   removePriceTier,
+  handleServiceTierChange,
+  addServiceTier,
+  removeServiceTier,
   handleDeletePrice,
   handleSavePrice,
   isPriceSaving,
@@ -70,10 +76,13 @@ export function ModelPriceManagerModal({
   isPriceLoading: boolean;
   priceDraft: PriceDraft;
   setPriceDraft: Dispatch<SetStateAction<PriceDraft>>;
-  handlePriceDraftChange: (field: Exclude<keyof PriceDraft, 'tiers'>, value: string) => void;
+  handlePriceDraftChange: (field: keyof PriceRateDraft, value: string) => void;
   handlePriceTierChange: (index: number, field: keyof PriceTierDraft, value: string) => void;
   addPriceTier: () => void;
   removePriceTier: (index: number) => void;
+  handleServiceTierChange: (index: number, field: keyof ServiceTierDraft, value: string) => void;
+  addServiceTier: () => void;
+  removeServiceTier: (index: number) => void;
   handleDeletePrice: (model: string) => void | Promise<void>;
   handleSavePrice: () => void | Promise<void>;
   isPriceSaving: boolean;
@@ -241,6 +250,7 @@ export function ModelPriceManagerModal({
                             ['output', 'usage_stats.model_price_output'],
                             ['cacheRead', 'usage_stats.model_price_cache_read'],
                             ['cacheWrite', 'usage_stats.model_price_cache_write'],
+                            ['reasoning', 'usage_stats.model_price_reasoning'],
                           ] as const).map(([field, label]) => (
                             <label className={styles.priceField} key={field}>
                               <span>{t(label)}</span>
@@ -291,6 +301,10 @@ export function ModelPriceManagerModal({
                                 <span>{t('usage_stats.model_price_cache_write')}</span>
                                 <Input type="number" min="0" step="0.0001" value={tier.cacheWrite} onChange={(event) => handlePriceTierChange(index, 'cacheWrite', event.target.value)} placeholder="0.0000" />
                               </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_reasoning')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.reasoning} onChange={(event) => handlePriceTierChange(index, 'reasoning', event.target.value)} placeholder="0.0000" />
+                              </label>
                               <button
                                 type="button"
                                 className={styles.priceTierRemoveButton}
@@ -304,6 +318,65 @@ export function ModelPriceManagerModal({
                           ))}
                           {priceDraft.tiers.length === 0 ? (
                             <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_tier_empty')}</div>
+                          ) : null}
+                        </div>
+                      </section>
+
+                      <section className={styles.priceRuleSection}>
+                        <div className={styles.priceRuleSectionHeader}>
+                          <div>
+                            <h4>{t('usage_stats.model_price_service_tiers')}</h4>
+                            <span>{t('usage_stats.model_price_service_tier_count', { count: priceDraft.serviceTiers.length })}</span>
+                          </div>
+                          <Button variant="secondary" size="sm" onClick={addServiceTier}>
+                            {t('usage_stats.model_price_service_tier_add')}
+                          </Button>
+                        </div>
+                        <p className={styles.priceRuleSectionHint}>{t('usage_stats.model_price_service_tier_hint')}</p>
+                        {selectedPriceTarget.rule?.source === 'models.dev' ? (
+                          <p className={styles.priceRuleSectionNotice}>{t('usage_stats.model_price_service_tier_synced_notice')}</p>
+                        ) : null}
+                        <div className={styles.priceTierList}>
+                          {priceDraft.serviceTiers.map((tier, index) => (
+                            <div className={`${styles.priceTierCompactRow} ${styles.priceServiceTierRow}`} key={index}>
+                              <span className={styles.priceTierIndex}>{index + 1}</span>
+                              <label>
+                                <span>{t('usage_stats.model_price_service_tier_name')}</span>
+                                <Input value={tier.name} onChange={(event) => handleServiceTierChange(index, 'name', event.target.value)} placeholder="priority" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_input')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.input} onChange={(event) => handleServiceTierChange(index, 'input', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_output')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.output} onChange={(event) => handleServiceTierChange(index, 'output', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_cache_read')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.cacheRead} onChange={(event) => handleServiceTierChange(index, 'cacheRead', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_cache_write')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.cacheWrite} onChange={(event) => handleServiceTierChange(index, 'cacheWrite', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_reasoning')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.reasoning} onChange={(event) => handleServiceTierChange(index, 'reasoning', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <button
+                                type="button"
+                                className={styles.priceTierRemoveButton}
+                                onClick={() => removeServiceTier(index)}
+                                aria-label={t('usage_stats.model_price_service_tier_remove')}
+                                title={t('usage_stats.model_price_service_tier_remove')}
+                              >
+                                <IconTrash2 size={15} />
+                              </button>
+                            </div>
+                          ))}
+                          {priceDraft.serviceTiers.length === 0 ? (
+                            <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_service_tier_empty')}</div>
                           ) : null}
                         </div>
                       </section>
@@ -437,6 +510,9 @@ export function ModelPriceManagerModal({
                       ));
                       const beforeTierCount = change.before?.tiers?.length ?? 0;
                       const afterTierCount = change.after?.tiers?.length ?? 0;
+                      const serviceTierChanges = collectServiceTierChanges(change.before?.serviceTiers, change.after?.serviceTiers);
+                      const beforeServiceTierCount = Object.keys(change.before?.serviceTiers ?? {}).length;
+                      const afterServiceTierCount = Object.keys(change.after?.serviceTiers ?? {}).length;
                       const overrideSelected = change.action === 'locked' && priceSyncLockedOverrideSet.has(change.model);
                       const displayedAction = overrideSelected ? 'overridden' : change.action;
                       return (
@@ -481,7 +557,18 @@ export function ModelPriceManagerModal({
                                   </div>
                                 </div>
                               ) : null}
-                              {rateChanges.length === 0 && beforeTierCount === afterTierCount ? (
+                              {serviceTierChanges.length > 0 ? (
+                                <div className={styles.priceSyncServiceTierChanges}>
+                                  <span>{t('usage_stats.model_price_service_tiers')}</span>
+                                  <div>
+                                    {change.before ? <del>{beforeServiceTierCount}</del> : null}
+                                    {change.before ? <span aria-hidden="true">-&gt;</span> : null}
+                                    <strong>{afterServiceTierCount}</strong>
+                                  </div>
+                                  <small>{serviceTierChanges.map((item) => `${item.action === 'added' ? '+' : item.action === 'removed' ? '-' : '~'}${item.name}`).join(', ')}</small>
+                                </div>
+                              ) : null}
+                              {rateChanges.length === 0 && beforeTierCount === afterTierCount && serviceTierChanges.length === 0 ? (
                                 <small>{t(change.action === 'locked'
                                   ? overrideSelected
                                     ? 'usage_stats.model_price_sync_override_selected_hint'

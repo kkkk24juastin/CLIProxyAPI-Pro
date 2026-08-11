@@ -42,7 +42,8 @@ func TestEvaluateEventCostUsesContextTierPerRequest(t *testing.T) {
 
 	assertCostClose(t, belowCost, float64(271999)/1_000_000*5+float64(1000)/1_000_000*30)
 	assertCostClose(t, boundaryCost, float64(272000)/1_000_000*10+float64(1000)/1_000_000*45)
-	if belowBreakdown.ContextTierSize != 0 || boundaryBreakdown.ContextTierSize != 272000 {
+	if belowBreakdown.ContextTierSize != 0 || belowBreakdown.PricingMode != modelPriceModeBase ||
+		boundaryBreakdown.ContextTierSize != 272000 || boundaryBreakdown.PricingMode != modelPriceModeContext {
 		t.Fatalf("tier sizes = %d/%d, want 0/272000", belowBreakdown.ContextTierSize, boundaryBreakdown.ContextTierSize)
 	}
 }
@@ -52,8 +53,63 @@ func TestEvaluateEventCostUsesServiceTierOverride(t *testing.T) {
 	event := internalusage.Event{InputTokens: 100000, OutputTokens: 1000, ServiceTier: "priority"}
 	cost, breakdown := evaluateEventCost(event, rule)
 	assertCostClose(t, cost, float64(100000)/1_000_000*10+float64(1000)/1_000_000*60)
-	if breakdown.ContextTierSize != 0 || breakdown.ServiceTier != "priority" {
+	if breakdown.ContextTierSize != 0 || breakdown.ServiceTier != "priority" || breakdown.PricingMode != modelPriceModeServiceTier {
 		t.Fatalf("breakdown = %+v, want priority override", breakdown)
+	}
+}
+
+func TestEvaluateEventCostNormalizesServiceTierAndOverridesContextTier(t *testing.T) {
+	rule := testGPT56PriceRule()
+	event := internalusage.Event{InputTokens: 300000, OutputTokens: 1000, ServiceTier: " PRIORITY "}
+	cost, breakdown := evaluateEventCost(event, rule)
+	assertCostClose(t, cost, float64(300000)/1_000_000*10+float64(1000)/1_000_000*60)
+	if breakdown.ContextTierSize != 0 || breakdown.PricingMode != modelPriceModeServiceTier {
+		t.Fatalf("breakdown = %+v, want normalized service-tier override", breakdown)
+	}
+}
+
+func TestEvaluateEventCostFallsBackWhenServiceTierHasNoOverride(t *testing.T) {
+	rule := testGPT56PriceRule()
+	baseEvent := internalusage.Event{InputTokens: 100000, OutputTokens: 1000, ServiceTier: "flex"}
+	_, baseBreakdown := evaluateEventCost(baseEvent, rule)
+	if baseBreakdown.PricingMode != modelPriceModeBase || baseBreakdown.ContextTierSize != 0 {
+		t.Fatalf("base breakdown = %+v, want base fallback", baseBreakdown)
+	}
+
+	contextEvent := internalusage.Event{InputTokens: 300000, OutputTokens: 1000, ServiceTier: "flex"}
+	_, contextBreakdown := evaluateEventCost(contextEvent, rule)
+	if contextBreakdown.PricingMode != modelPriceModeContext || contextBreakdown.ContextTierSize != 272000 {
+		t.Fatalf("context breakdown = %+v, want context fallback", contextBreakdown)
+	}
+}
+
+func TestUpsertModelPriceRuleRejectsInvalidServiceTierNames(t *testing.T) {
+	store := openTestStore(t)
+	rate := ModelPriceRate{Input: 1, Output: 2, CacheRead: 0.5, CacheWrite: 0.75}
+
+	blank := testGPT56PriceRule()
+	blank.ServiceTiers = map[string]ModelPriceRate{" ": rate}
+	if _, _, err := store.UpsertModelPriceRule(context.Background(), blank, true); err == nil {
+		t.Fatal("UpsertModelPriceRule() accepted a blank service tier name")
+	}
+
+	duplicate := testGPT56PriceRule()
+	duplicate.ServiceTiers = map[string]ModelPriceRate{"priority": rate, " PRIORITY ": rate}
+	if _, _, err := store.UpsertModelPriceRule(context.Background(), duplicate, true); err == nil {
+		t.Fatal("UpsertModelPriceRule() accepted duplicate normalized service tier names")
+	}
+}
+
+func TestModelPriceRuleFromModelsDevIncludesServiceTierReasoningRates(t *testing.T) {
+	model := modelsDevModel{ID: "gpt-test", Cost: &modelsDevCost{Input: 1, Output: 2, Reasoning: 3}}
+	mode := modelsDevMode{Cost: &modelsDevCost{Input: 4, Output: 5, CacheRead: 0.4, CacheWrite: 0.5, Reasoning: 6}}
+	mode.Provider.Body = map[string]any{"service_tier": " Priority "}
+	model.Experimental.Modes = map[string]modelsDevMode{"priority": mode}
+
+	rule := modelPriceRuleFromModelsDev(ObservedModel{Model: "gpt-test"}, "openai", "gpt-test", model, 1234)
+	priority, ok := rule.ServiceTiers["priority"]
+	if !ok || priority.Input != 4 || priority.Output != 5 || priority.Reasoning != 6 {
+		t.Fatalf("service tiers = %+v, want normalized priority reasoning rates", rule.ServiceTiers)
 	}
 }
 

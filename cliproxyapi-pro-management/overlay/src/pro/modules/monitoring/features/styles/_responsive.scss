@@ -150,7 +150,12 @@
   .priceTierCompactRow {
     position: relative;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
     padding: 34px 10px 10px;
+  }
+
+  .priceTierList {
+    overflow-x: visible;
   }
 
   .priceTierCompactRow label:first-of-type {

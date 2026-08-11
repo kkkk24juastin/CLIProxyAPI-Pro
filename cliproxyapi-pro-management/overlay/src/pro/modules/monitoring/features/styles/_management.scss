@@ -471,6 +471,7 @@
 
 .priceRuleSection {
   display: grid;
+  min-width: 0;
   gap: 16px;
   padding: 20px;
   border-bottom: 1px solid var(--monitor-line);
@@ -513,20 +514,43 @@
   gap: 12px;
 }
 
+.priceRuleSectionHint,
+.priceRuleSectionNotice {
+  margin: -6px 0 0;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.priceRuleSectionNotice {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--monitor-amber) 24%, var(--monitor-line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--monitor-amber) 7%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--monitor-amber) 72%, var(--monitor-ink));
+}
+
 .priceTierList {
   display: grid;
   gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
 .priceTierCompactRow {
   display: grid;
-  grid-template-columns: 26px minmax(130px, 1.3fr) repeat(4, minmax(90px, 1fr)) 32px;
+  grid-template-columns: 26px minmax(130px, 1.3fr) repeat(5, minmax(86px, 1fr)) 32px;
+  min-width: 680px;
   align-items: end;
   gap: 8px;
   padding: 10px;
   border: 1px solid var(--monitor-line);
   border-radius: 8px;
   background: color-mix(in srgb, var(--monitor-surface-muted) 64%, var(--monitor-surface));
+}
+
+.priceServiceTierRow {
+  grid-template-columns: 26px minmax(130px, 1.3fr) repeat(5, minmax(86px, 1fr)) 32px;
 }
 
 .priceTierCompactRow label {
@@ -1112,6 +1136,20 @@
 .priceSyncRateChanges strong {
   color: var(--monitor-ink);
   font-size: 11px;
+}
+
+.priceSyncRateChanges > .priceSyncServiceTierChanges {
+  min-width: 140px;
+}
+
+.priceSyncServiceTierChanges small {
+  overflow: hidden;
+  max-width: 220px;
+  color: var(--monitor-muted);
+  font-size: 9px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .priceSyncOverrideOption {

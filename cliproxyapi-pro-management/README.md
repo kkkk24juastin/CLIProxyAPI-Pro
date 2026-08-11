@@ -56,7 +56,7 @@
 
 价格规则按 model ID 全局生效，同一 model 在不同 provider 下共享规则；规则支持 input、output、cache read、cache write、多个上下文长度阶梯和 service tier 覆盖。页面可手动从 models.dev 同步，也可在监控设置中启用定期同步；同步只保存请求历史中实际出现过的模型，手动规则默认锁定且不会被自动覆盖。
 
-成本在后端按单次请求选择阶梯并固化到 usage event，聚合接口直接累加事件成本。模型价格和完整规则会作为 `model_prices` 元数据记录参与 JSONL 导入导出。
+成本在后端按单次请求选择阶梯并固化到 usage event，费用明细中的 `pricingMode` 会明确区分基础价格、上下文阶梯和实际命中的 service tier 覆盖；仅记录到 `service_tier` 不代表覆盖价格已经生效。聚合接口直接累加事件成本，模型价格和完整规则会作为 `model_prices` 元数据记录参与 JSONL 导入导出。
 
 ### SQLite 配额持久化
 

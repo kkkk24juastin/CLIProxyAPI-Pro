@@ -60,4 +60,44 @@ describe('client request metadata', () => {
       user_agent: 'backup-client/1.0',
     });
   });
+
+  test('preserves snake and camel case pricing modes from cost breakdowns', () => {
+    const details = collectUsageDetailsWithEndpoint({
+      apis: {
+        'POST /v1/responses': {
+          models: {
+            'gpt-test': {
+              details: [
+                {
+                  timestamp: '2026-07-28T00:00:01Z',
+                  source: '',
+                  tokens: {},
+                  failed: false,
+                  cost_breakdown: {
+                    pricing_mode: 'service_tier',
+                    service_tier: 'priority',
+                    total_cost: 0.01,
+                  },
+                },
+                {
+                  timestamp: '2026-07-28T00:00:00Z',
+                  source: '',
+                  tokens: {},
+                  failed: false,
+                  costBreakdown: {
+                    pricingMode: 'context',
+                    contextTierSize: 272000,
+                    totalCost: 0.02,
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    expect(details[0].cost_breakdown).toMatchObject({ pricingMode: 'service_tier', serviceTier: 'priority' });
+    expect(details[1].cost_breakdown).toMatchObject({ pricingMode: 'context', contextTierSize: 272000 });
+  });
 });
