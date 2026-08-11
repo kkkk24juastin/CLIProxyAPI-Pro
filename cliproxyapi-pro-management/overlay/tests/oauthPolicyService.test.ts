@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isPositiveDuration,
+  isValidOAuthModelPattern,
   normalizeOAuthPolicyPrefix,
   normalizeOAuthPolicyConfig,
   oauthModelProviderDefinitions,
@@ -101,6 +102,17 @@ describe("oauth account policy service", () => {
     expect(isPositiveDuration("1h30m")).toBe(true);
     expect(isPositiveDuration("0s")).toBe(false);
     expect(isPositiveDuration("30")).toBe(false);
+  });
+
+  it("matches backend Go glob syntax validation", () => {
+    expect(isValidOAuthModelPattern("grok-4-*")).toBe(true);
+    expect(isValidOAuthModelPattern("model-[a-z]")).toBe(true);
+    expect(isValidOAuthModelPattern("model-[z-a]")).toBe(true);
+    expect(isValidOAuthModelPattern("model-[a\\-z]")).toBe(true);
+    expect(isValidOAuthModelPattern("model-[a-]")).toBe(false);
+    expect(isValidOAuthModelPattern("model-[-a]")).toBe(false);
+    expect(isValidOAuthModelPattern("model-[a-b-c]")).toBe(false);
+    expect(isValidOAuthModelPattern("model-\\")).toBe(false);
   });
 
   it("treats a cleared prefix as inheriting the account value", () => {

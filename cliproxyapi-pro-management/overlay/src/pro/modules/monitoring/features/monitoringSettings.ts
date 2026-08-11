@@ -41,13 +41,15 @@ export const createMonitoringSettingsDraft = (
 });
 
 const parseNonNegativeInteger = (value: string) => {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 };
 
-const parsePositiveInteger = (value: string, fallback: number) => {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+const parseIntegerAtLeast = (value: string, min: number, fallback: number) => {
+  const parsed = Number(value.trim());
+  if (!value.trim() || !Number.isFinite(parsed)) return fallback;
+  const integer = Math.trunc(parsed);
+  return integer >= min ? integer : fallback;
 };
 
 export const buildMonitoringSettingsFromDraft = (
@@ -56,7 +58,7 @@ export const buildMonitoringSettingsFromDraft = (
   retentionDays: parseNonNegativeInteger(draft.retentionDays),
   webdav: {
     enabled: draft.webdavEnabled,
-    intervalMinutes: parsePositiveInteger(draft.webdavIntervalMinutes, 1440),
+    intervalMinutes: parseIntegerAtLeast(draft.webdavIntervalMinutes, 1, 1440),
     retentionDays: parseNonNegativeInteger(draft.webdavRetentionDays),
     url: draft.webdavUrl.trim(),
     username: draft.webdavUsername.trim(),
@@ -64,6 +66,6 @@ export const buildMonitoringSettingsFromDraft = (
   },
   modelPriceSync: {
     enabled: draft.modelPriceSyncEnabled,
-    intervalMinutes: parsePositiveInteger(draft.modelPriceSyncIntervalMinutes, 1440),
+    intervalMinutes: parseIntegerAtLeast(draft.modelPriceSyncIntervalMinutes, 60, 1440),
   },
 });

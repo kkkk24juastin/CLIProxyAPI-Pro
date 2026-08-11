@@ -2,6 +2,18 @@ import { authFilesApi } from '@/services/api/authFiles';
 import { apiClient } from '@/services/api/client';
 const DEFAULT_PROXY_POOL_LISTEN = '127.0.0.1:8318';
 
+export const PROXY_POOL_TEST_CONCURRENCY_LIMITS = { min: 1, max: 8, default: 4 } as const;
+
+export const normalizeProxyPoolInteger = (
+  value: string | number,
+  min = 1,
+  max = Number.MAX_SAFE_INTEGER
+): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return min;
+  return Math.min(max, Math.max(min, Math.trunc(parsed)));
+};
+
 export type ProxyPoolStrategy = 'round-robin' | 'weighted' | 'least-connections';
 export type ProxyPoolHealthState = 'unknown' | 'healthy' | 'degraded' | 'isolated' | 'disabled';
 
@@ -197,13 +209,13 @@ export const serializeProxyPoolConfig = (config: ProxyPoolConfig): Record<string
   listen: config.listen.trim(),
   strategy: config.strategy,
   'dial-timeout': config.dialTimeout.trim(),
-  'max-failover-attempts': config.maxFailoverAttempts,
+  'max-failover-attempts': normalizeProxyPoolInteger(config.maxFailoverAttempts),
   'fail-open': config.failOpen,
   'health-check': {
     enabled: config.healthCheck.enabled,
     interval: config.healthCheck.interval.trim(),
     timeout: config.healthCheck.timeout.trim(),
-    'isolation-threshold': config.healthCheck.isolationThreshold,
+    'isolation-threshold': normalizeProxyPoolInteger(config.healthCheck.isolationThreshold),
     'isolation-duration': config.healthCheck.isolationDuration.trim(),
     'probe-address': config.healthCheck.probeAddress.trim(),
     'test-url': config.healthCheck.testUrl.trim(),
@@ -536,9 +548,15 @@ export const proxyPoolApi = {
     }
   },
 
-  async testAll(): Promise<ProxyPoolProbeResult[]> {
+  async testAll(concurrency = PROXY_POOL_TEST_CONCURRENCY_LIMITS.default): Promise<ProxyPoolProbeResult[]> {
     const response = asRecord(
-      await apiClient.post('/pro/proxy-pool/test-all', { concurrency: 4 })
+      await apiClient.post('/pro/proxy-pool/test-all', {
+        concurrency: normalizeProxyPoolInteger(
+          concurrency,
+          PROXY_POOL_TEST_CONCURRENCY_LIMITS.min,
+          PROXY_POOL_TEST_CONCURRENCY_LIMITS.max
+        ),
+      })
     );
     return Array.isArray(response.results) ? response.results.map(normalizeProbeResult) : [];
   },

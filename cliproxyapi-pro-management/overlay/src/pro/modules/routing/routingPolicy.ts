@@ -16,6 +16,17 @@ export const ROUTING_POLICY_PROVIDERS = [
 export type RoutingPolicyProvider = (typeof ROUTING_POLICY_PROVIDERS)[number];
 export type RoutingProtectionMode = 'observe' | 'enforce';
 
+export const normalizeRoutingPolicyInteger = (
+  value: string | number,
+  min: number,
+  max: number,
+  fallback = min
+): number => {
+  const parsed = typeof value === 'string' && !value.trim() ? fallback : Number(value);
+  const integer = Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+  return Math.min(max, Math.max(min, integer));
+};
+
 export interface RoutingProtectionProviderPolicy {
   enabled: boolean;
   statusCodes: number[];

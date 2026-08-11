@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { IconAlertTriangle, IconCheckCircle2, IconRefreshCw } from '@/components/ui/icons';
 import type { ProxyPoolConfig, ProxyPoolSnapshot } from '@/pro/modules/proxyPool/proxyPool';
 import { formatProxyPoolTime, maskProxyCredentials } from './proxyPoolUi';
@@ -11,6 +12,8 @@ interface ProxyPoolDiagnosticsProps {
   draft: ProxyPoolConfig;
   language: string;
   testing: boolean;
+  testConcurrency: number;
+  onTestConcurrencyChange: (value: number) => void;
   onTestAll: () => void;
   onResetStats: () => void;
   onCopy: (value: string) => void;
@@ -21,6 +24,8 @@ export function ProxyPoolDiagnostics({
   draft,
   language,
   testing,
+  testConcurrency,
+  onTestConcurrencyChange,
   onTestAll,
   onResetStats,
   onCopy,
@@ -74,6 +79,19 @@ export function ProxyPoolDiagnostics({
           </p>
         </div>
         <div className={styles.panelActions}>
+          <label className={styles.testConcurrencyControl}>
+            <span>{t('proxy_pool.test_concurrency', { defaultValue: 'Test concurrency' })}</span>
+            <Select
+              value={String(testConcurrency)}
+              options={Array.from({ length: 8 }, (_, index) => {
+                const value = String(index + 1);
+                return { value, label: value };
+              })}
+              onChange={(value) => onTestConcurrencyChange(Number(value))}
+              ariaLabel={t('proxy_pool.test_concurrency', { defaultValue: 'Test concurrency' })}
+              disabled={testing}
+            />
+          </label>
           <Button variant="ghost" size="sm" onClick={() => onCopy(diagnosticText)}>
             {t('proxy_pool.copy_diagnostics', { defaultValue: 'Copy diagnostics' })}
           </Button>

@@ -13,6 +13,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import {
   ROUTING_POLICY_PROVIDERS,
+  normalizeRoutingPolicyInteger,
   routingPolicyApi,
   type RoutingPolicyProvider,
   type RoutingPolicyResponse,
@@ -56,11 +57,6 @@ const formatTimestamp = (value: number, locale: string, emptyText: string): stri
     minute: '2-digit',
     second: '2-digit',
   }).format(date);
-};
-
-const toNumber = (value: string): number => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
 };
 
 const runtimeStatusToneClass = (statusCode: number): string => {
@@ -612,9 +608,14 @@ export function RoutingPolicyPage() {
                         type="number"
                         min={1}
                         max={5}
+                        step={1}
                         value={policy.confirmations}
                         onChange={(event) =>
-                          setProviderPolicy(provider, 'confirmations', toNumber(event.target.value))
+                          setProviderPolicy(
+                            provider,
+                            'confirmations',
+                            normalizeRoutingPolicyInteger(event.target.value, 1, 5)
+                          )
                         }
                         disabled={disabled || !policy.enabled}
                       />
@@ -623,12 +624,13 @@ export function RoutingPolicyPage() {
                         type="number"
                         min={1}
                         max={86400}
+                        step={1}
                         value={policy.confirmationWindowSeconds}
                         onChange={(event) =>
                           setProviderPolicy(
                             provider,
                             'confirmationWindowSeconds',
-                            toNumber(event.target.value)
+                            normalizeRoutingPolicyInteger(event.target.value, 1, 86400, 600)
                           )
                         }
                         disabled={disabled || !policy.enabled}
@@ -638,12 +640,13 @@ export function RoutingPolicyPage() {
                         type="number"
                         min={0}
                         max={10080}
+                        step={1}
                         value={policy.fallbackDisableMinutes}
                         onChange={(event) =>
                           setProviderPolicy(
                             provider,
                             'fallbackDisableMinutes',
-                            toNumber(event.target.value)
+                            normalizeRoutingPolicyInteger(event.target.value, 0, 10080)
                           )
                         }
                         disabled={disabled || !policy.enabled || !policy.autoEnable}

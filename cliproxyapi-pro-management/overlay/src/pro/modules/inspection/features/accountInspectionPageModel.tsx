@@ -107,6 +107,7 @@ export type InspectionSettingsDraft = {
   autoExecuteQuotaRecoveryEnable: boolean;
   autoExecuteAccountInvalidAction: AccountInspectionAutoErrorAction;
   autoExecuteRequestErrorAction: AccountInspectionAutoErrorAction;
+  autoExecuteConfirmations: string;
 };
 
 export type InspectionSettingsDraftField = Exclude<
@@ -887,6 +888,7 @@ export const RETRY_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.retries;
 export const THRESHOLD_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.usedPercentThreshold;
 export const SAMPLE_SIZE_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.sampleSize;
 export const SCHEDULE_INTERVAL_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.scheduleIntervalMinutes;
+export const AUTO_EXECUTE_CONFIRMATION_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.autoExecuteConfirmations;
 
 export const formatTimestamp = (value: number, locale: string) => new Date(value).toLocaleString(locale);
 
@@ -919,6 +921,7 @@ export const toSettingsDraft = (settings: AccountInspectionConfigurableSettings)
   autoExecuteQuotaRecoveryEnable: settings.autoExecuteQuotaRecoveryEnable,
   autoExecuteAccountInvalidAction: settings.autoExecuteAccountInvalidAction,
   autoExecuteRequestErrorAction: settings.autoExecuteRequestErrorAction,
+  autoExecuteConfirmations: String(settings.autoExecuteConfirmations),
 });
 
 export const formatActionLabel = (action: AccountInspectionAction, t: TFunction) => {
@@ -1236,6 +1239,7 @@ const INSPECTION_SETTINGS_DRAFT_KEYS = [
   'autoExecuteQuotaRecoveryEnable',
   'autoExecuteAccountInvalidAction',
   'autoExecuteRequestErrorAction',
+  'autoExecuteConfirmations',
 ] as const satisfies readonly (keyof InspectionSettingsDraft)[];
 
 const sameSelectedFields = <T extends object>(
@@ -1245,8 +1249,7 @@ const sameSelectedFields = <T extends object>(
 ) => keys.every((key) => left[key] === right[key]);
 
 const sameInspectionSettings = (left: AccountInspectionConfigurableSettings, right: AccountInspectionConfigurableSettings) =>
-  sameSelectedFields(left, right, INSPECTION_SETTINGS_DRAFT_KEYS) &&
-  left.autoExecuteConfirmations === right.autoExecuteConfirmations;
+  sameSelectedFields(left, right, INSPECTION_SETTINGS_DRAFT_KEYS);
 
 const sameSettingsDraft = (left: InspectionSettingsDraft, right: InspectionSettingsDraft) =>
   sameSelectedFields(left, right, INSPECTION_SETTINGS_DRAFT_KEYS);

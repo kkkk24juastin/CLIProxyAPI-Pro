@@ -50,8 +50,8 @@ func HealthyDecision(disabled bool) Decision {
 	return Decision{Action: ActionKeep, ActionReason: "无需处理"}
 }
 
-func QuotaDecision(disabled bool, used *float64, hasQuotaData bool, threshold int) Decision {
-	over := used != nil && *used >= float64(threshold)
+func QuotaDecision(disabled bool, used *float64, hasQuotaData bool, threshold float64) Decision {
+	over := used != nil && *used >= threshold
 	if (over || !hasQuotaData) && disabled {
 		reason := "未获取到可判断额度，保留账号"
 		if over {
@@ -80,8 +80,8 @@ func QuotaUnavailableDecision(disabled bool, reason, detail string) Decision {
 	return Decision{Action: action, ActionReason: reason, IsQuota: true, ErrorDetail: detail}
 }
 
-func CodexDecision(disabled bool, status int, used *float64, isQuota bool, threshold int) Decision {
-	if isQuota || (used != nil && *used >= float64(threshold)) {
+func CodexDecision(disabled bool, status int, used *float64, isQuota bool, threshold float64) Decision {
+	if isQuota || (used != nil && *used >= threshold) {
 		if disabled {
 			return Decision{Action: ActionKeep, ActionReason: "额度超阈值，但账号已禁用", UsedPercent: used, IsQuota: true}
 		}

@@ -33,7 +33,7 @@ type Settings struct {
 	DeleteWorkers                   int                  `json:"deleteWorkers"`
 	Timeout                         int                  `json:"timeout"`
 	Retries                         int                  `json:"retries"`
-	UsedPercentThreshold            int                  `json:"usedPercentThreshold"`
+	UsedPercentThreshold            float64              `json:"usedPercentThreshold"`
 	SampleSize                      int                  `json:"sampleSize"`
 	AntigravityDeepProbeEnabled     bool                 `json:"antigravityDeepProbeEnabled"`
 	AntigravityDeepProbeModel       string               `json:"antigravityDeepProbeModel"`

@@ -1,6 +1,7 @@
 package inspection
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -22,6 +23,17 @@ func TestNormalizeScheduleOwnsDefaultsAndBounds(t *testing.T) {
 	}
 	if got.NextRunAt != now.Add(DefaultIntervalMin*time.Minute).UnixMilli() {
 		t.Fatalf("next run = %d", got.NextRunAt)
+	}
+}
+
+func TestScheduleAcceptsFractionalQuotaThreshold(t *testing.T) {
+	var schedule Schedule
+	if err := json.Unmarshal([]byte(`{"settings":{"usedPercentThreshold":99.5}}`), &schedule); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	got := NormalizeSchedule(schedule, time.Now())
+	if got.Settings.UsedPercentThreshold != 99.5 {
+		t.Fatalf("used percent threshold = %v, want 99.5", got.Settings.UsedPercentThreshold)
 	}
 }
 

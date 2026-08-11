@@ -345,7 +345,7 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 	}
 	payload, windows, used := proinspection.BuildCodexWindows(resp.Body)
 	isQuota := isQuotaHTTPStatus(resp.StatusCode) || strings.Contains(strings.ToLower(resp.Body), "quota exhausted") || strings.Contains(strings.ToLower(resp.Body), "limit reached") || strings.Contains(strings.ToLower(resp.Body), "payment_required")
-	if used != nil && *used >= float64(settings.UsedPercentThreshold) {
+	if used != nil && *used >= settings.UsedPercentThreshold {
 		isQuota = true
 	}
 	if payload != nil && len(windows) > 0 {

@@ -308,6 +308,21 @@ func probeProxyURL(ctx context.Context, result ProbeResult, rawProxyURL, rawTest
 	return result
 }
 
+const (
+	DefaultProbeConcurrency = 4
+	MaxProbeConcurrency     = 8
+)
+
+func NormalizeProbeConcurrency(concurrency int) int {
+	if concurrency <= 0 {
+		return DefaultProbeConcurrency
+	}
+	if concurrency > MaxProbeConcurrency {
+		return MaxProbeConcurrency
+	}
+	return concurrency
+}
+
 func (e *Engine) ProbeAll(ctx context.Context, concurrency int) []ProbeResult {
 	e.mu.RLock()
 	poolRef := e.pool
@@ -316,9 +331,7 @@ func (e *Engine) ProbeAll(ctx context.Context, concurrency int) []ProbeResult {
 		return []ProbeResult{}
 	}
 	snapshots := poolRef.Snapshots()
-	if concurrency <= 0 {
-		concurrency = 4
-	}
+	concurrency = NormalizeProbeConcurrency(concurrency)
 	semaphore := make(chan struct{}, concurrency)
 	results := make([]ProbeResult, len(snapshots))
 	var wg sync.WaitGroup

@@ -288,6 +288,19 @@
   gap: 7px;
 }
 
+.testConcurrencyControl {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.testConcurrencyControl > div {
+  min-width: 72px;
+}
+
 .nodeFilters {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) 180px auto;

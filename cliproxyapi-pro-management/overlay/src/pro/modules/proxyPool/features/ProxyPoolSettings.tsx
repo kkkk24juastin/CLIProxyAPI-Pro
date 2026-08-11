@@ -4,7 +4,10 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconAlertTriangle } from '@/components/ui/icons';
-import type { ProxyPoolConfig } from '@/pro/modules/proxyPool/proxyPool';
+import {
+  normalizeProxyPoolInteger,
+  type ProxyPoolConfig,
+} from '@/pro/modules/proxyPool/proxyPool';
 import { DurationInput, type DurationFieldProps } from '@/pro/shared/DurationInput';
 import {
   proxyPoolDurationValue,
@@ -99,10 +102,11 @@ export function ProxyPoolSettings({ draft, onChange, onEnableFailOpen }: ProxyPo
           <Input
             type="number"
             min={1}
+            step={1}
             label={t('proxy_pool.failover_attempts', { defaultValue: 'Max failover attempts' })}
             value={draft.maxFailoverAttempts}
             onChange={(event) =>
-              patch({ maxFailoverAttempts: Math.max(1, Number(event.target.value) || 1) })
+              patch({ maxFailoverAttempts: normalizeProxyPoolInteger(event.target.value) })
             }
           />
         </div>
@@ -146,12 +150,13 @@ export function ProxyPoolSettings({ draft, onChange, onEnableFailOpen }: ProxyPo
           <Input
             type="number"
             min={1}
+            step={1}
             label={t('proxy_pool.isolation_threshold', {
               defaultValue: 'Failures before isolation',
             })}
             value={draft.healthCheck.isolationThreshold}
             onChange={(event) =>
-              patchHealth({ isolationThreshold: Math.max(1, Number(event.target.value) || 1) })
+              patchHealth({ isolationThreshold: normalizeProxyPoolInteger(event.target.value) })
             }
             disabled={!draft.healthCheck.enabled}
           />

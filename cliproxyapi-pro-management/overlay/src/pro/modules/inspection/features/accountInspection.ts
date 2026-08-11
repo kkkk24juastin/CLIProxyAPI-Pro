@@ -289,9 +289,6 @@ const clampInteger = (
 
 const normalizeThreshold = (value: number | undefined) => {
   if (!Number.isFinite(value) || value === undefined || value < 0) return NaN;
-  if (value > 0 && value <= 1) {
-    return value * 100;
-  }
   return value;
 };
 

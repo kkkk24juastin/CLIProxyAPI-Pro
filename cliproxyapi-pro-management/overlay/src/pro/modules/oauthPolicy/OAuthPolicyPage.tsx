@@ -25,6 +25,7 @@ import {
 import {
   defaultOAuthPolicyConfig,
   isPositiveDuration,
+  isValidOAuthModelPattern,
   normalizeOAuthPolicyPrefix,
   normalizeOAuthModelPlanKey,
   oauthModelProviderDefinitions,
@@ -47,27 +48,6 @@ import styles from "./OAuthPolicyPage.module.scss";
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error || "Unknown error");
-
-const isLikelyValidGlob = (value: string): boolean => {
-  let escaped = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (character === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (character !== "[") continue;
-    let closing = index + 1;
-    while (closing < value.length && value[closing] !== "]") closing += 1;
-    if (closing >= value.length || closing === index + 1) return false;
-    index = closing;
-  }
-  return !escaped;
-};
 
 function OAuthDurationInput(props: DurationFieldProps<OAuthPolicyDurationUnit>) {
   return (
@@ -131,7 +111,7 @@ function PatternEditor({
             <span
               key={pattern}
               className={`${styles.patternChip} ${
-                isLikelyValidGlob(pattern) ? "" : styles.patternInvalid
+                isValidOAuthModelPattern(pattern) ? "" : styles.patternInvalid
               }`}
             >
               <code>{pattern}</code>
@@ -451,7 +431,7 @@ export function OAuthPolicyPage() {
 		    defaultValue: "Weight must be an integer from 0 to 1,000,000.",
 		  });
         const invalid = rule.excludedModels.find(
-          (pattern) => !isLikelyValidGlob(pattern),
+          (pattern) => !isValidOAuthModelPattern(pattern),
         );
         if (invalid)
           return t("oauth_policy.invalid_pattern", {

@@ -115,6 +115,18 @@ func freeAddress(t *testing.T) string {
 	return address
 }
 
+func TestNormalizeProbeConcurrency(t *testing.T) {
+	tests := []struct {
+		input int
+		want  int
+	}{{0, DefaultProbeConcurrency}, {-1, DefaultProbeConcurrency}, {1, 1}, {8, 8}, {9, MaxProbeConcurrency}}
+	for _, test := range tests {
+		if got := NormalizeProbeConcurrency(test.input); got != test.want {
+			t.Fatalf("NormalizeProbeConcurrency(%d) = %d, want %d", test.input, got, test.want)
+		}
+	}
+}
+
 func TestEngineRoutesSOCKSConnectionsRoundRobin(t *testing.T) {
 	proxyA := startConnectProxy(t)
 	proxyB := startConnectProxy(t)

@@ -250,6 +250,61 @@ const normalizeModelPatterns = (value: unknown): string[] => {
     });
 };
 
+const nextPatternCodePoint = (value: string, index: number): number => {
+  const codePoint = value.codePointAt(index);
+  return codePoint === undefined ? index : index + (codePoint > 0xffff ? 2 : 1);
+};
+
+const readGoGlobClassCharacter = (value: string, index: number): number | null => {
+  if (index >= value.length || value[index] === '-' || value[index] === ']') return null;
+  if (value[index] === '\\') {
+    index += 1;
+    if (index >= value.length) return null;
+  }
+  const next = nextPatternCodePoint(value, index);
+  return next < value.length ? next : null;
+};
+
+// Mirrors the syntax accepted by Go path.Match, which is the backend matcher.
+export const isValidOAuthModelPattern = (value: string): boolean => {
+  for (let index = 0; index < value.length;) {
+    const character = value[index];
+    if (character === '\\') {
+      index += 1;
+      if (index >= value.length) return false;
+      index = nextPatternCodePoint(value, index);
+      continue;
+    }
+    if (character !== '[') {
+      index = nextPatternCodePoint(value, index);
+      continue;
+    }
+
+    index += 1;
+    if (value[index] === '^') index += 1;
+    let ranges = 0;
+    let closed = false;
+    while (index < value.length) {
+      if (value[index] === ']' && ranges > 0) {
+        index += 1;
+        closed = true;
+        break;
+      }
+      const next = readGoGlobClassCharacter(value, index);
+      if (next === null) return false;
+      index = next;
+      if (value[index] === '-') {
+        const rangeEnd = readGoGlobClassCharacter(value, index + 1);
+        if (rangeEnd === null) return false;
+        index = rangeEnd;
+      }
+      ranges += 1;
+    }
+    if (!closed) return false;
+  }
+  return true;
+};
+
 export const defaultOAuthPolicyConfig = (): OAuthPolicyConfig => ({
   enabled: false,
   cacheTTL: "30m",

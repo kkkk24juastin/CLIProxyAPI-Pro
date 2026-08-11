@@ -512,7 +512,7 @@ func healthyDecision(account accountInspectionAccount) accountInspectionDecision
 	return proinspection.HealthyDecision(account.Disabled)
 }
 
-func quotaDecision(account accountInspectionAccount, used *float64, hasQuotaData bool, threshold int) accountInspectionDecision {
+func quotaDecision(account accountInspectionAccount, used *float64, hasQuotaData bool, threshold float64) accountInspectionDecision {
 	return proinspection.QuotaDecision(account.Disabled, used, hasQuotaData, threshold)
 }
 
@@ -520,7 +520,7 @@ func quotaUnavailableDecision(account accountInspectionAccount, reason string, b
 	return proinspection.QuotaUnavailableDecision(account.Disabled, reason, proinspection.HTTPErrorDetail(body))
 }
 
-func codexDecision(account accountInspectionAccount, status int, used *float64, isQuota bool, threshold int) accountInspectionDecision {
+func codexDecision(account accountInspectionAccount, status int, used *float64, isQuota bool, threshold float64) accountInspectionDecision {
 	return proinspection.CodexDecision(account.Disabled, status, used, isQuota, threshold)
 }
 

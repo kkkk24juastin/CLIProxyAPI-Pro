@@ -20,6 +20,8 @@ import {
 } from '@/pro/modules/proxyPool/features/proxyPoolUi';
 import {
   defaultProxyPoolConfig,
+  normalizeProxyPoolInteger,
+  PROXY_POOL_TEST_CONCURRENCY_LIMITS,
   proxyPoolApi,
   type ProxyPoolConfig,
   type ProxyPoolNodeConfig,
@@ -134,6 +136,9 @@ export function ProxyPoolPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testConcurrency, setTestConcurrency] = useState<number>(
+    PROXY_POOL_TEST_CONCURRENCY_LIMITS.default
+  );
   const [testingNode, setTestingNode] = useState('');
   const [recoveringNode, setRecoveringNode] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -312,9 +317,9 @@ export function ProxyPoolPage() {
     setTesting(true);
     try {
       const results: ProxyPoolProbeResult[] = [];
-      for (let offset = 0; offset < items.length; offset += 4) {
+      for (let offset = 0; offset < items.length; offset += testConcurrency) {
         const batch = await Promise.all(
-          items.slice(offset, offset + 4).map(({ node, index }) => runNodeTest(node, index, false))
+          items.slice(offset, offset + testConcurrency).map(({ node, index }) => runNodeTest(node, index, false))
         );
         results.push(...batch.filter((result): result is ProxyPoolProbeResult => result !== null));
       }
@@ -619,6 +624,12 @@ export function ProxyPoolPage() {
                 draft={draft}
                 language={i18n.language}
                 testing={testing}
+                testConcurrency={testConcurrency}
+                onTestConcurrencyChange={(value) => setTestConcurrency(normalizeProxyPoolInteger(
+                  value,
+                  PROXY_POOL_TEST_CONCURRENCY_LIMITS.min,
+                  PROXY_POOL_TEST_CONCURRENCY_LIMITS.max
+                ))}
                 onTestAll={() => void testAll()}
                 onResetStats={resetStats}
                 onCopy={(value) => void copyDiagnostics(value)}

@@ -220,6 +220,7 @@ describe('account inspection page model', () => {
     expect(toSettingsDraft(DEFAULT_ACCOUNT_INSPECTION_SETTINGS)).toMatchObject({
       workers: String(DEFAULT_ACCOUNT_INSPECTION_SETTINGS.workers),
       providerWorkers: String(DEFAULT_ACCOUNT_INSPECTION_SETTINGS.providerWorkers),
+      autoExecuteConfirmations: String(DEFAULT_ACCOUNT_INSPECTION_SETTINGS.autoExecuteConfirmations),
       targetType: DEFAULT_ACCOUNT_INSPECTION_SETTINGS.targetType,
     });
   });
@@ -239,6 +240,15 @@ describe('account inspection page model', () => {
       workers: 2,
       providerWorkers: 4,
     });
+  });
+
+  test('keeps quota thresholds in the backend 0-100 percentage unit', () => {
+    expect(saveAccountInspectionConfigurableSettings({
+      usedPercentThreshold: 0.5,
+    }).usedPercentThreshold).toBe(0.5);
+    expect(saveAccountInspectionConfigurableSettings({
+      usedPercentThreshold: 1,
+    }).usedPercentThreshold).toBe(1);
   });
 
   test('uses free-token exhaustion only for free xAI plans', () => {

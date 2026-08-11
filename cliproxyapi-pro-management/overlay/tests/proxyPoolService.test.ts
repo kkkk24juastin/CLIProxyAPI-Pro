@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   isProxyPoolListenerUrl,
+  normalizeProxyPoolInteger,
   normalizeProxyPoolConfig,
   parseProxyPoolImport,
   serializeProxyPoolConfig,
@@ -41,6 +42,21 @@ describe('proxy pool service model', () => {
         order: 30,
       },
     ]);
+  });
+
+  test('normalizes integer settings before sending them to the backend', () => {
+    expect(normalizeProxyPoolInteger('3.9')).toBe(3);
+    expect(normalizeProxyPoolInteger('0')).toBe(1);
+    const serialized = serializeProxyPoolConfig({
+      ...normalizeProxyPoolConfig({}),
+      maxFailoverAttempts: 2.8,
+      healthCheck: {
+        ...normalizeProxyPoolConfig({}).healthCheck,
+        isolationThreshold: 4.7,
+      },
+    });
+    expect(serialized['max-failover-attempts']).toBe(2);
+    expect(serialized['health-check']).toMatchObject({ 'isolation-threshold': 4 });
   });
 
   test('parses batch import formats and skips existing or repeated URLs', () => {

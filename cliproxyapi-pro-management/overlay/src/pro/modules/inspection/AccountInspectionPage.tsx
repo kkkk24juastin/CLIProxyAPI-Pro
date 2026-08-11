@@ -41,6 +41,7 @@ import {
   ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET,
   ANTIGRAVITY_QUOTA_MODE_OPTIONS,
   AUTO_ERROR_ACTION_OPTIONS,
+  AUTO_EXECUTE_CONFIRMATION_LIMITS,
   DELETE_WORKER_LIMITS,
   INSPECTION_TARGET_OPTIONS,
   InspectionErrorDetailsPanel,
@@ -1402,7 +1403,12 @@ export function AccountInspectionPage() {
         autoExecuteQuotaRecoveryEnable: settingsDraft.autoExecuteQuotaRecoveryEnable,
         autoExecuteAccountInvalidAction: settingsDraft.autoExecuteAccountInvalidAction,
         autoExecuteRequestErrorAction: settingsDraft.autoExecuteRequestErrorAction,
-        autoExecuteConfirmations: inspectionSettings.autoExecuteConfirmations,
+        autoExecuteConfirmations: parseIntegerInRange(
+          settingsDraft.autoExecuteConfirmations,
+          t('monitoring.account_inspection_settings_auto_execute_confirmations_label'),
+          AUTO_EXECUTE_CONFIRMATION_LIMITS.min,
+          AUTO_EXECUTE_CONFIRMATION_LIMITS.max
+        ),
       });
 
       const intervalMinutes = parseIntegerInRange(
@@ -1427,7 +1433,7 @@ export function AccountInspectionPage() {
     } finally {
       setScheduleLoading(false);
     }
-  }, [applyBackendResponse, inspectionSettings.autoExecuteConfirmations, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, settingsDraft, showNotification, t]);
+  }, [applyBackendResponse, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, settingsDraft, showNotification, t]);
 
   const handleResetSettings = useCallback(() => {
     clearAccountInspectionConfigurableSettings();
@@ -2489,6 +2495,21 @@ export function AccountInspectionPage() {
                       {t('monitoring.account_inspection_delete_irreversible_warning')}
                     </div>
                   ) : null}
+                </div>
+                <div className={styles.settingsFormPanel}>
+                  <Input
+                    label={t('monitoring.account_inspection_settings_auto_execute_confirmations_label')}
+                    hint={t('monitoring.account_inspection_settings_auto_execute_confirmations_hint', {
+                      min: AUTO_EXECUTE_CONFIRMATION_LIMITS.min,
+                      max: AUTO_EXECUTE_CONFIRMATION_LIMITS.max,
+                    })}
+                    type="number"
+                    value={settingsDraft.autoExecuteConfirmations}
+                    onChange={(event) => handleSettingsDraftChange('autoExecuteConfirmations', event.target.value)}
+                    min={AUTO_EXECUTE_CONFIRMATION_LIMITS.min}
+                    max={AUTO_EXECUTE_CONFIRMATION_LIMITS.max}
+                    step={1}
+                  />
                 </div>
               </div>
             </section>
