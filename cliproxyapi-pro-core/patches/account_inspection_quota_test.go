@@ -578,9 +578,7 @@ func TestXAIPlanTypeFromMonthlyBilling(t *testing.T) {
 		want string
 	}{
 		{name: "free missing limit", body: `{"config": {}}`, want: "free"},
-		{name: "paid on demand without monthly credits", body: `{"config": {"monthlyLimit": {"val": 0}, "onDemandCap": {"val": 50000}}}`, want: "paid-unknown"},
-		{name: "paid on demand without monthly limit", body: `{"config": {"onDemandCap": {"val": 20000}}}`, want: "paid-unknown"},
-		{name: "paid on demand usage", body: `{"config": {"monthlyLimit": {"val": 0}, "onDemandUsed": {"val": 125}}}`, want: "paid-unknown"},
+		{name: "free ignores on demand cap", body: `{"config": {"onDemandCap": {"val": 20000}}}`, want: "free"},
 		{name: "free zero limit", body: `{"config": {"monthlyLimit": {"val": 0}}}`, want: "free"},
 		{name: "supergrok", body: `{"config": {"monthlyLimit": {"val": 15000}}}`, want: "supergrok"},
 		{name: "unknown paid 20000", body: `{"config": {"monthlyLimit": {"val": 20000}}}`, want: "paid-unknown"},

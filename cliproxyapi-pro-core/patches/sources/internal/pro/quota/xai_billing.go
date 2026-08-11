@@ -438,20 +438,6 @@ func XAIPlanTypeFromBillingBody(status int, body string) (string, bool) {
 		return "", false
 	}
 	limit, hasLimit := xaiCentValue(billingFirstAny(config, "monthlyLimit", "monthly_limit"))
-	if hasLimit && math.Round(limit) > 0 {
-		return XAIPlanTypeFromMonthlyLimit(limit, true)
-	}
-	// A positive pay-as-you-go balance is paid access even when the included
-	// monthly subscription credits are zero. xAI uses this shape for accounts
-	// that bill entirely through on-demand usage.
-	for _, value := range []any{
-		billingFirstAny(config, "onDemandCap", "on_demand_cap"),
-		billingFirstAny(config, "onDemandUsed", "on_demand_used"),
-	} {
-		if cents, known := xaiCentValue(value); known && math.Round(cents) > 0 {
-			return "paid-unknown", true
-		}
-	}
 	return XAIPlanTypeFromMonthlyLimit(limit, hasLimit)
 }
 

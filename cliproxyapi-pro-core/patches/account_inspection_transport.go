@@ -484,19 +484,10 @@ func (s *accountInspectionScheduler) inspectXAICLI(ctx context.Context, account 
 		}
 		return accountInspectionDecision{}, status, fmt.Errorf("empty xai billing config")
 	}
-	tokenPlan, tokenPlanKnown := xaiPlanTypeFromAccessToken(account.Auth)
-	billingPlan, billingPlanKnown := proquota.XAIPlanTypeFromBillingBody(monthlyResp.StatusCode, monthlyResp.Body)
-	switch {
-	case tokenPlanKnown && !strings.EqualFold(tokenPlan, "free"):
-		billing["planType"] = tokenPlan
-	case billingPlanKnown && !strings.EqualFold(billingPlan, "free"):
-		// Positive on-demand billing is stronger evidence than a tier=0 token:
-		// xAI can keep zero included credits while enabling paid usage.
-		billing["planType"] = billingPlan
-	case tokenPlanKnown:
-		billing["planType"] = tokenPlan
-	case billingPlanKnown:
-		billing["planType"] = billingPlan
+	if planType, known := xaiPlanTypeFromAccessToken(account.Auth); known {
+		billing["planType"] = planType
+	} else if planType, known := proquota.XAIPlanTypeFromBillingBody(monthlyResp.StatusCode, monthlyResp.Body); known {
+		billing["planType"] = planType
 	}
 	billing = mergeCachedXAIFreeQuota(ctx, account, billing)
 

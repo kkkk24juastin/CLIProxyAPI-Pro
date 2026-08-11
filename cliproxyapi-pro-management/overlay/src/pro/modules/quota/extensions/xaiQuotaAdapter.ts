@@ -66,12 +66,7 @@ async function fetchProXaiQuota(file: AuthFileItem, t: TFunction): Promise<XaiBi
     return mergeXaiBillingRuntimeState({ ...billing, planType: 'paid' }, previous);
   }
 
-  const planType = resolveXaiPlanType(
-    billing.monthlyLimitCents,
-    isXaiMonthlyBillingKnown(billing),
-    billing.onDemandCapCents,
-    billing.onDemandUsedCents
-  );
+  const planType = resolveXaiPlanType(billing.monthlyLimitCents, isXaiMonthlyBillingKnown(billing));
   const merged = mergeXaiBillingRuntimeState({ ...billing, planType }, previous);
   if (planType !== 'free') return merged;
 

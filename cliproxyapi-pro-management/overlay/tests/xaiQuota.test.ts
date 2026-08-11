@@ -84,9 +84,6 @@ describe('xAI quota normalization', () => {
     expect(resolveXaiPlanType(null, false)).toBeUndefined();
     expect(resolveXaiPlanType(null, true)).toBe('free');
     expect(resolveXaiPlanType(0, true)).toBe('free');
-    expect(resolveXaiPlanType(0, true, 50_000, 0)).toBe('paid-unknown');
-    expect(resolveXaiPlanType(null, true, 20_000, 0)).toBe('paid-unknown');
-    expect(resolveXaiPlanType(0, true, 0, 125)).toBe('paid-unknown');
     expect(resolveXaiPlanType(15_000, true)).toBe('supergrok');
     expect(resolveXaiPlanType(20_000, true)).toBe('paid-unknown');
     expect(resolveXaiPlanType(150_000, true)).toBe('supergrok-heavy');
@@ -346,37 +343,6 @@ describe('xAI free quota forced refresh', () => {
       healthStatus: 'chat-ok',
       userId: 'official-user',
     });
-  });
-
-  test('treats a positive on-demand cap as paid when monthly credits are zero', async () => {
-    apiCallApi.request = async (payload) => {
-      requests.push(payload);
-      if (payload.url === XAI_BILLING_WEEKLY_URL) {
-        return result(200, { config: { currentPeriod: { type: 'weekly' }, monthlyLimit: { val: 0 } } });
-      }
-      if (payload.url === XAI_BILLING_MONTHLY_URL) {
-        return result(200, {
-          config: {
-            monthlyLimit: { val: 0 },
-            used: { val: 0 },
-            onDemandCap: { val: 50_000 },
-          },
-        });
-      }
-      throw new Error(`Unexpected URL: ${payload.url}`);
-    };
-
-    const summary = await PRO_XAI_CONFIG.fetchQuota(
-      { name: 'on-demand.json', type: 'xai', auth_index: 'xai:on-demand' },
-      t
-    );
-
-    expect(summary).toMatchObject({
-      planType: 'paid-unknown',
-      monthlyLimitCents: 0,
-      onDemandCapCents: 50_000,
-    });
-    expect(requests.some((request) => request.url === XAI_FREE_QUOTA_PROBE_URL)).toBe(false);
   });
 
   test('accepts a 429 exhaustion response as the current quota snapshot', async () => {

@@ -479,11 +479,19 @@ func resolveXAIPlan(ctx context.Context, timeout time.Duration, input Input) (st
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("fetch xai billing returned HTTP %d", resp.StatusCode)
 	}
-	plan, known := proquota.XAIPlanTypeFromBillingBody(resp.StatusCode, string(resp.Body))
-	if !known {
-		return "", fmt.Errorf("xai billing contains no supported plan evidence")
+	payload := map[string]any{}
+	if errUnmarshal := json.Unmarshal(resp.Body, &payload); errUnmarshal != nil {
+		return "", fmt.Errorf("decode xai billing: %w", errUnmarshal)
 	}
-	return plan, nil
+	config, _ := payload["config"].(map[string]any)
+	if config == nil {
+		return "", fmt.Errorf("xai billing config is missing")
+	}
+	limit, known := numberValue(firstValue(config, "monthlyLimit", "monthly_limit"))
+	if !known {
+		return "free", nil
+	}
+	return xaiPlanFromLimit(limit), nil
 }
 
 func xaiPlanFromLimit(limit float64) string {

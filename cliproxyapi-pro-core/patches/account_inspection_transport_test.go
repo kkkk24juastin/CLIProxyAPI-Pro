@@ -267,33 +267,6 @@ func TestXAICLIPaidAccessTokenTierSkipsFreeQuotaProbe(t *testing.T) {
 	}
 }
 
-func TestXAICLIOnDemandBillingOverridesFreeAccessTokenTier(t *testing.T) {
-	token := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":0}`)) + ".signature"
-	executor := &xaiInspectionRoutingExecutor{
-		billingStatus: http.StatusOK,
-		billingBody:   `{"config":{"monthlyLimit":{"val":0},"onDemandCap":{"val":50000},"used":{"val":0}}}`,
-	}
-	manager := coreauth.NewManager(nil, nil, nil)
-	manager.RegisterExecutor(executor)
-	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
-	decision, _, err := scheduler.inspectXAI(context.Background(), accountInspectionAccount{
-		Auth: &coreauth.Auth{
-			Provider:   "xai",
-			Attributes: map[string]string{"using_api": "false"},
-			Metadata:   map[string]any{"access_token": token},
-		},
-		Provider: "xai", FileName: "on-demand.json", AuthIndex: "on-demand",
-	}, accountInspectionSettings{Timeout: 3_000, UsedPercentThreshold: 100, XAIDeepProbeModel: "grok-4.5"})
-	if err != nil || decision.Action != accountInspectionActionKeep {
-		t.Fatalf("on-demand inspectXAI() = decision:%#v err:%v", decision, err)
-	}
-	for _, request := range executor.requests {
-		if strings.HasSuffix(request.URL.Path, "/responses") {
-			t.Fatalf("paid on-demand account unexpectedly requested free quota URL %q", request.URL.String())
-		}
-	}
-}
-
 func TestXAIPlanTierDoesNotMaskBillingUnauthorized(t *testing.T) {
 	token := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":5}`)) + ".signature"
 	executor := &xaiInspectionRoutingExecutor{

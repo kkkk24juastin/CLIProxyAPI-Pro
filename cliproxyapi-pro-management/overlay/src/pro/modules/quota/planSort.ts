@@ -128,15 +128,8 @@ const resolvePlanSortKey = (item: AuthFileItem, quotaStore: PlanSortQuotaStore):
   } else if (provider === 'xai') {
     const billing = quotaStore.xaiQuota[name]?.billing;
     const monthlyLimitCents = normalizeCents(billing?.monthlyLimitCents);
-    const onDemandCapCents = normalizeCents(billing?.onDemandCapCents);
-    const onDemandUsedCents = normalizeCents(billing?.onDemandUsedCents);
     rawPlan =
-      resolveXaiPlanType(
-        monthlyLimitCents,
-        monthlyLimitCents !== null || onDemandCapCents !== null || onDemandUsedCents !== null,
-        onDemandCapCents,
-        onDemandUsedCents
-      ) ??
+      resolveXaiPlanType(monthlyLimitCents, monthlyLimitCents !== null) ??
       billing?.planType ??
       readPlanField(item, 'planType', 'plan_type', 'plan', 'package');
   }

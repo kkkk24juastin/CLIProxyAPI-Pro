@@ -96,15 +96,8 @@ const formatClaudePlanLabel = (value: unknown, t: TFunction): string => {
 const formatXaiPlanLabel = (billingValue: unknown, fallbackValue: unknown, t: TFunction): string => {
   const billing = toPlanRecord(billingValue);
   const monthlyLimitCents = normalizeNumberValue(billing?.monthlyLimitCents ?? billing?.monthly_limit_cents);
-  const onDemandCapCents = normalizeNumberValue(billing?.onDemandCapCents ?? billing?.on_demand_cap_cents);
-  const onDemandUsedCents = normalizeNumberValue(billing?.onDemandUsedCents ?? billing?.on_demand_used_cents);
   const storedPlan = readPlanValue(billing?.planType ?? billing?.plan_type);
-  const planType = resolveXaiPlanType(
-    monthlyLimitCents,
-    monthlyLimitCents !== null || onDemandCapCents !== null || onDemandUsedCents !== null,
-    onDemandCapCents,
-    onDemandUsedCents
-  ) || storedPlan || readPlanValue(fallbackValue);
+  const planType = resolveXaiPlanType(monthlyLimitCents, monthlyLimitCents !== null) || storedPlan || readPlanValue(fallbackValue);
   const labels: Record<string, string> = {
     free: 'Free',
     supergrok: translatedPlanLabel(t, 'xai_quota.plan_supergrok', 'SuperGrok'),
