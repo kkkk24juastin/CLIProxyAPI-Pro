@@ -639,28 +639,28 @@ export function OAuthPolicyPage() {
                 </div>
               </div>
               <div className={styles.settingsGrid}>
-                <div className={styles.enabledControl}>
-                  <div>
-                    <strong>
-                      {t("oauth_policy.enabled", {
-                        defaultValue: "Enable account policy",
-                      })}
-                    </strong>
+                <div className={styles.enabledField}>
+                  <strong>
+                    {t("oauth_policy.enabled", {
+                      defaultValue: "Enable account policy",
+                    })}
+                  </strong>
+                  <div className={styles.enabledControl}>
                     <span>
                       {t("oauth_policy.enabled_hint", {
                         defaultValue:
                           "Apply configured plan rules to OAuth accounts.",
                       })}
                     </span>
+                    <ToggleSwitch
+                      checked={draft.enabled}
+                      disabled={saving}
+                      onChange={(enabled) => updateDraft({ ...draft, enabled })}
+                      ariaLabel={t("oauth_policy.enabled", {
+                        defaultValue: "Enable account policy",
+                      })}
+                    />
                   </div>
-                  <ToggleSwitch
-                    checked={draft.enabled}
-                    disabled={saving}
-                    onChange={(enabled) => updateDraft({ ...draft, enabled })}
-                    ariaLabel={t("oauth_policy.enabled", {
-                      defaultValue: "Enable account policy",
-                    })}
-                  />
                 </div>
                 <OAuthDurationInput
                   label={t("oauth_policy.cache_ttl", {
