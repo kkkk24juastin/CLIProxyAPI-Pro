@@ -3,8 +3,8 @@ package quota
 import "testing"
 
 func TestSuccessCacheState(t *testing.T) {
-	state := SuccessCacheState(7, map[string]any{"rows": []any{"value"}})
-	if state["status"] != "success" || state["schemaVersion"] != 2 || state["parserVersion"] != 7 {
+	state := SuccessCacheState(8, map[string]any{"rows": []any{"value"}})
+	if state["status"] != "success" || state["schemaVersion"] != 2 || state["parserVersion"] != 8 {
 		t.Fatalf("state = %#v", state)
 	}
 	if cachedAt, ok := state["cachedAt"].(int64); !ok || cachedAt <= 0 {

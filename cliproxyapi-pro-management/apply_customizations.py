@@ -1008,6 +1008,30 @@ def patch_antigravity_quota_builders(target: Path) -> None:
         "    productUsage: primary.productUsage.length > 0 ? primary.productUsage : fallback.productUsage,\n",
         "    productUsage: Array.isArray(primary.productUsage) && primary.productUsage.length > 0\n      ? primary.productUsage\n      : Array.isArray(fallback.productUsage)\n        ? fallback.productUsage\n        : [],\n",
     )
+    replace_once(
+        path,
+        "    monthlyLimitCents: primary.monthlyLimitCents ?? fallback.monthlyLimitCents,\n"
+        "    usedCents: primary.usedCents ?? fallback.usedCents,\n"
+        "    includedUsedCents: primary.includedUsedCents ?? fallback.includedUsedCents,\n"
+        "    onDemandCapCents: primary.onDemandCapCents ?? fallback.onDemandCapCents,\n"
+        "    onDemandUsedCents: primary.onDemandUsedCents ?? fallback.onDemandUsedCents,\n"
+        "    onDemandUsedPercent: primary.onDemandUsedPercent ?? fallback.onDemandUsedPercent,\n"
+        "    billingPeriodStart: primary.billingPeriodStart ?? fallback.billingPeriodStart,\n"
+        "    billingPeriodEnd: primary.billingPeriodEnd ?? fallback.billingPeriodEnd,\n"
+        "    usedPercent: primary.usedPercent ?? fallback.usedPercent,\n",
+        "    // The primary summary is the weekly credits response. xAI now emits\n"
+        "    // zero-valued monthly placeholders there, so the monthly endpoint must\n"
+        "    // own monthly billing fields whenever it returned a value.\n"
+        "    monthlyLimitCents: fallback.monthlyLimitCents ?? primary.monthlyLimitCents,\n"
+        "    usedCents: fallback.usedCents ?? primary.usedCents,\n"
+        "    includedUsedCents: fallback.includedUsedCents ?? primary.includedUsedCents,\n"
+        "    onDemandCapCents: fallback.onDemandCapCents ?? primary.onDemandCapCents,\n"
+        "    onDemandUsedCents: fallback.onDemandUsedCents ?? primary.onDemandUsedCents,\n"
+        "    onDemandUsedPercent: fallback.onDemandUsedPercent ?? primary.onDemandUsedPercent,\n"
+        "    billingPeriodStart: fallback.billingPeriodStart ?? primary.billingPeriodStart,\n"
+        "    billingPeriodEnd: fallback.billingPeriodEnd ?? primary.billingPeriodEnd,\n"
+        "    usedPercent: fallback.usedPercent ?? primary.usedPercent,\n",
+    )
 
 
 def patch_auth_files_runtime_state(target: Path) -> None:

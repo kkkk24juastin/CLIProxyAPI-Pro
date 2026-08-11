@@ -195,7 +195,10 @@ func TestMergeXAIBillingSummariesCombinesWeeklyAndMonthly(t *testing.T) {
 		"config": {
 			"current_period": {"type": "weekly", "end": "2026-07-13T00:00:00Z"},
 			"credit_usage_percent": 10,
-			"product_usage": [{"product": "Grok", "usage_percent": 10}]
+			"product_usage": [{"product": "Grok", "usage_percent": 10}],
+			"monthly_limit": 0,
+			"used": 0,
+			"on_demand_cap": 0
 		}
 	}`)
 	if err != nil {

@@ -309,18 +309,22 @@ func MergeXAIBillingSummaries(primary map[string]any, fallback map[string]any) m
 	periodEnd := billingString(periodSummary["periodEnd"])
 	resetAtMS, periodHours := xaiPeriodInstants(periodStart, periodEnd)
 	merged := map[string]any{
-		"periodType":          firstKnownXaiPeriodType(primary["periodType"], fallback["periodType"]),
-		"usagePercent":        firstNonNilAny(primary["usagePercent"], fallback["usagePercent"]),
-		"productUsage":        firstNonEmptyXaiProductUsage(primary["productUsage"], fallback["productUsage"]),
-		"monthlyLimitCents":   firstNonNilAny(primary["monthlyLimitCents"], fallback["monthlyLimitCents"]),
-		"usedCents":           firstNonNilAny(primary["usedCents"], fallback["usedCents"]),
-		"includedUsedCents":   firstNonNilAny(primary["includedUsedCents"], fallback["includedUsedCents"]),
-		"onDemandCapCents":    firstNonNilAny(primary["onDemandCapCents"], fallback["onDemandCapCents"]),
-		"onDemandUsedCents":   firstNonNilAny(primary["onDemandUsedCents"], fallback["onDemandUsedCents"]),
-		"onDemandUsedPercent": firstNonNilAny(primary["onDemandUsedPercent"], fallback["onDemandUsedPercent"]),
-		"billingPeriodStart":  firstNonNilAny(primary["billingPeriodStart"], fallback["billingPeriodStart"]),
-		"billingPeriodEnd":    firstNonNilAny(primary["billingPeriodEnd"], fallback["billingPeriodEnd"]),
-		"usedPercent":         firstNonNilAny(primary["usedPercent"], fallback["usedPercent"]),
+		"periodType":   firstKnownXaiPeriodType(primary["periodType"], fallback["periodType"]),
+		"usagePercent": firstNonNilAny(primary["usagePercent"], fallback["usagePercent"]),
+		"productUsage": firstNonEmptyXaiProductUsage(primary["productUsage"], fallback["productUsage"]),
+		// Callers pass the weekly credits response as primary and the monthly
+		// billing response as fallback. xAI now includes zero-valued monthly
+		// placeholders in the weekly response, so monthly-owned fields must
+		// prefer the monthly response even when the weekly value is non-nil.
+		"monthlyLimitCents":   firstNonNilAny(fallback["monthlyLimitCents"], primary["monthlyLimitCents"]),
+		"usedCents":           firstNonNilAny(fallback["usedCents"], primary["usedCents"]),
+		"includedUsedCents":   firstNonNilAny(fallback["includedUsedCents"], primary["includedUsedCents"]),
+		"onDemandCapCents":    firstNonNilAny(fallback["onDemandCapCents"], primary["onDemandCapCents"]),
+		"onDemandUsedCents":   firstNonNilAny(fallback["onDemandUsedCents"], primary["onDemandUsedCents"]),
+		"onDemandUsedPercent": firstNonNilAny(fallback["onDemandUsedPercent"], primary["onDemandUsedPercent"]),
+		"billingPeriodStart":  firstNonNilAny(fallback["billingPeriodStart"], primary["billingPeriodStart"]),
+		"billingPeriodEnd":    firstNonNilAny(fallback["billingPeriodEnd"], primary["billingPeriodEnd"]),
+		"usedPercent":         firstNonNilAny(fallback["usedPercent"], primary["usedPercent"]),
 		"resetAtMs":           resetAtMS,
 		"periodHours":         periodHours,
 	}

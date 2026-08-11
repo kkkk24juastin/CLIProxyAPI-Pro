@@ -14,7 +14,7 @@ func TestXAIPaidHealthSummary(t *testing.T) {
 
 func TestXAIBillingParserCombinesWeeklyAndMonthlyShapes(t *testing.T) {
 	weekly, used, err := BuildXAIBillingSummary(`{
-		"config":{"current_period":{"type":"weekly","start":"2026-07-06T00:00:00Z","end":"2026-07-13T00:00:00Z"},"credit_usage_percent":10,"product_usage":[{"product":"Grok","usage_percent":25}]}
+		"config":{"current_period":{"type":"weekly","start":"2026-07-06T00:00:00Z","end":"2026-07-13T00:00:00Z"},"credit_usage_percent":10,"product_usage":[{"product":"Grok","usage_percent":25}],"monthly_limit":0,"used":0,"on_demand_cap":0}
 	}`)
 	if err != nil || used == nil || *used != 10 {
 		t.Fatalf("weekly/used/error = %+v / %v / %v", weekly, used, err)
@@ -37,9 +37,9 @@ func TestXAIBillingParserCombinesWeeklyAndMonthlyShapes(t *testing.T) {
 	}
 }
 
-func TestCacheParserVersionCoversCodexWindowClassification(t *testing.T) {
-	if CacheParserVersion != 7 {
-		t.Fatalf("CacheParserVersion = %d, want 7", CacheParserVersion)
+func TestCacheParserVersionCoversXAIWeeklyPlaceholderMerge(t *testing.T) {
+	if CacheParserVersion != 8 {
+		t.Fatalf("CacheParserVersion = %d, want 8", CacheParserVersion)
 	}
 }
 
