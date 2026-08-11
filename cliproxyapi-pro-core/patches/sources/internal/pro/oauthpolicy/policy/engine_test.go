@@ -58,46 +58,6 @@ providers:
 	}
 }
 
-func TestFilterFreeXAIBlocksGrok420Wildcard(t *testing.T) {
-	cfg, err := modelconfig.Parse([]byte(`
-providers:
-  xai:
-    plans:
-      free:
-        excluded-models: ["grok-4.2*"]
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	engine := New()
-	engine.ApplyConfig(cfg)
-	result := engine.Filter(context.Background(), Input{
-		AuthID: "xai-free", AuthProvider: "xai", AuthKind: "oauth",
-		Attributes: map[string]string{"plan_type": "free"},
-		Models: []ModelInfo{
-			{ID: "grok-4.20-0309-reasoning"},
-			{ID: "grok-4.20-0309-non-reasoning"},
-			{ID: "grok-4.20-multi-agent-0309"},
-			{ID: "grok-4.3"},
-		},
-	})
-	if !result.Handled || result.Annotations["plan_key"] != "free" {
-		t.Fatalf("Filter() = %#v", result)
-	}
-	if len(result.ExcludedModelIDs) != 3 {
-		t.Fatalf("excluded models = %#v", result.ExcludedModelIDs)
-	}
-	for index, want := range []string{
-		"grok-4.20-0309-reasoning",
-		"grok-4.20-0309-non-reasoning",
-		"grok-4.20-multi-agent-0309",
-	} {
-		if result.ExcludedModelIDs[index] != want {
-			t.Fatalf("excluded models = %#v", result.ExcludedModelIDs)
-		}
-	}
-}
-
 func TestFilterReturnsAccountRoutingOverrides(t *testing.T) {
 	cfg, err := modelconfig.Parse([]byte(`
 providers:

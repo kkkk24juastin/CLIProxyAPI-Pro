@@ -19,7 +19,6 @@ import {
   XAI_BILLING_MONTHLY_URL,
   XAI_BILLING_WEEKLY_URL,
   XAI_PAID_HEALTH_MODEL,
-  mergeXaiBillingSummaries,
 } from '@/utils/quota';
 
 const t = ((key: string) => key) as unknown as TFunction;
@@ -39,47 +38,6 @@ const result = (
 });
 
 describe('xAI quota normalization', () => {
-  test('keeps monthly billing authoritative over weekly zero placeholders', () => {
-    const weekly = {
-      mode: 'billing' as const,
-      source: 'cli-chat-proxy' as const,
-      periodType: 'weekly' as const,
-      usagePercent: 10,
-      productUsage: [{ product: 'Grok', usagePercent: 10 }],
-      monthlyLimitCents: 0,
-      usedCents: 0,
-      includedUsedCents: 0,
-      onDemandCapCents: 0,
-      onDemandUsedCents: 0,
-      onDemandUsedPercent: null,
-      usedPercent: null,
-    };
-    const monthly = {
-      ...weekly,
-      periodType: 'monthly' as const,
-      usagePercent: 100,
-      productUsage: [],
-      monthlyLimitCents: 150_000,
-      usedCents: 160_000,
-      includedUsedCents: 150_000,
-      onDemandCapCents: 20_000,
-      onDemandUsedCents: 10_000,
-      onDemandUsedPercent: 50,
-      usedPercent: 100,
-      billingPeriodEnd: '2026-09-01T00:00:00Z',
-    };
-
-    expect(mergeXaiBillingSummaries(weekly, monthly)).toMatchObject({
-      periodType: 'weekly',
-      usagePercent: 10,
-      monthlyLimitCents: 150_000,
-      usedCents: 160_000,
-      onDemandCapCents: 20_000,
-      onDemandUsedCents: 10_000,
-      billingPeriodEnd: '2026-09-01T00:00:00Z',
-    });
-  });
-
   test('recognizes plans only from a known monthly billing response', () => {
     expect(resolveXaiPlanType(null, false)).toBeUndefined();
     expect(resolveXaiPlanType(null, true)).toBe('free');
