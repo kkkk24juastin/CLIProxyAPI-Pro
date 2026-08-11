@@ -22,6 +22,10 @@ func runAccountInspectionWorkers(total int, workers int, beforeNext func() bool,
 	proinspection.RunWorkers(total, workers, beforeNext, run)
 }
 
+func runAccountInspectionProviderWorkers(total int, workers int, providerWorkers int, provider func(index int) string, beforeNext func() bool, run func(index int) bool) {
+	proinspection.RunKeyedWorkers(total, workers, providerWorkers, provider, beforeNext, run)
+}
+
 func (s *accountInspectionScheduler) executeInspection(ctx context.Context, settings accountInspectionSettings) ([]accountInspectionResult, accountInspectionSummary, error) {
 	auths, err := s.auths()
 	if err != nil {
@@ -49,8 +53,6 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 	s.appendLog("info", fmt.Sprintf("巡检集合 %d 个账号，本次探测 %d 个账号", probeSetCount, len(accounts)))
 
 	results := make([]accountInspectionResult, len(accounts))
-	providerLimiters := accountInspectionProviderLimiters()
-	refreshLimiter := make(chan struct{}, accountInspectionMaxRefreshConcurrency)
 	completed := 0
 	inFlight := 0
 	var progressMu sync.Mutex
@@ -63,9 +65,12 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 		runErrOnce.Do(func() { runErr = err })
 	}
 	s.updateProgress(len(accounts), 0, 0, true)
-	runAccountInspectionWorkers(
+	s.appendLog("info", fmt.Sprintf("巡检并发：总任务 %d，单提供商 %d，操作执行 %d", settings.Workers, settings.ProviderWorkers, settings.DeleteWorkers))
+	runAccountInspectionProviderWorkers(
 		len(accounts),
 		settings.Workers,
+		settings.ProviderWorkers,
+		func(index int) string { return accounts[index].Provider },
 		func() bool {
 			if err := s.waitIfPaused(ctx); err != nil {
 				setRunErr(err)
@@ -75,22 +80,11 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 		},
 		func(index int) bool {
 			account := accounts[index]
-			limiter := providerLimiters[account.Provider]
-			if limiter == nil {
-				limiter = make(chan struct{}, accountInspectionMaxProviderConcurrency)
-			}
-			select {
-			case limiter <- struct{}{}:
-			case <-ctx.Done():
-				setRunErr(ctx.Err())
-				return false
-			}
 			progressMu.Lock()
 			inFlight++
 			s.updateProgress(len(accounts), completed, inFlight, false)
 			progressMu.Unlock()
-			results[index] = s.inspectAccount(ctx, account, settings, refreshLimiter)
-			<-limiter
+			results[index] = s.inspectAccount(ctx, account, settings)
 			progressMu.Lock()
 			inFlight--
 			completed++
@@ -110,10 +104,6 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 
 	s.applyAutomaticActions(ctx, results, settings)
 	return results, summarizeAccountInspection(len(liveAuths), probeSetCount, accounts, results), nil
-}
-
-func accountInspectionProviderLimiters() map[string]chan struct{} {
-	return proinspection.ProviderLimiters(accountInspectionSupportedProviders, accountInspectionMaxProviderConcurrency)
 }
 
 func (s *accountInspectionScheduler) auths() ([]*coreauth.Auth, error) {
@@ -295,7 +285,7 @@ func sampleAccounts(accounts []accountInspectionAccount, sampleSize int) []accou
 	return proinspection.Sample(accounts, sampleSize, time.Now().UnixNano())
 }
 
-func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, refreshLimiter chan struct{}) accountInspectionResult {
+func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) accountInspectionResult {
 	result := account.baseResult()
 	if account.AuthIndex == "" {
 		result.ActionReason = "缺少 auth_index，保留账号"
@@ -303,7 +293,7 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		result.ErrorCode = "missing_auth_index"
 		return result
 	}
-	if refreshed, refreshTriggered, refreshErr := s.refreshAccountIfDue(ctx, account, refreshLimiter); refreshErr != nil {
+	if refreshed, refreshTriggered, refreshErr := s.refreshAccountIfDue(ctx, account); refreshErr != nil {
 		result.TokenRefreshTriggered = refreshTriggered
 		result.NextRefreshAt = account.nextRefreshAtMillis()
 		if errors.Is(refreshErr, context.Canceled) || errors.Is(refreshErr, context.DeadlineExceeded) {
@@ -397,17 +387,9 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 	return result
 }
 
-func (s *accountInspectionScheduler) refreshAccountIfDue(ctx context.Context, account accountInspectionAccount, refreshLimiter chan struct{}) (accountInspectionAccount, bool, error) {
+func (s *accountInspectionScheduler) refreshAccountIfDue(ctx context.Context, account accountInspectionAccount) (accountInspectionAccount, bool, error) {
 	if account.Auth == nil || account.Auth.ID == "" || s == nil || s.h == nil || s.h.authManager == nil {
 		return account, false, nil
-	}
-	if refreshLimiter != nil {
-		select {
-		case refreshLimiter <- struct{}{}:
-			defer func() { <-refreshLimiter }()
-		case <-ctx.Done():
-			return account, false, ctx.Err()
-		}
 	}
 	updated, refreshed, err := s.h.authManager.RefreshIfDueForInspection(ctx, account.Auth.ID)
 	if err != nil {
@@ -595,9 +577,26 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 	defer release()
 	s.mu.Lock()
 	restoredSnapshot := s.status.RestoredSnapshot
+	running := s.isRunningLocked()
 	s.mu.Unlock()
 	if restoredSnapshot {
 		return nil, errAccountInspectionRestoredSnapshotReadOnly
+	}
+	if running {
+		return nil, fmt.Errorf("account inspection already running")
+	}
+	s.fullRunMu.RLock()
+	defer s.fullRunMu.RUnlock()
+	s.mu.Lock()
+	restoredSnapshot = s.status.RestoredSnapshot
+	running = s.isRunningLocked()
+	workers := s.schedule.Settings.DeleteWorkers
+	s.mu.Unlock()
+	if restoredSnapshot {
+		return nil, errAccountInspectionRestoredSnapshotReadOnly
+	}
+	if running {
+		return nil, fmt.Errorf("account inspection already running")
 	}
 	boundItems := make([]accountInspectionActionItem, 0, len(items))
 	for _, item := range items {
@@ -613,12 +612,15 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 	executableItems := proinspection.DedupeActionItems(boundItems)
 	outcomes := make([]accountInspectionActionOutcome, len(executableItems))
 	executedResults := make([]accountInspectionResult, len(executableItems))
-	runAccountInspectionWorkers(len(executableItems), accountInspectionMaxDeleteWorkers, nil, func(index int) bool {
+	if workers <= 0 {
+		workers = proinspection.DefaultSettings().DeleteWorkers
+	}
+	runAccountInspectionWorkers(len(executableItems), workers, nil, func(index int) bool {
 		item := executableItems[index]
 		result := item.ToResult()
 		action := item.Action
 		outcome := accountInspectionActionOutcome{Action: action, FileName: item.FileName, DisplayName: item.DisplayName, Email: item.Email, Name: item.Name, Provider: item.Provider, AuthIndex: item.AuthIndex}
-		if err := s.executeAction(ctx, result, action); err != nil {
+		if err := s.executeActionWithLimit(ctx, result, action, workers); err != nil {
 			outcome.Error = err.Error()
 			result.ExecuteError = err.Error()
 			s.appendLog("error", fmt.Sprintf("%s -> %s 执行失败：%s", proinspection.ResultIdentity(result), action, err.Error()))
@@ -688,7 +690,7 @@ func (s *accountInspectionScheduler) applyAutomaticActions(ctx context.Context, 
 			deletedFiles[results[index].FileName] = struct{}{}
 			mu.Unlock()
 		}
-		err := s.executeAction(ctx, results[index], action)
+		err := s.executeActionWithLimit(ctx, results[index], action, workers)
 		mu.Lock()
 		if err != nil {
 			results[index].ExecuteError = err.Error()
@@ -746,8 +748,6 @@ func (s *accountInspectionScheduler) executeAction(ctx context.Context, result a
 	if s.h == nil || s.h.authManager == nil {
 		return fmt.Errorf("core auth manager unavailable")
 	}
-	s.actionMu.Lock()
-	defer s.actionMu.Unlock()
 	auth, err := s.actionAuthForResult(result)
 	if err != nil {
 		return err
@@ -766,6 +766,23 @@ func (s *accountInspectionScheduler) executeAction(ctx context.Context, result a
 	default:
 		return fmt.Errorf("unsupported action %s", action)
 	}
+}
+
+func (s *accountInspectionScheduler) executeActionWithLimit(ctx context.Context, result accountInspectionResult, action accountInspectionAction, workers int) error {
+	auth, err := s.actionAuthForResult(result)
+	if err != nil {
+		return err
+	}
+	key := strings.TrimSpace(auth.ID)
+	if sourcePath := pluginVirtualSourcePath(auth); sourcePath != "" {
+		key = "source:" + sourcePath
+	}
+	release, err := s.actionLimiter.Acquire(ctx, workers, 1, key)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.executeAction(ctx, result, action)
 }
 
 func (s *accountInspectionScheduler) actionAuthForResult(result accountInspectionResult) (*coreauth.Auth, error) {

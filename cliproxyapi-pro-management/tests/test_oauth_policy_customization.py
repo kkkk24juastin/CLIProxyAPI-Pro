@@ -18,7 +18,8 @@ LOCALES = ROOT / 'monitoring-locales.json'
 class OAuthPolicyCustomizationTest(unittest.TestCase):
     def test_page_exposes_plan_settings_rules_and_fallbacks(self) -> None:
         source = PAGE.read_text()
-        self.assertIn('OAUTH_MODEL_PROVIDER_DEFINITIONS.map', source)
+        self.assertIn('oauthModelProviderDefinitions(draft.providers)', source)
+        self.assertIn('providerDefinitions.map', source)
         self.assertIn('activePlanDefinitions.map', source)
         self.assertIn('normalizeOAuthModelPlanKey', source)
         self.assertIn('PatternEditor', source)
@@ -56,7 +57,7 @@ class OAuthPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('if (!rule.configured) return', source)
         self.assertIn('/pro/oauth-policy/config', source)
         self.assertIn('/pro/oauth-policy/effective', source)
-        self.assertIn('serializeOAuthPolicyConfig({ ...config, enabled: true })', source)
+        self.assertIn('serializeOAuthPolicyConfig(config)', source)
         self.assertNotIn('pluginsApi', source)
         self.assertNotIn('PLUGIN_ID', source)
         for field in ('prefix', 'priority', 'weight'):

@@ -1058,7 +1058,7 @@ func TestUsageExportImportRestoresLatestAccountInspectionSnapshot(t *testing.T) 
 		"state": "completed",
 		"lastStartedAt": 1000,
 		"lastFinishedAt": 2000,
-		"settings": {"targetType": "xai", "workers": 4, "deleteWorkers": 4, "timeout": 15000},
+		"settings": {"targetType": "xai", "workers": 4, "providerWorkers": 2, "deleteWorkers": 4, "timeout": 15000},
 		"summary": {"totalFiles": 1, "probeSetCount": 1, "sampledCount": 1},
 		"healthCounts": {"total": 1, "inspectionError": 1},
 		"results": [{"key": "xai.json::xai-1", "provider": "xai", "fileName": "xai.json", "authIndex": "xai-1", "action": "keep", "error": "upstream error", "errorDetail": "{\"error\":{\"message\":\"raw upstream response\"}}"}]

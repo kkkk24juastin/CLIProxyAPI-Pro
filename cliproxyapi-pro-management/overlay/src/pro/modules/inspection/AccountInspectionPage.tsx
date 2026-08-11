@@ -44,6 +44,7 @@ import {
   DELETE_WORKER_LIMITS,
   INSPECTION_TARGET_OPTIONS,
   InspectionErrorDetailsPanel,
+  PROVIDER_WORKER_LIMITS,
   RETRY_LIMITS,
   SAMPLE_SIZE_LIMITS,
   SCHEDULE_INTERVAL_LIMITS,
@@ -107,6 +108,7 @@ import {
   buildZipArchive,
   downloadBlobFile,
   mapWithConcurrency,
+  mapWithKeyedConcurrency,
 } from '@/pro/modules/inspection/features/accountInspectionExport';
 import {
   accountInspectionApi,
@@ -120,7 +122,7 @@ import {
 import { apiClient } from '@/services/api/client';
 import { authFilesApi } from '@/services/api/authFiles';
 import { quotaPersistenceMiddleware } from '@/pro/modules/quota';
-import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
+import { useAuthStore, useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { resolveAuthProvider } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
@@ -131,7 +133,6 @@ type ResultBulkAction = 'suggested' | 'recheck' | ManualAccountInspectionAction;
 
 export function AccountInspectionPage() {
   const { t, i18n } = useTranslation();
-  const config = useConfigStore((state) => state.config);
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
@@ -144,13 +145,13 @@ export function AccountInspectionPage() {
   const kimiQuota = useQuotaStore((state) => state.kimiQuota);
   const xaiQuota = useQuotaStore((state) => state.xaiQuota);
   const initialAutoExecutionPolicy = useRef(
-    hasAccountInspectionAutoExecutePolicies(loadAccountInspectionConfigurableSettings(config))
+    hasAccountInspectionAutoExecutePolicies(loadAccountInspectionConfigurableSettings())
   ).current;
 
   const [backendState, dispatchBackendState] = useReducer(
     inspectionBackendReducer,
-    config,
-    (initialConfig) => createInspectionBackendState(loadAccountInspectionConfigurableSettings(initialConfig))
+    undefined,
+    () => createInspectionBackendState(loadAccountInspectionConfigurableSettings())
   );
   const {
     inspectionSettings,
@@ -220,14 +221,6 @@ export function AccountInspectionPage() {
     observer.observe(root, { attributes: true, attributeFilter: ['class', 'data-theme'] });
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    dispatchBackendState({
-      type: 'configChanged',
-      settings: loadAccountInspectionConfigurableSettings(config),
-      syncDraft: !isSettingsModalOpen,
-    });
-  }, [config, isSettingsModalOpen]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setResultSearch(deferredResultSearchInput.trim()), 300);
@@ -920,14 +913,20 @@ export function AccountInspectionPage() {
     setLogsCollapsed(false);
     appendLog('info', t('monitoring.account_inspection_recheck_selected_started', { count: items.length }));
     try {
-      const outcomes = await mapWithConcurrency(items, 4, async (item) => {
-        try {
-          const response = await accountInspectionApi.inspectOne(toAccountInspectionApiItem(item), currentInspectionDetailOptions);
-          return { success: Boolean(response.result?.key), response };
-        } catch {
-          return { success: false, response: null };
+      const outcomes = await mapWithKeyedConcurrency(
+        items,
+        inspectionSettings.workers,
+        inspectionSettings.providerWorkers,
+        (item) => item.provider,
+        async (item) => {
+          try {
+            const response = await accountInspectionApi.inspectOne(toAccountInspectionApiItem(item), currentInspectionDetailOptions);
+            return { success: Boolean(response.result?.key), response };
+          } catch {
+            return { success: false, response: null };
+          }
         }
-      });
+      );
       outcomes.forEach((outcome) => {
         if (outcome.response) applyBackendResponse(outcome.response);
       });
@@ -946,7 +945,7 @@ export function AccountInspectionPage() {
     } finally {
       setBulkActionLoading(false);
     }
-  }, [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, loadInspectionDetailsPage, restoredSnapshot, showNotification, t]);
+  }, [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, inspectionSettings.providerWorkers, inspectionSettings.workers, loadInspectionDetailsPage, restoredSnapshot, showNotification, t]);
 
   const handleExecuteSelectedResults = useCallback(() => {
     const items = selectedVisibleResultRows.map(({ item }) => item);
@@ -1353,6 +1352,12 @@ export function AccountInspectionPage() {
           t('monitoring.account_inspection_settings_workers_label'),
           WORKER_LIMITS.min,
           WORKER_LIMITS.max
+        ),
+        providerWorkers: parseIntegerInRange(
+          settingsDraft.providerWorkers,
+          t('monitoring.account_inspection_settings_provider_workers_label'),
+          PROVIDER_WORKER_LIMITS.min,
+          PROVIDER_WORKER_LIMITS.max
         ),
         deleteWorkers: parseIntegerInRange(
           settingsDraft.deleteWorkers,
@@ -2163,7 +2168,7 @@ export function AccountInspectionPage() {
               {[
                 { key: 'plan' as const, label: t('monitoring.account_inspection_schedule_section_title'), meta: draftScheduleStatusLabel },
                 { key: 'scope' as const, label: t('monitoring.account_inspection_settings_basic_section_title'), meta: draftInspectionScopeLabel },
-                { key: 'runtime' as const, label: t('monitoring.account_inspection_settings_runtime_section_title'), meta: `${settingsDraft.workers} / ${settingsDraft.timeout}ms` },
+                { key: 'runtime' as const, label: t('monitoring.account_inspection_settings_runtime_section_title'), meta: `${settingsDraft.workers} / ${settingsDraft.providerWorkers} / ${settingsDraft.timeout}ms` },
                 { key: 'antigravity' as const, label: t('monitoring.account_inspection_settings_advanced_section_title'), meta: draftQuotaModeLabel },
                 { key: 'auto' as const, label: t('monitoring.account_inspection_settings_auto_section_title'), meta: draftAutoPolicyLabel },
               ].map((item) => (
@@ -2314,6 +2319,16 @@ export function AccountInspectionPage() {
                   onChange={(event) => handleSettingsDraftChange('workers', event.target.value)}
                   min={WORKER_LIMITS.min}
                   max={WORKER_LIMITS.max}
+                  step={1}
+                />
+                <Input
+                  label={t('monitoring.account_inspection_settings_provider_workers_label')}
+                  hint={t('monitoring.account_inspection_settings_provider_workers_hint', { min: PROVIDER_WORKER_LIMITS.min, max: PROVIDER_WORKER_LIMITS.max })}
+                  type="number"
+                  value={settingsDraft.providerWorkers}
+                  onChange={(event) => handleSettingsDraftChange('providerWorkers', event.target.value)}
+                  min={PROVIDER_WORKER_LIMITS.min}
+                  max={PROVIDER_WORKER_LIMITS.max}
                   step={1}
                 />
                 <Input

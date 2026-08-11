@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	proinspection "github.com/router-for-me/CLIProxyAPI/v6/internal/pro/inspection"
@@ -179,6 +181,49 @@ func TestManagementHandlerShutdownReleasesBackgroundOwners(t *testing.T) {
 	if err := scheduler.startRun(true); err == nil {
 		t.Fatal("shut down scheduler accepted a new run")
 	}
+}
+
+func TestStartRunWaitsForExclusiveAdmissionBeforeClearingSnapshot(t *testing.T) {
+	scheduler := &accountInspectionScheduler{
+		schedule: accountInspectionSchedule{Settings: proinspection.DefaultSettings()},
+		status: accountInspectionStatus{
+			State:   accountInspectionStateCompleted,
+			Results: []accountInspectionResult{testInspectionResult("existing", accountInspectionActionKeep, false, nil, false, "")},
+		},
+	}
+	scheduler.pause = sync.NewCond(&scheduler.mu)
+	scheduler.fullRunMu.RLock()
+	started := make(chan error, 1)
+	go func() {
+		started <- scheduler.startRun(true)
+	}()
+
+	select {
+	case err := <-started:
+		scheduler.fullRunMu.RUnlock()
+		t.Fatalf("startRun() returned before existing reader released: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	scheduler.mu.Lock()
+	state := scheduler.status.State
+	resultCount := len(scheduler.status.Results)
+	scheduler.mu.Unlock()
+	if state != accountInspectionStateCompleted || resultCount != 1 {
+		scheduler.fullRunMu.RUnlock()
+		t.Fatalf("state changed before exclusive admission: state=%q results=%d", state, resultCount)
+	}
+
+	scheduler.fullRunMu.RUnlock()
+	select {
+	case err := <-started:
+		if err != nil {
+			t.Fatalf("startRun() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("startRun() did not proceed after existing reader released")
+	}
+	scheduler.runWG.Wait()
 }
 
 func TestAccountInspectionResultSnapshotPersistsAndRestoresReadOnly(t *testing.T) {

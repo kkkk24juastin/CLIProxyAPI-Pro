@@ -541,12 +541,6 @@ type xaiResponsesProbeOutcome struct {
 }
 
 func (s *accountInspectionScheduler) runXAIResponsesProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, model string, classifyDeep bool) xaiResponsesProbeOutcome {
-	release, err := s.acquireXAIDeepProbe(ctx)
-	if err != nil {
-		return xaiResponsesProbeOutcome{err: err}
-	}
-	defer release()
-
 	var freeQuota map[string]any
 	task := func() (accountInspectionHTTPResult, error) {
 		result, requestErr := s.apiCall(ctx, account.Auth, http.MethodPost, xaiResponsesURL(account.Auth), xaiDeepProbeHeaders(account.Auth), proinspection.BuildXAIDeepProbeBody(model), settings.Timeout)
@@ -637,21 +631,6 @@ func (s *accountInspectionScheduler) applyXAIDeepProbeOutcome(ctx context.Contex
 		decision.DeepProbeError = message
 		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测临时异常：%s", account.identity(), message))
 		return decision, probeStatus, nil
-	}
-}
-
-func (s *accountInspectionScheduler) acquireXAIDeepProbe(ctx context.Context) (func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	s.xaiDeepProbeOnce.Do(func() {
-		s.xaiDeepProbeGate = make(chan struct{}, 1)
-	})
-	select {
-	case s.xaiDeepProbeGate <- struct{}{}:
-		return func() { <-s.xaiDeepProbeGate }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
 }
 

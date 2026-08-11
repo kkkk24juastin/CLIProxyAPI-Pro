@@ -1519,13 +1519,8 @@ def patch_supporting_api_and_types(target: Path) -> None:
     config_path = target / 'src/types/config.ts'
     replace_once(
         config_path,
-        "export interface Config {\n  debug?: boolean;\n",
-        "export interface AuthPoolCleanConfig {\n  baseUrl?: string;\n  token?: string;\n  targetType?: string;\n  workers?: number;\n  deleteWorkers?: number;\n  timeout?: number;\n  retries?: number;\n  usedPercentThreshold?: number;\n  sampleSize?: number;\n}\n\nexport interface Config {\n  debug?: boolean;\n",
-    )
-    replace_once(
-        config_path,
         "  quotaExceeded?: QuotaExceededConfig;\n  requestLog?: boolean;\n",
-        "  quotaExceeded?: QuotaExceededConfig;\n  clean?: AuthPoolCleanConfig;\n  usageStatisticsEnabled?: boolean;\n  requestLog?: boolean;\n",
+        "  quotaExceeded?: QuotaExceededConfig;\n  usageStatisticsEnabled?: boolean;\n  requestLog?: boolean;\n",
     )
     replace_once(
         config_path,

@@ -1,4 +1,4 @@
-import type { Config, AuthFileItem } from '@/types';
+import type { AuthFileItem } from '@/types';
 import { normalizeNumberValue } from '@/utils/quota';
 import { isRecordValue, readBooleanValue, readStringValue } from '@/pro/shared/value';
 
@@ -10,21 +10,10 @@ export type AccountInspectionDeepProbeStatus = 'success' | 'quota' | 'auth_error
 export type AccountInspectionAutoErrorAction = 'none' | 'disable' | 'delete';
 export type AccountInspectionAntigravityQuotaMode = 'max-used' | 'claude-gpt';
 
-export interface AccountInspectionSettings {
-  baseUrl: string;
-  token: string;
-  targetType: string;
-  workers: number;
-  deleteWorkers: number;
-  timeout: number;
-  retries: number;
-  usedPercentThreshold: number;
-  sampleSize: number;
-}
-
 export interface AccountInspectionConfigurableSettings {
   targetType: string;
   workers: number;
+  providerWorkers: number;
   deleteWorkers: number;
   timeout: number;
   retries: number;
@@ -244,6 +233,7 @@ export type AccountInspectionSupportedProvider = typeof ACCOUNT_INSPECTION_SUPPO
 
 export const ACCOUNT_INSPECTION_SETTING_LIMITS = {
   workers: { min: 1, max: 8 },
+  providerWorkers: { min: 1, max: 4 },
   deleteWorkers: { min: 1, max: 4 },
   timeout: { min: 3000, max: 30000, step: 1000 },
   retries: { min: 0, max: 1 },
@@ -258,6 +248,7 @@ const ACCOUNT_INSPECTION_SETTINGS_STORAGE_KEY = 'cli-proxy-account-inspection-se
 export const DEFAULT_ACCOUNT_INSPECTION_SETTINGS: AccountInspectionConfigurableSettings = {
   targetType: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE,
   workers: 4,
+  providerWorkers: 2,
   deleteWorkers: 4,
   timeout: 15000,
   retries: 0,
@@ -324,31 +315,6 @@ const formatAccountInspectionIdentity = (
   return item.fileName;
 };
 
-const readConfigurableSettingsFromConfig = (
-  config?: Config | null
-): Partial<AccountInspectionConfigurableSettings> => {
-  const clean = config?.clean ?? null;
-  return {
-    targetType: readStringValue(clean?.targetType),
-    workers: normalizeNumberValue(clean?.workers) ?? undefined,
-    deleteWorkers: normalizeNumberValue(clean?.deleteWorkers) ?? undefined,
-    timeout: normalizeNumberValue(clean?.timeout) ?? undefined,
-    retries: normalizeNumberValue(clean?.retries) ?? undefined,
-    usedPercentThreshold: normalizeNumberValue(clean?.usedPercentThreshold) ?? undefined,
-    sampleSize: normalizeNumberValue(clean?.sampleSize) ?? undefined,
-    autoExecuteQuotaLimitDisable: undefined,
-    autoExecuteQuotaRecoveryEnable: undefined,
-    autoExecuteAccountInvalidAction: undefined,
-    autoExecuteRequestErrorAction: undefined,
-    autoExecuteConfirmations: undefined,
-    antigravityDeepProbeEnabled: undefined,
-    antigravityDeepProbeModel: undefined,
-    antigravityQuotaMode: undefined,
-    xaiDeepProbeEnabled: undefined,
-    xaiDeepProbeModel: undefined,
-  };
-};
-
 const normalizeInspectionTargetType = (value: unknown) => {
   const targetType = readStringValue(value).toLowerCase();
   return targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE ||
@@ -375,6 +341,11 @@ const normalizeConfigurableSettings = (
   return {
     targetType: normalizeInspectionTargetType(merged.targetType),
     workers,
+    providerWorkers: clampInteger(
+      normalizeNumberValue(merged.providerWorkers),
+      DEFAULT_ACCOUNT_INSPECTION_SETTINGS.providerWorkers,
+      ACCOUNT_INSPECTION_SETTING_LIMITS.providerWorkers
+    ),
     deleteWorkers: clampInteger(
       normalizeNumberValue(merged.deleteWorkers),
       workers,
@@ -434,29 +405,22 @@ const normalizeConfigurableSettings = (
   };
 };
 
-export const loadAccountInspectionConfigurableSettings = (
-  config?: Config | null
-): AccountInspectionConfigurableSettings => {
-  const configSettings = readConfigurableSettingsFromConfig(config);
-
+export const loadAccountInspectionConfigurableSettings = (): AccountInspectionConfigurableSettings => {
   try {
     if (typeof localStorage === 'undefined') {
-      return normalizeConfigurableSettings(configSettings);
+      return normalizeConfigurableSettings();
     }
     const raw = localStorage.getItem(ACCOUNT_INSPECTION_SETTINGS_STORAGE_KEY);
     if (!raw) {
-      return normalizeConfigurableSettings(configSettings);
+      return normalizeConfigurableSettings();
     }
     const parsed: unknown = JSON.parse(raw);
     if (!isRecordValue(parsed)) {
-      return normalizeConfigurableSettings(configSettings);
+      return normalizeConfigurableSettings();
     }
-    return normalizeConfigurableSettings({
-      ...configSettings,
-      ...parsed,
-    });
+    return normalizeConfigurableSettings(parsed);
   } catch {
-    return normalizeConfigurableSettings(configSettings);
+    return normalizeConfigurableSettings();
   }
 };
 

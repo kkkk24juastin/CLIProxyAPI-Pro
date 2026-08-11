@@ -20,6 +20,7 @@ import type { TFunction } from 'i18next';
 import {
   DEFAULT_ACCOUNT_INSPECTION_SETTINGS,
   isAccountInspectionBackendResponse,
+  saveAccountInspectionConfigurableSettings,
   type AccountInspectionResultItem,
 } from '../src/pro/modules/inspection/features/accountInspection';
 
@@ -218,7 +219,25 @@ describe('account inspection page model', () => {
 
     expect(toSettingsDraft(DEFAULT_ACCOUNT_INSPECTION_SETTINGS)).toMatchObject({
       workers: String(DEFAULT_ACCOUNT_INSPECTION_SETTINGS.workers),
+      providerWorkers: String(DEFAULT_ACCOUNT_INSPECTION_SETTINGS.providerWorkers),
       targetType: DEFAULT_ACCOUNT_INSPECTION_SETTINGS.targetType,
+    });
+  });
+
+  test('normalizes total and per-provider worker limits independently', () => {
+    expect(saveAccountInspectionConfigurableSettings({
+      workers: 99,
+      providerWorkers: 99,
+    })).toMatchObject({
+      workers: 8,
+      providerWorkers: 4,
+    });
+    expect(saveAccountInspectionConfigurableSettings({
+      workers: 2,
+      providerWorkers: 4,
+    })).toMatchObject({
+      workers: 2,
+      providerWorkers: 4,
     });
   });
 

@@ -92,6 +92,7 @@ export type SummaryCard = {
 export type InspectionSettingsDraft = {
   targetType: string;
   workers: string;
+  providerWorkers: string;
   deleteWorkers: string;
   timeout: string;
   retries: string;
@@ -879,6 +880,7 @@ export const ANTIGRAVITY_QUOTA_MODE_OPTIONS: Array<{ value: AccountInspectionAnt
 ];
 
 export const WORKER_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.workers;
+export const PROVIDER_WORKER_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.providerWorkers;
 export const DELETE_WORKER_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.deleteWorkers;
 export const TIMEOUT_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.timeout;
 export const RETRY_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.retries;
@@ -902,6 +904,7 @@ export const buildHighAvailabilityBarStyle = (highAvailable: number, total: numb
 export const toSettingsDraft = (settings: AccountInspectionConfigurableSettings): InspectionSettingsDraft => ({
   targetType: settings.targetType,
   workers: String(settings.workers),
+  providerWorkers: String(settings.providerWorkers),
   deleteWorkers: String(settings.deleteWorkers),
   timeout: String(settings.timeout),
   retries: String(settings.retries),
@@ -1218,6 +1221,7 @@ const sameProgressSnapshot = (left: AccountInspectionProgressSnapshot, right: Ac
 const INSPECTION_SETTINGS_DRAFT_KEYS = [
   'targetType',
   'workers',
+  'providerWorkers',
   'deleteWorkers',
   'timeout',
   'retries',
@@ -1297,7 +1301,6 @@ export type InspectionBackendState = {
 };
 
 export type InspectionBackendAction =
-  | { type: 'configChanged'; settings: AccountInspectionConfigurableSettings; syncDraft: boolean }
   | { type: 'backendResponseReceived'; response: AccountInspectionScheduleResponse }
   | { type: 'clearSchedule' }
   | { type: 'appendLog'; level: AccountInspectionLogLevel; message: string; timestamp: number }
@@ -1356,13 +1359,6 @@ export const inspectionBackendReducer = (
   action: InspectionBackendAction
 ): InspectionBackendState => {
   switch (action.type) {
-    case 'configChanged': {
-      let nextState = withChanged(state, 'inspectionSettings', action.settings, sameInspectionSettings);
-      if (action.syncDraft) {
-        nextState = withChanged(nextState, 'settingsDraft', toSettingsDraft(action.settings), sameSettingsDraft);
-      }
-      return nextState;
-    }
     case 'backendResponseReceived':
       if (!isAccountInspectionBackendResponse(action.response)) return state;
       return applyBackendViewState(state, action.response, buildAccountInspectionBackendViewState(action.response));

@@ -101,7 +101,7 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 主要能力：
 
 - 选择目标 provider
-- 配置 workers、delete workers、timeout、retries、用量阈值和抽样数量
+- 配置探测总并发 `workers`（`1–8`）、单 provider 并发 `providerWorkers`（`1–4`）、操作并发 `deleteWorkers`（`1–4`）、timeout、retries、用量阈值和抽样数量
 - 后端巡检的运行、暂停、继续和停止控制
 - 后端调度启用和间隔配置
 - 通过后端状态轮询展示进度、摘要卡片和结果表
@@ -111,6 +111,8 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - 单账号重检 toast 显示真实业务结果，例如账号异常、额度耗尽或健康状态
 - 针对额度耗尽禁用、额度恢复启用、账号错误禁用/删除的后端可选自动执行策略
 - 根据后端巡检结果刷新配额快照
+
+探测总并发作用于所有 provider，单 provider 并发在总并发之内独立约束每个 provider；普通探测、深度探测、xAI 探测和探测前 token refresh 使用同一组限制。操作并发同时作用于自动操作和手动批量操作。页面通过账号巡检 schedule API 保存这些设置，不读取或修改 `config.yaml`。
 
 页面依赖的后端调度/状态/控制接口：
 
@@ -155,7 +157,7 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - `/monitoring`、`/account-inspection` 和 `/routing` 路由。
 - 侧边栏导航文案和图标。
 - 从 `monitoring-locales.json` 合并的多语言文案。
-- monitoring/account inspection 使用的 `usageStatisticsEnabled` 和 `clean` 配置类型。
+- monitoring 使用的 `usageStatisticsEnabled` 配置类型；账号巡检设置仅通过 schedule API 管理。
 - `authFilesApi.patchFile`、`setStatusWithFallback` helper。
 - `accountInspection` service export。
 - `Select` 的 `triggerClassName` 和 `dropdownClassName` props。

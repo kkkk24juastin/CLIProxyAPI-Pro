@@ -261,9 +261,17 @@ class CoreModuleBoundaryTests(unittest.TestCase):
         for declaration in (
             'func ShouldInspectCandidate(',
             'func Sample[',
-            'func ProviderLimiters(',
         ):
             self.assertIn(declaration, selection_module)
+
+        workers_module = (PRO / 'inspection/workers.go').read_text(encoding='utf-8')
+        for declaration in (
+            'type KeyedLimiter struct',
+            'func (l *KeyedLimiter) Acquire(',
+            'func RunWorkers(',
+            'func RunKeyedWorkers(',
+        ):
+            self.assertIn(declaration, workers_module)
 
         policy_module = (PRO / 'inspection/policy.go').read_text(encoding='utf-8')
         for declaration in (
@@ -276,10 +284,13 @@ class CoreModuleBoundaryTests(unittest.TestCase):
         for delegation in (
             'return proinspection.ShouldInspectCandidate(',
             'return proinspection.Sample(',
-            'return proinspection.ProviderLimiters(',
             'return proinspection.CodexDecision(',
         ):
             self.assertIn(delegation, inspection)
+        self.assertIn('proinspection.RunKeyedWorkers(', inspection)
+        self.assertIn('.probeLimiter.Acquire(', inspection)
+        self.assertIn('.actionLimiter.Acquire(', inspection)
+        self.assertNotIn('actionMu', inspection)
         for delegation in (
             'proinspection.ErrorCode(',
             'proinspection.DecisionErrorCode(',

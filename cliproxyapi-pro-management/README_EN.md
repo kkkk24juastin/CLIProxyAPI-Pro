@@ -101,7 +101,7 @@ The page controls and displays backend-run inspections. The browser does not exe
 Features include:
 
 - target provider selection
-- configurable workers, delete workers, timeout, retries, used-percent threshold, and sample size
+- configurable global probe concurrency `workers` (`1–8`), per-provider concurrency `providerWorkers` (`1–4`), action concurrency `deleteWorkers` (`1–4`), timeout, retries, used-percent threshold, and sample size
 - backend run, pause, resume, and stop controls
 - backend schedule enablement and interval configuration
 - progress, summary cards, and result table from backend status polling
@@ -111,6 +111,8 @@ Features include:
 - business-result toast messages for single-account rechecks, such as account errors, quota exhaustion, or healthy state
 - optional backend auto-execution policies for quota-limit disable, quota-recovery enable, and account-error disable/delete
 - quota snapshot refresh from backend inspection results
+
+Global probe concurrency applies across all providers, while per-provider concurrency independently caps each provider within that global limit. Regular probes, deep probes, xAI probes, and pre-probe token refreshes use the same limits. Action concurrency applies to both automatic actions and manual bulk actions. The page persists these values through the account-inspection schedule API and neither reads nor modifies `config.yaml`.
 
 Backend schedule/status/control routes expected by the page:
 
@@ -155,7 +157,7 @@ Protection is disabled by default. `observe` records matches; only `enforce` dis
 - `/monitoring`, `/account-inspection`, and `/routing` routes.
 - sidebar navigation labels and icon.
 - locale entries from `monitoring-locales.json`.
-- `usageStatisticsEnabled` and `clean` config types used by monitoring/account inspection.
+- the `usageStatisticsEnabled` config type used by monitoring; account-inspection settings are managed only through the schedule API.
 - `authFilesApi.patchFile` and `setStatusWithFallback` helpers.
 - `accountInspection` service export.
 - `Select` `triggerClassName` and `dropdownClassName` props.

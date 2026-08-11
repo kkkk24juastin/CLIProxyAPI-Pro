@@ -20,25 +20,22 @@ import (
 )
 
 const (
-	accountInspectionProviderAll            = proinspection.ProviderAll
-	accountInspectionDefaultIntervalMin     = proinspection.DefaultIntervalMin
-	accountInspectionDefaultTimeoutMS       = proinspection.DefaultTimeoutMS
-	accountInspectionMinTimeoutMS           = proinspection.MinTimeoutMS
-	accountInspectionMaxTimeoutMS           = proinspection.MaxTimeoutMS
-	accountInspectionMaxWorkers             = proinspection.MaxWorkers
-	accountInspectionMaxDeleteWorkers       = proinspection.MaxDeleteWorkers
-	accountInspectionMaxRetries             = proinspection.MaxRetries
-	accountInspectionMaxRunDuration         = 30 * time.Minute
-	accountInspectionMaxProviderConcurrency = 2
-	accountInspectionMaxRefreshConcurrency  = 2
-	accountInspectionXAIRetryDelay          = 300 * time.Millisecond
-	accountInspectionWebSocketWriteTimeout  = 5 * time.Second
-	accountInspectionWebSocketPongWait      = 60 * time.Second
-	accountInspectionWebSocketPingPeriod    = 54 * time.Second
-	accountInspectionProgressBroadcastGap   = 500 * time.Millisecond
-	accountInspectionMaxResultPageSize      = 500
-	accountInspectionMaxLogPageSize         = 500
-	accountInspectionQuotaParserVersion     = proquota.CacheParserVersion
+	accountInspectionProviderAll           = proinspection.ProviderAll
+	accountInspectionDefaultIntervalMin    = proinspection.DefaultIntervalMin
+	accountInspectionDefaultTimeoutMS      = proinspection.DefaultTimeoutMS
+	accountInspectionMinTimeoutMS          = proinspection.MinTimeoutMS
+	accountInspectionMaxTimeoutMS          = proinspection.MaxTimeoutMS
+	accountInspectionMaxWorkers            = proinspection.MaxWorkers
+	accountInspectionMaxRetries            = proinspection.MaxRetries
+	accountInspectionMaxRunDuration        = 30 * time.Minute
+	accountInspectionXAIRetryDelay         = 300 * time.Millisecond
+	accountInspectionWebSocketWriteTimeout = 5 * time.Second
+	accountInspectionWebSocketPongWait     = 60 * time.Second
+	accountInspectionWebSocketPingPeriod   = 54 * time.Second
+	accountInspectionProgressBroadcastGap  = 500 * time.Millisecond
+	accountInspectionMaxResultPageSize     = 500
+	accountInspectionMaxLogPageSize        = 500
+	accountInspectionQuotaParserVersion    = proquota.CacheParserVersion
 )
 
 var accountInspectionSupportedProviders = proinspection.SupportedProviderSet()
@@ -131,7 +128,10 @@ type accountInspectionScheduler struct {
 	snapshotPath            string
 	trigger                 chan struct{}
 	mu                      sync.Mutex
-	actionMu                sync.Mutex
+	fullRunStartMu          sync.Mutex
+	fullRunMu               sync.RWMutex
+	probeLimiter            proinspection.KeyedLimiter
+	actionLimiter           proinspection.KeyedLimiter
 	pause                   *sync.Cond
 	cancel                  context.CancelFunc
 	schedule                accountInspectionSchedule
@@ -141,8 +141,6 @@ type accountInspectionScheduler struct {
 	autoActionConfirmations *proinspection.ConfirmationCounter
 	subscribers             map[chan accountInspectionLogStreamMessage]struct{}
 	lastProgressBroadcastAt int64
-	xaiDeepProbeOnce        sync.Once
-	xaiDeepProbeGate        chan struct{}
 	runWG                   sync.WaitGroup
 	stopped                 bool
 	lifecycle               *proinspection.Lifecycle
@@ -529,6 +527,33 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 	if err != nil {
 		return err
 	}
+	s.fullRunStartMu.Lock()
+	defer s.fullRunStartMu.Unlock()
+
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		release()
+		return fmt.Errorf("account inspection scheduler is shut down")
+	}
+	if s.isRunningLocked() {
+		s.mu.Unlock()
+		release()
+		return fmt.Errorf("account inspection already running")
+	}
+	s.mu.Unlock()
+
+	// Reserve the exclusive full-run slot before publishing running state or
+	// clearing the current snapshot. Existing single-account probes and manual
+	// actions can finish and merge their results while this acquisition waits.
+	s.fullRunMu.Lock()
+	fullRunOwned := true
+	defer func() {
+		if fullRunOwned {
+			s.fullRunMu.Unlock()
+		}
+	}()
+
 	baseContext := context.Background()
 	if s != nil && s.h != nil && s.h.lifecycleContext != nil {
 		baseContext = s.h.lifecycleContext
@@ -562,6 +587,7 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 	schedule := s.schedule
 	s.runWG.Add(2)
 	s.mu.Unlock()
+	fullRunOwned = false
 
 	go func() {
 		defer s.runWG.Done()
@@ -573,6 +599,7 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 	go func() {
 		defer s.runWG.Done()
 		defer release()
+		defer s.fullRunMu.Unlock()
 		s.run(ctx, cancel, schedule, manual)
 	}()
 	return nil
@@ -696,6 +723,14 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 		s.mu.Unlock()
 		return accountInspectionResult{}, errAccountInspectionRestoredSnapshotReadOnly
 	}
+	if s.isRunningLocked() {
+		s.mu.Unlock()
+		return accountInspectionResult{}, fmt.Errorf("account inspection already running")
+	}
+	s.mu.Unlock()
+	s.fullRunMu.RLock()
+	defer s.fullRunMu.RUnlock()
+	s.mu.Lock()
 	if s.isRunningLocked() {
 		s.mu.Unlock()
 		return accountInspectionResult{}, fmt.Errorf("account inspection already running")
@@ -864,7 +899,12 @@ func (s *accountInspectionScheduler) executeSingleInspection(ctx context.Context
 			return accountInspectionResult{}, accountInspectionSummary{}, fmt.Errorf("unsupported provider")
 		}
 		s.appendLog("info", fmt.Sprintf("重新检查 %s", account.identity()))
-		result := s.inspectAccount(ctx, account, settings, make(chan struct{}, accountInspectionMaxRefreshConcurrency))
+		release, err := s.probeLimiter.Acquire(ctx, settings.Workers, settings.ProviderWorkers, account.Provider)
+		if err != nil {
+			return accountInspectionResult{}, accountInspectionSummary{}, err
+		}
+		defer release()
+		result := s.inspectAccount(ctx, account, settings)
 		return result, summarizeAccountInspection(len(auths), 1, []accountInspectionAccount{account}, []accountInspectionResult{result}), nil
 	}
 	return accountInspectionResult{}, accountInspectionSummary{}, fmt.Errorf("account not found")

@@ -176,7 +176,9 @@ Core 内建回环 SOCKS5 代理池以及 xAI、Codex、Claude、Gemini CLI、Ant
 - Kimi
 - xAI
 
-能力包括 provider 过滤、worker 数量限制、重试/超时、抽样、按用量阈值判断、进度/状态/日志/结果快照、暂停/继续/停止控制、手动操作，以及对额度耗尽、额度恢复、账号错误的可选自动操作。Antigravity 和 xAI 还支持可选深度探测。
+能力包括 provider 过滤、两级探测并发、重试/超时、抽样、按用量阈值判断、进度/状态/日志/结果快照、暂停/继续/停止控制、手动操作，以及对额度耗尽、额度恢复、账号错误的可选自动操作。Antigravity 和 xAI 还支持可选深度探测。
+
+巡检设置中的 `workers` 是所有 provider 合计的探测总并发，范围 `1–8`、默认 `4`；`providerWorkers` 是单个 provider 的探测并发，范围 `1–4`、默认 `2`。普通探测、深度探测、xAI 探测和探测前 token refresh 共用这两个限制，不再使用单独的串行闸门。`deleteWorkers` 范围 `1–4`、默认 `4`，同时约束自动操作和管理端手动批量操作。调度设置保存在账号巡检调度 JSON 中，不读取或修改 `config.yaml`。
 
 探测账号前，调度器会在认证记录本来已经进入 upstream 正常刷新窗口时尝试刷新 auth。巡检刷新路径复用 upstream provider 刷新逻辑和持久化逻辑，允许 disabled 账号，跳过 API key 账号、未到刷新窗口的账号，并遵守 `NextRefreshAfter`。刷新成功后使用刷新后的 auth 探测；刷新失败时保留账号，并跳过该账号本次探测。
 
@@ -252,7 +254,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `patches/sources/internal/pro/observability/` — usage、留存、价格同步、WebDAV 后台任务，以及普通状态写入的备份协调适配。
 - `patches/sources/internal/pro/quota/` — Quota snapshot 规范化/最大使用率、cache 成功态与响应 shape 指纹、Gemini CLI/xAI billing、plan、request-path 配额解析与合并策略。
 - `patches/sources/internal/pro/routing/` — 稳定选路游标和 request-protection 所有权规则。
-- `patches/sources/internal/pro/inspection/` — 巡检配置、候选过滤/抽样/worker 策略、状态/日志/流与手动操作 DTO、结果分类/过滤/分页/汇总与合并状态机、provider 决策与错误码、操作去重/汇总、结果快照 schema/codec、自动操作决策、Antigravity/Claude/Codex/Kimi 响应解析，以及 Antigravity/xAI deep-probe 请求与响应协议；provider 探测 transport、并发闸门、Gin/WebSocket、快照/quota cache/observation I/O 与 Auth 写回仍位于 Management host adapter。
+- `patches/sources/internal/pro/inspection/` — 巡检配置、候选过滤/抽样/两级 worker 策略、状态/日志/流与手动操作 DTO、结果分类/过滤/分页/汇总与合并状态机、provider 决策与错误码、操作去重/汇总、结果快照 schema/codec、自动操作决策、Antigravity/Claude/Codex/Kimi 响应解析，以及 Antigravity/xAI deep-probe 请求与响应协议；provider 探测 transport、Gin/WebSocket、快照/quota cache/observation I/O 与 Auth 写回仍位于 Management host adapter。
 - `patches/sources/internal/pro/backup/` — JSONL 导出、导入独占/普通写共享屏障，以及“暂停、flush、导入、恢复运行态、恢复巡检、清理旧缓存、resume”的跨模块协调器。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
 - `embeddedusage/` — 保留 upstream 导入路径、公开类型和函数签名的薄兼容 façade；实现位于 `pro/observability`。
