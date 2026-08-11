@@ -151,33 +151,7 @@ func xaiPlanTypeFromAccessToken(auth *coreauth.Auth) (string, bool) {
 	if auth == nil {
 		return "", false
 	}
-	token := firstNonEmptyAuthValue(auth, "access_token", "accessToken")
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return "", false
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", false
-	}
-	claims := map[string]any{}
-	if json.Unmarshal(payload, &claims) != nil {
-		return "", false
-	}
-	tier, ok := floatFromAny(claims["tier"])
-	if !ok || tier < 0 || tier != float64(int64(tier)) {
-		return "", false
-	}
-	switch int64(tier) {
-	case 0:
-		return "free", true
-	case 1:
-		return "supergrok", true
-	case 5:
-		return "supergrok-heavy", true
-	default:
-		return "paid-unknown", true
-	}
+	return proquota.XAIPlanTypeFromAccessToken(firstNonEmptyAuthValue(auth, "access_token", "accessToken"))
 }
 
 func intFromAny(value any) (int, bool) {

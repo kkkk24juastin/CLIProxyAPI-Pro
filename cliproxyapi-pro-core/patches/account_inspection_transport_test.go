@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -231,15 +232,15 @@ func TestXAICLIFreeQuotaProbeAcceptsExhaustionWithoutDeepProbe(t *testing.T) {
 }
 
 func TestXAIPlanTypePrefersAccessTokenTier(t *testing.T) {
-	token := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":0}`)) + ".signature"
-	plan, ok := xaiPlanTypeFromAccessToken(&coreauth.Auth{Metadata: map[string]any{"access_token": token}})
-	if !ok || plan != "free" {
-		t.Fatalf("xaiPlanTypeFromAccessToken(tier=0) = %q, %v", plan, ok)
-	}
-	token = "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":5}`)) + ".signature"
-	plan, ok = xaiPlanTypeFromAccessToken(&coreauth.Auth{Attributes: map[string]string{"access_token": token}})
-	if !ok || plan != "supergrok-heavy" {
-		t.Fatalf("xaiPlanTypeFromAccessToken(tier=5) = %q, %v", plan, ok)
+	for tier, want := range map[int]string{
+		0: "free", 1: "supergrok", 2: "x-basic", 3: "x-premium", 4: "x-premium-plus",
+		5: "supergrok-heavy", 6: "supergrok-lite", 9: "paid-unknown",
+	} {
+		token := "header." + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"tier":%d}`, tier))) + ".signature"
+		plan, ok := xaiPlanTypeFromAccessToken(&coreauth.Auth{Metadata: map[string]any{"access_token": token}})
+		if !ok || plan != want {
+			t.Fatalf("xaiPlanTypeFromAccessToken(tier=%d) = %q, %v; want %q, true", tier, plan, ok, want)
+		}
 	}
 }
 

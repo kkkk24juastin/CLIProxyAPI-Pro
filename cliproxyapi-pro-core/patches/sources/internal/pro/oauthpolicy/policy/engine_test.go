@@ -58,6 +58,46 @@ providers:
 	}
 }
 
+func TestFilterPrefersXAIAccessTokenTierOverBilling(t *testing.T) {
+	cfg, errParse := modelconfig.Parse([]byte(`
+providers:
+  xai:
+    plans:
+      free:
+        excluded-models: ["grok-4.2*"]
+      supergrok-heavy: {}
+`))
+	if errParse != nil {
+		t.Fatal(errParse)
+	}
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"tier":0}`))
+	storage, _ := json.Marshal(map[string]any{
+		"access_token": "header." + payload + ".signature",
+		"plan_type":    "supergrok-heavy",
+		"subject":      "user",
+	})
+	called := false
+	engine := New()
+	engine.ApplyConfig(cfg)
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "xai-free", AuthProvider: "xai", AuthKind: "oauth", StorageJSON: storage,
+		Models: []ModelInfo{{ID: "grok-4.20-0309-reasoning"}},
+		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+			called = true
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"config":{"monthlyLimit":{"val":150000}}}`)}, nil
+		},
+	})
+	if called {
+		t.Fatal("xAI billing was queried despite a recognized access-token tier")
+	}
+	if !result.Handled || result.Annotations["plan_key"] != "free" || result.Annotations["plan_source"] != "auth" {
+		t.Fatalf("Filter() = %#v", result)
+	}
+	if len(result.ExcludedModelIDs) != 1 || result.ExcludedModelIDs[0] != "grok-4.20-0309-reasoning" {
+		t.Fatalf("excluded models = %#v", result.ExcludedModelIDs)
+	}
+}
+
 func TestFilterReturnsAccountRoutingOverrides(t *testing.T) {
 	cfg, err := modelconfig.Parse([]byte(`
 providers:

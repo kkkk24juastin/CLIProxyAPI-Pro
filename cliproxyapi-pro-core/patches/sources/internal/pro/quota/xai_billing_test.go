@@ -1,6 +1,10 @@
 package quota
 
-import "testing"
+import (
+	"encoding/base64"
+	"fmt"
+	"testing"
+)
 
 func TestXAIPaidHealthSummary(t *testing.T) {
 	summary := XAIPaidHealthSummary()
@@ -59,5 +63,39 @@ func TestXAIPlanAndFreeQuotaSemantics(t *testing.T) {
 	paid["freeQuota"] = map[string]any{"exhausted": true}
 	if used := XAISummaryUsedPercent(paid); used != nil {
 		t.Fatalf("paid free quota leaked into used percent: %v", used)
+	}
+}
+
+func TestXAIPlanTypeFromAccessToken(t *testing.T) {
+	tests := []struct {
+		tier int
+		want string
+	}{
+		{tier: 0, want: "free"},
+		{tier: 1, want: "supergrok"},
+		{tier: 2, want: "x-basic"},
+		{tier: 3, want: "x-premium"},
+		{tier: 4, want: "x-premium-plus"},
+		{tier: 5, want: "supergrok-heavy"},
+		{tier: 6, want: "supergrok-lite"},
+		{tier: 9, want: "paid-unknown"},
+	}
+	for _, tt := range tests {
+		payload := []byte(fmt.Sprintf(`{"tier":%v}`, tt.tier))
+		token := "header." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+		if got, known := XAIPlanTypeFromAccessToken(token); !known || got != tt.want {
+			t.Fatalf("XAIPlanTypeFromAccessToken(tier=%v) = %q, %v; want %q, true", tt.tier, got, known, tt.want)
+		}
+	}
+	for _, token := range []string{"", "not-a-jwt", "header.invalid.signature"} {
+		if got, known := XAIPlanTypeFromAccessToken(token); known || got != "" {
+			t.Fatalf("XAIPlanTypeFromAccessToken(%q) = %q, %v; want unknown", token, got, known)
+		}
+	}
+	for _, claims := range []string{`{}`, `{"tier":-1}`, `{"tier":1.5}`} {
+		token := "header." + base64.RawURLEncoding.EncodeToString([]byte(claims)) + ".signature"
+		if got, known := XAIPlanTypeFromAccessToken(token); known || got != "" {
+			t.Fatalf("XAIPlanTypeFromAccessToken(%s) = %q, %v; want unknown", claims, got, known)
+		}
 	}
 }

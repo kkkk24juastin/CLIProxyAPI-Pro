@@ -168,6 +168,11 @@ func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconf
 }
 
 func localPlan(provider string, input Input) string {
+	if provider == "xai" {
+		if plan, known := proquota.XAIPlanTypeFromAccessToken(accessToken(input)); known {
+			return plan
+		}
+	}
 	sources := []map[string]any{input.Metadata, stringMapToAny(input.Attributes)}
 	storage := map[string]any{}
 	if len(input.StorageJSON) > 0 && json.Unmarshal(input.StorageJSON, &storage) == nil {
@@ -479,19 +484,11 @@ func resolveXAIPlan(ctx context.Context, timeout time.Duration, input Input) (st
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("fetch xai billing returned HTTP %d", resp.StatusCode)
 	}
-	payload := map[string]any{}
-	if errUnmarshal := json.Unmarshal(resp.Body, &payload); errUnmarshal != nil {
-		return "", fmt.Errorf("decode xai billing: %w", errUnmarshal)
-	}
-	config, _ := payload["config"].(map[string]any)
-	if config == nil {
-		return "", fmt.Errorf("xai billing config is missing")
-	}
-	limit, known := numberValue(firstValue(config, "monthlyLimit", "monthly_limit"))
+	plan, known := proquota.XAIPlanTypeFromBillingBody(resp.StatusCode, string(resp.Body))
 	if !known {
-		return "free", nil
+		return "", fmt.Errorf("xai billing contains no supported plan evidence")
 	}
-	return xaiPlanFromLimit(limit), nil
+	return plan, nil
 }
 
 func xaiPlanFromLimit(limit float64) string {
