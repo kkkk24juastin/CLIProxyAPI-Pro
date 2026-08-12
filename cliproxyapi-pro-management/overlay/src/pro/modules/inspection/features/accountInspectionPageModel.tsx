@@ -72,7 +72,6 @@ export type ResultReasonFilter = 'accountInvalid' | 'requestError' | 'quotaExhau
 
 export type ResultFilter = ResultStatusFilter | ResultReasonFilter | 'pending';
 
-export type SettingsSectionKey = 'plan' | 'scope' | 'runtime' | 'antigravity' | 'auto';
 
 export type ManualAccountInspectionAction = Exclude<AccountInspectionAction, 'keep'>;
 

@@ -212,6 +212,7 @@ if customization_sentinel.exists():
 new_customization_paths = (
     'internal/pro',
     'internal/api/handlers/management/account_inspection_host.go',
+    'internal/api/handlers/management/api_tools_executor_proxy_test.go',
     'internal/api/handlers/management/auth_file_connection.go',
     'internal/api/handlers/management/auth_file_connection_test.go',
     *[
@@ -2646,6 +2647,7 @@ server_management = ROOT / 'internal/api/server_management.go'
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 auth_files_fields = ROOT / 'internal/api/handlers/management/auth_files_fields.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
+api_tools_executor_proxy_test = ROOT / 'internal/api/handlers/management/api_tools_executor_proxy_test.go'
 routing_policy = ROOT / 'internal/api/handlers/management/routing_policy.go'
 routing_policy_test = ROOT / 'internal/api/handlers/management/routing_policy_test.go'
 replace_once(
@@ -2768,6 +2770,56 @@ api_call_transport_args = (
     if 'h.apiCallTransport(auth, requestProxyURL)' in read(api_tools)
     else 'auth'
 )
+executor_auth_args = 'auth'
+if api_call_transport_args == 'auth, requestProxyURL':
+    insert_before(
+        api_tools,
+        'func firstNonNilBool(values ...*bool) bool {\n',
+        '''func requestScopedExecutorAuth(auth *coreauth.Auth, requestProxyURL string) *coreauth.Auth {
+\tif auth == nil || strings.TrimSpace(requestProxyURL) == "" {
+\t\treturn auth
+\t}
+\trequestAuth := auth.Clone()
+\trequestAuth.ProxyURL = strings.TrimSpace(requestProxyURL)
+\treturn requestAuth
+}
+
+''',
+        'func requestScopedExecutorAuth(auth *coreauth.Auth, requestProxyURL string)',
+    )
+    executor_auth_args = 'requestScopedExecutorAuth(auth, requestProxyURL)'
+    write(
+        api_tools_executor_proxy_test,
+        f'''package management
+
+import (
+\t"testing"
+
+\tcoreauth "{MODULE_PATH}/sdk/cliproxy/auth"
+)
+
+func TestRequestScopedExecutorAuthOverridesProxyWithoutMutatingCredential(t *testing.T) {{
+\tauth := &coreauth.Auth{{ProxyURL: "http://credential-proxy.example.com:8080"}}
+\trequestAuth := requestScopedExecutorAuth(auth, " direct ")
+\tif requestAuth == auth {{
+\t\tt.Fatal("request-scoped auth aliases shared credential")
+\t}}
+\tif requestAuth.ProxyURL != "direct" {{
+\t\tt.Fatalf("request-scoped proxy = %q, want direct", requestAuth.ProxyURL)
+\t}}
+\tif auth.ProxyURL != "http://credential-proxy.example.com:8080" {{
+\t\tt.Fatalf("shared credential proxy mutated to %q", auth.ProxyURL)
+\t}}
+}}
+
+func TestRequestScopedExecutorAuthKeepsCredentialWhenRequestProxyIsEmpty(t *testing.T) {{
+\tauth := &coreauth.Auth{{ProxyURL: "http://credential-proxy.example.com:8080"}}
+\tif requestAuth := requestScopedExecutorAuth(auth, "  "); requestAuth != auth {{
+\t\tt.Fatal("empty request proxy should reuse credential auth")
+\t}}
+}}
+''',
+    )
 replace_once(
     api_tools,
     '''\thttpClient := &http.Client{
@@ -2789,7 +2841,7 @@ replace_once(
 \t\t\tc.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 \t\t\treturn
 \t\t}
-\t\tresp, errDo = h.authManager.HttpRequest(c.Request.Context(), auth, req)
+\t\tresp, errDo = h.authManager.HttpRequest(c.Request.Context(), __EXECUTOR_AUTH_ARGS__, req)
 \t} else {
 \t\thttpClient := &http.Client{
 \t\t\tTimeout: defaultAPICallTimeout,
@@ -2797,7 +2849,7 @@ replace_once(
 \t\thttpClient.Transport = h.apiCallTransport(__API_CALL_TRANSPORT_ARGS__)
 \t\tresp, errDo = httpClient.Do(req)
 \t}
-'''.replace('__API_CALL_TRANSPORT_ARGS__', api_call_transport_args),
+'''.replace('__API_CALL_TRANSPORT_ARGS__', api_call_transport_args).replace('__EXECUTOR_AUTH_ARGS__', executor_auth_args),
 )
 replace_once(
     auth_files,

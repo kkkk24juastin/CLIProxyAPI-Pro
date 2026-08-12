@@ -71,10 +71,13 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('confirmClose={confirmMonitoringSettingsClose}', monitoring_settings)
         self.assertIn('onDiscard={discardMonitoringSettingsDraft}', monitoring_settings)
         self.assertIn('onCancel: () => resolve(false)', monitoring)
+        self.assertIn('if (!accepted) resolve(false)', monitoring)
         self.assertIn('confirmClose={confirmPriceWorkspaceClose}', prices)
         self.assertIn('onDiscard={discardPriceWorkspaceDraft}', prices)
         self.assertIn('confirmClose={confirmSettingsModalClose}', inspection)
         self.assertIn('onDiscard={discardSettingsModalDraft}', inspection)
+        self.assertIn('if (!accepted) resolve(false)', prices)
+        self.assertIn('if (!accepted) resolve(false)', inspection)
 
     def test_workspace_sheet_layout_responds_to_sheet_width(self) -> None:
         surface_styles = SURFACE_STYLE.read_text()
@@ -84,6 +87,49 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('@container pro-workspace-sheet (max-width: 1020px)', monitoring_styles)
         self.assertIn('@container pro-workspace-sheet (max-width: 720px)', monitoring_styles)
         self.assertIn('@container pro-workspace-sheet (max-width: 900px)', inspection_styles)
+
+    def test_inspection_settings_sheet_uses_single_scroll_container(self) -> None:
+        inspection = (PRO_ROOT / 'modules/inspection/AccountInspectionPage.tsx').read_text()
+        inspection_styles = (
+            PRO_ROOT / 'modules/inspection/features/account-inspection-styles/_analytics.scss'
+        ).read_text()
+        self.assertNotIn('className={styles.settingsSidebar}', inspection)
+        self.assertNotIn('settingsMainRef', inspection)
+        self.assertNotIn('settingsSectionRefs', inspection)
+        self.assertNotIn('.settingsSidebar', inspection_styles)
+        self.assertNotIn('max-height: 620px', inspection_styles)
+
+    def test_monitoring_settings_sections_are_visually_distinct(self) -> None:
+        settings = (
+            PRO_ROOT / 'modules/monitoring/features/components/MonitoringSettingsModal.tsx'
+        ).read_text()
+        styles = (
+            PRO_ROOT / 'modules/monitoring/features/styles/_management.scss'
+        ).read_text()
+        self.assertIn('styles.settingsRetentionSection', settings)
+        self.assertIn('styles.settingsBackupSection', settings)
+        self.assertIn('styles.settingsDangerSection', settings)
+        self.assertIn('styles.resetStatisticsIcon', settings)
+        self.assertIn('currentColor', styles)
+
+    def test_model_price_sheet_uses_single_scroll_workspace(self) -> None:
+        prices = (
+            PRO_ROOT / 'modules/monitoring/features/components/ModelPriceManagerModal.tsx'
+        ).read_text()
+        styles = (
+            PRO_ROOT / 'modules/monitoring/features/styles/_management.scss'
+        ).read_text()
+        responsive = (
+            PRO_ROOT / 'modules/monitoring/features/styles/_responsive.scss'
+        ).read_text()
+        self.assertIn('className={styles.priceRulePicker}', prices)
+        self.assertIn('className={styles.priceRuleEditorContent}', prices)
+        self.assertIn('requestPriceManagementViewChange', prices)
+        self.assertNotIn('priceRuleSidebar', prices)
+        self.assertNotIn('priceRuleEditorScroll', prices)
+        self.assertNotIn('.priceRuleSidebar', styles + responsive)
+        self.assertNotIn('.priceRuleEditorScroll', styles + responsive)
+        self.assertNotIn('max-height: min(64vh, 560px)', styles)
 
     def test_settings_surfaces_freeze_all_actions_while_busy(self) -> None:
         surface = SURFACE.read_text()

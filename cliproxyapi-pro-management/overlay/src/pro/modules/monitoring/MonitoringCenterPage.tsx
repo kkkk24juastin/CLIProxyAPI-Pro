@@ -510,7 +510,7 @@ export function MonitoringCenterPage() {
   const confirmMonitoringSettingsClose = useCallback((): Promise<boolean> => {
     if (!monitoringSettingsDirty) return Promise.resolve(true);
     return new Promise<boolean>((resolve) => {
-      showConfirmation({
+      const accepted = showConfirmation({
         dedupeKey: 'monitoring-settings:close-workspace',
         title: t('common.unsaved_changes_title'),
         message: t('common.unsaved_changes_message'),
@@ -520,6 +520,7 @@ export function MonitoringCenterPage() {
         onConfirm: () => resolve(true),
         onCancel: () => resolve(false),
       });
+      if (!accepted) resolve(false);
     });
   }, [monitoringSettingsDirty, showConfirmation, t]);
   const discardMonitoringSettingsDraft = useCallback(() => {

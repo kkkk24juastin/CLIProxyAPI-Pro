@@ -32,28 +32,6 @@
 }
 
 @container pro-workspace-sheet (max-width: 900px) {
-  .settingsWorkbench {
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .settingsSidebar {
-    grid-template-rows: auto auto auto;
-    border-right: 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--inspect-line) 74%, transparent);
-  }
-
-  .settingsSidebarNav {
-    display: flex;
-    overflow-x: auto;
-    padding-bottom: 2px;
-  }
-
-  .settingsSidebarNav button {
-    min-width: 170px;
-  }
-
-  .settingsSidebarStatus,
   .settingsSummaryGrid,
   .settingsThreeGrid,
   .settingsMatrixGrid,
@@ -208,28 +186,6 @@
     grid-template-columns: 1fr;
   }
 
-  .settingsWorkbench {
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .settingsSidebar {
-    grid-template-rows: auto auto auto;
-    border-right: 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--inspect-line) 74%, transparent);
-  }
-
-  .settingsSidebarNav {
-    display: flex;
-    overflow-x: auto;
-    padding-bottom: 2px;
-  }
-
-  .settingsSidebarNav button {
-    min-width: 170px;
-  }
-
-  .settingsSidebarStatus,
   .settingsSummaryGrid,
   .settingsThreeGrid,
   .settingsMatrixGrid,
@@ -474,7 +430,6 @@
   }
 
   .settingsSummaryGrid,
-  .settingsSidebarStatus,
   .settingsThreeGrid,
   .settingsMatrixGrid,
   .settingsFocusGrid,
@@ -484,21 +439,11 @@
 
   .settingsWorkbench {
     display: block;
-    max-height: none;
-    min-height: 0;
-    overflow: visible;
-    border-radius: 14px 14px 0 0;
-  }
-
-  .settingsSidebar {
-    display: none;
   }
 
   .settingsWorkbenchMain {
     display: grid;
-    max-height: none;
-    overflow: visible;
-    padding: 14px;
+    gap: 12px;
   }
 
   .settingsWorkbenchSection,

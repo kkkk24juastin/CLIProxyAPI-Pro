@@ -866,6 +866,11 @@ def patch_confirmation_queue(target: Path) -> None:
             1,
         )
         text = text.replace(
+            "  showConfirmation: (options: ConfirmationOptions) => void;\n",
+            "  showConfirmation: (options: ConfirmationOptions) => boolean;\n",
+            1,
+        )
+        text = text.replace(
             "  confirmation: {\n    isOpen: false,\n    isLoading: false,\n    options: null,\n  },\n",
             "  confirmation: {\n"
             "    id: '',\n"
@@ -882,6 +887,7 @@ def patch_confirmation_queue(target: Path) -> None:
             raise RuntimeError(f'Pattern not found in {store_path}: confirmation actions')
         actions = (
             "  showConfirmation: (options) => {\n"
+            "    let accepted = false;\n"
             "    set((state) => {\n"
             "      const dedupeKey = options.dedupeKey\n"
             "        ?? (typeof options.message === 'string'\n"
@@ -893,6 +899,7 @@ def patch_confirmation_queue(target: Path) -> None:
             "          : '');\n"
             "      if (dedupeKey && state.confirmation.id && currentKey === dedupeKey) return state;\n"
             "      if (dedupeKey && state.confirmationQueue.some((item) => item.options.dedupeKey === dedupeKey)) return state;\n"
+            "      accepted = true;\n"
             "      const item = { id: generateId(), options: { ...options, dedupeKey } };\n"
             "      if (state.confirmation.id) {\n"
             "        return { confirmationQueue: [...state.confirmationQueue, item] };\n"
@@ -901,6 +908,7 @@ def patch_confirmation_queue(target: Path) -> None:
             "        confirmation: { id: item.id, isOpen: true, isLoading: false, options: item.options },\n"
             "      };\n"
             "    });\n"
+            "    return accepted;\n"
             "  },\n\n"
             "  hideConfirmation: () => {\n"
             "    set((state) => ({\n"

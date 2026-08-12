@@ -29,6 +29,21 @@ class APIToolsPatchContractTests(unittest.TestCase):
         self.assertIn("'s.h.resolveTokenForAuth(reqCtx, auth, \"\")'", source)
         self.assertIn("'s.h.apiCallTransport(auth, \"\")'", source)
 
+    def test_executor_request_proxy_uses_request_scoped_auth_clone(self) -> None:
+        source = PATCHER.read_text(encoding='utf-8')
+
+        self.assertIn(
+            'func requestScopedExecutorAuth(auth *coreauth.Auth, requestProxyURL string)',
+            source,
+        )
+        self.assertIn('requestAuth := auth.Clone()', source)
+        self.assertIn('requestAuth.ProxyURL = strings.TrimSpace(requestProxyURL)', source)
+        self.assertIn(
+            "executor_auth_args = 'requestScopedExecutorAuth(auth, requestProxyURL)'",
+            source,
+        )
+        self.assertIn('api_tools_executor_proxy_test', source)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,20 +1,42 @@
 .monitoringSettingsEditor {
-  margin-top: 14px;
   display: grid;
-  gap: 14px;
+  gap: 18px;
 }
 
 .settingsSectionCard {
+  position: relative;
   display: grid;
-  gap: 14px;
-  padding: 16px;
-  border: 1px solid color-mix(in srgb, var(--monitor-line-strong) 30%, var(--monitor-line));
-  border-radius: 16px;
-  background: var(--monitor-surface-elevated);
+  gap: 16px;
+  overflow: hidden;
+  padding: 18px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 14px;
+  background: var(--monitor-surface);
+  box-shadow: 0 12px 28px -26px color-mix(in srgb, var(--monitor-ink) 62%, transparent);
+}
+
+.settingsSectionCard::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--settings-section-accent, var(--monitor-accent));
+}
+
+.settingsRetentionSection {
+  --settings-section-accent: var(--monitor-accent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--monitor-accent) 5%, var(--monitor-surface)), var(--monitor-surface) 52%);
+}
+
+.settingsBackupSection {
+  --settings-section-accent: var(--monitor-cyan);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--monitor-cyan) 5%, var(--monitor-surface)), var(--monitor-surface) 52%);
 }
 
 .settingsDangerSection {
-  border-color: color-mix(in srgb, var(--monitor-red) 32%, var(--monitor-line));
+  --settings-section-accent: var(--monitor-red);
+  border-color: color-mix(in srgb, var(--monitor-red) 28%, var(--monitor-line));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--monitor-red) 5%, var(--monitor-surface)), var(--monitor-surface) 58%);
 }
 
 .settingsDangerAction {
@@ -49,8 +71,8 @@
   min-height: 40px;
   padding-inline: 16px;
   border-color: var(--monitor-red);
-  background: var(--monitor-red);
-  color: #fff;
+  background: color-mix(in srgb, var(--monitor-red) 92%, var(--monitor-surface));
+  color: var(--color-text-on-danger, #fff);
   box-shadow: 0 8px 18px -12px color-mix(in srgb, var(--monitor-red) 78%, transparent);
 }
 
@@ -69,10 +91,21 @@
   stroke: currentColor;
 }
 
+.resetStatisticsIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-left: -6px;
+  border-radius: 7px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  color: inherit;
+}
+
 .resetStatisticsButton:global(.btn-danger):hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--monitor-red) 86%, #000);
-  background: color-mix(in srgb, var(--monitor-red) 86%, #000);
-  color: #fff;
+  background: color-mix(in srgb, var(--monitor-red) 82%, var(--monitor-ink));
+  color: var(--color-text-on-danger, #fff);
   box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--monitor-red) 88%, transparent);
   transform: translateY(-1px);
 }
@@ -83,14 +116,36 @@
 }
 
 .resetStatisticsButton:global(.btn-danger):disabled {
-  color: #fff;
+  color: var(--color-text-on-danger, #fff);
   opacity: 0.68;
   transform: none;
 }
 
 .settingsSectionHeader {
   display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 11px;
+}
+
+.settingsSectionHeader > div {
+  display: grid;
   gap: 4px;
+  min-width: 0;
+}
+
+.settingsSectionIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--settings-section-accent) 12%, var(--monitor-surface));
+  color: var(--settings-section-accent);
+}
+
+.settingsSectionIcon svg {
+  stroke: currentColor;
 }
 
 .settingsSectionHeader strong {
@@ -99,7 +154,7 @@
   font-weight: 800;
 }
 
-.settingsSectionHeader span,
+.settingsSectionHeader > div > span,
 .settingsField small,
 .settingsHint,
 .settingsScheduleNote {
@@ -188,46 +243,35 @@
 
 .priceManager {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-  background: var(--monitor-surface);
+  gap: 18px;
+  min-width: 0;
 }
 
 .priceManagerTabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
-  gap: 6px;
-  min-height: 52px;
-  padding: 8px 20px 0;
-  border-bottom: 1px solid var(--monitor-line);
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 12px;
+  background: var(--monitor-surface-muted);
 }
 
 .priceManagerTab {
-  position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  align-self: stretch;
-  min-width: 112px;
-  padding: 0 14px 7px;
+  min-height: 38px;
+  padding: 0 14px;
   border: 0;
+  border-radius: 9px;
   background: transparent;
   color: var(--monitor-muted);
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-}
-
-.priceManagerTab::after {
-  content: '';
-  position: absolute;
-  right: 10px;
-  bottom: -1px;
-  left: 10px;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: transparent;
 }
 
 .priceManagerTab > span {
@@ -245,14 +289,13 @@
 
 .priceManagerTab:hover {
   color: var(--monitor-ink);
+  background: color-mix(in srgb, var(--monitor-surface) 58%, transparent);
 }
 
 .priceManagerTabActive {
-  color: var(--monitor-accent);
-}
-
-.priceManagerTabActive::after {
-  background: var(--monitor-accent);
+  background: var(--monitor-surface);
+  color: var(--monitor-ink);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--monitor-ink) 10%, transparent);
 }
 
 .priceManagerTabActive > span {
@@ -262,32 +305,55 @@
 
 .priceRuleWorkspace {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
+  gap: 18px;
+  min-width: 0;
 }
 
-.priceRuleSidebar {
+.priceRulePicker {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
   min-width: 0;
-  overflow: hidden;
-  border-right: 1px solid var(--monitor-line);
-  background: color-mix(in srgb, var(--monitor-surface-muted) 68%, var(--monitor-surface));
+  padding: 16px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--monitor-accent) 4%, var(--monitor-surface));
 }
 
 .priceRuleSearch {
-  position: relative;
-  padding: 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 42%);
+  align-items: end;
+  gap: 16px;
 }
 
-.priceRuleSearch > svg {
+.priceRuleSearch > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.priceRuleSearch strong {
+  color: var(--monitor-ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.priceRuleSearch > div > span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.priceRuleSearch > label {
+  position: relative;
+  display: block;
+}
+
+.priceRuleSearch > label > svg {
   position: absolute;
   z-index: 1;
   top: 50%;
-  left: 26px;
+  left: 12px;
   color: var(--monitor-muted);
   pointer-events: none;
   transform: translateY(-50%);
@@ -298,16 +364,19 @@
 }
 
 .priceRuleSearch input {
-  min-height: 38px;
+  min-height: 40px;
   padding-left: 34px;
   background: var(--monitor-surface);
 }
 
 .priceRuleList {
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 8px;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
 }
 
 .priceRuleListItem {
@@ -315,24 +384,28 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  width: 100%;
-  min-height: 58px;
+  flex: 0 0 210px;
+  min-width: 0;
+  min-height: 62px;
   padding: 10px 11px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
+  border: 1px solid var(--monitor-line);
+  border-radius: 10px;
+  background: var(--monitor-surface);
   color: var(--monitor-ink);
   text-align: left;
   cursor: pointer;
+  scroll-snap-align: start;
 }
 
 .priceRuleListItem:hover {
+  border-color: color-mix(in srgb, var(--monitor-accent) 28%, var(--monitor-line));
   background: var(--monitor-surface-hover);
 }
 
 .priceRuleListItemActive {
-  border-color: color-mix(in srgb, var(--monitor-accent) 32%, var(--monitor-line));
-  background: color-mix(in srgb, var(--monitor-accent) 9%, var(--monitor-surface));
+  border-color: color-mix(in srgb, var(--monitor-accent) 52%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--monitor-accent) 12%, transparent);
 }
 
 .priceRuleListIdentity,
@@ -402,25 +475,25 @@
 }
 
 .priceRuleEditorEmpty {
-  grid-row: 1 / -1;
+  border: 1px dashed var(--monitor-line);
+  border-radius: 14px;
 }
 
 .priceRuleEditorPane {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
   min-width: 0;
-  min-height: 0;
-  overflow: hidden;
 }
 
 .priceRuleEditorHeader {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 64px;
-  padding: 10px 18px;
-  border-bottom: 1px solid var(--monitor-line);
+  gap: 10px 16px;
+  padding: 16px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 14px;
+  background: var(--monitor-surface);
 }
 
 .priceRuleEditorHeader > div:first-child {
@@ -454,6 +527,16 @@
   gap: 6px;
 }
 
+.priceRuleEditorActions {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--monitor-line);
+}
+
 .priceRuleEditorBadges > span:not(.priceRuleConfigured):not(.priceRuleUnconfigured) {
   display: inline-flex;
   align-items: center;
@@ -466,22 +549,20 @@
   font-weight: 700;
 }
 
-.priceRuleEditorScroll {
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
+.priceRuleEditorContent {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
 }
 
 .priceRuleSection {
   display: grid;
   min-width: 0;
   gap: 12px;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--monitor-line);
-}
-
-.priceRuleSection:last-child {
-  border-bottom: 0;
+  padding: 16px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 14px;
+  background: var(--monitor-surface);
 }
 
 .priceRuleSectionHeader {
@@ -513,7 +594,7 @@
 
 .priceBaseGrid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -536,14 +617,12 @@
 .priceTierList {
   display: grid;
   gap: 8px;
-  overflow-x: auto;
-  scrollbar-gutter: stable;
   padding-bottom: 2px;
 }
 
 .priceTierCompactRow {
   display: grid;
-  grid-template-columns: 26px minmax(130px, 1.3fr) repeat(5, minmax(86px, 1fr)) 32px;
+  grid-template-columns: 26px repeat(3, minmax(0, 1fr)) 32px;
   min-width: 0;
   align-items: end;
   gap: 8px;
@@ -554,7 +633,7 @@
 }
 
 .priceServiceTierRow {
-  grid-template-columns: 26px minmax(130px, 1.3fr) repeat(5, minmax(86px, 1fr)) 32px;
+  grid-template-columns: 26px repeat(3, minmax(0, 1fr)) 32px;
 }
 
 .priceTierCompactRow label {
@@ -628,27 +707,6 @@
   text-align: center;
 }
 
-.priceRuleEditorFooter {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 58px;
-  padding: 10px 18px;
-  border-top: 1px solid var(--monitor-line);
-  background: var(--monitor-surface);
-}
-
-.priceRuleEditorFooter > div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.priceRuleEditorFooter :global(.btn) {
-  white-space: nowrap;
-}
-
 .priceRuleDeleteButton :global(svg) {
   flex: 0 0 auto;
 }
@@ -658,10 +716,7 @@
   grid-auto-rows: max-content;
   align-content: start;
   gap: 16px;
-  min-height: 0;
-  max-height: min(64vh, 560px);
-  overflow: auto;
-  padding: 20px;
+  min-width: 0;
 }
 
 .priceSyncHeader {

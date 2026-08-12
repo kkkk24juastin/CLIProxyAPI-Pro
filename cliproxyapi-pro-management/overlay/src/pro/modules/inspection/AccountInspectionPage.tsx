@@ -94,7 +94,6 @@ import {
   type ResolvedTheme,
   type ResultReasonFilter,
   type ResultStatusFilter,
-  type SettingsSectionKey,
   type SummaryCard,
 } from '@/pro/modules/inspection/features/accountInspectionPageModel';
 import {
@@ -221,14 +220,6 @@ export function AccountInspectionPage() {
   const resultsPanelRef = useRef<HTMLDivElement | null>(null);
   const resultsTableViewportRef = useRef<HTMLDivElement | null>(null);
   const selectAllResultsRef = useRef<HTMLInputElement | null>(null);
-  const settingsMainRef = useRef<HTMLDivElement | null>(null);
-  const settingsSectionRefs = useRef<Record<SettingsSectionKey, HTMLElement | null>>({
-    plan: null,
-    scope: null,
-    runtime: null,
-    antigravity: null,
-    auto: null,
-  });
   const refreshedBackendFinishedAtRef = useRef(0);
   const loadedBackendDetailsKeyRef = useRef('');
   const backendScheduleRequestIdRef = useRef(0);
@@ -1197,23 +1188,6 @@ export function AccountInspectionPage() {
   const completedProgressLabel = completedDuration
     ? t(result?.state === 'completed' ? 'monitoring.account_inspection_completed_with_duration' : 'monitoring.account_inspection_ended_with_duration', { duration: completedDuration })
     : t('monitoring.account_inspection_phase_completed');
-  const setSettingsSectionRef = useCallback(
-    (section: SettingsSectionKey) => (element: HTMLElement | null) => {
-      settingsSectionRefs.current[section] = element;
-    },
-    []
-  );
-
-  const scrollToSettingsSection = useCallback((section: SettingsSectionKey) => {
-    const container = settingsMainRef.current;
-    const target = settingsSectionRefs.current[section];
-    if (!container || !target) return;
-    container.scrollTo({
-      top: target.offsetTop - container.offsetTop,
-      behavior: 'smooth',
-    });
-  }, []);
-
   const openSettingsModal = useCallback(() => {
     dispatchBackendState({ type: 'discardSettingsDraft' });
     setIsSettingsModalOpen(true);
@@ -1403,7 +1377,7 @@ export function AccountInspectionPage() {
   const confirmSettingsModalClose = useCallback((): Promise<boolean> => {
     if (!settingsDirty) return Promise.resolve(true);
     return new Promise<boolean>((resolve) => {
-      showConfirmation({
+      const accepted = showConfirmation({
         dedupeKey: 'account-inspection-settings:close-workspace',
         title: t('monitoring.account_inspection_settings_unsaved_title'),
         message: t('monitoring.account_inspection_settings_unsaved_desc'),
@@ -1413,6 +1387,7 @@ export function AccountInspectionPage() {
         onConfirm: () => resolve(true),
         onCancel: () => resolve(false),
       });
+      if (!accepted) resolve(false);
     });
   }, [settingsDirty, showConfirmation, t]);
   const discardSettingsModalDraft = useCallback(() => {
@@ -2198,46 +2173,7 @@ export function AccountInspectionPage() {
         )}
       >
         <div className={styles.settingsWorkbench}>
-          <aside className={styles.settingsSidebar}>
-            <div className={styles.settingsSidebarIntro}>
-              <strong>{t('monitoring.account_inspection_settings_title')}</strong>
-              <span>{t('monitoring.account_inspection_settings_desc')}</span>
-            </div>
-            <div className={styles.settingsSidebarNav}>
-              {[
-                { key: 'plan' as const, label: t('monitoring.account_inspection_schedule_section_title'), meta: draftScheduleStatusLabel },
-                { key: 'scope' as const, label: t('monitoring.account_inspection_settings_basic_section_title'), meta: draftInspectionScopeLabel },
-                { key: 'runtime' as const, label: t('monitoring.account_inspection_settings_runtime_section_title'), meta: `${settingsDraft.workers} / ${settingsDraft.providerWorkers} / ${settingsDraft.timeout}ms` },
-                { key: 'antigravity' as const, label: t('monitoring.account_inspection_settings_advanced_section_title'), meta: draftQuotaModeLabel },
-                { key: 'auto' as const, label: t('monitoring.account_inspection_settings_auto_section_title'), meta: draftAutoPolicyLabel },
-              ].map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => scrollToSettingsSection(item.key)}
-                >
-                  <strong>{item.label}</strong>
-                  <span>{item.meta}</span>
-                </button>
-              ))}
-            </div>
-            <div className={styles.settingsSidebarStatus}>
-              <span>
-                <small>{t('monitoring.account_inspection_quota_threshold_short')}</small>
-                <strong>{`${settingsDraft.usedPercentThreshold || '--'}%`}</strong>
-              </span>
-              <span>
-                <small>{t('monitoring.account_inspection_account_invalid_action_short')}</small>
-                <strong>{draftAccountInvalidActionLabel}</strong>
-              </span>
-              <span>
-                <small>{t('monitoring.account_inspection_request_error_action_short')}</small>
-                <strong>{draftRequestErrorActionLabel}</strong>
-              </span>
-            </div>
-          </aside>
-
-          <div ref={settingsMainRef} className={styles.settingsWorkbenchMain}>
+          <div className={styles.settingsWorkbenchMain}>
             <section className={styles.settingsHeroPanel}>
               <div>
                 <strong>{t('monitoring.account_inspection_settings_overview_title')}</strong>
@@ -2263,7 +2199,7 @@ export function AccountInspectionPage() {
               </div>
             </section>
 
-            <section ref={setSettingsSectionRef('plan')} className={styles.settingsWorkbenchSection}>
+            <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>
                   <small>01</small>
@@ -2296,7 +2232,7 @@ export function AccountInspectionPage() {
               </div>
             </section>
 
-            <section ref={setSettingsSectionRef('scope')} className={styles.settingsWorkbenchSection}>
+            <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>
                   <small>02</small>
@@ -2341,7 +2277,7 @@ export function AccountInspectionPage() {
               </div>
             </section>
 
-            <section ref={setSettingsSectionRef('runtime')} className={styles.settingsWorkbenchSection}>
+            <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>
                   <small>03</small>
@@ -2403,7 +2339,7 @@ export function AccountInspectionPage() {
               </div>
             </section>
 
-            <section ref={setSettingsSectionRef('antigravity')} className={styles.settingsWorkbenchSection}>
+            <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>
                   <small>04</small>
@@ -2468,7 +2404,7 @@ export function AccountInspectionPage() {
               </div>
             </section>
 
-            <section ref={setSettingsSectionRef('auto')} className={styles.settingsWorkbenchSection}>
+            <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>
                   <small>05</small>

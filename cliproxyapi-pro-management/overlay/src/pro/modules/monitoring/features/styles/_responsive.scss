@@ -1,54 +1,4 @@
 @container pro-workspace-sheet (max-width: 1020px) {
-  .priceRuleWorkspace {
-    grid-template-columns: 1fr;
-    grid-template-rows: 82px minmax(0, 1fr);
-    height: 100%;
-  }
-
-  .priceRuleSidebar {
-    grid-template-columns: minmax(190px, 34%) minmax(0, 1fr);
-    grid-template-rows: 1fr;
-    border-right: 0;
-    border-bottom: 1px solid var(--monitor-line);
-  }
-
-  .priceRuleSearch {
-    padding: 10px;
-    border-right: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
-    border-bottom: 0;
-  }
-
-  .priceRuleSearch > svg {
-    left: 21px;
-  }
-
-  .priceRuleSearch input {
-    min-height: 36px;
-  }
-
-  .priceRuleList {
-    display: flex;
-    gap: 7px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 10px;
-  }
-
-  .priceRuleListItem {
-    flex: 0 0 196px;
-    min-height: 60px;
-    padding: 8px 10px;
-  }
-
-  .priceRuleListEmpty {
-    flex: 1 1 100%;
-    min-height: 60px;
-  }
-
-  .priceBaseGrid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .priceSyncHeader {
     align-items: flex-start;
     flex-direction: column;
@@ -125,60 +75,37 @@
 
 @media (max-width: 680px) {
   .priceManagerTabs {
-    padding-inline: 10px 46px;
+    gap: 3px;
+    padding: 3px;
   }
 
   .priceManagerTab {
     min-width: 0;
-    flex: 1 1 0;
-    justify-content: center;
     padding-inline: 8px;
   }
 
-  .priceRuleWorkspace {
-    grid-template-rows: 78px minmax(0, 1fr);
-    height: 100%;
-  }
-
-  .priceRuleSidebar {
-    grid-template-columns: minmax(156px, 38%) minmax(0, 1fr);
-  }
-
   .priceRuleSearch {
-    padding: 8px;
+    grid-template-columns: 1fr;
+    gap: 10px;
   }
 
-  .priceRuleSearch > svg {
-    left: 18px;
-  }
-
-  .priceRuleSearch input {
-    min-height: 34px;
-    padding-left: 30px;
-  }
-
-  .priceRuleList {
-    padding: 8px;
+  .priceRulePicker,
+  .priceRuleEditorHeader,
+  .priceRuleSection {
+    padding: 14px;
   }
 
   .priceRuleListItem {
-    flex-basis: 176px;
+    flex-basis: 184px;
     min-height: 58px;
   }
 
-  .priceRuleEditorHeader,
-  .priceRuleSection,
-  .priceRuleEditorFooter,
-  .priceSyncView {
-    padding-inline: 14px;
-  }
-
   .priceRuleEditorHeader {
-    min-height: 60px;
+    grid-template-columns: 1fr;
   }
 
-  .priceRuleEditorBadges > span:not(:first-child) {
-    display: none;
+  .priceRuleEditorBadges {
+    justify-content: flex-start;
   }
 
   .priceBaseGrid {
@@ -191,10 +118,6 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     min-width: 0;
     padding: 34px 10px 10px;
-  }
-
-  .priceTierList {
-    overflow-x: visible;
   }
 
   .priceTierCompactRow label:first-of-type {
@@ -217,47 +140,12 @@
     height: 26px;
   }
 
-  .priceRuleEditorFooter {
-    position: sticky;
-    z-index: 2;
-    bottom: 0;
-    min-height: 56px;
-    padding-block: 9px;
-    background: color-mix(in srgb, var(--monitor-surface) 96%, transparent);
-    box-shadow: 0 -10px 24px -22px color-mix(in srgb, var(--monitor-ink) 70%, transparent);
+  .priceRuleEditorActions {
+    justify-content: stretch;
   }
 
-  .priceRuleEditorFooter > div {
-    width: auto;
-  }
-
-  .priceRuleEditorFooter > div:last-child :global(.btn) {
+  .priceRuleEditorActions :global(.btn) {
     flex: 1 1 0;
-  }
-
-  .priceRuleDeleteButton {
-    width: 36px;
-    min-width: 36px;
-    padding-inline: 0;
-  }
-
-  .priceRuleDeleteLabel {
-    display: none;
-  }
-
-  .priceRuleEditorPane {
-    display: block;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-
-  .priceRuleEditorScroll {
-    overflow: visible;
-  }
-
-  .priceSyncView {
-    padding-block: 18px;
   }
 
   .priceSyncActions :global(.btn) {
@@ -320,10 +208,6 @@
 }
 
 @media (max-width: 440px) {
-  .priceRuleSidebar {
-    grid-template-columns: 126px minmax(0, 1fr);
-  }
-
   .priceRuleSearch input {
     font-size: 12px;
   }
@@ -332,13 +216,7 @@
     grid-template-columns: 1fr;
   }
 
-  .priceRuleEditorFooter {
-    gap: 7px;
-    padding-inline: 10px;
-  }
-
-  .priceRuleEditorFooter > div:last-child {
-    min-width: 0;
-    flex: 1 1 auto;
+  .priceRuleEditorActions {
+    flex-direction: column;
   }
 }
