@@ -3,6 +3,12 @@
   background: var(--bg-secondary);
 }
 
+@media (min-width: 721px) {
+  .modal {
+    width: min(960px, calc(100vw - 32px)) !important;
+  }
+}
+
 .modal :global(.modal-title) {
   min-width: 0;
   font-size: 21px;

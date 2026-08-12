@@ -236,6 +236,17 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('onAfterClose={() => setDisplayFile(null)}', account_usage)
         self.assertIn('onAfterClose={clearClosedNodeSheet}', proxy_pool)
 
+    def test_account_usage_workspace_uses_a_readable_desktop_width(self) -> None:
+        account_usage = (
+            PRO_ROOT / 'modules/monitoring/features/components/AccountUsageModal.tsx'
+        ).read_text()
+        account_usage_styles = (
+            PRO_ROOT / 'modules/monitoring/features/components/AccountUsageModal.module.scss'
+        ).read_text()
+        self.assertIn('className={styles.modal}', account_usage)
+        self.assertIn('@media (min-width: 721px)', account_usage_styles)
+        self.assertIn('width: min(960px, calc(100vw - 32px)) !important;', account_usage_styles)
+
     def test_rich_account_confirmations_use_business_dedupe_keys(self) -> None:
         inspection = (PRO_ROOT / 'modules/inspection/AccountInspectionPage.tsx').read_text()
         self.assertGreaterEqual(
