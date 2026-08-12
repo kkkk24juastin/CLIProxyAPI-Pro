@@ -47,6 +47,8 @@ export function RealtimeRequestDetailsPanel({
     { label: translateRealtimeErrorText('accounting_version', t, language), value: row.accountingVersion !== null ? String(row.accountingVersion) : '-' },
     { label: translateRealtimeErrorText('accounting_quality', t, language), value: row.accountingQuality || '-' },
     { label: translateRealtimeErrorText('token_breakdown', t, language), value: formatRealtimeTokenBreakdown(row.tokenBreakdown) || '-' },
+    { label: t('monitoring.cost_detail_requested_tier'), value: row.serviceTier || '-' },
+    { label: t('monitoring.cost_detail_actual_tier'), value: row.effectiveServiceTier || '-' },
   ].filter((item) => item.value !== '-');
 
   return (

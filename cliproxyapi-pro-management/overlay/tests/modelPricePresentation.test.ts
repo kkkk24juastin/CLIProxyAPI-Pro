@@ -5,6 +5,7 @@ import {
   createServiceTierDraft,
   createPriceDraft,
   formatDeltaPercent,
+  normalizeServiceTierName,
   parsePriceValue,
   resolvePricingMode,
   validatePriceDraft,
@@ -27,12 +28,12 @@ describe('model price presentation model', () => {
     expect(draft.input).toBe('1');
     expect(draft.reasoning).toBe('3');
     expect(draft.tiers[0]).toMatchObject({ contextSize: '1000', output: '4', reasoning: '5' });
-    expect(draft.serviceTiers[0]).toMatchObject({ name: 'priority', output: '7', reasoning: '8' });
+    expect(draft.serviceTiers[0]).toMatchObject({ name: 'fast', output: '7', reasoning: '8' });
 
     const rebuilt = buildModelPriceRule('gpt-test', draft);
     expect(rebuilt.base.reasoning).toBe(3);
     expect(rebuilt.tiers?.[0].reasoning).toBe(5);
-    expect(rebuilt.serviceTiers?.priority).toMatchObject({ output: 7, reasoning: 8 });
+    expect(rebuilt.serviceTiers?.fast).toMatchObject({ output: 7, reasoning: 8 });
   });
 
   test('copies base rates for a new service tier and clears removed overrides', () => {
@@ -76,12 +77,26 @@ describe('model price presentation model', () => {
     const rate = { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0.75 };
     expect(collectServiceTierChanges(
       { priority: rate, removed: rate },
-      { priority: { ...rate, output: 3 }, flex: rate }
+      { fast: { ...rate, output: 3 }, flex: rate }
     )).toEqual([
+      { name: 'fast', action: 'updated' },
       { name: 'flex', action: 'added' },
-      { name: 'priority', action: 'updated' },
       { name: 'removed', action: 'removed' },
     ]);
+  });
+
+  test('canonicalizes OpenAI priority as the fast compatibility alias', () => {
+    expect(normalizeServiceTierName(' Priority ')).toBe('fast');
+    expect(normalizeServiceTierName('FAST')).toBe('fast');
+    expect(normalizeServiceTierName('flex')).toBe('flex');
+
+    const draft = createPriceDraft({
+      model: 'gpt-test',
+      base: { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0.75 },
+      serviceTiers: { fast: { input: 4, output: 5, cacheRead: 0.4, cacheWrite: 0.5 } },
+    });
+    draft.serviceTiers[0].name = ' Priority ';
+    expect(createPriceDraft(buildModelPriceRule('gpt-test', draft)).serviceTiers[0].name).toBe('fast');
   });
 
   test('resolves explicit and legacy pricing modes without claiming a tier match', () => {

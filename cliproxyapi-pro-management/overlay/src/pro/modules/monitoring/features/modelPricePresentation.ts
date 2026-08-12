@@ -55,6 +55,22 @@ const roundCurrency = (value: number) => Math.round(value * 100) / 100;
 
 const PRICE_RATE_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const;
 
+export const normalizeServiceTierName = (value: string) => {
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'priority' ? 'fast' : normalized;
+};
+
+const canonicalizeServiceTiers = (serviceTiers: ModelPriceRule['serviceTiers']) => {
+  const normalized: NonNullable<ModelPriceRule['serviceTiers']> = {};
+  Object.entries(serviceTiers ?? {}).forEach(([rawName, rate]) => {
+    const name = normalizeServiceTierName(rawName);
+    if (!name) return;
+    if (rawName.trim().toLowerCase() === 'priority' && normalized.fast) return;
+    normalized[name] = rate;
+  });
+  return normalized;
+};
+
 const createPriceRateDraft = (rate?: ModelPriceRate): PriceRateDraft => ({
   input: rate ? String(rate.input) : '',
   output: rate ? String(rate.output) : '',
@@ -91,7 +107,7 @@ export const createPriceDraft = (rule?: ModelPriceRule): PriceDraft => ({
     contextSize: String(tier.contextSize),
     ...createPriceRateDraft(tier),
   })) ?? [],
-  serviceTiers: Object.entries(rule?.serviceTiers ?? {})
+  serviceTiers: Object.entries(canonicalizeServiceTiers(rule?.serviceTiers))
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, rate]) => ({ name, ...createPriceRateDraft(rate) })),
 });
@@ -119,7 +135,7 @@ export const validatePriceDraft = (draft: PriceDraft): PriceDraftValidationError
 
   const serviceTierNames = new Set<string>();
   for (const tier of draft.serviceTiers) {
-    const name = tier.name.trim().toLowerCase();
+    const name = normalizeServiceTierName(tier.name);
     if (!name) return 'service_tier_name_required';
     if (serviceTierNames.has(name)) return 'service_tier_name_duplicate';
     serviceTierNames.add(name);
@@ -130,7 +146,7 @@ export const validatePriceDraft = (draft: PriceDraft): PriceDraftValidationError
 
 export const buildModelPriceRule = (model: string, draft: PriceDraft): ModelPriceRule => {
   const serviceTiers = Object.fromEntries(draft.serviceTiers.map((tier) => (
-    [tier.name.trim().toLowerCase(), parsePriceRateDraft(tier)]
+    [normalizeServiceTierName(tier.name), parsePriceRateDraft(tier)]
   )));
   return {
     model,
@@ -147,8 +163,8 @@ export const collectServiceTierChanges = (
   before: ModelPriceRule['serviceTiers'],
   after: ModelPriceRule['serviceTiers']
 ): ServiceTierChange[] => {
-  const previous = before ?? {};
-  const next = after ?? {};
+  const previous = canonicalizeServiceTiers(before);
+  const next = canonicalizeServiceTiers(after);
   return Array.from(new Set([...Object.keys(previous), ...Object.keys(next)]))
     .sort((left, right) => left.localeCompare(right))
     .flatMap((name): ServiceTierChange[] => {

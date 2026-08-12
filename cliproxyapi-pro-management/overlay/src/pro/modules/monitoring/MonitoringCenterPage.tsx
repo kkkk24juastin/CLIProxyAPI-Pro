@@ -1465,7 +1465,8 @@ export function MonitoringCenterPage() {
 		const rule = buildModelPriceRule(priceModel, priceDraft);
 		setIsPriceSaving(true);
 		try {
-			await saveModelPriceRule(rule);
+			const savedRule = await saveModelPriceRule(rule);
+			setPriceDraft(createPriceDraft(savedRule));
 			await recalculateModelPriceHistory(false);
 			await refreshPriceManagement();
 			await refreshAll();

@@ -382,9 +382,9 @@ func TestUsageImportRestoresModelPriceRuleWhenOnlyNewerHistoryRemains(t *testing
 	sourceStore := openTestStore(t)
 	sourceRule := testGPT56PriceRule()
 	sourceRule.Base.Input = 1.25
-	priorityRate := sourceRule.ServiceTiers["priority"]
-	priorityRate.Reasoning = 7.5
-	sourceRule.ServiceTiers["priority"] = priorityRate
+	fastRate := sourceRule.ServiceTiers["fast"]
+	fastRate.Reasoning = 7.5
+	sourceRule.ServiceTiers["fast"] = fastRate
 	if _, changed, err := sourceStore.UpsertModelPriceRule(ctx, sourceRule, true); err != nil || !changed {
 		t.Fatalf("source UpsertModelPriceRule() = changed:%v err:%v", changed, err)
 	}
@@ -413,13 +413,13 @@ func TestUsageImportRestoresModelPriceRuleWhenOnlyNewerHistoryRemains(t *testing
 		t.Fatalf("import status = %d, want 200; body=%s", importRecorder.Code, importRecorder.Body.String())
 	}
 	rules, err := targetStore.ActiveModelPriceRules(ctx)
-	var priority ModelPriceRate
-	var hasPriority bool
+	var fast ModelPriceRate
+	var hasFast bool
 	if len(rules) == 1 {
-		priority, hasPriority = rules[0].ServiceTiers["priority"]
+		fast, hasFast = rules[0].ServiceTiers["fast"]
 	}
 	if err != nil || len(rules) != 1 || rules[0].Model != sourceRule.Model || rules[0].Base.Input != sourceRule.Base.Input ||
-		!hasPriority || priority.Reasoning != sourceRule.ServiceTiers["priority"].Reasoning || rules[0].Version <= 2 {
+		!hasFast || fast.Reasoning != sourceRule.ServiceTiers["fast"].Reasoning || rules[0].Version <= 2 {
 		t.Fatalf("restored rules = %+v err:%v; want imported rule newer than retained version 2", rules, err)
 	}
 }

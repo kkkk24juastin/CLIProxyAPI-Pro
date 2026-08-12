@@ -154,7 +154,7 @@ On first startup, Core reads legacy `plugins.configs.proxy-pool` and `plugins.co
 
 The patch layer adds backend account-inspection routes under the management API:
 
-Request monitoring also stores TTFT, HTTP status code, structured error, reasoning effort, and service tier. `/usage/status` returns recent dead-letter samples with sensitive fields redacted. Account-inspection automatic actions support consecutive-confirmation gating, and quota cache entries include parser version plus response-shape hashes.
+Request monitoring also stores TTFT, HTTP status code, structured error, reasoning effort, the requested service tier, and the effective tier reported by upstream. Fast pricing treats `priority` as a compatibility alias for `fast` and prefers the response tier for billing, so requests downgraded to `default` do not use Fast rates. `/usage/status` returns recent dead-letter samples with sensitive fields redacted. Account-inspection automatic actions support consecutive-confirmation gating, and quota cache entries include parser version plus response-shape hashes.
 
 - `GET /v0/management/account-inspection/schedule`
 - `GET /v0/management/account-inspection/status`

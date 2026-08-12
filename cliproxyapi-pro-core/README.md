@@ -153,7 +153,7 @@ Core 内建回环 SOCKS5 代理池以及 xAI、Codex、Claude、Gemini CLI、Ant
 
 补丁层在 management API 下增加账号巡检路由：
 
-请求监控会额外保存 TTFT、HTTP 状态码、结构化错误、reasoning effort 和 service tier；`/usage/status` 会返回最近 dead letter 样本并对敏感字段脱敏。账号巡检自动动作支持连续确认门槛，quota cache 会记录解析器版本和返回结构 hash。
+请求监控会额外保存 TTFT、HTTP 状态码、结构化错误、reasoning effort、请求 service tier 和上游响应的生效 service tier；`/usage/status` 会返回最近 dead letter 样本并对敏感字段脱敏。Fast 定价将 `priority` 作为 `fast` 的兼容别名，并优先依据响应 tier 计费，避免已降级为 `default` 的请求误用 Fast 单价。账号巡检自动动作支持连续确认门槛，quota cache 会记录解析器版本和返回结构 hash。
 
 - `GET /v0/management/account-inspection/schedule`
 - `GET /v0/management/account-inspection/status`

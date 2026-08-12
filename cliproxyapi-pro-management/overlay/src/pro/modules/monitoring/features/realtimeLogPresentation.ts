@@ -312,6 +312,8 @@ export const buildRealtimeDiagnosticClipboardText = (
     [translateRealtimeErrorText('accounting_version', t, language), row.accountingVersion ?? '-'],
     [translateRealtimeErrorText('accounting_quality', t, language), row.accountingQuality || '-'],
     [translateRealtimeErrorText('token_breakdown', t, language), formatRealtimeTokenBreakdown(row.tokenBreakdown) || '-'],
+    [t('monitoring.cost_detail_requested_tier'), row.serviceTier || '-'],
+    [t('monitoring.cost_detail_actual_tier'), row.effectiveServiceTier || '-'],
   ];
   return fields.map(([label, value]) => `${label}: ${maskSensitiveText(String(value ?? '-'))}`).join('\n');
 };

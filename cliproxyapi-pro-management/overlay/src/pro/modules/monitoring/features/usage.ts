@@ -130,6 +130,10 @@ export interface UsageCostBreakdown {
   contextTokens: number;
   contextTierSize: number;
   serviceTier: string;
+  requestedServiceTier: string;
+  effectiveServiceTier: string;
+  matchedServiceTier: string;
+  serviceTierSource?: 'response' | 'request_fallback' | 'none';
   pricingMode?: 'base' | 'context' | 'service_tier';
   inputTokens: number;
   outputTokens: number;
@@ -167,6 +171,7 @@ export interface UsageDetail {
   stream?: boolean;
   reasoning_effort?: string;
   service_tier?: string;
+  effective_service_tier?: string;
   estimated_cost?: number;
   price_rule_id?: number;
   cost_breakdown?: UsageCostBreakdown;
@@ -420,6 +425,13 @@ const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undef
     contextTokens: readNumber('contextTokens', 'context_tokens'),
     contextTierSize: readNumber('contextTierSize', 'context_tier_size'),
     serviceTier: readString('serviceTier', 'service_tier'),
+    requestedServiceTier: readString('requestedServiceTier', 'requested_service_tier') || readString('serviceTier', 'service_tier'),
+    effectiveServiceTier: readString('effectiveServiceTier', 'effective_service_tier'),
+    matchedServiceTier: readString('matchedServiceTier', 'matched_service_tier'),
+    serviceTierSource: (() => {
+      const source = readString('serviceTierSource', 'service_tier_source');
+      return source === 'response' || source === 'request_fallback' || source === 'none' ? source : undefined;
+    })(),
     pricingMode,
     inputTokens: readNumber('inputTokens', 'input_tokens'),
     outputTokens: readNumber('outputTokens', 'output_tokens'),
@@ -548,6 +560,11 @@ const buildUsageDetail = (
       ? detailRaw.service_tier
       : typeof detailRaw.serviceTier === 'string'
         ? detailRaw.serviceTier
+        : undefined,
+    effective_service_tier: typeof detailRaw.effective_service_tier === 'string'
+      ? detailRaw.effective_service_tier
+      : typeof detailRaw.effectiveServiceTier === 'string'
+        ? detailRaw.effectiveServiceTier
         : undefined,
     estimated_cost: estimatedCost ?? undefined,
     price_rule_id: priceRuleID ?? undefined,

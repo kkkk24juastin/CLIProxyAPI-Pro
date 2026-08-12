@@ -19,6 +19,11 @@ const (
 	modelPriceModeBase        = "base"
 	modelPriceModeContext     = "context"
 	modelPriceModeServiceTier = "service_tier"
+	serviceTierFast           = "fast"
+	serviceTierPriority       = "priority"
+	serviceTierSourceResponse = "response"
+	serviceTierSourceRequest  = "request_fallback"
+	serviceTierSourceNone     = "none"
 )
 
 type ModelPriceRate struct {
@@ -55,26 +60,30 @@ type ModelPriceRule struct {
 }
 
 type ModelPriceCostBreakdown struct {
-	RuleID           int64   `json:"ruleId"`
-	RuleVersion      int     `json:"ruleVersion"`
-	Provider         string  `json:"provider"`
-	Model            string  `json:"model"`
-	Source           string  `json:"source"`
-	ContextTokens    int64   `json:"contextTokens"`
-	ContextTierSize  int64   `json:"contextTierSize,omitempty"`
-	ServiceTier      string  `json:"serviceTier,omitempty"`
-	PricingMode      string  `json:"pricingMode"`
-	InputTokens      int64   `json:"inputTokens"`
-	OutputTokens     int64   `json:"outputTokens"`
-	CacheReadTokens  int64   `json:"cacheReadTokens"`
-	CacheWriteTokens int64   `json:"cacheWriteTokens"`
-	ReasoningTokens  int64   `json:"reasoningTokens"`
-	InputCost        float64 `json:"inputCost"`
-	OutputCost       float64 `json:"outputCost"`
-	CacheReadCost    float64 `json:"cacheReadCost"`
-	CacheWriteCost   float64 `json:"cacheWriteCost"`
-	ReasoningCost    float64 `json:"reasoningCost"`
-	TotalCost        float64 `json:"totalCost"`
+	RuleID               int64   `json:"ruleId"`
+	RuleVersion          int     `json:"ruleVersion"`
+	Provider             string  `json:"provider"`
+	Model                string  `json:"model"`
+	Source               string  `json:"source"`
+	ContextTokens        int64   `json:"contextTokens"`
+	ContextTierSize      int64   `json:"contextTierSize,omitempty"`
+	ServiceTier          string  `json:"serviceTier,omitempty"`
+	RequestedServiceTier string  `json:"requestedServiceTier,omitempty"`
+	EffectiveServiceTier string  `json:"effectiveServiceTier,omitempty"`
+	MatchedServiceTier   string  `json:"matchedServiceTier,omitempty"`
+	ServiceTierSource    string  `json:"serviceTierSource"`
+	PricingMode          string  `json:"pricingMode"`
+	InputTokens          int64   `json:"inputTokens"`
+	OutputTokens         int64   `json:"outputTokens"`
+	CacheReadTokens      int64   `json:"cacheReadTokens"`
+	CacheWriteTokens     int64   `json:"cacheWriteTokens"`
+	ReasoningTokens      int64   `json:"reasoningTokens"`
+	InputCost            float64 `json:"inputCost"`
+	OutputCost           float64 `json:"outputCost"`
+	CacheReadCost        float64 `json:"cacheReadCost"`
+	CacheWriteCost       float64 `json:"cacheWriteCost"`
+	ReasoningCost        float64 `json:"reasoningCost"`
+	TotalCost            float64 `json:"totalCost"`
 }
 
 type ObservedModel struct {
@@ -87,6 +96,14 @@ type ObservedModel struct {
 
 func normalizePriceProvider(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func normalizeServiceTierName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == serviceTierPriority {
+		return serviceTierFast
+	}
+	return value
 }
 
 func normalizePriceRule(rule ModelPriceRule) ModelPriceRule {
@@ -112,9 +129,19 @@ func normalizePriceRule(rule ModelPriceRule) ModelPriceRule {
 	if len(rule.ServiceTiers) > 0 {
 		normalized := make(map[string]ModelPriceRate, len(rule.ServiceTiers))
 		for key, rate := range rule.ServiceTiers {
-			if value := strings.ToLower(strings.TrimSpace(key)); value != "" {
-				normalized[value] = rate
+			rawName := strings.ToLower(strings.TrimSpace(key))
+			name := normalizeServiceTierName(rawName)
+			if name == "" {
+				continue
 			}
+			// Legacy priority entries remain readable, but an explicit canonical
+			// fast entry always wins when both are present in old persisted JSON.
+			if rawName == serviceTierPriority {
+				if _, exists := normalized[serviceTierFast]; exists {
+					continue
+				}
+			}
+			normalized[name] = rate
 		}
 		rule.ServiceTiers = normalized
 	}
@@ -131,7 +158,7 @@ func validateModelPriceRate(rate ModelPriceRate) error {
 func validateModelPriceServiceTierNames(serviceTiers map[string]ModelPriceRate) error {
 	seen := make(map[string]struct{}, len(serviceTiers))
 	for key := range serviceTiers {
-		name := strings.ToLower(strings.TrimSpace(key))
+		name := normalizeServiceTierName(key)
 		if name == "" {
 			return fmt.Errorf("service tier name is required")
 		}
@@ -175,33 +202,56 @@ func priceRuleLookupKey(_ string, model string) string {
 	return strings.TrimSpace(model)
 }
 
-func selectModelPriceRate(rule ModelPriceRule, event internalusage.Event) (ModelPriceRate, int64, string) {
-	rate := rule.Base
+type modelPriceSelection struct {
+	Rate                 ModelPriceRate
+	ContextTierSize      int64
+	PricingMode          string
+	RequestedServiceTier string
+	EffectiveServiceTier string
+	MatchedServiceTier   string
+	ServiceTierSource    string
+}
+
+func selectModelPriceRate(rule ModelPriceRule, event internalusage.Event) modelPriceSelection {
+	selection := modelPriceSelection{
+		Rate:                 rule.Base,
+		PricingMode:          modelPriceModeBase,
+		RequestedServiceTier: strings.ToLower(strings.TrimSpace(event.ServiceTier)),
+		EffectiveServiceTier: strings.ToLower(strings.TrimSpace(event.EffectiveServiceTier)),
+		ServiceTierSource:    serviceTierSourceNone,
+	}
 	contextTokens := event.InputTokens
 	if contextTokens <= 0 {
 		contextTokens = event.CacheReadTokens + event.CacheWriteTokens
 	}
-	selectedSize := int64(0)
-	pricingMode := modelPriceModeBase
 	for _, tier := range rule.Tiers {
 		if contextTokens >= tier.ContextSize {
-			rate = tier.ModelPriceRate
-			selectedSize = tier.ContextSize
-			pricingMode = modelPriceModeContext
+			selection.Rate = tier.ModelPriceRate
+			selection.ContextTierSize = tier.ContextSize
+			selection.PricingMode = modelPriceModeContext
 		}
 	}
-	if serviceTier := strings.ToLower(strings.TrimSpace(event.ServiceTier)); serviceTier != "" {
+	billingTier := selection.EffectiveServiceTier
+	if billingTier != "" {
+		selection.ServiceTierSource = serviceTierSourceResponse
+	} else if selection.RequestedServiceTier != "" {
+		billingTier = selection.RequestedServiceTier
+		selection.ServiceTierSource = serviceTierSourceRequest
+	}
+	if serviceTier := normalizeServiceTierName(billingTier); serviceTier != "" {
 		if override, ok := rule.ServiceTiers[serviceTier]; ok {
-			rate = override
-			selectedSize = 0
-			pricingMode = modelPriceModeServiceTier
+			selection.Rate = override
+			selection.ContextTierSize = 0
+			selection.PricingMode = modelPriceModeServiceTier
+			selection.MatchedServiceTier = serviceTier
 		}
 	}
-	return rate, selectedSize, pricingMode
+	return selection
 }
 
 func evaluateEventCost(event internalusage.Event, rule ModelPriceRule) (float64, ModelPriceCostBreakdown) {
-	rate, contextTierSize, pricingMode := selectModelPriceRate(rule, event)
+	selection := selectModelPriceRate(rule, event)
+	rate := selection.Rate
 	cacheReadTokens := event.CacheReadTokens
 	if cacheReadTokens <= 0 {
 		cacheReadTokens = maxPricingInt64(event.CachedTokens, event.CacheTokens-event.CacheWriteTokens)
@@ -223,8 +273,11 @@ func evaluateEventCost(event internalusage.Event, rule ModelPriceRule) (float64,
 	const unit = 1_000_000.0
 	breakdown := ModelPriceCostBreakdown{
 		RuleID: rule.ID, RuleVersion: rule.Version, Provider: normalizePriceProvider(event.Provider), Model: rule.Model,
-		Source: rule.Source, ContextTokens: event.InputTokens, ContextTierSize: contextTierSize,
-		ServiceTier: event.ServiceTier, PricingMode: pricingMode, InputTokens: uncachedInputTokens, OutputTokens: outputTokens,
+		Source: rule.Source, ContextTokens: event.InputTokens, ContextTierSize: selection.ContextTierSize,
+		ServiceTier: event.ServiceTier, RequestedServiceTier: selection.RequestedServiceTier,
+		EffectiveServiceTier: selection.EffectiveServiceTier, MatchedServiceTier: selection.MatchedServiceTier,
+		ServiceTierSource: selection.ServiceTierSource, PricingMode: selection.PricingMode,
+		InputTokens: uncachedInputTokens, OutputTokens: outputTokens,
 		CacheReadTokens: cacheReadTokens, CacheWriteTokens: cacheWriteTokens, ReasoningTokens: reasoningTokens,
 		InputCost:      float64(uncachedInputTokens) / unit * rate.Input,
 		OutputCost:     float64(outputTokens) / unit * rate.Output,
@@ -492,7 +545,7 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 		return 0, err
 	}
 	query := `select id, provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens,
-		cache_read_tokens, cache_write_tokens, uncached_input_tokens, accounting_quality, service_tier from usage_events`
+		cache_read_tokens, cache_write_tokens, uncached_input_tokens, accounting_quality, service_tier, effective_service_tier from usage_events`
 	if onlyUnpriced {
 		query += ` where estimated_cost is null`
 	}
@@ -507,16 +560,17 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 	items := make([]pricedEvent, 0)
 	for rows.Next() {
 		var item pricedEvent
-		var provider, serviceTier, accountingQuality sql.NullString
+		var provider, serviceTier, effectiveServiceTier, accountingQuality sql.NullString
 		if err := rows.Scan(&item.id, &provider, &item.event.Model, &item.event.InputTokens, &item.event.OutputTokens,
 			&item.event.ReasoningTokens, &item.event.CachedTokens, &item.event.CacheTokens, &item.event.CacheReadTokens,
-			&item.event.CacheWriteTokens, &item.event.UncachedInputTokens, &accountingQuality, &serviceTier); err != nil {
+			&item.event.CacheWriteTokens, &item.event.UncachedInputTokens, &accountingQuality, &serviceTier, &effectiveServiceTier); err != nil {
 			_ = rows.Close()
 			return 0, err
 		}
 		item.event.Provider = provider.String
 		item.event.AccountingQuality = accountingQuality.String
 		item.event.ServiceTier = serviceTier.String
+		item.event.EffectiveServiceTier = effectiveServiceTier.String
 		items = append(items, item)
 	}
 	if err := rows.Close(); err != nil {

@@ -14,56 +14,57 @@ import (
 )
 
 type Event struct {
-	ID                  int64                    `json:"id,omitempty"`
-	RequestID           string                   `json:"request_id,omitempty"`
-	EventHash           string                   `json:"event_hash"`
-	TimestampMS         int64                    `json:"timestamp_ms"`
-	Timestamp           string                   `json:"timestamp"`
-	Provider            string                   `json:"provider,omitempty"`
-	ExecutorType        string                   `json:"executor_type,omitempty"`
-	Model               string                   `json:"model"`
-	Alias               string                   `json:"alias,omitempty"`
-	Endpoint            string                   `json:"endpoint,omitempty"`
-	Method              string                   `json:"method,omitempty"`
-	Path                string                   `json:"path,omitempty"`
-	AuthType            string                   `json:"auth_type,omitempty"`
-	AuthIndex           string                   `json:"auth_index,omitempty"`
-	Source              string                   `json:"source,omitempty"`
-	SourceHash          string                   `json:"source_hash,omitempty"`
-	APIKeyHash          string                   `json:"api_key_hash,omitempty"`
-	ClientIP            string                   `json:"client_ip,omitempty"`
-	XForwardedFor       string                   `json:"x_forwarded_for,omitempty"`
-	UserAgent           string                   `json:"user_agent,omitempty"`
-	InputTokens         int64                    `json:"input_tokens"`
-	OutputTokens        int64                    `json:"output_tokens"`
-	ReasoningTokens     int64                    `json:"reasoning_tokens"`
-	CachedTokens        int64                    `json:"cached_tokens"`
-	CacheTokens         int64                    `json:"cache_tokens"`
-	CacheReadTokens     int64                    `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens    int64                    `json:"cache_write_tokens,omitempty"`
-	TotalTokens         int64                    `json:"total_tokens"`
-	AccountingVersion   int                      `json:"accounting_version,omitempty"`
-	AccountingQuality   string                   `json:"accounting_quality,omitempty"`
-	UncachedInputTokens int64                    `json:"uncached_input_tokens,omitempty"`
-	UnclassifiedTokens  int64                    `json:"unclassified_tokens,omitempty"`
-	TokenBreakdown      coreusage.TokenBreakdown `json:"token_breakdown"`
-	LatencyMS           *int64                   `json:"latency_ms,omitempty"`
-	TTFTMS              *int64                   `json:"ttft_ms,omitempty"`
-	StatusCode          *int                     `json:"status_code,omitempty"`
-	ErrorCode           string                   `json:"error_code,omitempty"`
-	ErrorMessage        string                   `json:"error_message,omitempty"`
-	UpstreamRequestID   string                   `json:"upstream_request_id,omitempty"`
-	RetryAfter          string                   `json:"retry_after,omitempty"`
-	AttemptIndex        *int64                   `json:"attempt_index,omitempty"`
-	Stream              bool                     `json:"stream"`
-	ReasoningEffort     string                   `json:"reasoning_effort,omitempty"`
-	ServiceTier         string                   `json:"service_tier,omitempty"`
-	EstimatedCost       *float64                 `json:"estimated_cost,omitempty"`
-	PriceRuleID         int64                    `json:"price_rule_id,omitempty"`
-	CostBreakdownJSON   string                   `json:"cost_breakdown_json,omitempty"`
-	Failed              bool                     `json:"failed"`
-	RawJSON             string                   `json:"raw_json,omitempty"`
-	CreatedAtMS         int64                    `json:"created_at_ms"`
+	ID                   int64                    `json:"id,omitempty"`
+	RequestID            string                   `json:"request_id,omitempty"`
+	EventHash            string                   `json:"event_hash"`
+	TimestampMS          int64                    `json:"timestamp_ms"`
+	Timestamp            string                   `json:"timestamp"`
+	Provider             string                   `json:"provider,omitempty"`
+	ExecutorType         string                   `json:"executor_type,omitempty"`
+	Model                string                   `json:"model"`
+	Alias                string                   `json:"alias,omitempty"`
+	Endpoint             string                   `json:"endpoint,omitempty"`
+	Method               string                   `json:"method,omitempty"`
+	Path                 string                   `json:"path,omitempty"`
+	AuthType             string                   `json:"auth_type,omitempty"`
+	AuthIndex            string                   `json:"auth_index,omitempty"`
+	Source               string                   `json:"source,omitempty"`
+	SourceHash           string                   `json:"source_hash,omitempty"`
+	APIKeyHash           string                   `json:"api_key_hash,omitempty"`
+	ClientIP             string                   `json:"client_ip,omitempty"`
+	XForwardedFor        string                   `json:"x_forwarded_for,omitempty"`
+	UserAgent            string                   `json:"user_agent,omitempty"`
+	InputTokens          int64                    `json:"input_tokens"`
+	OutputTokens         int64                    `json:"output_tokens"`
+	ReasoningTokens      int64                    `json:"reasoning_tokens"`
+	CachedTokens         int64                    `json:"cached_tokens"`
+	CacheTokens          int64                    `json:"cache_tokens"`
+	CacheReadTokens      int64                    `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens     int64                    `json:"cache_write_tokens,omitempty"`
+	TotalTokens          int64                    `json:"total_tokens"`
+	AccountingVersion    int                      `json:"accounting_version,omitempty"`
+	AccountingQuality    string                   `json:"accounting_quality,omitempty"`
+	UncachedInputTokens  int64                    `json:"uncached_input_tokens,omitempty"`
+	UnclassifiedTokens   int64                    `json:"unclassified_tokens,omitempty"`
+	TokenBreakdown       coreusage.TokenBreakdown `json:"token_breakdown"`
+	LatencyMS            *int64                   `json:"latency_ms,omitempty"`
+	TTFTMS               *int64                   `json:"ttft_ms,omitempty"`
+	StatusCode           *int                     `json:"status_code,omitempty"`
+	ErrorCode            string                   `json:"error_code,omitempty"`
+	ErrorMessage         string                   `json:"error_message,omitempty"`
+	UpstreamRequestID    string                   `json:"upstream_request_id,omitempty"`
+	RetryAfter           string                   `json:"retry_after,omitempty"`
+	AttemptIndex         *int64                   `json:"attempt_index,omitempty"`
+	Stream               bool                     `json:"stream"`
+	ReasoningEffort      string                   `json:"reasoning_effort,omitempty"`
+	ServiceTier          string                   `json:"service_tier,omitempty"`
+	EffectiveServiceTier string                   `json:"effective_service_tier,omitempty"`
+	EstimatedCost        *float64                 `json:"estimated_cost,omitempty"`
+	PriceRuleID          int64                    `json:"price_rule_id,omitempty"`
+	CostBreakdownJSON    string                   `json:"cost_breakdown_json,omitempty"`
+	Failed               bool                     `json:"failed"`
+	RawJSON              string                   `json:"raw_json,omitempty"`
+	CreatedAtMS          int64                    `json:"created_at_ms"`
 }
 
 type Tokens struct {
@@ -79,38 +80,39 @@ type Tokens struct {
 }
 
 type Detail struct {
-	ID                int64                    `json:"id,omitempty"`
-	RequestID         string                   `json:"request_id,omitempty"`
-	Timestamp         string                   `json:"timestamp"`
-	Source            string                   `json:"source"`
-	AuthIndex         string                   `json:"auth_index,omitempty"`
-	APIKeyHash        string                   `json:"api_key_hash,omitempty"`
-	ClientIP          string                   `json:"client_ip,omitempty"`
-	XForwardedFor     string                   `json:"x_forwarded_for,omitempty"`
-	UserAgent         string                   `json:"user_agent,omitempty"`
-	Provider          string                   `json:"provider,omitempty"`
-	ExecutorType      string                   `json:"executor_type,omitempty"`
-	Alias             string                   `json:"alias,omitempty"`
-	AuthType          string                   `json:"auth_type,omitempty"`
-	LatencyMS         *int64                   `json:"latency_ms,omitempty"`
-	TTFTMS            *int64                   `json:"ttft_ms,omitempty"`
-	StatusCode        *int                     `json:"status_code,omitempty"`
-	ErrorCode         string                   `json:"error_code,omitempty"`
-	ErrorMessage      string                   `json:"error_message,omitempty"`
-	UpstreamRequestID string                   `json:"upstream_request_id,omitempty"`
-	RetryAfter        string                   `json:"retry_after,omitempty"`
-	AttemptIndex      *int64                   `json:"attempt_index,omitempty"`
-	Stream            bool                     `json:"stream"`
-	ReasoningEffort   string                   `json:"reasoning_effort,omitempty"`
-	ServiceTier       string                   `json:"service_tier,omitempty"`
-	EstimatedCost     *float64                 `json:"estimated_cost,omitempty"`
-	PriceRuleID       int64                    `json:"price_rule_id,omitempty"`
-	CostBreakdown     json.RawMessage          `json:"cost_breakdown,omitempty"`
-	AccountingVersion int                      `json:"accounting_version,omitempty"`
-	AccountingQuality string                   `json:"accounting_quality,omitempty"`
-	TokenBreakdown    coreusage.TokenBreakdown `json:"token_breakdown"`
-	Tokens            Tokens                   `json:"tokens"`
-	Failed            bool                     `json:"failed"`
+	ID                   int64                    `json:"id,omitempty"`
+	RequestID            string                   `json:"request_id,omitempty"`
+	Timestamp            string                   `json:"timestamp"`
+	Source               string                   `json:"source"`
+	AuthIndex            string                   `json:"auth_index,omitempty"`
+	APIKeyHash           string                   `json:"api_key_hash,omitempty"`
+	ClientIP             string                   `json:"client_ip,omitempty"`
+	XForwardedFor        string                   `json:"x_forwarded_for,omitempty"`
+	UserAgent            string                   `json:"user_agent,omitempty"`
+	Provider             string                   `json:"provider,omitempty"`
+	ExecutorType         string                   `json:"executor_type,omitempty"`
+	Alias                string                   `json:"alias,omitempty"`
+	AuthType             string                   `json:"auth_type,omitempty"`
+	LatencyMS            *int64                   `json:"latency_ms,omitempty"`
+	TTFTMS               *int64                   `json:"ttft_ms,omitempty"`
+	StatusCode           *int                     `json:"status_code,omitempty"`
+	ErrorCode            string                   `json:"error_code,omitempty"`
+	ErrorMessage         string                   `json:"error_message,omitempty"`
+	UpstreamRequestID    string                   `json:"upstream_request_id,omitempty"`
+	RetryAfter           string                   `json:"retry_after,omitempty"`
+	AttemptIndex         *int64                   `json:"attempt_index,omitempty"`
+	Stream               bool                     `json:"stream"`
+	ReasoningEffort      string                   `json:"reasoning_effort,omitempty"`
+	ServiceTier          string                   `json:"service_tier,omitempty"`
+	EffectiveServiceTier string                   `json:"effective_service_tier,omitempty"`
+	EstimatedCost        *float64                 `json:"estimated_cost,omitempty"`
+	PriceRuleID          int64                    `json:"price_rule_id,omitempty"`
+	CostBreakdown        json.RawMessage          `json:"cost_breakdown,omitempty"`
+	AccountingVersion    int                      `json:"accounting_version,omitempty"`
+	AccountingQuality    string                   `json:"accounting_quality,omitempty"`
+	TokenBreakdown       coreusage.TokenBreakdown `json:"token_breakdown"`
+	Tokens               Tokens                   `json:"tokens"`
+	Failed               bool                     `json:"failed"`
 }
 
 type ModelAggregate struct {
@@ -225,47 +227,48 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	}
 
 	event := NormalizeEventAccounting(Event{
-		RequestID:         readString(record, "request_id"),
-		TimestampMS:       timestampMS,
-		Timestamp:         timestamp,
-		Provider:          readString(record, "provider"),
-		ExecutorType:      readString(record, "executor_type"),
-		Model:             readString(record, "model"),
-		Alias:             readString(record, "alias"),
-		Endpoint:          endpoint,
-		Method:            method,
-		Path:              path,
-		AuthType:          readString(record, "auth_type"),
-		AuthIndex:         authIndex,
-		Source:            source,
-		SourceHash:        sourceHash,
-		APIKeyHash:        apiKeyHash,
-		ClientIP:          readString(record, "client_ip", "clientIp"),
-		XForwardedFor:     readString(record, "x_forwarded_for", "xForwardedFor"),
-		UserAgent:         readString(record, "user_agent", "userAgent"),
-		InputTokens:       inputTokens,
-		OutputTokens:      outputTokens,
-		ReasoningTokens:   reasoningTokens,
-		CachedTokens:      cachedTokens,
-		CacheTokens:       cacheTokens,
-		CacheReadTokens:   cacheReadTokens,
-		CacheWriteTokens:  cacheWriteTokens,
-		TotalTokens:       totalTokens,
-		TokenBreakdown:    readTokenBreakdown(record),
-		LatencyMS:         latencyMS,
-		TTFTMS:            ttftMS,
-		StatusCode:        statusCode,
-		ErrorCode:         errorCode,
-		ErrorMessage:      errorMessage,
-		UpstreamRequestID: upstreamRequestID,
-		RetryAfter:        retryAfter,
-		AttemptIndex:      attemptIndex,
-		Stream:            readBool(record, "stream"),
-		ReasoningEffort:   readString(record, "reasoning_effort"),
-		ServiceTier:       readString(record, "service_tier"),
-		Failed:            failed,
-		RawJSON:           rawJSON,
-		CreatedAtMS:       time.Now().UnixMilli(),
+		RequestID:            readString(record, "request_id"),
+		TimestampMS:          timestampMS,
+		Timestamp:            timestamp,
+		Provider:             readString(record, "provider"),
+		ExecutorType:         readString(record, "executor_type"),
+		Model:                readString(record, "model"),
+		Alias:                readString(record, "alias"),
+		Endpoint:             endpoint,
+		Method:               method,
+		Path:                 path,
+		AuthType:             readString(record, "auth_type"),
+		AuthIndex:            authIndex,
+		Source:               source,
+		SourceHash:           sourceHash,
+		APIKeyHash:           apiKeyHash,
+		ClientIP:             readString(record, "client_ip", "clientIp"),
+		XForwardedFor:        readString(record, "x_forwarded_for", "xForwardedFor"),
+		UserAgent:            readString(record, "user_agent", "userAgent"),
+		InputTokens:          inputTokens,
+		OutputTokens:         outputTokens,
+		ReasoningTokens:      reasoningTokens,
+		CachedTokens:         cachedTokens,
+		CacheTokens:          cacheTokens,
+		CacheReadTokens:      cacheReadTokens,
+		CacheWriteTokens:     cacheWriteTokens,
+		TotalTokens:          totalTokens,
+		TokenBreakdown:       readTokenBreakdown(record),
+		LatencyMS:            latencyMS,
+		TTFTMS:               ttftMS,
+		StatusCode:           statusCode,
+		ErrorCode:            errorCode,
+		ErrorMessage:         errorMessage,
+		UpstreamRequestID:    upstreamRequestID,
+		RetryAfter:           retryAfter,
+		AttemptIndex:         attemptIndex,
+		Stream:               readBool(record, "stream"),
+		ReasoningEffort:      readString(record, "reasoning_effort"),
+		ServiceTier:          readString(record, "service_tier", "request_service_tier"),
+		EffectiveServiceTier: readString(record, "effective_service_tier", "response_service_tier"),
+		Failed:               failed,
+		RawJSON:              rawJSON,
+		CreatedAtMS:          time.Now().UnixMilli(),
 	})
 	if exported {
 		if value, ok := readOptionalFloat(record, "estimated_cost"); ok {
@@ -321,37 +324,38 @@ func BuildPayload(events []Event) Payload {
 			costBreakdown = json.RawMessage(event.CostBreakdownJSON)
 		}
 		modelEntry.Details = append(modelEntry.Details, Detail{
-			ID:                event.ID,
-			RequestID:         event.RequestID,
-			Timestamp:         event.Timestamp,
-			Source:            event.Source,
-			AuthIndex:         event.AuthIndex,
-			APIKeyHash:        event.APIKeyHash,
-			ClientIP:          event.ClientIP,
-			XForwardedFor:     event.XForwardedFor,
-			UserAgent:         event.UserAgent,
-			Provider:          event.Provider,
-			ExecutorType:      event.ExecutorType,
-			Alias:             event.Alias,
-			AuthType:          event.AuthType,
-			LatencyMS:         event.LatencyMS,
-			TTFTMS:            event.TTFTMS,
-			StatusCode:        event.StatusCode,
-			ErrorCode:         event.ErrorCode,
-			ErrorMessage:      event.ErrorMessage,
-			UpstreamRequestID: event.UpstreamRequestID,
-			RetryAfter:        event.RetryAfter,
-			AttemptIndex:      event.AttemptIndex,
-			Stream:            event.Stream,
-			ReasoningEffort:   event.ReasoningEffort,
-			ServiceTier:       event.ServiceTier,
-			EstimatedCost:     event.EstimatedCost,
-			PriceRuleID:       event.PriceRuleID,
-			CostBreakdown:     costBreakdown,
-			AccountingVersion: event.AccountingVersion,
-			AccountingQuality: event.AccountingQuality,
-			TokenBreakdown:    event.TokenBreakdown,
-			Failed:            event.Failed,
+			ID:                   event.ID,
+			RequestID:            event.RequestID,
+			Timestamp:            event.Timestamp,
+			Source:               event.Source,
+			AuthIndex:            event.AuthIndex,
+			APIKeyHash:           event.APIKeyHash,
+			ClientIP:             event.ClientIP,
+			XForwardedFor:        event.XForwardedFor,
+			UserAgent:            event.UserAgent,
+			Provider:             event.Provider,
+			ExecutorType:         event.ExecutorType,
+			Alias:                event.Alias,
+			AuthType:             event.AuthType,
+			LatencyMS:            event.LatencyMS,
+			TTFTMS:               event.TTFTMS,
+			StatusCode:           event.StatusCode,
+			ErrorCode:            event.ErrorCode,
+			ErrorMessage:         event.ErrorMessage,
+			UpstreamRequestID:    event.UpstreamRequestID,
+			RetryAfter:           event.RetryAfter,
+			AttemptIndex:         event.AttemptIndex,
+			Stream:               event.Stream,
+			ReasoningEffort:      event.ReasoningEffort,
+			ServiceTier:          event.ServiceTier,
+			EffectiveServiceTier: event.EffectiveServiceTier,
+			EstimatedCost:        event.EstimatedCost,
+			PriceRuleID:          event.PriceRuleID,
+			CostBreakdown:        costBreakdown,
+			AccountingVersion:    event.AccountingVersion,
+			AccountingQuality:    event.AccountingQuality,
+			TokenBreakdown:       event.TokenBreakdown,
+			Failed:               event.Failed,
 			Tokens: Tokens{
 				InputTokens:      event.InputTokens,
 				OutputTokens:     event.OutputTokens,
@@ -752,6 +756,8 @@ func buildEventHash(event Event) string {
 		event.AuthIndex,
 		event.SourceHash,
 		event.APIKeyHash,
+		event.ServiceTier,
+		event.EffectiveServiceTier,
 		strconv.FormatInt(event.InputTokens, 10),
 		strconv.FormatInt(event.OutputTokens, 10),
 		strconv.FormatInt(event.ReasoningTokens, 10),

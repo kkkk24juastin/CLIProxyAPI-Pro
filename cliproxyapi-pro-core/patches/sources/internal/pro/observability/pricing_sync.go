@@ -158,7 +158,7 @@ func modelPriceRuleFromModelsDev(observed ObservedModel, providerID, modelID str
 			continue
 		}
 		serviceTier, _ := mode.Provider.Body["service_tier"].(string)
-		serviceTier = strings.ToLower(strings.TrimSpace(serviceTier))
+		serviceTier = normalizeServiceTierName(serviceTier)
 		if serviceTier == "" {
 			continue
 		}

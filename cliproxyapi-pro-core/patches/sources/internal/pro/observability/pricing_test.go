@@ -20,7 +20,7 @@ func testGPT56PriceRule() ModelPriceRule {
 			ModelPriceRate: ModelPriceRate{Input: 10, Output: 45, CacheRead: 1, CacheWrite: 12.5},
 		}},
 		ServiceTiers: map[string]ModelPriceRate{
-			"priority": {Input: 10, Output: 60, CacheRead: 1, CacheWrite: 12.5},
+			"fast": {Input: 10, Output: 60, CacheRead: 1, CacheWrite: 12.5},
 		},
 	}
 }
@@ -53,7 +53,8 @@ func TestEvaluateEventCostUsesContextTierPerRequest(t *testing.T) {
 	assertCostClose(t, belowCost, float64(271999)/1_000_000*5+float64(1000)/1_000_000*30)
 	assertCostClose(t, boundaryCost, float64(272000)/1_000_000*10+float64(1000)/1_000_000*45)
 	if belowBreakdown.ContextTierSize != 0 || belowBreakdown.PricingMode != modelPriceModeBase ||
-		boundaryBreakdown.ContextTierSize != 272000 || boundaryBreakdown.PricingMode != modelPriceModeContext {
+		belowBreakdown.ServiceTierSource != serviceTierSourceNone || boundaryBreakdown.ContextTierSize != 272000 ||
+		boundaryBreakdown.PricingMode != modelPriceModeContext || boundaryBreakdown.ServiceTierSource != serviceTierSourceNone {
 		t.Fatalf("tier sizes = %d/%d, want 0/272000", belowBreakdown.ContextTierSize, boundaryBreakdown.ContextTierSize)
 	}
 }
@@ -63,18 +64,31 @@ func TestEvaluateEventCostUsesServiceTierOverride(t *testing.T) {
 	event := internalusage.Event{InputTokens: 100000, OutputTokens: 1000, ServiceTier: "priority"}
 	cost, breakdown := evaluateEventCost(event, rule)
 	assertCostClose(t, cost, float64(100000)/1_000_000*10+float64(1000)/1_000_000*60)
-	if breakdown.ContextTierSize != 0 || breakdown.ServiceTier != "priority" || breakdown.PricingMode != modelPriceModeServiceTier {
-		t.Fatalf("breakdown = %+v, want priority override", breakdown)
+	if breakdown.ContextTierSize != 0 || breakdown.ServiceTier != "priority" || breakdown.MatchedServiceTier != "fast" ||
+		breakdown.ServiceTierSource != serviceTierSourceRequest || breakdown.PricingMode != modelPriceModeServiceTier {
+		t.Fatalf("breakdown = %+v, want legacy priority request fallback to fast override", breakdown)
 	}
 }
 
-func TestEvaluateEventCostNormalizesServiceTierAndOverridesContextTier(t *testing.T) {
+func TestEvaluateEventCostUsesEffectivePriorityForFastAndOverridesContextTier(t *testing.T) {
 	rule := testGPT56PriceRule()
-	event := internalusage.Event{InputTokens: 300000, OutputTokens: 1000, ServiceTier: " PRIORITY "}
+	event := internalusage.Event{InputTokens: 300000, OutputTokens: 1000, ServiceTier: " FAST ", EffectiveServiceTier: " PRIORITY "}
 	cost, breakdown := evaluateEventCost(event, rule)
 	assertCostClose(t, cost, float64(300000)/1_000_000*10+float64(1000)/1_000_000*60)
-	if breakdown.ContextTierSize != 0 || breakdown.PricingMode != modelPriceModeServiceTier {
-		t.Fatalf("breakdown = %+v, want normalized service-tier override", breakdown)
+	if breakdown.ContextTierSize != 0 || breakdown.RequestedServiceTier != "fast" || breakdown.EffectiveServiceTier != "priority" ||
+		breakdown.MatchedServiceTier != "fast" || breakdown.ServiceTierSource != serviceTierSourceResponse || breakdown.PricingMode != modelPriceModeServiceTier {
+		t.Fatalf("breakdown = %+v, want effective priority to match canonical fast override", breakdown)
+	}
+}
+
+func TestEvaluateEventCostEffectiveDefaultDowngradeUsesStandardPricing(t *testing.T) {
+	rule := testGPT56PriceRule()
+	event := internalusage.Event{InputTokens: 300000, OutputTokens: 1000, ServiceTier: "fast", EffectiveServiceTier: "default"}
+	cost, breakdown := evaluateEventCost(event, rule)
+	assertCostClose(t, cost, float64(300000)/1_000_000*10+float64(1000)/1_000_000*45)
+	if breakdown.ContextTierSize != 272000 || breakdown.PricingMode != modelPriceModeContext || breakdown.MatchedServiceTier != "" ||
+		breakdown.EffectiveServiceTier != "default" || breakdown.ServiceTierSource != serviceTierSourceResponse {
+		t.Fatalf("breakdown = %+v, want authoritative standard downgrade with context pricing", breakdown)
 	}
 }
 
@@ -108,18 +122,51 @@ func TestUpsertModelPriceRuleRejectsInvalidServiceTierNames(t *testing.T) {
 	if _, _, err := store.UpsertModelPriceRule(context.Background(), duplicate, true); err == nil {
 		t.Fatal("UpsertModelPriceRule() accepted duplicate normalized service tier names")
 	}
+
+	aliasDuplicate := testGPT56PriceRule()
+	aliasDuplicate.ServiceTiers = map[string]ModelPriceRate{"fast": rate, "priority": rate}
+	if _, _, err := store.UpsertModelPriceRule(context.Background(), aliasDuplicate, true); err == nil {
+		t.Fatal("UpsertModelPriceRule() accepted fast/priority alias duplicates")
+	}
 }
 
-func TestModelPriceRuleFromModelsDevIncludesServiceTierReasoningRates(t *testing.T) {
+func TestModelPriceRuleFromModelsDevCanonicalizesFastMode(t *testing.T) {
 	model := modelsDevModel{ID: "gpt-test", Cost: &modelsDevCost{Input: 1, Output: 2, Reasoning: 3}}
 	mode := modelsDevMode{Cost: &modelsDevCost{Input: 4, Output: 5, CacheRead: 0.4, CacheWrite: 0.5, Reasoning: 6}}
 	mode.Provider.Body = map[string]any{"service_tier": " Priority "}
-	model.Experimental.Modes = map[string]modelsDevMode{"priority": mode}
+	model.Experimental.Modes = map[string]modelsDevMode{"fast": mode}
 
 	rule := modelPriceRuleFromModelsDev(ObservedModel{Model: "gpt-test"}, "openai", "gpt-test", model, 1234)
-	priority, ok := rule.ServiceTiers["priority"]
-	if !ok || priority.Input != 4 || priority.Output != 5 || priority.Reasoning != 6 {
-		t.Fatalf("service tiers = %+v, want normalized priority reasoning rates", rule.ServiceTiers)
+	fast, ok := rule.ServiceTiers["fast"]
+	if !ok || fast.Input != 4 || fast.Output != 5 || fast.Reasoning != 6 {
+		t.Fatalf("service tiers = %+v, want canonical fast reasoning rates", rule.ServiceTiers)
+	}
+	if _, legacy := rule.ServiceTiers["priority"]; legacy {
+		t.Fatalf("service tiers = %+v, legacy priority key should not be synced", rule.ServiceTiers)
+	}
+}
+
+func TestModelPriceRuleFromModelsDevDoesNotTreatProviderFastModeAsServiceTier(t *testing.T) {
+	model := modelsDevModel{ID: "claude-test", Cost: &modelsDevCost{Input: 1, Output: 2}}
+	mode := modelsDevMode{Cost: &modelsDevCost{Input: 4, Output: 5}}
+	mode.Provider.Body = map[string]any{"speed": "fast"}
+	model.Experimental.Modes = map[string]modelsDevMode{"fast": mode}
+
+	rule := modelPriceRuleFromModelsDev(ObservedModel{Model: "claude-test"}, "anthropic", "claude-test", model, 1234)
+	if len(rule.ServiceTiers) != 0 {
+		t.Fatalf("service tiers = %+v, provider-specific fast mode must not become a service-tier override", rule.ServiceTiers)
+	}
+}
+
+func TestNormalizePriceRulePrefersCanonicalFastOverLegacyPriority(t *testing.T) {
+	legacyRate := ModelPriceRate{Input: 1, Output: 2}
+	fastRate := ModelPriceRate{Input: 3, Output: 4}
+	rule := normalizePriceRule(ModelPriceRule{ServiceTiers: map[string]ModelPriceRate{
+		"priority": legacyRate,
+		"fast":     fastRate,
+	}})
+	if len(rule.ServiceTiers) != 1 || rule.ServiceTiers["fast"] != fastRate {
+		t.Fatalf("service tiers = %+v, want canonical fast rate", rule.ServiceTiers)
 	}
 }
 

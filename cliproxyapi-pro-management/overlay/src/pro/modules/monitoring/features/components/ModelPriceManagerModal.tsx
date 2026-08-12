@@ -342,7 +342,7 @@ export function ModelPriceManagerModal({
                               <span className={styles.priceTierIndex}>{index + 1}</span>
                               <label>
                                 <span>{t('usage_stats.model_price_service_tier_name')}</span>
-                                <Input value={tier.name} onChange={(event) => handleServiceTierChange(index, 'name', event.target.value)} placeholder="priority" />
+                                <Input value={tier.name} onChange={(event) => handleServiceTierChange(index, 'name', event.target.value)} placeholder="fast" />
                               </label>
                               <label>
                                 <span>{t('usage_stats.model_price_input')}</span>

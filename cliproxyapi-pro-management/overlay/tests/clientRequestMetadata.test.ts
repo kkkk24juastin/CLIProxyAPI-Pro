@@ -75,7 +75,11 @@ describe('client request metadata', () => {
                   failed: false,
                   cost_breakdown: {
                     pricing_mode: 'service_tier',
-                    service_tier: 'priority',
+                    service_tier: 'fast',
+                    requested_service_tier: 'fast',
+                    effective_service_tier: 'priority',
+                    matched_service_tier: 'fast',
+                    service_tier_source: 'response',
                     total_cost: 0.01,
                   },
                 },
@@ -97,7 +101,14 @@ describe('client request metadata', () => {
       },
     });
 
-    expect(details[0].cost_breakdown).toMatchObject({ pricingMode: 'service_tier', serviceTier: 'priority' });
+    expect(details[0].cost_breakdown).toMatchObject({
+      pricingMode: 'service_tier',
+      serviceTier: 'fast',
+      requestedServiceTier: 'fast',
+      effectiveServiceTier: 'priority',
+      matchedServiceTier: 'fast',
+      serviceTierSource: 'response',
+    });
     expect(details[1].cost_breakdown).toMatchObject({ pricingMode: 'context', contextTierSize: 272000 });
   });
 

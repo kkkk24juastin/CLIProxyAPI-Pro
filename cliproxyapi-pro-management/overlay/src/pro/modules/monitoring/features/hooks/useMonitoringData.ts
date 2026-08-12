@@ -185,6 +185,7 @@ export type MonitoringEventRow = {
   stream: boolean;
   reasoningEffort: string;
   serviceTier: string;
+  effectiveServiceTier: string;
   costBreakdown: UsageCostBreakdown | null;
   inputTokens: number;
   outputTokens: number;
@@ -557,6 +558,7 @@ const buildEventRows = (
       stream: detail.stream === true,
       reasoningEffort: detail.reasoning_effort || '',
       serviceTier: detail.service_tier || '',
+      effectiveServiceTier: detail.effective_service_tier || '',
       costBreakdown: detail.cost_breakdown ?? null,
       inputTokens,
       outputTokens,
@@ -588,6 +590,8 @@ const buildEventRows = (
         detail.x_forwarded_for,
         detail.user_agent,
         detail.reasoning_effort,
+        detail.service_tier,
+        detail.effective_service_tier,
         authMeta?.planType,
         clientApiKeyIdentity.masked
       ),

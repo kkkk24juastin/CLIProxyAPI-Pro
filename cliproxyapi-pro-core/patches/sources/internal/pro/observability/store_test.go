@@ -24,33 +24,34 @@ func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Eve
 		status = 429
 	}
 	return internalusage.Event{
-		RequestID:         "request-" + string(rune('a'+index)),
-		EventHash:         "event-hash-" + string(rune('a'+index)),
-		TimestampMS:       timestamp.UnixMilli(),
-		Timestamp:         timestamp.Format(time.RFC3339Nano),
-		Provider:          "test",
-		ExecutorType:      "TestExecutor",
-		Model:             "model",
-		Alias:             "client-model",
-		Endpoint:          "POST /v1/test",
-		Method:            "POST",
-		Path:              "/v1/test",
-		ClientIP:          "192.0.2.10",
-		XForwardedFor:     "203.0.113.5, 198.51.100.8",
-		UserAgent:         "test-client/1.0",
-		TotalTokens:       totalTokens,
-		InputTokens:       totalTokens / 2,
-		OutputTokens:      totalTokens - totalTokens/2,
-		LatencyMS:         &latency,
-		TTFTMS:            &ttft,
-		StatusCode:        &status,
-		UpstreamRequestID: "upstream-request",
-		RetryAfter:        "30",
-		Stream:            index%2 == 0,
-		ReasoningEffort:   "medium",
-		ServiceTier:       "default",
-		Failed:            failed,
-		CreatedAtMS:       timestamp.UnixMilli(),
+		RequestID:            "request-" + string(rune('a'+index)),
+		EventHash:            "event-hash-" + string(rune('a'+index)),
+		TimestampMS:          timestamp.UnixMilli(),
+		Timestamp:            timestamp.Format(time.RFC3339Nano),
+		Provider:             "test",
+		ExecutorType:         "TestExecutor",
+		Model:                "model",
+		Alias:                "client-model",
+		Endpoint:             "POST /v1/test",
+		Method:               "POST",
+		Path:                 "/v1/test",
+		ClientIP:             "192.0.2.10",
+		XForwardedFor:        "203.0.113.5, 198.51.100.8",
+		UserAgent:            "test-client/1.0",
+		TotalTokens:          totalTokens,
+		InputTokens:          totalTokens / 2,
+		OutputTokens:         totalTokens - totalTokens/2,
+		LatencyMS:            &latency,
+		TTFTMS:               &ttft,
+		StatusCode:           &status,
+		UpstreamRequestID:    "upstream-request",
+		RetryAfter:           "30",
+		Stream:               index%2 == 0,
+		ReasoningEffort:      "medium",
+		ServiceTier:          "fast",
+		EffectiveServiceTier: "default",
+		Failed:               failed,
+		CreatedAtMS:          timestamp.UnixMilli(),
 	}
 }
 
@@ -579,7 +580,7 @@ func TestUsageDiagnosticsRoundTripAndAggregates(t *testing.T) {
 	if got.TTFTMS == nil || *got.TTFTMS != 20 || got.StatusCode == nil || *got.StatusCode != 429 {
 		t.Fatalf("diagnostics = ttft:%v status:%v, want 20/429", got.TTFTMS, got.StatusCode)
 	}
-	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || !got.Stream || got.ReasoningEffort != "medium" || got.ServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
+	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || !got.Stream || got.ReasoningEffort != "medium" || got.ServiceTier != "fast" || got.EffectiveServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
 		t.Fatalf("diagnostic strings = %+v", got)
 	}
 	if got.ClientIP != "192.0.2.10" || got.XForwardedFor != "203.0.113.5, 198.51.100.8" || got.UserAgent != "test-client/1.0" {
