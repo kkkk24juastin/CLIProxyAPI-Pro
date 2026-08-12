@@ -126,6 +126,8 @@
 
   .priceTierIndex {
     position: absolute;
+    grid-column: auto;
+    grid-row: auto;
     top: 8px;
     left: 10px;
     width: 24px;
@@ -134,6 +136,8 @@
 
   .priceTierRemoveButton {
     position: absolute;
+    grid-column: auto;
+    grid-row: auto;
     top: 6px;
     right: 8px;
     width: 30px;

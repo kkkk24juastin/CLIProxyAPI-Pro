@@ -98,6 +98,9 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertNotIn('settingsSectionRefs', inspection)
         self.assertNotIn('.settingsSidebar', inspection_styles)
         self.assertNotIn('max-height: 620px', inspection_styles)
+        self.assertNotIn('settingsHeroPanel', inspection)
+        self.assertNotIn('settingsSummaryGrid', inspection + inspection_styles)
+        self.assertNotIn('account_inspection_settings_overview_', inspection)
 
     def test_monitoring_settings_sections_are_visually_distinct(self) -> None:
         settings = (
@@ -130,6 +133,10 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertNotIn('.priceRuleSidebar', styles + responsive)
         self.assertNotIn('.priceRuleEditorScroll', styles + responsive)
         self.assertNotIn('max-height: min(64vh, 560px)', styles)
+        self.assertIn('grid-row: 1 / span 2;', styles)
+        self.assertIn('grid-column: -2 / -1;', styles)
+        self.assertNotIn('.priceServiceTierRow {', styles)
+        self.assertGreaterEqual(responsive.count('grid-row: auto;'), 2)
 
     def test_settings_surfaces_freeze_all_actions_while_busy(self) -> None:
         surface = SURFACE.read_text()

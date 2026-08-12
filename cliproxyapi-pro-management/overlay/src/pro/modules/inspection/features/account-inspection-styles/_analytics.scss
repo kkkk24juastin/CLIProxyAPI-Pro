@@ -526,37 +526,6 @@
   min-width: 0;
 }
 
-.settingsSummaryGrid span {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  padding: 11px 12px;
-  border: 1px solid color-mix(in srgb, var(--inspect-line) 72%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--inspect-surface) 86%, var(--inspect-surface-muted));
-}
-
-.settingsSummaryGrid small {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--inspect-muted);
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settingsSummaryGrid strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--inspect-ink);
-  font-size: 13px;
-  font-weight: 760;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-}
-
 .settingsWorkbenchMain {
   display: grid;
   align-content: start;
@@ -564,7 +533,6 @@
   min-width: 0;
 }
 
-.settingsHeroPanel,
 .settingsWorkbenchSection {
   display: grid;
   gap: 16px;
@@ -575,37 +543,10 @@
   box-shadow: 0 10px 28px color-mix(in srgb, var(--inspect-shadow) 6%, transparent);
 }
 
-.settingsHeroPanel {
-  padding: 16px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--inspect-accent) 8%, var(--inspect-surface-elevated)), var(--inspect-surface-elevated) 52%),
-    var(--inspect-surface-elevated);
-}
-
-.settingsHeroPanel > div:first-child,
 .settingsWorkbenchHeader > div {
   display: grid;
   gap: 5px;
   min-width: 0;
-}
-
-.settingsHeroPanel > div:first-child strong {
-  color: var(--inspect-ink);
-  font-size: 17px;
-  font-weight: 780;
-  line-height: 1.35;
-}
-
-.settingsHeroPanel > div:first-child span {
-  color: var(--inspect-muted);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.settingsSummaryGrid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
 }
 
 .settingsWorkbenchSection {

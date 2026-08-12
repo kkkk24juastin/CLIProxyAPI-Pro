@@ -632,10 +632,6 @@
   background: color-mix(in srgb, var(--monitor-surface-muted) 64%, var(--monitor-surface));
 }
 
-.priceServiceTierRow {
-  grid-template-columns: 26px repeat(3, minmax(0, 1fr)) 32px;
-}
-
 .priceTierCompactRow label {
   display: grid;
   gap: 6px;
@@ -664,9 +660,11 @@
 
 .priceTierIndex {
   display: inline-flex;
+  grid-column: 1;
+  grid-row: 1 / span 2;
   align-items: center;
   justify-content: center;
-  align-self: end;
+  align-self: center;
   width: 24px;
   height: 36px;
   color: var(--monitor-muted);
@@ -676,9 +674,11 @@
 
 .priceTierRemoveButton {
   display: inline-flex;
+  grid-column: -2 / -1;
+  grid-row: 1 / span 2;
   align-items: center;
   justify-content: center;
-  align-self: end;
+  align-self: center;
   width: 32px;
   height: 36px;
   padding: 0;

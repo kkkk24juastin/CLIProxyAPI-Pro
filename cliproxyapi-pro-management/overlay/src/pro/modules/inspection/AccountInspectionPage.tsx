@@ -1397,9 +1397,6 @@ export function AccountInspectionPage() {
     setIsSettingsModalOpen(false);
   }, [setIsSettingsModalOpen]);
 
-  const draftInspectionScopeLabel = settingsDraft.targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
-    ? t('monitoring.filter_all_providers')
-    : resolveProviderDisplayLabel(settingsDraft.targetType);
   const draftScheduleStatusLabel = scheduleDraft.enabled
     ? formatInspectionInterval(Number(scheduleDraft.intervalMinutes) || 0, i18n.language)
     : settingDisabledLabel;
@@ -1407,21 +1404,6 @@ export function AccountInspectionPage() {
     ANTIGRAVITY_QUOTA_MODE_OPTIONS.find((option) => option.value === settingsDraft.antigravityQuotaMode)?.labelKey
       ?? 'monitoring.account_inspection_settings_antigravity_quota_mode_claude_gpt'
   );
-  const draftAccountInvalidActionLabel = t(
-    AUTO_ERROR_ACTION_OPTIONS.find((option) => option.value === settingsDraft.autoExecuteAccountInvalidAction)?.labelKey
-      ?? 'monitoring.account_inspection_settings_account_error_action_none'
-  );
-  const draftRequestErrorActionLabel = t(
-    AUTO_ERROR_ACTION_OPTIONS.find((option) => option.value === settingsDraft.autoExecuteRequestErrorAction)?.labelKey
-      ?? 'monitoring.account_inspection_settings_account_error_action_none'
-  );
-  const draftAutoPolicyLabel = [
-    settingsDraft.autoExecuteQuotaLimitDisable ? t('monitoring.account_inspection_settings_auto_execute_quota_limit_disable_label') : '',
-    settingsDraft.autoExecuteQuotaRecoveryEnable ? t('monitoring.account_inspection_settings_auto_execute_quota_recovery_enable_label') : '',
-    settingsDraft.autoExecuteAccountInvalidAction !== 'none' ? `${t('monitoring.account_inspection_account_invalid')}: ${draftAccountInvalidActionLabel}` : '',
-    settingsDraft.autoExecuteRequestErrorAction !== 'none' ? `${t('monitoring.account_inspection_account_request_error')}: ${draftRequestErrorActionLabel}` : '',
-  ].filter(Boolean).join(' · ') || settingDisabledLabel;
-
   return (
     <div className={styles.page}>
       <Card className={styles.heroCard}>
@@ -2174,31 +2156,6 @@ export function AccountInspectionPage() {
       >
         <div className={styles.settingsWorkbench}>
           <div className={styles.settingsWorkbenchMain}>
-            <section className={styles.settingsHeroPanel}>
-              <div>
-                <strong>{t('monitoring.account_inspection_settings_overview_title')}</strong>
-                <span>{t('monitoring.account_inspection_settings_overview_desc')}</span>
-              </div>
-              <div className={styles.settingsSummaryGrid}>
-                <span>
-                  <small>{t('monitoring.account_inspection_detection_scope')}</small>
-                  <strong>{draftInspectionScopeLabel}</strong>
-                </span>
-                <span>
-                  <small>{t('monitoring.account_inspection_scheduled_inspection_short')}</small>
-                  <strong>{draftScheduleStatusLabel}</strong>
-                </span>
-                <span>
-                  <small>{t('monitoring.account_inspection_settings_antigravity_quota_mode_label')}</small>
-                  <strong>{draftQuotaModeLabel}</strong>
-                </span>
-                <span>
-                  <small>{t('monitoring.account_inspection_settings_auto_section_title')}</small>
-                  <strong>{draftAutoPolicyLabel}</strong>
-                </span>
-              </div>
-            </section>
-
             <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>

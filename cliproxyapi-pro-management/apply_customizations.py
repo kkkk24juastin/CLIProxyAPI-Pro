@@ -683,10 +683,11 @@ def patch_sheet_lifecycle(target: Path) -> None:
         "    onCloseRef.current = onClose;\n"
         "    onAfterCloseRef.current = onAfterClose;\n"
         "  }, [onAfterClose, onClose]);\n\n"
+        "  const shouldRegisterOverlay = open || isVisible;\n\n"
         "  useEffect(() => {\n"
-        "    if (!open && !isVisible) return;\n"
+        "    if (!shouldRegisterOverlay) return;\n"
         "    return registerOverlayLayer(titleId);\n"
-        "  }, [isVisible, open, titleId]);\n\n"
+        "  }, [shouldRegisterOverlay, titleId]);\n\n"
         + focusable_marker,
         1,
     )
@@ -747,13 +748,25 @@ def patch_sheet_lifecycle(target: Path) -> None:
     text = text[:start] + replacement + text[end:]
     text = text.replace(
         "    const t = window.setTimeout(() => {\n",
+        "    if (!isVisible) return;\n"
         "    const t = window.setTimeout(() => {\n"
         "      if (!isTopOverlayLayer(titleId)) return;\n",
         1,
     )
     text = text.replace(
+        "      (el) => !el.hasAttribute('disabled') && el.tabIndex !== -1\n",
+        "      (el) => !el.matches(':disabled') && el.tabIndex !== -1\n",
+        1,
+    )
+    text = text.replace(
+        "      (first ?? closeBtnRef.current ?? sheetRef.current)?.focus({ preventScroll: true });\n",
+        "      const fallback = closeBtnRef.current?.disabled ? sheetRef.current : closeBtnRef.current;\n"
+        "      (first ?? fallback ?? sheetRef.current)?.focus({ preventScroll: true });\n",
+        1,
+    )
+    text = text.replace(
         "  }, [getFocusableElements, open]);\n",
-        "  }, [getFocusableElements, open, titleId]);\n",
+        "  }, [getFocusableElements, isVisible, open, titleId]);\n",
         1,
     )
     text = text.replace(
@@ -889,16 +902,12 @@ def patch_confirmation_queue(target: Path) -> None:
             "  showConfirmation: (options) => {\n"
             "    let accepted = false;\n"
             "    set((state) => {\n"
-            "      const dedupeKey = options.dedupeKey\n"
-            "        ?? (typeof options.message === 'string'\n"
-            "          ? `${options.title ?? ''}|${options.confirmText ?? ''}|${options.message}`\n"
-            "          : undefined);\n"
-            "      const currentKey = state.confirmation.options?.dedupeKey\n"
-            "        ?? (state.confirmation.options\n"
-            "          ? `${state.confirmation.options.title ?? ''}|${state.confirmation.options.confirmText ?? ''}|${typeof state.confirmation.options.message === 'string' ? state.confirmation.options.message : ''}`\n"
-            "          : '');\n"
-            "      if (dedupeKey && state.confirmation.id && currentKey === dedupeKey) return state;\n"
-            "      if (dedupeKey && state.confirmationQueue.some((item) => item.options.dedupeKey === dedupeKey)) return state;\n"
+            "      const dedupeKey = confirmationDedupeKey(options);\n"
+            "      const currentKey = state.confirmation.options\n"
+            "        ? confirmationDedupeKey(state.confirmation.options)\n"
+            "        : '';\n"
+            "      if (state.confirmation.id && currentKey === dedupeKey) return state;\n"
+            "      if (state.confirmationQueue.some((item) => confirmationDedupeKey(item.options) === dedupeKey)) return state;\n"
             "      accepted = true;\n"
             "      const item = { id: generateId(), options: { ...options, dedupeKey } };\n"
             "      if (state.confirmation.id) {\n"
@@ -929,6 +938,17 @@ def patch_confirmation_queue(target: Path) -> None:
             "  },\n\n"
         )
         text = text[:start] + actions + text[end:]
+        helper_marker = "interface NotificationState {\n"
+        helper = (
+            "const confirmationDedupeKey = (confirmationOptions: ConfirmationOptions) =>\n"
+            "  confirmationOptions.dedupeKey\n"
+            "    ?? `${confirmationOptions.title ?? ''}|${confirmationOptions.confirmText ?? ''}|${confirmationOptions.cancelText ?? ''}|${\n"
+            "      typeof confirmationOptions.message === 'string' ? confirmationOptions.message : 'react-node'\n"
+            "    }`;\n\n"
+        )
+        if text.count(helper_marker) != 1:
+            raise RuntimeError(f'Expected one pattern in {store_path}: confirmation helper marker')
+        text = text.replace(helper_marker, helper + helper_marker, 1)
         write(store_path, text)
 
     modal_path = target / 'src/components/common/ConfirmationModal.tsx'

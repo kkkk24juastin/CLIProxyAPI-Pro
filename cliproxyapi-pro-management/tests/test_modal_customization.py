@@ -154,12 +154,19 @@ export function Sheet({
   const [isClosing, setIsClosing] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
   const getFocusableElements = useCallback(() => {
-    return [];
+    if (!sheetRef.current) return [] as HTMLElement[];
+    return Array.from(sheetRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+      (el) => !el.hasAttribute('disabled') && el.tabIndex !== -1
+    );
   }, []);
   useEffect(() => {
     if (!open) return;
     const t = window.setTimeout(() => {
+      const first = getFocusableElements()[0];
+      (first ?? closeBtnRef.current ?? sheetRef.current)?.focus({ preventScroll: true });
     }, 0);
     return () => window.clearTimeout(t);
   }, [getFocusableElements, open]);
@@ -224,6 +231,7 @@ interface ConfirmationOptions {
   title?: string;
   message: ReactNode;
   confirmText?: string;
+  cancelText?: string;
   onConfirm: () => void | Promise<void>;
 }
 interface NotificationState {
@@ -383,6 +391,13 @@ class ModalCustomizationTest(unittest.TestCase):
             self.assertIn('}, [onAfterClose, onClose]);', patched)
             self.assertIn('onAfterCloseRef.current?.();', patched)
             self.assertIn('registerOverlayLayer(titleId)', patched)
+            self.assertIn('const shouldRegisterOverlay = open || isVisible;', patched)
+            self.assertIn('}, [shouldRegisterOverlay, titleId]);', patched)
+            self.assertNotIn('}, [isVisible, open, titleId]);', patched)
+            self.assertIn('if (!isVisible) return;', patched)
+            self.assertIn('}, [getFocusableElements, isVisible, open, titleId]);', patched)
+            self.assertIn("!el.matches(':disabled')", patched)
+            self.assertIn('const fallback = closeBtnRef.current?.disabled ? sheetRef.current : closeBtnRef.current;', patched)
             self.assertIn('if (!isTopOverlayLayer(titleId)) return;', patched)
             self.assertIn("window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0", patched)
             self.assertIn('closeRequestedRef.current = true;\n    if (confirmClose)', patched)
@@ -416,10 +431,13 @@ class ModalCustomizationTest(unittest.TestCase):
             self.assertIn('let accepted = false;', store)
             self.assertIn('accepted = true;', store)
             self.assertIn('return accepted;', store)
-            self.assertIn("typeof options.message === 'string'", store)
-            self.assertIn(': undefined);', store)
-            self.assertIn('if (dedupeKey && state.confirmation.id', store)
-            self.assertIn('if (dedupeKey && state.confirmationQueue.some', store)
+            self.assertIn("typeof confirmationOptions.message === 'string'", store)
+            self.assertIn(": 'react-node'", store)
+            self.assertLess(store.index('const confirmationDedupeKey'), store.index('interface NotificationState'))
+            self.assertIn('const dedupeKey = confirmationDedupeKey(options);', store)
+            self.assertIn('confirmationDedupeKey(state.confirmation.options)', store)
+            self.assertIn('if (state.confirmation.id && currentKey === dedupeKey)', store)
+            self.assertIn('confirmationDedupeKey(item.options) === dedupeKey', store)
             self.assertIn('const [next, ...remaining]', store)
             self.assertIn('advanceConfirmation:', store)
             self.assertIn('if (state.confirmation.id)', store)
