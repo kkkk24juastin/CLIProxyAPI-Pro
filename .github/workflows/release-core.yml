@@ -224,11 +224,26 @@ jobs:
           VERSION: v${{ needs.check-version.outputs.management_version }}-pro
         run: bash customizations-repo/scripts/validation/management.sh upstream-management
 
+      - name: Prepare validated management asset
+        working-directory: upstream-management
+        run: |
+          set -euo pipefail
+          mv dist/index.html dist/management.html
+          ls -lh dist/management.html
+
+      - name: Upload validated management asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: management-release-asset
+          path: upstream-management/dist/management.html
+          if-no-files-found: error
+          retention-days: 7
+
   build-docker-image:
     needs:
       - check-version
       - build-core-binaries
-      - build-management-html
+      - validate-management
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 
@@ -757,80 +772,12 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  build-management-html:
-    needs:
-      - check-version
-      - validate-repository
-      - validate-management
-    if: needs.check-version.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout customizations
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: customizations-repo
-          fetch-depth: 1
-
-      - name: Checkout management upstream release
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: router-for-me/Cli-Proxy-API-Management-Center
-          ref: ${{ needs.check-version.outputs.management_sha }}
-          path: upstream-management
-          fetch-depth: 1
-
-      - name: Apply Pro management customizations
-        run: bash customizations-repo/cliproxyapi-pro-management/apply.sh upstream-management
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: upstream-management/package.json
-
-      - name: Cache Bun dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('upstream-management/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install management dependencies
-        working-directory: upstream-management
-        run: bun install --frozen-lockfile
-
-      - name: Build management HTML
-        working-directory: upstream-management
-        env:
-          VERSION: v${{ needs.check-version.outputs.management_version }}-pro
-        run: bun run build
-
-      - name: Prepare management asset
-        working-directory: upstream-management
-        run: |
-          set -euo pipefail
-          cd dist
-          mv index.html management.html
-          ls -lh management.html
-
-      - name: Upload management asset
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: management-release-asset
-          path: upstream-management/dist/management.html
-          if-no-files-found: error
-          retention-days: 7
-
   publish-release:
     needs:
       - check-version
       - build-docker-image
       - assemble-core-assets
-      - build-management-html
+      - validate-management
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 

@@ -179,7 +179,7 @@ Overview:
 3. Checks out the latest upstream core and upstream management releases.
 4. Applies core patches and builds Pro binary assets: default desktop/Linux archives enable CGO for dynamic-library plugin support, while `_no-plugin` archives remain CGO-free portable builds.
 5. Reuses the built Linux assets to assemble and push the multi-architecture image through `Dockerfile.runtime`.
-6. Applies the management customization layer and builds the single-file `management.html`.
+6. Applies the management customization layer during the pre-release validation, runs tests, lint, type checking, and the single-file build, then reuses the validated `management.html` in later jobs.
 7. Creates or updates the current repository GitHub Release, then uploads binaries, `checksums.txt`, and `management.html`.
 8. Includes both core upstream and management upstream version mapping and release notes in the release notes.
 9. Runs WebDAV usage backup, Render deployment hooks, Telegram notification, and old workflow-run cleanup.
@@ -219,11 +219,10 @@ Overview:
 1. Checks the latest upstream `router-for-me/Cli-Proxy-API-Management-Center` release.
 2. Reads the management upstream version recorded in the current repository latest release notes.
 3. If management upstream is newer, or the latest release has no `management.html`, checks out the latest management upstream release.
-4. Applies the `cliproxyapi-pro-management` customization layer.
-5. Runs `bun install --frozen-lockfile` and `bun run build`; the Bun version comes from upstream `package.json`.
-6. Renames `dist/index.html` to `management.html`.
-7. Uploads and clobbers `management.html` on the current latest release.
-8. Updates the management version mapping and release notes section.
+4. Applies the `cliproxyapi-pro-management` customization layer and runs tests, lint, type checking, and the release-version build in the same validation job; the Bun version comes from upstream `package.json`.
+5. Renames the validated `dist/index.html` to `management.html` and stores it as a workflow artifact.
+6. Downloads that validated artifact in the release job and clobbers `management.html` on the current latest release without reinstalling dependencies or rebuilding it.
+7. Updates the management version mapping and release notes section.
 
 This keeps `remote-management.panel-github-repository=https://github.com/ssfun/CLIProxyAPI-Pro` compatible with GitHub `/releases/latest`, because the latest release always carries `management.html`.
 

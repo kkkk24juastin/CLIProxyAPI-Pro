@@ -185,7 +185,7 @@ v<core-version>-pro
 3. checkout upstream core 和 upstream management 最新 release。
 4. 应用 core patch 并构建 Pro 二进制资产：默认桌面/Linux 包启用 CGO 并支持动态库插件，`_no-plugin` 包保留 CGO-free 静态便携构建。
 5. 复用已构建的 Linux 资产，通过 `Dockerfile.runtime` 组装并推送多架构 Docker 镜像。
-6. 应用 management 定制层，构建单文件 `management.html`。
+6. 在 management 发布前校验中应用定制层并完成测试、lint、类型检查和单文件构建，后续步骤直接复用已验证的 `management.html`。
 7. 创建或更新当前仓库的 GitHub Release，并上传二进制、`checksums.txt` 和 `management.html`。
 8. release notes 同时包含 core upstream 和 management upstream 的版本映射与 release notes。
 9. 执行 WebDAV usage 备份、Render 部署触发、Telegram 通知和 workflow run 清理。
@@ -225,11 +225,10 @@ Workflow：
 1. 检查 upstream `router-for-me/Cli-Proxy-API-Management-Center` 最新 release。
 2. 读取当前仓库 latest release notes 中记录的 management upstream 版本。
 3. 如果 management upstream 更新，或 latest release 缺少 `management.html`，则 checkout management upstream 最新 release。
-4. 应用 `cliproxyapi-pro-management` 定制层。
-5. 执行 `bun install --frozen-lockfile` 和 `bun run build`；Bun 版本读取 upstream `package.json`。
-6. 将 `dist/index.html` 重命名为 `management.html`。
-7. 上传覆盖当前 latest release 中的 `management.html`。
-8. 更新 release notes 中的 management 版本映射和 release notes。
+4. 在同一校验 job 中应用 `cliproxyapi-pro-management` 定制层，执行测试、lint、类型检查和正式版本构建；Bun 版本读取 upstream `package.json`。
+5. 将校验通过的 `dist/index.html` 重命名为 `management.html` 并保存为 workflow artifact。
+6. 发布 job 直接下载该已验证 artifact，上传覆盖当前 latest release 中的 `management.html`，不再重复安装依赖和构建。
+7. 更新 release notes 中的 management 版本映射和 release notes。
 
 这样 `remote-management.panel-github-repository=https://github.com/ssfun/CLIProxyAPI-Pro` 仍然可以通过 GitHub `/releases/latest` 获取到最新 `management.html`。
 
