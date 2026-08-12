@@ -183,7 +183,7 @@ v<core-version>-pro
 1. 检查 upstream `router-for-me/CLIProxyAPI` 最新 release。
 2. 计算 Pro release tag，例如 `v<core-version>-pro`。
 3. checkout upstream core 和 upstream management 最新 release。
-4. 应用 core patch 并构建 Pro 二进制资产：默认桌面/Linux 包启用 CGO 并支持动态库插件，`_no-plugin` 包保留 CGO-free 静态便携构建。
+4. 固定 `router-for-me/models` 提交，并在发布前验证和正式构建中先写入同一份 `models.json`、再应用 core patch；验证通过后构建 Pro 二进制资产。默认桌面/Linux 包启用 CGO 并支持动态库插件，`_no-plugin` 包保留 CGO-free 静态便携构建。
 5. 复用已构建的 Linux 资产，通过 `Dockerfile.runtime` 组装并推送多架构 Docker 镜像。
 6. 在 management 发布前校验中应用定制层并完成测试、lint、类型检查和单文件构建，后续步骤直接复用已验证的 `management.html`。
 7. 创建或更新当前仓库的 GitHub Release，并上传二进制、`checksums.txt` 和 `management.html`。

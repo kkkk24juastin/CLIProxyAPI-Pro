@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$#" -ne 1 ]]; then
-  echo "Usage: $0 /path/to/CLIProxyAPI" >&2
+if [[ "$#" -lt 1 || "$#" -gt 2 ]]; then
+  echo "Usage: $0 /path/to/CLIProxyAPI [/path/to/models.json]" >&2
   exit 2
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 upstream_root="$(cd "$1" && pwd)"
+release_models_file=""
+if [[ "$#" -eq 2 ]]; then
+  release_models_file="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+fi
 
 if [[ ! -f "${upstream_root}/go.mod" || ! -d "${upstream_root}/cmd/server" ]]; then
   echo "Core upstream checkout is invalid: ${upstream_root}" >&2
@@ -18,6 +22,15 @@ fi
 if [[ -d "${upstream_root}/.git" ]] && [[ -n "$(git -C "${upstream_root}" status --porcelain)" ]]; then
   echo "Core upstream checkout must be clean before validation: ${upstream_root}" >&2
   exit 1
+fi
+
+if [[ -n "${release_models_file}" ]]; then
+  if [[ ! -f "${release_models_file}" ]]; then
+    echo "Release models data is invalid: ${release_models_file}" >&2
+    exit 1
+  fi
+  python3 -m json.tool "${release_models_file}" >/dev/null
+  cp "${release_models_file}" "${upstream_root}/internal/registry/models/models.json"
 fi
 
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-${TMPDIR:-/tmp}/cliproxyapi-pro-pycache}"

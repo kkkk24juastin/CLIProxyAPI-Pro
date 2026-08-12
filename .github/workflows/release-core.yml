@@ -170,6 +170,13 @@ jobs:
           ref: ${{ needs.check-version.outputs.core_sha }}
           path: upstream-core
 
+      - name: Checkout release models data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: router-for-me/models
+          ref: ${{ needs.check-version.outputs.models_sha }}
+          path: upstream-models
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -181,8 +188,15 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Validate Core customization
-        run: bash customizations-repo/scripts/validation/core.sh upstream-core
+      - name: Validate Core customization against release models data
+        env:
+          MODELS_SHA: ${{ needs.check-version.outputs.models_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream-models rev-parse HEAD)" = "${MODELS_SHA}"
+          bash customizations-repo/scripts/validation/core.sh \
+            upstream-core \
+            upstream-models/models.json
 
   validate-management:
     needs: check-version

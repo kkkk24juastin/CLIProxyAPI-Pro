@@ -177,7 +177,7 @@ Overview:
 1. Checks the latest upstream `router-for-me/CLIProxyAPI` release.
 2. Computes the Pro release tag, for example `v<core-version>-pro`.
 3. Checks out the latest upstream core and upstream management releases.
-4. Applies core patches and builds Pro binary assets: default desktop/Linux archives enable CGO for dynamic-library plugin support, while `_no-plugin` archives remain CGO-free portable builds.
+4. Pins a `router-for-me/models` commit, installs the same `models.json` before applying core patches in both pre-release validation and release builds, then builds the Pro binary assets. Default desktop/Linux archives enable CGO for dynamic-library plugin support, while `_no-plugin` archives remain CGO-free portable builds.
 5. Reuses the built Linux assets to assemble and push the multi-architecture image through `Dockerfile.runtime`.
 6. Applies the management customization layer during the pre-release validation, runs tests, lint, type checking, and the single-file build, then reuses the validated `management.html` in later jobs.
 7. Creates or updates the current repository GitHub Release, then uploads binaries, `checksums.txt`, and `management.html`.
