@@ -23,6 +23,7 @@ import {
 } from '@/pro/modules/routing/routingPolicy';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import configActionStyles from '@/pro/shared/FloatingActionBar.module.scss';
+import { ProFeatureHeader } from '@/pro/shared/ProFeatureHeader';
 import { ProDetailDialog } from '@/pro/shared/ProSurface';
 import { ProInformationDetails, type ProInformationDetailsTone } from '@/pro/shared/ProInformationDetails';
 import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
@@ -422,13 +423,6 @@ export function RoutingPolicyPage() {
     });
   };
 
-  const modeLabel = useMemo(() => {
-    if (!requestProtection?.enabled) return t('routing_policy.mode_disabled');
-    return requestProtection.mode === 'enforce'
-      ? t('routing_policy.mode_enforce')
-      : t('routing_policy.mode_observe');
-  }, [requestProtection, t]);
-
   const floatingActions = (
     <div className={configActionStyles.floatingActionContainer} ref={floatingActionsRef}>
       <div className={configActionStyles.floatingActionList}>
@@ -492,55 +486,17 @@ export function RoutingPolicyPage() {
 
   return (
     <div className={styles.container}>
-      <header className={styles.pageHeader}>
-        <div className={styles.headerIdentity}>
-          <span
-            className={`${styles.headerIcon} ${
-              requestProtection.enabled ? styles.headerIconActive : ''
-            }`}
-          >
-            <IconShield size={20} />
-          </span>
-          <div className={styles.headerCopy}>
-          <div className={styles.titleRow}>
-            <h1 className={styles.pageTitle}>{t('routing_policy.title')}</h1>
-            <span
-              className={`${styles.modeBadge} ${
-                requestProtection.enabled && requestProtection.mode === 'enforce'
-                  ? styles.modeEnforce
-                  : ''
-              }`}
-            >
-              <IconShield size={14} />
-              {modeLabel}
-            </span>
-          </div>
-          <p className={styles.subtitle}>{t('routing_policy.subtitle')}</p>
-          </div>
-        </div>
-        <div className={styles.headerActions}>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void loadPolicy()}
-            disabled={loading || saving}
-          >
-            <IconRefreshCw size={16} />
-            {t('common.refresh')}
-          </Button>
-          <Button
-            variant={requestProtection.enabled ? 'danger' : 'primary'}
-            size="sm"
-            onClick={handleEnabledChange}
-            loading={saving}
-            disabled={disabled || loading}
-          >
-            {requestProtection.enabled
-              ? t('routing_policy.disable', { defaultValue: 'Disable protection' })
-              : t('routing_policy.enable', { defaultValue: 'Enable protection' })}
-          </Button>
-        </div>
-      </header>
+      <ProFeatureHeader
+        title={t('routing_policy.title')}
+        subtitle={t('routing_policy.subtitle')}
+        icon={<IconShield size={20} />}
+        active={requestProtection.enabled}
+        loading={loading}
+        actionBusy={saving}
+        actionDisabled={disabled}
+        onRefresh={() => void loadPolicy()}
+        onToggle={handleEnabledChange}
+      />
 
       <nav className={styles.viewTabs} aria-label={t('routing_policy.title')}>
         {VIEW_KEYS.map((view) => (

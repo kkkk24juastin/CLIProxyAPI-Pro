@@ -7,6 +7,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / 'overlay/src/pro/modules/oauthPolicy/OAuthPolicyPage.tsx'
 STYLE = ROOT / 'overlay/src/pro/modules/oauthPolicy/OAuthPolicyPage.module.scss'
+FEATURE_HEADER = ROOT / 'overlay/src/pro/shared/ProFeatureHeader.tsx'
+FEATURE_HEADER_STYLE = ROOT / 'overlay/src/pro/shared/ProFeatureHeader.module.scss'
 ACTION_BAR_STYLE = ROOT / 'overlay/src/pro/shared/FloatingActionBar.module.scss'
 SERVICE = ROOT / 'overlay/src/pro/modules/oauthPolicy/oauthPolicy.ts'
 CUSTOMIZER = ROOT / 'apply_customizations.py'
@@ -91,9 +93,8 @@ class OAuthPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('.providerTabs', styles)
         self.assertIn('.customPlanRow', styles)
         self.assertIn('.durationControl', styles)
-        self.assertIn('className={styles.headerActions}', source)
-        self.assertIn('onClick={toggleEnabled}', source)
-        self.assertIn('? styles.policyStatusOn', source)
+        self.assertIn('<ProFeatureHeader', source)
+        self.assertIn('onToggle={toggleEnabled}', source)
         self.assertNotIn('className={styles.enabledField}', source)
         self.assertIn('grid-template-columns: repeat(2, minmax(0, 1fr))', styles)
         mobile = styles[styles.index('@media (max-width: 720px)'):]
@@ -104,6 +105,16 @@ class OAuthPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('repeat(auto-fit, minmax(min(220px, 100%), 1fr))', styles)
         self.assertIn('--oauth-policy-action-bar-height', styles)
         self.assertIn('.patternInput:focus', styles)
+
+        header = FEATURE_HEADER.read_text()
+        header_styles = FEATURE_HEADER_STYLE.read_text()
+        self.assertIn("variant={active ? 'danger' : 'primary'}", header)
+        self.assertIn('size="sm"', header)
+        self.assertIn("pro_feature_header.start_takeover", header)
+        self.assertIn("pro_feature_header.stop_takeover", header)
+        self.assertIn('@media (max-width: 720px)', header_styles)
+        self.assertIn('grid-template-columns: repeat(2, minmax(0, 1fr))', header_styles)
+        self.assertIn('@media (max-width: 480px)', header_styles)
 
     def test_shared_action_bar_is_owned_by_the_pro_overlay(self) -> None:
         source = ACTION_BAR_STYLE.read_text()

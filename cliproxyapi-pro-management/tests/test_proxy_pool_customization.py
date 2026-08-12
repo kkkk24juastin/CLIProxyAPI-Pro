@@ -39,7 +39,7 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('createPortal(content, document.body)', features)
         self.assertIn('@/pro/shared/FloatingActionBar.module.scss', features)
         self.assertIn('proxy_pool.load_unavailable', source)
-        self.assertIn('disabled={loading || !snapshot}', features)
+        self.assertIn('actionDisabled={!snapshot}', features)
         self.assertIn('await load(true, true)', source)
         self.assertIn('key={key}', features)
         self.assertIn('proxy_pool.discard_changes', features)

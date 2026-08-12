@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PRO_ROOT = ROOT / 'overlay/src/pro/modules'
+SHARED_ROOT = ROOT / 'overlay/src/pro/shared'
 LOCALES = ROOT / 'monitoring-locales.json'
 
 
@@ -14,14 +15,26 @@ class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
         account = (PRO_ROOT / 'oauthPolicy/OAuthPolicyPage.tsx').read_text()
         proxy_header = (PRO_ROOT / 'proxyPool/features/ProxyPoolHeader.tsx').read_text()
 
-        self.assertIn('className={styles.headerActions}', routing)
-        self.assertIn('onClick={handleEnabledChange}', routing)
+        self.assertIn('<ProFeatureHeader', routing)
+        self.assertIn('onToggle={handleEnabledChange}', routing)
         self.assertNotIn("setProtection('enabled'", routing)
-        self.assertIn('className={styles.headerActions}', account)
-        self.assertIn('onClick={toggleEnabled}', account)
+        self.assertIn('<ProFeatureHeader', account)
+        self.assertIn('onToggle={toggleEnabled}', account)
         self.assertNotIn('className={styles.enabledField}', account)
-        self.assertIn('className={styles.headerActions}', proxy_header)
-        self.assertIn('onClick={onTakeover}', proxy_header)
+        self.assertIn('<ProFeatureHeader', proxy_header)
+        self.assertIn('onToggle={onTakeover}', proxy_header)
+
+    def test_optional_feature_headers_share_copy_buttons_and_breakpoints(self) -> None:
+        header = (SHARED_ROOT / 'ProFeatureHeader.tsx').read_text()
+        styles = (SHARED_ROOT / 'ProFeatureHeader.module.scss').read_text()
+
+        self.assertIn("variant={active ? 'danger' : 'primary'}", header)
+        self.assertGreaterEqual(header.count('size="sm"'), 2)
+        for key in ('active', 'inactive', 'start_takeover', 'stop_takeover'):
+            self.assertIn(f'pro_feature_header.{key}', header)
+        self.assertIn('@media (max-width: 720px)', styles)
+        self.assertIn('grid-template-columns: repeat(2, minmax(0, 1fr));', styles)
+        self.assertIn('@media (max-width: 480px)', styles)
 
     def test_floating_save_bars_only_render_for_modified_drafts(self) -> None:
         routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()
@@ -64,9 +77,15 @@ class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
         routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()
         account = (PRO_ROOT / 'oauthPolicy/OAuthPolicyPage.tsx').read_text()
         required = {
-            'routing_policy': {'enable', 'disable', 'discard_changes'},
-            'oauth_policy': {'enable', 'disable', 'discard_changes'},
-            'proxy_pool': {'start_takeover', 'stop_takeover', 'discard_changes'},
+            'routing_policy': {'discard_changes'},
+            'oauth_policy': {'discard_changes'},
+            'proxy_pool': {'discard_changes'},
+            'pro_feature_header': {
+                'active',
+                'inactive',
+                'start_takeover',
+                'stop_takeover',
+            },
         }
 
         for locale in ('en.json', 'ru.json', 'zh-CN.json', 'zh-TW.json'):

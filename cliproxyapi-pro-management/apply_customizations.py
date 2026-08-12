@@ -2228,6 +2228,11 @@ def patch_locales(target: Path) -> None:
         )
         proxy_pool.update(additions.get('proxy_pool', {}))
         data['proxy_pool'] = proxy_pool
+        pro_feature_header = json.loads(
+            json.dumps(monitoring.get('en.json', {}).get('pro_feature_header', {}))
+        )
+        pro_feature_header.update(additions.get('pro_feature_header', {}))
+        data['pro_feature_header'] = pro_feature_header
         oauth_policy = json.loads(
             json.dumps(monitoring.get('en.json', {}).get('oauth_policy', {}))
         )

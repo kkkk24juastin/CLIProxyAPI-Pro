@@ -44,6 +44,7 @@ import { useActionBarHeightVar } from "@/hooks/useActionBarHeightVar";
 import { useAuthStore, useNotificationStore } from "@/stores";
 import { DurationInput, type DurationFieldProps } from '@/pro/shared/DurationInput';
 import configStyles from "@/pro/shared/FloatingActionBar.module.scss";
+import { ProFeatureHeader } from "@/pro/shared/ProFeatureHeader";
 import styles from "./OAuthPolicyPage.module.scss";
 
 const errorMessage = (error: unknown): string =>
@@ -491,70 +492,20 @@ export function OAuthPolicyPage() {
 
   return (
     <div className={`${styles.page} ${dirty ? styles.pageWithSave : ""}`}>
-      <header className={styles.header}>
-        <div className={styles.headerIdentity}>
-          <span
-            className={`${styles.headerIcon} ${
-              snapshot?.status.enabled ? styles.headerIconActive : ""
-            }`}
-          >
-            <IconModelCluster size={22} />
-          </span>
-          <div>
-            <div className={styles.titleLine}>
-              <h1>
-                {t("oauth_policy.title", {
-                  defaultValue: "OAuth Account Policy",
-                })}
-              </h1>
-              <span
-                className={
-                  snapshot?.status.enabled
-                    ? styles.policyStatusOn
-                    : styles.policyStatusOff
-                }
-              >
-                <span />
-                {snapshot?.status.enabled
-                  ? t("oauth_policy.running", { defaultValue: "Enabled" })
-                  : t("oauth_policy.stopped", { defaultValue: "Disabled" })}
-              </span>
-            </div>
-            <p>
-              {t("oauth_policy.subtitle", {
-                defaultValue:
-                  "Apply model availability and routing attributes by provider and detected OAuth plan.",
-              })}
-            </p>
-          </div>
-        </div>
-        <div className={styles.headerActions}>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={loading || saving}
-            onClick={() => void load()}
-          >
-            <IconRefreshCw size={15} />
-            {t("common.refresh")}
-          </Button>
-          <Button
-            variant={snapshot?.status.enabled ? "danger" : "primary"}
-            size="sm"
-            disabled={loading || saving || !snapshot}
-            loading={saving}
-            onClick={toggleEnabled}
-          >
-            {snapshot?.status.enabled
-              ? t("oauth_policy.disable", {
-                  defaultValue: "Disable account policy",
-                })
-              : t("oauth_policy.enable", {
-                  defaultValue: "Enable account policy",
-                })}
-          </Button>
-        </div>
-      </header>
+      <ProFeatureHeader
+        title={t("oauth_policy.title", { defaultValue: "OAuth Account Policy" })}
+        subtitle={t("oauth_policy.subtitle", {
+          defaultValue:
+            "Apply model availability and routing attributes by provider and detected OAuth plan.",
+        })}
+        icon={<IconModelCluster size={20} />}
+        active={snapshot?.status.enabled === true}
+        loading={loading}
+        actionBusy={saving}
+        actionDisabled={!snapshot}
+        onRefresh={() => void load()}
+        onToggle={toggleEnabled}
+      />
 
       {loadError && <div className={styles.errorBanner}>{loadError}</div>}
       {snapshot?.status.lastError && (

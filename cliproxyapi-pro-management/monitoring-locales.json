@@ -5,6 +5,12 @@
       "account_inspection": "Account Inspection",
       "routing_policy": "Routing Policy"
     },
+    "pro_feature_header": {
+      "active": "Taking over",
+      "inactive": "Not taking over",
+      "start_takeover": "Start takeover",
+      "stop_takeover": "Stop takeover"
+    },
     "proxy_pool": {
       "title": "Proxy Management",
       "subtitle": "Aggregate multiple upstream proxies behind one local SOCKS5 endpoint with rotation, health isolation, and failover.",
@@ -1482,6 +1488,12 @@
       "account_inspection": "Проверка аккаунтов",
       "routing_policy": "Политика маршрутизации"
     },
+    "pro_feature_header": {
+      "active": "Перехват активен",
+      "inactive": "Перехват неактивен",
+      "start_takeover": "Включить перехват",
+      "stop_takeover": "Остановить перехват"
+    },
     "proxy_pool": {
       "start_takeover": "Включить перехват",
       "stop_takeover": "Остановить перехват",
@@ -2629,6 +2641,12 @@
       "monitoring_center": "请求监控",
       "account_inspection": "账号巡检",
       "routing_policy": "路由策略"
+    },
+    "pro_feature_header": {
+      "active": "正在接管",
+      "inactive": "尚未接管",
+      "start_takeover": "开始接管",
+      "stop_takeover": "停止接管"
     },
     "proxy_pool": {
       "title": "代理管理",
@@ -4106,6 +4124,12 @@
       "monitoring_center": "請求監控",
       "account_inspection": "帳號巡檢",
       "routing_policy": "路由策略"
+    },
+    "pro_feature_header": {
+      "active": "正在接管",
+      "inactive": "尚未接管",
+      "start_takeover": "開始接管",
+      "stop_takeover": "停止接管"
     },
     "proxy_pool": {
       "title": "代理管理",
