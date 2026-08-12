@@ -1,5 +1,6 @@
 .page,
-.settingsModal {
+.settingsModal,
+.informationDetailsTheme {
   --inspect-bg: var(--bg-secondary);
   --inspect-surface: var(--bg-primary);
   --inspect-surface-elevated: color-mix(in srgb, var(--bg-primary) 88%, var(--bg-secondary));

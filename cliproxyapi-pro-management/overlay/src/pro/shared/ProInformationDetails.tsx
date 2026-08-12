@@ -15,6 +15,7 @@ export interface ProInformationDetailGroup {
 }
 
 interface ProInformationDetailsProps {
+  className?: string;
   tone?: ProInformationDetailsTone;
   status: ReactNode;
   context?: ReactNode;
@@ -25,6 +26,7 @@ interface ProInformationDetailsProps {
 }
 
 export function ProInformationDetails({
+  className,
   tone = 'neutral',
   status,
   context,
@@ -34,9 +36,10 @@ export function ProInformationDetails({
   detail,
 }: ProInformationDetailsProps) {
   const visibleGroups = groups.filter((group) => group.items.length > 0);
+  const rootClassName = [styles.details, styles[tone], className].filter(Boolean).join(' ');
 
   return (
-    <div className={`${styles.details} ${styles[tone]}`}>
+    <div className={rootClassName}>
       <section className={styles.summary}>
         <div className={styles.summaryMeta}>
           <div className={styles.status}>{status}</div>

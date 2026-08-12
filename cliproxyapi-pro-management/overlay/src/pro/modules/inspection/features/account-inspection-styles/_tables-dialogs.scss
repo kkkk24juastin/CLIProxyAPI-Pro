@@ -448,8 +448,23 @@
 }
 
 :global(.modal):has(.confirmationDecisionBody) {
+  --inspect-surface: var(--bg-primary);
+  --inspect-surface-muted: var(--bg-secondary);
+  --inspect-line: var(--border-color);
+  --inspect-line-strong: var(--border-primary);
+  --inspect-ink: var(--text-primary);
+  --inspect-muted: var(--text-secondary);
+  --inspect-accent: var(--primary-color);
+  --inspect-green: var(--success-color);
+  --inspect-amber: #d97706;
+  --inspect-red: var(--error-color);
+  --decision-tone: var(--primary-color);
   width: min(760px, calc(100vw - 32px)) !important;
   max-height: min(88vh, 820px);
+}
+
+:global(.modal):has(.confirmationDecisionDanger) {
+  --decision-tone: var(--error-color);
 }
 
 :global(.modal):has(.confirmationDecisionBody) :global(.modal-header) {

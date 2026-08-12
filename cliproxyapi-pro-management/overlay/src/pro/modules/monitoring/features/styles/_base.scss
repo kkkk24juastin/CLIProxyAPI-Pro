@@ -1,6 +1,7 @@
 .page,
 .monitoringWorkspaceSheet,
-.priceManagerSheet {
+.priceManagerSheet,
+.informationDetailsTheme {
   --monitor-bg: var(--bg-secondary);
   --monitor-surface: var(--bg-primary);
   --monitor-surface-elevated: color-mix(in srgb, var(--bg-primary) 88%, var(--bg-secondary));

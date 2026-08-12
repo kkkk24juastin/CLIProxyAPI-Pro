@@ -65,8 +65,19 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('ProInformationDetails', monitoring)
         self.assertIn('ProInformationDetails', inspection_model)
         self.assertIn('ProInformationDetails', routing)
-        self.assertIn('confirmationDecisionBody', inspection_model)
+        self.assertIn('className={styles.informationDetailsTheme}', monitoring)
+        self.assertIn('className={styles.informationDetailsTheme}', inspection_model)
+        delete_confirmation = inspection_model[
+            inspection_model.index('export const buildDeleteConfirmationMessage'):inspection_model.index(
+                'const withChanged'
+            )
+        ]
+        self.assertIn('confirmationDecisionBody', delete_confirmation)
+        self.assertIn('confirmationDecisionDanger', delete_confirmation)
         self.assertIn(':has(.confirmationDecisionBody)', inspection_styles)
+        self.assertIn('--inspect-surface: var(--bg-primary);', inspection_styles)
+        self.assertIn(':has(.confirmationDecisionDanger)', inspection_styles)
+        self.assertIn('--decision-tone: var(--error-color);', inspection_styles)
         self.assertIn('width: min(760px', inspection_styles)
         self.assertIn('grid-auto-rows: max-content', inspection_styles)
         self.assertNotIn('-webkit-line-clamp', inspection_styles)

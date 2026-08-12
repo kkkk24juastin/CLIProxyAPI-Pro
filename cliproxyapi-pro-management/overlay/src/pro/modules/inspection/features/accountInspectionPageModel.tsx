@@ -418,6 +418,7 @@ export function InspectionErrorDetailsPanel({
 
   return (
     <ProInformationDetails
+      className={styles.informationDetailsTheme}
       tone={toneByHealth[healthStatus]}
       status={(
         <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>
@@ -1249,7 +1250,13 @@ export const buildDeleteConfirmationMessage = (
   item: AccountInspectionResultItem,
   t: TFunction
 ) => (
-  <div className={styles.confirmationBody}>
+  <div
+    className={[
+      styles.confirmationBody,
+      styles.confirmationDecisionBody,
+      styles.confirmationDecisionDanger,
+    ].join(' ')}
+  >
     <div className={`${styles.confirmationLead} ${styles.confirmationLeadDanger}`}>
       <strong>{t('monitoring.account_inspection_delete_single_title')}</strong>
       <span>

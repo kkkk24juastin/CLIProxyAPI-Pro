@@ -59,6 +59,7 @@ export function RealtimeRequestDetailsPanel({
 
   return (
     <ProInformationDetails
+      className={styles.informationDetailsTheme}
       tone={tone}
       status={(
         <div className={styles.realtimeErrorOverviewTop}>
