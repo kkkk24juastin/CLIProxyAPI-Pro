@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 
@@ -31,6 +32,13 @@ def read_monitoring_styles() -> str:
 
 
 class MonitoringToolbarCustomizationTest(unittest.TestCase):
+    def test_simplified_chinese_inspection_duration_uses_concise_minute_unit(self) -> None:
+        locales = json.loads(LOCALES_PATH.read_text())
+        self.assertEqual(
+            '{{count}}分',
+            locales['zh-CN.json']['monitoring']['account_inspection_duration_minute'],
+        )
+
     def test_monitoring_settings_button_keeps_a_stable_label_while_loading(self) -> None:
         source = PAGE_PATH.read_text()
         handler = 'onClick={() => void loadMonitoringSettings()}'

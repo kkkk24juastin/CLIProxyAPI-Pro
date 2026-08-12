@@ -3319,7 +3319,7 @@
       "account_inspection_settings_discard": "放弃修改",
       "account_inspection_duration_day": "{{count}}天",
       "account_inspection_duration_hour": "{{count}}小时",
-      "account_inspection_duration_minute": "{{count}}分钟",
+      "account_inspection_duration_minute": "{{count}}分",
       "account_inspection_duration_second": "{{count}}秒",
       "account_inspection_settings_button": "巡检配置",
       "account_inspection_settings_title": "账号巡检设置",
