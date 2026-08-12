@@ -1400,24 +1400,27 @@ export function AccountInspectionPage() {
     showNotification(t('monitoring.account_inspection_settings_reset_draft'), 'info');
   }, [showNotification, t]);
 
-  const closeSettingsModal = useCallback(() => {
-    if (!settingsDirty) {
-      setIsSettingsModalOpen(false);
-      return true;
-    }
-    showConfirmation({
-      title: t('monitoring.account_inspection_settings_unsaved_title'),
-      message: t('monitoring.account_inspection_settings_unsaved_desc'),
-      confirmText: t('monitoring.account_inspection_settings_discard'),
-      cancelText: t('common.cancel'),
-      variant: 'danger',
-      onConfirm: () => {
-        dispatchBackendState({ type: 'discardSettingsDraft' });
-        setIsSettingsModalOpen(false);
-      },
+  const confirmSettingsModalClose = useCallback((): Promise<boolean> => {
+    if (!settingsDirty) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      showConfirmation({
+        dedupeKey: 'account-inspection-settings:close-workspace',
+        title: t('monitoring.account_inspection_settings_unsaved_title'),
+        message: t('monitoring.account_inspection_settings_unsaved_desc'),
+        confirmText: t('monitoring.account_inspection_settings_discard'),
+        cancelText: t('common.stay'),
+        variant: 'danger',
+        onConfirm: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
     });
-    return false;
-  }, [setIsSettingsModalOpen, settingsDirty, showConfirmation, t]);
+  }, [settingsDirty, showConfirmation, t]);
+  const discardSettingsModalDraft = useCallback(() => {
+    dispatchBackendState({ type: 'discardSettingsDraft' });
+  }, []);
+  const closeSettingsModal = useCallback(() => {
+    setIsSettingsModalOpen(false);
+  }, [setIsSettingsModalOpen]);
 
   const draftInspectionScopeLabel = settingsDraft.targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
     ? t('monitoring.filter_all_providers')
@@ -2178,7 +2181,8 @@ export function AccountInspectionPage() {
       <ProSettingsSheet
         open={isSettingsModalOpen}
         onClose={closeSettingsModal}
-        size="xl"
+        confirmClose={confirmSettingsModalClose}
+        onDiscard={discardSettingsModalDraft}
         title={t('monitoring.account_inspection_settings_title')}
         className={styles.settingsModal}
         dirty={settingsDirty}

@@ -1,6 +1,9 @@
 import {
   type PropsWithChildren,
   type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
 } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Sheet, type SheetSize } from '@/components/ui/Sheet';
@@ -113,6 +116,7 @@ interface ProSettingsSheetProps extends Omit<ProWorkspaceSheetProps, 'footer'> {
   dirtyLabel?: ReactNode;
   footerStart?: ReactNode;
   onSave: () => void | Promise<void>;
+  onDiscard?: () => void;
 }
 
 export function ProSettingsSheet({
@@ -126,10 +130,57 @@ export function ProSettingsSheet({
   footerStart,
   onSave,
   onClose,
+  confirmClose,
+  onDiscard,
+  open,
   children,
   ...props
 }: PropsWithChildren<ProSettingsSheetProps>) {
   const busy = loading || saving;
+  const closeCheckRef = useRef<Promise<boolean> | null>(null);
+  const cancelRequestedRef = useRef(false);
+  const closeCommittedRef = useRef(false);
+
+  useEffect(() => {
+    closeCheckRef.current = null;
+    cancelRequestedRef.current = false;
+    closeCommittedRef.current = false;
+  }, [open]);
+
+  const commitClose = useCallback(() => {
+    if (closeCommittedRef.current) return;
+    closeCommittedRef.current = true;
+    void onClose();
+  }, [onClose]);
+
+  const confirmSettingsClose = useCallback(() => {
+    if (busy) return Promise.resolve(false);
+    if (closeCheckRef.current) return closeCheckRef.current;
+
+    const closeCheck = Promise.resolve(confirmClose?.() ?? true)
+      .then((confirmed) => {
+        if (confirmed && dirty) onDiscard?.();
+        return confirmed;
+      })
+      .catch(() => false)
+      .finally(() => {
+        closeCheckRef.current = null;
+      });
+    closeCheckRef.current = closeCheck;
+    return closeCheck;
+  }, [busy, confirmClose, dirty, onDiscard]);
+
+  const handleCancelClick = useCallback(async () => {
+    if (busy || cancelRequestedRef.current) return;
+    cancelRequestedRef.current = true;
+    const confirmed = await confirmSettingsClose();
+    if (confirmed) {
+      commitClose();
+      return;
+    }
+    cancelRequestedRef.current = false;
+  }, [busy, commitClose, confirmSettingsClose]);
+
   const footer = (
     <div className={styles.settingsFooter}>
       <fieldset className={styles.settingsFooterStart} disabled={busy} aria-busy={busy}>
@@ -137,7 +188,7 @@ export function ProSettingsSheet({
         {dirty && dirtyLabel ? <span className={styles.dirtyStatus}>{dirtyLabel}</span> : null}
       </fieldset>
       <div className={styles.settingsFooterActions}>
-        <Button variant="secondary" onClick={() => void onClose()} disabled={busy}>
+        <Button variant="secondary" onClick={() => void handleCancelClick()} disabled={busy}>
           {cancelLabel}
         </Button>
         <Button
@@ -155,8 +206,10 @@ export function ProSettingsSheet({
   return (
     <ProWorkspaceSheet
       {...props}
-      onClose={onClose}
-      closeDisabled={saving || props.closeDisabled}
+      open={open}
+      onClose={commitClose}
+      confirmClose={confirmSettingsClose}
+      closeDisabled={busy || props.closeDisabled}
       footer={footer}
     >
       <fieldset className={styles.settingsFields} disabled={busy} aria-busy={busy}>

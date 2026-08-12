@@ -12,6 +12,8 @@ import styles from '../monitoring.module.scss';
 export function MonitoringSettingsModal({
   isMonitoringSettingsOpen,
   closeMonitoringSettings,
+  confirmMonitoringSettingsClose,
+  discardMonitoringSettingsDraft,
   monitoringSettingsDirty,
   monitoringSettingsDraft,
   setMonitoringSettingsDraft,
@@ -25,6 +27,8 @@ export function MonitoringSettingsModal({
 }: {
   isMonitoringSettingsOpen: boolean;
   closeMonitoringSettings: () => void | boolean;
+  confirmMonitoringSettingsClose: () => Promise<boolean>;
+  discardMonitoringSettingsDraft: () => void;
   monitoringSettingsDirty: boolean;
   monitoringSettingsDraft: MonitoringSettingsDraft;
   setMonitoringSettingsDraft: Dispatch<SetStateAction<MonitoringSettingsDraft>>;
@@ -40,7 +44,8 @@ export function MonitoringSettingsModal({
       <ProSettingsSheet
         open={isMonitoringSettingsOpen}
         onClose={closeMonitoringSettings}
-        size="xl"
+        confirmClose={confirmMonitoringSettingsClose}
+        onDiscard={discardMonitoringSettingsDraft}
         title={t('usage_stats.monitoring_settings')}
         dirty={monitoringSettingsDirty}
         loading={isMonitoringSettingsLoading}

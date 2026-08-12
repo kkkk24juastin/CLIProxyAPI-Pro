@@ -1,4 +1,4 @@
-@media (max-width: 1020px) {
+@container pro-workspace-sheet (max-width: 1020px) {
   .priceRuleWorkspace {
     grid-template-columns: 1fr;
     grid-template-rows: 82px minmax(0, 1fr);
@@ -93,6 +93,12 @@
 
   .priceSyncRateChanges {
     justify-content: flex-start;
+  }
+}
+
+@container pro-workspace-sheet (max-width: 720px) {
+  .monitoringSettingsEditor .settingsGrid {
+    grid-template-columns: 1fr;
   }
 }
 

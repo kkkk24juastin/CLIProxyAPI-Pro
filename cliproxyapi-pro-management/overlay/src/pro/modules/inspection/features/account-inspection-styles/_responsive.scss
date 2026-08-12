@@ -31,6 +31,42 @@
   }
 }
 
+@container pro-workspace-sheet (max-width: 900px) {
+  .settingsWorkbench {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .settingsSidebar {
+    grid-template-rows: auto auto auto;
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--inspect-line) 74%, transparent);
+  }
+
+  .settingsSidebarNav {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .settingsSidebarNav button {
+    min-width: 170px;
+  }
+
+  .settingsSidebarStatus,
+  .settingsSummaryGrid,
+  .settingsThreeGrid,
+  .settingsMatrixGrid,
+  .settingsFocusGrid,
+  .settingsAutomationGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settingsSplitGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 900px) {
 	.filterGrid {
 		grid-template-columns: repeat(2, minmax(0, 1fr));

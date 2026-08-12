@@ -54,6 +54,36 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertNotIn('<ProWorkspaceDialog', inspection)
         self.assertIn('dirty={monitoringSettingsDirty}', monitoring_settings)
         self.assertIn('dirty={settingsDirty}', inspection)
+        self.assertNotIn('size="xl"', monitoring_settings)
+        self.assertNotIn('size="xl"', prices)
+        self.assertNotIn('size="xl"', inspection)
+
+    def test_settings_sheets_use_native_confirm_close_contract(self) -> None:
+        surface = SURFACE.read_text()
+        monitoring = (PRO_ROOT / 'modules/monitoring/MonitoringCenterPage.tsx').read_text()
+        monitoring_settings = (PRO_ROOT / 'modules/monitoring/features/components/MonitoringSettingsModal.tsx').read_text()
+        prices = (PRO_ROOT / 'modules/monitoring/features/components/ModelPriceManagerModal.tsx').read_text()
+        inspection = (PRO_ROOT / 'modules/inspection/AccountInspectionPage.tsx').read_text()
+        self.assertIn('confirmClose={confirmSettingsClose}', surface)
+        self.assertIn('onClick={() => void handleCancelClick()}', surface)
+        self.assertIn('onClose={commitClose}', surface)
+        self.assertIn('closeDisabled={busy || props.closeDisabled}', surface)
+        self.assertIn('confirmClose={confirmMonitoringSettingsClose}', monitoring_settings)
+        self.assertIn('onDiscard={discardMonitoringSettingsDraft}', monitoring_settings)
+        self.assertIn('onCancel: () => resolve(false)', monitoring)
+        self.assertIn('confirmClose={confirmPriceWorkspaceClose}', prices)
+        self.assertIn('onDiscard={discardPriceWorkspaceDraft}', prices)
+        self.assertIn('confirmClose={confirmSettingsModalClose}', inspection)
+        self.assertIn('onDiscard={discardSettingsModalDraft}', inspection)
+
+    def test_workspace_sheet_layout_responds_to_sheet_width(self) -> None:
+        surface_styles = SURFACE_STYLE.read_text()
+        monitoring_styles = (PRO_ROOT / 'modules/monitoring/features/styles/_responsive.scss').read_text()
+        inspection_styles = (PRO_ROOT / 'modules/inspection/features/account-inspection-styles/_responsive.scss').read_text()
+        self.assertIn('container: pro-workspace-sheet / inline-size;', surface_styles)
+        self.assertIn('@container pro-workspace-sheet (max-width: 1020px)', monitoring_styles)
+        self.assertIn('@container pro-workspace-sheet (max-width: 720px)', monitoring_styles)
+        self.assertIn('@container pro-workspace-sheet (max-width: 900px)', inspection_styles)
 
     def test_settings_surfaces_freeze_all_actions_while_busy(self) -> None:
         surface = SURFACE.read_text()

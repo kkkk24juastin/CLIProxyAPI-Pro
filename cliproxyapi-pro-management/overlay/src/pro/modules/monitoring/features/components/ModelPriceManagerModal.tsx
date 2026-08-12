@@ -1,4 +1,4 @@
-import { useMemo, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -147,25 +147,28 @@ export function ModelPriceManagerModal({
       onConfirm: () => selectPriceTarget(model),
     });
   };
-  const closePriceWorkspace = () => {
-    if (!workspaceDirty) {
-      setIsPriceModalOpen(false);
-      return true;
-    }
-    showConfirmation({
-      title: t('common.unsaved_changes_title'),
-      message: t('common.unsaved_changes_message'),
-      confirmText: t('monitoring.account_inspection_settings_discard'),
-      cancelText: t('common.cancel'),
-      variant: 'danger',
-      onConfirm: () => {
-        setPriceDraft(createPriceDraft(selectedPriceTarget?.rule));
-        setMonitoringSettingsDraft(savedMonitoringSettingsDraft);
-        setIsPriceModalOpen(false);
-      },
+  const confirmPriceWorkspaceClose = useCallback((): Promise<boolean> => {
+    if (!workspaceDirty) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      showConfirmation({
+        dedupeKey: 'model-price:close-workspace',
+        title: t('common.unsaved_changes_title'),
+        message: t('common.unsaved_changes_message'),
+        confirmText: t('monitoring.account_inspection_settings_discard'),
+        cancelText: t('common.stay'),
+        variant: 'danger',
+        onConfirm: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
     });
-    return false;
-  };
+  }, [showConfirmation, t, workspaceDirty]);
+  const discardPriceWorkspaceDraft = useCallback(() => {
+    setPriceDraft(createPriceDraft(selectedPriceTarget?.rule));
+    setMonitoringSettingsDraft(savedMonitoringSettingsDraft);
+  }, [savedMonitoringSettingsDraft, selectedPriceTarget?.rule, setMonitoringSettingsDraft, setPriceDraft]);
+  const closePriceWorkspace = useCallback(() => {
+    setIsPriceModalOpen(false);
+  }, [setIsPriceModalOpen]);
   const configuredPriceRuleCount = priceRuleTargets.filter((item) => Boolean(item.rule)).length;
   const unconfiguredPriceRuleCount = priceRuleTargets.length - configuredPriceRuleCount;
   const priceSyncStatus = isPriceSyncing ? 'syncing' : priceSyncState.status;
@@ -210,7 +213,8 @@ export function ModelPriceManagerModal({
       <ProSettingsSheet
         open={isPriceModalOpen}
         onClose={closePriceWorkspace}
-        size="xl"
+        confirmClose={confirmPriceWorkspaceClose}
+        onDiscard={discardPriceWorkspaceDraft}
         title={t('usage_stats.model_price_settings')}
         className={styles.priceManagerSheet}
         dirty={workspaceDirty}

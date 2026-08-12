@@ -507,24 +507,27 @@ export function MonitoringCenterPage() {
     [monitoringSettingsDraft, savedMonitoringSettingsDraft]
   );
 
-  const closeMonitoringSettings = useCallback(() => {
-    if (!monitoringSettingsDirty) {
-      setIsMonitoringSettingsOpen(false);
-      return true;
-    }
-    showConfirmation({
-      title: t('common.unsaved_changes_title'),
-      message: t('common.unsaved_changes_message'),
-      confirmText: t('monitoring.account_inspection_settings_discard'),
-      cancelText: t('common.cancel'),
-      variant: 'danger',
-      onConfirm: () => {
-        setMonitoringSettingsDraft(savedMonitoringSettingsDraft);
-        setIsMonitoringSettingsOpen(false);
-      },
+  const confirmMonitoringSettingsClose = useCallback((): Promise<boolean> => {
+    if (!monitoringSettingsDirty) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      showConfirmation({
+        dedupeKey: 'monitoring-settings:close-workspace',
+        title: t('common.unsaved_changes_title'),
+        message: t('common.unsaved_changes_message'),
+        confirmText: t('monitoring.account_inspection_settings_discard'),
+        cancelText: t('common.stay'),
+        variant: 'danger',
+        onConfirm: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
     });
-    return false;
-  }, [monitoringSettingsDirty, savedMonitoringSettingsDraft, setIsMonitoringSettingsOpen, showConfirmation, t]);
+  }, [monitoringSettingsDirty, showConfirmation, t]);
+  const discardMonitoringSettingsDraft = useCallback(() => {
+    setMonitoringSettingsDraft(savedMonitoringSettingsDraft);
+  }, [savedMonitoringSettingsDraft]);
+  const closeMonitoringSettings = useCallback(() => {
+    setIsMonitoringSettingsOpen(false);
+  }, [setIsMonitoringSettingsOpen]);
 
   const executeMonitoringStatisticsReset = useCallback(async () => {
     setIsMonitoringStatisticsResetting(true);
@@ -2050,6 +2053,8 @@ export function MonitoringCenterPage() {
       <MonitoringSettingsModal
         isMonitoringSettingsOpen={isMonitoringSettingsOpen}
         closeMonitoringSettings={closeMonitoringSettings}
+        confirmMonitoringSettingsClose={confirmMonitoringSettingsClose}
+        discardMonitoringSettingsDraft={discardMonitoringSettingsDraft}
         monitoringSettingsDirty={monitoringSettingsDirty}
         monitoringSettingsDraft={monitoringSettingsDraft}
         setMonitoringSettingsDraft={setMonitoringSettingsDraft}

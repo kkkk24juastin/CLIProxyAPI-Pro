@@ -2660,9 +2660,19 @@ replace_once(
 )
 for source_name in ACCOUNT_INSPECTION_SOURCE_FILES:
     source = Path(__file__).resolve().parent / source_name
+    source_text = re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(source))
+    if source_name == 'account_inspection_transport.go':
+        if 'func (h *Handler) apiCallTransport(auth *coreauth.Auth, requestProxyURL string)' in read(api_tools):
+            source_text = source_text.replace(
+                's.h.resolveTokenForAuth(reqCtx, auth)',
+                's.h.resolveTokenForAuth(reqCtx, auth, "")',
+            ).replace(
+                's.h.apiCallTransport(auth)',
+                's.h.apiCallTransport(auth, "")',
+            )
     write(
         ROOT / 'internal/api/handlers/management' / source_name,
-        re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(source)),
+        source_text,
     )
 write(routing_policy, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy.go')))
 write(routing_policy_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy_test.go')))
@@ -2753,15 +2763,20 @@ insert_before(
 ''',
     'func firstNonNilBool(values ...*bool) bool',
 )
+api_call_transport_args = (
+    'auth, requestProxyURL'
+    if 'h.apiCallTransport(auth, requestProxyURL)' in read(api_tools)
+    else 'auth'
+)
 replace_once(
     api_tools,
     '''\thttpClient := &http.Client{
 \t\tTimeout: defaultAPICallTimeout,
 \t}
-\thttpClient.Transport = h.apiCallTransport(auth)
+\thttpClient.Transport = h.apiCallTransport(__API_CALL_TRANSPORT_ARGS__)
 
 \tresp, errDo := httpClient.Do(req)
-''',
+'''.replace('__API_CALL_TRANSPORT_ARGS__', api_call_transport_args),
     '''\tuseExecutor := firstNonNilBool(body.UseExecutorSnake, body.UseExecutorCamel, body.UseExecutorPascal)
 \tvar resp *http.Response
 \tvar errDo error
@@ -2779,10 +2794,10 @@ replace_once(
 \t\thttpClient := &http.Client{
 \t\t\tTimeout: defaultAPICallTimeout,
 \t\t}
-\t\thttpClient.Transport = h.apiCallTransport(auth)
+\t\thttpClient.Transport = h.apiCallTransport(__API_CALL_TRANSPORT_ARGS__)
 \t\tresp, errDo = httpClient.Do(req)
 \t}
-''',
+'''.replace('__API_CALL_TRANSPORT_ARGS__', api_call_transport_args),
 )
 replace_once(
     auth_files,
