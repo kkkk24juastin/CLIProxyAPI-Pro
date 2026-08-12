@@ -22,6 +22,23 @@ type OneRequest struct {
 	Item ActionItem `json:"item"`
 }
 
+type ManyRequest struct {
+	Items []ActionItem `json:"items"`
+}
+
+type InspectionOutcome struct {
+	Key         string  `json:"key"`
+	FileName    string  `json:"fileName"`
+	DisplayName string  `json:"displayName"`
+	Email       string  `json:"email"`
+	Name        string  `json:"name"`
+	Provider    string  `json:"provider"`
+	AuthIndex   string  `json:"authIndex"`
+	Success     bool    `json:"success"`
+	Error       string  `json:"error"`
+	Result      *Result `json:"result,omitempty"`
+}
+
 type RefreshTokenRequest struct {
 	Item ActionItem `json:"item"`
 }

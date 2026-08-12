@@ -135,3 +135,26 @@ func TestHTTPErrorHelpers(t *testing.T) {
 		t.Fatalf("detail = %q, want %q", got, string(body))
 	}
 }
+
+func TestHTTPErrorDetailRedactsAndTruncates(t *testing.T) {
+	detail := HTTPErrorDetail(`{"error":{"message":"failed","access_token":"secret-token"},"authorization":"Bearer abc"}`)
+	if strings.Contains(detail, "secret-token") || strings.Contains(detail, "Bearer abc") || !strings.Contains(detail, "[REDACTED]") {
+		t.Fatalf("detail was not redacted: %q", detail)
+	}
+	plain := HTTPErrorDetail("request failed api_key=plain-secret password:guess Authorization: Bearer abc.def")
+	if strings.Contains(plain, "plain-secret") || strings.Contains(plain, "guess") || strings.Contains(plain, "abc.def") {
+		t.Fatalf("plain detail was not redacted: %q", plain)
+	}
+	for _, secret := range []string{"token=plain-token", "id_token=id-secret", "session_token=session-secret", "credential=credential-secret"} {
+		if redacted := HTTPErrorDetail(secret); strings.Contains(redacted, strings.Split(secret, "=")[1]) {
+			t.Fatalf("HTTPErrorDetail(%q) leaked secret: %q", secret, redacted)
+		}
+	}
+	if summary := SummarizeHTTPBody(`{"error":{"message":"failed token=summary-secret"}}`); strings.Contains(summary, "summary-secret") {
+		t.Fatalf("SummarizeHTTPBody() leaked secret: %q", summary)
+	}
+	large := HTTPErrorDetail(strings.Repeat("x", 20*1024))
+	if len(large) > 17*1024 || !strings.HasSuffix(large, "[truncated]") {
+		t.Fatalf("large detail length/suffix = %d, %q", len(large), large[len(large)-20:])
+	}
+}

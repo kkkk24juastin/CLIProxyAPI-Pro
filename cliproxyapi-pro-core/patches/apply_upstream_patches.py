@@ -4398,6 +4398,8 @@ format_go_writes([
     'internal/pro/inspection/lifecycle_test.go',
     'internal/pro/inspection/confirmations.go',
     'internal/pro/inspection/confirmations_test.go',
+    'internal/pro/inspection/persistence.go',
+    'internal/pro/inspection/persistence_test.go',
     'internal/pro/inspection/policy.go',
     'internal/pro/inspection/policy_test.go',
     'internal/pro/inspection/ports.go',

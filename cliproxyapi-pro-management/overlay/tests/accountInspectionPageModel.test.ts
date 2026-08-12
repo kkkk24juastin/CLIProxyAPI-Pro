@@ -19,6 +19,7 @@ import {
 } from '../src/pro/modules/inspection/features/accountInspectionPageModel';
 import type { TFunction } from 'i18next';
 import {
+  buildAccountInspectionBackendViewState,
   DEFAULT_ACCOUNT_INSPECTION_SETTINGS,
   isAccountInspectionBackendResponse,
   saveAccountInspectionConfigurableSettings,
@@ -84,6 +85,50 @@ describe('account inspection page model', () => {
       schedule: { settings: DEFAULT_ACCOUNT_INSPECTION_SETTINGS },
       status: { summary: {} },
     })).toBe(true);
+  });
+
+  test('does not mark an unchanged settings dialog as dirty', () => {
+	let state = createInspectionBackendState(DEFAULT_ACCOUNT_INSPECTION_SETTINGS);
+	state = inspectionBackendReducer(state, { type: 'discardSettingsDraft' });
+	expect(state.settingsDirty).toBe(false);
+	state = inspectionBackendReducer(state, { type: 'updateSettingsDraft', values: { sampleSize: '10' } });
+	expect(state.settingsDirty).toBe(true);
+	state = inspectionBackendReducer(state, { type: 'discardSettingsDraft' });
+	expect(state.settingsDirty).toBe(false);
+  });
+
+  test('keeps historical run settings and terminal states separate from the current schedule', () => {
+    const runSettings = { ...DEFAULT_ACCOUNT_INSPECTION_SETTINGS, usedPercentThreshold: 80, sampleSize: 12 };
+    const response = {
+      schedule: { enabled: true, intervalMinutes: 360, nextRunAt: 99, settings: { ...DEFAULT_ACCOUNT_INSPECTION_SETTINGS, usedPercentThreshold: 95 } },
+      status: {
+        state: 'partial' as const,
+        runSettings,
+        lastStartedAt: 10,
+        lastFinishedAt: 20,
+        lastError: 'deadline exceeded',
+        summary: { totalFiles: 20, probeSetCount: 20, sampledCount: 12, disabledCount: 0, enabledCount: 12, deleteCount: 0, disableCount: 0, enableCount: 0, keepCount: 12, errorCount: 1 },
+        logs: [],
+        results: [],
+      },
+    };
+
+    const view = buildAccountInspectionBackendViewState(response);
+    expect(view.settings.usedPercentThreshold).toBe(95);
+    expect(view.result?.settings).toMatchObject({ usedPercentThreshold: 80, sampleSize: 12 });
+    expect(view.result?.state).toBe('partial');
+    expect(view.runStatus).toBe('partial');
+    expect(view.lastError).toBe('deadline exceeded');
+  });
+
+  test('tracks settings as dirty until saved or explicitly discarded', () => {
+    let state = createInspectionBackendState(DEFAULT_ACCOUNT_INSPECTION_SETTINGS);
+    state = inspectionBackendReducer(state, { type: 'updateSettingsDraft', values: { sampleSize: '10' } });
+    expect(state.settingsDirty).toBe(true);
+    expect(state.settingsDraft.sampleSize).toBe('10');
+    state = inspectionBackendReducer(state, { type: 'discardSettingsDraft' });
+    expect(state.settingsDirty).toBe(false);
+    expect(state.settingsDraft.sampleSize).toBe('0');
   });
 
   test('classifies result rows and pending actions in one pass', () => {

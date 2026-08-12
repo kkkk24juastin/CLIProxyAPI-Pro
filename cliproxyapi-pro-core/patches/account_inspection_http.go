@@ -109,6 +109,7 @@ func (s *accountInspectionScheduler) streamStatusLocked(options accountInspectio
 	if options.IncludeDetails {
 		healthCounts = s.healthCountsLocked()
 	}
+	s.status.RunSettings = s.lastRunSettings
 	return proinspection.ProjectStatus(s.status, healthCounts, options, accountInspectionMaxResultPageSize, accountInspectionMaxLogPageSize)
 }
 
@@ -257,11 +258,36 @@ func (h *Handler) RegisterAccountInspectionRoutes(group *gin.RouterGroup) {
 	group.GET("/account-inspection/status", h.GetAccountInspectionStatus)
 	group.POST("/account-inspection/run", h.RunAccountInspection)
 	group.POST("/account-inspection/inspect-one", h.InspectOneAccount)
+	group.POST("/account-inspection/inspect-many", h.InspectManyAccounts)
 	group.POST("/account-inspection/refresh-token", h.RefreshAccountInspectionToken)
 	group.POST("/account-inspection/pause", h.PauseAccountInspection)
 	group.POST("/account-inspection/resume", h.ResumeAccountInspection)
 	group.POST("/account-inspection/stop", h.StopAccountInspection)
 	group.POST("/account-inspection/actions", h.ExecuteAccountInspectionActions)
+}
+
+func (h *Handler) InspectManyAccounts(c *gin.Context) {
+	scheduler := schedulerForHandler(h)
+	if scheduler == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account inspection scheduler unavailable"})
+		return
+	}
+	var request accountInspectionManyRequest
+	if err := c.ShouldBindJSON(&request); err != nil || len(request.Items) == 0 || len(request.Items) > 500 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	outcomes, err := scheduler.inspectMany(c.Request.Context(), request.Items)
+	snapshot := scheduler.snapshotForRequest(c)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) || errors.Is(err, errAccountInspectionResultStale) {
+			statusCode = http.StatusConflict
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error(), "outcomes": outcomes, "schedule": snapshot["schedule"], "status": snapshot["status"]})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"outcomes": outcomes, "schedule": snapshot["schedule"], "status": snapshot["status"]})
 }
 
 func (h *Handler) GetAccountInspectionSchedule(c *gin.Context) {

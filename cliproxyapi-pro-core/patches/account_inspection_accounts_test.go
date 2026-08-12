@@ -277,11 +277,13 @@ func TestAutoActionConfirmationDelaysExecution(t *testing.T) {
 	if confirmed || count != 1 || required != 2 {
 		t.Fatalf("first confirmation = confirmed:%v count:%d required:%d, want false/1/2", confirmed, count, required)
 	}
+	scheduler.autoActionConfirmations.BeginRun()
 	confirmed, count, required = scheduler.confirmAutoAction(result, action, settings.AutoExecuteConfirmations)
 	if !confirmed || count != 2 || required != 2 {
 		t.Fatalf("second confirmation = confirmed:%v count:%d required:%d, want true/2/2", confirmed, count, required)
 	}
 	scheduler.clearAutoActionConfirmation(result)
+	scheduler.autoActionConfirmations.BeginRun()
 	confirmed, count, required = scheduler.confirmAutoAction(result, action, settings.AutoExecuteConfirmations)
 	if confirmed || count != 1 || required != 2 {
 		t.Fatalf("confirmation after clear = confirmed:%v count:%d required:%d, want false/1/2", confirmed, count, required)

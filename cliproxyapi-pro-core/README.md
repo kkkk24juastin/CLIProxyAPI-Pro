@@ -162,6 +162,7 @@ Core 内建回环 SOCKS5 代理池以及 xAI、Codex、Claude、Gemini CLI、Ant
 - `POST /v0/management/account-inspection/run`
 - `POST /v0/management/account-inspection/inspect-one`
 - `POST /v0/management/account-inspection/refresh-token`
+- `POST /v0/management/account-inspection/inspect-many`：后端限流批量重检并返回逐账号结果。
 - `POST /v0/management/account-inspection/pause`
 - `POST /v0/management/account-inspection/resume`
 - `POST /v0/management/account-inspection/stop`

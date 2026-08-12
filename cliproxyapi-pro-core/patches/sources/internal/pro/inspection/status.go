@@ -17,9 +17,11 @@ type Progress struct {
 
 type Status struct {
 	State                RunState                `json:"state"`
+	RunSettings          Settings                `json:"runSettings"`
 	LastStartedAt        int64                   `json:"lastStartedAt"`
 	LastFinishedAt       int64                   `json:"lastFinishedAt"`
 	LastError            string                  `json:"lastError"`
+	PersistenceError     string                  `json:"persistenceError,omitempty"`
 	Progress             Progress                `json:"progress"`
 	Summary              Summary                 `json:"summary"`
 	HealthCounts         *HealthCounts           `json:"healthCounts,omitempty"`

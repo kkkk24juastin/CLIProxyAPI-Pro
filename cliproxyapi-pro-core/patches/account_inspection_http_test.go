@@ -1,6 +1,12 @@
 package management
 
-import "testing"
+import (
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
 
 func TestPaginateAccountInspectionResultsReturnsRequestedPage(t *testing.T) {
 	results := []accountInspectionResult{
@@ -130,6 +136,37 @@ func TestStreamStatusLockedOmitsDetailsForLightSnapshots(t *testing.T) {
 	}
 	if status.ResultsPage != nil || status.LogsPage != nil {
 		t.Fatalf("streamStatusLocked(light) leaked page info: results=%v logs=%v", status.ResultsPage, status.LogsPage)
+	}
+}
+
+func TestStreamStatusIncludesLastRunSettings(t *testing.T) {
+	scheduler := &accountInspectionScheduler{
+		lastRunSettings: accountInspectionSettings{TargetType: "xai", UsedPercentThreshold: 73},
+		status:          accountInspectionStatus{State: accountInspectionStateCompleted},
+	}
+	status := scheduler.streamStatusLocked(accountInspectionSnapshotOptions{})
+	if status.RunSettings.TargetType != "xai" || status.RunSettings.UsedPercentThreshold != 73 {
+		t.Fatalf("run settings = %#v", status.RunSettings)
+	}
+}
+
+func TestInspectManyAccountsRejectsInvalidBatchWithoutScheduler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := &Handler{}
+	scheduler := &accountInspectionScheduler{
+		schedule: accountInspectionSchedule{}, status: accountInspectionStatus{},
+		subscribers: make(map[chan accountInspectionLogStreamMessage]struct{}),
+	}
+	accountInspectionSchedulers.Store(handler, scheduler)
+	t.Cleanup(func() { accountInspectionSchedulers.Delete(handler) })
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest("POST", "/account-inspection/inspect-many", strings.NewReader(`{"items":[]}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	handler.InspectManyAccounts(context)
+	if recorder.Code != 400 {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

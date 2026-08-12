@@ -36,7 +36,7 @@ import { resolveAccountPlanLabel, type AccountPlanQuotaStore } from '@/pro/modul
 import { isQuotaLowState } from './quotaHealth';
 import styles from './accountInspection.module.scss';
 
-export type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
+export type RunStatus = 'idle' | 'running' | 'paused' | 'completed' | 'partial' | 'stopped' | 'failed';
 
 export const formatAccountInspectionDuration = (
   startedAt: number,
@@ -1327,6 +1327,9 @@ export type InspectionBackendState = {
   result: AccountInspectionRunResult | null;
   autoExecutionCounts: AutoExecutionCounts;
   restoredSnapshot: boolean;
+  lastError: string;
+  persistenceError: string;
+  settingsDirty: boolean;
 };
 
 export type InspectionBackendAction =
@@ -1339,7 +1342,7 @@ export type InspectionBackendAction =
   | { type: 'clearAutoExecutionCounts' }
   | { type: 'setResult'; result: AccountInspectionRunResult | null }
   | { type: 'resetSettings'; settings: AccountInspectionConfigurableSettings }
-  | { type: 'setSettingsDraft'; draft: InspectionSettingsDraft }
+  | { type: 'discardSettingsDraft' }
   | { type: 'updateSettingsDraft'; values: Partial<InspectionSettingsDraft> }
   | { type: 'updateScheduleDraft'; values: Partial<ScheduleDraft> };
 
@@ -1355,6 +1358,9 @@ export const createInspectionBackendState = (settings: AccountInspectionConfigur
   result: null,
   autoExecutionCounts: emptyAutoExecutionCounts(),
   restoredSnapshot: false,
+  lastError: '',
+  persistenceError: '',
+  settingsDirty: false,
 });
 
 const applyBackendViewState = (
@@ -1364,13 +1370,22 @@ const applyBackendViewState = (
 ) => {
   let nextState = state;
   nextState = withChanged(nextState, 'inspectionSettings', viewState.settings, sameInspectionSettings);
-  nextState = withChanged(nextState, 'settingsDraft', toSettingsDraft(viewState.settings), sameSettingsDraft);
-  nextState = withChanged(nextState, 'scheduleDraft', viewState.scheduleDraft, sameScheduleDraft);
+  if (!state.settingsDirty) {
+    nextState = withChanged(nextState, 'settingsDraft', toSettingsDraft(viewState.settings), sameSettingsDraft);
+    nextState = withChanged(nextState, 'scheduleDraft', viewState.scheduleDraft, sameScheduleDraft);
+  }
   nextState = withChanged(nextState, 'schedule', response.schedule, sameScheduleSnapshot);
   nextState = withChanged(nextState, 'autoExecutionCounts', viewState.autoExecutionCounts, sameAutoExecutionCounts);
   nextState = withChanged(nextState, 'progress', viewState.progress, sameProgressSnapshot);
   nextState = withChanged(nextState, 'runStatus', viewState.runStatus, sameRunStatus);
   nextState = withChanged(nextState, 'restoredSnapshot', viewState.restoredSnapshot, Object.is);
+  nextState = withChanged(nextState, 'lastError', viewState.lastError, Object.is);
+  nextState = withChanged(nextState, 'persistenceError', viewState.persistenceError, Object.is);
+  if (state.settingsDirty &&
+    sameSettingsDraft(toSettingsDraft(viewState.settings), state.settingsDraft) &&
+    sameScheduleDraft(viewState.scheduleDraft, state.scheduleDraft)) {
+    nextState = withChanged(nextState, 'settingsDirty', false, Object.is);
+  }
   if (viewState.logs) {
     nextState = withChanged(nextState, 'logs', viewState.logs, Object.is);
   }
@@ -1420,7 +1435,7 @@ export const inspectionBackendReducer = (
         },
       };
     case 'runFailed':
-      return state.runStatus === 'error' ? state : { ...state, runStatus: 'error' };
+      return state.runStatus === 'failed' ? state : { ...state, runStatus: 'failed' };
     case 'clearAutoExecutionCounts':
       return withChanged(state, 'autoExecutionCounts', emptyAutoExecutionCounts(), sameAutoExecutionCounts);
     case 'setResult':
@@ -1428,15 +1443,23 @@ export const inspectionBackendReducer = (
     case 'resetSettings':
       return {
         ...state,
-        inspectionSettings: action.settings,
         settingsDraft: toSettingsDraft(action.settings),
+        settingsDirty: true,
       };
-    case 'setSettingsDraft':
-      return withChanged(state, 'settingsDraft', action.draft, sameSettingsDraft);
+    case 'discardSettingsDraft':
+      return {
+        ...state,
+        settingsDraft: toSettingsDraft(state.inspectionSettings),
+        scheduleDraft: {
+          enabled: state.schedule?.enabled ?? false,
+          intervalMinutes: String(state.schedule?.intervalMinutes ?? 360),
+        },
+        settingsDirty: false,
+      };
     case 'updateSettingsDraft':
-      return { ...state, settingsDraft: { ...state.settingsDraft, ...action.values } };
+      return { ...state, settingsDraft: { ...state.settingsDraft, ...action.values }, settingsDirty: true };
     case 'updateScheduleDraft':
-      return { ...state, scheduleDraft: { ...state.scheduleDraft, ...action.values } };
+      return { ...state, scheduleDraft: { ...state.scheduleDraft, ...action.values }, settingsDirty: true };
     default:
       return state;
   }

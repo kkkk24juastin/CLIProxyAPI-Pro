@@ -106,6 +106,65 @@
   line-height: 1.55;
 }
 
+.inspectionAlert,
+.inspectionInlineError,
+.bulkFailurePanel {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--color-danger, #dc2626) 38%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-danger, #dc2626) 8%, transparent);
+  color: var(--text-primary);
+}
+
+.inspectionAlert,
+.bulkFailurePanel {
+  flex-direction: column;
+  margin-bottom: 14px;
+}
+
+.inspectionInlineError {
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px;
+}
+
+.bulkFailurePanel {
+  margin: 14px;
+}
+
+.bulkFailurePanel > :global(button) {
+  align-self: flex-start;
+}
+
+.inspectionStatusError {
+  color: var(--color-danger, #dc2626);
+  overflow-wrap: anywhere;
+}
+
+.latestInspectionSnapshot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-secondary) 86%, transparent);
+}
+
+.latestInspectionSnapshot > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.latestInspectionSnapshot > div:first-child {
+  flex-direction: column;
+}
+
 .heroCard:global(.card),
 .heroCard {
   display: grid;

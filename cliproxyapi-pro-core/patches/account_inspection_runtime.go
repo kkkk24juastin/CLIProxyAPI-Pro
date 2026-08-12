@@ -165,6 +165,8 @@ type accountInspectionDecision = proinspection.Decision
 type accountInspectionActionItem = proinspection.ActionItem
 type accountInspectionActionRequest = proinspection.ActionRequest
 type accountInspectionOneRequest = proinspection.OneRequest
+type accountInspectionManyRequest = proinspection.ManyRequest
+type accountInspectionOutcome = proinspection.InspectionOutcome
 type accountInspectionRefreshTokenRequest = proinspection.RefreshTokenRequest
 type accountInspectionActionOutcome = proinspection.ActionOutcome
 
@@ -289,7 +291,7 @@ func (s *accountInspectionScheduler) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, append(raw, '\n'), 0o600)
+	return proinspection.AtomicWriteFile(s.path, append(raw, '\n'), 0o600)
 }
 
 func decodeAccountInspectionResultSnapshot(raw []byte) (accountInspectionResultSnapshot, error) {
@@ -314,10 +316,11 @@ func (s *accountInspectionScheduler) resultSnapshotLocked() (accountInspectionRe
 		Summary:        s.status.Summary,
 		HealthCounts:   s.healthCountsLocked(),
 		Results:        append([]accountInspectionResult(nil), s.status.Results...),
+		Confirmations:  s.autoActionConfirmations.State(),
 	}, true
 }
 
-func (s *accountInspectionScheduler) applyResultSnapshotLocked(snapshot accountInspectionResultSnapshot, restored bool) {
+func (s *accountInspectionScheduler) applyResultSnapshotLocked(snapshot accountInspectionResultSnapshot, restored bool, restoreConfirmations bool) {
 	s.lastRunSettings = snapshot.Settings
 	s.status.State = snapshot.State
 	s.status.LastStartedAt = snapshot.LastStartedAt
@@ -332,6 +335,14 @@ func (s *accountInspectionScheduler) applyResultSnapshotLocked(snapshot accountI
 	s.status.Results = append([]accountInspectionResult(nil), snapshot.Results...)
 	s.status.RestoredSnapshot = restored
 	s.healthCounts = snapshot.HealthCounts
+	if s.autoActionConfirmations == nil {
+		s.autoActionConfirmations = proinspection.NewConfirmationCounter()
+	}
+	if restoreConfirmations {
+		s.autoActionConfirmations.Restore(snapshot.Confirmations)
+	} else {
+		s.autoActionConfirmations.Reset()
+	}
 }
 
 func (s *accountInspectionScheduler) saveResultSnapshotLocked() error {
@@ -346,10 +357,10 @@ func (s *accountInspectionScheduler) saveResultSnapshotLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.snapshotPath, append(raw, '\n'), 0o600); err != nil {
+	if err := proinspection.AtomicWriteFile(s.snapshotPath, append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
-	return os.Chmod(s.snapshotPath, 0o600)
+	return nil
 }
 
 func (s *accountInspectionScheduler) loadResultSnapshot() error {
@@ -367,7 +378,13 @@ func (s *accountInspectionScheduler) loadResultSnapshot() error {
 	if err != nil {
 		return err
 	}
-	s.applyResultSnapshotLocked(snapshot, true)
+	// The schedule and result snapshot are separate atomic files. If a settings
+	// update persisted its schedule but failed while clearing the snapshot's
+	// confirmation state, never reuse confirmations accumulated under the old
+	// settings after restart.
+	currentSettings := normalizeAccountInspectionSchedule(accountInspectionSchedule{Settings: s.schedule.Settings}).Settings
+	restoreConfirmations := snapshot.Settings == currentSettings
+	s.applyResultSnapshotLocked(snapshot, true, restoreConfirmations)
 	return nil
 }
 
@@ -391,6 +408,10 @@ func (s *accountInspectionScheduler) exportResultSnapshot() ([]byte, bool, error
 			return nil, false, err
 		}
 	}
+	// Consecutive automatic-action confirmation state is local runtime state.
+	// It must survive a restart, but must not travel to another instance in a
+	// portable backup where it could immediately trigger a destructive action.
+	snapshot.Confirmations = proinspection.ConfirmationState{}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, false, err
@@ -411,7 +432,7 @@ func (s *accountInspectionScheduler) importResultSnapshot(raw []byte) error {
 		s.mu.Unlock()
 		return fmt.Errorf("account inspection is running")
 	}
-	s.applyResultSnapshotLocked(snapshot, true)
+	s.applyResultSnapshotLocked(snapshot, true, false)
 	err = s.saveResultSnapshotLocked()
 	broadcast := s.statusBroadcastLocked()
 	s.mu.Unlock()
@@ -468,12 +489,20 @@ func (s *accountInspectionScheduler) update(schedule accountInspectionSchedule) 
 		return fmt.Errorf("account inspection scheduler is shut down")
 	}
 	previousNextRunAt := s.schedule.NextRunAt
+	previousSettings := s.schedule.Settings
 	s.schedule = normalizeAccountInspectionSchedule(schedule)
 	if s.schedule.Enabled && previousNextRunAt > 0 && schedule.NextRunAt == 0 {
 		s.schedule.NextRunAt = previousNextRunAt
 	}
+	settingsChanged := previousSettings != s.schedule.Settings
 	if err := s.saveLocked(); err != nil {
 		return err
+	}
+	if settingsChanged && s.autoActionConfirmations != nil {
+		s.autoActionConfirmations.Reset()
+		if err := s.saveResultSnapshotLocked(); err != nil {
+			return err
+		}
 	}
 	select {
 	case s.trigger <- struct{}{}:
@@ -574,6 +603,10 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 	}
 	s.cancel = cancel
 	s.lastRunSettings = s.schedule.Settings
+	if s.autoActionConfirmations == nil {
+		s.autoActionConfirmations = proinspection.NewConfirmationCounter()
+	}
+	s.autoActionConfirmations.BeginRun()
 	s.setRunStateLocked(accountInspectionStateRunning)
 	s.status.RestoredSnapshot = false
 	s.status.LastStartedAt = time.Now().UnixMilli()
@@ -764,6 +797,107 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 	return result, nil
 }
 
+func (s *accountInspectionScheduler) inspectMany(ctx context.Context, items []accountInspectionActionItem) ([]accountInspectionOutcome, error) {
+	release, err := s.beginLifecycle()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, accountInspectionMaxRunDuration)
+	defer cancel()
+	s.mu.Lock()
+	if s.status.RestoredSnapshot {
+		s.mu.Unlock()
+		return nil, errAccountInspectionRestoredSnapshotReadOnly
+	}
+	if s.isRunningLocked() {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("account inspection already running")
+	}
+	s.mu.Unlock()
+	s.fullRunMu.RLock()
+	defer s.fullRunMu.RUnlock()
+	s.mu.Lock()
+	if s.isRunningLocked() {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("account inspection already running")
+	}
+	settings := s.schedule.Settings
+	s.mu.Unlock()
+
+	boundItems := make([]accountInspectionActionItem, 0, len(items))
+	outcomes := make([]accountInspectionOutcome, 0, len(items))
+	workOutcomeIndexes := make([]int, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		outcome := accountInspectionOutcome{Key: item.Key, FileName: item.FileName, DisplayName: item.DisplayName, Email: item.Email, Name: item.Name, Provider: item.Provider, AuthIndex: item.AuthIndex}
+		bound, bindErr := s.bindActionItemToSnapshot(item)
+		if bindErr != nil {
+			outcome.Error = bindErr.Error()
+			outcomes = append(outcomes, outcome)
+			continue
+		}
+		if _, ok := seen[bound.Key]; ok {
+			continue
+		}
+		seen[bound.Key] = struct{}{}
+		outcome = accountInspectionOutcome{Key: bound.Key, FileName: bound.FileName, DisplayName: bound.DisplayName, Email: bound.Email, Name: bound.Name, Provider: bound.Provider, AuthIndex: bound.AuthIndex}
+		workOutcomeIndexes = append(workOutcomeIndexes, len(outcomes))
+		outcomes = append(outcomes, outcome)
+		boundItems = append(boundItems, bound)
+	}
+	processed := make([]bool, len(boundItems))
+	runAccountInspectionProviderWorkers(len(boundItems), settings.Workers, settings.ProviderWorkers, func(index int) string {
+		return boundItems[index].Provider
+	}, nil, func(index int) bool {
+		item := boundItems[index]
+		outcomeIndex := workOutcomeIndexes[index]
+		outcome := outcomes[outcomeIndex]
+		result, _, inspectErr := s.executeSingleInspection(ctx, settings, item)
+		if inspectErr != nil {
+			outcome.Error = inspectErr.Error()
+			s.appendLog("error", fmt.Sprintf("%s 重新检查失败：%s", item.FileName, inspectErr.Error()))
+		} else {
+			outcome.Success = true
+			outcome.Result = &result
+		}
+		outcomes[outcomeIndex] = outcome
+		processed[index] = true
+		return ctx.Err() == nil
+	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		for index, wasProcessed := range processed {
+			if wasProcessed {
+				continue
+			}
+			outcomeIndex := workOutcomeIndexes[index]
+			outcomes[outcomeIndex].Error = fmt.Sprintf("recheck canceled before execution: %v", ctxErr)
+		}
+	}
+
+	s.mu.Lock()
+	for _, outcome := range outcomes {
+		if outcome.Success && outcome.Result != nil {
+			s.mergeSingleInspectionResultLocked(*outcome.Result)
+		}
+	}
+	s.status.Results = proinspection.SortResults(s.status.Results)
+	saveErr := s.saveResultSnapshotLocked()
+	broadcast := s.statusBroadcastLocked()
+	s.mu.Unlock()
+	broadcast.send()
+	if saveErr != nil {
+		return outcomes, fmt.Errorf("failed to save account inspection snapshot: %w", saveErr)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return outcomes, ctxErr
+	}
+	return outcomes, nil
+}
+
 func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item accountInspectionActionItem) (accountInspectionResult, error) {
 	release, err := s.beginLifecycle()
 	if err != nil {
@@ -948,16 +1082,21 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 		s.status.LastError = ""
 	}
 	s.cancel = nil
-	broadcast := s.statusBroadcastLocked()
-	if s.schedule.Enabled && !manual {
+	s.status.PersistenceError = ""
+	if s.schedule.Enabled && (!manual || state == accountInspectionStateCompleted) {
 		s.schedule.NextRunAt = time.Now().Add(time.Duration(s.schedule.IntervalMinutes) * time.Minute).UnixMilli()
 		if err := s.saveLocked(); err != nil {
+			s.status.PersistenceError = fmt.Sprintf("保存下次巡检时间失败：%v", err)
 			log.WithError(err).Warn("failed to save next account inspection run time")
 		}
 	}
 	if err := s.saveResultSnapshotLocked(); err != nil {
+		s.status.PersistenceError = fmt.Sprintf("保存巡检结果失败：%v", err)
 		log.WithError(err).Warn("failed to save account inspection snapshot")
+	} else if s.status.PersistenceError == "" || strings.HasPrefix(s.status.PersistenceError, "保存巡检结果失败：") {
+		s.status.PersistenceError = ""
 	}
+	broadcast := s.statusBroadcastLocked()
 	s.mu.Unlock()
 	broadcast.send()
 }

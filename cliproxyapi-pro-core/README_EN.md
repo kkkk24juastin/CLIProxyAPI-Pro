@@ -163,6 +163,7 @@ Request monitoring also stores TTFT, HTTP status code, structured error, reasoni
 - `POST /v0/management/account-inspection/run`
 - `POST /v0/management/account-inspection/inspect-one`
 - `POST /v0/management/account-inspection/refresh-token`
+- `POST /v0/management/account-inspection/inspect-many` — backend-limited bulk recheck with per-account outcomes.
 - `POST /v0/management/account-inspection/pause`
 - `POST /v0/management/account-inspection/resume`
 - `POST /v0/management/account-inspection/stop`

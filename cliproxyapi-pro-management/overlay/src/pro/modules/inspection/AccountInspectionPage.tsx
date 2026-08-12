@@ -20,7 +20,6 @@ import {
   accountInspectionBackendResultToItem,
   buildAccountInspectionBackendViewState,
   buildExecutionFailureMessage,
-  clearAccountInspectionConfigurableSettings,
   DEFAULT_ACCOUNT_INSPECTION_SETTINGS,
   hasAccountInspectionAutoExecutePolicies,
   isAccountInspectionBackendResponse,
@@ -35,7 +34,6 @@ import {
 import {
   ACCOUNT_INSPECTION_ACTION_PAGE_SIZE,
   ACCOUNT_INSPECTION_AUTH_FILES_IDLE_DELAY_MS,
-  ACCOUNT_INSPECTION_DETAILS_IDLE_DELAY_MS,
   ACCOUNT_INSPECTION_EXPORT_DOWNLOAD_CONCURRENCY,
   ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
   ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET,
@@ -82,11 +80,9 @@ import {
   levelClassMap,
   resolveAccountInspectionAccountLabel,
   resolveAccountInspectionPlanLabel,
-  resolveAssetInspectionHealthCounts,
   scheduleAuthFileAccountStats,
   summaryToneClass,
   toAccountInspectionApiItem,
-  toSettingsDraft,
   tokenRefreshToneClass,
   type AccountInspectionIdleCallback,
   type AuthFileAccountStats,
@@ -110,7 +106,6 @@ import {
   buildZipArchive,
   downloadBlobFile,
   mapWithConcurrency,
-  mapWithKeyedConcurrency,
 } from '@/pro/modules/inspection/features/accountInspectionExport';
 import {
   accountInspectionApi,
@@ -122,6 +117,7 @@ import {
   type AccountInspectionScheduleResponse,
 } from './api';
 import { apiClient } from '@/services/api/client';
+import type { ApiError } from '@/types';
 import { authFilesApi } from '@/services/api/authFiles';
 import { quotaPersistenceMiddleware } from '@/pro/modules/quota';
 import { useAuthStore, useNotificationStore, useQuotaStore } from '@/stores';
@@ -130,6 +126,7 @@ import { resolveAuthProvider } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
 import quotaStyles from '@/features/quota/QuotaPage.module.scss';
 import styles from '@/pro/modules/inspection/features/accountInspection.module.scss';
+import { useInspectionDetailsLoader } from '@/pro/modules/inspection/hooks/useInspectionDetailsLoader';
 
 type ResultBulkAction = 'suggested' | 'recheck' | ManualAccountInspectionAction;
 
@@ -167,6 +164,9 @@ export function AccountInspectionPage() {
     result,
     autoExecutionCounts,
     restoredSnapshot,
+    lastError,
+    persistenceError,
+    settingsDirty,
   } = backendState;
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [selectedDetailResult, setSelectedDetailResult] = useState<AccountInspectionResultItem | null>(null);
@@ -195,6 +195,9 @@ export function AccountInspectionPage() {
   const [selectedResultKeys, setSelectedResultKeys] = useState<Set<string>>(() => new Set());
   const [resultBulkAction, setResultBulkAction] = useState<ResultBulkAction>('suggested');
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [bulkRecheckFailures, setBulkRecheckFailures] = useState<Array<{ item: AccountInspectionResultItem; error: string }>>([]);
+  const [detailsLoadError, setDetailsLoadError] = useState('');
+  const [detailsRetryNonce, setDetailsRetryNonce] = useState(0);
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
   const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
@@ -305,7 +308,7 @@ export function AccountInspectionPage() {
     }
   }, [loadAuthFiles]);
 
-  const loadInspectionDetailsPage = useCallback(async () => {
+  const loadInspectionDetailsPage = useCallback(async (signal?: AbortSignal) => {
     const response = await accountInspectionApi.getStatus({
       includeDetails: true,
       resultPage,
@@ -317,7 +320,10 @@ export function AccountInspectionPage() {
       logPage,
       logPageSize: ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
       logLevel: logLevelFilter,
-    });
+    }, signal);
+    if (signal?.aborted) {
+      throw signal.reason ?? new DOMException('Account inspection details request aborted', 'AbortError');
+    }
     applyBackendResponse(response, true);
     return response;
   }, [activeResultFilter, applyBackendResponse, logLevelFilter, logPage, resultPage, resultPageSize, resultPendingOnly, resultSearch, selectedResultProvider]);
@@ -452,67 +458,16 @@ export function AccountInspectionPage() {
     };
   }, [apiBase, applyBackendResponse, connectionStatus, loadBackendSchedule, managementKey]);
 
-  useEffect(() => {
-    if (connectionStatus !== 'connected') return;
-    if (progress.status === 'running' || progress.status === 'paused') return;
-    if (progress.startedAt <= 0 || (progress.total <= 0 && progress.summary.totalFiles <= 0)) return;
-    const detailKey = [
-      progress.startedAt,
-      activeResultFilter,
-      resultPendingOnly,
-      selectedResultProvider,
-      resultSearch,
-      resultPage,
-      resultPageSize,
-      logLevelFilter,
-      logPage,
-    ].join(':');
-    if (loadedBackendDetailsKeyRef.current === detailKey) return;
-
-    let cancelled = false;
-    const loadDetails = async () => {
-      try {
-        await loadInspectionDetailsPage();
-        if (cancelled) return;
-        loadedBackendDetailsKeyRef.current = detailKey;
-      } catch {
-        // Keep the detail fetch retryable; a transient miss should not leave the table empty.
-      }
-    };
-    const windowWithIdleCallback = window as Window & {
-      requestIdleCallback?: (callback: AccountInspectionIdleCallback, options?: { timeout?: number }) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    };
-    if (windowWithIdleCallback.requestIdleCallback) {
-      const idleHandle = windowWithIdleCallback.requestIdleCallback(() => void loadDetails(), {
-        timeout: 1500,
-      });
-      return () => {
-        cancelled = true;
-        windowWithIdleCallback.cancelIdleCallback?.(idleHandle);
-      };
-    }
-    const timeoutId = window.setTimeout(() => void loadDetails(), ACCOUNT_INSPECTION_DETAILS_IDLE_DELAY_MS);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    connectionStatus,
-    loadInspectionDetailsPage,
-    logLevelFilter,
-    logPage,
-    progress.startedAt,
-    progress.status,
-    progress.summary.totalFiles,
-    progress.total,
-    activeResultFilter,
-    resultPage,
-    resultPageSize,
-    resultPendingOnly,
-    resultSearch,
-    selectedResultProvider,
-  ]);
+  const inspectionDetailsKey = [progress.startedAt, activeResultFilter, resultPendingOnly, selectedResultProvider, resultSearch, resultPage, resultPageSize, logLevelFilter, logPage].join(':');
+  const handleDetailsLoadError = useCallback((message: string) => setDetailsLoadError(message), []);
+  useInspectionDetailsLoader({
+    enabled: connectionStatus === 'connected' && progress.status !== 'running' && progress.status !== 'paused' && progress.startedAt > 0 && (progress.total > 0 || progress.summary.totalFiles > 0),
+    detailKey: inspectionDetailsKey,
+    retryNonce: detailsRetryNonce,
+    load: loadInspectionDetailsPage,
+    loadedKeyRef: loadedBackendDetailsKeyRef,
+    onError: handleDetailsLoadError,
+  });
 
   useEffect(() => {
     setResultPage(1);
@@ -915,25 +870,16 @@ export function AccountInspectionPage() {
     setLogsCollapsed(false);
     appendLog('info', t('monitoring.account_inspection_recheck_selected_started', { count: items.length }));
     try {
-      const outcomes = await mapWithKeyedConcurrency(
-        items,
-        inspectionSettings.workers,
-        inspectionSettings.providerWorkers,
-        (item) => item.provider,
-        async (item) => {
-          try {
-            const response = await accountInspectionApi.inspectOne(toAccountInspectionApiItem(item), currentInspectionDetailOptions);
-            return { success: Boolean(response.result?.key), response };
-          } catch {
-            return { success: false, response: null };
-          }
-        }
-      );
-      outcomes.forEach((outcome) => {
-        if (outcome.response) applyBackendResponse(outcome.response);
+      const response = await accountInspectionApi.inspectMany(items.map(toAccountInspectionApiItem), currentInspectionDetailOptions);
+      applyBackendResponse(response);
+      const itemByKey = new Map(items.map((item) => [item.key, item]));
+      const outcomes = response.outcomes.flatMap((outcome) => {
+        const item = itemByKey.get(outcome.key) ?? items.find((candidate) => candidate.fileName === outcome.fileName && candidate.authIndex === outcome.authIndex);
+        return item ? [{ success: outcome.success, item, error: outcome.error }] : [];
       });
       const success = outcomes.filter((outcome) => outcome.success).length;
       const failed = outcomes.length - success;
+      setBulkRecheckFailures(outcomes.filter((outcome) => !outcome.success).map((outcome) => ({ item: outcome.item, error: outcome.error })));
       showNotification(
         t('monitoring.account_inspection_recheck_selected_summary', {
           total: outcomes.length,
@@ -944,10 +890,28 @@ export function AccountInspectionPage() {
       );
       setSelectedResultKeys(new Set());
       void loadInspectionDetailsPage();
+    } catch (error) {
+      const response = (error as ApiError | undefined)?.data;
+      if (isAccountInspectionBackendResponse(response)) {
+        applyBackendResponse(response);
+        const itemByKey = new Map(items.map((item) => [item.key, item]));
+        const responseWithOutcomes = response as AccountInspectionScheduleResponse & {
+          outcomes?: Array<{ key?: string; fileName?: string; authIndex?: string; success?: boolean; error?: string }>;
+        };
+        const failures = Array.isArray(responseWithOutcomes.outcomes)
+          ? responseWithOutcomes.outcomes.flatMap((outcome) => {
+              if (outcome.success) return [];
+              const item = itemByKey.get(outcome.key ?? '') ?? items.find((candidate) => candidate.fileName === outcome.fileName && candidate.authIndex === outcome.authIndex);
+              return item ? [{ item, error: outcome.error || t('common.unknown_error') }] : [];
+            })
+          : [];
+        setBulkRecheckFailures(failures);
+      }
+      handleAccountInspectionControlError(error, appendLog, showNotification, t('common.unknown_error'));
     } finally {
       setBulkActionLoading(false);
     }
-  }, [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, inspectionSettings.providerWorkers, inspectionSettings.workers, loadInspectionDetailsPage, restoredSnapshot, showNotification, t]);
+  }, [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, loadInspectionDetailsPage, restoredSnapshot, showNotification, t]);
 
   const handleExecuteSelectedResults = useCallback(() => {
     const items = selectedVisibleResultRows.map(({ item }) => item);
@@ -1038,15 +1002,6 @@ export function AccountInspectionPage() {
     return authFileStats.providers.find((provider) => provider.provider === selectedAssetProvider) ?? authFileStats;
   }, [authFileStats, selectedAssetProvider]);
 
-  const selectedInspectionHealthCounts = useMemo(() => {
-    return resolveAssetInspectionHealthCounts(
-      result?.healthCounts,
-      result?.providerHealthCounts,
-      selectedAssetProvider,
-      selectedAssetStats.total
-    );
-  }, [result?.healthCounts, result?.providerHealthCounts, selectedAssetProvider, selectedAssetStats.total]);
-
   const selectedAssetLabel = selectedAssetProvider === 'all'
     ? t('monitoring.filter_all_accounts')
     : resolveProviderDisplayLabel(selectedAssetProvider);
@@ -1075,28 +1030,7 @@ export function AccountInspectionPage() {
       description: t('monitoring.account_inspection_blast_radius'),
       tone: authFileStatsReady && selectedAssetStats.disabled > 0 ? 'warn' : 'neutral',
     },
-    {
-      key: 'quotaLow',
-      label: t('monitoring.account_inspection_account_quota_low'),
-      value: authFileStatsReady ? String(selectedInspectionHealthCounts?.quotaExhausted ?? selectedAssetStats.quotaLow) : '--',
-      description: t('monitoring.account_inspection_settings_auto_execute_quota_limit_disable_label'),
-      tone: authFileStatsReady && (selectedInspectionHealthCounts?.quotaExhausted ?? selectedAssetStats.quotaLow) > 0 ? 'bad' : 'neutral',
-    },
-    {
-      key: 'accountInvalid',
-      label: t('monitoring.account_inspection_account_invalid'),
-      value: authFileStatsReady ? String(selectedInspectionHealthCounts?.authInvalid ?? selectedAssetStats.accountInvalid) : '--',
-      description: t('monitoring.account_inspection_settings_auto_execute_account_invalid_action_label'),
-      tone: authFileStatsReady && (selectedInspectionHealthCounts?.authInvalid ?? selectedAssetStats.accountInvalid) > 0 ? 'bad' : 'neutral',
-    },
-    {
-      key: 'requestError',
-      label: t('monitoring.account_inspection_account_request_error'),
-      value: authFileStatsReady ? String(selectedInspectionHealthCounts?.inspectionError ?? selectedAssetStats.requestError) : '--',
-      description: t('monitoring.account_inspection_settings_auto_execute_request_error_action_label'),
-      tone: authFileStatsReady && (selectedInspectionHealthCounts?.inspectionError ?? selectedAssetStats.requestError) > 0 ? 'bad' : 'neutral',
-    },
-  ], [authFileStatsReady, selectedAssetLabel, selectedAssetStats, selectedInspectionHealthCounts, t]);
+  ], [authFileStatsReady, selectedAssetLabel, selectedAssetStats, t]);
 
   const actionStats = useMemo(() => {
     const autoTotal = autoExecutionCounts.delete + autoExecutionCounts.disable + autoExecutionCounts.enable;
@@ -1167,7 +1101,9 @@ export function AccountInspectionPage() {
       }
       return t('monitoring.account_inspection_phase_probing');
     }
-    if (runStatus === 'error') return t('monitoring.account_inspection_phase_failed');
+    if (runStatus === 'failed') return t('monitoring.account_inspection_phase_failed');
+    if (runStatus === 'partial') return t('monitoring.account_inspection_phase_partial');
+    if (runStatus === 'stopped') return t('monitoring.account_inspection_phase_stopped');
     if (result && pendingActionCount > 0) return t('monitoring.account_inspection_phase_review');
     if (result) return t('monitoring.account_inspection_phase_completed');
     return t('monitoring.account_inspection_phase_idle');
@@ -1175,7 +1111,7 @@ export function AccountInspectionPage() {
 
   const resultEmptyMessage = runStatus === 'running'
     ? t('monitoring.account_inspection_results_generating')
-    : runStatus === 'error'
+    : runStatus === 'failed'
       ? t('monitoring.account_inspection_results_error_empty')
       : t('monitoring.account_inspection_empty');
   const accountIssueResultCount = displayedHealthCounts.authInvalid + displayedHealthCounts.inspectionError;
@@ -1239,11 +1175,11 @@ export function AccountInspectionPage() {
           percent: progress.percent,
         })
       : t('monitoring.account_inspection_progress_idle');
-  const completedDuration = progress.status === 'completed' && result
+  const completedDuration = result && ['completed', 'partial', 'stopped', 'failed'].includes(result.state)
     ? formatAccountInspectionDuration(result.startedAt, result.finishedAt, t)
     : null;
   const completedProgressLabel = completedDuration
-    ? t('monitoring.account_inspection_completed_with_duration', { duration: completedDuration })
+    ? t(result?.state === 'completed' ? 'monitoring.account_inspection_completed_with_duration' : 'monitoring.account_inspection_ended_with_duration', { duration: completedDuration })
     : t('monitoring.account_inspection_phase_completed');
   const setSettingsSectionRef = useCallback(
     (section: SettingsSectionKey) => (element: HTMLElement | null) => {
@@ -1263,9 +1199,9 @@ export function AccountInspectionPage() {
   }, []);
 
   const openSettingsModal = useCallback(() => {
-    dispatchBackendState({ type: 'setSettingsDraft', draft: toSettingsDraft(inspectionSettings) });
+    dispatchBackendState({ type: 'discardSettingsDraft' });
     setIsSettingsModalOpen(true);
-  }, [inspectionSettings]);
+  }, []);
 
   const handleSettingsDraftChange = useCallback(
     (field: InspectionSettingsDraftField, value: string) => {
@@ -1353,7 +1289,7 @@ export function AccountInspectionPage() {
     }
 
     try {
-      const nextSettings = saveAccountInspectionConfigurableSettings({
+      const nextSettings = {
         targetType,
         workers: parseIntegerInRange(
           settingsDraft.workers,
@@ -1416,7 +1352,7 @@ export function AccountInspectionPage() {
           AUTO_EXECUTE_CONFIRMATION_LIMITS.min,
           AUTO_EXECUTE_CONFIRMATION_LIMITS.max
         ),
-      });
+      };
 
       const intervalMinutes = parseIntegerInRange(
         scheduleDraft.intervalMinutes,
@@ -1432,6 +1368,7 @@ export function AccountInspectionPage() {
           : 0,
         settings: nextSettings,
       });
+      saveAccountInspectionConfigurableSettings(nextSettings);
       applyBackendResponse(response);
       setIsSettingsModalOpen(false);
       showNotification(t('monitoring.account_inspection_settings_saved'), 'success');
@@ -1443,11 +1380,27 @@ export function AccountInspectionPage() {
   }, [applyBackendResponse, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, settingsDraft, showNotification, t]);
 
   const handleResetSettings = useCallback(() => {
-    clearAccountInspectionConfigurableSettings();
-    const nextSettings = saveAccountInspectionConfigurableSettings(DEFAULT_ACCOUNT_INSPECTION_SETTINGS);
-    dispatchBackendState({ type: 'resetSettings', settings: nextSettings });
-    showNotification(t('monitoring.account_inspection_settings_reset'), 'success');
+    dispatchBackendState({ type: 'resetSettings', settings: DEFAULT_ACCOUNT_INSPECTION_SETTINGS });
+    showNotification(t('monitoring.account_inspection_settings_reset_draft'), 'info');
   }, [showNotification, t]);
+
+  const closeSettingsModal = useCallback(() => {
+    if (!settingsDirty) {
+      setIsSettingsModalOpen(false);
+      return;
+    }
+    showConfirmation({
+      title: t('monitoring.account_inspection_settings_unsaved_title'),
+      message: t('monitoring.account_inspection_settings_unsaved_desc'),
+      confirmText: t('monitoring.account_inspection_settings_discard'),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+      onConfirm: () => {
+        dispatchBackendState({ type: 'discardSettingsDraft' });
+        setIsSettingsModalOpen(false);
+      },
+    });
+  }, [settingsDirty, showConfirmation, t]);
 
   const draftInspectionScopeLabel = settingsDraft.targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
     ? t('monitoring.filter_all_providers')
@@ -1572,12 +1525,34 @@ export function AccountInspectionPage() {
             </div>
           </Card>
         </div>
+        {result ? (
+          <div className={styles.latestInspectionSnapshot}>
+            <div>
+              <strong>{t('monitoring.account_inspection_latest_snapshot_title')}</strong>
+              <span>{t('monitoring.account_inspection_results_updated_at', { time: formatTimestamp(result.finishedAt, i18n.language) })}</span>
+            </div>
+            <div>
+              <span>{t('monitoring.account_inspection_result_total')}: {result.healthCounts?.total ?? result.summary.sampledCount}</span>
+              <span>{t('monitoring.account_inspection_account_quota_low')}: {result.healthCounts?.quotaExhausted ?? 0}</span>
+              <span>{t('monitoring.account_inspection_account_invalid')}: {result.healthCounts?.authInvalid ?? 0}</span>
+              <span>{t('monitoring.account_inspection_account_request_error')}: {result.healthCounts?.inspectionError ?? 0}</span>
+              <span>{t('monitoring.account_inspection_coverage_rate')}: {result.summary.totalFiles > 0 ? `${Math.round((result.summary.sampledCount / result.summary.totalFiles) * 100)}%` : '--'}</span>
+            </div>
+          </div>
+        ) : null}
       </Card>
 
       {restoredSnapshot ? (
         <div className={styles.restoredSnapshotNotice} role="status">
           <strong>{t('monitoring.account_inspection_restored_snapshot_title')}</strong>
           <span>{t('monitoring.account_inspection_restored_snapshot_desc')}</span>
+        </div>
+      ) : null}
+
+      {persistenceError ? (
+        <div className={styles.inspectionAlert} role="alert">
+          <strong>{t('monitoring.account_inspection_persistence_error_title')}</strong>
+          <span>{persistenceError}</span>
         </div>
       ) : null}
 
@@ -1608,22 +1583,23 @@ export function AccountInspectionPage() {
                   </div>
                   <div className={styles.inspectionStatusCopy}>
                     <strong>{operationPhase}</strong>
-                    <span>{progress.percent >= 100 ? completedProgressLabel : progressLabel}</span>
+                    <span>{result && ['completed', 'partial', 'stopped', 'failed'].includes(result.state) ? completedProgressLabel : progressLabel}</span>
                     <small>{`${t('monitoring.last_sync')}: ${result?.finishedAt ? formatTimestamp(result.finishedAt, i18n.language) : '--'}`}</small>
+                    {lastError ? <small className={styles.inspectionStatusError}>{lastError}</small> : null}
                   </div>
                 </div>
                 <div className={styles.inspectionConfigGrid}>
                   <span>
                     <small>{t('monitoring.account_inspection_detection_scope')}</small>
-                    <strong>{inspectionScopeLabel}</strong>
+                    <strong>{result ? (result.settings.targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE ? t('monitoring.filter_all_providers') : resolveProviderDisplayLabel(result.settings.targetType)) : inspectionScopeLabel}</strong>
                   </span>
                   <span>
                     <small>{t('monitoring.account_inspection_quota_threshold_short')}</small>
-                    <strong>{`${inspectionSettings.usedPercentThreshold}%`}</strong>
+                    <strong>{`${result?.settings.usedPercentThreshold ?? inspectionSettings.usedPercentThreshold}%`}</strong>
                   </span>
                   <span>
                     <small>{t('monitoring.account_inspection_sample_size')}</small>
-                    <strong>{inspectionSettings.sampleSize || t('monitoring.account_inspection_all_accounts')}</strong>
+                    <strong>{result?.settings.sampleSize || inspectionSettings.sampleSize || t('monitoring.account_inspection_all_accounts')}</strong>
                   </span>
                   <span>
                     <small>{t('monitoring.account_inspection_scheduled_inspection_short')}</small>
@@ -1780,6 +1756,25 @@ export function AccountInspectionPage() {
           ) : null}
         </div>
         <Card className={styles.panel}>
+
+        {detailsLoadError ? (
+          <div className={styles.inspectionInlineError} role="alert">
+            <span>{t('monitoring.account_inspection_details_load_failed', { error: detailsLoadError })}</span>
+            <Button size="sm" variant="secondary" onClick={() => setDetailsRetryNonce((value) => value + 1)}>
+              {t('monitoring.account_inspection_retry_load')}
+            </Button>
+          </div>
+        ) : null}
+
+        {bulkRecheckFailures.length > 0 ? (
+          <div className={styles.bulkFailurePanel} role="alert">
+            <strong>{t('monitoring.account_inspection_recheck_failures_title', { count: bulkRecheckFailures.length })}</strong>
+            {bulkRecheckFailures.slice(0, 10).map(({ item, error }) => <span key={item.key}>{`${resolveAccountInspectionAccountLabel(item)}：${error}`}</span>)}
+            <Button size="sm" variant="secondary" onClick={() => void recheckSelectedResults(bulkRecheckFailures.map(({ item }) => item))}>
+              {t('monitoring.account_inspection_retry_failed')}
+            </Button>
+          </div>
+        ) : null}
 
         {result ? (
           <>
@@ -2166,7 +2161,7 @@ export function AccountInspectionPage() {
 
       <Modal
         open={isSettingsModalOpen}
-        onClose={() => setIsSettingsModalOpen(false)}
+        onClose={closeSettingsModal}
         title={t('monitoring.account_inspection_settings_title')}
         width={1120}
         className={styles.settingsModal}
@@ -2528,7 +2523,7 @@ export function AccountInspectionPage() {
             {t('monitoring.account_inspection_settings_reset_button')}
           </Button>
           <div className={styles.settingsActionsRight}>
-            <Button variant="secondary" onClick={() => setIsSettingsModalOpen(false)}>
+            <Button variant="secondary" onClick={closeSettingsModal}>
               {t('common.cancel')}
             </Button>
             <Button variant="primary" onClick={() => void handleSaveSettings()} loading={scheduleLoading}>

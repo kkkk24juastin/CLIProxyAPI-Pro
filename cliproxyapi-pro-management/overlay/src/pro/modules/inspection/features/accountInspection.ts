@@ -5,7 +5,7 @@ import { isRecordValue, readBooleanValue, readStringValue } from '@/pro/shared/v
 export type AccountInspectionLogLevel = 'info' | 'success' | 'warning' | 'error';
 export type AccountInspectionAction = 'keep' | 'delete' | 'disable' | 'enable';
 export type AccountInspectionExecutionAction = Exclude<AccountInspectionAction, 'keep'>;
-export type AccountInspectionProgressStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'completed' | 'failed';
+export type AccountInspectionProgressStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'completed' | 'partial' | 'failed';
 export type AccountInspectionDeepProbeStatus = 'success' | 'quota' | 'auth_error' | 'transient_error' | 'skipped' | '';
 export type AccountInspectionAutoErrorAction = 'none' | 'disable' | 'delete';
 export type AccountInspectionAntigravityQuotaMode = 'max-used' | 'claude-gpt';
@@ -121,6 +121,9 @@ export interface AccountInspectionRunResult {
   providerHealthCounts?: Record<string, AccountInspectionHealthCounts>;
   resultsPage?: AccountInspectionPageInfo;
   resultsLimited?: boolean;
+  settings: AccountInspectionConfigurableSettings;
+  state: AccountInspectionBackendRunState;
+  lastError: string;
 }
 
 export interface AccountInspectionProgressSnapshot {
@@ -160,9 +163,11 @@ export type AccountInspectionBackendResultItem = Omit<AccountInspectionResultIte
 
 export type AccountInspectionBackendStatus = {
   state: AccountInspectionBackendRunState;
+  runSettings: AccountInspectionConfigurableSettings;
   lastStartedAt: number;
   lastFinishedAt: number;
   lastError: string;
+  persistenceError?: string;
   progress?: AccountInspectionBackendProgress;
   summary: AccountInspectionSummary & {
     executedDeleteCount?: number;
@@ -199,10 +204,11 @@ export const isAccountInspectionBackendResponse = (value: unknown): value is Acc
   return isRecordValue(schedule)
     && isRecordValue(schedule.settings)
     && isRecordValue(status)
-    && isRecordValue(status.summary);
+    && isRecordValue(status.summary)
+    && (!('runSettings' in status) || isRecordValue(status.runSettings));
 };
 
-export type AccountInspectionDisplayRunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
+export type AccountInspectionDisplayRunStatus = 'idle' | 'running' | 'paused' | 'completed' | 'partial' | 'stopped' | 'failed';
 
 export interface AccountInspectionExecutionOutcome {
   action: AccountInspectionExecutionAction;
@@ -437,16 +443,6 @@ export const saveAccountInspectionConfigurableSettings = (
   return normalized;
 };
 
-export const clearAccountInspectionConfigurableSettings = () => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(ACCOUNT_INSPECTION_SETTINGS_STORAGE_KEY);
-    }
-  } catch {
-    console.warn('清除 账号巡检配置失败');
-  }
-};
-
 const buildPlannedActionPreview = (results: AccountInspectionResultItem[]) => {
   const preview: string[] = [];
   for (const item of results) {
@@ -525,8 +521,9 @@ const accountInspectionBackendProgressStatus = (
   if (status.state === 'paused') return 'paused';
   if (status.state === 'running' || status.state === 'stopping') return 'running';
   if (status.state === 'failed') return 'failed';
+  if (status.state === 'partial') return 'partial';
   if (status.state === 'stopped') return 'stopped';
-  if (status.state === 'completed' || status.state === 'partial' || status.lastFinishedAt > 0) return 'completed';
+  if (status.state === 'completed' || status.lastFinishedAt > 0) return 'completed';
   return 'idle';
 };
 
@@ -535,11 +532,10 @@ const accountInspectionBackendRunStatus = (
 ): AccountInspectionDisplayRunStatus => {
   if (status.state === 'paused') return 'paused';
   if (status.state === 'running' || status.state === 'stopping') return 'running';
-  if (status.state === 'failed') return 'error';
-  if (status.state === 'stopped') return 'idle';
-  if (status.state === 'completed' || status.state === 'partial' || status.lastFinishedAt > 0) {
-    return status.lastError ? 'error' : 'success';
-  }
+  if (status.state === 'failed') return 'failed';
+  if (status.state === 'stopped') return 'stopped';
+  if (status.state === 'partial') return 'partial';
+  if (status.state === 'completed') return 'completed';
   return 'idle';
 };
 
@@ -551,7 +547,7 @@ const buildAccountInspectionBackendRunResult = (
 ): AccountInspectionRunResult | null => {
   if (results.length === 0 && response.status.lastFinishedAt <= 0) return null;
 
-  const settings = normalizeConfigurableSettings(response.schedule.settings);
+  const settings = normalizeConfigurableSettings(response.status.runSettings ?? response.schedule.settings);
   return {
     results,
     summary: {
@@ -566,6 +562,9 @@ const buildAccountInspectionBackendRunResult = (
     providerHealthCounts: response.status.providerHealthCounts,
     resultsPage: response.status.resultsPage,
     resultsLimited: response.status.resultsLimited ?? false,
+    settings,
+    state: response.status.state,
+    lastError: response.status.lastError || response.status.persistenceError || '',
   };
 };
 
@@ -607,6 +606,8 @@ export const buildAccountInspectionBackendViewState = (
       enable: response.status.summary.executedEnableCount ?? 0,
     },
     restoredSnapshot: response.status.restoredSnapshot ?? false,
+    lastError: response.status.lastError || '',
+    persistenceError: response.status.persistenceError || '',
     result: hasSnapshot
       ? buildAccountInspectionBackendRunResult(response, results, startedAt, finishedAt)
       : undefined,

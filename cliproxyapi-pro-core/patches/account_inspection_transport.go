@@ -75,7 +75,7 @@ func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth
 			return accountInspectionHTTPResult{}, err
 		}
 		defer resp.Body.Close()
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 		return accountInspectionHTTPResult{StatusCode: resp.StatusCode, Body: string(raw), Header: resp.Header.Clone()}, nil
 	}
 	client := &http.Client{Timeout: time.Duration(timeoutMS) * time.Millisecond, Transport: s.h.apiCallTransport(auth)}
@@ -84,7 +84,7 @@ func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth
 		return accountInspectionHTTPResult{}, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 	return accountInspectionHTTPResult{StatusCode: resp.StatusCode, Body: string(raw), Header: resp.Header.Clone()}, nil
 }
 

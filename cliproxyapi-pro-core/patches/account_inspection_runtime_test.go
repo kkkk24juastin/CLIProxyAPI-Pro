@@ -286,6 +286,213 @@ func TestAccountInspectionResultSnapshotPersistsAndRestoresReadOnly(t *testing.T
 	}
 }
 
+func TestAccountInspectionSnapshotRestoresRunSettingsAndConfirmations(t *testing.T) {
+	dir := t.TempDir()
+	scheduler := &accountInspectionScheduler{
+		snapshotPath: filepath.Join(dir, "snapshot.json"),
+		lastRunSettings: accountInspectionSettings{
+			TargetType: "xai", UsedPercentThreshold: 82, Workers: 2,
+		},
+		status: accountInspectionStatus{
+			State: accountInspectionStateCompleted, LastStartedAt: 10, LastFinishedAt: 20,
+			Results: []accountInspectionResult{testInspectionResult("account", accountInspectionActionDelete, false, nil, false, "")},
+		},
+		autoActionConfirmations: proinspection.NewConfirmationCounter(),
+	}
+	scheduler.autoActionConfirmations.Confirm("account|delete|invalid", 3)
+	if err := scheduler.saveResultSnapshotLocked(); err != nil {
+		t.Fatal(err)
+	}
+	restored := &accountInspectionScheduler{
+		snapshotPath: scheduler.snapshotPath,
+		schedule: accountInspectionSchedule{Settings: scheduler.lastRunSettings},
+		autoActionConfirmations: proinspection.NewConfirmationCounter(),
+	}
+	if err := restored.loadResultSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	if restored.lastRunSettings.TargetType != "xai" || restored.lastRunSettings.UsedPercentThreshold != 82 {
+		t.Fatalf("restored settings = %#v", restored.lastRunSettings)
+	}
+	restored.autoActionConfirmations.BeginRun()
+	if confirmed, count, _ := restored.autoActionConfirmations.Confirm("account|delete|invalid", 3); confirmed || count != 2 {
+		t.Fatalf("restored confirmation = %v, %d", confirmed, count)
+	}
+}
+
+func TestAccountInspectionSnapshotDropsConfirmationsWhenPersistedSettingsDiffer(t *testing.T) {
+	dir := t.TempDir()
+	oldSettings := proinspection.DefaultSettings()
+	oldSettings.AutoExecuteConfirmations = 3
+	scheduler := &accountInspectionScheduler{
+		snapshotPath: filepath.Join(dir, "snapshot.json"),
+		lastRunSettings: oldSettings,
+		status: accountInspectionStatus{
+			State: accountInspectionStateCompleted, LastStartedAt: 10, LastFinishedAt: 20,
+		},
+		autoActionConfirmations: proinspection.NewConfirmationCounter(),
+	}
+	scheduler.autoActionConfirmations.Confirm("account|delete|invalid", 3)
+	if err := scheduler.saveResultSnapshotLocked(); err != nil {
+		t.Fatal(err)
+	}
+
+	newSettings := oldSettings
+	newSettings.AutoExecuteConfirmations = 2
+	restored := &accountInspectionScheduler{
+		snapshotPath: scheduler.snapshotPath,
+		schedule: accountInspectionSchedule{Settings: newSettings},
+		autoActionConfirmations: proinspection.NewConfirmationCounter(),
+	}
+	if err := restored.loadResultSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	restored.autoActionConfirmations.BeginRun()
+	if confirmed, count, _ := restored.autoActionConfirmations.Confirm("account|delete|invalid", 3); confirmed || count != 1 {
+		t.Fatalf("confirmation after settings mismatch = %v, %d, want false/1", confirmed, count)
+	}
+}
+
+func TestAccountInspectionPortableSnapshotClearsConfirmations(t *testing.T) {
+	scheduler := &accountInspectionScheduler{
+		lastRunSettings: proinspection.DefaultSettings(),
+		status: accountInspectionStatus{
+			State: accountInspectionStateCompleted, LastStartedAt: 10, LastFinishedAt: 20,
+		},
+		autoActionConfirmations: proinspection.NewConfirmationCounter(),
+	}
+	scheduler.autoActionConfirmations.Confirm("account|delete|invalid", 3)
+	raw, ok, err := scheduler.exportResultSnapshot()
+	if err != nil || !ok {
+		t.Fatalf("exportResultSnapshot() = ok:%v err:%v", ok, err)
+	}
+	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Confirmations.Entries) != 0 || snapshot.Confirmations.Sequence != 0 {
+		t.Fatalf("portable confirmations = %+v, want empty", snapshot.Confirmations)
+	}
+}
+
+func TestAccountInspectionSettingsChangeClearsPersistedConfirmations(t *testing.T) {
+	dir := t.TempDir()
+	settings := proinspection.DefaultSettings()
+	scheduler := &accountInspectionScheduler{
+		path: filepath.Join(dir, "schedule.json"), snapshotPath: filepath.Join(dir, "snapshot.json"),
+		schedule:                accountInspectionSchedule{IntervalMinutes: 60, Settings: settings},
+		lastRunSettings:         settings,
+		status:                  accountInspectionStatus{State: accountInspectionStateCompleted, LastStartedAt: 10, LastFinishedAt: 20},
+		autoActionConfirmations: proinspection.NewConfirmationCounter(), trigger: make(chan struct{}, 1),
+	}
+	scheduler.autoActionConfirmations.Confirm("account|delete|invalid", 3)
+	updated := scheduler.schedule
+	updated.Settings.AutoExecuteConfirmations = 2
+	if err := scheduler.update(updated); err != nil {
+		t.Fatal(err)
+	}
+	restored := &accountInspectionScheduler{snapshotPath: scheduler.snapshotPath, autoActionConfirmations: proinspection.NewConfirmationCounter()}
+	if err := restored.loadResultSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	restored.autoActionConfirmations.BeginRun()
+	if confirmed, count, _ := restored.autoActionConfirmations.Confirm("account|delete|invalid", 3); confirmed || count != 1 {
+		t.Fatalf("confirmation after settings change = %v, %d", confirmed, count)
+	}
+}
+
+func TestManualRunCompletionAdvancesEnabledSchedule(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	scheduler := &accountInspectionScheduler{
+		path: filepath.Join(dir, "schedule.json"), snapshotPath: filepath.Join(dir, "snapshot.json"),
+		schedule: accountInspectionSchedule{Enabled: true, IntervalMinutes: 60, NextRunAt: now.Add(-time.Minute).UnixMilli(), Settings: proinspection.DefaultSettings()},
+		h:        &Handler{authManager: coreauth.NewManager(nil, nil, nil)},
+		status:   accountInspectionStatus{State: accountInspectionStateRunning, LastStartedAt: now.UnixMilli()},
+		pause:    sync.NewCond(&sync.Mutex{}), autoActionConfirmations: proinspection.NewConfirmationCounter(),
+		subscribers: make(map[chan accountInspectionLogStreamMessage]struct{}),
+	}
+	scheduler.pause = sync.NewCond(&scheduler.mu)
+	scheduler.run(context.Background(), func() {}, scheduler.schedule, true)
+	if scheduler.schedule.NextRunAt <= now.UnixMilli() {
+		t.Fatalf("next run was not advanced: %d", scheduler.schedule.NextRunAt)
+	}
+}
+
+func TestManualRunFailureDoesNotAdvanceEnabledSchedule(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	nextRunAt := now.Add(-time.Minute).UnixMilli()
+	scheduler := &accountInspectionScheduler{
+		path: filepath.Join(dir, "schedule.json"), snapshotPath: filepath.Join(dir, "snapshot.json"),
+		schedule:                accountInspectionSchedule{Enabled: true, IntervalMinutes: 60, NextRunAt: nextRunAt, Settings: proinspection.DefaultSettings()},
+		status:                  accountInspectionStatus{State: accountInspectionStateRunning, LastStartedAt: now.UnixMilli()},
+		autoActionConfirmations: proinspection.NewConfirmationCounter(), subscribers: make(map[chan accountInspectionLogStreamMessage]struct{}),
+	}
+	scheduler.pause = sync.NewCond(&scheduler.mu)
+	scheduler.run(context.Background(), func() {}, scheduler.schedule, true)
+	if scheduler.status.State != accountInspectionStateFailed {
+		t.Fatalf("state = %q, want failed", scheduler.status.State)
+	}
+	if scheduler.schedule.NextRunAt != nextRunAt {
+		t.Fatalf("next run = %d, want unchanged %d", scheduler.schedule.NextRunAt, nextRunAt)
+	}
+}
+
+func TestInspectManyReturnsPerItemStaleAndCanceledOutcomes(t *testing.T) {
+	settings := proinspection.DefaultSettings()
+	settings.Workers = 1
+	settings.ProviderWorkers = 1
+	valid := testInspectionResult("valid", accountInspectionActionKeep, false, nil, false, "")
+	second := testInspectionResult("second", accountInspectionActionKeep, false, nil, false, "")
+	scheduler := &accountInspectionScheduler{
+		schedule:                accountInspectionSchedule{Settings: settings},
+		status:                  accountInspectionStatus{Results: []accountInspectionResult{valid, second}},
+		autoActionConfirmations: proinspection.NewConfirmationCounter(), subscribers: make(map[chan accountInspectionLogStreamMessage]struct{}),
+	}
+	scheduler.pause = sync.NewCond(&scheduler.mu)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	outcomes, err := scheduler.inspectMany(ctx, []accountInspectionActionItem{
+		{Key: "stale", FileName: "stale.json", AuthIndex: "stale"},
+		proinspection.ActionItemFromResult(valid, accountInspectionActionNone),
+		proinspection.ActionItemFromResult(second, accountInspectionActionNone),
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("inspectMany() error = %v, want context canceled", err)
+	}
+	if len(outcomes) != 3 {
+		t.Fatalf("outcomes = %d, want 3", len(outcomes))
+	}
+	for index, outcome := range outcomes {
+		if outcome.Key == "" || outcome.FileName == "" || outcome.Error == "" {
+			t.Fatalf("outcome[%d] = %+v, want identified failure", index, outcome)
+		}
+	}
+}
+
+func TestAccountInspectionPauseResumeStopStateMachine(t *testing.T) {
+	cancelled := false
+	scheduler := &accountInspectionScheduler{
+		status:      accountInspectionStatus{State: accountInspectionStateRunning},
+		cancel:      func() { cancelled = true },
+		subscribers: make(map[chan accountInspectionLogStreamMessage]struct{}),
+	}
+	scheduler.pause = sync.NewCond(&scheduler.mu)
+	scheduler.pauseRun()
+	if scheduler.status.State != accountInspectionStatePaused {
+		t.Fatalf("paused state = %q", scheduler.status.State)
+	}
+	scheduler.resumeRun()
+	if scheduler.status.State != accountInspectionStateRunning {
+		t.Fatalf("resumed state = %q", scheduler.status.State)
+	}
+	scheduler.stopRun()
+	if scheduler.status.State != accountInspectionStateStopping || !cancelled {
+		t.Fatalf("stopped state = %q cancelled=%v", scheduler.status.State, cancelled)
+	}
+}
+
 func TestRefreshTokenNowRespectsBackupLifecyclePause(t *testing.T) {
 	lifecycle := &proinspection.Lifecycle{}
 	if err := lifecycle.Pause(context.Background()); err != nil {

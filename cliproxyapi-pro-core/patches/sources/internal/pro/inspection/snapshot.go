@@ -22,15 +22,16 @@ const (
 )
 
 type ResultSnapshot struct {
-	Version        int          `json:"version"`
-	State          RunState     `json:"state"`
-	LastStartedAt  int64        `json:"lastStartedAt"`
-	LastFinishedAt int64        `json:"lastFinishedAt"`
-	LastError      string       `json:"lastError,omitempty"`
-	Settings       Settings     `json:"settings"`
-	Summary        Summary      `json:"summary"`
-	HealthCounts   HealthCounts `json:"healthCounts"`
-	Results        []Result     `json:"results"`
+	Version        int               `json:"version"`
+	State          RunState          `json:"state"`
+	LastStartedAt  int64             `json:"lastStartedAt"`
+	LastFinishedAt int64             `json:"lastFinishedAt"`
+	LastError      string            `json:"lastError,omitempty"`
+	Settings       Settings          `json:"settings"`
+	Summary        Summary           `json:"summary"`
+	HealthCounts   HealthCounts      `json:"healthCounts"`
+	Results        []Result          `json:"results"`
+	Confirmations  ConfirmationState `json:"confirmations,omitempty"`
 }
 
 func NormalizeSnapshotState(state RunState) RunState {
