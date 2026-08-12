@@ -135,16 +135,16 @@ export const createPriceDraft = (rule?: ModelPriceRule): PriceDraft => ({
     .map(([name, rate]) => ({ name, ...createPriceRateDraft(rate) })),
 });
 
-export const createServiceTierDraft = (base: PriceRateDraft): ServiceTierDraft => ({
+export const createServiceTierDraft = (_base?: PriceRateDraft): ServiceTierDraft => ({
   name: '',
-  input: base.input,
-  output: base.output,
-  cacheRead: base.cacheRead,
-  cacheWrite: base.cacheWrite,
-  reasoning: base.reasoning,
+  input: '',
+  output: '',
+  cacheRead: '',
+  cacheWrite: '',
+  reasoning: '',
 });
 
-export const createSpeedDraft = (base: PriceRateDraft): SpeedDraft => createServiceTierDraft(base);
+export const createSpeedDraft = (_base?: PriceRateDraft): SpeedDraft => createServiceTierDraft();
 
 export const validatePriceDraft = (draft: PriceDraft): PriceDraftValidationError | null => {
   if (!isValidPriceRateDraft(draft)) return 'rate_required';

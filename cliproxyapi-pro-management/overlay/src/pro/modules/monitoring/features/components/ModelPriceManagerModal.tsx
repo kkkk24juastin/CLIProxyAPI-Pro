@@ -382,17 +382,24 @@ export function ModelPriceManagerModal({
                         </div>
                       </section>
 
-                      <section className={styles.priceRuleSection}>
-                        <div className={styles.priceRuleSectionHeader}>
+                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`}>
+                        <summary className={styles.priceAdvancedSummary}>
                           <div>
                             <h4>{t('usage_stats.model_price_context_tier')}</h4>
                             <span>{t('usage_stats.model_price_tier_count', { count: priceDraft.tiers.length })}</span>
                           </div>
-                          <Button variant="secondary" size="sm" onClick={addPriceTier}>
-                            {t('usage_stats.model_price_tier_add')}
-                          </Button>
-                        </div>
-                        <div className={styles.priceTierList}>
+                          <span className={styles.priceAdvancedSummaryAction}>
+                            {t('usage_stats.model_price_advanced')}
+                            <span className={styles.priceAdvancedChevron} aria-hidden="true">⌄</span>
+                          </span>
+                        </summary>
+                        <div className={styles.priceAdvancedContent}>
+                          <div className={styles.priceAdvancedActions}>
+                            <Button variant="secondary" size="sm" onClick={addPriceTier}>
+                              {t('usage_stats.model_price_tier_add')}
+                            </Button>
+                          </div>
+                          <div className={styles.priceTierList}>
                           {priceDraft.tiers.map((tier, index) => (
                             <div className={styles.priceTierCompactRow} key={index}>
                               <span className={styles.priceTierIndex}>{index + 1}</span>
@@ -434,24 +441,32 @@ export function ModelPriceManagerModal({
                           {priceDraft.tiers.length === 0 ? (
                             <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_tier_empty')}</div>
                           ) : null}
+                          </div>
                         </div>
-                      </section>
+                      </details>
 
-                      <section className={styles.priceRuleSection}>
-                        <div className={styles.priceRuleSectionHeader}>
+                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`}>
+                        <summary className={styles.priceAdvancedSummary}>
                           <div>
                             <h4>{t('usage_stats.model_price_service_tiers')}</h4>
                             <span>{t('usage_stats.model_price_service_tier_count', { count: priceDraft.serviceTiers.length })}</span>
                           </div>
-                          <Button variant="secondary" size="sm" onClick={addServiceTier}>
-                            {t('usage_stats.model_price_service_tier_add')}
-                          </Button>
-                        </div>
-                        <p className={styles.priceRuleSectionHint}>{t('usage_stats.model_price_service_tier_hint')}</p>
-                        {selectedPriceTarget.rule?.source === 'models.dev' ? (
-                          <p className={styles.priceRuleSectionNotice}>{t('usage_stats.model_price_service_tier_synced_notice')}</p>
-                        ) : null}
-                        <div className={styles.priceTierList}>
+                          <span className={styles.priceAdvancedSummaryAction}>
+                            {t('usage_stats.model_price_advanced')}
+                            <span className={styles.priceAdvancedChevron} aria-hidden="true">⌄</span>
+                          </span>
+                        </summary>
+                        <div className={styles.priceAdvancedContent}>
+                          <div className={styles.priceAdvancedActions}>
+                            <Button variant="secondary" size="sm" onClick={addServiceTier}>
+                              {t('usage_stats.model_price_service_tier_add')}
+                            </Button>
+                          </div>
+                          <p className={styles.priceRuleSectionHint}>{t('usage_stats.model_price_service_tier_hint')}</p>
+                          {selectedPriceTarget.rule?.source === 'models.dev' ? (
+                            <p className={styles.priceRuleSectionNotice}>{t('usage_stats.model_price_service_tier_synced_notice')}</p>
+                          ) : null}
+                          <div className={styles.priceTierList}>
                           {priceDraft.serviceTiers.map((tier, index) => (
                             <div className={`${styles.priceTierCompactRow} ${styles.priceServiceTierRow}`} key={index}>
                               <span className={styles.priceTierIndex}>{index + 1}</span>
@@ -493,24 +508,32 @@ export function ModelPriceManagerModal({
                           {priceDraft.serviceTiers.length === 0 ? (
                             <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_service_tier_empty')}</div>
                           ) : null}
+                          </div>
                         </div>
-                      </section>
+                      </details>
 
-                      <section className={styles.priceRuleSection}>
-                        <div className={styles.priceRuleSectionHeader}>
+                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`}>
+                        <summary className={styles.priceAdvancedSummary}>
                           <div>
                             <h4>{t('usage_stats.model_price_speeds')}</h4>
                             <span>{t('usage_stats.model_price_speed_count', { count: priceDraft.speeds.length })}</span>
                           </div>
-                          <Button variant="secondary" size="sm" onClick={addSpeed}>
-                            {t('usage_stats.model_price_speed_add')}
-                          </Button>
-                        </div>
-                        <p className={styles.priceRuleSectionHint}>{t('usage_stats.model_price_speed_hint')}</p>
-                        {selectedPriceTarget.rule?.source === 'models.dev' ? (
-                          <p className={styles.priceRuleSectionNotice}>{t('usage_stats.model_price_speed_synced_notice')}</p>
-                        ) : null}
-                        <div className={styles.priceTierList}>
+                          <span className={styles.priceAdvancedSummaryAction}>
+                            {t('usage_stats.model_price_advanced')}
+                            <span className={styles.priceAdvancedChevron} aria-hidden="true">⌄</span>
+                          </span>
+                        </summary>
+                        <div className={styles.priceAdvancedContent}>
+                          <div className={styles.priceAdvancedActions}>
+                            <Button variant="secondary" size="sm" onClick={addSpeed}>
+                              {t('usage_stats.model_price_speed_add')}
+                            </Button>
+                          </div>
+                          <p className={styles.priceRuleSectionHint}>{t('usage_stats.model_price_speed_hint')}</p>
+                          {selectedPriceTarget.rule?.source === 'models.dev' ? (
+                            <p className={styles.priceRuleSectionNotice}>{t('usage_stats.model_price_speed_synced_notice')}</p>
+                          ) : null}
+                          <div className={styles.priceTierList}>
                           {priceDraft.speeds.map((speed, index) => (
                             <div className={`${styles.priceTierCompactRow} ${styles.priceServiceTierRow}`} key={index}>
                               <span className={styles.priceTierIndex}>{index + 1}</span>
@@ -552,8 +575,9 @@ export function ModelPriceManagerModal({
                           {priceDraft.speeds.length === 0 ? (
                             <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_speed_empty')}</div>
                           ) : null}
+                          </div>
                         </div>
-                      </section>
+                      </details>
                     </div>
 
                   </>
@@ -564,6 +588,7 @@ export function ModelPriceManagerModal({
             </div>
           ) : (
             <div className={styles.priceSyncView}>
+              <section className={styles.priceSyncOverview}>
               <header className={styles.priceSyncHeader}>
                 <div>
                   <span className={`${styles.priceSyncStatusDot} ${styles[`priceSyncStatus${priceSyncStatus}`] ?? ''}`} />
@@ -612,6 +637,7 @@ export function ModelPriceManagerModal({
               </div>
 
               {priceSyncState.error ? <div className={styles.priceSyncError}>{priceSyncState.error}</div> : null}
+              </section>
 
               <section className={styles.priceSyncSchedule}>
                 <div>

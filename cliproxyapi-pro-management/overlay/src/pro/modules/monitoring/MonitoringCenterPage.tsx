@@ -1503,7 +1503,7 @@ export function MonitoringCenterPage() {
 	const addServiceTier = useCallback(() => {
 		setPriceDraft((previous) => ({
 			...previous,
-			serviceTiers: [...previous.serviceTiers, createServiceTierDraft(previous)],
+			serviceTiers: [...previous.serviceTiers, createServiceTierDraft()],
 		}));
 	}, []);
 
@@ -1524,7 +1524,7 @@ export function MonitoringCenterPage() {
 	const addSpeed = useCallback(() => {
 		setPriceDraft((previous) => ({
 			...previous,
-			speeds: [...previous.speeds, createSpeedDraft(previous)],
+			speeds: [...previous.speeds, createSpeedDraft()],
 		}));
 	}, []);
 

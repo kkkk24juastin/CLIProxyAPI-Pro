@@ -44,14 +44,18 @@ describe('model price presentation model', () => {
     expect(rebuilt.speeds?.fast).toMatchObject({ output: 10, reasoning: 12 });
   });
 
-  test('copies base rates for a new service tier and clears removed overrides', () => {
+  test('keeps new advanced rates empty and clears removed overrides', () => {
     const draft = createPriceDraft({
       model: 'gpt-test',
       base: { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0.75, reasoning: 3 },
       serviceTiers: { priority: { input: 4, output: 5, cacheRead: 0.4, cacheWrite: 0.5 } },
     });
-    expect(createServiceTierDraft(draft)).toMatchObject({ name: '', input: '1', reasoning: '3' });
-    expect(createSpeedDraft(draft)).toMatchObject({ name: '', input: '1', reasoning: '3' });
+    expect(createServiceTierDraft(draft)).toEqual({
+      name: '', input: '', output: '', cacheRead: '', cacheWrite: '', reasoning: '',
+    });
+    expect(createSpeedDraft(draft)).toEqual({
+      name: '', input: '', output: '', cacheRead: '', cacheWrite: '', reasoning: '',
+    });
     draft.serviceTiers = [];
     draft.speeds = [];
     expect(buildModelPriceRule('gpt-test', draft).serviceTiers).toEqual({});

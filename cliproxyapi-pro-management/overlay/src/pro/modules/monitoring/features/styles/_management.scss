@@ -370,12 +370,13 @@
 }
 
 .priceRuleList {
-  display: flex;
+  display: grid;
   gap: 8px;
   min-width: 0;
-  overflow-x: auto;
-  padding: 2px 2px 6px;
-  scroll-snap-type: x proximity;
+  max-height: 218px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 2px;
   scrollbar-width: thin;
 }
 
@@ -384,9 +385,9 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  flex: 0 0 210px;
+  width: 100%;
   min-width: 0;
-  min-height: 62px;
+  min-height: 52px;
   padding: 10px 11px;
   border: 1px solid var(--monitor-line);
   border-radius: 10px;
@@ -394,7 +395,6 @@
   color: var(--monitor-ink);
   text-align: left;
   cursor: pointer;
-  scroll-snap-align: start;
 }
 
 .priceRuleListItem:hover {
@@ -565,6 +565,93 @@
   background: var(--monitor-surface);
 }
 
+.priceAdvancedSection {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.priceAdvancedSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 60px;
+  padding: 15px 16px;
+  color: var(--monitor-ink);
+  cursor: pointer;
+  list-style: none;
+}
+
+.priceAdvancedSummary::-webkit-details-marker {
+  display: none;
+}
+
+.priceAdvancedSummary:hover {
+  background: var(--monitor-surface-hover);
+}
+
+.priceAdvancedSummary > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.priceAdvancedSummary h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.priceAdvancedSummary > div > span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.priceAdvancedSummaryAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--monitor-accent);
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.priceAdvancedChevron {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--monitor-surface-muted);
+  color: var(--monitor-muted);
+  font-size: 17px;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.priceAdvancedSection[open] .priceAdvancedChevron {
+  transform: rotate(180deg);
+}
+
+.priceAdvancedSection[open] .priceAdvancedSummary {
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceAdvancedContent {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+.priceAdvancedActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .priceRuleSectionHeader {
   display: flex;
   align-items: center;
@@ -717,6 +804,21 @@
   align-content: start;
   gap: 16px;
   min-width: 0;
+}
+
+.priceSyncOverview,
+.priceSyncSchedule,
+.priceSyncChangesSection,
+.priceSyncResultSection {
+  border: 1px solid var(--monitor-line);
+  border-radius: 14px;
+  background: var(--monitor-surface);
+}
+
+.priceSyncOverview {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
 }
 
 .priceSyncHeader {
@@ -880,8 +982,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-top: 14px;
-  border-top: 1px solid var(--monitor-line);
+  padding: 18px;
 }
 
 .priceSyncSchedule > div:first-child {
@@ -945,6 +1046,7 @@
   display: grid;
   gap: 10px;
   min-width: 0;
+  padding: 18px;
 }
 
 .priceSyncChangesHeader {
@@ -1247,6 +1349,7 @@
 .priceSyncResultSection {
   display: grid;
   gap: 12px;
+  padding: 18px;
 }
 
 .priceUnmatchedList {
