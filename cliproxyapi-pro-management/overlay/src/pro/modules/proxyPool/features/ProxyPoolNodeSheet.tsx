@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Sheet } from '@/components/ui/Sheet';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconEye, IconEyeOff, IconRefreshCw } from '@/components/ui/icons';
 import type {
@@ -11,6 +10,7 @@ import type {
   ProxyPoolProbeResult,
   ProxyPoolStrategy,
 } from '@/pro/modules/proxyPool/proxyPool';
+import { ProWorkspaceSheet } from '@/pro/shared/ProSurface';
 import {
   formatProxyPoolSuccessRate,
   formatProxyPoolTime,
@@ -65,7 +65,7 @@ export function ProxyPoolNodeSheet({
   const hasCredentials = displayUrl !== value.url;
 
   return (
-    <Sheet
+    <ProWorkspaceSheet
       open={open}
       onClose={onClose}
       size="lg"
@@ -278,6 +278,6 @@ export function ProxyPoolNodeSheet({
           </div>
         </details>
       </div>
-    </Sheet>
+    </ProWorkspaceSheet>
   );
 }

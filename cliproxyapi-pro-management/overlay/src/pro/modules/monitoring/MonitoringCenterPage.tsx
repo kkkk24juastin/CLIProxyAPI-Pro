@@ -4,7 +4,6 @@ import { useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import {
   IconSearch,
@@ -108,6 +107,8 @@ import {
   normalizeProPageSize,
   resolveProPaginationCopy,
 } from '@/pro/shared/pagination';
+import { ProDetailDialog } from '@/pro/shared/ProSurface';
+import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { apiClient } from '@/services/api/client';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
@@ -277,9 +278,26 @@ export function MonitoringCenterPage() {
   const [selectedApiKey, setSelectedApiKey] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
   const [linkedRequestLogScope, setLinkedRequestLogScope] = useState<LinkedRequestLogScope | null>(null);
-  const [selectedRealtimeErrorRow, setSelectedRealtimeErrorRow] = useState<RealtimeLogRow | null>(null);
-  const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
-  const [isMonitoringSettingsOpen, setIsMonitoringSettingsOpen] = useState(false);
+  const [selectedRealtimeErrorRow, setSelectedRealtimeErrorRowState] = useState<RealtimeLogRow | null>(null);
+  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'realtime-detail' | 'monitoring-settings' | 'price-management'>();
+  const setSelectedRealtimeErrorRow = useCallback((row: RealtimeLogRow | null) => {
+    if (row) {
+      setSelectedRealtimeErrorRowState(row);
+      openSurface('realtime-detail');
+    } else if (activeSurface === 'realtime-detail') {
+      closeSurface();
+    }
+  }, [activeSurface, closeSurface, openSurface]);
+  const isPriceModalOpen = activeSurface === 'price-management';
+  const setIsPriceModalOpen = useCallback((open: boolean) => {
+    if (open) openSurface('price-management');
+    else if (activeSurface === 'price-management') closeSurface();
+  }, [activeSurface, closeSurface, openSurface]);
+  const isMonitoringSettingsOpen = activeSurface === 'monitoring-settings';
+  const setIsMonitoringSettingsOpen = useCallback((open: boolean) => {
+    if (open) openSurface('monitoring-settings');
+    else if (activeSurface === 'monitoring-settings') closeSurface();
+  }, [activeSurface, closeSurface, openSurface]);
   const [isMonitoringSettingsLoading, setIsMonitoringSettingsLoading] = useState(false);
   const [isMonitoringSettingsSaving, setIsMonitoringSettingsSaving] = useState(false);
   const [isMonitoringStatisticsResetting, setIsMonitoringStatisticsResetting] = useState(false);
@@ -298,6 +316,8 @@ export function MonitoringCenterPage() {
   const [isPriceSaving, setIsPriceSaving] = useState(false);
   const [isPriceSyncing, setIsPriceSyncing] = useState(false);
   const [isImportingUsage, setIsImportingUsage] = useState(false);
+  const monitoringSettingsRequestRef = useRef<Promise<void> | null>(null);
+  const priceManagementRequestRef = useRef<Promise<void> | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [isUsageTrendHidden, setIsUsageTrendHidden] = useState(false);
   const [modelRankingMetric, setModelRankingMetric] = useState<RankingMetric>('requests');
@@ -396,7 +416,7 @@ export function MonitoringCenterPage() {
   const handleRealtimeLogGenerationChange = useCallback(() => {
     setSelectedRealtimeErrorRow(null);
     void refreshAggregates();
-  }, [refreshAggregates]);
+  }, [refreshAggregates, setSelectedRealtimeErrorRow]);
 
   const {
     page: realtimeLogPage,
@@ -436,21 +456,26 @@ export function MonitoringCenterPage() {
     return response.settings;
   }, []);
 
-  const loadMonitoringSettings = useCallback(async () => {
+  const loadMonitoringSettings = useCallback(() => {
     if (connectionStatus !== 'connected') {
       showNotification(t('notification.connection_required'), 'warning');
-      return;
+      return Promise.resolve();
     }
+    if (monitoringSettingsRequestRef.current) return monitoringSettingsRequestRef.current;
+    setIsMonitoringSettingsOpen(true);
     setIsMonitoringSettingsLoading(true);
-    try {
-      await fetchMonitoringSettings();
-      setIsMonitoringSettingsOpen(true);
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    } finally {
-      setIsMonitoringSettingsLoading(false);
-    }
-  }, [connectionStatus, fetchMonitoringSettings, showNotification, t]);
+    const request = fetchMonitoringSettings()
+      .then(() => undefined)
+      .catch((error) => {
+        showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
+      })
+      .finally(() => {
+        monitoringSettingsRequestRef.current = null;
+        setIsMonitoringSettingsLoading(false);
+      });
+    monitoringSettingsRequestRef.current = request;
+    return request;
+  }, [connectionStatus, fetchMonitoringSettings, setIsMonitoringSettingsOpen, showNotification, t]);
 
   const handleSaveMonitoringSettings = useCallback(async (closeModal = true) => {
     const settings = buildMonitoringSettingsFromDraft(monitoringSettingsDraft);
@@ -470,7 +495,7 @@ export function MonitoringCenterPage() {
     } finally {
       setIsMonitoringSettingsSaving(false);
     }
-  }, [monitoringSettingsDraft, refreshAll, showNotification, t]);
+  }, [monitoringSettingsDraft, refreshAll, setIsMonitoringSettingsOpen, showNotification, t]);
 
   const executeMonitoringStatisticsReset = useCallback(async () => {
     setIsMonitoringStatisticsResetting(true);
@@ -488,7 +513,7 @@ export function MonitoringCenterPage() {
     } finally {
       setIsMonitoringStatisticsResetting(false);
     }
-  }, [refreshAggregates, refreshRealtimeLogs, refreshUsage, resetRealtimeLogs, showNotification, t]);
+  }, [refreshAggregates, refreshRealtimeLogs, refreshUsage, resetRealtimeLogs, setSelectedRealtimeErrorRow, showNotification, t]);
 
   const handleMonitoringStatisticsReset = useCallback(() => {
     if (connectionStatus !== 'connected') {
@@ -1140,7 +1165,7 @@ export function MonitoringCenterPage() {
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.time,
       render: (row) => new Date(row.timestampMs).toLocaleString(i18n.language),
     },
-  }), [hasPrices, i18n.language, t]);
+  }), [hasPrices, i18n.language, setSelectedRealtimeErrorRow, t]);
   const visibleRealtimeLogColumns = useMemo(
     () => realtimeLogColumns
       .filter((column) => column.visible)
@@ -1371,41 +1396,47 @@ export function MonitoringCenterPage() {
     setPriceDraft(createPriceDraft(rules.find((rule) => rule.model === model)));
   }, [priceRules]);
 
-  const openPriceManagement = useCallback(async () => {
+  const openPriceManagement = useCallback(() => {
     if (connectionStatus !== 'connected') {
       showNotification(t('notification.connection_required'), 'warning');
-      return;
+      return Promise.resolve();
     }
+    if (priceManagementRequestRef.current) return priceManagementRequestRef.current;
     setIsPriceModalOpen(true);
     setPriceManagementView('rules');
     setPriceRuleSearch('');
     setPriceSyncLockedOverrides([]);
     setIsPriceLoading(true);
     setIsMonitoringSettingsLoading(true);
-    try {
-      const [payload] = await Promise.all([refreshPriceManagement(), fetchMonitoringSettings()]);
-      const selectedStillExists = payload.observedModels.some((item) => item.model === priceModel)
-        || payload.rules.some((rule) => rule.model === priceModel);
-      if (selectedStillExists) {
-        selectPriceTarget(priceModel, payload.rules);
-      } else {
-        const nextTarget = payload.observedModels.find((item) => !payload.rules.some((rule) => rule.model === item.model))
-          ?? payload.observedModels[0]
-          ?? payload.rules[0];
-        if (nextTarget) {
-          selectPriceTarget(nextTarget.model, payload.rules);
+    const request = Promise.all([refreshPriceManagement(), fetchMonitoringSettings()])
+      .then(([payload]) => {
+        const selectedStillExists = payload.observedModels.some((item) => item.model === priceModel)
+          || payload.rules.some((rule) => rule.model === priceModel);
+        if (selectedStillExists) {
+          selectPriceTarget(priceModel, payload.rules);
         } else {
-          setPriceModel('');
-          setPriceDraft(createPriceDraft());
+          const nextTarget = payload.observedModels.find((item) => !payload.rules.some((rule) => rule.model === item.model))
+            ?? payload.observedModels[0]
+            ?? payload.rules[0];
+          if (nextTarget) {
+            selectPriceTarget(nextTarget.model, payload.rules);
+          } else {
+            setPriceModel('');
+            setPriceDraft(createPriceDraft());
+          }
         }
-      }
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error), 'error');
-    } finally {
-      setIsPriceLoading(false);
-      setIsMonitoringSettingsLoading(false);
-    }
-  }, [connectionStatus, fetchMonitoringSettings, priceModel, refreshPriceManagement, selectPriceTarget, showNotification, t]);
+      })
+      .catch((error) => {
+        showNotification(error instanceof Error ? error.message : String(error), 'error');
+      })
+      .finally(() => {
+        priceManagementRequestRef.current = null;
+        setIsPriceLoading(false);
+        setIsMonitoringSettingsLoading(false);
+      });
+    priceManagementRequestRef.current = request;
+    return request;
+  }, [connectionStatus, fetchMonitoringSettings, priceModel, refreshPriceManagement, selectPriceTarget, setIsPriceModalOpen, showNotification, t]);
 
   const handlePriceDraftChange = useCallback((field: keyof PriceRateDraft, value: string) => {
     setPriceDraft((previous) => ({ ...previous, [field]: value }));
@@ -1580,6 +1611,8 @@ export function MonitoringCenterPage() {
                 type="button"
                 className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
 				onClick={() => void openPriceManagement()}
+				disabled={isPriceLoading}
+				aria-busy={isPriceLoading}
               >
                 {t('usage_stats.model_price_settings')}
               </button>
@@ -1964,11 +1997,11 @@ export function MonitoringCenterPage() {
         </Card>
       </section>
 
-      <Modal
-        open={Boolean(selectedRealtimeErrorRow)}
+      <ProDetailDialog
+        open={activeSurface === 'realtime-detail' && Boolean(selectedRealtimeErrorRow)}
         onClose={() => setSelectedRealtimeErrorRow(null)}
+        onAfterClose={() => setSelectedRealtimeErrorRowState(null)}
         title={translateRealtimeErrorText('request_details', t, i18n.language)}
-        width={720}
         className={styles.monitorModal}
         footer={selectedRealtimeErrorRow ? (
           <div className={styles.monitorModalActions}>
@@ -1984,7 +2017,7 @@ export function MonitoringCenterPage() {
         {selectedRealtimeErrorRow ? (
           <RealtimeRequestDetailsPanel row={selectedRealtimeErrorRow} t={t} language={i18n.language} />
         ) : null}
-      </Modal>
+      </ProDetailDialog>
 
       <MonitoringSettingsModal
         isMonitoringSettingsOpen={isMonitoringSettingsOpen}
@@ -1992,6 +2025,7 @@ export function MonitoringCenterPage() {
         monitoringSettingsDraft={monitoringSettingsDraft}
         setMonitoringSettingsDraft={setMonitoringSettingsDraft}
         usageTotalRequests={Number(usage?.total_requests) || 0}
+        isMonitoringSettingsLoading={isMonitoringSettingsLoading}
         isMonitoringStatisticsResetting={isMonitoringStatisticsResetting}
         isMonitoringSettingsSaving={isMonitoringSettingsSaving}
         handleMonitoringStatisticsReset={handleMonitoringStatisticsReset}

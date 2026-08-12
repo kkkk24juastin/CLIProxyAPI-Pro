@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
+import { ProTaskDialog } from '@/pro/shared/ProSurface';
 import { IconAlertTriangle, IconCheckCircle2 } from '@/components/ui/icons';
 import type { ProxyPoolConfig, ProxyPoolSnapshot } from '@/pro/modules/proxyPool/proxyPool';
 import { maskProxyCredentials } from './proxyPoolUi';
@@ -30,11 +30,10 @@ export function ProxyPoolTakeoverDialog({
   const endpoint = snapshot.status?.proxyUrl || `socks5://${draft.listen}`;
 
   return (
-    <Modal
+    <ProTaskDialog
       open={open}
       onClose={onClose}
       closeDisabled={busy}
-      width={620}
       title={
         activating
           ? t('proxy_pool.takeover_confirm_title', { defaultValue: 'Start global proxy takeover?' })
@@ -115,6 +114,6 @@ export function ProxyPoolTakeoverDialog({
           </div>
         </div>
       )}
-    </Modal>
+    </ProTaskDialog>
   );
 }

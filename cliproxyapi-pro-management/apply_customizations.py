@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -491,6 +492,358 @@ def patch_modal_focus_restore(target: Path) -> None:
         "    previouslyFocusedRef.current = null;\n"
         "  }, [isVisible, open]);\n",
     )
+
+
+def patch_modal_lifecycle(target: Path) -> None:
+    path = target / 'src/components/ui/Modal.tsx'
+    text = read(path)
+    if 'The parent owns the open state; a rejected close keeps the surface open.' in text:
+        return
+
+    replacements = (
+        (
+            "  onClose: () => void;\n",
+            "  onClose: () => void | boolean | Promise<void | boolean>;\n"
+            "  onAfterClose?: () => void;\n",
+            'modal close contract',
+        ),
+        (
+            "  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);\n",
+            "  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);\n"
+            "  const closeRequestedRef = useRef(false);\n"
+            "  const onCloseRef = useRef(onClose);\n"
+            "  const onAfterCloseRef = useRef(onAfterClose);\n",
+            'modal close refs',
+        ),
+    )
+    for old, new, label in replacements:
+        count = text.count(old)
+        if count != 1:
+            raise RuntimeError(f'Expected one pattern in {path}, found {count}: {label}')
+        text = text.replace(old, new, 1)
+
+    destructure_old = "  onClose,\n  footer,\n"
+    if text.count(destructure_old) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {text.count(destructure_old)}: modal props')
+    text = text.replace(destructure_old, "  onClose,\n  onAfterClose,\n  footer,\n", 1)
+    focusable_marker = "  const getFocusableElements = useCallback(() => {\n"
+    if text.count(focusable_marker) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {text.count(focusable_marker)}: modal callbacks')
+    text = text.replace(
+        focusable_marker,
+        "  useEffect(() => {\n"
+        "    onCloseRef.current = onClose;\n"
+        "    onAfterCloseRef.current = onAfterClose;\n"
+        "  }, [onAfterClose, onClose]);\n\n"
+        + focusable_marker,
+        1,
+    )
+
+    start = text.find('  const startClose = useCallback(')
+    end = text.find('  useEffect(() => {\n    return () => {', start)
+    if start == -1 or end == -1:
+        raise RuntimeError(f'Pattern not found in {path}: modal close lifecycle')
+    replacement = (
+        "  const finishClose = useCallback(() => {\n"
+        "    if (closeTimerRef.current !== null) return;\n"
+        "    setIsClosing(true);\n"
+        "    closeTimerRef.current = window.setTimeout(() => {\n"
+        "      setIsVisible(false);\n"
+        "      setIsClosing(false);\n"
+        "      closeTimerRef.current = null;\n"
+        "      closeRequestedRef.current = false;\n"
+        "      onAfterCloseRef.current?.();\n"
+        "    }, CLOSE_ANIMATION_DURATION);\n"
+        "  }, []);\n\n"
+        "  useEffect(() => {\n"
+        "    if (open) {\n"
+        "      if (closeTimerRef.current !== null) {\n"
+        "        window.clearTimeout(closeTimerRef.current);\n"
+        "        closeTimerRef.current = null;\n"
+        "      }\n"
+        "      closeRequestedRef.current = false;\n"
+        "      queueMicrotask(() => {\n"
+        "        setIsVisible(true);\n"
+        "        setIsClosing(false);\n"
+        "      });\n"
+        "      return;\n"
+        "    }\n"
+        "    if (isVisible) finishClose();\n"
+        "  }, [finishClose, isVisible, open]);\n\n"
+        "  const handleClose = useCallback(async () => {\n"
+        "    if (closeRequestedRef.current || closeDisabled) return;\n"
+        "    closeRequestedRef.current = true;\n"
+        "    try {\n"
+        "      const shouldClose = await onCloseRef.current();\n"
+        "      if (shouldClose === false) {\n"
+        "        return;\n"
+        "      }\n"
+        "    } catch {\n"
+        "      // The parent owns the open state; a rejected close keeps the surface open.\n"
+        "    } finally {\n"
+        "      closeRequestedRef.current = false;\n"
+        "    }\n"
+        "  }, [closeDisabled]);\n\n"
+    )
+    text = text[:start] + replacement + text[end:]
+    aria_pattern = re.compile(r'(?P<indent>\s+)role="dialog"\n(?P=indent)aria-modal="true"\n')
+    matches = list(aria_pattern.finditer(text))
+    if len(matches) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {len(matches)}: modal aria state')
+    match = matches[0]
+    indent = match.group('indent')
+    text = text[:match.start()] + (
+        f"{indent}role={{open ? 'dialog' : undefined}}\n"
+        f"{indent}aria-modal={{open ? 'true' : undefined}}\n"
+        f"{indent}aria-hidden={{open ? undefined : true}}\n"
+        f"{indent}inert={{open ? undefined : true}}\n"
+    ) + text[match.end():]
+    write(path, text)
+
+
+def patch_sheet_lifecycle(target: Path) -> None:
+    path = target / 'src/components/ui/Sheet/Sheet.tsx'
+    text = read(path)
+    if 'try {\n      onCloseRef.current();\n    } finally {' in text:
+        return
+
+    old_refs = "  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);\n"
+    if text.count(old_refs) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {text.count(old_refs)}: sheet close refs')
+    text = text.replace(
+        old_refs,
+        old_refs
+        + "  const closeRequestedRef = useRef(false);\n"
+        + "  const onCloseRef = useRef(onClose);\n",
+        1,
+    )
+    focusable_marker = "  const getFocusableElements = useCallback(() => {\n"
+    if text.count(focusable_marker) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {text.count(focusable_marker)}: sheet callbacks')
+    text = text.replace(
+        focusable_marker,
+        "  useEffect(() => {\n"
+        "    onCloseRef.current = onClose;\n"
+        "  }, [onClose]);\n\n"
+        + focusable_marker,
+        1,
+    )
+    start = text.find('  const startClose = useCallback(')
+    end = text.find('  useEffect(() => {\n    return () => {', start)
+    if start == -1 or end == -1:
+        raise RuntimeError(f'Pattern not found in {path}: sheet close lifecycle')
+    replacement = (
+        "  const finishClose = useCallback(() => {\n"
+        "    if (closeTimerRef.current !== null) return;\n"
+        "    setIsClosing(true);\n"
+        "    closeTimerRef.current = window.setTimeout(() => {\n"
+        "      setIsVisible(false);\n"
+        "      setIsClosing(false);\n"
+        "      closeTimerRef.current = null;\n"
+        "      closeRequestedRef.current = false;\n"
+        "    }, CLOSE_ANIMATION_DURATION);\n"
+        "  }, []);\n\n"
+        "  useEffect(() => {\n"
+        "    if (open) {\n"
+        "      if (closeTimerRef.current !== null) {\n"
+        "        window.clearTimeout(closeTimerRef.current);\n"
+        "        closeTimerRef.current = null;\n"
+        "      }\n"
+        "      closeRequestedRef.current = false;\n"
+        "      queueMicrotask(() => {\n"
+        "        setIsVisible(true);\n"
+        "        setIsClosing(false);\n"
+        "      });\n"
+        "      return;\n"
+        "    }\n"
+        "    if (isVisible) finishClose();\n"
+        "  }, [finishClose, isVisible, open]);\n\n"
+        "  const handleClose = useCallback(async () => {\n"
+        "    if (closeRequestedRef.current || closeDisabled) return;\n"
+        "    closeRequestedRef.current = true;\n"
+        "    if (confirmClose) {\n"
+        "      try {\n"
+        "        const ok = await confirmClose();\n"
+        "        if (ok === false) {\n"
+        "          closeRequestedRef.current = false;\n"
+        "          return;\n"
+        "        }\n"
+        "      } catch {\n"
+        "        closeRequestedRef.current = false;\n"
+        "        return;\n"
+        "      }\n"
+        "    }\n"
+        "    try {\n"
+        "      onCloseRef.current();\n"
+        "    } finally {\n"
+        "      closeRequestedRef.current = false;\n"
+        "    }\n"
+        "  }, [closeDisabled, confirmClose]);\n\n"
+    )
+    text = text[:start] + replacement + text[end:]
+    aria_pattern = re.compile(r'(?P<indent>\s+)role="dialog"\n(?P=indent)aria-modal="true"\n')
+    matches = list(aria_pattern.finditer(text))
+    if len(matches) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {len(matches)}: sheet aria state')
+    match = matches[0]
+    indent = match.group('indent')
+    text = text[:match.start()] + (
+        f"{indent}role={{open ? 'dialog' : undefined}}\n"
+        f"{indent}aria-modal={{open ? 'true' : undefined}}\n"
+        f"{indent}aria-hidden={{open ? undefined : true}}\n"
+        f"{indent}inert={{open ? undefined : true}}\n"
+    ) + text[match.end():]
+    text = text.replace(
+        '    previouslyFocusedRef.current?.focus();\n',
+        "    const previouslyFocused = previouslyFocusedRef.current;\n"
+        "    if (previouslyFocused?.isConnected) {\n"
+        "      previouslyFocused.focus({ preventScroll: true });\n"
+        "    }\n",
+        1,
+    )
+    write(path, text)
+
+
+def patch_confirmation_queue(target: Path) -> None:
+    store_path = target / 'src/stores/useNotificationStore.ts'
+    text = read(store_path)
+    if 'confirmationQueue:' not in text:
+        text = text.replace(
+            "interface ConfirmationOptions {\n",
+            "interface ConfirmationOptions {\n  dedupeKey?: string;\n",
+            1,
+        )
+        text = text.replace(
+            "  confirmation: {\n    isOpen: boolean;\n    isLoading: boolean;\n    options: ConfirmationOptions | null;\n  };\n",
+            "  confirmation: {\n"
+            "    id: string;\n"
+            "    isOpen: boolean;\n"
+            "    isLoading: boolean;\n"
+            "    options: ConfirmationOptions | null;\n"
+            "  };\n"
+            "  confirmationQueue: Array<{ id: string; options: ConfirmationOptions }>;\n",
+            1,
+        )
+        text = text.replace(
+            "  hideConfirmation: () => void;\n",
+            "  hideConfirmation: () => void;\n  advanceConfirmation: () => void;\n",
+            1,
+        )
+        text = text.replace(
+            "  confirmation: {\n    isOpen: false,\n    isLoading: false,\n    options: null,\n  },\n",
+            "  confirmation: {\n"
+            "    id: '',\n"
+            "    isOpen: false,\n"
+            "    isLoading: false,\n"
+            "    options: null,\n"
+            "  },\n"
+            "  confirmationQueue: [],\n",
+            1,
+        )
+        start = text.find('  showConfirmation: (options) => {')
+        end = text.find('  setConfirmationLoading: (loading) => {', start)
+        if start == -1 or end == -1:
+            raise RuntimeError(f'Pattern not found in {store_path}: confirmation actions')
+        actions = (
+            "  showConfirmation: (options) => {\n"
+            "    set((state) => {\n"
+            "      const dedupeKey = options.dedupeKey\n"
+            "        ?? (typeof options.message === 'string'\n"
+            "          ? `${options.title ?? ''}|${options.confirmText ?? ''}|${options.message}`\n"
+            "          : undefined);\n"
+            "      const currentKey = state.confirmation.options?.dedupeKey\n"
+            "        ?? (state.confirmation.options\n"
+            "          ? `${state.confirmation.options.title ?? ''}|${state.confirmation.options.confirmText ?? ''}|${typeof state.confirmation.options.message === 'string' ? state.confirmation.options.message : ''}`\n"
+            "          : '');\n"
+            "      if (dedupeKey && state.confirmation.id && currentKey === dedupeKey) return state;\n"
+            "      if (dedupeKey && state.confirmationQueue.some((item) => item.options.dedupeKey === dedupeKey)) return state;\n"
+            "      const item = { id: generateId(), options: { ...options, dedupeKey } };\n"
+            "      if (state.confirmation.id) {\n"
+            "        return { confirmationQueue: [...state.confirmationQueue, item] };\n"
+            "      }\n"
+            "      return {\n"
+            "        confirmation: { id: item.id, isOpen: true, isLoading: false, options: item.options },\n"
+            "      };\n"
+            "    });\n"
+            "  },\n\n"
+            "  hideConfirmation: () => {\n"
+            "    set((state) => ({\n"
+            "      confirmation: { ...state.confirmation, isOpen: false, isLoading: false },\n"
+            "    }));\n"
+            "  },\n\n"
+            "  advanceConfirmation: () => {\n"
+            "    set((state) => {\n"
+            "      if (state.confirmation.isOpen) return state;\n"
+            "      const [next, ...remaining] = state.confirmationQueue;\n"
+            "      return {\n"
+            "        confirmation: next\n"
+            "          ? { id: next.id, isOpen: true, isLoading: false, options: next.options }\n"
+            "          : { id: '', isOpen: false, isLoading: false, options: null },\n"
+            "        confirmationQueue: remaining,\n"
+            "      };\n"
+            "    });\n"
+            "  },\n\n"
+        )
+        text = text[:start] + actions + text[end:]
+        write(store_path, text)
+
+    modal_path = target / 'src/components/common/ConfirmationModal.tsx'
+    text = read(modal_path)
+    if 'const submittingRef = useRef(false);' not in text:
+        text = text.replace(
+            "import { useTranslation } from 'react-i18next';\n",
+            "import { useEffect, useRef } from 'react';\n"
+            "import { useTranslation } from 'react-i18next';\n",
+            1,
+        )
+        text = text.replace(
+            "  const setConfirmationLoading = useNotificationStore((state) => state.setConfirmationLoading);\n",
+            "  const setConfirmationLoading = useNotificationStore((state) => state.setConfirmationLoading);\n"
+            "  const advanceConfirmation = useNotificationStore((state) => state.advanceConfirmation);\n",
+            1,
+        )
+        text = text.replace(
+            "  const { isOpen, isLoading, options } = confirmation;\n",
+            "  const { id, isOpen, isLoading, options } = confirmation;\n"
+            "  const submittingRef = useRef(false);\n\n"
+            "  useEffect(() => {\n"
+            "    submittingRef.current = false;\n"
+            "  }, [id]);\n",
+            1,
+        )
+        text = text.replace(
+            "  if (!isOpen || !options) {\n    return null;\n  }\n",
+            "  if (!options) {\n    return null;\n  }\n",
+            1,
+        )
+        text = text.replace(
+            "  const handleConfirm = async () => {\n    try {\n",
+            "  const handleConfirm = async () => {\n"
+            "    if (submittingRef.current || isLoading) return;\n"
+            "    submittingRef.current = true;\n"
+            "    try {\n",
+            1,
+        )
+        text = text.replace(
+            "    } finally {\n      setConfirmationLoading(false);\n    }\n",
+            "    } finally {\n"
+            "      submittingRef.current = false;\n"
+            "      setConfirmationLoading(false);\n"
+            "    }\n",
+            1,
+        )
+        text = text.replace(
+            "    <Modal open={isOpen} onClose={handleCancel} title={title} closeDisabled={isLoading}>\n",
+            "    <Modal\n"
+            "      open={isOpen}\n"
+            "      onClose={handleCancel}\n"
+            "      onAfterClose={advanceConfirmation}\n"
+            "      title={title}\n"
+            "      closeDisabled={isLoading}\n"
+            "    >\n",
+            1,
+        )
+        write(modal_path, text)
 
 
 def patch_modal_scroll_lock(target: Path) -> None:
@@ -1237,11 +1590,12 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
         page_path,
         "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
         "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n"
+        "import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';\n"
         "import type { AuthFileItem } from '@/types';\n",
-        "import type { AuthFileItem } from '@/types';",
+        "useProSurfaceState } from '@/pro/shared/useProSurfaceState'",
     )
     page_text = read(page_path)
-    if 'const [accountUsageFile, setAccountUsageFile]' not in page_text:
+    if 'const [accountUsageFile, setAccountUsageFileState]' not in page_text:
         state_markers = (
             "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n",
             "  const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');\n",
@@ -1253,7 +1607,13 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
                     page_text.replace(
                         marker,
                         marker
-                        + "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n",
+                        + "  const [accountUsageFile, setAccountUsageFileState] = useState<AuthFileItem | null>(null);\n"
+                        + "  const { activeSurface: activeAuthSurface, openSurface: openAuthSurface, closeSurface: closeAuthSurface } = useProSurfaceState<'usage' | 'connection-test'>();\n"
+                        + "  const setAccountUsageFile = useCallback((file: AuthFileItem | null) => {\n"
+                        + "    setAccountUsageFileState(file);\n"
+                        + "    if (file) openAuthSurface('usage');\n"
+                        + "    else if (activeAuthSurface === 'usage') closeAuthSurface();\n"
+                        + "  }, [activeAuthSurface, closeAuthSurface, openAuthSurface]);\n",
                         1,
                     ),
                 )
@@ -1281,9 +1641,9 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
     insert_once(
         page_path,
         "      <AuthFileModelsModal\n",
-        "      <AccountUsageModal file={accountUsageFile} onClose={() => setAccountUsageFile(null)} />\n\n"
+        "      <AccountUsageModal file={activeAuthSurface === 'usage' ? accountUsageFile : null} onClose={() => setAccountUsageFile(null)} />\n\n"
         "      <AuthFileModelsModal\n",
-        '<AccountUsageModal file={accountUsageFile}',
+        "<AccountUsageModal file={activeAuthSurface === 'usage' ? accountUsageFile : null}",
     )
 
     insert_once(
@@ -1400,10 +1760,23 @@ def patch_auth_file_connection_test(target: Path) -> None:
     )
     insert_once(
         page_path,
-        "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n",
-        "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n"
-        "  const [connectionTestFile, setConnectionTestFile] = useState<AuthFileItem | null>(null);\n",
-        'const [connectionTestFile, setConnectionTestFile]',
+        "  const setAccountUsageFile = useCallback((file: AuthFileItem | null) => {\n"
+        "    setAccountUsageFileState(file);\n"
+        "    if (file) openAuthSurface('usage');\n"
+        "    else if (activeAuthSurface === 'usage') closeAuthSurface();\n"
+        "  }, [activeAuthSurface, closeAuthSurface, openAuthSurface]);\n",
+        "  const setAccountUsageFile = useCallback((file: AuthFileItem | null) => {\n"
+        "    setAccountUsageFileState(file);\n"
+        "    if (file) openAuthSurface('usage');\n"
+        "    else if (activeAuthSurface === 'usage') closeAuthSurface();\n"
+        "  }, [activeAuthSurface, closeAuthSurface, openAuthSurface]);\n"
+        "  const [connectionTestFile, setConnectionTestFileState] = useState<AuthFileItem | null>(null);\n"
+        "  const setConnectionTestFile = useCallback((file: AuthFileItem | null) => {\n"
+        "    setConnectionTestFileState(file);\n"
+        "    if (file) openAuthSurface('connection-test');\n"
+        "    else if (activeAuthSurface === 'connection-test') closeAuthSurface();\n"
+        "  }, [activeAuthSurface, closeAuthSurface, openAuthSurface]);\n",
+        'const [connectionTestFile, setConnectionTestFileState]',
     )
     insert_once(
         page_path,
@@ -1414,12 +1787,12 @@ def patch_auth_file_connection_test(target: Path) -> None:
     )
     insert_once(
         page_path,
-        "      <AccountUsageModal file={accountUsageFile} onClose={() => setAccountUsageFile(null)} />\n",
+        "      <AccountUsageModal file={activeAuthSurface === 'usage' ? accountUsageFile : null} onClose={() => setAccountUsageFile(null)} />\n",
         "      <AuthFileConnectionTestModal\n"
-        "        file={connectionTestFile}\n"
+        "        file={activeAuthSurface === 'connection-test' ? connectionTestFile : null}\n"
         "        onClose={() => setConnectionTestFile(null)}\n"
         "      />\n\n"
-        "      <AccountUsageModal file={accountUsageFile} onClose={() => setAccountUsageFile(null)} />\n",
+        "      <AccountUsageModal file={activeAuthSurface === 'usage' ? accountUsageFile : null} onClose={() => setAccountUsageFile(null)} />\n",
         '<AuthFileConnectionTestModal',
     )
 
@@ -2082,6 +2455,9 @@ def main() -> None:
 
     copy_overlay(target)
     patch_modal_focus_restore(target)
+    patch_modal_lifecycle(target)
+    patch_sheet_lifecycle(target)
+    patch_confirmation_queue(target)
     patch_modal_scroll_lock(target)
     patch_modal_content_scrollbar_layout(target)
     patch_routes(target)

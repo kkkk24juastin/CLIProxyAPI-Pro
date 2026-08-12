@@ -43,6 +43,16 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
         self.assertIn("{t('usage_stats.monitoring_settings')}", button)
         self.assertNotIn("isMonitoringSettingsLoading ? t('common.loading')", button)
 
+    def test_async_surface_openers_use_synchronous_promise_guards(self) -> None:
+        source = PAGE_PATH.read_text()
+        self.assertIn('monitoringSettingsRequestRef.current', source)
+        self.assertIn('priceManagementRequestRef.current', source)
+        self.assertIn('if (monitoringSettingsRequestRef.current) return', source)
+        self.assertIn('if (priceManagementRequestRef.current) return', source)
+        self.assertIn('disabled={isPriceLoading}', source)
+        self.assertIn("openSurface('monitoring-settings')", source)
+        self.assertIn("openSurface('price-management')", source)
+
     def test_realtime_logs_pause_auto_refresh_during_browsing(self) -> None:
         source = PAGE_PATH.read_text()
         hook_source = REALTIME_HOOK_PATH.read_text()

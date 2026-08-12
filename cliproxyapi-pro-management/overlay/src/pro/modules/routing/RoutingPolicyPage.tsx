@@ -4,7 +4,6 @@ import { createPortal } from 'react-dom';
 import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconCheck, IconRefreshCw, IconShield } from '@/components/ui/icons';
@@ -24,6 +23,8 @@ import {
 } from '@/pro/modules/routing/routingPolicy';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import configActionStyles from '@/pro/shared/FloatingActionBar.module.scss';
+import { ProDetailDialog } from '@/pro/shared/ProSurface';
+import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
 import styles from './RoutingPolicyPage.module.scss';
 
 type RoutingPolicyView = 'providers' | 'runtime';
@@ -174,8 +175,17 @@ export function RoutingPolicyPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [releasing, setReleasing] = useState<string | null>(null);
-  const [selectedRuntimeDetail, setSelectedRuntimeDetail] =
+  const [selectedRuntimeDetail, setSelectedRuntimeDetailState] =
     useState<RoutingRuntimeDetail | null>(null);
+  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'runtime-detail'>();
+  const setSelectedRuntimeDetail = useCallback((detail: RoutingRuntimeDetail | null) => {
+    if (detail) {
+      setSelectedRuntimeDetailState(detail);
+      openSurface('runtime-detail');
+    } else if (activeSurface === 'runtime-detail') {
+      closeSurface();
+    }
+  }, [activeSurface, closeSurface, openSurface]);
   const [error, setError] = useState('');
   const [dirty, setDirty] = useState(false);
   const floatingActionsRef = useRef<HTMLDivElement>(null);
@@ -850,11 +860,11 @@ export function RoutingPolicyPage() {
           </section>
         </div>
       )}
-      <Modal
-        open={Boolean(selectedRuntimeDetail)}
+      <ProDetailDialog
+        open={activeSurface === 'runtime-detail' && Boolean(selectedRuntimeDetail)}
         onClose={() => setSelectedRuntimeDetail(null)}
+        onAfterClose={() => setSelectedRuntimeDetailState(null)}
         title={t('routing_policy.runtime.details_title')}
-        width={720}
         className={styles.runtimeDetailModal}
         footer={(
           <div className={styles.runtimeDetailModalActions}>
@@ -871,7 +881,7 @@ export function RoutingPolicyPage() {
             language={i18n.language}
           />
         ) : null}
-      </Modal>
+      </ProDetailDialog>
       {shouldRenderFloatingActions && typeof document !== 'undefined'
         ? createPortal(floatingActions, document.body)
         : null}

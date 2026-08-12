@@ -2,9 +2,10 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
 import { IconTrash2 } from '@/components/ui/icons';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { formatCompactNumber } from '@/pro/modules/monitoring/features/usage';
+import { ProFormDialog } from '@/pro/shared/ProSurface';
 import type { MonitoringSettingsDraft } from '../monitoringSettings';
 import styles from '../monitoring.module.scss';
 
@@ -14,6 +15,7 @@ export function MonitoringSettingsModal({
   monitoringSettingsDraft,
   setMonitoringSettingsDraft,
   usageTotalRequests,
+  isMonitoringSettingsLoading,
   isMonitoringStatisticsResetting,
   isMonitoringSettingsSaving,
   handleMonitoringStatisticsReset,
@@ -21,10 +23,11 @@ export function MonitoringSettingsModal({
   t,
 }: {
   isMonitoringSettingsOpen: boolean;
-  setIsMonitoringSettingsOpen: Dispatch<SetStateAction<boolean>>;
+  setIsMonitoringSettingsOpen: (open: boolean) => void;
   monitoringSettingsDraft: MonitoringSettingsDraft;
   setMonitoringSettingsDraft: Dispatch<SetStateAction<MonitoringSettingsDraft>>;
   usageTotalRequests: number;
+  isMonitoringSettingsLoading: boolean;
   isMonitoringStatisticsResetting: boolean;
   isMonitoringSettingsSaving: boolean;
   handleMonitoringStatisticsReset: () => void;
@@ -32,16 +35,21 @@ export function MonitoringSettingsModal({
   t: TFunction;
 }) {
   return (
-      <Modal
+      <ProFormDialog
         open={isMonitoringSettingsOpen}
         onClose={() => {
           if (!isMonitoringStatisticsResetting) setIsMonitoringSettingsOpen(false);
         }}
         title={t('usage_stats.monitoring_settings')}
-        width={760}
         className={styles.monitorModal}
       >
-        <div className={styles.monitoringSettingsEditor}>
+        <div className={styles.monitoringSettingsEditor} aria-busy={isMonitoringSettingsLoading}>
+          {isMonitoringSettingsLoading ? (
+            <div className={styles.surfaceLoadingStatus} role="status">
+              <LoadingSpinner size={16} />
+              {t('common.loading')}
+            </div>
+          ) : null}
           <div className={styles.settingsSectionCard}>
             <div className={styles.settingsSectionHeader}>
               <strong>{t('usage_stats.monitoring_settings_retention_title')}</strong>
@@ -157,11 +165,11 @@ export function MonitoringSettingsModal({
             <Button variant="secondary" size="sm" onClick={() => setIsMonitoringSettingsOpen(false)} disabled={isMonitoringStatisticsResetting}>
               {t('common.cancel')}
             </Button>
-            <Button variant="primary" size="sm" onClick={() => void handleSaveMonitoringSettings()} disabled={isMonitoringSettingsSaving || isMonitoringStatisticsResetting}>
+            <Button variant="primary" size="sm" onClick={() => void handleSaveMonitoringSettings()} disabled={isMonitoringSettingsLoading || isMonitoringSettingsSaving || isMonitoringStatisticsResetting}>
               {isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
             </Button>
           </div>
         </div>
-      </Modal>
+      </ProFormDialog>
   );
 }

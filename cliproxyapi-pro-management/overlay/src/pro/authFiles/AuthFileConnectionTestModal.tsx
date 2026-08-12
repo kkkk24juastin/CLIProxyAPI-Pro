@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { IconCheckCircle2, IconNetwork, IconAlertTriangle } from '@/components/ui/icons';
 import { authFilesApi, type AuthFileConnectionTestResponse } from '@/services/api/authFiles';
 import type { AuthFileItem } from '@/types';
 import { maskSensitiveText } from '@/utils/format';
 import { getErrorMessage } from '@/utils/helpers';
+import { ProTaskDialog } from '@/pro/shared/ProSurface';
 import styles from './AuthFileConnectionTestModal.module.scss';
 
 type TestStatus = 'idle' | 'running' | 'success' | 'error';
@@ -148,11 +148,10 @@ export function AuthFileConnectionTestModal({
           : t('auth_files.connection_test_ready');
 
   return (
-    <Modal
+    <ProTaskDialog
       open={file !== null}
       title={t('auth_files.connection_test_title', { account: file?.email || file?.name || '' })}
       onClose={close}
-      width={680}
       footer={
         <>
           <Button variant="secondary" onClick={close}>
@@ -241,6 +240,6 @@ export function AuthFileConnectionTestModal({
           </div>
         )}
       </div>
-    </Modal>
+    </ProTaskDialog>
   );
 }

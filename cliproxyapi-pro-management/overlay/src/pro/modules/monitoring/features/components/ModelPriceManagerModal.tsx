@@ -2,7 +2,7 @@ import { useMemo, type Dispatch, type SetStateAction } from 'react';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { ProWorkspaceDialog } from '@/pro/shared/ProSurface';
 import { IconRefreshCw, IconSearch, IconTrash2 } from '@/components/ui/icons';
 import { formatShortDateTime } from '../hooks/useMonitoringData';
 import {
@@ -70,7 +70,7 @@ export function ModelPriceManagerModal({
   t,
 }: {
   isPriceModalOpen: boolean;
-  setIsPriceModalOpen: Dispatch<SetStateAction<boolean>>;
+  setIsPriceModalOpen: (open: boolean) => void;
   priceManagementView: PriceManagementView;
   setPriceManagementView: Dispatch<SetStateAction<PriceManagementView>>;
   priceRuleTargets: PriceRuleTarget[];
@@ -159,11 +159,10 @@ export function ModelPriceManagerModal({
     && lockedPriceSyncChanges.every((change) => priceSyncLockedOverrideSet.has(change.model));
 
   return (
-      <Modal
+      <ProWorkspaceDialog
         open={isPriceModalOpen}
         onClose={() => setIsPriceModalOpen(false)}
         title={t('usage_stats.model_price_settings')}
-        width={1200}
         className={`${styles.monitorModal} ${styles.priceManagerModal}`}
       >
         <div className={styles.priceManager}>
@@ -751,6 +750,6 @@ export function ModelPriceManagerModal({
             </div>
           )}
         </div>
-      </Modal>
+      </ProWorkspaceDialog>
   );
 }

@@ -28,6 +28,7 @@ import {
   type ProxyPoolProbeResult,
   type ProxyPoolSnapshot,
 } from '@/pro/modules/proxyPool/proxyPool';
+import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import styles from '@/pro/modules/proxyPool/features/ProxyPool.module.scss';
 
@@ -150,8 +151,17 @@ export function ProxyPoolPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [pendingNode, setPendingNode] = useState<ProxyPoolNodeConfig | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
-  const [takeoverOpen, setTakeoverOpen] = useState(false);
+  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'node' | 'import' | 'takeover'>();
+  const importOpen = activeSurface === 'import';
+  const takeoverOpen = activeSurface === 'takeover';
+  const setImportOpen = useCallback((open: boolean) => {
+    if (open) openSurface('import');
+    else if (activeSurface === 'import') closeSurface();
+  }, [activeSurface, closeSurface, openSurface]);
+  const setTakeoverOpen = useCallback((open: boolean) => {
+    if (open) openSurface('takeover');
+    else if (activeSurface === 'takeover') closeSurface();
+  }, [activeSurface, closeSurface, openSurface]);
 
   const load = useCallback(
     async (silent = false, replaceDraft = false) => {
@@ -198,16 +208,19 @@ export function ProxyPoolPage() {
   const closeNodeSheet = () => {
     setEditingIndex(null);
     setPendingNode(null);
+    if (activeSurface === 'node') closeSurface();
   };
 
   const editNode = (index: number) => {
     setPendingNode(null);
     setEditingIndex(index);
+    openSurface('node');
   };
 
   const beginAddNode = () => {
     setEditingIndex(null);
     setPendingNode(createProxyPoolNode(draft.nodes.length));
+    openSurface('node');
   };
 
   const updateDraft = useCallback(
@@ -660,7 +673,7 @@ export function ProxyPoolPage() {
             )}
 
             <ProxyPoolNodeSheet
-              open={editingNode !== null}
+              open={activeSurface === 'node' && editingNode !== null}
               node={editingNode}
               strategy={draft.strategy}
               runtime={!pendingNode && editingNode ? statusByID.get(editingNode.id) : undefined}

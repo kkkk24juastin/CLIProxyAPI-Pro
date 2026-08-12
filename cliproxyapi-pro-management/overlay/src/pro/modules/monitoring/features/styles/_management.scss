@@ -179,6 +179,20 @@
   gap: 10px;
 }
 
+.surfaceLoadingStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 10px;
+  background: var(--monitor-surface-muted);
+  color: var(--monitor-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .priceManagerModal :global(.modal-body) {
   width: 100%;
   height: min(82vh, 760px);

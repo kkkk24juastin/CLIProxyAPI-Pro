@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { Modal } from '@/components/ui/Modal';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   IconChevronDown,
@@ -31,6 +30,8 @@ import {
   type AccountInspectionLogLevel,
   type AccountInspectionResultItem,
 } from '@/pro/modules/inspection/features/accountInspection';
+import { ProDetailDialog, ProWorkspaceDialog } from '@/pro/shared/ProSurface';
+import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
 import {
   ACCOUNT_INSPECTION_ACTION_PAGE_SIZE,
   ACCOUNT_INSPECTION_AUTH_FILES_IDLE_DELAY_MS,
@@ -168,8 +169,21 @@ export function AccountInspectionPage() {
     persistenceError,
     settingsDirty,
   } = backendState;
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [selectedDetailResult, setSelectedDetailResult] = useState<AccountInspectionResultItem | null>(null);
+  const [selectedDetailResult, setSelectedDetailResultState] = useState<AccountInspectionResultItem | null>(null);
+  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'settings' | 'detail'>();
+  const isSettingsModalOpen = activeSurface === 'settings';
+  const setIsSettingsModalOpen = useCallback((open: boolean) => {
+    if (open) openSurface('settings');
+    else if (activeSurface === 'settings') closeSurface();
+  }, [activeSurface, closeSurface, openSurface]);
+  const setSelectedDetailResult = useCallback((item: AccountInspectionResultItem | null) => {
+    if (item) {
+      setSelectedDetailResultState(item);
+      openSurface('detail');
+    } else if (activeSurface === 'detail') {
+      closeSurface();
+    }
+  }, [activeSurface, closeSurface, openSurface]);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
   const [resultStatusFilter, setResultStatusFilter] = useState<ResultStatusFilter>(
@@ -736,6 +750,7 @@ export function AccountInspectionPage() {
     const confirmTargets = (targets: AccountInspectionResultItem[]) => {
       const counts = countActions(targets);
       showConfirmation({
+        dedupeKey: `account-inspection:execute:${targets.map((item) => `${item.key}:${item.action}`).sort().join('|')}`,
         title: t('monitoring.account_inspection_execute_confirm_title'),
         message: buildExecuteConfirmationMessage(
           targets,
@@ -792,6 +807,7 @@ export function AccountInspectionPage() {
       const actionLabel = formatActionLabel(target.action, t);
       const isDelete = target.action === 'delete';
       showConfirmation({
+        dedupeKey: `account-inspection:execute:${target.key}:${target.action}`,
         title: isDelete
           ? t('monitoring.account_inspection_delete_single_title')
           : t('monitoring.account_inspection_execute_single_title'),
@@ -937,6 +953,7 @@ export function AccountInspectionPage() {
     }
     const counts = countActions(targets);
     showConfirmation({
+      dedupeKey: `account-inspection:execute:${targets.map((item) => `${item.key}:${item.action}`).sort().join('|')}`,
       title: t('monitoring.account_inspection_execute_confirm_title'),
       message: buildExecuteConfirmationMessage(
         targets,
@@ -1200,7 +1217,7 @@ export function AccountInspectionPage() {
   const openSettingsModal = useCallback(() => {
     dispatchBackendState({ type: 'discardSettingsDraft' });
     setIsSettingsModalOpen(true);
-  }, []);
+  }, [setIsSettingsModalOpen]);
 
   const handleSettingsDraftChange = useCallback(
     (field: InspectionSettingsDraftField, value: string) => {
@@ -1376,7 +1393,7 @@ export function AccountInspectionPage() {
     } finally {
       setScheduleLoading(false);
     }
-  }, [applyBackendResponse, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, settingsDraft, showNotification, t]);
+  }, [applyBackendResponse, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, setIsSettingsModalOpen, settingsDraft, showNotification, t]);
 
   const handleResetSettings = useCallback(() => {
     dispatchBackendState({ type: 'resetSettings', settings: DEFAULT_ACCOUNT_INSPECTION_SETTINGS });
@@ -1386,7 +1403,7 @@ export function AccountInspectionPage() {
   const closeSettingsModal = useCallback(() => {
     if (!settingsDirty) {
       setIsSettingsModalOpen(false);
-      return;
+      return true;
     }
     showConfirmation({
       title: t('monitoring.account_inspection_settings_unsaved_title'),
@@ -1399,7 +1416,8 @@ export function AccountInspectionPage() {
         setIsSettingsModalOpen(false);
       },
     });
-  }, [settingsDirty, showConfirmation, t]);
+    return false;
+  }, [setIsSettingsModalOpen, settingsDirty, showConfirmation, t]);
 
   const draftInspectionScopeLabel = settingsDraft.targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
     ? t('monitoring.filter_all_providers')
@@ -2139,11 +2157,11 @@ export function AccountInspectionPage() {
         </Card>
       </div>
 
-      <Modal
-        open={Boolean(selectedDetailResult)}
+      <ProDetailDialog
+        open={activeSurface === 'detail' && Boolean(selectedDetailResult)}
         onClose={() => setSelectedDetailResult(null)}
+        onAfterClose={() => setSelectedDetailResultState(null)}
         title={t('monitoring.account_inspection_result_details')}
-        width={720}
         className={styles.errorModal}
         footer={(
           <div className={styles.errorModalActions}>
@@ -2156,13 +2174,12 @@ export function AccountInspectionPage() {
         {selectedDetailResult ? (
           <InspectionErrorDetailsPanel item={selectedDetailResult} t={t} />
         ) : null}
-      </Modal>
+      </ProDetailDialog>
 
-      <Modal
+      <ProWorkspaceDialog
         open={isSettingsModalOpen}
         onClose={closeSettingsModal}
         title={t('monitoring.account_inspection_settings_title')}
-        width={1120}
         className={styles.settingsModal}
       >
         <div className={styles.settingsWorkbench}>
@@ -2530,7 +2547,7 @@ export function AccountInspectionPage() {
             </Button>
           </div>
         </div>
-      </Modal>
+      </ProWorkspaceDialog>
     </div>
   );
 }

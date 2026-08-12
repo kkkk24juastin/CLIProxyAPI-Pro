@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
+import { ProWorkspaceDialog } from '@/pro/shared/ProSurface';
 import {
   IconChartColumnIncreasing,
   IconInfo,
@@ -164,11 +164,10 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   );
 
   return (
-    <Modal
+    <ProWorkspaceDialog
       open={Boolean(file)}
       title={title}
       onClose={onClose}
-      width={960}
       className={styles.modal}
     >
       <div className={styles.accountHeader}>
@@ -469,6 +468,6 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
           ) : null}
         </div>
       ) : null}
-    </Modal>
+    </ProWorkspaceDialog>
   );
 }
