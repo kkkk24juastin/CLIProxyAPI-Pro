@@ -8,6 +8,8 @@ CUSTOMIZER = ROOT / 'apply_customizations.py'
 SURFACE = PRO_ROOT / 'shared/ProSurface.tsx'
 SURFACE_STYLE = PRO_ROOT / 'shared/ProSurface.module.scss'
 SURFACE_STATE = PRO_ROOT / 'shared/useProSurfaceState.ts'
+INFORMATION_DETAILS = PRO_ROOT / 'shared/ProInformationDetails.tsx'
+INFORMATION_DETAILS_STYLE = PRO_ROOT / 'shared/ProInformationDetails.module.scss'
 
 
 class ProSurfaceCustomizationTest(unittest.TestCase):
@@ -41,6 +43,33 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('useProSurfaceState', state_source)
         self.assertIn("@media (max-width: 720px)", styles)
         self.assertIn('height: 100dvh;', styles)
+
+    def test_information_and_decision_dialogs_have_distinct_product_layouts(self) -> None:
+        surface_styles = SURFACE_STYLE.read_text()
+        details = INFORMATION_DETAILS.read_text()
+        detail_styles = INFORMATION_DETAILS_STYLE.read_text()
+        monitoring = (
+            PRO_ROOT / 'modules/monitoring/features/components/RealtimeLogDetails.tsx'
+        ).read_text()
+        inspection_model = (
+            PRO_ROOT / 'modules/inspection/features/accountInspectionPageModel.tsx'
+        ).read_text()
+        inspection_styles = (
+            PRO_ROOT / 'modules/inspection/features/account-inspection-styles/_tables-dialogs.scss'
+        ).read_text()
+        routing = (PRO_ROOT / 'modules/routing/RoutingPolicyPage.tsx').read_text()
+
+        self.assertIn('width: min(800px', surface_styles)
+        self.assertIn('ProInformationDetails', details)
+        self.assertIn('grid-template-columns: repeat(2, minmax(0, 1fr))', detail_styles)
+        self.assertIn('ProInformationDetails', monitoring)
+        self.assertIn('ProInformationDetails', inspection_model)
+        self.assertIn('ProInformationDetails', routing)
+        self.assertIn('confirmationDecisionBody', inspection_model)
+        self.assertIn(':has(.confirmationDecisionBody)', inspection_styles)
+        self.assertIn('width: min(760px', inspection_styles)
+        self.assertIn('grid-auto-rows: max-content', inspection_styles)
+        self.assertNotIn('-webkit-line-clamp', inspection_styles)
 
     def test_workspace_settings_use_sheets_and_shared_footer_contract(self) -> None:
         monitoring_settings = (PRO_ROOT / 'modules/monitoring/features/components/MonitoringSettingsModal.tsx').read_text()

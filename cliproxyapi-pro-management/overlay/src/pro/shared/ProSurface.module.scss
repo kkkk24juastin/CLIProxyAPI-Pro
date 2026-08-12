@@ -9,7 +9,28 @@
 }
 
 .detail {
-  width: min(720px, calc(100vw - 32px)) !important;
+  width: min(800px, calc(100vw - 32px)) !important;
+  max-height: min(90dvh, 860px) !important;
+}
+
+.detail :global(.modal-header) {
+  min-height: 58px;
+  padding: 17px 64px 17px 24px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 76%, var(--bg-primary)), var(--bg-primary));
+}
+
+.detail :global(.modal-title) {
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.detail :global(.modal-body) {
+  max-height: min(72dvh, 720px);
+}
+
+.detail :global(.modal-footer) {
+  padding: 13px 24px 15px;
+  background: color-mix(in srgb, var(--bg-secondary) 54%, var(--bg-primary));
 }
 
 .form {
@@ -84,6 +105,24 @@
 
   .surface {
     --pro-surface-body-padding: 16px;
+  }
+
+  .detail {
+    width: calc(100vw - 24px) !important;
+    max-height: calc(100dvh - 24px) !important;
+  }
+
+  .detail :global(.modal-header) {
+    min-height: 54px;
+    padding: 15px 54px 15px 16px;
+  }
+
+  .detail :global(.modal-body) {
+    max-height: none;
+  }
+
+  .detail :global(.modal-footer) {
+    padding: 12px 16px 16px;
   }
 
   .workspace {

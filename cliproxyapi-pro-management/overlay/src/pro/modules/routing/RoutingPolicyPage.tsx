@@ -24,6 +24,7 @@ import {
 import { useAuthStore, useNotificationStore } from '@/stores';
 import configActionStyles from '@/pro/shared/FloatingActionBar.module.scss';
 import { ProDetailDialog } from '@/pro/shared/ProSurface';
+import { ProInformationDetails, type ProInformationDetailsTone } from '@/pro/shared/ProInformationDetails';
 import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
 import styles from './RoutingPolicyPage.module.scss';
 
@@ -79,11 +80,13 @@ function RoutingRuntimeDetailPanel({
   const item = detail.item;
   const accountName = item.fileName || item.authIndex || item.authId || '-';
   const action = detail.kind === 'active' ? 'disabled' : detail.item.action;
-  const detailItems = [
+  const accountItems = [
     { label: t('routing_policy.runtime.provider'), value: item.provider || '-' },
     { label: t('routing_policy.runtime.account'), value: accountName },
     { label: t('routing_policy.runtime.auth_index'), value: item.authIndex || '-' },
     { label: t('routing_policy.runtime.auth_id'), value: item.authId || '-' },
+  ];
+  const eventItems = [
     {
       label: t('routing_policy.runtime.status_code'),
       value: item.statusCode ? String(item.statusCode) : '-',
@@ -124,33 +127,35 @@ function RoutingRuntimeDetailPanel({
         ]
       : []),
   ];
+  const tone: ProInformationDetailsTone = item.statusCode >= 400
+    ? 'danger'
+    : item.statusCode >= 300
+      ? 'warning'
+      : item.statusCode >= 200
+        ? 'good'
+        : 'neutral';
 
   return (
-    <div className={styles.runtimeDetailPanel}>
-      <div className={styles.runtimeDetailOverview}>
+    <ProInformationDetails
+      tone={tone}
+      status={(
         <div className={styles.runtimeDetailOverviewTop}>
           <span
             className={`${styles.runtimeStatusBadge} ${runtimeStatusToneClass(item.statusCode)}`}
           >
             {item.statusCode || '-'}
           </span>
-          <span>{t(`routing_policy.actions.${action}`, { defaultValue: action })}</span>
         </div>
-        <strong>{accountName}</strong>
-      </div>
-      <div className={styles.runtimeDetailGrid}>
-        {detailItems.map((entry) => (
-          <div key={entry.label} className={styles.runtimeDetailItem}>
-            <span>{entry.label}</span>
-            <strong>{entry.value}</strong>
-          </div>
-        ))}
-      </div>
-      <div className={styles.runtimeReasonBlock}>
-        <span>{t('routing_policy.runtime.reason_details')}</span>
-        <pre className={styles.runtimeReasonMessage}>{item.reason || '-'}</pre>
-      </div>
-    </div>
+      )}
+      context={t(`routing_policy.actions.${action}`, { defaultValue: action })}
+      summary={accountName}
+      groups={[
+        { title: t('routing_policy.runtime.account'), items: accountItems },
+        { title: t('routing_policy.runtime.action'), items: eventItems },
+      ]}
+      detailLabel={t('routing_policy.runtime.reason_details')}
+      detail={<pre>{item.reason || '-'}</pre>}
+    />
   );
 }
 

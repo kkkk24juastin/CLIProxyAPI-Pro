@@ -225,96 +225,9 @@
   border-radius: 6px;
 }
 
-.errorDetailsPanel {
-  display: grid;
-  gap: 14px;
-  padding: 2px 0 4px;
-}
-
 .errorModalActions {
   display: flex;
   justify-content: flex-end;
-}
-
-.errorOverview {
-  display: grid;
-  justify-items: start;
-  gap: 10px;
-  min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--inspect-red) 24%, var(--inspect-line));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--inspect-red) 7%, var(--inspect-surface));
-}
-
-.errorOverview strong {
-  color: var(--inspect-ink);
-  font-size: 15px;
-  font-weight: 650;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.errorDetailsGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  border: 1px solid color-mix(in srgb, var(--inspect-line) 82%, transparent);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.errorDetailItem {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
-  padding: 9px 12px;
-  background: var(--inspect-surface);
-}
-
-.errorDetailItem + .errorDetailItem {
-  border-top: 1px solid color-mix(in srgb, var(--inspect-line) 72%, transparent);
-}
-
-.errorDetailItem span,
-.errorMessageBlock > span {
-  color: var(--inspect-muted);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.errorDetailItem strong {
-  min-width: 0;
-  max-width: 72%;
-  text-align: right;
-  overflow-wrap: anywhere;
-  color: var(--inspect-ink);
-  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.35;
-}
-
-.errorMessageBlock {
-  display: grid;
-  gap: 6px;
-}
-
-.errorMessage {
-  max-height: min(440px, 48vh);
-  overflow: auto;
-  margin: 0;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--inspect-line) 86%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--inspect-surface-muted) 58%, var(--inspect-surface));
-  color: var(--inspect-ink);
-  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .stateText,
@@ -520,16 +433,37 @@
   gap: 12px;
 }
 
+.confirmationDecisionBody {
+  --decision-tone: var(--inspect-accent);
+  gap: 14px;
+  min-width: 0;
+}
+
+.confirmationDecisionDanger {
+  --decision-tone: var(--inspect-red);
+}
+
 .confirmationBatchBody {
   min-width: 0;
 }
 
-:global(.modal):has(.confirmationBatchBody) {
-  width: min(720px, calc(100vw - 32px)) !important;
+:global(.modal):has(.confirmationDecisionBody) {
+  width: min(760px, calc(100vw - 32px)) !important;
   max-height: min(88vh, 820px);
 }
 
-:global(.modal-body):has(.confirmationBatchBody) {
+:global(.modal):has(.confirmationDecisionBody) :global(.modal-header) {
+  min-height: 58px;
+  padding: 17px 64px 17px 24px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--decision-tone) 6%, var(--inspect-surface)), var(--inspect-surface));
+}
+
+:global(.modal):has(.confirmationDecisionBody) :global(.modal-title) {
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+:global(.modal-body):has(.confirmationDecisionBody) {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   max-height: min(74vh, 680px);
@@ -537,19 +471,19 @@
   overflow: hidden;
 }
 
-:global(.modal-body):has(.confirmationBatchBody) > div:first-child {
+:global(.modal-body):has(.confirmationDecisionBody) > div:first-child {
   min-height: 0;
   margin: 0 !important;
-  padding: 20px 24px 12px;
+  padding: 20px 24px 16px;
   overflow: auto;
   overscroll-behavior: contain;
 }
 
-:global(.modal-body):has(.confirmationBatchBody) > div:last-child {
+:global(.modal-body):has(.confirmationDecisionBody) > div:last-child {
   margin: 0 !important;
   padding: 14px 24px 18px;
   border-top: 1px solid var(--inspect-line);
-  background: var(--inspect-surface);
+  background: color-mix(in srgb, var(--inspect-surface-muted) 58%, var(--inspect-surface));
 }
 
 .confirmationBody p {
@@ -562,6 +496,12 @@
 .confirmationBatchLead {
   display: grid;
   gap: 5px;
+  padding: 15px 16px;
+  border: 1px solid color-mix(in srgb, var(--decision-tone) 22%, var(--inspect-line));
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--decision-tone) 12%, transparent), transparent 46%),
+    linear-gradient(135deg, color-mix(in srgb, var(--decision-tone) 7%, var(--inspect-surface)), var(--inspect-surface) 70%);
 }
 
 .confirmationBatchLead strong {
@@ -715,7 +655,7 @@
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--inspect-line) 84%, transparent);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--inspect-surface-muted);
   color: var(--inspect-ink);
 }
@@ -752,7 +692,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 11px 13px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--inspect-line);
   background: var(--inspect-surface-muted);
 }
@@ -779,7 +719,7 @@
 }
 
 .confirmationPreviewHeader {
-  padding: 7px 13px;
+  padding: 8px 14px;
   border-bottom: 1px solid color-mix(in srgb, var(--inspect-line) 78%, transparent);
   color: var(--inspect-muted);
   font-size: 11px;
@@ -788,14 +728,15 @@
 
 .confirmationPreviewList {
   display: grid;
-  max-height: 240px;
+  grid-auto-rows: max-content;
+  max-height: 280px;
   overflow: auto;
   overscroll-behavior: contain;
 }
 
 .confirmationPreviewRow {
-  min-height: 40px;
-  padding: 7px 13px;
+  min-height: 44px;
+  padding: 8px 14px;
   border-bottom: 1px solid color-mix(in srgb, var(--inspect-line) 62%, transparent);
   font-size: 12px;
   line-height: 1.35;
@@ -837,11 +778,10 @@
 
 .confirmationPreviewRow em {
   min-width: 0;
-  overflow: hidden;
   color: var(--inspect-muted);
   font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .confirmationPreviewAccount {

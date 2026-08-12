@@ -129,6 +129,8 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     accounting_version: 'Accounting Version',
     accounting_quality: 'Accounting Quality',
     token_breakdown: 'Token Breakdown',
+    request_context: 'Request Context',
+    usage_context: 'Usage & Routing',
   },
   ru: {
     request_details: 'Детали запроса',
@@ -163,6 +165,8 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     accounting_version: 'Версия учета',
     accounting_quality: 'Качество учета',
     token_breakdown: 'Разбивка токенов',
+    request_context: 'Контекст запроса',
+    usage_context: 'Использование и маршрутизация',
   },
   zhCN: {
     request_details: '请求详情',
@@ -197,6 +201,8 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     accounting_version: '计费口径版本',
     accounting_quality: '计费数据质量',
     token_breakdown: 'Token 明细',
+    request_context: '请求上下文',
+    usage_context: '用量与路由',
   },
   zhTW: {
     request_details: '請求詳情',
@@ -231,6 +237,8 @@ const REALTIME_ERROR_TEXT_FALLBACKS = {
     accounting_version: '計費口徑版本',
     accounting_quality: '計費資料品質',
     token_breakdown: 'Token 明細',
+    request_context: '請求上下文',
+    usage_context: '用量與路由',
   },
 } as const;
 

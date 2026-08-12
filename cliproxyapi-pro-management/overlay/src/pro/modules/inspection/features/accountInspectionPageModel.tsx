@@ -32,6 +32,7 @@ import {
   resolveAuthProvider,
 } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
+import { ProInformationDetails, type ProInformationDetailsTone } from '@/pro/shared/ProInformationDetails';
 import { isRecordValue, readStringValue } from '@/pro/shared/value';
 import { resolveAccountPlanLabel, type AccountPlanQuotaStore } from '@/pro/modules/quota';
 import { isQuotaLowState } from './quotaHealth';
@@ -387,7 +388,7 @@ export function InspectionErrorDetailsPanel({
   const healthStatus = resolveResultHealthStatus(item);
   const httpStatusCode = extractHealthHttpStatusCode(item);
   const errorPresentation = buildInspectionErrorPresentation(item);
-  const detailItems = [
+  const accountItems = [
     { label: t('monitoring.account_label'), value: resolveAccountInspectionAccountLabel(item) },
     { label: t('monitoring.account_inspection_file_name'), value: item.fileName },
     { label: t('monitoring.filter_provider'), value: item.provider },
@@ -397,33 +398,41 @@ export function InspectionErrorDetailsPanel({
         ? t('monitoring.account_inspection_state_disabled')
         : t('monitoring.account_inspection_state_enabled'),
     },
+  ].filter((detail) => detail.value);
+  const inspectionItems = [
     { label: t('monitoring.account_inspection_http_status'), value: httpStatusCode !== null ? String(httpStatusCode) : '' },
     { label: t('monitoring.account_inspection_error_code'), value: item.errorCode?.trim() || '' },
+    { label: t('monitoring.account_inspection_used_percent'), value: item.usedPercent !== null ? `${item.usedPercent}%` : '' },
+    { label: t('monitoring.account_inspection_token_status'), value: formatTokenRefreshLabel(item, t) },
+    { label: t('monitoring.account_inspection_next_action'), value: formatActionLabel(item.action, t) },
+    { label: t('monitoring.account_inspection_reason'), value: item.actionReason?.trim() || '' },
   ].filter((detail) => detail.value);
+  const toneByHealth: Record<ResultHealthStatus, ProInformationDetailsTone> = {
+    healthy: 'good',
+    recoverable: 'good',
+    disabled: 'neutral',
+    quotaExhausted: 'warning',
+    authInvalid: 'danger',
+    inspectionError: 'danger',
+  };
 
   return (
-    <div className={styles.errorDetailsPanel}>
-      <div className={styles.errorOverview}>
+    <ProInformationDetails
+      tone={toneByHealth[healthStatus]}
+      status={(
         <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>
           {buildHealthStatusLabel(item, healthStatus, t)}
         </span>
-        {errorPresentation.summary ? <strong>{errorPresentation.summary}</strong> : null}
-      </div>
-      <div className={styles.errorDetailsGrid}>
-        {detailItems.map((detail) => (
-          <div key={detail.label} className={styles.errorDetailItem}>
-            <span>{detail.label}</span>
-            <strong>{detail.value}</strong>
-          </div>
-        ))}
-      </div>
-      {errorPresentation.detail ? (
-        <div className={styles.errorMessageBlock}>
-          <span>{t('monitoring.account_inspection_raw_error_response')}</span>
-          <pre className={styles.errorMessage}>{errorPresentation.detail}</pre>
-        </div>
-      ) : null}
-    </div>
+      )}
+      context={resolveProviderDisplayLabel(item.provider)}
+      summary={errorPresentation.summary || formatInspectionVerdictPrimary(item, healthStatus, t)}
+      groups={[
+        { title: t('monitoring.account_inspection_account_summary_title'), items: accountItems },
+        { title: t('monitoring.account_inspection_inspection_summary_title'), items: inspectionItems },
+      ]}
+      detailLabel={errorPresentation.detail ? t('monitoring.account_inspection_raw_error_response') : undefined}
+      detail={errorPresentation.detail ? <pre>{errorPresentation.detail}</pre> : undefined}
+    />
   );
 }
 
@@ -1153,7 +1162,14 @@ export const buildExecuteConfirmationMessage = (
   const isBatch = items.length > 1;
 
   return (
-    <div className={`${styles.confirmationBody} ${isBatch ? styles.confirmationBatchBody : ''}`}>
+    <div
+      className={[
+        styles.confirmationBody,
+        styles.confirmationDecisionBody,
+        isBatch ? styles.confirmationBatchBody : '',
+        hasDelete ? styles.confirmationDecisionDanger : '',
+      ].filter(Boolean).join(' ')}
+    >
       <div className={styles.confirmationBatchLead}>
         <strong>{t('monitoring.account_inspection_execute_confirm_summary', { total: items.length })}</strong>
         <span>
@@ -1197,7 +1213,7 @@ export const buildExecuteConfirmationMessage = (
                 <span className={styles.confirmationPreviewAccount} title={item.account}>{item.account}</span>
                 <small>{item.provider}</small>
                 <strong className={item.dangerous ? styles.errorText : undefined}>{item.action}</strong>
-                <em title={item.reason}>{item.reason}</em>
+                <em>{item.reason}</em>
               </div>
             ))}
           </div>

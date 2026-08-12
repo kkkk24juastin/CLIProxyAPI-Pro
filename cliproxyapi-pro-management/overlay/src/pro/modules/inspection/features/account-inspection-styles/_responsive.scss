@@ -336,39 +336,44 @@
     justify-self: start;
   }
 
-  :global(.modal):has(.confirmationBatchBody) {
+  :global(.modal):has(.confirmationDecisionBody) {
     width: calc(100vw - 24px) !important;
     max-height: calc(100vh - 24px);
   }
 
   @supports (height: 100dvh) {
-    :global(.modal):has(.confirmationBatchBody) {
+    :global(.modal):has(.confirmationDecisionBody) {
       max-height: calc(100dvh - 24px);
     }
   }
 
-  :global(.modal-body):has(.confirmationBatchBody) {
+  :global(.modal-body):has(.confirmationDecisionBody) {
     max-height: calc(100vh - 116px);
   }
 
   @supports (height: 100dvh) {
-    :global(.modal-body):has(.confirmationBatchBody) {
+    :global(.modal-body):has(.confirmationDecisionBody) {
       max-height: calc(100dvh - 116px);
     }
   }
 
-  :global(.modal-body):has(.confirmationBatchBody) > div:first-child {
+  :global(.modal):has(.confirmationDecisionBody) :global(.modal-header) {
+    min-height: 54px;
+    padding: 15px 54px 15px 16px;
+  }
+
+  :global(.modal-body):has(.confirmationDecisionBody) > div:first-child {
     padding: 16px 16px 10px;
   }
 
-  :global(.modal-body):has(.confirmationBatchBody) > div:last-child {
+  :global(.modal-body):has(.confirmationDecisionBody) > div:last-child {
     flex-direction: column-reverse;
     align-items: stretch;
     gap: 8px !important;
     padding: 12px 16px 16px;
   }
 
-  :global(.modal-body):has(.confirmationBatchBody) > div:last-child :global(.btn) {
+  :global(.modal-body):has(.confirmationDecisionBody) > div:last-child :global(.btn) {
     width: 100%;
   }
 
@@ -397,6 +402,7 @@
 
   .confirmationPreviewRow {
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto auto;
     gap: 5px 10px;
     align-items: start;
     padding: 10px 12px;
@@ -404,6 +410,7 @@
 
   .confirmationPreviewRow small {
     grid-column: 1;
+    grid-row: 2;
   }
 
   .confirmationPreviewRow strong {
@@ -414,13 +421,12 @@
 
   .confirmationPreviewRow em {
     grid-column: 1 / -1;
-    display: -webkit-box;
+    grid-row: 3;
+    display: block;
     padding-top: 6px;
     border-top: 1px dashed color-mix(in srgb, var(--inspect-line) 72%, transparent);
-    overflow: hidden;
+    overflow: visible;
     white-space: normal;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
   }
 
   .emptyState {
