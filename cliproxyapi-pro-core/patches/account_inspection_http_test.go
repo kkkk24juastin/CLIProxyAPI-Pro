@@ -1,11 +1,14 @@
 package management
 
 import (
+	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	proinspection "github.com/router-for-me/CLIProxyAPI/v6/internal/pro/inspection"
 )
 
 func TestPaginateAccountInspectionResultsReturnsRequestedPage(t *testing.T) {
@@ -167,6 +170,44 @@ func TestInspectManyAccountsRejectsInvalidBatchWithoutScheduler(t *testing.T) {
 	handler.InspectManyAccounts(context)
 	if recorder.Code != 400 {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAccountInspectionHTTPStatusClassifiesExpectedControlErrors(t *testing.T) {
+	tests := []struct {
+		err  error
+		want int
+	}{
+		{errAccountInspectionAlreadyRunning, http.StatusConflict},
+		{errAccountInspectionResultStale, http.StatusConflict},
+		{proinspection.ErrPaused, http.StatusLocked},
+		{context.DeadlineExceeded, http.StatusGatewayTimeout},
+		{context.Canceled, http.StatusRequestTimeout},
+	}
+	for _, test := range tests {
+		if got := accountInspectionHTTPStatus(test.err); got != test.want {
+			t.Errorf("accountInspectionHTTPStatus(%v) = %d, want %d", test.err, got, test.want)
+		}
+	}
+}
+
+func TestInspectManyAccountsReturnsConflictWhenInspectionIsRunning(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := &Handler{}
+	scheduler := &accountInspectionScheduler{
+		schedule: accountInspectionSchedule{}, status: accountInspectionStatus{State: accountInspectionStateRunning},
+		subscribers: make(map[chan accountInspectionLogStreamMessage]struct{}),
+	}
+	accountInspectionSchedulers.Store(handler, scheduler)
+	t.Cleanup(func() { accountInspectionSchedulers.Delete(handler) })
+
+	recorder := httptest.NewRecorder()
+	requestContext, _ := gin.CreateTestContext(recorder)
+	requestContext.Request = httptest.NewRequest("POST", "/account-inspection/inspect-many", strings.NewReader(`{"items":[{"key":"account","fileName":"account.json","authIndex":"account"}]}`))
+	requestContext.Request.Header.Set("Content-Type", "application/json")
+	handler.InspectManyAccounts(requestContext)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s, want conflict", recorder.Code, recorder.Body.String())
 	}
 }
 

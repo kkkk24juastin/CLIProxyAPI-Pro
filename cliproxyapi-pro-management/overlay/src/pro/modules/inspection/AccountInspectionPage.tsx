@@ -889,7 +889,6 @@ export function AccountInspectionPage() {
         failed > 0 ? 'warning' : 'success'
       );
       setSelectedResultKeys(new Set());
-      void loadInspectionDetailsPage();
     } catch (error) {
       const response = (error as ApiError | undefined)?.data;
       if (isAccountInspectionBackendResponse(response)) {
@@ -911,7 +910,7 @@ export function AccountInspectionPage() {
     } finally {
       setBulkActionLoading(false);
     }
-  }, [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, loadInspectionDetailsPage, restoredSnapshot, showNotification, t]);
+  }, [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, restoredSnapshot, showNotification, t]);
 
   const handleExecuteSelectedResults = useCallback(() => {
     const items = selectedVisibleResultRows.map(({ item }) => item);

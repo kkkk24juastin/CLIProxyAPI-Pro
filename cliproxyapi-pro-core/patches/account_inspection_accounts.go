@@ -583,7 +583,7 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 		return nil, errAccountInspectionRestoredSnapshotReadOnly
 	}
 	if running {
-		return nil, fmt.Errorf("account inspection already running")
+		return nil, errAccountInspectionAlreadyRunning
 	}
 	s.fullRunMu.RLock()
 	defer s.fullRunMu.RUnlock()
@@ -596,7 +596,7 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 		return nil, errAccountInspectionRestoredSnapshotReadOnly
 	}
 	if running {
-		return nil, fmt.Errorf("account inspection already running")
+		return nil, errAccountInspectionAlreadyRunning
 	}
 	boundItems := make([]accountInspectionActionItem, 0, len(items))
 	for _, item := range items {

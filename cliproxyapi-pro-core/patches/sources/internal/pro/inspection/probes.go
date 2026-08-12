@@ -338,7 +338,7 @@ func redactSensitiveJSON(value any) {
 
 func redactSensitiveText(value string) string {
 	value = regexp.MustCompile(`(?i)bearer\s+[a-z0-9._~+/=-]+`).ReplaceAllString(value, "Bearer [REDACTED]")
-	return regexp.MustCompile(`(?i)(authorization|api[_-]?key|(?:[a-z0-9]+[_-])*token|password|secret|credential|cookie)(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&}]+)`).ReplaceAllString(value, "${1}${2}[REDACTED]")
+	return regexp.MustCompile(`(?i)("?(?:authorization|api[_-]?key|(?:[a-z0-9]+[_-])*token|password|secret|credential|cookie)"?)(\s*[:=]\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;&}]+)`).ReplaceAllString(value, "${1}${2}[REDACTED]")
 }
 
 func WithHTTPErrorDetail(decision Decision, body string) Decision {

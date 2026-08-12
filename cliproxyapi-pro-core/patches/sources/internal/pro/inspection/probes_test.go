@@ -145,6 +145,14 @@ func TestHTTPErrorDetailRedactsAndTruncates(t *testing.T) {
 	if strings.Contains(plain, "plain-secret") || strings.Contains(plain, "guess") || strings.Contains(plain, "abc.def") {
 		t.Fatalf("plain detail was not redacted: %q", plain)
 	}
+	brokenJSON := HTTPErrorDetail(`{"access_token":"broken-secret","authorization":"Bearer malformed","broken":`)
+	if strings.Contains(brokenJSON, "broken-secret") || strings.Contains(brokenJSON, "Bearer malformed") || !strings.Contains(brokenJSON, "[REDACTED]") {
+		t.Fatalf("broken JSON detail was not redacted: %q", brokenJSON)
+	}
+	html := HTTPErrorDetail(`<pre>"api_key": "html-secret" cookie='session-secret'</pre>`)
+	if strings.Contains(html, "html-secret") || strings.Contains(html, "session-secret") {
+		t.Fatalf("HTML-like detail was not redacted: %q", html)
+	}
 	for _, secret := range []string{"token=plain-token", "id_token=id-secret", "session_token=session-secret", "credential=credential-secret"} {
 		if redacted := HTTPErrorDetail(secret); strings.Contains(redacted, strings.Split(secret, "=")[1]) {
 			t.Fatalf("HTTPErrorDetail(%q) leaked secret: %q", secret, redacted)

@@ -304,8 +304,8 @@ func TestAccountInspectionSnapshotRestoresRunSettingsAndConfirmations(t *testing
 		t.Fatal(err)
 	}
 	restored := &accountInspectionScheduler{
-		snapshotPath: scheduler.snapshotPath,
-		schedule: accountInspectionSchedule{Settings: scheduler.lastRunSettings},
+		snapshotPath:            scheduler.snapshotPath,
+		schedule:                accountInspectionSchedule{Settings: scheduler.lastRunSettings},
 		autoActionConfirmations: proinspection.NewConfirmationCounter(),
 	}
 	if err := restored.loadResultSnapshot(); err != nil {
@@ -325,7 +325,7 @@ func TestAccountInspectionSnapshotDropsConfirmationsWhenPersistedSettingsDiffer(
 	oldSettings := proinspection.DefaultSettings()
 	oldSettings.AutoExecuteConfirmations = 3
 	scheduler := &accountInspectionScheduler{
-		snapshotPath: filepath.Join(dir, "snapshot.json"),
+		snapshotPath:    filepath.Join(dir, "snapshot.json"),
 		lastRunSettings: oldSettings,
 		status: accountInspectionStatus{
 			State: accountInspectionStateCompleted, LastStartedAt: 10, LastFinishedAt: 20,
@@ -340,8 +340,8 @@ func TestAccountInspectionSnapshotDropsConfirmationsWhenPersistedSettingsDiffer(
 	newSettings := oldSettings
 	newSettings.AutoExecuteConfirmations = 2
 	restored := &accountInspectionScheduler{
-		snapshotPath: scheduler.snapshotPath,
-		schedule: accountInspectionSchedule{Settings: newSettings},
+		snapshotPath:            scheduler.snapshotPath,
+		schedule:                accountInspectionSchedule{Settings: newSettings},
 		autoActionConfirmations: proinspection.NewConfirmationCounter(),
 	}
 	if err := restored.loadResultSnapshot(); err != nil {
@@ -398,6 +398,66 @@ func TestAccountInspectionSettingsChangeClearsPersistedConfirmations(t *testing.
 	restored.autoActionConfirmations.BeginRun()
 	if confirmed, count, _ := restored.autoActionConfirmations.Confirm("account|delete|invalid", 3); confirmed || count != 1 {
 		t.Fatalf("confirmation after settings change = %v, %d", confirmed, count)
+	}
+}
+
+func TestAccountInspectionSettingsUpdateFailureLeavesScheduleAndConfirmationsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	settings := proinspection.DefaultSettings()
+	scheduler := &accountInspectionScheduler{
+		path: filepath.Join(dir, "schedule.json"), snapshotPath: filepath.Join(dir, "snapshot.json"),
+		schedule:                accountInspectionSchedule{IntervalMinutes: 60, Settings: settings},
+		lastRunSettings:         settings,
+		status:                  accountInspectionStatus{State: accountInspectionStateCompleted, LastStartedAt: 10, LastFinishedAt: 20},
+		autoActionConfirmations: proinspection.NewConfirmationCounter(), trigger: make(chan struct{}, 1),
+	}
+	scheduler.autoActionConfirmations.Confirm("account|delete|invalid", 3)
+	if err := scheduler.saveLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduler.saveResultSnapshotLocked(); err != nil {
+		t.Fatal(err)
+	}
+	originalSchedulePath := scheduler.path
+	scheduler.path = filepath.Join(dir, "schedule-as-directory")
+	if err := os.Mkdir(scheduler.path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	updated := scheduler.schedule
+	updated.Settings.AutoExecuteConfirmations = 2
+	if err := scheduler.update(updated); err == nil {
+		t.Fatal("update() error = nil, want schedule persistence failure")
+	}
+	if scheduler.schedule.Settings.AutoExecuteConfirmations != settings.AutoExecuteConfirmations {
+		t.Fatalf("in-memory schedule changed after failure: %+v", scheduler.schedule.Settings)
+	}
+	scheduler.autoActionConfirmations.BeginRun()
+	if confirmed, count, _ := scheduler.autoActionConfirmations.Confirm("account|delete|invalid", 3); confirmed || count != 2 {
+		t.Fatalf("in-memory confirmation after failure = %v, %d, want false/2", confirmed, count)
+	}
+	scheduler.path = originalSchedulePath
+	restored := &accountInspectionScheduler{
+		path: originalSchedulePath, snapshotPath: scheduler.snapshotPath,
+		schedule: accountInspectionSchedule{Settings: settings}, autoActionConfirmations: proinspection.NewConfirmationCounter(),
+	}
+	if err := restored.loadResultSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	restored.autoActionConfirmations.BeginRun()
+	if confirmed, count, _ := restored.autoActionConfirmations.Confirm("account|delete|invalid", 3); confirmed || count != 2 {
+		t.Fatalf("persisted confirmation after failure = %v, %d, want false/2", confirmed, count)
+	}
+}
+
+func TestAccountInspectionSettingsUpdateRejectsRunningInspection(t *testing.T) {
+	scheduler := &accountInspectionScheduler{
+		schedule: accountInspectionSchedule{Settings: proinspection.DefaultSettings()},
+		status:   accountInspectionStatus{State: accountInspectionStateRunning}, trigger: make(chan struct{}, 1),
+	}
+	updated := scheduler.schedule
+	updated.Settings.AutoExecuteConfirmations++
+	if err := scheduler.update(updated); !errors.Is(err, errAccountInspectionAlreadyRunning) {
+		t.Fatalf("update() error = %v, want already running", err)
 	}
 }
 

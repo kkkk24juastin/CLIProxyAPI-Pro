@@ -104,6 +104,7 @@ const accountInspectionResultSnapshotVersion = proinspection.ResultSnapshotVersi
 var errAccountInspectionRestoredSnapshotReadOnly = errors.New("restored account inspection snapshot is read-only; run a new inspection first")
 var errAccountInspectionResultStale = errors.New("account inspection result is stale or no longer available")
 var errAccountInspectionSharedSourceDelete = errors.New("cannot delete one plugin virtual auth from a shared source file")
+var errAccountInspectionAlreadyRunning = errors.New("account inspection already running")
 
 type accountInspectionProgress = proinspection.Progress
 type accountInspectionStatus = proinspection.Status
@@ -284,10 +285,14 @@ func (s *accountInspectionScheduler) load() {
 }
 
 func (s *accountInspectionScheduler) saveLocked() error {
+	return s.saveScheduleLocked(s.schedule)
+}
+
+func (s *accountInspectionScheduler) saveScheduleLocked(schedule accountInspectionSchedule) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(s.schedule, "", "  ")
+	raw, err := json.MarshalIndent(schedule, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -350,6 +355,10 @@ func (s *accountInspectionScheduler) saveResultSnapshotLocked() error {
 	if !ok {
 		return nil
 	}
+	return s.writeResultSnapshotLocked(snapshot)
+}
+
+func (s *accountInspectionScheduler) writeResultSnapshotLocked(snapshot accountInspectionResultSnapshot) error {
 	if err := os.MkdirAll(filepath.Dir(s.snapshotPath), 0o755); err != nil {
 		return err
 	}
@@ -488,20 +497,41 @@ func (s *accountInspectionScheduler) update(schedule accountInspectionSchedule) 
 	if s.stopped {
 		return fmt.Errorf("account inspection scheduler is shut down")
 	}
-	previousNextRunAt := s.schedule.NextRunAt
-	previousSettings := s.schedule.Settings
-	s.schedule = normalizeAccountInspectionSchedule(schedule)
-	if s.schedule.Enabled && previousNextRunAt > 0 && schedule.NextRunAt == 0 {
-		s.schedule.NextRunAt = previousNextRunAt
+	previousSchedule := s.schedule
+	nextSchedule := normalizeAccountInspectionSchedule(schedule)
+	if nextSchedule.Enabled && previousSchedule.NextRunAt > 0 && schedule.NextRunAt == 0 {
+		nextSchedule.NextRunAt = previousSchedule.NextRunAt
 	}
-	settingsChanged := previousSettings != s.schedule.Settings
-	if err := s.saveLocked(); err != nil {
+	settingsChanged := previousSchedule.Settings != nextSchedule.Settings
+	if settingsChanged && s.isRunningLocked() {
+		return errAccountInspectionAlreadyRunning
+	}
+	var previousSnapshot accountInspectionResultSnapshot
+	var hasSnapshot bool
+	if settingsChanged {
+		previousSnapshot, hasSnapshot = s.resultSnapshotLocked()
+		if hasSnapshot {
+			clearedSnapshot := previousSnapshot
+			clearedSnapshot.Confirmations = proinspection.ConfirmationState{}
+			if err := s.writeResultSnapshotLocked(clearedSnapshot); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.saveScheduleLocked(nextSchedule); err != nil {
+		if hasSnapshot {
+			if restoreErr := s.writeResultSnapshotLocked(previousSnapshot); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf("restore account inspection confirmation snapshot: %w", restoreErr))
+			}
+		}
 		return err
 	}
-	if settingsChanged && s.autoActionConfirmations != nil {
-		s.autoActionConfirmations.Reset()
-		if err := s.saveResultSnapshotLocked(); err != nil {
-			return err
+	s.schedule = nextSchedule
+	if settingsChanged {
+		if s.autoActionConfirmations == nil {
+			s.autoActionConfirmations = proinspection.NewConfirmationCounter()
+		} else {
+			s.autoActionConfirmations.Reset()
 		}
 	}
 	select {
@@ -568,7 +598,7 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 	if s.isRunningLocked() {
 		s.mu.Unlock()
 		release()
-		return fmt.Errorf("account inspection already running")
+		return errAccountInspectionAlreadyRunning
 	}
 	s.mu.Unlock()
 
@@ -599,7 +629,7 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 		s.mu.Unlock()
 		cancel()
 		release()
-		return fmt.Errorf("account inspection already running")
+		return errAccountInspectionAlreadyRunning
 	}
 	s.cancel = cancel
 	s.lastRunSettings = s.schedule.Settings
@@ -758,7 +788,7 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 	}
 	if s.isRunningLocked() {
 		s.mu.Unlock()
-		return accountInspectionResult{}, fmt.Errorf("account inspection already running")
+		return accountInspectionResult{}, errAccountInspectionAlreadyRunning
 	}
 	s.mu.Unlock()
 	s.fullRunMu.RLock()
@@ -766,7 +796,7 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 	s.mu.Lock()
 	if s.isRunningLocked() {
 		s.mu.Unlock()
-		return accountInspectionResult{}, fmt.Errorf("account inspection already running")
+		return accountInspectionResult{}, errAccountInspectionAlreadyRunning
 	}
 	schedule := s.schedule
 	s.mu.Unlock()
@@ -815,7 +845,7 @@ func (s *accountInspectionScheduler) inspectMany(ctx context.Context, items []ac
 	}
 	if s.isRunningLocked() {
 		s.mu.Unlock()
-		return nil, fmt.Errorf("account inspection already running")
+		return nil, errAccountInspectionAlreadyRunning
 	}
 	s.mu.Unlock()
 	s.fullRunMu.RLock()
@@ -823,7 +853,7 @@ func (s *accountInspectionScheduler) inspectMany(ctx context.Context, items []ac
 	s.mu.Lock()
 	if s.isRunningLocked() {
 		s.mu.Unlock()
-		return nil, fmt.Errorf("account inspection already running")
+		return nil, errAccountInspectionAlreadyRunning
 	}
 	settings := s.schedule.Settings
 	s.mu.Unlock()
