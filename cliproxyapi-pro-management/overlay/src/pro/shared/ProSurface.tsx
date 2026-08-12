@@ -132,10 +132,10 @@ export function ProSettingsSheet({
   const busy = loading || saving;
   const footer = (
     <div className={styles.settingsFooter}>
-      <div className={styles.settingsFooterStart}>
+      <fieldset className={styles.settingsFooterStart} disabled={busy} aria-busy={busy}>
         {footerStart}
         {dirty && dirtyLabel ? <span className={styles.dirtyStatus}>{dirtyLabel}</span> : null}
-      </div>
+      </fieldset>
       <div className={styles.settingsFooterActions}>
         <Button variant="secondary" onClick={() => void onClose()} disabled={busy}>
           {cancelLabel}
@@ -144,7 +144,7 @@ export function ProSettingsSheet({
           variant="primary"
           onClick={() => void onSave()}
           loading={saving}
-          disabled={loading || saveDisabled}
+          disabled={busy || saveDisabled}
         >
           {saveLabel}
         </Button>
@@ -159,7 +159,7 @@ export function ProSettingsSheet({
       closeDisabled={saving || props.closeDisabled}
       footer={footer}
     >
-      <fieldset className={styles.settingsFields} disabled={loading} aria-busy={busy}>
+      <fieldset className={styles.settingsFields} disabled={busy} aria-busy={busy}>
         {children}
       </fieldset>
     </ProWorkspaceSheet>

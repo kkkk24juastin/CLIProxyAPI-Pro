@@ -55,6 +55,28 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('dirty={monitoringSettingsDirty}', monitoring_settings)
         self.assertIn('dirty={settingsDirty}', inspection)
 
+    def test_settings_surfaces_freeze_all_actions_while_busy(self) -> None:
+        surface = SURFACE.read_text()
+        self.assertGreaterEqual(surface.count('disabled={busy}'), 3)
+        self.assertIn(
+            '<fieldset className={styles.settingsFooterStart} disabled={busy} aria-busy={busy}>',
+            surface,
+        )
+        self.assertIn(
+            '<fieldset className={styles.settingsFields} disabled={busy} aria-busy={busy}>',
+            surface,
+        )
+
+    def test_price_workspace_preserves_dirty_state_across_tabs_and_model_changes(self) -> None:
+        prices = (PRO_ROOT / 'modules/monitoring/features/components/ModelPriceManagerModal.tsx').read_text()
+        self.assertIn('const workspaceDirty = priceEditorDirty || scheduleDirty;', prices)
+        self.assertIn('const requestPriceTargetChange = (model: string) => {', prices)
+        self.assertIn('if (!priceEditorDirty) {', prices)
+        self.assertIn('dedupeKey: `model-price:discard:${priceModel}`', prices)
+        self.assertIn('onConfirm: () => selectPriceTarget(model)', prices)
+        self.assertIn('onClick={() => requestPriceTargetChange(item.model)}', prices)
+        self.assertNotIn('onClick={() => selectPriceTarget(item.model)}', prices)
+
     def test_loading_requests_reopen_the_surface_before_reusing_inflight_work(self) -> None:
         monitoring = (PRO_ROOT / 'modules/monitoring/MonitoringCenterPage.tsx').read_text()
         monitoring_open = monitoring.index('setIsMonitoringSettingsOpen(true);')

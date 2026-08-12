@@ -130,7 +130,23 @@ export function ModelPriceManagerModal({
     () => JSON.stringify(monitoringSettingsDraft) !== JSON.stringify(savedMonitoringSettingsDraft),
     [monitoringSettingsDraft, savedMonitoringSettingsDraft]
   );
-  const workspaceDirty = priceManagementView === 'rules' ? priceEditorDirty : scheduleDirty;
+  const workspaceDirty = priceEditorDirty || scheduleDirty;
+  const requestPriceTargetChange = (model: string) => {
+    if (model === priceModel) return;
+    if (!priceEditorDirty) {
+      selectPriceTarget(model);
+      return;
+    }
+    showConfirmation({
+      dedupeKey: `model-price:discard:${priceModel}`,
+      title: t('common.unsaved_changes_title'),
+      message: t('common.unsaved_changes_message'),
+      confirmText: t('monitoring.account_inspection_settings_discard'),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+      onConfirm: () => selectPriceTarget(model),
+    });
+  };
   const closePriceWorkspace = () => {
     if (!workspaceDirty) {
       setIsPriceModalOpen(false);
@@ -268,7 +284,7 @@ export function ModelPriceManagerModal({
                         key={item.key}
                         type="button"
                         className={`${styles.priceRuleListItem} ${active ? styles.priceRuleListItemActive : ''}`}
-                        onClick={() => selectPriceTarget(item.model)}
+                        onClick={() => requestPriceTargetChange(item.model)}
                       >
                         <span className={styles.priceRuleListIdentity}>
                           <strong title={item.model}>{item.model}</strong>
