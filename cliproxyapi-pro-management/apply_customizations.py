@@ -2223,14 +2223,16 @@ def patch_locales(target: Path) -> None:
         )
         data.setdefault('nav_meta', {})['proxy_pool'] = proxy_pool_nav['meta']
         data.setdefault('nav_meta', {})['oauth_policy'] = oauth_policy_nav['meta']
-        data['proxy_pool'] = additions.get(
-            'proxy_pool',
-            monitoring.get('en.json', {}).get('proxy_pool', {}),
+        proxy_pool = json.loads(
+            json.dumps(monitoring.get('en.json', {}).get('proxy_pool', {}))
         )
-        data['oauth_policy'] = additions.get(
-            'oauth_policy',
-            monitoring.get('en.json', {}).get('oauth_policy', {}),
+        proxy_pool.update(additions.get('proxy_pool', {}))
+        data['proxy_pool'] = proxy_pool
+        oauth_policy = json.loads(
+            json.dumps(monitoring.get('en.json', {}).get('oauth_policy', {}))
         )
+        oauth_policy.update(additions.get('oauth_policy', {}))
+        data['oauth_policy'] = oauth_policy
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_name, {}))
         gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(
             locale_name,

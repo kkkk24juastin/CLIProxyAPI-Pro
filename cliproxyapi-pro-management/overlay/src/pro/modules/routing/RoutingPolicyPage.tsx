@@ -239,8 +239,10 @@ export function RoutingPolicyPage() {
     const requestId = runtimeRequestIdRef.current + 1;
     runtimeRequestIdRef.current = requestId;
     if (connectionStatus !== 'connected') {
-      setData(null);
-      setRequestProtection(null);
+      if (!dirtyRef.current) {
+        setData(null);
+        setRequestProtection(null);
+      }
       setLoading(false);
       return;
     }
@@ -444,8 +446,8 @@ export function RoutingPolicyPage() {
           className={configActionStyles.floatingActionButton}
           onClick={handleDiscard}
           disabled={saving}
-          title={t('config_management.reload')}
-          aria-label={t('config_management.reload')}
+          title={t('routing_policy.discard_changes', { defaultValue: 'Discard changes' })}
+          aria-label={t('routing_policy.discard_changes', { defaultValue: 'Discard changes' })}
         >
           <IconRefreshCw size={16} />
         </button>
@@ -534,8 +536,8 @@ export function RoutingPolicyPage() {
             disabled={disabled || loading}
           >
             {requestProtection.enabled
-              ? t('common.disable', { defaultValue: 'Disable' })
-              : t('routing_policy.protection.enabled')}
+              ? t('routing_policy.disable', { defaultValue: 'Disable protection' })
+              : t('routing_policy.enable', { defaultValue: 'Enable protection' })}
           </Button>
         </div>
       </header>

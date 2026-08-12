@@ -546,8 +546,12 @@ export function OAuthPolicyPage() {
             onClick={toggleEnabled}
           >
             {snapshot?.status.enabled
-              ? t("common.disable", { defaultValue: "Disable" })
-              : t("oauth_policy.enabled", { defaultValue: "Enable account policy" })}
+              ? t("oauth_policy.disable", {
+                  defaultValue: "Disable account policy",
+                })
+              : t("oauth_policy.enable", {
+                  defaultValue: "Enable account policy",
+                })}
           </Button>
         </div>
       </header>
@@ -1086,10 +1090,10 @@ export function OAuthPolicyPage() {
                 className={configStyles.floatingActionButton}
                 onClick={discard}
                 disabled={saving}
-                title={t("oauth_policy.discard", {
+                title={t("oauth_policy.discard_changes", {
                   defaultValue: "Discard changes",
                 })}
-                aria-label={t("oauth_policy.discard", {
+                aria-label={t("oauth_policy.discard_changes", {
                   defaultValue: "Discard changes",
                 })}
               >

@@ -1,9 +1,11 @@
+import json
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PRO_ROOT = ROOT / 'overlay/src/pro/modules'
+LOCALES = ROOT / 'monitoring-locales.json'
 
 
 class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
@@ -48,6 +50,39 @@ class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
         ):
             source = (PRO_ROOT / relative).read_text()
             self.assertIn('dirtyRef', source)
+
+    def test_routing_disconnect_preserves_modified_draft(self) -> None:
+        routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()
+        disconnected = routing[routing.index("if (connectionStatus !== 'connected') {"):]
+        disconnected = disconnected[:disconnected.index("    try {")]
+
+        self.assertIn('if (!dirtyRef.current) {', disconnected)
+        self.assertIn('setRequestProtection(null);', disconnected)
+
+    def test_header_and_discard_actions_cover_all_locales(self) -> None:
+        locales = json.loads(LOCALES.read_text())
+        routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()
+        account = (PRO_ROOT / 'oauthPolicy/OAuthPolicyPage.tsx').read_text()
+        required = {
+            'routing_policy': {'enable', 'disable', 'discard_changes'},
+            'oauth_policy': {'enable', 'disable', 'discard_changes'},
+            'proxy_pool': {'start_takeover', 'stop_takeover', 'discard_changes'},
+        }
+
+        for locale in ('en.json', 'ru.json', 'zh-CN.json', 'zh-TW.json'):
+            for section, keys in required.items():
+                self.assertTrue(keys.issubset(locales[locale][section]), f'{locale}: {section}')
+            discard_labels = {
+                locales[locale][section]['discard_changes']
+                for section in ('routing_policy', 'oauth_policy', 'proxy_pool')
+            }
+            self.assertEqual(len(discard_labels), 1, f'{locale}: discard_changes')
+
+        self.assertNotIn("t('common.disable'", routing)
+        self.assertNotIn('t("common.disable"', account)
+        self.assertNotIn("title={t('config_management.reload')}", routing)
+        self.assertIn("routing_policy.discard_changes", routing)
+        self.assertIn("oauth_policy.discard_changes", account)
 
 
 if __name__ == '__main__':
