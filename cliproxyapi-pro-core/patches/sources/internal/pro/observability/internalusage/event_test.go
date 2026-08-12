@@ -26,6 +26,8 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 		"reasoning_effort":"high",
 		"service_tier":"fast",
 		"response_service_tier":"priority",
+		"speed":"fast",
+		"response_speed":"standard",
 		"failed":true,
 		"fail":{"status_code":429,"body":"{\"error\":{\"message\":\"too many requests\"}}"},
 		"response_headers":{"set_cookie":"secret-cookie","X-Upstream-Request-Id":["upstream-req-1"],"Retry-After":["30"]}
@@ -39,8 +41,8 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 	if event.ErrorCode != "" || event.ErrorMessage != "too many requests" {
 		t.Fatalf("error fields = %q/%q, want empty/too many requests", event.ErrorCode, event.ErrorMessage)
 	}
-	if !event.Stream || event.ReasoningEffort != "high" || event.ServiceTier != "fast" || event.EffectiveServiceTier != "priority" {
-		t.Fatalf("request fields = stream:%t reasoning:%q requested:%q effective:%q, want true/high/fast/priority", event.Stream, event.ReasoningEffort, event.ServiceTier, event.EffectiveServiceTier)
+	if !event.Stream || event.ReasoningEffort != "high" || event.ServiceTier != "fast" || event.EffectiveServiceTier != "priority" || event.Speed != "fast" || event.EffectiveSpeed != "standard" {
+		t.Fatalf("request fields = stream:%t reasoning:%q tier:%q/%q speed:%q/%q", event.Stream, event.ReasoningEffort, event.ServiceTier, event.EffectiveServiceTier, event.Speed, event.EffectiveSpeed)
 	}
 	if event.AttemptIndex == nil || *event.AttemptIndex != 1 {
 		t.Fatalf("attempt index = %v, want 1", event.AttemptIndex)

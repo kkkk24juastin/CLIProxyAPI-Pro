@@ -89,8 +89,12 @@ describe('client request metadata', () => {
                   tokens: {},
                   failed: false,
                   costBreakdown: {
-                    pricingMode: 'context',
-                    contextTierSize: 272000,
+                    pricingMode: 'speed',
+                    speed: 'fast',
+                    requestedSpeed: 'fast',
+                    effectiveSpeed: 'standard',
+                    matchedSpeed: 'fast',
+                    speedSource: 'response',
                     totalCost: 0.02,
                   },
                 },
@@ -109,7 +113,13 @@ describe('client request metadata', () => {
       matchedServiceTier: 'fast',
       serviceTierSource: 'response',
     });
-    expect(details[1].cost_breakdown).toMatchObject({ pricingMode: 'context', contextTierSize: 272000 });
+    expect(details[1].cost_breakdown).toMatchObject({
+      pricingMode: 'speed',
+      requestedSpeed: 'fast',
+      effectiveSpeed: 'standard',
+      matchedSpeed: 'fast',
+      speedSource: 'response',
+    });
   });
 
   test('preserves retry and canonical accounting diagnostics', () => {

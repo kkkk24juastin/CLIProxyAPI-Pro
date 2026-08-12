@@ -65,6 +65,7 @@ import {
 } from '@/pro/modules/monitoring/features/monitoringSettings';
 import {
   buildModelPriceRule,
+  createSpeedDraft,
   createServiceTierDraft,
   createPriceDraft,
   formatDeltaPercent,
@@ -74,6 +75,7 @@ import {
   type PriceRateDraft,
   type PriceRuleTarget,
   type ServiceTierDraft,
+  type SpeedDraft,
   type PriceSyncChangeFilter,
   type PriceTierDraft,
 } from '@/pro/modules/monitoring/features/modelPricePresentation';
@@ -1448,6 +1450,27 @@ export function MonitoringCenterPage() {
 		}));
 	}, []);
 
+	const handleSpeedChange = useCallback((index: number, field: keyof SpeedDraft, value: string) => {
+		setPriceDraft((previous) => ({
+			...previous,
+			speeds: previous.speeds.map((speed, speedIndex) => speedIndex === index ? { ...speed, [field]: value } : speed),
+		}));
+	}, []);
+
+	const addSpeed = useCallback(() => {
+		setPriceDraft((previous) => ({
+			...previous,
+			speeds: [...previous.speeds, createSpeedDraft(previous)],
+		}));
+	}, []);
+
+	const removeSpeed = useCallback((index: number) => {
+		setPriceDraft((previous) => ({
+			...previous,
+			speeds: previous.speeds.filter((_, speedIndex) => speedIndex !== index),
+		}));
+	}, []);
+
 	const resetPriceEditor = useCallback(() => {
 		setPriceModel('');
 		setPriceDraft(createPriceDraft());
@@ -1996,6 +2019,9 @@ export function MonitoringCenterPage() {
         handleServiceTierChange={handleServiceTierChange}
         addServiceTier={addServiceTier}
         removeServiceTier={removeServiceTier}
+        handleSpeedChange={handleSpeedChange}
+        addSpeed={addSpeed}
+        removeSpeed={removeSpeed}
         handleDeletePrice={handleDeletePrice}
         handleSavePrice={handleSavePrice}
         isPriceSaving={isPriceSaving}

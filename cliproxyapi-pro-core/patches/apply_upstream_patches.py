@@ -243,6 +243,13 @@ new_customization_paths = (
     'internal/requestmeta/observer_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
+	'internal/runtime/executor/helps/usage_speed_test.go',
+	'internal/redisqueue/speed_test.go',
+	'sdk/api/handlers/handlers_speed_test.go',
+	'sdk/cliproxy/auth/conductor_speed_test.go',
+	'sdk/cliproxy/executor/speed.go',
+	'sdk/cliproxy/usage/speed.go',
+	'sdk/cliproxy/usage/speed_test.go',
     'internal/runtime/executor/helps/response_observer_test.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
@@ -1137,8 +1144,64 @@ replace_once(
     's.proApp.Close()',
 )
 
+for speed_source in (
+    'internal/redisqueue/speed_test.go',
+    'internal/runtime/executor/helps/usage_speed_test.go',
+    'sdk/api/handlers/handlers_speed_test.go',
+    'sdk/cliproxy/auth/conductor_speed_test.go',
+    'sdk/cliproxy/executor/speed.go',
+    'sdk/cliproxy/usage/speed.go',
+    'sdk/cliproxy/usage/speed_test.go',
+):
+    queue_go_source(speed_source)
+
+handlers_source = ROOT / 'sdk/api/handlers/handlers.go'
+replace_once(
+    handlers_source,
+    '''\tmeta[coreexecutor.ServiceTierMetadataKey] = serviceTier
+}
+''',
+    '''\tmeta[coreexecutor.ServiceTierMetadataKey] = serviceTier
+\tspeed := strings.TrimSpace(gjson.GetBytes(rawJSON, "speed").String())
+\tif speed != "" {
+\t\tmeta[coreexecutor.SpeedMetadataKey] = speed
+\t}
+}
+''',
+    'meta[coreexecutor.SpeedMetadataKey] = speed',
+)
+
 usage_manager = ROOT / 'sdk/cliproxy/usage/manager.go'
 add_go_import(usage_manager, '"net/http"\n', '\t"reflect"\n')
+replace_once(
+    usage_manager,
+    '''\t// ResponseServiceTier stores the final tier reported by the upstream response.
+\tResponseServiceTier string
+\t// Generate reports whether the client requested actual generation.
+''',
+    '''\t// ResponseServiceTier stores the final tier reported by the upstream response.
+\tResponseServiceTier string
+\t// Speed stores the client-requested inference speed.
+\tSpeed string
+\t// ResponseSpeed stores the final inference speed reported by the upstream response.
+\tResponseSpeed string
+\t// Generate reports whether the client requested actual generation.
+''',
+    'ResponseSpeed string',
+)
+replace_once(
+    usage_manager,
+    '''\tTokenBreakdown      TokenBreakdown
+\tResponseServiceTier string
+}
+''',
+    '''\tTokenBreakdown      TokenBreakdown
+\tResponseServiceTier string
+\tResponseSpeed       string
+}
+''',
+    'ResponseSpeed       string',
+)
 replace_once(
     usage_manager,
     '\tnamed     map[string]int\n',
@@ -1460,6 +1523,35 @@ replace_once(
     '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n',
     '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n\tctx = coreusage.WithStream(ctx, opts.Stream)\n',
 )
+replace_once(
+    auth_conductor,
+    '''\tserviceTier := serviceTierFromOptions(opts)
+\tif serviceTier != "" {
+\t\tctx = coreusage.WithServiceTier(ctx, serviceTier)
+\t}
+\tif generate, ok := generateFromOptions(opts); ok {
+''',
+    '''\tserviceTier := serviceTierFromOptions(opts)
+\tif serviceTier != "" {
+\t\tctx = coreusage.WithServiceTier(ctx, serviceTier)
+\t}
+\tif speed := speedFromOptions(opts); speed != "" {
+\t\tctx = coreusage.WithSpeed(ctx, speed)
+\t}
+\tif generate, ok := generateFromOptions(opts); ok {
+''',
+    'ctx = coreusage.WithSpeed(ctx, speed)',
+)
+insert_before(
+    auth_conductor,
+    'func generateFromOptions(opts cliproxyexecutor.Options) (bool, bool) {\n',
+    '''func speedFromOptions(opts cliproxyexecutor.Options) string {
+\treturn stringMetadataValue(opts.Metadata, cliproxyexecutor.SpeedMetadataKey)
+}
+
+''',
+    'func speedFromOptions(opts cliproxyexecutor.Options) string',
+)
 
 auth_conductor_base = ROOT / 'sdk/cliproxy/auth/conductor.go'
 replace_once(
@@ -1610,6 +1702,270 @@ replace_once(
 )
 
 usage_helpers = ROOT / 'internal/runtime/executor/helps/usage_helpers.go'
+replace_once(
+    usage_helpers,
+    '''\treasoning       string
+\tserviceTier     string
+\tgenerate        bool
+''',
+    '''\treasoning       string
+\tserviceTier     string
+\tspeed           string
+\tgenerate        bool
+''',
+    '\tspeed           string\n',
+)
+replace_once(
+    usage_helpers,
+    '''\t\treasoning:   usage.ReasoningEffortFromContext(ctx),
+\t\tserviceTier: usage.ServiceTierFromContext(ctx),
+\t\tgenerate:    usage.GenerateFromContext(ctx),
+''',
+    '''\t\treasoning:   usage.ReasoningEffortFromContext(ctx),
+\t\tserviceTier: usage.ServiceTierFromContext(ctx),
+\t\tspeed:       usage.SpeedFromContext(ctx),
+\t\tgenerate:    usage.GenerateFromContext(ctx),
+''',
+    'speed:       usage.SpeedFromContext(ctx)',
+)
+replace_once(
+    usage_helpers,
+    '''\t\tServiceTier:         r.serviceTier,
+\t\tResponseServiceTier: strings.TrimSpace(detail.ResponseServiceTier),
+\t\tGenerate:            usage.GenerateFlag(r.generate),
+''',
+    '''\t\tServiceTier:         r.serviceTier,
+\t\tResponseServiceTier: strings.TrimSpace(detail.ResponseServiceTier),
+\t\tSpeed:               r.speed,
+\t\tResponseSpeed:       strings.TrimSpace(detail.ResponseSpeed),
+\t\tGenerate:            usage.GenerateFlag(r.generate),
+''',
+    'ResponseSpeed:       strings.TrimSpace(detail.ResponseSpeed)',
+)
+replace_once(
+    usage_helpers,
+    '''\tusageNode := gjson.GetBytes(payload, "usage")
+\tif !usageNode.Exists() {
+\t\treturn usage.Detail{}, false
+\t}
+\treturn parseClaudeUsageNode(usageNode), true
+''',
+    '''\tusageNode := gjson.GetBytes(payload, "usage")
+\tif !usageNode.Exists() {
+\t\tusageNode = gjson.GetBytes(payload, "message.usage")
+\t}
+\tif !usageNode.Exists() {
+\t\treturn usage.Detail{}, false
+\t}
+\treturn parseClaudeUsageNode(usageNode), true
+''',
+    'usageNode = gjson.GetBytes(payload, "message.usage")',
+)
+replace_once(
+    usage_helpers,
+    '''\t\tCacheReadTokens:     cacheReadTokens,
+\t\tCacheCreationTokens: cacheCreationTokens,
+\t}
+''',
+    '''\t\tCacheReadTokens:     cacheReadTokens,
+\t\tCacheCreationTokens: cacheCreationTokens,
+\t\tResponseSpeed:       strings.TrimSpace(usageNode.Get("speed").String()),
+\t}
+''',
+    'ResponseSpeed:       strings.TrimSpace(usageNode.Get("speed").String())',
+)
+replace_once(
+    usage_helpers,
+    '''\tresponseServiceTier := strings.TrimSpace(detail.ResponseServiceTier)
+\tif responseServiceTier == "" || hasNonZeroTokenUsage(detail) {
+\t\tpreservedTier := b.detail.ResponseServiceTier
+\t\tb.detail = detail
+\t\tif b.detail.ResponseServiceTier == "" {
+\t\t\tb.detail.ResponseServiceTier = preservedTier
+\t\t}
+\t} else {
+\t\tb.detail.ResponseServiceTier = responseServiceTier
+\t}
+\tb.ok = true
+}
+''',
+    '''\tresponseServiceTier := strings.TrimSpace(detail.ResponseServiceTier)
+\tresponseSpeed := strings.TrimSpace(detail.ResponseSpeed)
+\tif (responseServiceTier == "" && responseSpeed == "") || hasNonZeroTokenUsage(detail) {
+\t\tpreservedTier := b.detail.ResponseServiceTier
+\t\tpreservedSpeed := b.detail.ResponseSpeed
+\t\tb.detail = detail
+\t\tif b.detail.ResponseServiceTier == "" {
+\t\t\tb.detail.ResponseServiceTier = preservedTier
+\t\t}
+\t\tif b.detail.ResponseSpeed == "" {
+\t\t\tb.detail.ResponseSpeed = preservedSpeed
+\t\t}
+\t} else {
+\t\tif responseServiceTier != "" {
+\t\t\tb.detail.ResponseServiceTier = responseServiceTier
+\t\t}
+\t\tif responseSpeed != "" {
+\t\t\tb.detail.ResponseSpeed = responseSpeed
+\t\t}
+\t}
+\tb.ok = true
+}
+
+// ObserveClaude records Anthropic stream usage. The Messages API reports
+// input/cache buckets in message_start and final output in message_delta, so
+// retain earlier input buckets independently of whether the response reports a
+// speed. Keep this protocol-specific behavior out of Observe so OpenAI-style
+// streams continue to use their final complete usage object as authoritative.
+func (b *StreamUsageBuffer) ObserveClaude(detail usage.Detail, ok bool) {
+\tif b == nil || !ok {
+\t\treturn
+\t}
+\tpreservedInput := b.detail.InputTokens
+\tpreservedCacheRead := b.detail.CacheReadTokens
+\tpreservedCacheCreation := b.detail.CacheCreationTokens
+\tb.Observe(detail, true)
+\tmerged := false
+\tif detail.InputTokens == 0 && preservedInput != 0 {
+\t\tb.detail.InputTokens = preservedInput
+\t\tmerged = true
+\t}
+\tif detail.CacheReadTokens == 0 {
+\t\tb.detail.CacheReadTokens = preservedCacheRead
+\t\tmerged = merged || preservedCacheRead != 0
+\t}
+\tif detail.CacheCreationTokens == 0 {
+\t\tb.detail.CacheCreationTokens = preservedCacheCreation
+\t\tmerged = merged || preservedCacheCreation != 0
+\t}
+\tif !merged {
+\t\treturn
+\t}
+\tb.detail.CachedTokens = b.detail.CacheReadTokens
+\tif b.detail.CachedTokens == 0 {
+\t\tb.detail.CachedTokens = b.detail.CacheCreationTokens
+\t}
+\tb.detail.TotalTokens = b.detail.InputTokens + b.detail.OutputTokens + b.detail.CacheReadTokens + b.detail.CacheCreationTokens
+\tb.detail.TokenBreakdown = usage.NewIndependentTokenBreakdown(
+\t\tb.detail.InputTokens,
+\t\tb.detail.CacheReadTokens,
+\t\tb.detail.CacheCreationTokens,
+\t\tmax(b.detail.OutputTokens-b.detail.ReasoningTokens, 0),
+\t\tb.detail.ReasoningTokens,
+\t\tb.detail.TotalTokens,
+\t)
+}
+''',
+    'func (b *StreamUsageBuffer) ObserveClaude(detail usage.Detail, ok bool)',
+)
+
+claude_execute = ROOT / 'internal/runtime/executor/claude_executor_execute.go'
+replace_once(
+    claude_execute,
+    '''\t\tlines := bytes.Split(data, []byte("\\n"))
+\t\tfor i, line := range lines {
+\t\t\tif detail, ok := helps.ParseClaudeStreamUsage(line); ok {
+\t\t\t\treporter.Publish(ctx, detail)
+\t\t\t}
+''',
+    '''\t\tlines := bytes.Split(data, []byte("\\n"))
+\t\tvar usageBuffer helps.StreamUsageBuffer
+\t\tfor i, line := range lines {
+\t\t\tusageBuffer.ObserveClaude(helps.ParseClaudeStreamUsage(line))
+''',
+    'var usageBuffer helps.StreamUsageBuffer',
+)
+replace_once(
+    claude_execute,
+    '''\t\t\tlines[i] = restoredLine
+\t\t}
+\t\tdata = bytes.Join(lines, []byte("\\n"))
+''',
+    '''\t\t\tlines[i] = restoredLine
+\t\t}
+\t\tusageBuffer.Publish(ctx, reporter)
+\t\tdata = bytes.Join(lines, []byte("\\n"))
+''',
+    'usageBuffer.Publish(ctx, reporter)',
+)
+
+claude_stream = ROOT / 'internal/runtime/executor/claude_executor_stream.go'
+replace_once(
+    claude_stream,
+    '''\t\t\tvar event bytes.Buffer
+\t\t\tvar upstreamMessageID string
+''',
+    '''\t\t\tvar event bytes.Buffer
+\t\t\tvar usageBuffer helps.StreamUsageBuffer
+\t\t\tvar upstreamMessageID string
+''',
+    'var usageBuffer helps.StreamUsageBuffer',
+)
+stream_publish_block = '''\t\t\t\tif detail, ok := helps.ParseClaudeStreamUsage(line); ok {
+\t\t\t\t\treporter.Publish(ctx, detail)
+\t\t\t\t}
+'''
+stream_observe_block = '''\t\t\t\tusageBuffer.ObserveClaude(helps.ParseClaudeStreamUsage(line))
+'''
+stream_text = read(claude_stream)
+if stream_observe_block not in stream_text:
+    if stream_text.count(stream_publish_block) != 1:
+        raise SystemExit('expected one native Claude stream usage publish block')
+    write(claude_stream, stream_text.replace(stream_publish_block, stream_observe_block, 1))
+replace_once(
+    claude_stream,
+    '''\t\t\tif upstreamCompleted {
+\t\t\t\tcommitClaudeDiagnostics(diagnosticsState, upstreamMessageID)
+\t\t\t}
+\t\t\treturn
+''',
+    '''\t\t\tif upstreamCompleted {
+\t\t\t\tcommitClaudeDiagnostics(diagnosticsState, upstreamMessageID)
+\t\t\t}
+\t\t\tusageBuffer.Publish(ctx, reporter)
+\t\t\treturn
+''',
+    'usageBuffer.Publish(ctx, reporter)\n\t\t\treturn',
+)
+replace_once(
+    claude_stream,
+    '''\t\tvar param any
+\t\tvar upstreamMessageID string
+''',
+    '''\t\tvar param any
+\t\tvar usageBuffer helps.StreamUsageBuffer
+\t\tvar upstreamMessageID string
+''',
+    'var param any\n\t\tvar usageBuffer helps.StreamUsageBuffer',
+)
+stream_publish_block = '''\t\t\tif detail, ok := helps.ParseClaudeStreamUsage(line); ok {
+\t\t\t\treporter.Publish(ctx, detail)
+\t\t\t}
+'''
+stream_observe_block = '''\t\t\tusageBuffer.ObserveClaude(helps.ParseClaudeStreamUsage(line))
+'''
+stream_text = read(claude_stream)
+if stream_publish_block in stream_text:
+    if stream_text.count(stream_publish_block) != 1:
+        raise SystemExit('expected one translated Claude stream usage publish block')
+    write(claude_stream, stream_text.replace(stream_publish_block, stream_observe_block, 1))
+elif stream_text.count(stream_observe_block) < 2:
+    raise SystemExit('translated Claude stream usage buffer patch missing')
+replace_once(
+    claude_stream,
+    '''\t\tif upstreamCompleted {
+\t\t\tcommitClaudeDiagnostics(diagnosticsState, upstreamMessageID)
+\t\t}
+\t}()
+''',
+    '''\t\tif upstreamCompleted {
+\t\t\tcommitClaudeDiagnostics(diagnosticsState, upstreamMessageID)
+\t\t}
+\t\tusageBuffer.Publish(ctx, reporter)
+\t}()
+''',
+    'usageBuffer.Publish(ctx, reporter)\n\t}()',
+)
 replace_once(
     usage_helpers,
     '''func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
@@ -2508,6 +2864,49 @@ replace_once(
 \t\tTokens:          tokens,
 ''',
     'AttemptIndex:    record.AttemptIndex',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\tresponseServiceTier := strings.TrimSpace(record.ResponseServiceTier)
+\tclientRequestMetadata := requestmeta.GetClientRequestMetadata(ctx)
+''',
+    '''\tresponseServiceTier := strings.TrimSpace(record.ResponseServiceTier)
+\tspeed := strings.TrimSpace(record.Speed)
+\tif speed == "" {
+\t\tspeed = coreusage.SpeedFromContext(ctx)
+\t}
+\tresponseSpeed := strings.TrimSpace(record.ResponseSpeed)
+\tclientRequestMetadata := requestmeta.GetClientRequestMetadata(ctx)
+''',
+    'responseSpeed := strings.TrimSpace(record.ResponseSpeed)',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\t\tServiceTier:         serviceTier,
+\t\tResponseServiceTier: responseServiceTier,
+\t})
+''',
+    '''\t\tServiceTier:         serviceTier,
+\t\tResponseServiceTier: responseServiceTier,
+\t\tSpeed:               speed,
+\t\tResponseSpeed:       responseSpeed,
+\t})
+''',
+    'ResponseSpeed:       responseSpeed',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\tServiceTier         string                   `json:"service_tier"`
+\tResponseServiceTier string                   `json:"response_service_tier,omitempty"`
+}
+''',
+    '''\tServiceTier         string                   `json:"service_tier"`
+\tResponseServiceTier string                   `json:"response_service_tier,omitempty"`
+\tSpeed               string                   `json:"speed,omitempty"`
+\tResponseSpeed       string                   `json:"response_speed,omitempty"`
+}
+''',
+    '`json:"response_speed,omitempty"`',
 )
 redisqueue_plugin_text = read(redisqueue_plugin)
 stream_field = '\tStream bool `json:"stream"`\n'
@@ -3750,6 +4149,7 @@ format_go_writes([
     'internal/pluginstore/gitstore_auth_test.go',
     'internal/redisqueue/plugin.go',
     'internal/redisqueue/plugin_test.go',
+    'internal/redisqueue/speed_test.go',
     'internal/requestmeta/client.go',
     'internal/requestmeta/client_test.go',
     'internal/requestmeta/observer.go',
@@ -3758,6 +4158,10 @@ format_go_writes([
     'internal/requestmeta/response.go',
     'internal/runtime/executor/helps/logging_helpers.go',
     'internal/runtime/executor/helps/response_observer_test.go',
+    'internal/runtime/executor/helps/usage_helpers.go',
+    'internal/runtime/executor/helps/usage_speed_test.go',
+    'internal/runtime/executor/claude_executor_execute.go',
+    'internal/runtime/executor/claude_executor_stream.go',
     'internal/pro/oauthpolicy/config/config.go',
     'internal/pro/oauthpolicy/config/config_test.go',
     'internal/pro/oauthpolicy/policy/engine.go',
@@ -3851,12 +4255,16 @@ format_go_writes([
     'sdk/auth/codex_device.go',
     'sdk/auth/filestore.go',
     'sdk/auth/filestore_test.go',
+    'sdk/api/handlers/handlers.go',
+    'sdk/api/handlers/handlers_speed_test.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
 	'sdk/cliproxy/auth/auth_account_policy.go',
 	'sdk/cliproxy/auth/auth_account_policy_test.go',
     'sdk/cliproxy/auth/pinned_execution.go',
     'sdk/cliproxy/auth/conductor.go',
+    'sdk/cliproxy/auth/conductor_execution.go',
+    'sdk/cliproxy/auth/conductor_speed_test.go',
     'sdk/cliproxy/auth/scheduler.go',
     'sdk/cliproxy/auth/types.go',
     'sdk/cliproxy/builder.go',
@@ -3865,8 +4273,11 @@ format_go_writes([
     'sdk/cliproxy/service_executors.go',
     'sdk/cliproxy/service_lifecycle.go',
     'sdk/cliproxy/service_models.go',
+    'sdk/cliproxy/executor/speed.go',
     'sdk/cliproxy/usage/manager.go',
     'sdk/cliproxy/usage/manager_test.go',
+    'sdk/cliproxy/usage/speed.go',
+    'sdk/cliproxy/usage/speed_test.go',
     'sdk/pluginabi/types.go',
     'sdk/pluginapi/types.go',
     'sdk/proxyutil/proxy.go',

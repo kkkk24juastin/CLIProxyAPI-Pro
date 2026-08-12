@@ -186,6 +186,8 @@ export type MonitoringEventRow = {
   reasoningEffort: string;
   serviceTier: string;
   effectiveServiceTier: string;
+  speed: string;
+  effectiveSpeed: string;
   costBreakdown: UsageCostBreakdown | null;
   inputTokens: number;
   outputTokens: number;
@@ -559,6 +561,8 @@ const buildEventRows = (
       reasoningEffort: detail.reasoning_effort || '',
       serviceTier: detail.service_tier || '',
       effectiveServiceTier: detail.effective_service_tier || '',
+      speed: detail.speed || '',
+      effectiveSpeed: detail.effective_speed || '',
       costBreakdown: detail.cost_breakdown ?? null,
       inputTokens,
       outputTokens,
@@ -592,6 +596,8 @@ const buildEventRows = (
         detail.reasoning_effort,
         detail.service_tier,
         detail.effective_service_tier,
+        detail.speed,
+        detail.effective_speed,
         authMeta?.planType,
         clientApiKeyIdentity.masked
       ),

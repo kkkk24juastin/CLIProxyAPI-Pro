@@ -19,11 +19,15 @@ const (
 	modelPriceModeBase        = "base"
 	modelPriceModeContext     = "context"
 	modelPriceModeServiceTier = "service_tier"
+	modelPriceModeSpeed       = "speed"
 	serviceTierFast           = "fast"
 	serviceTierPriority       = "priority"
 	serviceTierSourceResponse = "response"
 	serviceTierSourceRequest  = "request_fallback"
 	serviceTierSourceNone     = "none"
+	speedSourceResponse       = "response"
+	speedSourceRequest        = "request_fallback"
+	speedSourceNone           = "none"
 )
 
 type ModelPriceRate struct {
@@ -48,6 +52,7 @@ type ModelPriceRule struct {
 	Base           ModelPriceRate            `json:"base"`
 	Tiers          []ModelPriceTier          `json:"tiers,omitempty"`
 	ServiceTiers   map[string]ModelPriceRate `json:"serviceTiers,omitempty"`
+	Speeds         map[string]ModelPriceRate `json:"speeds,omitempty"`
 	Source         string                    `json:"source"`
 	SourceProvider string                    `json:"sourceProvider,omitempty"`
 	SourceModel    string                    `json:"sourceModel,omitempty"`
@@ -72,6 +77,11 @@ type ModelPriceCostBreakdown struct {
 	EffectiveServiceTier string  `json:"effectiveServiceTier,omitempty"`
 	MatchedServiceTier   string  `json:"matchedServiceTier,omitempty"`
 	ServiceTierSource    string  `json:"serviceTierSource"`
+	Speed                string  `json:"speed,omitempty"`
+	RequestedSpeed       string  `json:"requestedSpeed,omitempty"`
+	EffectiveSpeed       string  `json:"effectiveSpeed,omitempty"`
+	MatchedSpeed         string  `json:"matchedSpeed,omitempty"`
+	SpeedSource          string  `json:"speedSource"`
 	PricingMode          string  `json:"pricingMode"`
 	InputTokens          int64   `json:"inputTokens"`
 	OutputTokens         int64   `json:"outputTokens"`
@@ -104,6 +114,10 @@ func normalizeServiceTierName(value string) string {
 		return serviceTierFast
 	}
 	return value
+}
+
+func normalizeSpeedName(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func normalizePriceRule(rule ModelPriceRule) ModelPriceRule {
@@ -145,6 +159,15 @@ func normalizePriceRule(rule ModelPriceRule) ModelPriceRule {
 		}
 		rule.ServiceTiers = normalized
 	}
+	if len(rule.Speeds) > 0 {
+		normalized := make(map[string]ModelPriceRate, len(rule.Speeds))
+		for key, rate := range rule.Speeds {
+			if name := normalizeSpeedName(key); name != "" {
+				normalized[name] = rate
+			}
+		}
+		rule.Speeds = normalized
+	}
 	return rule
 }
 
@@ -164,6 +187,21 @@ func validateModelPriceServiceTierNames(serviceTiers map[string]ModelPriceRate) 
 		}
 		if _, exists := seen[name]; exists {
 			return fmt.Errorf("duplicate service tier name %q", name)
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
+}
+
+func validateModelPriceSpeedNames(speeds map[string]ModelPriceRate) error {
+	seen := make(map[string]struct{}, len(speeds))
+	for key := range speeds {
+		name := normalizeSpeedName(key)
+		if name == "" {
+			return fmt.Errorf("speed name is required")
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("duplicate speed name %q", name)
 		}
 		seen[name] = struct{}{}
 	}
@@ -195,6 +233,11 @@ func validateModelPriceRule(rule ModelPriceRule) error {
 			return err
 		}
 	}
+	for _, rate := range rule.Speeds {
+		if err := validateModelPriceRate(rate); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -210,6 +253,10 @@ type modelPriceSelection struct {
 	EffectiveServiceTier string
 	MatchedServiceTier   string
 	ServiceTierSource    string
+	RequestedSpeed       string
+	EffectiveSpeed       string
+	MatchedSpeed         string
+	SpeedSource          string
 }
 
 func selectModelPriceRate(rule ModelPriceRule, event internalusage.Event) modelPriceSelection {
@@ -219,6 +266,9 @@ func selectModelPriceRate(rule ModelPriceRule, event internalusage.Event) modelP
 		RequestedServiceTier: strings.ToLower(strings.TrimSpace(event.ServiceTier)),
 		EffectiveServiceTier: strings.ToLower(strings.TrimSpace(event.EffectiveServiceTier)),
 		ServiceTierSource:    serviceTierSourceNone,
+		RequestedSpeed:       normalizeSpeedName(event.Speed),
+		EffectiveSpeed:       normalizeSpeedName(event.EffectiveSpeed),
+		SpeedSource:          speedSourceNone,
 	}
 	contextTokens := event.InputTokens
 	if contextTokens <= 0 {
@@ -244,6 +294,21 @@ func selectModelPriceRate(rule ModelPriceRule, event internalusage.Event) modelP
 			selection.ContextTierSize = 0
 			selection.PricingMode = modelPriceModeServiceTier
 			selection.MatchedServiceTier = serviceTier
+		}
+	}
+	billingSpeed := selection.EffectiveSpeed
+	if billingSpeed != "" {
+		selection.SpeedSource = speedSourceResponse
+	} else if selection.RequestedSpeed != "" {
+		billingSpeed = selection.RequestedSpeed
+		selection.SpeedSource = speedSourceRequest
+	}
+	if speed := normalizeSpeedName(billingSpeed); speed != "" {
+		if override, ok := rule.Speeds[speed]; ok {
+			selection.Rate = override
+			selection.ContextTierSize = 0
+			selection.PricingMode = modelPriceModeSpeed
+			selection.MatchedSpeed = speed
 		}
 	}
 	return selection
@@ -277,6 +342,8 @@ func evaluateEventCost(event internalusage.Event, rule ModelPriceRule) (float64,
 		ServiceTier: event.ServiceTier, RequestedServiceTier: selection.RequestedServiceTier,
 		EffectiveServiceTier: selection.EffectiveServiceTier, MatchedServiceTier: selection.MatchedServiceTier,
 		ServiceTierSource: selection.ServiceTierSource, PricingMode: selection.PricingMode,
+		Speed: event.Speed, RequestedSpeed: selection.RequestedSpeed, EffectiveSpeed: selection.EffectiveSpeed,
+		MatchedSpeed: selection.MatchedSpeed, SpeedSource: selection.SpeedSource,
 		InputTokens: uncachedInputTokens, OutputTokens: outputTokens,
 		CacheReadTokens: cacheReadTokens, CacheWriteTokens: cacheWriteTokens, ReasoningTokens: reasoningTokens,
 		InputCost:      float64(uncachedInputTokens) / unit * rate.Input,
@@ -451,6 +518,9 @@ func (s *Store) UpsertModelPriceRule(ctx context.Context, rule ModelPriceRule, a
 	if err := validateModelPriceServiceTierNames(rule.ServiceTiers); err != nil {
 		return ModelPriceRule{}, false, err
 	}
+	if err := validateModelPriceSpeedNames(rule.Speeds); err != nil {
+		return ModelPriceRule{}, false, err
+	}
 	rule = normalizePriceRule(rule)
 	rule.Provider = ""
 	if err := validateModelPriceRule(rule); err != nil {
@@ -545,7 +615,7 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 		return 0, err
 	}
 	query := `select id, provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens,
-		cache_read_tokens, cache_write_tokens, uncached_input_tokens, accounting_quality, service_tier, effective_service_tier from usage_events`
+		cache_read_tokens, cache_write_tokens, uncached_input_tokens, accounting_quality, service_tier, effective_service_tier, speed, effective_speed from usage_events`
 	if onlyUnpriced {
 		query += ` where estimated_cost is null`
 	}
@@ -560,10 +630,10 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 	items := make([]pricedEvent, 0)
 	for rows.Next() {
 		var item pricedEvent
-		var provider, serviceTier, effectiveServiceTier, accountingQuality sql.NullString
+		var provider, serviceTier, effectiveServiceTier, speed, effectiveSpeed, accountingQuality sql.NullString
 		if err := rows.Scan(&item.id, &provider, &item.event.Model, &item.event.InputTokens, &item.event.OutputTokens,
 			&item.event.ReasoningTokens, &item.event.CachedTokens, &item.event.CacheTokens, &item.event.CacheReadTokens,
-			&item.event.CacheWriteTokens, &item.event.UncachedInputTokens, &accountingQuality, &serviceTier, &effectiveServiceTier); err != nil {
+			&item.event.CacheWriteTokens, &item.event.UncachedInputTokens, &accountingQuality, &serviceTier, &effectiveServiceTier, &speed, &effectiveSpeed); err != nil {
 			_ = rows.Close()
 			return 0, err
 		}
@@ -571,6 +641,8 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 		item.event.AccountingQuality = accountingQuality.String
 		item.event.ServiceTier = serviceTier.String
 		item.event.EffectiveServiceTier = effectiveServiceTier.String
+		item.event.Speed = speed.String
+		item.event.EffectiveSpeed = effectiveSpeed.String
 		items = append(items, item)
 	}
 	if err := rows.Close(); err != nil {

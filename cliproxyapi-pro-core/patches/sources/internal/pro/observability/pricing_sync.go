@@ -157,15 +157,23 @@ func modelPriceRuleFromModelsDev(observed ObservedModel, providerID, modelID str
 		if mode.Cost == nil {
 			continue
 		}
+		rate := modelPriceRateFromModelsDev(*mode.Cost)
 		serviceTier, _ := mode.Provider.Body["service_tier"].(string)
 		serviceTier = normalizeServiceTierName(serviceTier)
-		if serviceTier == "" {
-			continue
+		if serviceTier != "" {
+			if rule.ServiceTiers == nil {
+				rule.ServiceTiers = map[string]ModelPriceRate{}
+			}
+			rule.ServiceTiers[serviceTier] = rate
 		}
-		if rule.ServiceTiers == nil {
-			rule.ServiceTiers = map[string]ModelPriceRate{}
+		speed, _ := mode.Provider.Body["speed"].(string)
+		speed = normalizeSpeedName(speed)
+		if speed != "" {
+			if rule.Speeds == nil {
+				rule.Speeds = map[string]ModelPriceRate{}
+			}
+			rule.Speeds[speed] = rate
 		}
-		rule.ServiceTiers[serviceTier] = modelPriceRateFromModelsDev(*mode.Cost)
 	}
 	return normalizePriceRule(rule)
 }

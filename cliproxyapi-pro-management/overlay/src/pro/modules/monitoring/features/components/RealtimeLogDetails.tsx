@@ -49,6 +49,8 @@ export function RealtimeRequestDetailsPanel({
     { label: translateRealtimeErrorText('token_breakdown', t, language), value: formatRealtimeTokenBreakdown(row.tokenBreakdown) || '-' },
     { label: t('monitoring.cost_detail_requested_tier'), value: row.serviceTier || '-' },
     { label: t('monitoring.cost_detail_actual_tier'), value: row.effectiveServiceTier || '-' },
+    { label: t('monitoring.cost_detail_requested_speed'), value: row.speed || '-' },
+    { label: t('monitoring.cost_detail_actual_speed'), value: row.effectiveSpeed || '-' },
   ].filter((item) => item.value !== '-');
 
   return (

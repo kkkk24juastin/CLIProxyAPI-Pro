@@ -30,6 +30,7 @@ export interface ModelPriceRule {
   base: ModelPriceRate;
   tiers?: ModelPriceTier[];
   serviceTiers?: Record<string, ModelPriceRate>;
+  speeds?: Record<string, ModelPriceRate>;
   source?: string;
   sourceProvider?: string;
   sourceModel?: string;
@@ -134,7 +135,12 @@ export interface UsageCostBreakdown {
   effectiveServiceTier: string;
   matchedServiceTier: string;
   serviceTierSource?: 'response' | 'request_fallback' | 'none';
-  pricingMode?: 'base' | 'context' | 'service_tier';
+  speed: string;
+  requestedSpeed: string;
+  effectiveSpeed: string;
+  matchedSpeed: string;
+  speedSource?: 'response' | 'request_fallback' | 'none';
+  pricingMode?: 'base' | 'context' | 'service_tier' | 'speed';
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -172,6 +178,8 @@ export interface UsageDetail {
   reasoning_effort?: string;
   service_tier?: string;
   effective_service_tier?: string;
+  speed?: string;
+  effective_speed?: string;
   estimated_cost?: number;
   price_rule_id?: number;
   cost_breakdown?: UsageCostBreakdown;
@@ -412,7 +420,7 @@ const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undef
     .some((key) => raw[key] !== undefined);
   if (!hasCostFields) return undefined;
   const rawPricingMode = readString('pricingMode', 'pricing_mode');
-  const pricingMode = rawPricingMode === 'base' || rawPricingMode === 'context' || rawPricingMode === 'service_tier'
+  const pricingMode = rawPricingMode === 'base' || rawPricingMode === 'context' || rawPricingMode === 'service_tier' || rawPricingMode === 'speed'
     ? rawPricingMode
     : undefined;
 
@@ -430,6 +438,14 @@ const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undef
     matchedServiceTier: readString('matchedServiceTier', 'matched_service_tier'),
     serviceTierSource: (() => {
       const source = readString('serviceTierSource', 'service_tier_source');
+      return source === 'response' || source === 'request_fallback' || source === 'none' ? source : undefined;
+    })(),
+    speed: readString('speed', 'speed'),
+    requestedSpeed: readString('requestedSpeed', 'requested_speed') || readString('speed', 'speed'),
+    effectiveSpeed: readString('effectiveSpeed', 'effective_speed'),
+    matchedSpeed: readString('matchedSpeed', 'matched_speed'),
+    speedSource: (() => {
+      const source = readString('speedSource', 'speed_source');
       return source === 'response' || source === 'request_fallback' || source === 'none' ? source : undefined;
     })(),
     pricingMode,
@@ -565,6 +581,16 @@ const buildUsageDetail = (
       ? detailRaw.effective_service_tier
       : typeof detailRaw.effectiveServiceTier === 'string'
         ? detailRaw.effectiveServiceTier
+        : undefined,
+    speed: typeof detailRaw.speed === 'string'
+      ? detailRaw.speed
+      : typeof detailRaw.requestSpeed === 'string'
+        ? detailRaw.requestSpeed
+        : undefined,
+    effective_speed: typeof detailRaw.effective_speed === 'string'
+      ? detailRaw.effective_speed
+      : typeof detailRaw.effectiveSpeed === 'string'
+        ? detailRaw.effectiveSpeed
         : undefined,
     estimated_cost: estimatedCost ?? undefined,
     price_rule_id: priceRuleID ?? undefined,

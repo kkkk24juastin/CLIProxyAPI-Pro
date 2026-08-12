@@ -25,6 +25,20 @@ func testGPT56PriceRule() ModelPriceRule {
 	}
 }
 
+func testClaudeSpeedPriceRule() ModelPriceRule {
+	return ModelPriceRule{
+		Model: "claude-opus-test",
+		Base:  ModelPriceRate{Input: 5, Output: 25, CacheRead: 0.5, CacheWrite: 6.25},
+		Tiers: []ModelPriceTier{{
+			ContextSize:    200000,
+			ModelPriceRate: ModelPriceRate{Input: 8, Output: 40, CacheRead: 0.8, CacheWrite: 10},
+		}},
+		Speeds: map[string]ModelPriceRate{
+			"fast": {Input: 10, Output: 50, CacheRead: 1, CacheWrite: 12.5},
+		},
+	}
+}
+
 func TestModelPriceRulePublicJSONOmitsLegacyProvider(t *testing.T) {
 	raw, err := json.Marshal(testGPT56PriceRule())
 	if err != nil {
@@ -107,6 +121,37 @@ func TestEvaluateEventCostFallsBackWhenServiceTierHasNoOverride(t *testing.T) {
 	}
 }
 
+func TestEvaluateEventCostUsesEffectiveFastSpeedOverride(t *testing.T) {
+	rule := testClaudeSpeedPriceRule()
+	event := internalusage.Event{InputTokens: 300000, OutputTokens: 1000, Speed: "fast", EffectiveSpeed: " FAST "}
+	cost, breakdown := evaluateEventCost(event, rule)
+	assertCostClose(t, cost, float64(300000)/1_000_000*10+float64(1000)/1_000_000*50)
+	if breakdown.ContextTierSize != 0 || breakdown.PricingMode != modelPriceModeSpeed || breakdown.RequestedSpeed != "fast" ||
+		breakdown.EffectiveSpeed != "fast" || breakdown.MatchedSpeed != "fast" || breakdown.SpeedSource != speedSourceResponse {
+		t.Fatalf("breakdown = %+v, want response-confirmed fast speed override", breakdown)
+	}
+}
+
+func TestEvaluateEventCostEffectiveStandardSpeedFallsBackToContext(t *testing.T) {
+	rule := testClaudeSpeedPriceRule()
+	event := internalusage.Event{InputTokens: 300000, OutputTokens: 1000, Speed: "fast", EffectiveSpeed: "standard"}
+	cost, breakdown := evaluateEventCost(event, rule)
+	assertCostClose(t, cost, float64(300000)/1_000_000*8+float64(1000)/1_000_000*40)
+	if breakdown.ContextTierSize != 200000 || breakdown.PricingMode != modelPriceModeContext || breakdown.MatchedSpeed != "" ||
+		breakdown.EffectiveSpeed != "standard" || breakdown.SpeedSource != speedSourceResponse {
+		t.Fatalf("breakdown = %+v, want authoritative standard-speed context pricing", breakdown)
+	}
+}
+
+func TestEvaluateEventCostFallsBackToRequestedFastSpeed(t *testing.T) {
+	rule := testClaudeSpeedPriceRule()
+	event := internalusage.Event{InputTokens: 100000, OutputTokens: 1000, Speed: " FAST "}
+	_, breakdown := evaluateEventCost(event, rule)
+	if breakdown.PricingMode != modelPriceModeSpeed || breakdown.MatchedSpeed != "fast" || breakdown.SpeedSource != speedSourceRequest {
+		t.Fatalf("breakdown = %+v, want request fast-speed fallback", breakdown)
+	}
+}
+
 func TestUpsertModelPriceRuleRejectsInvalidServiceTierNames(t *testing.T) {
 	store := openTestStore(t)
 	rate := ModelPriceRate{Input: 1, Output: 2, CacheRead: 0.5, CacheWrite: 0.75}
@@ -127,6 +172,23 @@ func TestUpsertModelPriceRuleRejectsInvalidServiceTierNames(t *testing.T) {
 	aliasDuplicate.ServiceTiers = map[string]ModelPriceRate{"fast": rate, "priority": rate}
 	if _, _, err := store.UpsertModelPriceRule(context.Background(), aliasDuplicate, true); err == nil {
 		t.Fatal("UpsertModelPriceRule() accepted fast/priority alias duplicates")
+	}
+}
+
+func TestUpsertModelPriceRuleRejectsInvalidSpeedNames(t *testing.T) {
+	store := openTestStore(t)
+	rate := ModelPriceRate{Input: 1, Output: 2, CacheRead: 0.5, CacheWrite: 0.75}
+
+	blank := testClaudeSpeedPriceRule()
+	blank.Speeds = map[string]ModelPriceRate{" ": rate}
+	if _, _, err := store.UpsertModelPriceRule(context.Background(), blank, true); err == nil {
+		t.Fatal("UpsertModelPriceRule() accepted a blank speed name")
+	}
+
+	duplicate := testClaudeSpeedPriceRule()
+	duplicate.Speeds = map[string]ModelPriceRate{"fast": rate, " FAST ": rate}
+	if _, _, err := store.UpsertModelPriceRule(context.Background(), duplicate, true); err == nil {
+		t.Fatal("UpsertModelPriceRule() accepted duplicate normalized speed names")
 	}
 }
 
@@ -155,6 +217,10 @@ func TestModelPriceRuleFromModelsDevDoesNotTreatProviderFastModeAsServiceTier(t 
 	rule := modelPriceRuleFromModelsDev(ObservedModel{Model: "claude-test"}, "anthropic", "claude-test", model, 1234)
 	if len(rule.ServiceTiers) != 0 {
 		t.Fatalf("service tiers = %+v, provider-specific fast mode must not become a service-tier override", rule.ServiceTiers)
+	}
+	fast, ok := rule.Speeds["fast"]
+	if !ok || fast.Input != 4 || fast.Output != 5 {
+		t.Fatalf("speeds = %+v, want Anthropic fast speed rates", rule.Speeds)
 	}
 }
 

@@ -59,6 +59,8 @@ type Event struct {
 	ReasoningEffort      string                   `json:"reasoning_effort,omitempty"`
 	ServiceTier          string                   `json:"service_tier,omitempty"`
 	EffectiveServiceTier string                   `json:"effective_service_tier,omitempty"`
+	Speed                string                   `json:"speed,omitempty"`
+	EffectiveSpeed       string                   `json:"effective_speed,omitempty"`
 	EstimatedCost        *float64                 `json:"estimated_cost,omitempty"`
 	PriceRuleID          int64                    `json:"price_rule_id,omitempty"`
 	CostBreakdownJSON    string                   `json:"cost_breakdown_json,omitempty"`
@@ -105,6 +107,8 @@ type Detail struct {
 	ReasoningEffort      string                   `json:"reasoning_effort,omitempty"`
 	ServiceTier          string                   `json:"service_tier,omitempty"`
 	EffectiveServiceTier string                   `json:"effective_service_tier,omitempty"`
+	Speed                string                   `json:"speed,omitempty"`
+	EffectiveSpeed       string                   `json:"effective_speed,omitempty"`
 	EstimatedCost        *float64                 `json:"estimated_cost,omitempty"`
 	PriceRuleID          int64                    `json:"price_rule_id,omitempty"`
 	CostBreakdown        json.RawMessage          `json:"cost_breakdown,omitempty"`
@@ -266,6 +270,8 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		ReasoningEffort:      readString(record, "reasoning_effort"),
 		ServiceTier:          readString(record, "service_tier", "request_service_tier"),
 		EffectiveServiceTier: readString(record, "effective_service_tier", "response_service_tier"),
+		Speed:                readString(record, "speed", "request_speed"),
+		EffectiveSpeed:       readString(record, "effective_speed", "response_speed"),
 		Failed:               failed,
 		RawJSON:              rawJSON,
 		CreatedAtMS:          time.Now().UnixMilli(),
@@ -349,6 +355,8 @@ func BuildPayload(events []Event) Payload {
 			ReasoningEffort:      event.ReasoningEffort,
 			ServiceTier:          event.ServiceTier,
 			EffectiveServiceTier: event.EffectiveServiceTier,
+			Speed:                event.Speed,
+			EffectiveSpeed:       event.EffectiveSpeed,
 			EstimatedCost:        event.EstimatedCost,
 			PriceRuleID:          event.PriceRuleID,
 			CostBreakdown:        costBreakdown,
@@ -758,6 +766,8 @@ func buildEventHash(event Event) string {
 		event.APIKeyHash,
 		event.ServiceTier,
 		event.EffectiveServiceTier,
+		event.Speed,
+		event.EffectiveSpeed,
 		strconv.FormatInt(event.InputTokens, 10),
 		strconv.FormatInt(event.OutputTokens, 10),
 		strconv.FormatInt(event.ReasoningTokens, 10),

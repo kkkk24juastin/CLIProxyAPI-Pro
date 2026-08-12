@@ -7,6 +7,7 @@ import { IconRefreshCw, IconSearch, IconTrash2 } from '@/components/ui/icons';
 import { formatShortDateTime } from '../hooks/useMonitoringData';
 import {
   MODEL_PRICE_SYNC_RATE_FIELDS,
+  collectSpeedChanges,
   collectServiceTierChanges,
   createPriceDraft,
   formatModelPriceRate,
@@ -15,6 +16,7 @@ import {
   type PriceRateDraft,
   type PriceRuleTarget,
   type ServiceTierDraft,
+  type SpeedDraft,
   type PriceSyncChangeFilter,
   type PriceTierDraft,
 } from '../modelPricePresentation';
@@ -46,6 +48,9 @@ export function ModelPriceManagerModal({
   handleServiceTierChange,
   addServiceTier,
   removeServiceTier,
+  handleSpeedChange,
+  addSpeed,
+  removeSpeed,
   handleDeletePrice,
   handleSavePrice,
   isPriceSaving,
@@ -83,6 +88,9 @@ export function ModelPriceManagerModal({
   handleServiceTierChange: (index: number, field: keyof ServiceTierDraft, value: string) => void;
   addServiceTier: () => void;
   removeServiceTier: (index: number) => void;
+  handleSpeedChange: (index: number, field: keyof SpeedDraft, value: string) => void;
+  addSpeed: () => void;
+  removeSpeed: (index: number) => void;
   handleDeletePrice: (model: string) => void | Promise<void>;
   handleSavePrice: () => void | Promise<void>;
   isPriceSaving: boolean;
@@ -380,6 +388,65 @@ export function ModelPriceManagerModal({
                           ) : null}
                         </div>
                       </section>
+
+                      <section className={styles.priceRuleSection}>
+                        <div className={styles.priceRuleSectionHeader}>
+                          <div>
+                            <h4>{t('usage_stats.model_price_speeds')}</h4>
+                            <span>{t('usage_stats.model_price_speed_count', { count: priceDraft.speeds.length })}</span>
+                          </div>
+                          <Button variant="secondary" size="sm" onClick={addSpeed}>
+                            {t('usage_stats.model_price_speed_add')}
+                          </Button>
+                        </div>
+                        <p className={styles.priceRuleSectionHint}>{t('usage_stats.model_price_speed_hint')}</p>
+                        {selectedPriceTarget.rule?.source === 'models.dev' ? (
+                          <p className={styles.priceRuleSectionNotice}>{t('usage_stats.model_price_speed_synced_notice')}</p>
+                        ) : null}
+                        <div className={styles.priceTierList}>
+                          {priceDraft.speeds.map((speed, index) => (
+                            <div className={`${styles.priceTierCompactRow} ${styles.priceServiceTierRow}`} key={index}>
+                              <span className={styles.priceTierIndex}>{index + 1}</span>
+                              <label>
+                                <span>{t('usage_stats.model_price_speed_name')}</span>
+                                <Input value={speed.name} onChange={(event) => handleSpeedChange(index, 'name', event.target.value)} placeholder="fast" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_input')}</span>
+                                <Input type="number" min="0" step="0.0001" value={speed.input} onChange={(event) => handleSpeedChange(index, 'input', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_output')}</span>
+                                <Input type="number" min="0" step="0.0001" value={speed.output} onChange={(event) => handleSpeedChange(index, 'output', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_cache_read')}</span>
+                                <Input type="number" min="0" step="0.0001" value={speed.cacheRead} onChange={(event) => handleSpeedChange(index, 'cacheRead', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_cache_write')}</span>
+                                <Input type="number" min="0" step="0.0001" value={speed.cacheWrite} onChange={(event) => handleSpeedChange(index, 'cacheWrite', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_reasoning')}</span>
+                                <Input type="number" min="0" step="0.0001" value={speed.reasoning} onChange={(event) => handleSpeedChange(index, 'reasoning', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <button
+                                type="button"
+                                className={styles.priceTierRemoveButton}
+                                onClick={() => removeSpeed(index)}
+                                aria-label={t('usage_stats.model_price_speed_remove')}
+                                title={t('usage_stats.model_price_speed_remove')}
+                              >
+                                <IconTrash2 size={15} />
+                              </button>
+                            </div>
+                          ))}
+                          {priceDraft.speeds.length === 0 ? (
+                            <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_speed_empty')}</div>
+                          ) : null}
+                        </div>
+                      </section>
                     </div>
 
                     <footer className={styles.priceRuleEditorFooter}>
@@ -519,6 +586,9 @@ export function ModelPriceManagerModal({
                       const serviceTierChanges = collectServiceTierChanges(change.before?.serviceTiers, change.after?.serviceTiers);
                       const beforeServiceTierCount = Object.keys(change.before?.serviceTiers ?? {}).length;
                       const afterServiceTierCount = Object.keys(change.after?.serviceTiers ?? {}).length;
+                      const speedChanges = collectSpeedChanges(change.before?.speeds, change.after?.speeds);
+                      const beforeSpeedCount = Object.keys(change.before?.speeds ?? {}).length;
+                      const afterSpeedCount = Object.keys(change.after?.speeds ?? {}).length;
                       const overrideSelected = change.action === 'locked' && priceSyncLockedOverrideSet.has(change.model);
                       const displayedAction = overrideSelected ? 'overridden' : change.action;
                       return (
@@ -574,7 +644,18 @@ export function ModelPriceManagerModal({
                                   <small>{serviceTierChanges.map((item) => `${item.action === 'added' ? '+' : item.action === 'removed' ? '-' : '~'}${item.name}`).join(', ')}</small>
                                 </div>
                               ) : null}
-                              {rateChanges.length === 0 && beforeTierCount === afterTierCount && serviceTierChanges.length === 0 ? (
+                              {speedChanges.length > 0 ? (
+                                <div className={styles.priceSyncServiceTierChanges}>
+                                  <span>{t('usage_stats.model_price_speeds')}</span>
+                                  <div>
+                                    {change.before ? <del>{beforeSpeedCount}</del> : null}
+                                    {change.before ? <span aria-hidden="true">-&gt;</span> : null}
+                                    <strong>{afterSpeedCount}</strong>
+                                  </div>
+                                  <small>{speedChanges.map((item) => `${item.action === 'added' ? '+' : item.action === 'removed' ? '-' : '~'}${item.name}`).join(', ')}</small>
+                                </div>
+                              ) : null}
+                              {rateChanges.length === 0 && beforeTierCount === afterTierCount && serviceTierChanges.length === 0 && speedChanges.length === 0 ? (
                                 <small>{t(change.action === 'locked'
                                   ? overrideSelected
                                     ? 'usage_stats.model_price_sync_override_selected_hint'

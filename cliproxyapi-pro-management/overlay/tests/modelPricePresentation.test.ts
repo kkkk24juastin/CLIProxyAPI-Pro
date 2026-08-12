@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildModelPriceRule,
+  collectSpeedChanges,
   collectServiceTierChanges,
   createServiceTierDraft,
+  createSpeedDraft,
   createPriceDraft,
   formatDeltaPercent,
   normalizeServiceTierName,
+  normalizeSpeedName,
   parsePriceValue,
   resolvePricingMode,
   validatePriceDraft,
@@ -23,17 +26,22 @@ describe('model price presentation model', () => {
       serviceTiers: {
         priority: { input: 6, output: 7, cacheRead: 0.6, cacheWrite: 0.7, reasoning: 8 },
       },
+      speeds: {
+        FAST: { input: 9, output: 10, cacheRead: 0.9, cacheWrite: 1.1, reasoning: 12 },
+      },
     });
 
     expect(draft.input).toBe('1');
     expect(draft.reasoning).toBe('3');
     expect(draft.tiers[0]).toMatchObject({ contextSize: '1000', output: '4', reasoning: '5' });
     expect(draft.serviceTiers[0]).toMatchObject({ name: 'fast', output: '7', reasoning: '8' });
+    expect(draft.speeds[0]).toMatchObject({ name: 'fast', output: '10', reasoning: '12' });
 
     const rebuilt = buildModelPriceRule('gpt-test', draft);
     expect(rebuilt.base.reasoning).toBe(3);
     expect(rebuilt.tiers?.[0].reasoning).toBe(5);
     expect(rebuilt.serviceTiers?.fast).toMatchObject({ output: 7, reasoning: 8 });
+    expect(rebuilt.speeds?.fast).toMatchObject({ output: 10, reasoning: 12 });
   });
 
   test('copies base rates for a new service tier and clears removed overrides', () => {
@@ -43,8 +51,11 @@ describe('model price presentation model', () => {
       serviceTiers: { priority: { input: 4, output: 5, cacheRead: 0.4, cacheWrite: 0.5 } },
     });
     expect(createServiceTierDraft(draft)).toMatchObject({ name: '', input: '1', reasoning: '3' });
+    expect(createSpeedDraft(draft)).toMatchObject({ name: '', input: '1', reasoning: '3' });
     draft.serviceTiers = [];
+    draft.speeds = [];
     expect(buildModelPriceRule('gpt-test', draft).serviceTiers).toEqual({});
+    expect(buildModelPriceRule('gpt-test', draft).speeds).toEqual({});
   });
 
   test('keeps missing base rates empty when creating a service tier', () => {
@@ -85,6 +96,28 @@ describe('model price presentation model', () => {
     ]);
   });
 
+  test('validates and describes speed overrides independently', () => {
+    const rate = { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0.75 };
+    const draft = createPriceDraft({
+      model: 'claude-test',
+      base: rate,
+      speeds: { fast: { ...rate, output: 4 } },
+    });
+    draft.speeds.push({ ...draft.speeds[0], name: ' FAST ' });
+    expect(validatePriceDraft(draft)).toBe('speed_name_duplicate');
+    draft.speeds[1].name = ' ';
+    expect(validatePriceDraft(draft)).toBe('speed_name_required');
+    expect(normalizeSpeedName(' FAST ')).toBe('fast');
+    expect(collectSpeedChanges(
+      { fast: rate, removed: rate },
+      { FAST: { ...rate, output: 3 }, turbo: rate }
+    )).toEqual([
+      { name: 'fast', action: 'updated' },
+      { name: 'removed', action: 'removed' },
+      { name: 'turbo', action: 'added' },
+    ]);
+  });
+
   test('canonicalizes OpenAI priority as the fast compatibility alias', () => {
     expect(normalizeServiceTierName(' Priority ')).toBe('fast');
     expect(normalizeServiceTierName('FAST')).toBe('fast');
@@ -102,6 +135,7 @@ describe('model price presentation model', () => {
   test('resolves explicit and legacy pricing modes without claiming a tier match', () => {
     expect(resolvePricingMode({ pricingMode: 'service_tier', contextTierSize: 0, serviceTier: 'priority' })).toBe('service_tier');
     expect(resolvePricingMode({ pricingMode: 'context', contextTierSize: 1000, serviceTier: 'flex' })).toBe('context');
+    expect(resolvePricingMode({ pricingMode: 'speed', contextTierSize: 0, serviceTier: '' })).toBe('speed');
     expect(resolvePricingMode({ contextTierSize: 0, serviceTier: 'priority' })).toBe('legacy_unknown');
     expect(resolvePricingMode({ contextTierSize: 1000, serviceTier: 'priority' })).toBe('legacy_unknown');
     expect(resolvePricingMode({ contextTierSize: 1000, serviceTier: '' })).toBe('context');

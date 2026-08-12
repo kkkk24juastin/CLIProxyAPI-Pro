@@ -21,9 +21,14 @@ export type ServiceTierDraft = PriceRateDraft & {
   name: string;
 };
 
+export type SpeedDraft = PriceRateDraft & {
+  name: string;
+};
+
 export type PriceDraft = PriceRateDraft & {
   tiers: PriceTierDraft[];
   serviceTiers: ServiceTierDraft[];
+  speeds: SpeedDraft[];
 };
 
 export type PriceDraftValidationError =
@@ -31,14 +36,18 @@ export type PriceDraftValidationError =
   | 'context_size_invalid'
   | 'context_size_duplicate'
   | 'service_tier_name_required'
-  | 'service_tier_name_duplicate';
+  | 'service_tier_name_duplicate'
+  | 'speed_name_required'
+  | 'speed_name_duplicate';
 
 export type ServiceTierChange = {
   name: string;
   action: 'added' | 'removed' | 'updated';
 };
 
-export type ResolvedPricingMode = 'base' | 'context' | 'service_tier' | 'legacy_unknown';
+export type SpeedChange = ServiceTierChange;
+
+export type ResolvedPricingMode = 'base' | 'context' | 'service_tier' | 'speed' | 'legacy_unknown';
 
 export type PriceManagementView = 'rules' | 'sync';
 export type PriceSyncChangeFilter = 'all' | ModelPriceSyncChangeAction;
@@ -67,6 +76,17 @@ const canonicalizeServiceTiers = (serviceTiers: ModelPriceRule['serviceTiers']) 
     if (!name) return;
     if (rawName.trim().toLowerCase() === 'priority' && normalized.fast) return;
     normalized[name] = rate;
+  });
+  return normalized;
+};
+
+export const normalizeSpeedName = (value: string) => value.trim().toLowerCase();
+
+const canonicalizeSpeeds = (speeds: ModelPriceRule['speeds']) => {
+  const normalized: NonNullable<ModelPriceRule['speeds']> = {};
+  Object.entries(speeds ?? {}).forEach(([rawName, rate]) => {
+    const name = normalizeSpeedName(rawName);
+    if (name) normalized[name] = rate;
   });
   return normalized;
 };
@@ -110,6 +130,9 @@ export const createPriceDraft = (rule?: ModelPriceRule): PriceDraft => ({
   serviceTiers: Object.entries(canonicalizeServiceTiers(rule?.serviceTiers))
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, rate]) => ({ name, ...createPriceRateDraft(rate) })),
+  speeds: Object.entries(canonicalizeSpeeds(rule?.speeds))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, rate]) => ({ name, ...createPriceRateDraft(rate) })),
 });
 
 export const createServiceTierDraft = (base: PriceRateDraft): ServiceTierDraft => ({
@@ -120,6 +143,8 @@ export const createServiceTierDraft = (base: PriceRateDraft): ServiceTierDraft =
   cacheWrite: base.cacheWrite,
   reasoning: base.reasoning,
 });
+
+export const createSpeedDraft = (base: PriceRateDraft): SpeedDraft => createServiceTierDraft(base);
 
 export const validatePriceDraft = (draft: PriceDraft): PriceDraftValidationError | null => {
   if (!isValidPriceRateDraft(draft)) return 'rate_required';
@@ -141,12 +166,23 @@ export const validatePriceDraft = (draft: PriceDraft): PriceDraftValidationError
     serviceTierNames.add(name);
     if (!isValidPriceRateDraft(tier)) return 'rate_required';
   }
+  const speedNames = new Set<string>();
+  for (const speed of draft.speeds) {
+    const name = normalizeSpeedName(speed.name);
+    if (!name) return 'speed_name_required';
+    if (speedNames.has(name)) return 'speed_name_duplicate';
+    speedNames.add(name);
+    if (!isValidPriceRateDraft(speed)) return 'rate_required';
+  }
   return null;
 };
 
 export const buildModelPriceRule = (model: string, draft: PriceDraft): ModelPriceRule => {
   const serviceTiers = Object.fromEntries(draft.serviceTiers.map((tier) => (
     [normalizeServiceTierName(tier.name), parsePriceRateDraft(tier)]
+  )));
+  const speeds = Object.fromEntries(draft.speeds.map((speed) => (
+    [normalizeSpeedName(speed.name), parsePriceRateDraft(speed)]
   )));
   return {
     model,
@@ -156,6 +192,7 @@ export const buildModelPriceRule = (model: string, draft: PriceDraft): ModelPric
       ...parsePriceRateDraft(tier),
     })),
     serviceTiers,
+    speeds,
   };
 };
 
@@ -176,13 +213,31 @@ export const collectServiceTierChanges = (
     });
 };
 
+export const collectSpeedChanges = (
+  before: ModelPriceRule['speeds'],
+  after: ModelPriceRule['speeds']
+): SpeedChange[] => {
+  const previous = canonicalizeSpeeds(before);
+  const next = canonicalizeSpeeds(after);
+  return Array.from(new Set([...Object.keys(previous), ...Object.keys(next)]))
+    .sort((left, right) => left.localeCompare(right))
+    .flatMap((name): SpeedChange[] => {
+      if (!(name in previous)) return [{ name, action: 'added' }];
+      if (!(name in next)) return [{ name, action: 'removed' }];
+      return PRICE_RATE_FIELDS.some((field) => (previous[name][field] ?? 0) !== (next[name][field] ?? 0))
+        ? [{ name, action: 'updated' }]
+        : [];
+    });
+};
+
 export const resolvePricingMode = (
   breakdown: Pick<UsageCostBreakdown, 'pricingMode' | 'contextTierSize' | 'serviceTier'>
+    & Partial<Pick<UsageCostBreakdown, 'speed'>>
 ): ResolvedPricingMode => {
-  if (breakdown.pricingMode === 'base' || breakdown.pricingMode === 'context' || breakdown.pricingMode === 'service_tier') {
+  if (breakdown.pricingMode === 'base' || breakdown.pricingMode === 'context' || breakdown.pricingMode === 'service_tier' || breakdown.pricingMode === 'speed') {
     return breakdown.pricingMode;
   }
-  if (breakdown.serviceTier) return 'legacy_unknown';
+  if (breakdown.serviceTier || breakdown.speed) return 'legacy_unknown';
   if (breakdown.contextTierSize > 0) return 'context';
   return 'base';
 };
