@@ -1507,21 +1507,6 @@ export function AccountInspectionPage() {
             </div>
           </Card>
         </div>
-        {result ? (
-          <div className={styles.latestInspectionSnapshot}>
-            <div>
-              <strong>{t('monitoring.account_inspection_latest_snapshot_title')}</strong>
-              <span>{t('monitoring.account_inspection_results_updated_at', { time: formatTimestamp(result.finishedAt, i18n.language) })}</span>
-            </div>
-            <div>
-              <span>{t('monitoring.account_inspection_result_total')}: {result.healthCounts?.total ?? result.summary.sampledCount}</span>
-              <span>{t('monitoring.account_inspection_account_quota_low')}: {result.healthCounts?.quotaExhausted ?? 0}</span>
-              <span>{t('monitoring.account_inspection_account_invalid')}: {result.healthCounts?.authInvalid ?? 0}</span>
-              <span>{t('monitoring.account_inspection_account_request_error')}: {result.healthCounts?.inspectionError ?? 0}</span>
-              <span>{t('monitoring.account_inspection_coverage_rate')}: {result.summary.totalFiles > 0 ? `${Math.round((result.summary.sampledCount / result.summary.totalFiles) * 100)}%` : '--'}</span>
-            </div>
-          </div>
-        ) : null}
       </Card>
 
       {restoredSnapshot ? (

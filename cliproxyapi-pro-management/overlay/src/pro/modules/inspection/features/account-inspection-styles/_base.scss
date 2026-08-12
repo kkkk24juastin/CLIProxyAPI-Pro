@@ -142,28 +142,6 @@
   overflow-wrap: anywhere;
 }
 
-.latestInspectionSnapshot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-top: 14px;
-  padding: 12px 14px;
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-secondary) 86%, transparent);
-}
-
-.latestInspectionSnapshot > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-}
-
-.latestInspectionSnapshot > div:first-child {
-  flex-direction: column;
-}
-
 .heroCard:global(.card),
 .heroCard {
   display: grid;
