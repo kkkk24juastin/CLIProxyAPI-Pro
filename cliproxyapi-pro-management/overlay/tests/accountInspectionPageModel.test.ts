@@ -3,6 +3,7 @@ import {
   buildActionPreview,
   buildInspectionResultsViewState,
   createInspectionBackendState,
+  formatAccountInspectionDuration,
   getPaginationRange,
   inspectionBackendReducer,
   isAuthFileAccountInvalid,
@@ -45,6 +46,22 @@ const result = (overrides: Partial<AccountInspectionResultItem> = {}): AccountIn
 });
 
 describe('account inspection page model', () => {
+  test('formats the completed inspection duration from backend run timestamps', () => {
+    const labels: Record<string, string> = {
+      'monitoring.account_inspection_duration_day': '天',
+      'monitoring.account_inspection_duration_hour': '小时',
+      'monitoring.account_inspection_duration_minute': '分钟',
+      'monitoring.account_inspection_duration_second': '秒',
+    };
+    const t = ((key: string, options?: { count?: number }) => `${options?.count ?? ''}${labels[key] ?? key}`) as TFunction;
+    const startedAt = Date.UTC(2026, 7, 12, 9, 50, 50);
+
+    expect(formatAccountInspectionDuration(startedAt, startedAt + 4_332_000, t)).toBe('1小时12分钟12秒');
+    expect(formatAccountInspectionDuration(startedAt, startedAt + 12_000, t)).toBe('12秒');
+    expect(formatAccountInspectionDuration(startedAt, startedAt, t)).toBe('0秒');
+    expect(formatAccountInspectionDuration(startedAt, startedAt - 1, t)).toBeNull();
+  });
+
   test('ignores incomplete backend snapshots instead of crashing the page reducer', () => {
     const state = createInspectionBackendState(DEFAULT_ACCOUNT_INSPECTION_SETTINGS);
     const incompleteResponses = [

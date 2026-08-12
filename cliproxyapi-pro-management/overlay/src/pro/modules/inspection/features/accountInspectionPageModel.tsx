@@ -38,6 +38,32 @@ import styles from './accountInspection.module.scss';
 
 export type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
 
+export const formatAccountInspectionDuration = (
+  startedAt: number,
+  finishedAt: number,
+  t: TFunction
+): string | null => {
+  if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt) || startedAt <= 0 || finishedAt < startedAt) {
+    return null;
+  }
+
+  let remainingSeconds = Math.floor((finishedAt - startedAt) / 1000);
+  const days = Math.floor(remainingSeconds / 86_400);
+  remainingSeconds -= days * 86_400;
+  const hours = Math.floor(remainingSeconds / 3_600);
+  remainingSeconds -= hours * 3_600;
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = remainingSeconds - minutes * 60;
+  const parts = [
+    { value: days, key: 'monitoring.account_inspection_duration_day' },
+    { value: hours, key: 'monitoring.account_inspection_duration_hour' },
+    { value: minutes, key: 'monitoring.account_inspection_duration_minute' },
+    { value: seconds, key: 'monitoring.account_inspection_duration_second' },
+  ].filter((part, index) => part.value > 0 || (index === 3 && days === 0 && hours === 0 && minutes === 0));
+
+  return parts.map((part) => t(part.key, { count: part.value })).join('');
+};
+
 export type ResultHealthStatus = 'healthy' | 'disabled' | 'authInvalid' | 'quotaExhausted' | 'inspectionError' | 'recoverable';
 
 export type ResultStatusFilter = 'all' | 'accountIssues' | 'quotaChanges' | 'highAvailable';

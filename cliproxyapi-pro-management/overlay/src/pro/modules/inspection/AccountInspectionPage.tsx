@@ -63,6 +63,7 @@ import {
   createEmptyAuthFileAccountStats,
   createInspectionBackendState,
   formatActionLabel,
+  formatAccountInspectionDuration,
   formatCurrentStateLabel,
   formatInspectionInterval,
   formatInspectionResultToast,
@@ -1238,6 +1239,12 @@ export function AccountInspectionPage() {
           percent: progress.percent,
         })
       : t('monitoring.account_inspection_progress_idle');
+  const completedDuration = progress.status === 'completed' && result
+    ? formatAccountInspectionDuration(result.startedAt, result.finishedAt, t)
+    : null;
+  const completedProgressLabel = completedDuration
+    ? t('monitoring.account_inspection_completed_with_duration', { duration: completedDuration })
+    : t('monitoring.account_inspection_phase_completed');
   const setSettingsSectionRef = useCallback(
     (section: SettingsSectionKey) => (element: HTMLElement | null) => {
       settingsSectionRefs.current[section] = element;
@@ -1601,7 +1608,7 @@ export function AccountInspectionPage() {
                   </div>
                   <div className={styles.inspectionStatusCopy}>
                     <strong>{operationPhase}</strong>
-                    <span>{progress.percent >= 100 ? t('monitoring.account_inspection_phase_completed') : progressLabel}</span>
+                    <span>{progress.percent >= 100 ? completedProgressLabel : progressLabel}</span>
                     <small>{`${t('monitoring.last_sync')}: ${result?.finishedAt ? formatTimestamp(result.finishedAt, i18n.language) : '--'}`}</small>
                   </div>
                 </div>
