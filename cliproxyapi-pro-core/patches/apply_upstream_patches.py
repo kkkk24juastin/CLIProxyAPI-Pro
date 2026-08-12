@@ -244,6 +244,7 @@ new_customization_paths = (
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
 	'internal/runtime/executor/helps/usage_speed_test.go',
+	'internal/runtime/executor/claude_usage_speed_test.go',
 	'internal/redisqueue/speed_test.go',
 	'sdk/api/handlers/handlers_speed_test.go',
 	'sdk/cliproxy/auth/conductor_speed_test.go',
@@ -1063,6 +1064,23 @@ replace_once(
     's.mgmt.SetProApp(optionState.proApp)',
 )
 
+server_test_source = ROOT / 'internal/api/server_test.go'
+replace_once(
+    server_test_source,
+    '''\tif legacyRR.Code != http.StatusNotFound {
+\t\tt.Fatalf("legacy usage status = %d, want %d body=%s", legacyRR.Code, http.StatusNotFound, legacyRR.Body.String())
+\t}
+''',
+    '''\tif legacyRR.Code != http.StatusServiceUnavailable {
+\t\tt.Fatalf("unavailable usage status = %d, want %d body=%s", legacyRR.Code, http.StatusServiceUnavailable, legacyRR.Body.String())
+\t}
+\tif body := strings.TrimSpace(legacyRR.Body.String()); body != `{"error":"usage service is not available"}` {
+\t\tt.Fatalf("unavailable usage body = %s", body)
+\t}
+''',
+    'unavailable usage body = %s',
+)
+
 service_source = ROOT / 'sdk/cliproxy/service.go'
 add_go_import(service_source, '"' + import_path('internal/pluginhost') + '"\n', '\tproapp "' + import_path('internal/pro/app') + '"\n')
 replace_once(
@@ -1147,6 +1165,7 @@ replace_once(
 for speed_source in (
     'internal/redisqueue/speed_test.go',
     'internal/runtime/executor/helps/usage_speed_test.go',
+    'internal/runtime/executor/claude_usage_speed_test.go',
     'sdk/api/handlers/handlers_speed_test.go',
     'sdk/cliproxy/auth/conductor_speed_test.go',
     'sdk/cliproxy/executor/speed.go',
@@ -1776,6 +1795,24 @@ replace_once(
 )
 replace_once(
     usage_helpers,
+    '''func (r *UsageReporter) PublishFailure(ctx context.Context, errs ...error) {
+\tr.publishWithOutcome(ctx, usage.Detail{}, true, failFromErrors(errs...))
+}
+''',
+    '''func (r *UsageReporter) PublishFailure(ctx context.Context, errs ...error) {
+\tr.publishWithOutcome(ctx, usage.Detail{}, true, failFromErrors(errs...))
+}
+
+// PublishFailureWithDetail emits one failed record while preserving usage
+// already observed before a streaming request terminated.
+func (r *UsageReporter) PublishFailureWithDetail(ctx context.Context, detail usage.Detail, errs ...error) {
+\tr.publishWithOutcome(ctx, detail, true, failFromErrors(errs...))
+}
+''',
+    'func (r *UsageReporter) PublishFailureWithDetail(',
+)
+replace_once(
+    usage_helpers,
     '''\tresponseServiceTier := strings.TrimSpace(detail.ResponseServiceTier)
 \tif responseServiceTier == "" || hasNonZeroTokenUsage(detail) {
 \t\tpreservedTier := b.detail.ResponseServiceTier
@@ -1854,6 +1891,15 @@ func (b *StreamUsageBuffer) ObserveClaude(detail usage.Detail, ok bool) {
 \t\tb.detail.ReasoningTokens,
 \t\tb.detail.TotalTokens,
 \t)
+}
+
+// PublishFailure emits one failed record with the latest observed usage.
+func (b *StreamUsageBuffer) PublishFailure(ctx context.Context, reporter *UsageReporter, errs ...error) bool {
+\tif b == nil || !b.ok || reporter == nil {
+\t\treturn false
+\t}
+\treporter.PublishFailureWithDetail(ctx, b.detail, errs...)
+\treturn true
 }
 ''',
     'func (b *StreamUsageBuffer) ObserveClaude(detail usage.Detail, ok bool)',
@@ -1966,6 +2012,156 @@ replace_once(
 ''',
     'usageBuffer.Publish(ctx, reporter)\n\t}()',
 )
+replace_once(
+    claude_stream,
+    '''\t\temitCancellation := func(cause error) bool {
+\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, oauthToken, cause)
+\t\t\tif cancelErr == nil {
+\t\t\t\treturn false
+\t\t\t}
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, cancelErr)
+\t\t\treporter.PublishFailure(ctx, cancelErr)
+\t\t\tselect {
+\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: cancelErr}:
+\t\t\tdefault:
+\t\t\t}
+\t\t\treturn true
+\t\t}
+\t\temitResponseError := func(errResponse error) {
+\t\t\terrResponse = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errResponse)
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errResponse)
+\t\t\treporter.PublishFailure(ctx, errResponse)
+\t\t\tselect {
+\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: errResponse}:
+\t\t\tcase <-ctx.Done():
+\t\t\t}
+\t\t}
+''',
+    '''\t\tpublishStreamFailure := func(usageBuffer *helps.StreamUsageBuffer, errResponse error) {
+\t\t\tif usageBuffer == nil || !usageBuffer.PublishFailure(ctx, reporter, errResponse) {
+\t\t\t\treporter.PublishFailure(ctx, errResponse)
+\t\t\t}
+\t\t}
+\t\temitCancellation := func(usageBuffer *helps.StreamUsageBuffer, cause error) bool {
+\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, oauthToken, cause)
+\t\t\tif cancelErr == nil {
+\t\t\t\treturn false
+\t\t\t}
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, cancelErr)
+\t\t\tpublishStreamFailure(usageBuffer, cancelErr)
+\t\t\tselect {
+\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: cancelErr}:
+\t\t\tdefault:
+\t\t\t}
+\t\t\treturn true
+\t\t}
+\t\temitResponseError := func(usageBuffer *helps.StreamUsageBuffer, errResponse error) {
+\t\t\terrResponse = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errResponse)
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errResponse)
+\t\t\tpublishStreamFailure(usageBuffer, errResponse)
+\t\t\tselect {
+\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: errResponse}:
+\t\t\tcase <-ctx.Done():
+\t\t\t}
+\t\t}
+''',
+    'publishStreamFailure := func(usageBuffer *helps.StreamUsageBuffer',
+)
+
+stream_text = read(claude_stream)
+restore_failure_call = 'emitResponseError(fmt.Errorf("restore Claude OAuth tool name from streaming response: %w", errRestore))'
+if stream_text.count(restore_failure_call) != 2:
+    raise SystemExit('expected two Claude stream restore failure calls')
+stream_text = stream_text.replace(
+    restore_failure_call,
+    'emitResponseError(&usageBuffer, fmt.Errorf("restore Claude OAuth tool name from streaming response: %w", errRestore))',
+)
+cancellation_block = '''\t\t\t\tif len(bytes.TrimSpace(line)) == 0 && !flushEvent() {
+\t\t\t\t\temitCancellation(ctx.Err())
+\t\t\t\t\treturn
+\t\t\t\t}
+'''
+cancellation_replacement = '''\t\t\t\tif len(bytes.TrimSpace(line)) == 0 && !flushEvent() {
+\t\t\t\t\tif !emitCancellation(&usageBuffer, ctx.Err()) {
+\t\t\t\t\t\tpublishStreamFailure(&usageBuffer, ctx.Err())
+\t\t\t\t\t}
+\t\t\t\t\treturn
+\t\t\t\t}
+'''
+if stream_text.count(cancellation_block) != 1:
+    raise SystemExit('expected native Claude event flush cancellation block')
+stream_text = stream_text.replace(cancellation_block, cancellation_replacement, 1)
+final_flush_block = '''\t\t\tif !flushEvent() {
+\t\t\t\temitCancellation(ctx.Err())
+\t\t\t\treturn
+\t\t\t}
+'''
+final_flush_replacement = '''\t\t\tif !flushEvent() {
+\t\t\t\tif !emitCancellation(&usageBuffer, ctx.Err()) {
+\t\t\t\t\tpublishStreamFailure(&usageBuffer, ctx.Err())
+\t\t\t\t}
+\t\t\t\treturn
+\t\t\t}
+'''
+if stream_text.count(final_flush_block) != 1:
+    raise SystemExit('expected native Claude final flush cancellation block')
+stream_text = stream_text.replace(final_flush_block, final_flush_replacement, 1)
+translated_cancellation_block = '''\t\t\t\tcase <-ctx.Done():
+\t\t\t\t\temitCancellation(ctx.Err())
+\t\t\t\t\treturn
+'''
+translated_cancellation_replacement = '''\t\t\t\tcase <-ctx.Done():
+\t\t\t\t\tif !emitCancellation(&usageBuffer, ctx.Err()) {
+\t\t\t\t\t\tpublishStreamFailure(&usageBuffer, ctx.Err())
+\t\t\t\t\t}
+\t\t\t\t\treturn
+'''
+if stream_text.count(translated_cancellation_block) != 1:
+    raise SystemExit('expected translated Claude output cancellation block')
+stream_text = stream_text.replace(translated_cancellation_block, translated_cancellation_replacement, 1)
+if stream_text.count('emitCancellation(scanner.Err())') != 2:
+    raise SystemExit('expected two Claude scanner cancellation calls')
+stream_text = stream_text.replace('emitCancellation(scanner.Err())', 'emitCancellation(&usageBuffer, scanner.Err())')
+native_scanner_outcome = '''\t\t\tif emitCancellation(&usageBuffer, scanner.Err()) {
+\t\t\t\treturn
+\t\t\t}
+\t\t\tif errScan := scanner.Err(); errScan != nil {
+'''
+native_scanner_outcome_replacement = '''\t\t\tscannerErr := scanner.Err()
+\t\t\tif emitCancellation(&usageBuffer, scannerErr) {
+\t\t\t\treturn
+\t\t\t}
+\t\t\tif scannerErr == nil && ctx.Err() != nil {
+\t\t\t\tpublishStreamFailure(&usageBuffer, ctx.Err())
+\t\t\t\treturn
+\t\t\t}
+\t\t\tif errScan := scannerErr; errScan != nil {
+'''
+if stream_text.count(native_scanner_outcome) != 1:
+    raise SystemExit('expected native Claude scanner outcome block')
+stream_text = stream_text.replace(native_scanner_outcome, native_scanner_outcome_replacement, 1)
+translated_scanner_outcome = '''\t\tif emitCancellation(&usageBuffer, scanner.Err()) {
+\t\t\treturn
+\t\t}
+\t\tif errScan := scanner.Err(); errScan != nil {
+'''
+translated_scanner_outcome_replacement = '''\t\tscannerErr := scanner.Err()
+\t\tif emitCancellation(&usageBuffer, scannerErr) {
+\t\t\treturn
+\t\t}
+\t\tif scannerErr == nil && ctx.Err() != nil {
+\t\t\tpublishStreamFailure(&usageBuffer, ctx.Err())
+\t\t\treturn
+\t\t}
+\t\tif errScan := scannerErr; errScan != nil {
+'''
+if stream_text.count(translated_scanner_outcome) != 1:
+    raise SystemExit('expected translated Claude scanner outcome block')
+stream_text = stream_text.replace(translated_scanner_outcome, translated_scanner_outcome_replacement, 1)
+if stream_text.count('reporter.PublishFailure(ctx, errScan)') != 2:
+    raise SystemExit('expected two Claude scanner failure publishes')
+stream_text = stream_text.replace('reporter.PublishFailure(ctx, errScan)', 'publishStreamFailure(&usageBuffer, errScan)')
+write(claude_stream, stream_text)
 replace_once(
     usage_helpers,
     '''func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
@@ -4106,6 +4302,7 @@ format_go_writes([
     'cmd/server/main.go',
     'internal/api/server.go',
     'internal/api/server_options.go',
+    'internal/api/server_test.go',
     *[
         f'internal/api/handlers/management/{name}'
         for name in ACCOUNT_INSPECTION_SOURCE_FILES
@@ -4160,6 +4357,7 @@ format_go_writes([
     'internal/runtime/executor/helps/response_observer_test.go',
     'internal/runtime/executor/helps/usage_helpers.go',
     'internal/runtime/executor/helps/usage_speed_test.go',
+    'internal/runtime/executor/claude_usage_speed_test.go',
     'internal/runtime/executor/claude_executor_execute.go',
     'internal/runtime/executor/claude_executor_stream.go',
     'internal/pro/oauthpolicy/config/config.go',
