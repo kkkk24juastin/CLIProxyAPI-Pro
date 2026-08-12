@@ -188,6 +188,7 @@ export function OAuthPolicyPage() {
   const [effectiveProvider, setEffectiveProvider] = useState("all");
   const [effectivePlan, setEffectivePlan] = useState("all");
   const actionBarRef = useRef<HTMLDivElement>(null);
+  const dirtyRef = useRef(false);
   useActionBarHeightVar(
     actionBarRef,
     "--oauth-policy-action-bar-height",
@@ -204,7 +205,7 @@ export function OAuthPolicyPage() {
       try {
         const next = await oauthPolicyApi.load();
         setSnapshot(next);
-        if (!dirty || replaceDraft) setDraft(next.config);
+        if (!dirtyRef.current || replaceDraft) setDraft(next.config);
         setLoadError("");
       } catch (error) {
         setLoadError(errorMessage(error));
@@ -212,7 +213,7 @@ export function OAuthPolicyPage() {
         setLoading(false);
       }
     },
-    [connectionStatus, dirty],
+    [connectionStatus],
   );
 
   useEffect(() => {
@@ -229,6 +230,7 @@ export function OAuthPolicyPage() {
         typeof next === "function" ? next(current) : next,
       );
       setDirty(true);
+      dirtyRef.current = true;
     },
     [],
   );
@@ -410,17 +412,17 @@ export function OAuthPolicyPage() {
     return t("oauth_policy.no_rule", { defaultValue: "No policy rule" });
   };
 
-  const validate = (): string => {
-    if (!isPositiveDuration(draft.cacheTTL))
+  const validate = (config = draft): string => {
+    if (!isPositiveDuration(config.cacheTTL))
       return t("oauth_policy.invalid_cache_ttl", {
         defaultValue: "Cache TTL must be a positive Go duration, such as 30m.",
       });
-    if (!isPositiveDuration(draft.resolveTimeout))
+    if (!isPositiveDuration(config.resolveTimeout))
       return t("oauth_policy.invalid_resolve_timeout", {
         defaultValue:
           "Resolve timeout must be a positive Go duration, such as 15s.",
       });
-    for (const provider of Object.values(draft.providers)) {
+    for (const provider of Object.values(config.providers)) {
       for (const rule of Object.values(provider.plans)) {
 		if (rule.prefix?.includes("/"))
 		  return t("oauth_policy.invalid_prefix", {
@@ -443,18 +445,19 @@ export function OAuthPolicyPage() {
     return "";
   };
 
-  const save = async () => {
-    const validation = validate();
+  const save = async (nextDraft = draft) => {
+    const validation = validate(nextDraft);
     if (validation) {
       showNotification(validation, "error");
       return;
     }
     setSaving(true);
     try {
-      const next = await oauthPolicyApi.save(draft);
+      const next = await oauthPolicyApi.save(nextDraft);
       setSnapshot(next);
       setDraft(next.config);
       setDirty(false);
+      dirtyRef.current = false;
       setLoadError("");
       showNotification(
         t("oauth_policy.save_success", {
@@ -475,9 +478,15 @@ export function OAuthPolicyPage() {
     }
   };
 
+  const toggleEnabled = () => {
+    const enabled = !(snapshot?.status.enabled ?? draft.enabled);
+    void save({ ...draft, enabled });
+  };
+
   const discard = () => {
     setDraft(snapshot?.config ?? defaultOAuthPolicyConfig());
     setDirty(false);
+    dirtyRef.current = false;
   };
 
   return (
@@ -498,6 +507,18 @@ export function OAuthPolicyPage() {
                   defaultValue: "OAuth Account Policy",
                 })}
               </h1>
+              <span
+                className={
+                  snapshot?.status.enabled
+                    ? styles.policyStatusOn
+                    : styles.policyStatusOff
+                }
+              >
+                <span />
+                {snapshot?.status.enabled
+                  ? t("oauth_policy.running", { defaultValue: "Enabled" })
+                  : t("oauth_policy.stopped", { defaultValue: "Disabled" })}
+              </span>
             </div>
             <p>
               {t("oauth_policy.subtitle", {
@@ -507,15 +528,28 @@ export function OAuthPolicyPage() {
             </p>
           </div>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={loading || saving}
-          onClick={() => void load()}
-        >
-          <IconRefreshCw size={15} />
-          {t("common.refresh")}
-        </Button>
+        <div className={styles.headerActions}>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={loading || saving}
+            onClick={() => void load()}
+          >
+            <IconRefreshCw size={15} />
+            {t("common.refresh")}
+          </Button>
+          <Button
+            variant={snapshot?.status.enabled ? "danger" : "primary"}
+            size="sm"
+            disabled={loading || saving || !snapshot}
+            loading={saving}
+            onClick={toggleEnabled}
+          >
+            {snapshot?.status.enabled
+              ? t("common.disable", { defaultValue: "Disable" })
+              : t("oauth_policy.enabled", { defaultValue: "Enable account policy" })}
+          </Button>
+        </div>
       </header>
 
       {loadError && <div className={styles.errorBanner}>{loadError}</div>}
@@ -639,29 +673,6 @@ export function OAuthPolicyPage() {
                 </div>
               </div>
               <div className={styles.settingsGrid}>
-                <div className={styles.enabledField}>
-                  <strong>
-                    {t("oauth_policy.enabled", {
-                      defaultValue: "Enable account policy",
-                    })}
-                  </strong>
-                  <div className={styles.enabledControl}>
-                    <span>
-                      {t("oauth_policy.enabled_hint", {
-                        defaultValue:
-                          "Apply configured plan rules to OAuth accounts.",
-                      })}
-                    </span>
-                    <ToggleSwitch
-                      checked={draft.enabled}
-                      disabled={saving}
-                      onChange={(enabled) => updateDraft({ ...draft, enabled })}
-                      ariaLabel={t("oauth_policy.enabled", {
-                        defaultValue: "Enable account policy",
-                      })}
-                    />
-                  </div>
-                </div>
                 <OAuthDurationInput
                   label={t("oauth_policy.cache_ttl", {
                     defaultValue: "Plan cache TTL",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
@@ -143,6 +143,7 @@ export function ProxyPoolPage() {
   const [testingNode, setTestingNode] = useState('');
   const [recoveringNode, setRecoveringNode] = useState('');
   const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
   const [loadError, setLoadError] = useState('');
   const [probeResults, setProbeResults] = useState<Record<string, ProxyPoolProbeResult>>({});
   const [activeView, setActiveView] = useState<ProxyPoolView>('nodes');
@@ -173,7 +174,7 @@ export function ProxyPoolPage() {
       try {
         const next = await proxyPoolApi.load();
         setSnapshot(next);
-        if (!dirty || replaceDraft) setDraft(next.config);
+        if (!dirtyRef.current || replaceDraft) setDraft(next.config);
         setLoadError('');
       } catch (error) {
         setLoadError(errorMessage(error));
@@ -181,7 +182,7 @@ export function ProxyPoolPage() {
         if (!silent) setLoading(false);
       }
     },
-    [connectionStatus, dirty]
+    [connectionStatus]
   );
 
   useEffect(() => {
@@ -230,6 +231,7 @@ export function ProxyPoolPage() {
     (next: ProxyPoolConfig | ((current: ProxyPoolConfig) => ProxyPoolConfig)) => {
       setDraft((current) => (typeof next === 'function' ? next(current) : next));
       setDirty(true);
+      dirtyRef.current = true;
     },
     []
   );
@@ -251,6 +253,7 @@ export function ProxyPoolPage() {
     try {
       await proxyPoolApi.save(draft);
       setDirty(false);
+      dirtyRef.current = false;
       showNotification(
         t('proxy_pool.save_success', { defaultValue: 'Proxy pool saved' }),
         'success'
@@ -288,6 +291,7 @@ export function ProxyPoolPage() {
         setDraft({ ...draft, takeoverEnabled: false });
       }
       setDirty(false);
+      dirtyRef.current = false;
       setTakeoverOpen(false);
       await load(true, true);
       showNotification(
@@ -473,6 +477,7 @@ export function ProxyPoolPage() {
     if (!snapshot) return;
     setDraft(snapshot.config);
     setDirty(false);
+    dirtyRef.current = false;
     setSelected(new Set());
     setProbeResults({});
     showNotification(

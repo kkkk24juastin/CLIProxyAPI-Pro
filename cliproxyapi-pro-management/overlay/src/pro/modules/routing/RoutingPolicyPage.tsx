@@ -191,13 +191,13 @@ export function RoutingPolicyPage() {
       closeSurface();
     }
   }, [activeSurface, closeSurface, openSurface]);
-  const [error, setError] = useState('');
   const [dirty, setDirty] = useState(false);
   const floatingActionsRef = useRef<HTMLDivElement>(null);
   const runtimeRequestIdRef = useRef(0);
+  const dirtyRef = useRef(false);
 
   const disabled = connectionStatus !== 'connected';
-  const shouldRenderFloatingActions = isCurrentLayer;
+  const shouldRenderFloatingActions = isCurrentLayer && dirty;
   const unsavedChangesDialog = useMemo(
     () => ({
       title: t('common.unsaved_changes_title'),
@@ -232,6 +232,7 @@ export function RoutingPolicyPage() {
       ) as Record<RoutingPolicyProvider, string>
     );
     setDirty(false);
+    dirtyRef.current = false;
   }, []);
 
   const loadPolicy = useCallback(async () => {
@@ -240,20 +241,18 @@ export function RoutingPolicyPage() {
     if (connectionStatus !== 'connected') {
       setData(null);
       setRequestProtection(null);
-      setError('');
       setLoading(false);
       return;
     }
     setLoading(true);
-    setError('');
     try {
       const response = await routingPolicyApi.get();
       if (runtimeRequestIdRef.current !== requestId) return;
-      applyConfigResponse(response);
+      if (dirtyRef.current) setData(response);
+      else applyConfigResponse(response);
     } catch (error: unknown) {
       if (runtimeRequestIdRef.current !== requestId) return;
       const message = error instanceof Error ? error.message : t('routing_policy.load_failed');
-      setError(message);
       showNotification(`${t('routing_policy.load_failed')}: ${message}`, 'error');
     } finally {
       if (runtimeRequestIdRef.current === requestId) setLoading(false);
@@ -298,6 +297,7 @@ export function RoutingPolicyPage() {
     ) => {
       setRequestProtection((current) => (current ? { ...current, [key]: value } : current));
       setDirty(true);
+      dirtyRef.current = true;
     },
     []
   );
@@ -319,16 +319,17 @@ export function RoutingPolicyPage() {
         };
       });
       setDirty(true);
+      dirtyRef.current = true;
     },
     []
   );
 
-  const handleSave = async () => {
-    if (!requestProtection) return;
-    const providers = { ...requestProtection.providers };
+  const handleSave = async (nextProtection = requestProtection) => {
+    if (!nextProtection) return;
+    const providers = { ...nextProtection.providers };
     for (const provider of ROUTING_POLICY_PROVIDERS) {
       const statusCodes = parseStatusCodes(statusCodeInputs[provider]);
-      if (statusCodes.length === 0) {
+      if (statusCodes.length === 0 && nextProtection.enabled) {
         showNotification(
           t('routing_policy.status_codes_required', {
             provider: t(`routing_policy.providers.${provider}`),
@@ -338,7 +339,9 @@ export function RoutingPolicyPage() {
         setActiveView('providers');
         return;
       }
-      providers[provider] = { ...providers[provider], statusCodes };
+      if (statusCodes.length > 0) {
+        providers[provider] = { ...providers[provider], statusCodes };
+      }
     }
 
     setSaving(true);
@@ -346,7 +349,7 @@ export function RoutingPolicyPage() {
     runtimeRequestIdRef.current = requestId;
     try {
       const response = await routingPolicyApi.updateRequestProtection({
-        ...requestProtection,
+        ...nextProtection,
         providers,
       });
       if (runtimeRequestIdRef.current !== requestId) return;
@@ -359,6 +362,11 @@ export function RoutingPolicyPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleEnabledChange = () => {
+    if (!requestProtection) return;
+    void handleSave({ ...requestProtection, enabled: !requestProtection.enabled });
   };
 
   const refreshRuntime = useCallback(async () => {
@@ -377,19 +385,9 @@ export function RoutingPolicyPage() {
     }
   }, [showNotification, t]);
 
-  const handleRefresh = () => {
-    if (!dirty) {
-      void loadPolicy();
-      return;
-    }
-    showConfirmation({
-      title: t('common.unsaved_changes_title'),
-      message: t('config_management.reload_confirm_message'),
-      confirmText: t('config_management.reload'),
-      cancelText: t('common.cancel'),
-      variant: 'danger',
-      onConfirm: loadPolicy,
-    });
+  const handleDiscard = () => {
+    if (!data) return;
+    applyConfigResponse(data);
   };
 
   const releaseAccount = (authIndex: string, fileName: string) => {
@@ -429,48 +427,23 @@ export function RoutingPolicyPage() {
       : t('routing_policy.mode_observe');
   }, [requestProtection, t]);
 
-  const getStatusText = () => {
-    if (disabled) return t('config_management.status_disconnected');
-    if (loading) return t('config_management.status_loading');
-    if (error) return t('config_management.status_load_failed');
-    if (saving) return t('config_management.status_saving');
-    if (dirty) return t('config_management.status_dirty');
-    return t('config_management.status_loaded');
-  };
-
-  const getFloatingStatusText = () => {
-    if (!isMobile) return getStatusText();
-    if (disabled)
-      return t('config_management.status_disconnected_short', { defaultValue: 'Disconnected' });
-    if (loading) return t('config_management.status_loading_short', { defaultValue: 'Loading' });
-    if (error) return t('config_management.status_load_failed_short', { defaultValue: 'Failed' });
-    if (saving) return t('config_management.status_saving_short', { defaultValue: 'Saving' });
-    if (dirty) return t('config_management.status_dirty_short', { defaultValue: 'Unsaved' });
-    return t('config_management.status_loaded_short', { defaultValue: 'Loaded' });
-  };
-
-  const getStatusClass = () => {
-    if (error) return configActionStyles.error;
-    if (dirty) return configActionStyles.modified;
-    if (!loading && !saving) return configActionStyles.saved;
-    return '';
-  };
-
   const floatingActions = (
     <div className={configActionStyles.floatingActionContainer} ref={floatingActionsRef}>
       <div className={configActionStyles.floatingActionList}>
         <div
           className={`${configActionStyles.floatingStatus} ${
             isMobile ? configActionStyles.floatingStatusCompact : ''
-          } ${getStatusClass()}`}
+          } ${configActionStyles.modified}`}
         >
-          {getFloatingStatusText()}
+          {saving
+            ? t('config_management.status_saving_short', { defaultValue: 'Saving' })
+            : t('config_management.status_dirty_short', { defaultValue: 'Unsaved' })}
         </div>
         <button
           type="button"
           className={configActionStyles.floatingActionButton}
-          onClick={handleRefresh}
-          disabled={loading || saving}
+          onClick={handleDiscard}
+          disabled={saving}
           title={t('config_management.reload')}
           aria-label={t('config_management.reload')}
         >
@@ -480,12 +453,12 @@ export function RoutingPolicyPage() {
           type="button"
           className={configActionStyles.floatingActionButton}
           onClick={() => void handleSave()}
-          disabled={disabled || loading || saving || !dirty}
+          disabled={disabled || saving}
           title={t('config_management.save')}
           aria-label={t('config_management.save')}
         >
           <IconCheck size={16} />
-          {dirty && <span className={configActionStyles.dirtyDot} aria-hidden="true" />}
+          {!saving && <span className={configActionStyles.dirtyDot} aria-hidden="true" />}
         </button>
       </div>
     </div>
@@ -518,7 +491,15 @@ export function RoutingPolicyPage() {
   return (
     <div className={styles.container}>
       <header className={styles.pageHeader}>
-        <div className={styles.headerCopy}>
+        <div className={styles.headerIdentity}>
+          <span
+            className={`${styles.headerIcon} ${
+              requestProtection.enabled ? styles.headerIconActive : ''
+            }`}
+          >
+            <IconShield size={20} />
+          </span>
+          <div className={styles.headerCopy}>
           <div className={styles.titleRow}>
             <h1 className={styles.pageTitle}>{t('routing_policy.title')}</h1>
             <span
@@ -533,6 +514,29 @@ export function RoutingPolicyPage() {
             </span>
           </div>
           <p className={styles.subtitle}>{t('routing_policy.subtitle')}</p>
+          </div>
+        </div>
+        <div className={styles.headerActions}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void loadPolicy()}
+            disabled={loading || saving}
+          >
+            <IconRefreshCw size={16} />
+            {t('common.refresh')}
+          </Button>
+          <Button
+            variant={requestProtection.enabled ? 'danger' : 'primary'}
+            size="sm"
+            onClick={handleEnabledChange}
+            loading={saving}
+            disabled={disabled || loading}
+          >
+            {requestProtection.enabled
+              ? t('common.disable', { defaultValue: 'Disable' })
+              : t('routing_policy.protection.enabled')}
+          </Button>
         </div>
       </header>
 
@@ -560,12 +564,6 @@ export function RoutingPolicyPage() {
                 <h2>{t('routing_policy.protection.title')}</h2>
                 <p>{t('routing_policy.protection.master_hint')}</p>
               </div>
-              <ToggleSwitch
-                checked={requestProtection.enabled}
-                onChange={(value) => setProtection('enabled', value)}
-                disabled={disabled}
-                ariaLabel={t('routing_policy.protection.enabled')}
-              />
             </div>
             <div className={styles.modeSelect}>
               <label>{t('routing_policy.protection.mode')}</label>
@@ -578,7 +576,7 @@ export function RoutingPolicyPage() {
                 onChange={(value) =>
                   setProtection('mode', value as RoutingRequestProtectionConfig['mode'])
                 }
-                disabled={disabled || !requestProtection.enabled}
+                disabled={disabled}
               />
             </div>
           </section>
@@ -596,7 +594,7 @@ export function RoutingPolicyPage() {
                     <ToggleSwitch
                       checked={policy.enabled}
                       onChange={(value) => setProviderPolicy(provider, 'enabled', value)}
-                      disabled={disabled || !requestProtection.enabled}
+                      disabled={disabled}
                       ariaLabel={t('routing_policy.protection.provider_enabled', {
                         provider: t(`routing_policy.providers.${provider}`),
                       })}
@@ -613,6 +611,7 @@ export function RoutingPolicyPage() {
                           [provider]: event.target.value,
                         }));
                         setDirty(true);
+                        dirtyRef.current = true;
                       }}
                       disabled={disabled || !policy.enabled}
                       placeholder="429, 401, 403"
