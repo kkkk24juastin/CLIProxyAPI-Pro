@@ -1,28 +1,11 @@
 .modal {
   min-width: 0;
-  border-radius: 8px;
-}
-
-.modal :global(.modal-header) {
-  min-height: 68px;
-  padding: 18px 64px 18px 28px;
   background: var(--bg-secondary);
 }
 
 .modal :global(.modal-title) {
   min-width: 0;
   font-size: 21px;
-}
-
-.modal :global(.modal-body) {
-  max-height: min(80vh, 900px);
-  padding: 22px;
-  background: var(--bg-secondary);
-}
-
-.modal :global(.modal-close-floating) {
-  top: 17px;
-  right: 18px;
 }
 
 .titleBlock {
@@ -940,32 +923,8 @@
 }
 
 @media (max-width: 720px) {
-  .modal {
-    max-height: calc(100vh - 32px);
-  }
-
-  @supports (height: 100dvh) {
-    .modal {
-      max-height: calc(100dvh - 32px);
-    }
-  }
-
-  .modal :global(.modal-header) {
-    min-height: 58px;
-    padding: 14px 52px 14px 16px;
-  }
-
   .modal :global(.modal-title) {
     font-size: 16px;
-  }
-
-  .modal :global(.modal-body) {
-    flex: 1 1 auto;
-    min-height: 0;
-    max-height: none;
-    padding: 10px;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
   }
 
   .titleBlock {

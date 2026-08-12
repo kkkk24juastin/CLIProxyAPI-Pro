@@ -86,14 +86,20 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const [activeTab, setActiveTab] = useState<AccountUsageTab>('overview');
   const [modelMetric, setModelMetric] = useState<DistributionMetric>('requests');
   const [apiKeyMetric, setApiKeyMetric] = useState<DistributionMetric>('requests');
-  const authIndex = normalizeAuthIndex(file?.['auth_index'] ?? file?.authIndex);
-  const accountLabel = resolveAccountUsageLabel(file, authIndex);
+  const [displayFile, setDisplayFile] = useState(file);
+  const activeFile = file ?? displayFile;
+  const authIndex = normalizeAuthIndex(activeFile?.['auth_index'] ?? activeFile?.authIndex);
+  const accountLabel = resolveAccountUsageLabel(activeFile, authIndex);
   const { data, loading, error, refresh } = useAccountUsage(authIndex, rangeDays, Boolean(file));
   const detail = data?.detail ?? null;
   const configuredApiKeys = useMemo(
     () => buildConfiguredApiKeyMap(configuredApiKeyValues),
     [configuredApiKeyValues]
   );
+
+  useEffect(() => {
+    if (file) setDisplayFile(file);
+  }, [file]);
 
   useEffect(() => {
     setActiveTab('overview');
@@ -119,9 +125,9 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const modelTotal = detail?.models.reduce((sum, item) => sum + distributionValue(item, modelMetric), 0) ?? 0;
   const apiKeyTotal = detail?.apiKeys.reduce((sum, item) => sum + distributionValue(item, apiKeyMetric), 0) ?? 0;
   const rangeLabel = t(rangeDays === 0 ? 'account_usage.range_all' : `account_usage.range_${rangeDays}d`);
-  const statusKey = file?.unavailable
+  const statusKey = activeFile?.unavailable
     ? 'account_usage.status_unavailable'
-    : file?.disabled
+    : activeFile?.disabled
       ? 'account_usage.status_disabled'
       : 'account_usage.status_active';
 
@@ -168,6 +174,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
       open={Boolean(file)}
       title={title}
       onClose={onClose}
+      onAfterClose={() => setDisplayFile(null)}
       className={styles.modal}
     >
       <div className={styles.accountHeader}>
@@ -179,7 +186,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
           </div>
         </div>
         <div className={styles.accountActions}>
-          <span className={`${styles.statusBadge} ${file?.disabled || file?.unavailable ? styles.statusMuted : ''}`}>
+          <span className={`${styles.statusBadge} ${activeFile?.disabled || activeFile?.unavailable ? styles.statusMuted : ''}`}>
             {t(statusKey)}
           </span>
           <Button

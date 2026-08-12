@@ -4,6 +4,7 @@ import {
 } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Sheet, type SheetSize } from '@/components/ui/Sheet';
+import { Button } from '@/components/ui/Button';
 import styles from './ProSurface.module.scss';
 
 type SurfaceKind = 'detail' | 'form' | 'task' | 'workspace';
@@ -68,7 +69,8 @@ export function ProWorkspaceDialog(props: PropsWithChildren<ProDialogProps>) {
 
 interface ProWorkspaceSheetProps {
   open: boolean;
-  onClose: () => void;
+  onClose: () => void | boolean | Promise<void | boolean>;
+  onAfterClose?: () => void;
   size?: SheetSize;
   eyebrow?: ReactNode;
   title?: ReactNode;
@@ -98,5 +100,68 @@ export function ProWorkspaceSheet({
     >
       {children}
     </Sheet>
+  );
+}
+
+interface ProSettingsSheetProps extends Omit<ProWorkspaceSheetProps, 'footer'> {
+  dirty: boolean;
+  loading?: boolean;
+  saving?: boolean;
+  saveDisabled?: boolean;
+  cancelLabel: ReactNode;
+  saveLabel: ReactNode;
+  dirtyLabel?: ReactNode;
+  footerStart?: ReactNode;
+  onSave: () => void | Promise<void>;
+}
+
+export function ProSettingsSheet({
+  dirty,
+  loading = false,
+  saving = false,
+  saveDisabled = false,
+  cancelLabel,
+  saveLabel,
+  dirtyLabel,
+  footerStart,
+  onSave,
+  onClose,
+  children,
+  ...props
+}: PropsWithChildren<ProSettingsSheetProps>) {
+  const busy = loading || saving;
+  const footer = (
+    <div className={styles.settingsFooter}>
+      <div className={styles.settingsFooterStart}>
+        {footerStart}
+        {dirty && dirtyLabel ? <span className={styles.dirtyStatus}>{dirtyLabel}</span> : null}
+      </div>
+      <div className={styles.settingsFooterActions}>
+        <Button variant="secondary" onClick={() => void onClose()} disabled={busy}>
+          {cancelLabel}
+        </Button>
+        <Button
+          variant="primary"
+          onClick={() => void onSave()}
+          loading={saving}
+          disabled={loading || saveDisabled}
+        >
+          {saveLabel}
+        </Button>
+      </div>
+    </div>
+  );
+
+  return (
+    <ProWorkspaceSheet
+      {...props}
+      onClose={onClose}
+      closeDisabled={saving || props.closeDisabled}
+      footer={footer}
+    >
+      <fieldset className={styles.settingsFields} disabled={loading} aria-busy={busy}>
+        {children}
+      </fieldset>
+    </ProWorkspaceSheet>
   );
 }

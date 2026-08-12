@@ -41,6 +41,12 @@ export function AuthFileConnectionTestModal({
   const [selectedModel, setSelectedModel] = useState('');
   const [status, setStatus] = useState<TestStatus>('idle');
   const [result, setResult] = useState<AuthFileConnectionTestResponse | null>(null);
+  const [displayFile, setDisplayFile] = useState(file);
+  const activeFile = file ?? displayFile;
+
+  useEffect(() => {
+    if (file) setDisplayFile(file);
+  }, [file]);
 
   useEffect(() => {
     abortRef.current?.abort();
@@ -52,11 +58,11 @@ export function AuthFileConnectionTestModal({
     setModelsError('');
     setResult(null);
     setStatus('idle');
-    if (!file) return;
+    if (!activeFile) return;
 
     setModelsLoading(true);
     void authFilesApi
-      .getModelsForAuthFile(file.name, normalizeAuthIndex(file.authIndex))
+      .getModelsForAuthFile(activeFile.name, normalizeAuthIndex(activeFile.authIndex))
       .then((items) => {
         if (requestSequence.current !== sequence) return;
         const seen = new Set<string>();
@@ -82,7 +88,7 @@ export function AuthFileConnectionTestModal({
       .finally(() => {
         if (requestSequence.current === sequence) setModelsLoading(false);
       });
-  }, [file, t]);
+  }, [activeFile, t]);
 
   const modelOptions = useMemo(
     () => models.map((model) => ({ value: model, label: model })),
@@ -90,7 +96,7 @@ export function AuthFileConnectionTestModal({
   );
 
   const runTest = async () => {
-    if (!file || !selectedModel || status === 'running') return;
+    if (!activeFile || !selectedModel || status === 'running') return;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -101,8 +107,8 @@ export function AuthFileConnectionTestModal({
     try {
       const response = await authFilesApi.testConnection(
         {
-          name: file.name,
-          auth_index: normalizeAuthIndex(file.authIndex),
+          name: activeFile.name,
+          auth_index: normalizeAuthIndex(activeFile.authIndex),
           model: selectedModel,
         },
         controller.signal
@@ -150,8 +156,9 @@ export function AuthFileConnectionTestModal({
   return (
     <ProTaskDialog
       open={file !== null}
-      title={t('auth_files.connection_test_title', { account: file?.email || file?.name || '' })}
+      title={t('auth_files.connection_test_title', { account: activeFile?.email || activeFile?.name || '' })}
       onClose={close}
+      onAfterClose={() => setDisplayFile(null)}
       footer={
         <>
           <Button variant="secondary" onClick={close}>

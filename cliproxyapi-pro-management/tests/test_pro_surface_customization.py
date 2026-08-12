@@ -35,11 +35,34 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
             'ProTaskDialog',
             'ProWorkspaceDialog',
             'ProWorkspaceSheet',
+            'ProSettingsSheet',
         ):
             self.assertIn(component, source)
         self.assertIn('useProSurfaceState', state_source)
         self.assertIn("@media (max-width: 720px)", styles)
         self.assertIn('height: 100dvh;', styles)
+
+    def test_workspace_settings_use_sheets_and_shared_footer_contract(self) -> None:
+        monitoring_settings = (PRO_ROOT / 'modules/monitoring/features/components/MonitoringSettingsModal.tsx').read_text()
+        prices = (PRO_ROOT / 'modules/monitoring/features/components/ModelPriceManagerModal.tsx').read_text()
+        inspection = (PRO_ROOT / 'modules/inspection/AccountInspectionPage.tsx').read_text()
+        self.assertIn('<ProSettingsSheet', monitoring_settings)
+        self.assertIn('<ProSettingsSheet', prices)
+        self.assertIn('<ProSettingsSheet', inspection)
+        self.assertNotIn('<ProWorkspaceDialog', monitoring_settings)
+        self.assertNotIn('<ProWorkspaceDialog', prices)
+        self.assertNotIn('<ProWorkspaceDialog', inspection)
+        self.assertIn('dirty={monitoringSettingsDirty}', monitoring_settings)
+        self.assertIn('dirty={settingsDirty}', inspection)
+
+    def test_loading_requests_reopen_the_surface_before_reusing_inflight_work(self) -> None:
+        monitoring = (PRO_ROOT / 'modules/monitoring/MonitoringCenterPage.tsx').read_text()
+        monitoring_open = monitoring.index('setIsMonitoringSettingsOpen(true);')
+        monitoring_reuse = monitoring.index('if (monitoringSettingsRequestRef.current)')
+        price_open = monitoring.index('setIsPriceModalOpen(true);')
+        price_reuse = monitoring.index('if (priceManagementRequestRef.current)')
+        self.assertLess(monitoring_open, monitoring_reuse)
+        self.assertLess(price_open, price_reuse)
 
     def test_pages_coordinate_one_primary_surface(self) -> None:
         monitoring = (PRO_ROOT / 'modules/monitoring/MonitoringCenterPage.tsx').read_text()
@@ -54,11 +77,17 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         monitoring = (PRO_ROOT / 'modules/monitoring/MonitoringCenterPage.tsx').read_text()
         inspection = (PRO_ROOT / 'modules/inspection/AccountInspectionPage.tsx').read_text()
         routing = (PRO_ROOT / 'modules/routing/RoutingPolicyPage.tsx').read_text()
+        auth_test = (PRO_ROOT / 'authFiles/AuthFileConnectionTestModal.tsx').read_text()
+        account_usage = (PRO_ROOT / 'modules/monitoring/features/components/AccountUsageModal.tsx').read_text()
+        proxy_pool = (PRO_ROOT / 'modules/proxyPool/ProxyPoolPage.tsx').read_text()
         self.assertIn('onAfterClose?: () => void;', surface)
         self.assertIn('onAfterClose={onAfterClose}', surface)
         self.assertIn('onAfterClose={() => setSelectedRealtimeErrorRowState(null)}', monitoring)
         self.assertIn('onAfterClose={() => setSelectedDetailResultState(null)}', inspection)
         self.assertIn('onAfterClose={() => setSelectedRuntimeDetailState(null)}', routing)
+        self.assertIn('onAfterClose={() => setDisplayFile(null)}', auth_test)
+        self.assertIn('onAfterClose={() => setDisplayFile(null)}', account_usage)
+        self.assertIn('onAfterClose={clearClosedNodeSheet}', proxy_pool)
 
     def test_rich_account_confirmations_use_business_dedupe_keys(self) -> None:
         inspection = (PRO_ROOT / 'modules/inspection/AccountInspectionPage.tsx').read_text()

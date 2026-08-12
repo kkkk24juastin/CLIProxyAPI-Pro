@@ -172,13 +172,6 @@
   min-height: 40px;
 }
 
-.priceActionsBar {
-  margin-top: 2px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
 .surfaceLoadingStatus {
   display: flex;
   align-items: center;
@@ -191,14 +184,6 @@
   color: var(--monitor-muted);
   font-size: 13px;
   font-weight: 700;
-}
-
-.priceManagerModal :global(.modal-body) {
-  width: 100%;
-  height: min(82vh, 760px);
-  max-height: calc(100dvh - 120px);
-  overflow: hidden;
-  padding: 0;
 }
 
 .priceManager {

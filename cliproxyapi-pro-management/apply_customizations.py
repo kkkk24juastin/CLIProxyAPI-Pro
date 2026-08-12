@@ -497,10 +497,16 @@ def patch_modal_focus_restore(target: Path) -> None:
 def patch_modal_lifecycle(target: Path) -> None:
     path = target / 'src/components/ui/Modal.tsx'
     text = read(path)
-    if 'The parent owns the open state; a rejected close keeps the surface open.' in text:
+    if 'registerOverlayLayer(titleId)' in text:
         return
 
     replacements = (
+        (
+            "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from './scrollLock';\n",
+            "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from './scrollLock';\n"
+            "import { isTopOverlayLayer, registerOverlayLayer } from './overlayStack';\n",
+            'modal overlay stack import',
+        ),
         (
             "  onClose: () => void;\n",
             "  onClose: () => void | boolean | Promise<void | boolean>;\n"
@@ -535,6 +541,10 @@ def patch_modal_lifecycle(target: Path) -> None:
         "    onCloseRef.current = onClose;\n"
         "    onAfterCloseRef.current = onAfterClose;\n"
         "  }, [onAfterClose, onClose]);\n\n"
+        "  useEffect(() => {\n"
+        "    if (!open && !isVisible) return;\n"
+        "    return registerOverlayLayer(titleId);\n"
+        "  }, [isVisible, open, titleId]);\n\n"
         + focusable_marker,
         1,
     )
@@ -553,7 +563,7 @@ def patch_modal_lifecycle(target: Path) -> None:
         "      closeTimerRef.current = null;\n"
         "      closeRequestedRef.current = false;\n"
         "      onAfterCloseRef.current?.();\n"
-        "    }, CLOSE_ANIMATION_DURATION);\n"
+        "    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : CLOSE_ANIMATION_DURATION);\n"
         "  }, []);\n\n"
         "  useEffect(() => {\n"
         "    if (open) {\n"
@@ -586,6 +596,28 @@ def patch_modal_lifecycle(target: Path) -> None:
         "  }, [closeDisabled]);\n\n"
     )
     text = text[:start] + replacement + text[end:]
+    text = text.replace(
+        "    const focusTimer = window.setTimeout(() => {\n",
+        "    const focusTimer = window.setTimeout(() => {\n"
+        "      if (!isTopOverlayLayer(titleId)) return;\n",
+        1,
+    )
+    text = text.replace(
+        "  }, [getFocusableElements, open]);\n",
+        "  }, [getFocusableElements, open, titleId]);\n",
+        1,
+    )
+    text = text.replace(
+        "    const handleKeyDown = (event: KeyboardEvent) => {\n",
+        "    const handleKeyDown = (event: KeyboardEvent) => {\n"
+        "      if (!isTopOverlayLayer(titleId)) return;\n",
+        1,
+    )
+    text = text.replace(
+        "  }, [closeDisabled, getFocusableElements, handleClose, open]);\n",
+        "  }, [closeDisabled, getFocusableElements, handleClose, open, titleId]);\n",
+        1,
+    )
     aria_pattern = re.compile(r'(?P<indent>\s+)role="dialog"\n(?P=indent)aria-modal="true"\n')
     matches = list(aria_pattern.finditer(text))
     if len(matches) != 1:
@@ -604,8 +636,32 @@ def patch_modal_lifecycle(target: Path) -> None:
 def patch_sheet_lifecycle(target: Path) -> None:
     path = target / 'src/components/ui/Sheet/Sheet.tsx'
     text = read(path)
-    if 'try {\n      onCloseRef.current();\n    } finally {' in text:
+    if 'registerOverlayLayer(titleId)' in text:
         return
+
+    replacements = (
+        (
+            "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from '../scrollLock';\n",
+            "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from '../scrollLock';\n"
+            "import { isTopOverlayLayer, registerOverlayLayer } from '../overlayStack';\n",
+            'sheet overlay stack import',
+        ),
+        (
+            "  onClose: () => void;\n",
+            "  onClose: () => void | boolean | Promise<void | boolean>;\n"
+            "  onAfterClose?: () => void;\n",
+            'sheet close contract',
+        ),
+    )
+    for old, new, label in replacements:
+        count = text.count(old)
+        if count != 1:
+            raise RuntimeError(f'Expected one pattern in {path}, found {count}: {label}')
+        text = text.replace(old, new, 1)
+
+    if text.count("  onClose,\n  size = 'md',\n") != 1:
+        raise RuntimeError(f'Expected one pattern in {path}: sheet props')
+    text = text.replace("  onClose,\n  size = 'md',\n", "  onClose,\n  onAfterClose,\n  size = 'md',\n", 1)
 
     old_refs = "  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);\n"
     if text.count(old_refs) != 1:
@@ -614,7 +670,8 @@ def patch_sheet_lifecycle(target: Path) -> None:
         old_refs,
         old_refs
         + "  const closeRequestedRef = useRef(false);\n"
-        + "  const onCloseRef = useRef(onClose);\n",
+        + "  const onCloseRef = useRef(onClose);\n"
+        + "  const onAfterCloseRef = useRef(onAfterClose);\n",
         1,
     )
     focusable_marker = "  const getFocusableElements = useCallback(() => {\n"
@@ -624,7 +681,12 @@ def patch_sheet_lifecycle(target: Path) -> None:
         focusable_marker,
         "  useEffect(() => {\n"
         "    onCloseRef.current = onClose;\n"
-        "  }, [onClose]);\n\n"
+        "    onAfterCloseRef.current = onAfterClose;\n"
+        "  }, [onAfterClose, onClose]);\n\n"
+        "  useEffect(() => {\n"
+        "    if (!open && !isVisible) return;\n"
+        "    return registerOverlayLayer(titleId);\n"
+        "  }, [isVisible, open, titleId]);\n\n"
         + focusable_marker,
         1,
     )
@@ -641,7 +703,8 @@ def patch_sheet_lifecycle(target: Path) -> None:
         "      setIsClosing(false);\n"
         "      closeTimerRef.current = null;\n"
         "      closeRequestedRef.current = false;\n"
-        "    }, CLOSE_ANIMATION_DURATION);\n"
+        "      onAfterCloseRef.current?.();\n"
+        "    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : CLOSE_ANIMATION_DURATION);\n"
         "  }, []);\n\n"
         "  useEffect(() => {\n"
         "    if (open) {\n"
@@ -674,13 +737,43 @@ def patch_sheet_lifecycle(target: Path) -> None:
         "      }\n"
         "    }\n"
         "    try {\n"
-        "      onCloseRef.current();\n"
+        "      const shouldClose = await onCloseRef.current();\n"
+        "      if (shouldClose === false) return;\n"
         "    } finally {\n"
         "      closeRequestedRef.current = false;\n"
         "    }\n"
         "  }, [closeDisabled, confirmClose]);\n\n"
     )
     text = text[:start] + replacement + text[end:]
+    text = text.replace(
+        "    const t = window.setTimeout(() => {\n",
+        "    const t = window.setTimeout(() => {\n"
+        "      if (!isTopOverlayLayer(titleId)) return;\n",
+        1,
+    )
+    text = text.replace(
+        "  }, [getFocusableElements, open]);\n",
+        "  }, [getFocusableElements, open, titleId]);\n",
+        1,
+    )
+    text = text.replace(
+        "    const handleKey = (event: KeyboardEvent) => {\n",
+        "    const handleKey = (event: KeyboardEvent) => {\n"
+        "      if (!isTopOverlayLayer(titleId)) return;\n",
+        1,
+    )
+    text = text.replace(
+        "  }, [closeDisabled, getFocusableElements, handleClose, open]);\n",
+        "  }, [closeDisabled, getFocusableElements, handleClose, open, titleId]);\n",
+        1,
+    )
+    text = text.replace(
+        "        if (closeDisabled) return;\n"
+        "        if (e.target === e.currentTarget) handleClose();\n",
+        "        if (closeDisabled || !isTopOverlayLayer(titleId)) return;\n"
+        "        if (e.target === e.currentTarget) handleClose();\n",
+        1,
+    )
     aria_pattern = re.compile(r'(?P<indent>\s+)role="dialog"\n(?P=indent)aria-modal="true"\n')
     matches = list(aria_pattern.finditer(text))
     if len(matches) != 1:
@@ -702,6 +795,49 @@ def patch_sheet_lifecycle(target: Path) -> None:
         1,
     )
     write(path, text)
+
+
+def patch_overlay_reduced_motion(target: Path) -> None:
+    components_path = target / 'src/styles/components.scss'
+    components = read(components_path)
+    marker = "@media (prefers-reduced-motion: reduce) {\n  .modal-overlay-entering,\n"
+    if marker not in components:
+        components += (
+            "\n@media (prefers-reduced-motion: reduce) {\n"
+            "  .modal-overlay-entering,\n"
+            "  .modal-overlay-closing,\n"
+            "  .modal-entering,\n"
+            "  .modal-closing {\n"
+            "    animation: none !important;\n"
+            "  }\n"
+            "}\n"
+        )
+        write(components_path, components)
+
+    sheet_path = target / 'src/components/ui/Sheet/Sheet.module.scss'
+    sheet = read(sheet_path)
+    if 'padding: var(--pro-surface-body-padding, 24px);' not in sheet:
+        sheet = sheet.replace(
+            ".body {\n  flex: 1;\n  overflow-y: auto;\n  padding: 24px;\n",
+            ".body {\n  flex: 1;\n  overflow-y: auto;\n  padding: var(--pro-surface-body-padding, 24px);\n",
+            1,
+        )
+        sheet = sheet.replace(
+            "  .body {\n    padding: 16px;\n",
+            "  .body {\n    padding: var(--pro-surface-body-padding, 16px);\n",
+            1,
+        )
+    marker = "@media (prefers-reduced-motion: reduce) {\n  .overlay,\n"
+    if marker not in sheet:
+        sheet += (
+            "\n@media (prefers-reduced-motion: reduce) {\n"
+            "  .overlay,\n"
+            "  .content {\n"
+            "    transition: none !important;\n"
+            "  }\n"
+            "}\n"
+        )
+        write(sheet_path, sheet)
 
 
 def patch_confirmation_queue(target: Path) -> None:
@@ -2457,6 +2593,7 @@ def main() -> None:
     patch_modal_focus_restore(target)
     patch_modal_lifecycle(target)
     patch_sheet_lifecycle(target)
+    patch_overlay_reduced_motion(target)
     patch_confirmation_queue(target)
     patch_modal_scroll_lock(target)
     patch_modal_content_scrollbar_layout(target)

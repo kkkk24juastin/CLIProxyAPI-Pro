@@ -302,6 +302,7 @@ export function MonitoringCenterPage() {
   const [isMonitoringSettingsSaving, setIsMonitoringSettingsSaving] = useState(false);
   const [isMonitoringStatisticsResetting, setIsMonitoringStatisticsResetting] = useState(false);
   const [monitoringSettingsDraft, setMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
+  const [savedMonitoringSettingsDraft, setSavedMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
   const [priceManagementView, setPriceManagementView] = useState<PriceManagementView>('rules');
   const [priceRuleSearch, setPriceRuleSearch] = useState('');
   const [priceSyncChangeFilter, setPriceSyncChangeFilter] = useState<PriceSyncChangeFilter>('all');
@@ -452,7 +453,9 @@ export function MonitoringCenterPage() {
 
   const fetchMonitoringSettings = useCallback(async () => {
     const response = await apiClient.get<{ settings: MonitoringSettings }>('/usage/settings');
-    setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
+    const nextDraft = createMonitoringSettingsDraft(response.settings);
+    setMonitoringSettingsDraft(nextDraft);
+    setSavedMonitoringSettingsDraft(nextDraft);
     return response.settings;
   }, []);
 
@@ -461,8 +464,8 @@ export function MonitoringCenterPage() {
       showNotification(t('notification.connection_required'), 'warning');
       return Promise.resolve();
     }
-    if (monitoringSettingsRequestRef.current) return monitoringSettingsRequestRef.current;
     setIsMonitoringSettingsOpen(true);
+    if (monitoringSettingsRequestRef.current) return monitoringSettingsRequestRef.current;
     setIsMonitoringSettingsLoading(true);
     const request = fetchMonitoringSettings()
       .then(() => undefined)
@@ -486,7 +489,9 @@ export function MonitoringCenterPage() {
     setIsMonitoringSettingsSaving(true);
     try {
       const response = await apiClient.put<{ settings: MonitoringSettings }>('/usage/settings', { settings });
-      setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
+      const nextDraft = createMonitoringSettingsDraft(response.settings);
+      setMonitoringSettingsDraft(nextDraft);
+      setSavedMonitoringSettingsDraft(nextDraft);
       if (closeModal) setIsMonitoringSettingsOpen(false);
       showNotification(t('usage_stats.monitoring_settings_saved'), 'success');
       await refreshAll();
@@ -496,6 +501,30 @@ export function MonitoringCenterPage() {
       setIsMonitoringSettingsSaving(false);
     }
   }, [monitoringSettingsDraft, refreshAll, setIsMonitoringSettingsOpen, showNotification, t]);
+
+  const monitoringSettingsDirty = useMemo(
+    () => JSON.stringify(monitoringSettingsDraft) !== JSON.stringify(savedMonitoringSettingsDraft),
+    [monitoringSettingsDraft, savedMonitoringSettingsDraft]
+  );
+
+  const closeMonitoringSettings = useCallback(() => {
+    if (!monitoringSettingsDirty) {
+      setIsMonitoringSettingsOpen(false);
+      return true;
+    }
+    showConfirmation({
+      title: t('common.unsaved_changes_title'),
+      message: t('common.unsaved_changes_message'),
+      confirmText: t('monitoring.account_inspection_settings_discard'),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+      onConfirm: () => {
+        setMonitoringSettingsDraft(savedMonitoringSettingsDraft);
+        setIsMonitoringSettingsOpen(false);
+      },
+    });
+    return false;
+  }, [monitoringSettingsDirty, savedMonitoringSettingsDraft, setIsMonitoringSettingsOpen, showConfirmation, t]);
 
   const executeMonitoringStatisticsReset = useCallback(async () => {
     setIsMonitoringStatisticsResetting(true);
@@ -1401,8 +1430,8 @@ export function MonitoringCenterPage() {
       showNotification(t('notification.connection_required'), 'warning');
       return Promise.resolve();
     }
-    if (priceManagementRequestRef.current) return priceManagementRequestRef.current;
     setIsPriceModalOpen(true);
+    if (priceManagementRequestRef.current) return priceManagementRequestRef.current;
     setPriceManagementView('rules');
     setPriceRuleSearch('');
     setPriceSyncLockedOverrides([]);
@@ -2002,7 +2031,6 @@ export function MonitoringCenterPage() {
         onClose={() => setSelectedRealtimeErrorRow(null)}
         onAfterClose={() => setSelectedRealtimeErrorRowState(null)}
         title={translateRealtimeErrorText('request_details', t, i18n.language)}
-        className={styles.monitorModal}
         footer={selectedRealtimeErrorRow ? (
           <div className={styles.monitorModalActions}>
             <Button variant="secondary" size="sm" onClick={() => handleCopyRealtimeDiagnostic(selectedRealtimeErrorRow)}>
@@ -2021,7 +2049,8 @@ export function MonitoringCenterPage() {
 
       <MonitoringSettingsModal
         isMonitoringSettingsOpen={isMonitoringSettingsOpen}
-        setIsMonitoringSettingsOpen={setIsMonitoringSettingsOpen}
+        closeMonitoringSettings={closeMonitoringSettings}
+        monitoringSettingsDirty={monitoringSettingsDirty}
         monitoringSettingsDraft={monitoringSettingsDraft}
         setMonitoringSettingsDraft={setMonitoringSettingsDraft}
         usageTotalRequests={Number(usage?.total_requests) || 0}
@@ -2068,6 +2097,7 @@ export function MonitoringCenterPage() {
         priceSyncChangeFilter={priceSyncChangeFilter}
         setPriceSyncChangeFilter={setPriceSyncChangeFilter}
         monitoringSettingsDraft={monitoringSettingsDraft}
+        savedMonitoringSettingsDraft={savedMonitoringSettingsDraft}
         setMonitoringSettingsDraft={setMonitoringSettingsDraft}
         handleSaveMonitoringSettings={handleSaveMonitoringSettings}
         isMonitoringSettingsLoading={isMonitoringSettingsLoading}

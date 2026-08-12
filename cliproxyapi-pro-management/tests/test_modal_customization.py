@@ -49,6 +49,7 @@ export const FOCUSABLE_SELECTOR = 'button';
 """
 
 MODAL_LIFECYCLE_SOURCE = """import { useCallback, useEffect, useRef, useState } from 'react';
+import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from './scrollLock';
 interface ModalProps {
   open: boolean;
   onClose: () => void;
@@ -59,12 +60,26 @@ export function Modal({
   footer,
   closeDisabled = false,
 }) {
+  const titleId = 'modal-test';
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const getFocusableElements = useCallback(() => {
     return [];
   }, []);
+  useEffect(() => {
+    if (!open) return;
+    const focusTimer = window.setTimeout(() => {
+    }, 0);
+    return () => window.clearTimeout(focusTimer);
+  }, [getFocusableElements, open]);
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [closeDisabled, getFocusableElements, handleClose, open]);
   const startClose = useCallback(
     (notifyParent: boolean) => {
       if (closeTimerRef.current !== null) return;
@@ -122,7 +137,19 @@ export function Modal({
 """
 
 SHEET_LIFECYCLE_SOURCE = """import { useCallback, useEffect, useRef, useState } from 'react';
-export function Sheet({ open, onClose, closeDisabled = false, confirmClose }) {
+import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from '../scrollLock';
+interface SheetProps {
+  open: boolean;
+  onClose: () => void;
+}
+export function Sheet({
+  open,
+  onClose,
+  size = 'md',
+  closeDisabled = false,
+  confirmClose,
+}) {
+  const titleId = 'sheet-test';
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -130,6 +157,19 @@ export function Sheet({ open, onClose, closeDisabled = false, confirmClose }) {
   const getFocusableElements = useCallback(() => {
     return [];
   }, []);
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => {
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [getFocusableElements, open]);
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (event: KeyboardEvent) => {
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [closeDisabled, getFocusableElements, handleClose, open]);
   const startClose = useCallback(
     (notifyParent: boolean) => {
       if (closeTimerRef.current !== null) return;
@@ -164,10 +204,15 @@ export function Sheet({ open, onClose, closeDisabled = false, confirmClose }) {
     previouslyFocusedRef.current?.focus();
   }, [isVisible, open]);
   return (
-    <div
+    <div onMouseDown={(e) => {
+        if (closeDisabled) return;
+        if (e.target === e.currentTarget) handleClose();
+      }}>
+      <div
         role="dialog"
         aria-modal="true"
-    />
+      />
+    </div>
   );
 }
 """
@@ -309,6 +354,9 @@ class ModalCustomizationTest(unittest.TestCase):
             self.assertIn('const onAfterCloseRef = useRef(onAfterClose);', patched)
             self.assertIn('}, [onAfterClose, onClose]);', patched)
             self.assertIn('onAfterCloseRef.current?.();', patched)
+            self.assertIn('registerOverlayLayer(titleId)', patched)
+            self.assertIn('if (!isTopOverlayLayer(titleId)) return;', patched)
+            self.assertIn("window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0", patched)
             self.assertIn('closeRequestedRef.current = true;\n    try {', patched)
             self.assertIn('const shouldClose = await onCloseRef.current();', patched)
             self.assertIn('if (shouldClose === false) {', patched)
@@ -332,7 +380,11 @@ class ModalCustomizationTest(unittest.TestCase):
 
             patched = sheet_path.read_text()
             self.assertIn('const closeRequestedRef = useRef(false);', patched)
-            self.assertIn('}, [onClose]);', patched)
+            self.assertIn('}, [onAfterClose, onClose]);', patched)
+            self.assertIn('onAfterCloseRef.current?.();', patched)
+            self.assertIn('registerOverlayLayer(titleId)', patched)
+            self.assertIn('if (!isTopOverlayLayer(titleId)) return;', patched)
+            self.assertIn("window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0", patched)
             self.assertIn('closeRequestedRef.current = true;\n    if (confirmClose)', patched)
             self.assertIn('closeRequestedRef.current = false;', patched)
             self.assertNotIn('if (closeRequestedRef.current) return;', patched)

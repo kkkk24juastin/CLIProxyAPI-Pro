@@ -1,9 +1,4 @@
 @media (max-width: 1020px) {
-  .priceManagerModal :global(.modal-body) {
-    height: min(86dvh, 760px);
-    max-height: calc(100dvh - 112px);
-  }
-
   .priceRuleWorkspace {
     grid-template-columns: 1fr;
     grid-template-rows: 82px minmax(0, 1fr);
@@ -123,11 +118,6 @@
 }
 
 @media (max-width: 680px) {
-  .priceManagerModal :global(.modal-body) {
-    height: calc(100dvh - 108px);
-    max-height: calc(100dvh - 108px);
-  }
-
   .priceManagerTabs {
     padding-inline: 10px 46px;
   }

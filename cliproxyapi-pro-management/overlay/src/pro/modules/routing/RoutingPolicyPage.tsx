@@ -865,7 +865,6 @@ export function RoutingPolicyPage() {
         onClose={() => setSelectedRuntimeDetail(null)}
         onAfterClose={() => setSelectedRuntimeDetailState(null)}
         title={t('routing_policy.runtime.details_title')}
-        className={styles.runtimeDetailModal}
         footer={(
           <div className={styles.runtimeDetailModalActions}>
             <Button variant="primary" size="sm" onClick={() => setSelectedRuntimeDetail(null)}>

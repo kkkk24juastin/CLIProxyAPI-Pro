@@ -520,14 +520,6 @@
   gap: 16px;
 }
 
-.settingsModal :global(.modal-body) {
-  display: grid;
-  gap: 0;
-  max-height: min(78vh, 820px);
-  overflow: hidden;
-  padding: 0;
-}
-
 .settingsWorkbench {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);

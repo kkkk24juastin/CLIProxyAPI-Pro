@@ -29,6 +29,7 @@ interface ProxyPoolNodeSheetProps {
   testing: boolean;
   recovering: boolean;
   onClose: () => void;
+  onAfterClose?: () => void;
   onApply: (node: ProxyPoolNodeConfig) => void;
   onTest: (node: ProxyPoolNodeConfig) => void;
   onRecover: (nodeId: string) => void;
@@ -44,6 +45,7 @@ export function ProxyPoolNodeSheet({
   testing,
   recovering,
   onClose,
+  onAfterClose,
   onApply,
   onTest,
   onRecover,
@@ -68,6 +70,7 @@ export function ProxyPoolNodeSheet({
     <ProWorkspaceSheet
       open={open}
       onClose={onClose}
+      onAfterClose={onAfterClose}
       size="lg"
       eyebrow={t('proxy_pool.node_details', { defaultValue: 'Node details' })}
       title={

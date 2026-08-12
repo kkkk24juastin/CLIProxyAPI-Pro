@@ -34,6 +34,35 @@
   --pro-surface-body-padding: 24px;
 }
 
+.settingsFields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settingsFooter {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settingsFooterStart,
+.settingsFooterActions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.dirtyStatus {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .surface,
   .sheet {
@@ -64,5 +93,23 @@
 
   .sheet {
     --pro-surface-body-padding: 16px;
+    width: 100vw !important;
+    height: 100dvh;
+    max-width: none;
+    border-left: 0;
+  }
+
+  .settingsFooter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settingsFooterActions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .settingsFooterActions :global(.btn) {
+    width: 100%;
   }
 }

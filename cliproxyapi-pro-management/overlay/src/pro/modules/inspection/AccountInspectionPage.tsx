@@ -30,7 +30,7 @@ import {
   type AccountInspectionLogLevel,
   type AccountInspectionResultItem,
 } from '@/pro/modules/inspection/features/accountInspection';
-import { ProDetailDialog, ProWorkspaceDialog } from '@/pro/shared/ProSurface';
+import { ProDetailDialog, ProSettingsSheet } from '@/pro/shared/ProSurface';
 import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
 import {
   ACCOUNT_INSPECTION_ACTION_PAGE_SIZE,
@@ -2162,7 +2162,6 @@ export function AccountInspectionPage() {
         onClose={() => setSelectedDetailResult(null)}
         onAfterClose={() => setSelectedDetailResultState(null)}
         title={t('monitoring.account_inspection_result_details')}
-        className={styles.errorModal}
         footer={(
           <div className={styles.errorModalActions}>
             <Button variant="primary" size="sm" onClick={() => setSelectedDetailResult(null)}>
@@ -2176,11 +2175,23 @@ export function AccountInspectionPage() {
         ) : null}
       </ProDetailDialog>
 
-      <ProWorkspaceDialog
+      <ProSettingsSheet
         open={isSettingsModalOpen}
         onClose={closeSettingsModal}
+        size="xl"
         title={t('monitoring.account_inspection_settings_title')}
         className={styles.settingsModal}
+        dirty={settingsDirty}
+        saving={scheduleLoading}
+        cancelLabel={t('common.cancel')}
+        saveLabel={t('common.save')}
+        dirtyLabel={t('common.unsaved_changes_title')}
+        onSave={handleSaveSettings}
+        footerStart={(
+          <Button variant="secondary" onClick={handleResetSettings} disabled={scheduleLoading}>
+            {t('monitoring.account_inspection_settings_reset_button')}
+          </Button>
+        )}
       >
         <div className={styles.settingsWorkbench}>
           <aside className={styles.settingsSidebar}>
@@ -2534,20 +2545,7 @@ export function AccountInspectionPage() {
           </div>
         </div>
 
-        <div className={styles.settingsActionsBar}>
-          <Button variant="secondary" onClick={handleResetSettings}>
-            {t('monitoring.account_inspection_settings_reset_button')}
-          </Button>
-          <div className={styles.settingsActionsRight}>
-            <Button variant="secondary" onClick={closeSettingsModal}>
-              {t('common.cancel')}
-            </Button>
-            <Button variant="primary" onClick={() => void handleSaveSettings()} loading={scheduleLoading}>
-              {t('common.save')}
-            </Button>
-          </div>
-        </div>
-      </ProWorkspaceDialog>
+      </ProSettingsSheet>
     </div>
   );
 }

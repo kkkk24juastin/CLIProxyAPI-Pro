@@ -206,9 +206,12 @@ export function ProxyPoolPage() {
       : '';
 
   const closeNodeSheet = () => {
+    if (activeSurface === 'node') closeSurface();
+  };
+
+  const clearClosedNodeSheet = () => {
     setEditingIndex(null);
     setPendingNode(null);
-    if (activeSurface === 'node') closeSurface();
   };
 
   const editNode = (index: number) => {
@@ -682,6 +685,7 @@ export function ProxyPoolPage() {
               testing={testingNode === editingKey}
               recovering={recoveringNode === editingNode?.id}
               onClose={closeNodeSheet}
+              onAfterClose={clearClosedNodeSheet}
               onApply={(node) => {
                 if (pendingNode) {
                   updateDraft((current) => ({ ...current, nodes: [...current.nodes, node] }));

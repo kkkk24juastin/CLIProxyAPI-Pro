@@ -553,14 +553,6 @@
     gap: 8px;
   }
 
-  .priceActionsBar {
-    justify-content: stretch;
-  }
-
-  .priceActionsBar :global(.btn) {
-    flex: 1 1 0;
-  }
-
   .table {
     min-width: 0;
   }

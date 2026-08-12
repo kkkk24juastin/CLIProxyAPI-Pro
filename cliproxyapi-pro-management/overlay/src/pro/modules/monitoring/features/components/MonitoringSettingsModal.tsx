@@ -5,13 +5,14 @@ import { Input } from '@/components/ui/Input';
 import { IconTrash2 } from '@/components/ui/icons';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { formatCompactNumber } from '@/pro/modules/monitoring/features/usage';
-import { ProFormDialog } from '@/pro/shared/ProSurface';
+import { ProSettingsSheet } from '@/pro/shared/ProSurface';
 import type { MonitoringSettingsDraft } from '../monitoringSettings';
 import styles from '../monitoring.module.scss';
 
 export function MonitoringSettingsModal({
   isMonitoringSettingsOpen,
-  setIsMonitoringSettingsOpen,
+  closeMonitoringSettings,
+  monitoringSettingsDirty,
   monitoringSettingsDraft,
   setMonitoringSettingsDraft,
   usageTotalRequests,
@@ -23,7 +24,8 @@ export function MonitoringSettingsModal({
   t,
 }: {
   isMonitoringSettingsOpen: boolean;
-  setIsMonitoringSettingsOpen: (open: boolean) => void;
+  closeMonitoringSettings: () => void | boolean;
+  monitoringSettingsDirty: boolean;
   monitoringSettingsDraft: MonitoringSettingsDraft;
   setMonitoringSettingsDraft: Dispatch<SetStateAction<MonitoringSettingsDraft>>;
   usageTotalRequests: number;
@@ -35,13 +37,32 @@ export function MonitoringSettingsModal({
   t: TFunction;
 }) {
   return (
-      <ProFormDialog
+      <ProSettingsSheet
         open={isMonitoringSettingsOpen}
-        onClose={() => {
-          if (!isMonitoringStatisticsResetting) setIsMonitoringSettingsOpen(false);
-        }}
+        onClose={closeMonitoringSettings}
+        size="xl"
         title={t('usage_stats.monitoring_settings')}
-        className={styles.monitorModal}
+        dirty={monitoringSettingsDirty}
+        loading={isMonitoringSettingsLoading}
+        saving={isMonitoringSettingsSaving || isMonitoringStatisticsResetting}
+        cancelLabel={t('common.cancel')}
+        saveLabel={isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
+        dirtyLabel={t('common.unsaved_changes_title')}
+        onSave={handleSaveMonitoringSettings}
+        footerStart={(
+          <Button
+            variant="danger"
+            size="sm"
+            className={styles.resetStatisticsButton}
+            onClick={handleMonitoringStatisticsReset}
+            disabled={isMonitoringSettingsLoading || isMonitoringStatisticsResetting || isMonitoringSettingsSaving}
+          >
+            <IconTrash2 size={15} />
+            {isMonitoringStatisticsResetting
+              ? t('usage_stats.monitoring_settings_resetting')
+              : t('usage_stats.monitoring_settings_reset_button')}
+          </Button>
+        )}
       >
         <div className={styles.monitoringSettingsEditor} aria-busy={isMonitoringSettingsLoading}>
           {isMonitoringSettingsLoading ? (
@@ -146,30 +167,10 @@ export function MonitoringSettingsModal({
                 <span>{t('usage_stats.monitoring_settings_data_count')}</span>
                 <strong>{formatCompactNumber(usageTotalRequests)}</strong>
               </div>
-              <Button
-                variant="danger"
-                size="sm"
-                className={styles.resetStatisticsButton}
-                onClick={handleMonitoringStatisticsReset}
-                disabled={isMonitoringStatisticsResetting || isMonitoringSettingsSaving}
-              >
-                <IconTrash2 size={15} />
-                {isMonitoringStatisticsResetting
-                  ? t('usage_stats.monitoring_settings_resetting')
-                  : t('usage_stats.monitoring_settings_reset_button')}
-              </Button>
             </div>
           </div>
 
-          <div className={styles.priceActionsBar}>
-            <Button variant="secondary" size="sm" onClick={() => setIsMonitoringSettingsOpen(false)} disabled={isMonitoringStatisticsResetting}>
-              {t('common.cancel')}
-            </Button>
-            <Button variant="primary" size="sm" onClick={() => void handleSaveMonitoringSettings()} disabled={isMonitoringSettingsLoading || isMonitoringSettingsSaving || isMonitoringStatisticsResetting}>
-              {isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
-            </Button>
-          </div>
         </div>
-      </ProFormDialog>
+      </ProSettingsSheet>
   );
 }
