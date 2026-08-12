@@ -747,6 +747,7 @@
   max-height: 280px;
   overflow: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .confirmationPreviewRow {

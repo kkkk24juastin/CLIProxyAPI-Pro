@@ -1142,16 +1142,14 @@ export const toAccountInspectionApiItem = (item: AccountInspectionResultItem): A
 });
 
 export const buildActionPreview = (items: AccountInspectionResultItem[], t: TFunction) =>
-  items
-    .slice(0, 5)
-    .map((item) => ({
-      key: item.key,
-      account: item.fileName,
-      provider: resolveProviderDisplayLabel(item.provider),
-      action: formatActionLabel(item.action, t),
-      reason: item.actionReason || item.error || '-',
-      dangerous: item.action === 'delete',
-    }));
+  items.map((item) => ({
+    key: item.key,
+    account: item.fileName,
+    provider: resolveProviderDisplayLabel(item.provider),
+    action: formatActionLabel(item.action, t),
+    reason: item.actionReason || item.error || '-',
+    dangerous: item.action === 'delete',
+  }));
 
 export const buildExecuteConfirmationMessage = (
   items: AccountInspectionResultItem[],
@@ -1200,7 +1198,7 @@ export const buildExecuteConfirmationMessage = (
         <div className={styles.confirmationPreview}>
           <div className={styles.confirmationPreviewHeading}>
             <strong>{t('monitoring.account_inspection_preview_title')}</strong>
-            <span>{t('monitoring.account_inspection_preview_count', { shown: preview.length, total: items.length })}</span>
+            <span>{t('monitoring.account_inspection_preview_count', { total: preview.length })}</span>
           </div>
           <div className={styles.confirmationPreviewHeader} aria-hidden="true">
             <span>{t('monitoring.account_label')}</span>

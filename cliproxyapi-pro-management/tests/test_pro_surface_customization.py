@@ -80,6 +80,8 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('--decision-tone: var(--error-color);', inspection_styles)
         self.assertIn('width: min(760px', inspection_styles)
         self.assertIn('grid-auto-rows: max-content', inspection_styles)
+        self.assertIn('scrollbar-gutter: stable', inspection_styles)
+        self.assertNotIn('.slice(0, 5)', inspection_model)
         self.assertNotIn('-webkit-line-clamp', inspection_styles)
 
     def test_workspace_settings_use_sheets_and_shared_footer_contract(self) -> None:

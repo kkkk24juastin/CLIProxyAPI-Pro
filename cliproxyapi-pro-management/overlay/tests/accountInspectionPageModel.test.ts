@@ -160,7 +160,7 @@ describe('account inspection page model', () => {
     }))).toBe('codex-account.json');
   });
 
-  test('builds a compact five-row action preview across every action type', () => {
+  test('builds a complete scrollable action preview across every action type', () => {
     const t = ((key: string) => ({
       'monitoring.account_inspection_action_delete': '删除',
       'monitoring.account_inspection_action_disable': '禁用',
@@ -174,10 +174,11 @@ describe('account inspection page model', () => {
       actionReason: `reason-${index}`,
     })), t);
 
-    expect(preview).toHaveLength(5);
-    expect(preview.map((item) => item.action)).toEqual(['删除', '禁用', '启用', '删除', '禁用']);
+    expect(preview).toHaveLength(6);
+    expect(preview.map((item) => item.action)).toEqual(['删除', '禁用', '启用', '删除', '禁用', '启用']);
     expect(preview[0]).toMatchObject({ account: 'account-0.json', reason: 'reason-0', dangerous: true });
     expect(preview[2]).toMatchObject({ account: 'account-2.json', dangerous: false });
+    expect(preview[5]).toMatchObject({ account: 'account-5.json', reason: 'reason-5', dangerous: false });
   });
 
   test('uses semantic evidence consistently across all providers', () => {
