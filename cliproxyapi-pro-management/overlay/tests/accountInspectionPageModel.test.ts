@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildAuthFileAccountStats,
   buildActionPreview,
   buildInspectionResultsViewState,
   createInspectionBackendState,
@@ -250,6 +251,44 @@ describe('account inspection page model', () => {
       status: 'error',
       status_message: 'disabled by scheduled account inspection',
     })).toBe(false);
+  });
+
+  test('uses the auth-files page semantics for all, enabled, disabled, and problem stats', () => {
+    const files = [
+      { name: 'healthy.json', type: 'codex', status_message: 'healthy' },
+      {
+        name: 'disabled-with-error.json',
+        type: 'codex',
+        disabled: true,
+        unavailable: true,
+        status: 'error',
+        last_error: { message: 'credential failed' },
+      },
+      { name: 'status-disabled.json', type: 'codex', status: 'disabled' },
+      { name: 'unavailable.json', type: 'claude', unavailable: true },
+      { name: 'error-status.json', type: 'claude', status: 'error' },
+      { name: 'healthy-message.json', type: 'claude', status_message: 'available' },
+      { name: 'warning-message.json', type: 'claude', last_error: { message: 'refresh failed' } },
+    ];
+    const stats = buildAuthFileAccountStats(
+      files,
+      {
+        antigravityQuota: {},
+        claudeQuota: {},
+        codexQuota: {},
+        geminiCliQuota: {},
+        kimiQuota: {},
+        xaiQuota: {},
+      },
+      90,
+      'claude-gpt'
+    );
+
+    expect(stats).toMatchObject({ total: 7, enabled: 6, disabled: 1, problem: 3 });
+    expect(stats.providers).toEqual([
+      expect.objectContaining({ provider: 'claude', total: 4, enabled: 4, disabled: 0, problem: 3 }),
+      expect.objectContaining({ provider: 'codex', total: 3, enabled: 2, disabled: 1, problem: 0 }),
+    ]);
   });
 
   test('uses complete inspection health counts for aggregate and provider asset cards', () => {

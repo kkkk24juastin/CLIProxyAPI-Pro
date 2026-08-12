@@ -24,6 +24,7 @@ import type {
   AccountInspectionInspectOneItem,
   AccountInspectionScheduleResponse,
 } from '../api';
+import { isProblemAuthFile } from '@/features/authFiles/constants';
 import type { AuthFileItem } from '@/types';
 import {
   isDisabledAuthFile,
@@ -149,6 +150,7 @@ export type ProviderAccountStats = {
   provider: string;
   total: number;
   enabled: number;
+  problem: number;
   highAvailable: number;
   disabled: number;
   quotaLow: number;
@@ -162,6 +164,7 @@ export type AuthFileAccountStats = {
   total: number;
   providerCount: number;
   enabled: number;
+  problem: number;
   highAvailable: number;
   disabled: number;
   quotaLow: number;
@@ -472,13 +475,14 @@ export const isAuthFileRequestError = (file: AuthFileItem) => {
     || code === 'token_refresh_error';
 };
 
-const incrementProviderStats = (stats: ProviderAccountStats, disabled: boolean, highAvailable: boolean, quotaLow: boolean, accountInvalid: boolean, requestError: boolean) => {
+const incrementProviderStats = (stats: ProviderAccountStats, disabled: boolean, problem: boolean, highAvailable: boolean, quotaLow: boolean, accountInvalid: boolean, requestError: boolean) => {
   stats.total += 1;
   if (disabled) {
     stats.disabled += 1;
   } else {
     stats.enabled += 1;
   }
+  if (problem) stats.problem += 1;
   if (highAvailable) stats.highAvailable += 1;
   if (quotaLow) stats.quotaLow += 1;
   if (accountInvalid) stats.accountInvalid += 1;
@@ -489,6 +493,7 @@ const emptyProviderAccountStats = (provider: string): ProviderAccountStats => ({
   provider,
   total: 0,
   enabled: 0,
+  problem: 0,
   highAvailable: 0,
   disabled: 0,
   quotaLow: 0,
@@ -500,6 +505,7 @@ export const createEmptyAuthFileAccountStats = (): AuthFileAccountStats => ({
   total: 0,
   providerCount: 0,
   enabled: 0,
+  problem: 0,
   highAvailable: 0,
   disabled: 0,
   quotaLow: 0,
@@ -646,7 +652,11 @@ const accumulateAuthFileAccountStats = (
   if (!isInspectableAccountInspectionAuthFile(file)) return;
 
   const provider = resolveAuthProvider(file) || 'unknown';
-  const disabled = isDisabledAuthFile(file);
+  // Keep these three status dimensions identical to the auth-files page filters.
+  const disabled = file.disabled === true;
+  const problem = isProblemAuthFile(file);
+  // Preserve the existing boolean-compatible disabled handling for ancillary availability metrics.
+  const unavailableForQuota = isDisabledAuthFile(file);
   const quotaLow = isProviderQuotaLow(
     provider,
     quotaStore,
@@ -656,7 +666,7 @@ const accumulateAuthFileAccountStats = (
   );
   const accountInvalid = isAuthFileAccountInvalid(file);
   const requestError = isAuthFileRequestError(file);
-  const highAvailable = !disabled && !quotaLow && !accountInvalid && !requestError;
+  const highAvailable = !unavailableForQuota && !quotaLow && !accountInvalid && !requestError;
 
   stats.total += 1;
   if (disabled) {
@@ -664,14 +674,36 @@ const accumulateAuthFileAccountStats = (
   } else {
     stats.enabled += 1;
   }
+  if (problem) stats.problem += 1;
   if (highAvailable) stats.highAvailable += 1;
   if (accountInvalid) stats.accountInvalid += 1;
   if (requestError) stats.requestError += 1;
   if (quotaLow) stats.quotaLow += 1;
 
   const providerEntry = providerStats.get(provider) ?? emptyProviderAccountStats(provider);
-  incrementProviderStats(providerEntry, disabled, highAvailable, quotaLow, accountInvalid, requestError);
+  incrementProviderStats(providerEntry, disabled, problem, highAvailable, quotaLow, accountInvalid, requestError);
   providerStats.set(provider, providerEntry);
+};
+
+export const buildAuthFileAccountStats = (
+  files: AuthFileItem[],
+  quotaStore: QuotaAccountStatsState,
+  usedPercentThreshold: number,
+  antigravityQuotaMode: AccountInspectionAntigravityQuotaMode
+): AuthFileAccountStats => {
+  const providerStats = new Map<string, ProviderAccountStats>();
+  const stats = createEmptyAuthFileAccountStats();
+  files.forEach((file) => {
+    accumulateAuthFileAccountStats(
+      stats,
+      providerStats,
+      file,
+      quotaStore,
+      usedPercentThreshold,
+      antigravityQuotaMode
+    );
+  });
+  return finalizeAuthFileAccountStats(stats, providerStats);
 };
 
 export type AuthFileAccountStatsJob = {

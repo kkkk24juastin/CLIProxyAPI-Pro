@@ -1019,23 +1019,28 @@ export function AccountInspectionPage() {
   const accountAssetCards = useMemo<SummaryCard[]>(() => [
     {
       key: 'total',
-      label: t('monitoring.account_inspection_account_total'),
+      label: t('auth_files.problem_filter_all'),
       value: authFileStatsReady ? String(selectedAssetStats.total) : '--',
       description: selectedAssetLabel,
     },
     {
       key: 'enabled',
-      label: t('monitoring.account_inspection_account_enabled'),
+      label: t('auth_files.problem_filter_enabled'),
       value: authFileStatsReady ? String(selectedAssetStats.enabled) : '--',
-      description: t('monitoring.account_inspection_inventory_health'),
-      tone: authFileStatsReady && selectedAssetStats.enabled > 0 ? 'good' : 'neutral',
+      description: t('monitoring.account_inspection_account_enabled_desc'),
     },
     {
       key: 'disabled',
-      label: t('monitoring.account_inspection_account_disabled'),
+      label: t('auth_files.problem_filter_disabled'),
       value: authFileStatsReady ? String(selectedAssetStats.disabled) : '--',
-      description: t('monitoring.account_inspection_blast_radius'),
-      tone: authFileStatsReady && selectedAssetStats.disabled > 0 ? 'warn' : 'neutral',
+      description: t('monitoring.account_inspection_account_disabled_desc'),
+    },
+    {
+      key: 'problem',
+      label: t('auth_files.problem_filter_problem'),
+      value: authFileStatsReady ? String(selectedAssetStats.problem) : '--',
+      description: t('monitoring.account_inspection_account_problem_desc'),
+      tone: authFileStatsReady && selectedAssetStats.problem > 0 ? 'bad' : 'neutral',
     },
   ], [authFileStatsReady, selectedAssetLabel, selectedAssetStats, t]);
 
