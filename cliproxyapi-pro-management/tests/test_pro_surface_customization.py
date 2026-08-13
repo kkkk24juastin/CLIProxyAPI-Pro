@@ -180,6 +180,23 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertNotIn('.priceServiceTierRow {', styles)
         self.assertGreaterEqual(responsive.count('grid-row: auto;'), 2)
 
+    def test_model_price_editor_prioritizes_status_and_expanded_price_sections(self) -> None:
+        prices = (
+            PRO_ROOT / 'modules/monitoring/features/components/ModelPriceManagerModal.tsx'
+        ).read_text()
+        styles = (
+            PRO_ROOT / 'modules/monitoring/features/styles/_management.scss'
+        ).read_text()
+        header_start = prices.index('<header className={styles.priceRuleEditorHeader}>')
+        header = prices[header_start:prices.index('</header>', header_start)]
+        self.assertNotIn('model_price_model_scope', header)
+        self.assertLess(header.index('priceRuleEditorBadges'), header.index('priceRuleEditorActions'))
+        self.assertEqual(prices.count('styles.priceAdvancedSection}`} open>'), 3)
+        actions_start = styles.index('.priceRuleEditorActions {')
+        actions = styles[actions_start:styles.index('}', actions_start)]
+        self.assertNotIn('grid-column: 1 / -1;', actions)
+        self.assertNotIn('border-top:', actions)
+
     def test_settings_surfaces_freeze_all_actions_while_busy(self) -> None:
         surface = SURFACE.read_text()
         self.assertGreaterEqual(surface.count('disabled={busy}'), 3)

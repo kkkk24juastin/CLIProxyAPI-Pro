@@ -327,13 +327,12 @@ export function ModelPriceManagerModal({
                     <header className={styles.priceRuleEditorHeader}>
                       <div>
                         <h3 title={selectedPriceTarget.model}>{selectedPriceTarget.model}</h3>
-                        <span>{t('usage_stats.model_price_model_scope')}</span>
-                      </div>
-                      <div className={styles.priceRuleEditorBadges}>
-                        <span className={selectedPriceTarget.rule ? styles.priceRuleConfigured : styles.priceRuleUnconfigured}>
-                          {t(selectedPriceTarget.rule ? 'usage_stats.model_price_configured' : 'usage_stats.model_price_unconfigured')}
-                        </span>
-                        {selectedPriceTarget.rule?.source ? <span>{selectedPriceTarget.rule.source}</span> : null}
+                        <div className={styles.priceRuleEditorBadges}>
+                          <span className={selectedPriceTarget.rule ? styles.priceRuleConfigured : styles.priceRuleUnconfigured}>
+                            {t(selectedPriceTarget.rule ? 'usage_stats.model_price_configured' : 'usage_stats.model_price_unconfigured')}
+                          </span>
+                          {selectedPriceTarget.rule?.source ? <span>{selectedPriceTarget.rule.source}</span> : null}
+                        </div>
                       </div>
                       <div className={styles.priceRuleEditorActions}>
                         <Button variant="secondary" size="sm" onClick={() => setPriceDraft(createPriceDraft(selectedPriceTarget.rule))}>
@@ -382,7 +381,7 @@ export function ModelPriceManagerModal({
                         </div>
                       </section>
 
-                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`}>
+                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`} open>
                         <summary className={styles.priceAdvancedSummary}>
                           <div>
                             <h4>{t('usage_stats.model_price_context_tier')}</h4>
@@ -445,7 +444,7 @@ export function ModelPriceManagerModal({
                         </div>
                       </details>
 
-                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`}>
+                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`} open>
                         <summary className={styles.priceAdvancedSummary}>
                           <div>
                             <h4>{t('usage_stats.model_price_service_tiers')}</h4>
@@ -512,7 +511,7 @@ export function ModelPriceManagerModal({
                         </div>
                       </details>
 
-                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`}>
+                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`} open>
                         <summary className={styles.priceAdvancedSummary}>
                           <div>
                             <h4>{t('usage_stats.model_price_speeds')}</h4>

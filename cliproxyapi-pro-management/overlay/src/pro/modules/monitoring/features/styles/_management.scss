@@ -498,7 +498,7 @@
 
 .priceRuleEditorHeader > div:first-child {
   display: grid;
-  gap: 3px;
+  gap: 7px;
   min-width: 0;
 }
 
@@ -514,7 +514,6 @@
   white-space: nowrap;
 }
 
-.priceRuleEditorHeader > div:first-child > span,
 .priceSyncHeader > div:first-child > div > span {
   color: var(--monitor-muted);
   font-size: 12px;
@@ -529,12 +528,9 @@
 
 .priceRuleEditorActions {
   display: flex;
-  grid-column: 1 / -1;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--monitor-line);
 }
 
 .priceRuleEditorBadges > span:not(.priceRuleConfigured):not(.priceRuleUnconfigured) {
