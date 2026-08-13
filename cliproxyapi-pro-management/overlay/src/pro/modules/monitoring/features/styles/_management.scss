@@ -533,6 +533,42 @@
   gap: 8px;
 }
 
+.priceRuleEditorActions :global(.btn) {
+  min-height: 38px;
+}
+
+.priceRuleEditorActions :global(.btn) > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: inherit;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.priceRuleRestoreButton:global(.btn-secondary) {
+  background: var(--monitor-surface-muted);
+}
+
+.priceRuleDeleteButton:global(.btn-secondary) {
+  border-color: color-mix(in srgb, var(--monitor-red) 24%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-red) 6%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--monitor-red) 84%, var(--monitor-ink));
+}
+
+.priceRuleDeleteButton:global(.btn-secondary):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--monitor-red) 42%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-red) 11%, var(--monitor-surface));
+  color: var(--monitor-red);
+}
+
+.priceRuleDeleteButton:global(.btn-secondary):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--monitor-red) 22%, transparent);
+  outline-offset: 2px;
+}
+
 .priceRuleEditorBadges > span:not(.priceRuleConfigured):not(.priceRuleUnconfigured) {
   display: inline-flex;
   align-items: center;
@@ -722,7 +758,10 @@
 }
 
 .priceRuleDeleteButton :global(svg) {
+  display: block;
   flex: 0 0 auto;
+  color: inherit;
+  stroke: currentColor;
 }
 
 .priceSyncView {

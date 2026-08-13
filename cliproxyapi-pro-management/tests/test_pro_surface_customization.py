@@ -191,6 +191,8 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         header = prices[header_start:prices.index('</header>', header_start)]
         self.assertNotIn('model_price_model_scope', header)
         self.assertLess(header.index('priceRuleEditorBadges'), header.index('priceRuleEditorActions'))
+        self.assertIn('className={styles.priceRuleRestoreButton}', header)
+        self.assertNotIn("<span>{t('common.delete')}</span>", header)
         self.assertNotIn('<details', prices)
         self.assertNotIn('model_price_advanced', prices)
         self.assertEqual(prices.count('styles.priceRuleCollectionSection'), 3)
@@ -220,10 +222,11 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         narrow = responsive[narrow_start:]
         self.assertIn('grid-template-columns: repeat(2, minmax(0, 1fr));', narrow)
         self.assertNotIn('grid-template-columns: 1fr;', narrow)
-        self.assertIn('flex-direction: row;', narrow)
         self.assertNotIn('flex-direction: column;', narrow)
         self.assertIn('min-height: 40px;', narrow)
-        self.assertIn('.priceRuleEditorActions .priceRuleDeleteButton:global(.btn)', narrow)
+        self.assertIn('.priceRuleEditorActions :global(.btn:only-child)', narrow)
+        self.assertNotIn('min-width: 76px;', narrow)
+        self.assertNotIn('flex: 1 1 auto;', narrow)
 
     def test_settings_surfaces_freeze_all_actions_while_busy(self) -> None:
         surface = SURFACE.read_text()

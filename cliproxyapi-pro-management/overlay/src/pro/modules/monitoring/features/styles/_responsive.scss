@@ -233,7 +233,8 @@
   }
 
   .priceRuleEditorActions {
-    flex-direction: row;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
     padding: 6px;
     border: 1px solid var(--monitor-line);
@@ -242,18 +243,14 @@
   }
 
   .priceRuleEditorActions :global(.btn) {
+    width: 100%;
     min-width: 0;
     min-height: 40px;
     padding-inline: 10px;
     font-size: 12px;
   }
 
-  .priceRuleEditorActions :global(.btn:first-child) {
-    flex: 1 1 auto;
-  }
-
-  .priceRuleEditorActions .priceRuleDeleteButton:global(.btn) {
-    flex: 0 0 auto;
-    min-width: 76px;
+  .priceRuleEditorActions :global(.btn:only-child) {
+    grid-column: 1 / -1;
   }
 }

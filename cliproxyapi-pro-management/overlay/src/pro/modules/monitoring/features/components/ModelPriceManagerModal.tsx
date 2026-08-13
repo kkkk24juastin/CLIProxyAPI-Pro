@@ -335,7 +335,12 @@ export function ModelPriceManagerModal({
                         </div>
                       </div>
                       <div className={styles.priceRuleEditorActions}>
-                        <Button variant="secondary" size="sm" onClick={() => setPriceDraft(createPriceDraft(selectedPriceTarget.rule))}>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className={styles.priceRuleRestoreButton}
+                          onClick={() => setPriceDraft(createPriceDraft(selectedPriceTarget.rule))}
+                        >
                           {t('usage_stats.model_price_reset_changes')}
                         </Button>
                         {selectedPriceTarget.rule ? (
@@ -346,7 +351,7 @@ export function ModelPriceManagerModal({
                             onClick={() => void handleDeletePrice(selectedPriceTarget.model)}
                           >
                             <IconTrash2 size={15} />
-                            <span>{t('common.delete')}</span>
+                            {t('common.delete')}
                           </Button>
                         ) : null}
                       </div>
