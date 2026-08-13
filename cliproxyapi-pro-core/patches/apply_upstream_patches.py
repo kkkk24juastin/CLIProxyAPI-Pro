@@ -973,6 +973,21 @@ insert_before(
     'func (s *Service) applyOAuthPolicy',
 )
 
+service_auth = ROOT / 'sdk/cliproxy/service_auth.go'
+replace_once(
+    service_auth,
+    '''\tGlobalModelRegistry().UnregisterClient(id)
+\ts.coreManager.Remove(ctx, id)
+''',
+    '''\tGlobalModelRegistry().UnregisterClient(id)
+\tif s.proApp != nil {
+\t\ts.proApp.ForgetAccountPolicy(id)
+\t}
+\ts.coreManager.Remove(ctx, id)
+''',
+    's.proApp.ForgetAccountPolicy(id)',
+)
+
 service_executors = ROOT / 'sdk/cliproxy/service_executors.go'
 replace_once(
     service_executors,

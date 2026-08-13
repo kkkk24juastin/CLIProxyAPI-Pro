@@ -64,17 +64,27 @@ func Parse(raw []byte) (Config, error) {
 			return Config{}, fmt.Errorf("resolve-timeout must be a positive duration")
 		}
 	}
+	seenProviders := make(map[string]string, len(decoded.Providers))
 	for rawProvider, provider := range decoded.Providers {
 		providerKey := normalizeKey(rawProvider)
 		if providerKey == "" {
 			continue
 		}
+		if previous, exists := seenProviders[providerKey]; exists {
+			return Config{}, fmt.Errorf("providers contains duplicate normalized key %q from %q and %q", providerKey, previous, rawProvider)
+		}
+		seenProviders[providerKey] = rawProvider
 		clean := Provider{Plans: map[string]Plan{}}
+		seenPlans := make(map[string]string, len(provider.Plans))
 		for rawPlan, plan := range provider.Plans {
 			planKey := normalizePlanKey(providerKey, rawPlan)
 			if planKey == "" {
 				continue
 			}
+			if previous, exists := seenPlans[planKey]; exists {
+				return Config{}, fmt.Errorf("providers.%s.plans contains duplicate normalized key %q from %q and %q", providerKey, planKey, previous, rawPlan)
+			}
+			seenPlans[planKey] = rawPlan
 			patterns := make([]string, 0, len(plan.ExcludedModels))
 			seen := map[string]struct{}{}
 			for _, pattern := range plan.ExcludedModels {

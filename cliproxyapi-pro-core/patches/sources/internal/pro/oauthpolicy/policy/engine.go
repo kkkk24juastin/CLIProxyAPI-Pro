@@ -84,20 +84,39 @@ type cacheEntry struct {
 }
 
 type Engine struct {
-	mu    sync.RWMutex
-	cfg   modelconfig.Config
-	cache map[string]cacheEntry
+	mu         sync.RWMutex
+	cfg        modelconfig.Config
+	cache      map[string]cacheEntry
+	authEpochs map[string]uint64
 }
 
 func New() *Engine {
 	cfg, _ := modelconfig.Parse(nil)
-	return &Engine{cfg: cfg, cache: make(map[string]cacheEntry)}
+	return &Engine{cfg: cfg, cache: make(map[string]cacheEntry), authEpochs: make(map[string]uint64)}
 }
 
 func (e *Engine) ApplyConfig(cfg modelconfig.Config) {
 	e.mu.Lock()
 	e.cfg = cfg
 	e.cache = make(map[string]cacheEntry)
+	e.authEpochs = make(map[string]uint64)
+	e.mu.Unlock()
+}
+
+// ForgetAuth drops cached plan state and prevents an in-flight lookup that
+// started before account removal from repopulating it.
+func (e *Engine) ForgetAuth(authID string) {
+	if e == nil || strings.TrimSpace(authID) == "" {
+		return
+	}
+	e.mu.Lock()
+	e.authEpochs[authID]++
+	suffix := "\x00" + authID
+	for key := range e.cache {
+		if strings.HasSuffix(key, suffix) {
+			delete(e.cache, key)
+		}
+	}
 	e.mu.Unlock()
 }
 
@@ -136,7 +155,7 @@ func (e *Engine) Filter(ctx context.Context, input Input) Result {
 }
 
 func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconfig.Config, input Input) (string, string, error) {
-	if plan := localPlan(provider, input); plan != "" {
+	if plan := localPlan(provider, input); plan != "" && plan != "unknown" {
 		return plan, "auth", nil
 	}
 	useCache := provider != "xai"
@@ -144,6 +163,7 @@ func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconf
 	cacheKey := provider + "\x00" + input.AuthID
 	e.mu.RLock()
 	cached, hasCache := e.cache[cacheKey]
+	authEpoch := e.authEpochs[input.AuthID]
 	e.mu.RUnlock()
 	if useCache && hasCache && now.Sub(cached.ObservedAt) <= cfg.CacheTTL {
 		return cached.Plan, "cache", nil
@@ -152,7 +172,9 @@ func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconf
 	if errResolve == nil && plan != "" {
 		if useCache {
 			e.mu.Lock()
-			e.cache[cacheKey] = cacheEntry{Plan: plan, ObservedAt: now}
+			if e.authEpochs[input.AuthID] == authEpoch {
+				e.cache[cacheKey] = cacheEntry{Plan: plan, ObservedAt: now}
+			}
 			e.mu.Unlock()
 		}
 		source := "provider-api"

@@ -7,6 +7,7 @@ import {
   normalizeOAuthPolicyConfig,
   oauthModelProviderDefinitions,
   oauthModelProviderDefinitionsForAuthProviders,
+  oauthPolicyConfiguredProviderKeys,
   oauthPolicyDurationValue,
   OAUTH_MODEL_PROVIDER_DEFINITIONS,
   planDefinitionsForProvider,
@@ -255,5 +256,27 @@ describe("oauth account policy service", () => {
     expect(countOAuthPolicyProvidersWithRules(config.providers)).toBe(2);
     config.providers.xai.plans.free.configured = false;
     expect(countOAuthPolicyProvidersWithRules(config.providers)).toBe(1);
+  });
+
+  it("retains configured providers when authentication-file discovery fails", () => {
+    const config = normalizeOAuthPolicyConfig({
+      providers: {
+        xai: { plans: { free: { "excluded-models": [] } } },
+        codex: { plans: {} },
+        "future-provider": {
+          plans: { enterprise: { "excluded-models": ["future-preview-*"] } },
+        },
+      },
+    });
+    const fallbackProviders = oauthPolicyConfiguredProviderKeys(
+      config.providers,
+    );
+    expect(fallbackProviders.sort()).toEqual(["future-provider", "xai"]);
+    expect(
+      oauthModelProviderDefinitionsForAuthProviders(
+        config.providers,
+        fallbackProviders,
+      ).map(({ key }) => key),
+    ).toEqual(["xai", "future-provider"]);
   });
 });

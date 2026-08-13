@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -265,6 +266,73 @@ providers:
 	})
 	if !result.Handled || result.Annotations["plan_key"] != "pro" || result.Annotations["plan_source"] != "provider-api" {
 		t.Fatalf("Filter() = %#v", result)
+	}
+}
+
+func TestFilterResolvesProviderPlanWhenLocalValueIsUnknown(t *testing.T) {
+	cfg, _ := modelconfig.Parse([]byte(`
+providers:
+  claude:
+    plans:
+      pro: {priority: 99}
+      _unknown: {priority: 1}
+`))
+	engine := New()
+	engine.ApplyConfig(cfg)
+	called := false
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "claude-unknown", AuthProvider: "claude", AuthKind: "oauth",
+		Attributes: map[string]string{"plan_type": "unknown"},
+		Metadata:   map[string]any{"access_token": "claude-token"},
+		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+			called = true
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"account":{"has_claude_pro":true}}`)}, nil
+		},
+	})
+	if !called || !result.Handled || result.Annotations["plan_key"] != "pro" || result.Priority == nil || *result.Priority != 99 {
+		t.Fatalf("Filter() = %#v, provider called = %t", result, called)
+	}
+}
+
+func TestForgetAuthDropsCacheAndRejectsInFlightCacheWrite(t *testing.T) {
+	cfg, _ := modelconfig.Parse([]byte(`
+providers:
+  claude:
+    plans:
+      pro: {priority: 99}
+      max: {priority: 55}
+`))
+	engine := New()
+	engine.ApplyConfig(cfg)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan Result, 1)
+	var calls atomic.Int32
+	input := Input{
+		AuthID: "removed", AuthProvider: "claude", AuthKind: "oauth",
+		Metadata: map[string]any{"access_token": "claude-token"},
+		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+			if calls.Add(1) == 1 {
+				close(started)
+				<-release
+				return HTTPResponse{StatusCode: 200, Body: []byte(`{"account":{"has_claude_pro":true}}`)}, nil
+			}
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"account":{"has_claude_max":true}}`)}, nil
+		},
+	}
+	go func() { finished <- engine.Filter(context.Background(), input) }()
+	<-started
+	engine.ForgetAuth(input.AuthID)
+	close(release)
+	if result := <-finished; !result.Handled || result.Annotations["plan_key"] != "pro" {
+		t.Fatalf("in-flight Filter() = %#v", result)
+	}
+	result := engine.Filter(context.Background(), input)
+	if !result.Handled || result.Annotations["plan_key"] != "max" {
+		t.Fatalf("Filter() after ForgetAuth = %#v", result)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("provider lookup calls = %d, want 2", got)
 	}
 }
 

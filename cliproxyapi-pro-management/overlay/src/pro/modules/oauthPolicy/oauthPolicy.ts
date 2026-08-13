@@ -180,6 +180,15 @@ export const countOAuthPolicyProvidersWithRules = (
     Object.values(provider.plans).some(({ configured }) => configured),
   ).length;
 
+export const oauthPolicyConfiguredProviderKeys = (
+  providers: OAuthPolicyConfig["providers"],
+): string[] =>
+  Object.entries(providers)
+    .filter(([, provider]) =>
+      Object.values(provider.plans).some(({ configured }) => configured),
+    )
+    .map(([key]) => key);
+
 export const resolveOAuthPolicyActiveProvider = (
   activeProvider: string,
   providers: OAuthPolicyConfig["providers"],

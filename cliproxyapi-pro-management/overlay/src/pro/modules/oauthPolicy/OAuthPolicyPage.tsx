@@ -30,6 +30,7 @@ import {
   isValidOAuthModelPattern,
   normalizeOAuthPolicyPrefix,
   normalizeOAuthModelPlanKey,
+  oauthPolicyConfiguredProviderKeys,
   oauthModelProviderDefinitionsForAuthProviders,
   oauthPolicyDurationValue,
   oauthPolicyApi,
@@ -189,7 +190,8 @@ export function OAuthPolicyPage() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const [authProviders, setAuthProviders] = useState<string[]>([]);
+  const [authProviders, setAuthProviders] = useState<string[] | null>(null);
+  const [authProviderError, setAuthProviderError] = useState("");
   const [activeProvider, setActiveProvider] = useState("xai");
   const [customPlan, setCustomPlan] = useState("");
   const [effectiveProvider, setEffectiveProvider] = useState("all");
@@ -210,16 +212,19 @@ export function OAuthPolicyPage() {
       }
       setLoading(true);
       try {
-        const [next, authFileResponse] = await Promise.all([
+        const [next, authFileResult] = await Promise.all([
           oauthPolicyApi.load(),
-          authFilesApi.list().catch(() => null),
+          authFilesApi
+            .list()
+            .then((response) => ({ response, error: "" }))
+            .catch((error) => ({ response: null, error: errorMessage(error) })),
         ]);
         setSnapshot(next);
-        if (authFileResponse) {
+        if (authFileResult.response) {
           const nextAuthProviders = Array.from(
             new Set(
-              (Array.isArray(authFileResponse.files)
-                ? authFileResponse.files
+              (Array.isArray(authFileResult.response.files)
+                ? authFileResult.response.files
                 : []
               )
                 .filter((file) => !isRuntimeOnlyAuthFile(file))
@@ -228,7 +233,10 @@ export function OAuthPolicyPage() {
             ),
           );
           setAuthProviders(nextAuthProviders);
+        } else {
+          setAuthProviders(null);
         }
+        setAuthProviderError(authFileResult.error);
         if (!dirtyRef.current || replaceDraft) setDraft(next.config);
         setLoadError("");
       } catch (error) {
@@ -317,7 +325,7 @@ export function OAuthPolicyPage() {
     () =>
       oauthModelProviderDefinitionsForAuthProviders(
         draft.providers,
-        authProviders,
+        authProviders ?? oauthPolicyConfiguredProviderKeys(draft.providers),
       ),
     [authProviders, draft.providers],
   );
@@ -539,6 +547,15 @@ export function OAuthPolicyPage() {
       />
 
       {loadError && <div className={styles.errorBanner}>{loadError}</div>}
+      {authProviderError && (
+        <div className={styles.warningBanner}>
+          {t("oauth_policy.auth_providers_load_failed", {
+            defaultValue:
+              "Authentication-file providers could not be refreshed: {{message}}. Existing configured providers remain available.",
+            message: authProviderError,
+          })}
+        </div>
+      )}
       {snapshot?.status.lastError && (
         <div className={styles.warningBanner}>{snapshot.status.lastError}</div>
       )}

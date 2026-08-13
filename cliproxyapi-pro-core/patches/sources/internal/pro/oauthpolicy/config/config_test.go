@@ -87,3 +87,22 @@ providers:
 		}
 	}
 }
+
+func TestParseRejectsDuplicateNormalizedKeys(t *testing.T) {
+	if _, err := Parse([]byte(`
+providers:
+  xai: {plans: {free: {excluded-models: [first-*]}}}
+  XAI: {plans: {free: {excluded-models: [second-*]}}}
+`)); err == nil {
+		t.Fatal("accepted duplicate normalized provider keys")
+	}
+	if _, err := Parse([]byte(`
+providers:
+  xai:
+    plans:
+      super-grok: {excluded-models: [first-*]}
+      supergrok: {excluded-models: [second-*]}
+`)); err == nil {
+		t.Fatal("accepted duplicate normalized plan keys")
+	}
+}

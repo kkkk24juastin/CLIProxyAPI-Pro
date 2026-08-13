@@ -27,6 +27,8 @@ type Service struct {
 	store      settings.Store
 	config     modelconfig.Config
 	engine     *modelengine.Engine
+	revision   uint64
+	authEpochs map[string]uint64
 	configErr  string
 	effective  map[string]modelengine.EffectivePolicy
 	decisions  map[string]modelengine.Result
@@ -48,15 +50,17 @@ func New(ctx context.Context, store settings.Store) (*Service, error) {
 	}
 	cfg, loadErr := loadConfig(ctx, store)
 	changeCtx, changeStop := context.WithCancel(context.Background())
+	engine := modelengine.New()
+	engine.ApplyConfig(cfg)
 	service := &Service{
-		store: store, config: cfg, engine: modelengine.New(),
+		store: store, config: cfg, engine: engine,
+		revision: 1, authEpochs: make(map[string]uint64),
 		effective: make(map[string]modelengine.EffectivePolicy), decisions: make(map[string]modelengine.Result),
 		changeCtx: changeCtx, changeStop: changeStop,
 	}
 	if loadErr != nil {
 		service.configErr = loadErr.Error()
 	}
-	service.engine.ApplyConfig(cfg)
 	service.unregister = store.Subscribe(settings.NamespaceOAuthPolicy, service.applyImportedSetting)
 	return service, nil
 }
@@ -167,11 +171,14 @@ func (s *Service) UpdateConfig(ctx context.Context, cfg modelconfig.Config) erro
 		s.mu.Unlock()
 		return err
 	}
+	engine := modelengine.New()
+	engine.ApplyConfig(normalized)
 	s.config = normalized
+	s.engine = engine
+	s.revision++
 	s.configErr = ""
 	s.effective = make(map[string]modelengine.EffectivePolicy)
 	s.decisions = make(map[string]modelengine.Result)
-	s.engine.ApplyConfig(normalized)
 	s.mu.Unlock()
 	s.queueChange()
 	return nil
@@ -190,11 +197,14 @@ func (s *Service) applyImportedSetting(_ context.Context, item settings.Item) er
 		s.mu.Unlock()
 		return fmt.Errorf("account policy service is closed")
 	}
+	engine := modelengine.New()
+	engine.ApplyConfig(cfg)
 	s.config = cfg
+	s.engine = engine
+	s.revision++
 	s.configErr = ""
 	s.effective = make(map[string]modelengine.EffectivePolicy)
 	s.decisions = make(map[string]modelengine.Result)
-	s.engine.ApplyConfig(cfg)
 	s.mu.Unlock()
 	s.queueChange()
 	return nil
@@ -257,30 +267,64 @@ func (s *Service) Filter(ctx context.Context, input modelengine.Input) modelengi
 	if s == nil {
 		return modelengine.Result{}
 	}
-	s.mu.RLock()
-	engine := s.engine
-	closed := s.closed
-	s.mu.RUnlock()
-	if closed || engine == nil {
-		return modelengine.Result{}
-	}
-	result := engine.Filter(ctx, input)
-	s.mu.Lock()
-	if result.Handled {
-		s.decisions[input.AuthID] = result
-		s.effective[input.AuthID] = modelengine.EffectivePolicy{
-			AuthID: input.AuthID, Provider: input.AuthProvider,
-			PlanKey: result.Annotations["plan_key"], PlanSource: result.Annotations["plan_source"],
-			MatchedRule: result.Annotations["matched_rule"], PlanError: result.Annotations["plan_error"],
-			Prefix: effectivePrefix(input, result), Priority: effectivePriority(input, result), Weight: effectiveWeight(input, result),
-			ExcludedCount: len(result.ExcludedModelIDs),
+	for {
+		s.mu.RLock()
+		engine := s.engine
+		closed := s.closed
+		revision := s.revision
+		authEpoch := s.authEpochs[input.AuthID]
+		s.mu.RUnlock()
+		if closed || engine == nil {
+			return modelengine.Result{}
 		}
-	} else {
-		delete(s.effective, input.AuthID)
-		delete(s.decisions, input.AuthID)
+		result := engine.Filter(ctx, input)
+		s.mu.Lock()
+		if s.closed || s.authEpochs[input.AuthID] != authEpoch {
+			s.mu.Unlock()
+			return modelengine.Result{}
+		}
+		if s.revision != revision {
+			s.mu.Unlock()
+			if ctx != nil && ctx.Err() != nil {
+				return modelengine.Result{}
+			}
+			continue
+		}
+		if result.Handled {
+			s.decisions[input.AuthID] = result
+			s.effective[input.AuthID] = modelengine.EffectivePolicy{
+				AuthID: input.AuthID, Provider: input.AuthProvider,
+				PlanKey: result.Annotations["plan_key"], PlanSource: result.Annotations["plan_source"],
+				MatchedRule: result.Annotations["matched_rule"], PlanError: result.Annotations["plan_error"],
+				Prefix: effectivePrefix(input, result), Priority: effectivePriority(input, result), Weight: effectiveWeight(input, result),
+				ExcludedCount: len(result.ExcludedModelIDs),
+			}
+		} else {
+			delete(s.effective, input.AuthID)
+			delete(s.decisions, input.AuthID)
+		}
+		s.mu.Unlock()
+		return result
+	}
+}
+
+// ForgetAuth removes runtime-only policy state for an authentication account.
+// Advancing the account epoch also prevents a provider lookup that started
+// before deletion from restoring the removed decision after it completes.
+func (s *Service) ForgetAuth(authID string) {
+	if s == nil || strings.TrimSpace(authID) == "" {
+		return
+	}
+	s.mu.Lock()
+	if !s.closed {
+		s.authEpochs[authID]++
+		if s.engine != nil {
+			s.engine.ForgetAuth(authID)
+		}
+		delete(s.effective, authID)
+		delete(s.decisions, authID)
 	}
 	s.mu.Unlock()
-	return result
 }
 
 func effectivePrefix(input modelengine.Input, result modelengine.Result) string {

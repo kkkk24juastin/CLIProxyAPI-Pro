@@ -95,4 +95,11 @@ func TestBuiltInOAuthPolicyConstrainsRegistrationAndSelection(t *testing.T) {
 	if err != nil || selected == nil || selected.ID != superGrokAuth.ID {
 		t.Fatalf("selected auth = %#v, %v; want %s", selected, err, superGrokAuth.ID)
 	}
+	if _, found := runtime.OAuthPolicy().EffectivePolicy(freeAuth.ID); !found {
+		t.Fatal("free auth account policy was not recorded before removal")
+	}
+	service.applyCoreAuthRemoval(ctx, freeAuth.ID)
+	if _, found := runtime.OAuthPolicy().EffectivePolicy(freeAuth.ID); found {
+		t.Fatal("removed auth retained its effective account policy")
+	}
 }

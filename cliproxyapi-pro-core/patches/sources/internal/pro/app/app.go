@@ -185,3 +185,9 @@ func (a *App) ApplyCachedAccountPolicy(auth *coreauth.Auth) *coreauth.Auth {
 	}
 	return host.ApplyCachedAccountPolicy(auth, a.oauthPolicy)
 }
+
+func (a *App) ForgetAccountPolicy(authID string) {
+	if a != nil && a.oauthPolicy != nil {
+		a.oauthPolicy.ForgetAuth(authID)
+	}
+}

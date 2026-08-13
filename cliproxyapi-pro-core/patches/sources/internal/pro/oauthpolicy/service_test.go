@@ -10,6 +10,7 @@ import (
 	"time"
 
 	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
+	modelengine "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/policy"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/settings"
 )
 
@@ -158,5 +159,87 @@ func TestUpdateConfigCoalescesConcurrentAccountRefreshes(t *testing.T) {
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("account refresh calls = %d, want 2", got)
+	}
+}
+
+func TestFilterRetriesWithLatestConfigAfterConcurrentUpdate(t *testing.T) {
+	store := &memorySettingsStore{items: map[string]settings.Item{}}
+	service, err := New(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	enabled, _ := modelconfig.Parse([]byte(`{"enabled":true,"providers":{"claude":{"plans":{"pro":{"priority":99}}}}}`))
+	if err = service.UpdateConfig(context.Background(), enabled); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan modelengine.Result, 1)
+	var calls atomic.Int32
+	storage, _ := json.Marshal(map[string]any{"access_token": "token"})
+	go func() {
+		finished <- service.Filter(context.Background(), modelengine.Input{
+			AuthID: "claude-1", AuthProvider: "claude", AuthKind: "oauth", StorageJSON: storage,
+			HTTPDo: func(context.Context, modelengine.HTTPRequest) (modelengine.HTTPResponse, error) {
+				if calls.Add(1) == 1 {
+					close(started)
+					<-release
+					return modelengine.HTTPResponse{StatusCode: 200, Body: []byte(`{"account":{"has_claude_pro":true}}`)}, nil
+				}
+				return modelengine.HTTPResponse{StatusCode: 200, Body: []byte(`{"account":{"has_claude_max":true}}`)}, nil
+			},
+		})
+	}()
+	<-started
+	latest, _ := modelconfig.Parse([]byte(`{"enabled":true,"providers":{"claude":{"plans":{"max":{"priority":55}}}}}`))
+	if err = service.UpdateConfig(context.Background(), latest); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if result := <-finished; !result.Handled || result.Annotations["plan_key"] != "max" || result.Priority == nil || *result.Priority != 55 {
+		t.Fatalf("Filter() did not use latest config and probe result: %#v", result)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("provider lookup calls = %d, want 2", got)
+	}
+	if result, found := service.EffectivePolicy("claude-1"); !found || result.Annotations["plan_key"] != "max" {
+		t.Fatalf("effective policy = %#v, found = %t", result, found)
+	}
+}
+
+func TestForgetAuthClearsStateAndRejectsInFlightResult(t *testing.T) {
+	store := &memorySettingsStore{items: map[string]settings.Item{}}
+	service, err := New(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	cfg, _ := modelconfig.Parse([]byte(`{"enabled":true,"providers":{"claude":{"plans":{"pro":{"priority":99}}}}}`))
+	if err = service.UpdateConfig(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan modelengine.Result, 1)
+	go func() {
+		finished <- service.Filter(context.Background(), modelengine.Input{
+			AuthID: "removed", AuthProvider: "claude", AuthKind: "oauth",
+			Metadata: map[string]any{"access_token": "token"},
+			HTTPDo: func(context.Context, modelengine.HTTPRequest) (modelengine.HTTPResponse, error) {
+				close(started)
+				<-release
+				return modelengine.HTTPResponse{StatusCode: 200, Body: []byte(`{"account":{"has_claude_pro":true}}`)}, nil
+			},
+		})
+	}()
+	<-started
+	service.ForgetAuth("removed")
+	close(release)
+	if result := <-finished; result.Handled {
+		t.Fatalf("removed auth retained in-flight result: %#v", result)
+	}
+	if _, found := service.EffectivePolicy("removed"); found {
+		t.Fatal("removed auth retained effective policy")
 	}
 }
