@@ -25,11 +25,12 @@ export function ProxyPoolTakeoverDialog({
 }: ProxyPoolTakeoverDialogProps) {
   const { t } = useTranslation();
   const activating = !snapshot.takeoverActive;
-  const readyNodes =
-    snapshot.status?.eligibleNodes ??
-    snapshot.status?.healthyNodes ??
-    draft.nodes.filter((node) => node.enabled).length;
-  const endpoint = resolveProxyPoolEndpoint(snapshot.status?.proxyUrl, draft.listen);
+  const readyNodes = activating
+    ? draft.nodes.filter((node) => node.enabled).length
+    : (snapshot.status?.eligibleNodes ?? snapshot.status?.healthyNodes ?? 0);
+  const endpoint = activating
+    ? `socks5://${draft.listen.trim()}`
+    : resolveProxyPoolEndpoint(snapshot.status?.proxyUrl, snapshot.config.listen);
 
   return (
     <ProTaskDialog
@@ -67,18 +68,32 @@ export function ProxyPoolTakeoverDialog({
       </p>
       <dl className={styles.takeoverChecklist}>
         <div>
-          <dt>{t('proxy_pool.listener_ready', { defaultValue: 'Runtime ready' })}</dt>
+          <dt>
+            {t('proxy_pool.current_runtime', { defaultValue: 'Current runtime ready' })}
+          </dt>
           <dd className={snapshot.status?.ready ? styles.checkGood : styles.checkBad}>
             {snapshot.status?.ready ? <IconCheckCircle2 size={16} /> : <IconAlertTriangle size={16} />}
             {snapshot.status?.ready ? t('common.yes') : t('common.no')}
           </dd>
         </div>
         <div>
-          <dt>{t('proxy_pool.available_nodes', { defaultValue: 'Available nodes' })}</dt>
+          <dt>
+            {activating
+              ? t('proxy_pool.pending_enabled_nodes', {
+                  defaultValue: 'Enabled nodes to apply',
+                })
+              : t('proxy_pool.available_nodes', { defaultValue: 'Available nodes' })}
+          </dt>
           <dd className={readyNodes > 0 ? styles.checkGood : styles.checkBad}>{readyNodes}</dd>
         </div>
         <div>
-          <dt>{t('proxy_pool.internal_endpoint', { defaultValue: 'Internal endpoint' })}</dt>
+          <dt>
+            {activating
+              ? t('proxy_pool.pending_internal_endpoint', {
+                  defaultValue: 'Internal endpoint to apply',
+                })
+              : t('proxy_pool.internal_endpoint', { defaultValue: 'Internal endpoint' })}
+          </dt>
           <dd>
             <code>{endpoint}</code>
           </dd>

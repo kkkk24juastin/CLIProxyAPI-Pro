@@ -186,6 +186,9 @@
       "stop_confirm_title": "Stop global proxy takeover?",
       "stop_confirm_body": "Core traffic will return to the configured global proxy without changing config.yaml.",
       "internal_endpoint": "Internal endpoint",
+      "current_runtime": "Current runtime ready",
+      "pending_enabled_nodes": "Enabled nodes to apply",
+      "pending_internal_endpoint": "Internal endpoint to apply",
       "current_global_proxy": "Current global proxy",
       "bypass_credentials_count": "Credentials bypassing pool",
       "none": "None",
@@ -1501,7 +1504,10 @@
     "proxy_pool": {
       "start_takeover": "Включить перехват",
       "stop_takeover": "Остановить перехват",
-      "discard_changes": "Отменить изменения"
+      "discard_changes": "Отменить изменения",
+      "current_runtime": "Текущая среда выполнения готова",
+      "pending_enabled_nodes": "Включенные узлы для применения",
+      "pending_internal_endpoint": "Внутренняя точка подключения для применения"
     },
     "oauth_policy": {
       "enable": "Включить политику аккаунтов",
@@ -2830,6 +2836,9 @@
       "stop_confirm_title": "停止全局代理接管？",
       "stop_confirm_body": "Core 流量将恢复使用已配置的全局代理，不会修改 config.yaml。",
       "internal_endpoint": "内部入口",
+      "current_runtime": "当前运行态已就绪",
+      "pending_enabled_nodes": "即将应用的启用节点",
+      "pending_internal_endpoint": "即将应用的内部入口",
       "current_global_proxy": "当前全局代理",
       "bypass_credentials_count": "绕过代理池的凭证",
       "none": "无",
@@ -4317,6 +4326,9 @@
       "stop_confirm_title": "停止全域代理接管？",
       "stop_confirm_body": "Core 流量將恢復使用已設定的全域代理，不會修改 config.yaml。",
       "internal_endpoint": "內部入口",
+      "current_runtime": "目前執行狀態已就緒",
+      "pending_enabled_nodes": "即將套用的啟用節點",
+      "pending_internal_endpoint": "即將套用的內部入口",
       "current_global_proxy": "目前全域代理",
       "bypass_credentials_count": "略過代理池的憑證",
       "none": "無",

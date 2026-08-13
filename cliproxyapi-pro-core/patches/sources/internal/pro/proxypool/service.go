@@ -152,9 +152,13 @@ func (s *Service) UpdateConfig(ctx context.Context, cfg proxyconfig.Config) erro
 				s.engine = proxyengine.New()
 			}
 			if err := s.engine.ApplyConfig(cfg); err != nil {
-				_ = store.Put(context.Background(), settings.Item{
+				rollbackErr := store.Put(context.Background(), settings.Item{
 					Namespace: settings.NamespaceProxyPool, SchemaVersion: settings.SchemaVersionOne, Settings: oldRaw,
 				})
+				if rollbackErr != nil {
+					s.configErr = fmt.Sprintf("%v (persisted configuration rollback failed: %v)", err, rollbackErr)
+					return fmt.Errorf("apply proxy pool config: %w (persisted configuration rollback failed: %v)", err, rollbackErr)
+				}
 				s.configErr = err.Error()
 				return err
 			}
@@ -244,7 +248,7 @@ func (s *Service) Status() proxyengine.Status {
 	if status.Strategy == "" {
 		status.Strategy = cfg.Strategy
 	}
-	if status.LastError == "" {
+	if configErr != "" {
 		status.LastError = configErr
 	}
 	return status

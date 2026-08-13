@@ -149,6 +149,7 @@ export function ProxyPoolPage() {
   const [recoveringNode, setRecoveringNode] = useState('');
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(false);
+  const draftRevisionRef = useRef(0);
   const mountedRef = useRef(true);
   const automaticLocationAttemptsRef = useRef(new Set<string>());
   const [loadError, setLoadError] = useState('');
@@ -188,19 +189,28 @@ export function ProxyPoolPage() {
   }, [activeSurface, closeSurface, openSurface]);
 
   const load = useCallback(
-    async (silent = false, replaceDraft = false) => {
+    async (silent = false, replaceDraftRevision?: number): Promise<boolean> => {
       if (connectionStatus !== 'connected') {
         setLoading(false);
-        return;
+        return false;
       }
       if (!silent) setLoading(true);
       try {
         const next = await proxyPoolApi.load();
         setSnapshot(next);
-        if (!dirtyRef.current || replaceDraft) setDraft(next.config);
+        const canReplaceSavedDraft =
+          replaceDraftRevision !== undefined &&
+          draftRevisionRef.current === replaceDraftRevision;
+        if (!dirtyRef.current || canReplaceSavedDraft) setDraft(next.config);
+        if (canReplaceSavedDraft) {
+          setDirty(false);
+          dirtyRef.current = false;
+        }
         setLoadError('');
+        return canReplaceSavedDraft;
       } catch (error) {
         setLoadError(errorMessage(error));
+        return false;
       } finally {
         if (!silent) setLoading(false);
       }
@@ -303,6 +313,7 @@ export function ProxyPoolPage() {
   const updateDraft = useCallback(
     (next: ProxyPoolConfig | ((current: ProxyPoolConfig) => ProxyPoolConfig)) => {
       setDraft((current) => (typeof next === 'function' ? next(current) : next));
+      draftRevisionRef.current += 1;
       setDirty(true);
       dirtyRef.current = true;
     },
@@ -317,21 +328,25 @@ export function ProxyPoolPage() {
   };
 
   const save = async (): Promise<boolean> => {
-    const validation = validateProxyPoolConfig(draft);
+    const configToSave = draft;
+    const savedRevision = draftRevisionRef.current;
+    const validation = validateProxyPoolConfig(configToSave);
     if (validation) {
       notifyValidation(validation);
       return false;
     }
     setSaving(true);
     try {
-      await proxyPoolApi.save(draft);
-      setDirty(false);
-      dirtyRef.current = false;
+      await proxyPoolApi.save(configToSave);
+      if (draftRevisionRef.current === savedRevision) {
+        setDirty(false);
+        dirtyRef.current = false;
+      }
       showNotification(
         t('proxy_pool.save_success', { defaultValue: 'Proxy pool saved' }),
         'success'
       );
-      await load(true, true);
+      await load(true, savedRevision);
       return true;
     } catch (error) {
       showNotification(
@@ -347,7 +362,9 @@ export function ProxyPoolPage() {
   const confirmTakeover = async () => {
     if (!snapshot) return;
     const activating = !snapshot.takeoverActive;
-    const validation = validateProxyPoolConfig(draft);
+    const configToApply = draft;
+    const savedRevision = draftRevisionRef.current;
+    const validation = validateProxyPoolConfig(configToApply);
     if (activating && validation) {
       notifyValidation(validation);
       setTakeoverOpen(false);
@@ -356,17 +373,20 @@ export function ProxyPoolPage() {
     setSaving(true);
     try {
       if (activating) {
-        const activationDraft = { ...draft, enabled: true, takeoverEnabled: true };
+        const activationDraft = { ...configToApply, enabled: true, takeoverEnabled: true };
         await proxyPoolApi.activate(activationDraft);
-        setDraft(activationDraft);
       } else {
-        await proxyPoolApi.deactivate(draft);
-        setDraft({ ...draft, takeoverEnabled: false });
+        await proxyPoolApi.deactivate(configToApply);
       }
-      setDirty(false);
-      dirtyRef.current = false;
+      if (draftRevisionRef.current === savedRevision) {
+        setDirty(false);
+        dirtyRef.current = false;
+      }
       setTakeoverOpen(false);
-      await load(true, true);
+      const replacedDraft = await load(true, savedRevision);
+      if (!replacedDraft) {
+        setDraft((current) => ({ ...current, takeoverEnabled: activating }));
+      }
       showNotification(
         activating
           ? t('proxy_pool.takeover_enabled', { defaultValue: 'Global proxy takeover enabled' })
@@ -550,6 +570,7 @@ export function ProxyPoolPage() {
   const discard = () => {
     if (!snapshot) return;
     setDraft(snapshot.config);
+    draftRevisionRef.current += 1;
     setDirty(false);
     dirtyRef.current = false;
     setSelected(new Set());

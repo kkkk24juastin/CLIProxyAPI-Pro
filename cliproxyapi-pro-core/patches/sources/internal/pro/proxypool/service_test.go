@@ -3,6 +3,9 @@ package proxypool
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -47,6 +50,19 @@ type coordinatedServiceTestStore struct {
 	writeGate sync.RWMutex
 	entered   chan struct{}
 	once      sync.Once
+}
+
+type rollbackFailServiceTestStore struct {
+	*serviceTestStore
+	puts int
+}
+
+func (s *rollbackFailServiceTestStore) Put(ctx context.Context, item settings.Item) error {
+	s.puts++
+	if s.puts == 2 {
+		return errors.New("forced persisted rollback failure")
+	}
+	return s.serviceTestStore.Put(ctx, item)
 }
 
 func (s *coordinatedServiceTestStore) ExecuteWrite(
@@ -97,5 +113,32 @@ func TestDisabledServiceStatusUsesConfiguredEndpoint(t *testing.T) {
 	if status.Ready || status.Listen != proxyconfig.DefaultListenAddress ||
 		status.ProxyURL != "socks5://"+proxyconfig.DefaultListenAddress || status.Strategy != "round-robin" {
 		t.Fatalf("Status() = %+v", status)
+	}
+}
+
+func TestUpdateConfigReportsPersistedRollbackFailure(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	store := &rollbackFailServiceTestStore{
+		serviceTestStore: &serviceTestStore{items: map[string]settings.Item{}},
+	}
+	service, err := New(context.Background(), store, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	cfg := proxyconfig.Default()
+	cfg.Enabled = true
+	cfg.Listen = listener.Addr().String()
+	err = service.UpdateConfig(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "persisted configuration rollback failed") ||
+		!strings.Contains(err.Error(), "forced persisted rollback failure") {
+		t.Fatalf("UpdateConfig() error = %v", err)
+	}
+	if status := service.Status(); !strings.Contains(status.LastError, "persisted configuration rollback failed") {
+		t.Fatalf("Status().LastError = %q", status.LastError)
 	}
 }

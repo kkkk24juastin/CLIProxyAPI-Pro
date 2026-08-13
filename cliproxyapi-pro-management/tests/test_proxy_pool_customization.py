@@ -40,7 +40,7 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('@/pro/shared/FloatingActionBar.module.scss', features)
         self.assertIn('proxy_pool.load_unavailable', source)
         self.assertIn('actionDisabled={!snapshot}', features)
-        self.assertIn('await load(true, true)', source)
+        self.assertIn('await load(true, savedRevision)', source)
         self.assertIn('key={key}', features)
         self.assertIn('proxy_pool.discard_changes', features)
 
@@ -111,6 +111,22 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
             'ProxyPoolTakeoverDialog.tsx',
         ):
             self.assertIn('resolveProxyPoolEndpoint(', (FEATURE_DIR / name).read_text())
+
+    def test_save_preserves_edits_made_while_request_is_in_flight(self) -> None:
+        source = PAGE.read_text()
+        self.assertIn('const draftRevisionRef = useRef(0)', source)
+        self.assertIn('draftRevisionRef.current += 1', source)
+        self.assertIn('draftRevisionRef.current === replaceDraftRevision', source)
+        self.assertIn('await load(true, savedRevision)', source)
+        self.assertNotIn('await load(true, true)', source)
+
+    def test_takeover_confirmation_previews_the_draft_being_applied(self) -> None:
+        source = (FEATURE_DIR / 'ProxyPoolTakeoverDialog.tsx').read_text()
+        self.assertIn('draft.nodes.filter((node) => node.enabled).length', source)
+        self.assertIn('`socks5://${draft.listen.trim()}`', source)
+        self.assertIn('proxy_pool.current_runtime', source)
+        self.assertIn('proxy_pool.pending_enabled_nodes', source)
+        self.assertIn('proxy_pool.pending_internal_endpoint', source)
 
     def test_proxy_pool_locales_cover_page_keys(self) -> None:
         locales = json.loads(LOCALES.read_text())
