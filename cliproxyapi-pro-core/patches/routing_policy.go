@@ -203,34 +203,42 @@ func (c *routingPolicyController) HandleUsage(ctx context.Context, record coreus
 		return
 	}
 	provider := strings.ToLower(strings.TrimSpace(record.Provider))
-	policyConfig := c.requestProtectionConfig()
+	c.configMu.RLock()
+	policyConfig := normalizeRoutingRequestProtectionConfig(c.requestProtection)
 	policy, ok := policyConfig.Providers[provider]
 	if !policyConfig.Enabled || !ok || !policy.Enabled {
+		c.configMu.RUnlock()
 		return
 	}
 	auth := c.authForRecord(record)
 	if auth == nil {
+		c.configMu.RUnlock()
 		return
 	}
 	if !record.Failed {
 		c.clearConfirmations(auth.ID, provider)
+		c.configMu.RUnlock()
 		return
 	}
 	statusCode := record.Fail.StatusCode
 	if statusCode <= 0 || !routingProtectionStatusMatches(policy.StatusCodes, statusCode) {
 		c.clearConfirmations(auth.ID, provider)
+		c.configMu.RUnlock()
 		return
 	}
 	if statusCode == http.StatusTooManyRequests && policy.RequireQuotaEvidence && !routingProtectionHasQuotaEvidence(record) {
 		c.clearConfirmations(auth.ID, provider)
+		c.configMu.RUnlock()
 		return
 	}
 	if auth.Disabled && !routingProtectionOwned(auth) {
+		c.configMu.RUnlock()
 		return
 	}
 
 	now := time.Now()
 	confirmed, count, required := c.confirm(auth.ID, provider, statusCode, policy, now)
+	c.configMu.RUnlock()
 	releaseAt := routingProtectionReleaseAt(record, policy, now)
 	mode := normalizeRoutingProtectionMode(policyConfig.Mode)
 	event := routingProtectionEvent{
@@ -259,11 +267,19 @@ func (c *routingPolicyController) HandleUsage(ctx context.Context, record coreus
 		c.appendEvent(event)
 		return
 	}
-	if err := c.disableAuth(ctx, auth, event); err != nil {
+	disabled, err := c.disableAuth(ctx, auth, event)
+	if err != nil {
 		event.Action = "error"
 		event.Reason = err.Error()
 		c.appendEvent(event)
 		log.WithError(err).WithFields(log.Fields{"provider": provider, "auth_index": auth.Index, "status": statusCode}).Warn("routing request protection failed to disable auth")
+		return
+	}
+	if !disabled {
+		event.Action = "skipped"
+		event.Reason = "auth state changed before routing request protection could disable it"
+		c.clearConfirmations(auth.ID, provider)
+		c.appendEvent(event)
 		return
 	}
 	event.Action = "disabled"
@@ -287,6 +303,7 @@ func (c *routingPolicyController) setRequestProtectionConfig(value routingReques
 	}
 	c.configMu.Lock()
 	c.requestProtection = normalizeRoutingRequestProtectionConfig(value)
+	c.confirmations.Reset()
 	c.configMu.Unlock()
 }
 
@@ -333,11 +350,12 @@ func (c *routingPolicyController) clearConfirmations(authID, provider string) {
 	}
 }
 
-func (c *routingPolicyController) disableAuth(ctx context.Context, auth *coreauth.Auth, event routingProtectionEvent) error {
+func (c *routingPolicyController) disableAuth(ctx context.Context, auth *coreauth.Auth, event routingProtectionEvent) (bool, error) {
 	if auth == nil {
-		return fmt.Errorf("auth not found")
+		return false, fmt.Errorf("auth not found")
 	}
-	return c.h.updateProAuth(ctx, auth.Index, func(updated *coreauth.Auth) {
+	mutated := false
+	err := c.h.updateProAuth(ctx, auth.Index, func(updated *coreauth.Auth) {
 		if updated == nil || (updated.Disabled && !routingProtectionOwned(updated)) {
 			return
 		}
@@ -354,20 +372,25 @@ func (c *routingPolicyController) disableAuth(ctx context.Context, auth *coreaut
 			"triggered_at": event.TriggeredAt,
 			"release_at":   event.ReleaseAt,
 		}
+		mutated = true
 	})
+	return mutated, err
 }
 
-func (c *routingPolicyController) releaseAuth(ctx context.Context, auth *coreauth.Auth) error {
+func (c *routingPolicyController) releaseAuth(ctx context.Context, auth *coreauth.Auth) (bool, error) {
 	if auth == nil {
-		return fmt.Errorf("auth not found")
+		return false, fmt.Errorf("auth not found")
 	}
-	return c.h.updateProAuth(ctx, auth.Index, func(updated *coreauth.Auth) {
+	mutated := false
+	err := c.h.updateProAuth(ctx, auth.Index, func(updated *coreauth.Auth) {
 		if updated == nil || !routingProtectionOwned(updated) {
 			return
 		}
 		setProAuthDisabledState(updated, false)
 		clearRoutingProtectionOwnership(updated)
+		mutated = true
 	})
+	return mutated, err
 }
 
 func (c *routingPolicyController) reconcileLoop(ctx context.Context) {
@@ -405,8 +428,12 @@ func (c *routingPolicyController) reconcile(now time.Time) {
 		if releaseAt <= 0 || now.UnixMilli() < releaseAt {
 			continue
 		}
-		if err := c.releaseAuth(context.Background(), auth); err != nil {
+		released, err := c.releaseAuth(context.Background(), auth)
+		if err != nil {
 			log.WithError(err).WithField("auth_index", auth.Index).Warn("routing request protection failed to auto-enable auth")
+			continue
+		}
+		if !released {
 			continue
 		}
 		c.appendEvent(routingProtectionEvent{
@@ -683,8 +710,13 @@ func (h *Handler) ReleaseRoutingProtectedAuth(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "auth is not managed by routing request protection"})
 		return
 	}
-	if err := controller.releaseAuth(c.Request.Context(), auth); err != nil {
+	released, err := controller.releaseAuth(c.Request.Context(), auth)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if !released {
+		c.JSON(http.StatusConflict, gin.H{"error": "auth is no longer managed by routing request protection"})
 		return
 	}
 	c.JSON(http.StatusOK, h.routingPolicyResponse())

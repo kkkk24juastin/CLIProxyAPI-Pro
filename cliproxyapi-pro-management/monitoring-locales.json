@@ -1484,6 +1484,7 @@
         "pending": "Pending",
         "observe": "Observed",
         "disabled": "Disabled",
+        "skipped": "Skipped",
         "released": "Released",
         "error": "Error"
       }
@@ -2644,6 +2645,7 @@
         "pending": "Ожидание",
         "observe": "Наблюдение",
         "disabled": "Отключён",
+        "skipped": "Пропущено",
         "released": "Освобождён",
         "error": "Ошибка"
       }
@@ -4134,6 +4136,7 @@
         "pending": "待确认",
         "observe": "已观察",
         "disabled": "已禁用",
+        "skipped": "已跳过",
         "released": "已解除",
         "error": "执行失败"
       }
@@ -5624,6 +5627,7 @@
         "pending": "待確認",
         "observe": "已觀察",
         "disabled": "已停用",
+        "skipped": "已略過",
         "released": "已解除",
         "error": "執行失敗"
       }

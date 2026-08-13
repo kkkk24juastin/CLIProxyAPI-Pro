@@ -101,6 +101,92 @@ func TestRoutingProtectionNonMatchingFailureBreaksConfirmationSequence(t *testin
 	}
 }
 
+func TestRoutingProtectionConfigChangeResetsConfirmationSequence(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "config-reset-auth", Provider: "xai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := routingProtectionProviderPolicy{
+		Enabled: true, StatusCodes: []int{429}, Confirmations: 2, ConfirmationWindowSeconds: 600,
+	}
+	controller := &routingPolicyController{
+		h:             &Handler{authManager: manager},
+		confirmations: prorouting.NewConfirmationTracker(),
+		requestProtection: routingRequestProtectionConfig{
+			Enabled: true,
+			Mode:    routingProtectionModeObserve,
+			Providers: map[string]routingProtectionProviderPolicy{
+				"xai": policy,
+			},
+		},
+	}
+	failure := coreusage.Record{
+		Provider: "xai", AuthID: auth.ID, Failed: true,
+		Fail: coreusage.Failure{StatusCode: http.StatusTooManyRequests},
+	}
+	controller.HandleUsage(context.Background(), failure)
+	controller.setRequestProtectionConfig(routingRequestProtectionConfig{Enabled: false})
+	controller.setRequestProtectionConfig(routingRequestProtectionConfig{
+		Enabled: true,
+		Mode:    routingProtectionModeObserve,
+		Providers: map[string]routingProtectionProviderPolicy{
+			"xai": policy,
+		},
+	})
+	controller.HandleUsage(context.Background(), failure)
+	events := controller.recentEvents()
+	if len(events) != 2 || events[0].Action != "pending" || events[0].Count != 1 {
+		t.Fatalf("events = %#v, want a new 1/2 confirmation after the config change", events)
+	}
+}
+
+func TestRoutingProtectionSkippedDisableReportsActualOutcome(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "skipped-disable-auth", Provider: "xai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyAuthDisabledState(auth, true)
+	if _, err = manager.Update(context.Background(), auth); err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{h: &Handler{authManager: manager}}
+	disabled, err := controller.disableAuth(context.Background(), auth, routingProtectionEvent{
+		Provider: "xai", StatusCode: http.StatusTooManyRequests,
+	})
+	if err != nil {
+		t.Fatalf("disable auth: %v", err)
+	}
+	if disabled {
+		t.Fatal("routing protection reported a mutation after inspection/manual ownership took priority")
+	}
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil || !updated.Disabled || routingProtectionOwned(updated) {
+		t.Fatalf("unexpected auth state after skipped disable: %#v", updated)
+	}
+}
+
+func TestRoutingProtectionSkippedReleaseReportsActualOutcome(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "skipped-release-auth", Provider: "xai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyAuthDisabledState(auth, true)
+	if _, err = manager.Update(context.Background(), auth); err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{h: &Handler{authManager: manager}}
+	released, err := controller.releaseAuth(context.Background(), auth)
+	if err != nil {
+		t.Fatalf("release auth: %v", err)
+	}
+	if released {
+		t.Fatal("routing protection reported a release after ownership was lost")
+	}
+}
+
 func TestConcurrentRoutingPolicySavesApplyLatestStoredValue(t *testing.T) {
 	oldSetAndApply := setAndApplyLatestRoutingPolicyProSetting
 	defer func() { setAndApplyLatestRoutingPolicyProSetting = oldSetAndApply }()
@@ -378,6 +464,45 @@ func TestRoutingProtectionReasonPreservesCompleteBody(t *testing.T) {
 	}
 }
 
+func TestRoutingProtectionRedactsReasonBeforeEventAndAuthPersistence(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "redacted-reason-auth", Provider: "xai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{
+		h:             &Handler{authManager: manager},
+		confirmations: prorouting.NewConfirmationTracker(),
+		requestProtection: routingRequestProtectionConfig{
+			Enabled: true,
+			Mode:    routingProtectionModeEnforce,
+			Providers: map[string]routingProtectionProviderPolicy{
+				"xai": {Enabled: true, StatusCodes: []int{429}, Confirmations: 1},
+			},
+		},
+	}
+	body := `{"error":"quota exceeded","access_token":"sk-secret","authorization":"Bearer private"}`
+	controller.HandleUsage(context.Background(), coreusage.Record{
+		Provider: "xai", AuthID: auth.ID, Failed: true,
+		Fail: coreusage.Failure{StatusCode: http.StatusTooManyRequests, Body: body},
+	})
+	events := controller.recentEvents()
+	if len(events) != 1 || events[0].Action != "disabled" {
+		t.Fatalf("events = %#v", events)
+	}
+	if strings.Contains(events[0].Reason, "sk-secret") || strings.Contains(events[0].Reason, "Bearer private") {
+		t.Fatalf("event exposed a secret: %q", events[0].Reason)
+	}
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatal("updated auth missing")
+	}
+	reason, _ := routingProtectionMetadata(updated)["reason"].(string)
+	if reason == "" || strings.Contains(reason, "sk-secret") || strings.Contains(reason, "Bearer private") {
+		t.Fatalf("persisted reason exposed a secret or was lost: %q", reason)
+	}
+}
+
 func TestRoutingProtectionReleaseAtPrefersLatestSignal(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	record := coreusage.Record{
@@ -462,7 +587,7 @@ func TestRoutingProtectionDisableRestoresOwnership(t *testing.T) {
 		t.Fatalf("register auth: %v", err)
 	}
 	controller := &routingPolicyController{h: &Handler{authManager: manager}}
-	err = controller.disableAuth(context.Background(), registered, routingProtectionEvent{
+	disabled, err := controller.disableAuth(context.Background(), registered, routingProtectionEvent{
 		Provider:    "xai",
 		StatusCode:  http.StatusTooManyRequests,
 		Reason:      "quota exhausted",
@@ -470,6 +595,9 @@ func TestRoutingProtectionDisableRestoresOwnership(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("disable auth: %v", err)
+	}
+	if !disabled {
+		t.Fatal("routing protection did not report the auth mutation")
 	}
 	updated, ok := manager.GetByID(registered.ID)
 	if !ok || updated == nil {

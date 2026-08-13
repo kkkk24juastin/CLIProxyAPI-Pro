@@ -2,6 +2,7 @@ package routing
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,6 +22,19 @@ func TestConfirmationTrackerResetsOutsideWindow(t *testing.T) {
 	}
 }
 
+func TestConfirmationTrackerResetDiscardsPendingState(t *testing.T) {
+	tracker := NewConfirmationTracker()
+	policy := ProviderPolicy{Confirmations: 2, ConfirmationWindowSeconds: 60}
+	now := time.Unix(1_700_000_000, 0)
+	if confirmed, count, _ := tracker.Confirm("auth", "xai", 429, policy, now); confirmed || count != 1 {
+		t.Fatalf("first confirmation = %v, %d", confirmed, count)
+	}
+	tracker.Reset()
+	if confirmed, count, _ := tracker.Confirm("auth", "xai", 429, policy, now.Add(time.Second)); confirmed || count != 1 {
+		t.Fatalf("confirmation after reset = %v, %d", confirmed, count)
+	}
+}
+
 func TestProtectionEvidenceAndReleasePolicy(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	failure := UsageFailure{
@@ -36,6 +50,20 @@ func TestProtectionEvidenceAndReleasePolicy(t *testing.T) {
 	}
 	if got := Reason(failure); got != failure.Body {
 		t.Fatalf("reason = %q", got)
+	}
+}
+
+func TestReasonRedactsSensitiveJSONAndText(t *testing.T) {
+	jsonReason := Reason(UsageFailure{Body: `{"error":"quota exceeded","access_token":"sk-secret","x-api-key":"api-secret","nested":{"authorization":"Bearer private"}}`})
+	if strings.Contains(jsonReason, "sk-secret") || strings.Contains(jsonReason, "api-secret") || strings.Contains(jsonReason, "Bearer private") {
+		t.Fatalf("JSON reason exposed a secret: %q", jsonReason)
+	}
+	if !strings.Contains(jsonReason, "quota exceeded") || !strings.Contains(jsonReason, "[REDACTED]") {
+		t.Fatalf("JSON reason lost useful detail: %q", jsonReason)
+	}
+	textReason := Reason(UsageFailure{Body: `quota exceeded; authorization=Bearer private-token; refresh_token=secret-token`})
+	if strings.Contains(textReason, "private-token") || strings.Contains(textReason, "secret-token") {
+		t.Fatalf("text reason exposed a secret: %q", textReason)
 	}
 }
 

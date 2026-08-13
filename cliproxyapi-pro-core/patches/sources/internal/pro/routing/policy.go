@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -115,6 +116,11 @@ type ConfirmationTracker struct {
 	states map[string]confirmation
 }
 
+var (
+	routingBearerPattern = regexp.MustCompile(`(?i)bearer\s+[a-z0-9._~+/=-]+`)
+	routingSecretPattern = regexp.MustCompile(`(?i)("?(?:authorization|api[_-]?key|(?:[a-z0-9]+[_-])*token|password|secret|credential|cookie)"?)(\s*[:=]\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;&}]+)`)
+)
+
 func NewConfirmationTracker() *ConfirmationTracker {
 	return &ConfirmationTracker{states: make(map[string]confirmation)}
 }
@@ -154,6 +160,15 @@ func (t *ConfirmationTracker) Clear(authID, provider string) {
 			delete(t.states, key)
 		}
 	}
+	t.mu.Unlock()
+}
+
+func (t *ConfirmationTracker) Reset() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	clear(t.states)
 	t.mu.Unlock()
 }
 
@@ -218,9 +233,75 @@ func ReleaseAt(failure UsageFailure, policy ProviderPolicy, now time.Time) time.
 
 func Reason(failure UsageFailure) string {
 	if body := strings.TrimSpace(failure.Body); body != "" {
-		return body
+		return redactReason(body)
 	}
 	return fmt.Sprintf("HTTP %d", failure.StatusCode)
+}
+
+func redactReason(value string) string {
+	var payload any
+	if json.Unmarshal([]byte(value), &payload) == nil {
+		if redactReasonJSON(payload) {
+			if encoded, err := json.Marshal(payload); err == nil {
+				return string(encoded)
+			}
+		}
+		return value
+	}
+	return redactReasonText(value)
+}
+
+func redactReasonText(value string) string {
+	value = routingBearerPattern.ReplaceAllString(value, "Bearer [REDACTED]")
+	return routingSecretPattern.ReplaceAllString(value, "${1}${2}[REDACTED]")
+}
+
+func redactReasonJSON(value any) bool {
+	changed := false
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalized := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(key))
+			if sensitiveReasonKey(normalized) {
+				typed[key] = "[REDACTED]"
+				changed = true
+				continue
+			}
+			if text, ok := child.(string); ok {
+				redacted := redactReasonText(text)
+				if redacted != text {
+					typed[key] = redacted
+					changed = true
+				}
+			} else if redactReasonJSON(child) {
+				changed = true
+			}
+		}
+	case []any:
+		for index, child := range typed {
+			if text, ok := child.(string); ok {
+				redacted := redactReasonText(text)
+				if redacted != text {
+					typed[index] = redacted
+					changed = true
+				}
+			} else if redactReasonJSON(child) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func sensitiveReasonKey(normalized string) bool {
+	return strings.Contains(normalized, "token") ||
+		strings.Contains(normalized, "secret") ||
+		strings.Contains(normalized, "password") ||
+		strings.Contains(normalized, "credential") ||
+		strings.Contains(normalized, "authorization") ||
+		strings.Contains(normalized, "api_key") ||
+		normalized == "apikey" ||
+		strings.Contains(normalized, "cookie")
 }
 
 func MetadataInt64(metadata map[string]any, key string) int64 {
