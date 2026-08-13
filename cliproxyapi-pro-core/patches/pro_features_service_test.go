@@ -184,3 +184,60 @@ func TestOAuthPolicyInFlightRegistrationCannotRestoreRemovedAuthModels(t *testin
 		t.Fatalf("removed auth models were restored by in-flight registration: %#v", models)
 	}
 }
+
+func TestQueuedModelRegistrationCannotReplaceRecreatedAuthModels(t *testing.T) {
+	ctx := context.Background()
+	manager := coreauth.NewManager(nil, nil, nil)
+	service := &Service{coreManager: manager}
+	stale := &coreauth.Auth{ID: "reused-auth-id", Provider: "claude", Status: coreauth.StatusActive}
+	if _, err := manager.Register(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	queuedCtx := service.beginAuthModelRegistration(ctx, stale.ID)
+	service.applyCoreAuthRemoval(ctx, stale.ID)
+
+	replacement := &coreauth.Auth{ID: stale.ID, Provider: "xai", Status: coreauth.StatusActive}
+	if _, err := manager.Register(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+	modelRegistry := internalregistry.GetGlobalRegistry()
+	t.Cleanup(func() { modelRegistry.UnregisterClient(stale.ID) })
+	service.registerModelsForAuth(ctx, replacement)
+	service.registerModelsForAuth(queuedCtx, stale)
+
+	models := modelRegistry.GetModelsForClient(stale.ID)
+	if len(models) == 0 {
+		t.Fatal("recreated xAI auth has no registered models")
+	}
+	for _, model := range models {
+		if model != nil && strings.HasPrefix(model.ID, "claude-") {
+			t.Fatalf("queued stale snapshot replaced recreated auth models: %#v", models)
+		}
+	}
+}
+
+func TestStalePluginAuthUpdateCannotReplaceRecreatedAuth(t *testing.T) {
+	ctx := context.Background()
+	manager := coreauth.NewManager(nil, nil, nil)
+	service := &Service{coreManager: manager}
+	stale := &coreauth.Auth{ID: "reused-plugin-auth-id", Provider: "claude", Label: "old", Status: coreauth.StatusActive}
+	if _, err := manager.Register(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	queuedCtx := service.beginAuthModelRegistration(ctx, stale.ID)
+	service.applyCoreAuthRemoval(ctx, stale.ID)
+
+	replacement := &coreauth.Auth{ID: stale.ID, Provider: "xai", Label: "replacement", Status: coreauth.StatusActive}
+	if _, err := manager.Register(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+	staleUpdate := stale.Clone()
+	staleUpdate.Label = "stale-plugin-update"
+	if _, committed := service.updateAuthForCurrentModelRegistration(queuedCtx, stale, staleUpdate); committed {
+		t.Fatal("stale plugin auth update committed after the auth ID was recreated")
+	}
+	current, found := manager.GetByID(stale.ID)
+	if !found || current.Provider != "xai" || current.Label != "replacement" {
+		t.Fatalf("recreated auth was overwritten by stale plugin update: %#v", current)
+	}
+}

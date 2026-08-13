@@ -1082,6 +1082,9 @@ func (s *Service) beginAuthModelRegistration(ctx context.Context, authID string)
 \tif ctx == nil {
 \t\tctx = context.Background()
 \t}
+\tif token, found := ctx.Value(authModelRegistrationContextKey{}).(authModelRegistrationToken); found && token.authID == authID {
+\t\treturn ctx
+\t}
 \ts.authModelCommitMu.Lock()
 \tif s.authModelGenerations == nil {
 \t\ts.authModelGenerations = make(map[string]uint64)
@@ -1092,17 +1095,12 @@ func (s *Service) beginAuthModelRegistration(ctx context.Context, authID string)
 \treturn context.WithValue(ctx, authModelRegistrationContextKey{}, token)
 }
 
-func (s *Service) withCurrentAuthModelCommit(ctx context.Context, auth *coreauth.Auth, commit func()) bool {
-\tif s == nil || auth == nil || auth.ID == "" || commit == nil {
+func (s *Service) currentAuthModelRegistrationLocked(ctx context.Context, auth *coreauth.Auth) bool {
+\tif s == nil || ctx == nil || auth == nil || auth.ID == "" {
 \t\treturn false
 \t}
 \ttoken, found := ctx.Value(authModelRegistrationContextKey{}).(authModelRegistrationToken)
-\tif !found || token.authID != auth.ID {
-\t\treturn false
-\t}
-\ts.authModelCommitMu.Lock()
-\tdefer s.authModelCommitMu.Unlock()
-\tif s.authModelGenerations[token.authID] != token.generation {
+\tif !found || token.authID != auth.ID || s.authModelGenerations[token.authID] != token.generation {
 \t\treturn false
 \t}
 \tif s.coreManager != nil {
@@ -1110,8 +1108,43 @@ func (s *Service) withCurrentAuthModelCommit(ctx context.Context, auth *coreauth
 \t\t\treturn false
 \t\t}
 \t}
+\treturn true
+}
+
+func (s *Service) isCurrentAuthModelRegistration(ctx context.Context, auth *coreauth.Auth) bool {
+\tif s == nil {
+\t\treturn false
+\t}
+\ts.authModelCommitMu.Lock()
+\tdefer s.authModelCommitMu.Unlock()
+\treturn s.currentAuthModelRegistrationLocked(ctx, auth)
+}
+
+func (s *Service) withCurrentAuthModelCommit(ctx context.Context, auth *coreauth.Auth, commit func()) bool {
+\tif s == nil || auth == nil || auth.ID == "" || commit == nil {
+\t\treturn false
+\t}
+\ts.authModelCommitMu.Lock()
+\tdefer s.authModelCommitMu.Unlock()
+\tif !s.currentAuthModelRegistrationLocked(ctx, auth) {
+\t\treturn false
+\t}
 \tcommit()
 \treturn true
+}
+
+func (s *Service) updateAuthForCurrentModelRegistration(ctx context.Context, auth, updated *coreauth.Auth) (*coreauth.Auth, bool) {
+\tif s == nil || s.coreManager == nil || updated == nil {
+\t\treturn nil, false
+\t}
+\tvar result *coreauth.Auth
+\tvar errUpdate error
+\tif !s.withCurrentAuthModelCommit(ctx, auth, func() {
+\t\tresult, errUpdate = s.coreManager.Update(ctx, updated)
+\t}) || errUpdate != nil || result == nil {
+\t\treturn nil, false
+\t}
+\treturn result, true
 }
 
 func (s *Service) unregisterModelsForCurrentAuth(ctx context.Context, auth *coreauth.Auth) {
@@ -1135,6 +1168,9 @@ service_models_text = service_models_text.replace(
 \t\treturn
 \t}
 \tctx = s.beginAuthModelRegistration(ctx, a.ID)
+\tif !s.isCurrentAuthModelRegistration(ctx, a) {
+\t\treturn
+\t}
 \tif a.Disabled {
 ''',
     1,
@@ -1161,6 +1197,92 @@ replace_once(
     '\tGlobalModelRegistry().UnregisterClient(activeAuth.ID)\n\treturn true\n',
     '\ts.unregisterModelsForCurrentAuth(ctx, activeAuth)\n\treturn true\n',
     's.unregisterModelsForCurrentAuth(ctx, activeAuth)',
+)
+
+replace_once(
+    service_executors,
+    '''\t\tif updated, errUpdate := s.coreManager.Update(ctx, result.Auth); errUpdate == nil && updated != nil {
+\t\t\tactiveAuth = updated.Clone()
+\t\t}
+''',
+    '''\t\tif updated, committed := s.updateAuthForCurrentModelRegistration(ctx, a, result.Auth); committed {
+\t\t\tactiveAuth = updated.Clone()
+\t\t}
+''',
+    's.updateAuthForCurrentModelRegistration(ctx, a, result.Auth)',
+)
+
+service_plugins = ROOT / 'sdk/cliproxy/service_plugins.go'
+service_config_source = ROOT / 'sdk/cliproxy/service_config.go'
+replace_once(
+    service_plugins,
+    '''\t\tauthForRegistration := auth.Clone()
+\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    '''\t\tauthForRegistration := auth.Clone()
+\t\tregistrationCtx := s.beginAuthModelRegistration(ctx, authForRegistration.ID)
+\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    'registrationCtx := s.beginAuthModelRegistration(ctx, authForRegistration.ID)',
+)
+replace_once(
+    service_plugins,
+    's.completeModelRegistrationForAuthWithCache(ctx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(registrationCtx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(registrationCtx, authForRegistration, compatCache)',
+)
+replace_once(
+    service_plugins,
+    '''\t\t\tauthForRefresh := auth
+\t\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    '''\t\t\tauthForRefresh := auth
+\t\t\tregistrationCtx := s.beginAuthModelRegistration(context.Background(), authForRefresh.ID)
+\t\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    'registrationCtx := s.beginAuthModelRegistration(context.Background(), authForRefresh.ID)',
+)
+replace_once(
+    service_plugins,
+    'if s.refreshModelRegistrationForAuthWithCache(authForRefresh, compatCache) {',
+    'if s.refreshModelRegistrationForAuthWithContext(registrationCtx, authForRefresh, compatCache) {',
+    's.refreshModelRegistrationForAuthWithContext(registrationCtx, authForRefresh, compatCache)',
+)
+
+replace_once(
+    service_auth,
+    '''\t\t\tauthForRegistration := auth
+\t\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    '''\t\t\tauthForRegistration := auth
+\t\t\tauthRegistrationCtx := s.beginAuthModelRegistration(registrationCtx, authForRegistration.ID)
+\t\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    'authRegistrationCtx := s.beginAuthModelRegistration(registrationCtx, authForRegistration.ID)',
+)
+replace_once(
+    service_auth,
+    's.completeModelRegistrationForAuthWithCache(registrationCtx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(authRegistrationCtx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(authRegistrationCtx, authForRegistration, compatCache)',
+)
+
+replace_once(
+    service_config_source,
+    '''\t\tauthForRegistration := prepared
+\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    '''\t\tauthForRegistration := prepared
+\t\tauthRegistrationCtx := s.beginAuthModelRegistration(registrationCtx, authForRegistration.ID)
+\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    'authRegistrationCtx := s.beginAuthModelRegistration(registrationCtx, authForRegistration.ID)',
+)
+replace_once(
+    service_config_source,
+    's.completeModelRegistrationForAuthWithCache(registrationCtx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(authRegistrationCtx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(authRegistrationCtx, authForRegistration, compatCache)',
 )
 
 write(
