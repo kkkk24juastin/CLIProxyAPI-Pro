@@ -265,6 +265,20 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertEqual(prices.count("'usage_stats.model_price_manual_configured'"), 2)
         self.assertNotIn('onClick={() => selectPriceTarget(item.model)}', prices)
 
+    def test_models_dev_search_controls_align_and_results_scroll_inside_the_section(self) -> None:
+        styles = (PRO_ROOT / 'modules/monitoring/features/styles/_management.scss').read_text()
+        form_start = styles.index('.modelsDevSearchForm {')
+        form = styles[form_start:styles.index('}', form_start)]
+        results_start = styles.index('.modelsDevSearchResults {')
+        results = styles[results_start:styles.index('}', results_start)]
+        self.assertIn('align-items: stretch;', form)
+        self.assertIn('.modelsDevSearchForm :global(.form-group)', styles)
+        self.assertIn('margin: 0;', styles[styles.index('.modelsDevSearchForm :global(.form-group)'):results_start])
+        self.assertIn('max-height: 304px;', results)
+        self.assertIn('overflow-y: auto;', results)
+        self.assertIn('overscroll-behavior: contain;', results)
+        self.assertIn('scrollbar-gutter: stable;', results)
+
     def test_loading_requests_reopen_the_surface_before_reusing_inflight_work(self) -> None:
         monitoring = (PRO_ROOT / 'modules/monitoring/MonitoringCenterPage.tsx').read_text()
         monitoring_open = monitoring.index('setIsMonitoringSettingsOpen(true);')

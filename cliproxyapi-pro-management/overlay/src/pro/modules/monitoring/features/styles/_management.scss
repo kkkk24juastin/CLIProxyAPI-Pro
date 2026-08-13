@@ -1364,12 +1364,23 @@
 .modelsDevSearchForm {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
   gap: 8px;
 }
 
 .modelsDevSearchForm label {
   position: relative;
+  display: block;
   min-width: 0;
+}
+
+.modelsDevSearchForm :global(.form-group) {
+  height: 100%;
+  margin: 0;
+}
+
+.modelsDevSearchForm :global(.form-group > div) {
+  height: 100%;
 }
 
 .modelsDevSearchForm label > svg {
@@ -1383,14 +1394,25 @@
 }
 
 .modelsDevSearchForm label input {
+  height: 100%;
+  min-height: 38px;
   padding-left: 34px;
+}
+
+.modelsDevSearchForm :global(.btn) {
+  min-height: 38px;
 }
 
 .modelsDevSearchResults {
   display: grid;
-  overflow: hidden;
+  max-height: 304px;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid var(--monitor-line);
   border-radius: 8px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 .modelsDevSearchResults > button {
