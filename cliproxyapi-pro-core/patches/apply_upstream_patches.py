@@ -984,11 +984,48 @@ replace_once(
 \t\ts.proApp.ForgetAccountPolicy(id)
 \t}
 \ts.coreManager.Remove(ctx, id)
+\ts.authModelCommitMu.Unlock()
 ''',
-    's.proApp.ForgetAccountPolicy(id)',
+    's.authModelCommitMu.Unlock()',
+)
+
+service_source = ROOT / 'sdk/cliproxy/service.go'
+replace_once(
+    service_source,
+    '''\tconfigRuntimeMu        sync.Mutex
+\texecutorRegistrationMu sync.Mutex
+''',
+    '''\tconfigRuntimeMu        sync.Mutex
+\texecutorRegistrationMu sync.Mutex
+\tauthModelCommitMu      sync.Mutex
+\tauthModelGenerations   map[string]uint64
+''',
+    'authModelGenerations   map[string]uint64',
 )
 
 service_executors = ROOT / 'sdk/cliproxy/service_executors.go'
+replace_once(
+    service_executors,
+    '''func (s *Service) registerResolvedModelsForAuth(a *coreauth.Auth, providerKey string, models []*ModelInfo) {
+\tif a == nil || a.ID == "" {
+\t\treturn
+\t}
+''',
+    '''func (s *Service) registerResolvedModelsForAuth(ctx context.Context, a *coreauth.Auth, providerKey string, models []*ModelInfo) {
+\tif a == nil || a.ID == "" {
+\t\treturn
+\t}
+\tif !s.withCurrentAuthModelCommit(ctx, a, func() {
+\t\ts.registerResolvedModelsForCurrentAuth(a, providerKey, models)
+\t}) {
+\t\treturn
+\t}
+}
+
+func (s *Service) registerResolvedModelsForCurrentAuth(a *coreauth.Auth, providerKey string, models []*ModelInfo) {
+''',
+    'func (s *Service) registerResolvedModelsForCurrentAuth',
+)
 replace_once(
     service_executors,
     '''\tmodels := applyExcludedModels(result.Models, activeExcluded)
@@ -999,6 +1036,131 @@ replace_once(
 \tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
 ''',
     'models = s.applyOAuthPolicy(ctx, activeAuth, models)',
+)
+
+replace_once(
+    service_executors,
+    's.registerResolvedModelsForAuth(activeAuth, providerKey, applyModelPrefixes(models, activeAuth.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))',
+    's.registerResolvedModelsForAuth(ctx, activeAuth, providerKey, applyModelPrefixes(models, activeAuth.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))',
+    's.registerResolvedModelsForAuth(ctx, activeAuth, providerKey',
+)
+
+replace_once(
+    service_auth,
+    '''\tid = strings.TrimSpace(id)
+\tvar provider string
+''',
+    '''\tid = strings.TrimSpace(id)
+\ts.authModelCommitMu.Lock()
+\tif s.authModelGenerations == nil {
+\t\ts.authModelGenerations = make(map[string]uint64)
+\t}
+\ts.authModelGenerations[id]++
+\tvar provider string
+''',
+    '''\tid = strings.TrimSpace(id)
+\ts.authModelCommitMu.Lock()
+\tif s.authModelGenerations == nil {
+\t\ts.authModelGenerations = make(map[string]uint64)
+\t}
+\ts.authModelGenerations[id]++
+\tvar provider string
+    ''',
+)
+
+insert_before(
+    service_auth,
+    'func (s *Service) applyCoreAuthRemoval(ctx context.Context, id string) {\n',
+    '''type authModelRegistrationContextKey struct{}
+
+type authModelRegistrationToken struct {
+\tauthID     string
+\tgeneration uint64
+}
+
+func (s *Service) beginAuthModelRegistration(ctx context.Context, authID string) context.Context {
+\tif ctx == nil {
+\t\tctx = context.Background()
+\t}
+\ts.authModelCommitMu.Lock()
+\tif s.authModelGenerations == nil {
+\t\ts.authModelGenerations = make(map[string]uint64)
+\t}
+\ts.authModelGenerations[authID]++
+\ttoken := authModelRegistrationToken{authID: authID, generation: s.authModelGenerations[authID]}
+\ts.authModelCommitMu.Unlock()
+\treturn context.WithValue(ctx, authModelRegistrationContextKey{}, token)
+}
+
+func (s *Service) withCurrentAuthModelCommit(ctx context.Context, auth *coreauth.Auth, commit func()) bool {
+\tif s == nil || auth == nil || auth.ID == "" || commit == nil {
+\t\treturn false
+\t}
+\ttoken, found := ctx.Value(authModelRegistrationContextKey{}).(authModelRegistrationToken)
+\tif !found || token.authID != auth.ID {
+\t\treturn false
+\t}
+\ts.authModelCommitMu.Lock()
+\tdefer s.authModelCommitMu.Unlock()
+\tif s.authModelGenerations[token.authID] != token.generation {
+\t\treturn false
+\t}
+\tif s.coreManager != nil {
+\t\tif current, exists := s.coreManager.GetByID(auth.ID); !exists || current == nil {
+\t\t\treturn false
+\t\t}
+\t}
+\tcommit()
+\treturn true
+}
+
+func (s *Service) unregisterModelsForCurrentAuth(ctx context.Context, auth *coreauth.Auth) {
+\t_ = s.withCurrentAuthModelCommit(ctx, auth, func() {
+\t\tGlobalModelRegistry().UnregisterClient(auth.ID)
+\t})
+}
+
+''',
+    'func (s *Service) withCurrentAuthModelCommit',
+)
+
+service_models_text = read(service_models)
+service_models_text = service_models_text.replace(
+    '''\tif ctx.Err() != nil {
+\t\treturn
+\t}
+\tif a.Disabled {
+''',
+    '''\tif ctx.Err() != nil {
+\t\treturn
+\t}
+\tctx = s.beginAuthModelRegistration(ctx, a.ID)
+\tif a.Disabled {
+''',
+    1,
+)
+unregister_model_call = '\tGlobalModelRegistry().UnregisterClient(a.ID)'
+if service_models_text.count(unregister_model_call) != 5:
+    raise SystemExit(
+        f'expected five auth model unregister calls in {service_models}, '
+        f'found {service_models_text.count(unregister_model_call)}'
+    )
+write(
+    service_models,
+    service_models_text.replace(
+        unregister_model_call,
+        '\ts.unregisterModelsForCurrentAuth(ctx, a)',
+    ).replace(
+        's.registerResolvedModelsForAuth(a,',
+        's.registerResolvedModelsForAuth(ctx, a,',
+    ),
+)
+
+replace_once(
+    service_executors,
+    '\tGlobalModelRegistry().UnregisterClient(activeAuth.ID)\n\treturn true\n',
+    '\ts.unregisterModelsForCurrentAuth(ctx, activeAuth)\n\treturn true\n',
+    's.unregisterModelsForCurrentAuth(ctx, activeAuth)',
 )
 
 write(

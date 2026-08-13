@@ -205,7 +205,7 @@ func localPlan(provider string, input Input) string {
 		sources = append(sources, storage)
 	}
 	for _, source := range sources {
-		if plan := planFromMap(provider, source); plan != "" {
+		if plan := planFromMap(provider, source); plan != "" && plan != "unknown" {
 			return plan
 		}
 	}
@@ -221,7 +221,7 @@ func planFromMap(provider string, source map[string]any) string {
 		"tier", "tier_label", "tierLabel", "subscription_type", "subscriptionType",
 		"chatgpt_plan_type",
 	} {
-		if plan := normalizeProviderPlan(provider, stringValue(source[key])); plan != "" {
+		if plan := normalizeProviderPlan(provider, stringValue(source[key])); plan != "" && plan != "unknown" {
 			return plan
 		}
 	}

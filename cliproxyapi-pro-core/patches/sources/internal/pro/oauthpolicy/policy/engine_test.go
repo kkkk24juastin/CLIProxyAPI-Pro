@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -290,6 +291,32 @@ providers:
 		},
 	})
 	if !called || !result.Handled || result.Annotations["plan_key"] != "pro" || result.Priority == nil || *result.Priority != 99 {
+		t.Fatalf("Filter() = %#v, provider called = %t", result, called)
+	}
+}
+
+func TestFilterUsesLaterKnownLocalPlanAfterUnknownMetadata(t *testing.T) {
+	cfg, _ := modelconfig.Parse([]byte(`
+providers:
+  claude:
+    plans:
+      pro: {priority: 99}
+      _unknown: {priority: 1}
+`))
+	engine := New()
+	engine.ApplyConfig(cfg)
+	called := false
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "claude-known-storage", AuthProvider: "claude", AuthKind: "oauth",
+		Metadata:    map[string]any{"plan_type": "unknown"},
+		Attributes:  map[string]string{"tier": "unknown"},
+		StorageJSON: []byte(`{"plan_type":"unknown","plan":"pro"}`),
+		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+			called = true
+			return HTTPResponse{}, fmt.Errorf("provider should not be called")
+		},
+	})
+	if called || !result.Handled || result.Annotations["plan_key"] != "pro" || result.Annotations["plan_source"] != "auth" || result.Priority == nil || *result.Priority != 99 {
 		t.Fatalf("Filter() = %#v, provider called = %t", result, called)
 	}
 }
