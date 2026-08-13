@@ -212,6 +212,19 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertNotIn('grid-column: 1 / -1;', actions)
         self.assertNotIn('border-top:', actions)
 
+    def test_model_price_editor_keeps_mobile_actions_and_base_rates_compact(self) -> None:
+        responsive = (
+            PRO_ROOT / 'modules/monitoring/features/styles/_responsive.scss'
+        ).read_text()
+        narrow_start = responsive.index('@media (max-width: 440px)')
+        narrow = responsive[narrow_start:]
+        self.assertIn('grid-template-columns: repeat(2, minmax(0, 1fr));', narrow)
+        self.assertNotIn('grid-template-columns: 1fr;', narrow)
+        self.assertIn('flex-direction: row;', narrow)
+        self.assertNotIn('flex-direction: column;', narrow)
+        self.assertIn('min-height: 40px;', narrow)
+        self.assertIn('.priceRuleEditorActions .priceRuleDeleteButton:global(.btn)', narrow)
+
     def test_settings_surfaces_freeze_all_actions_while_busy(self) -> None:
         surface = SURFACE.read_text()
         self.assertGreaterEqual(surface.count('disabled={busy}'), 3)

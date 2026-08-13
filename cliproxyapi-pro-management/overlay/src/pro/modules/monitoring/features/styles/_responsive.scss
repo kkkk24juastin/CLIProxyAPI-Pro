@@ -228,10 +228,32 @@
   }
 
   .priceBaseGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .priceRuleEditorActions {
-    flex-direction: column;
+    flex-direction: row;
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid var(--monitor-line);
+    border-radius: 10px;
+    background: var(--monitor-surface-muted);
+  }
+
+  .priceRuleEditorActions :global(.btn) {
+    min-width: 0;
+    min-height: 40px;
+    padding-inline: 10px;
+    font-size: 12px;
+  }
+
+  .priceRuleEditorActions :global(.btn:first-child) {
+    flex: 1 1 auto;
+  }
+
+  .priceRuleEditorActions .priceRuleDeleteButton:global(.btn) {
+    flex: 0 0 auto;
+    min-width: 76px;
   }
 }
