@@ -45,6 +45,7 @@ import { useAuthStore, useNotificationStore } from "@/stores";
 import { DurationInput, type DurationFieldProps } from '@/pro/shared/DurationInput';
 import configStyles from "@/pro/shared/FloatingActionBar.module.scss";
 import { ProFeatureHeader } from "@/pro/shared/ProFeatureHeader";
+import { ProFeatureTabs } from "@/pro/shared/ProFeatureTabs";
 import styles from "./OAuthPolicyPage.module.scss";
 
 const errorMessage = (error: unknown): string =>
@@ -660,44 +661,30 @@ export function OAuthPolicyPage() {
             </section>
 
             <section className={styles.policyPanel}>
-              <div
-                className={styles.providerTabs}
-                role="tablist"
-                aria-label={t("oauth_policy.providers", {
+              <ProFeatureTabs
+                className={styles.providerTabBar}
+                ariaLabel={t("oauth_policy.providers", {
                   defaultValue: "Providers",
                 })}
-              >
-                {providerDefinitions.map((provider) => {
+                activeKey={resolvedActiveProvider}
+                onChange={(key) => {
+                  setActiveProvider(key);
+                  setCustomPlan("");
+                }}
+                items={providerDefinitions.map((provider) => {
                   const count = Object.values(
                     draft.providers[provider.key].plans,
                   ).filter(({ configured }) => configured).length;
-                  return (
-                    <button
-                      key={provider.key}
-                      type="button"
-                      role="tab"
-                      aria-selected={provider.key === resolvedActiveProvider}
-                      className={
-                        provider.key === resolvedActiveProvider
-                          ? styles.providerTabActive
-                          : ""
-                      }
-                      onClick={() => {
-                        setActiveProvider(provider.key);
-                        setCustomPlan("");
-                      }}
-                    >
-                      <span>
-                        {t(
-                          `oauth_policy.provider_${provider.key.replace(/-/g, "_")}`,
-                          { defaultValue: provider.key },
-                        )}
-                      </span>
-                      {count > 0 && <small>{count}</small>}
-                    </button>
-                  );
+                  return {
+                    key: provider.key,
+                    label: t(
+                      `oauth_policy.provider_${provider.key.replace(/-/g, "_")}`,
+                      { defaultValue: provider.key },
+                    ),
+                    badge: count > 0 ? count : undefined,
+                  };
                 })}
-              </div>
+              />
               <div className={styles.policyHeader}>
                 <div>
                   <h2>

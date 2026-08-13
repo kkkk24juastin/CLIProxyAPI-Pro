@@ -223,62 +223,8 @@
   padding: 16px;
 }
 
-.providerTabs {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
-  gap: 4px;
+.providerTabBar {
   margin-bottom: 16px;
-  padding: 4px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--muted-bg, rgba(148, 163, 184, 0.08));
-}
-
-.providerTabs button {
-  display: flex;
-  min-width: 0;
-  min-height: 36px;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 6px;
-  color: var(--text-secondary);
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.providerTabs button:hover {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--bg-primary) 72%, transparent);
-}
-
-.providerTabs button.providerTabActive {
-  color: var(--text-primary);
-  background: var(--bg-primary);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
-}
-
-.providerTabs button span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.providerTabs button small {
-  display: grid;
-  width: 17px;
-  height: 17px;
-  flex: 0 0 17px;
-  place-items: center;
-  border-radius: 50%;
-  color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-  font-size: 9px;
 }
 
 .policyHeader {
@@ -582,9 +528,6 @@
     border-bottom: 1px solid var(--border-color);
   }
 
-  .providerTabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 720px) {
@@ -604,6 +547,10 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .statusGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .settingsPanel,
   .policyPanel {
     padding: 13px;
@@ -611,10 +558,6 @@
 
   .policyHeader {
     flex-direction: column;
-  }
-
-  .providerTabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .customPlanRow {

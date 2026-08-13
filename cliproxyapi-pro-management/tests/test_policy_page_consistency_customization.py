@@ -36,6 +36,26 @@ class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
         self.assertIn('grid-template-columns: repeat(2, minmax(0, 1fr));', styles)
         self.assertIn('@media (max-width: 480px)', styles)
 
+    def test_optional_feature_tabs_share_proxy_management_style_and_behavior(self) -> None:
+        routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()
+        account = (PRO_ROOT / 'oauthPolicy/OAuthPolicyPage.tsx').read_text()
+        proxy = (PRO_ROOT / 'proxyPool/ProxyPoolPage.tsx').read_text()
+        tabs = (SHARED_ROOT / 'ProFeatureTabs.tsx').read_text()
+        styles = (SHARED_ROOT / 'ProFeatureTabs.module.scss').read_text()
+
+        for source in (routing, account, proxy):
+            self.assertIn('<ProFeatureTabs', source)
+        self.assertIn('role="tablist"', tabs)
+        self.assertIn('role="tab"', tabs)
+        self.assertIn('aria-selected={active}', tabs)
+        self.assertIn('border-radius: 11px;', styles)
+        self.assertIn('color: var(--primary-color);', styles)
+        self.assertIn('background: color-mix(in srgb, var(--primary-color) 11%, transparent);', styles)
+        self.assertIn('@media (max-width: 780px)', styles)
+        self.assertIn('grid-auto-flow: column;', styles)
+        self.assertIn('overflow-x: auto;', styles)
+        self.assertIn('@media (max-width: 480px)', styles)
+
     def test_floating_save_bars_only_render_for_modified_drafts(self) -> None:
         routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()
         account = (PRO_ROOT / 'oauthPolicy/OAuthPolicyPage.tsx').read_text()

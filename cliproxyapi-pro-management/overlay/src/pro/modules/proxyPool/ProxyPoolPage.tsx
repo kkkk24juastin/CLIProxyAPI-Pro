@@ -29,6 +29,7 @@ import {
   type ProxyPoolSnapshot,
 } from '@/pro/modules/proxyPool/proxyPool';
 import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
+import { ProFeatureTabs } from '@/pro/shared/ProFeatureTabs';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import styles from '@/pro/modules/proxyPool/features/ProxyPool.module.scss';
 
@@ -518,37 +519,28 @@ export function ProxyPoolPage() {
       ) : (
           <>
             <ProxyPoolStatusOverview snapshot={snapshot} draft={draft} />
-            <nav
-              className={styles.viewTabs}
-              aria-label={t('proxy_pool.views', { defaultValue: 'Proxy pool views' })}
-            >
-              <button
-                type="button"
-                className={activeView === 'nodes' ? styles.viewTabActive : ''}
-                onClick={() => setActiveView('nodes')}
-              >
-                <IconNetwork size={17} />
-                <span>{t('proxy_pool.node_management', { defaultValue: 'Node management' })}</span>
-              </button>
-              <button
-                type="button"
-                className={activeView === 'diagnostics' ? styles.viewTabActive : ''}
-                onClick={() => setActiveView('diagnostics')}
-              >
-                <IconInfo size={17} />
-                <span>{t('proxy_pool.diagnostics', { defaultValue: 'Runtime diagnostics' })}</span>
-              </button>
-              <button
-                type="button"
-                className={activeView === 'settings' ? styles.viewTabActive : ''}
-                onClick={() => setActiveView('settings')}
-              >
-                <IconSettings size={17} />
-                <span>
-                  {t('proxy_pool.advanced_settings', { defaultValue: 'Advanced settings' })}
-                </span>
-              </button>
-            </nav>
+            <ProFeatureTabs
+              ariaLabel={t('proxy_pool.views', { defaultValue: 'Proxy pool views' })}
+              activeKey={activeView}
+              onChange={(key) => setActiveView(key as ProxyPoolView)}
+              items={[
+                {
+                  key: 'nodes',
+                  icon: <IconNetwork size={17} />,
+                  label: t('proxy_pool.node_management', { defaultValue: 'Node management' }),
+                },
+                {
+                  key: 'diagnostics',
+                  icon: <IconInfo size={17} />,
+                  label: t('proxy_pool.diagnostics', { defaultValue: 'Runtime diagnostics' }),
+                },
+                {
+                  key: 'settings',
+                  icon: <IconSettings size={17} />,
+                  label: t('proxy_pool.advanced_settings', { defaultValue: 'Advanced settings' }),
+                },
+              ]}
+            />
 
             {activeView === 'nodes' && (
               <>

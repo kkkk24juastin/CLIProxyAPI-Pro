@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { IconCheck, IconRefreshCw, IconShield } from '@/components/ui/icons';
+import { IconCheck, IconInfo, IconRefreshCw, IconShield } from '@/components/ui/icons';
 import { useActionBarHeightVar } from '@/hooks/useActionBarHeightVar';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
@@ -24,6 +24,7 @@ import {
 import { useAuthStore, useNotificationStore } from '@/stores';
 import configActionStyles from '@/pro/shared/FloatingActionBar.module.scss';
 import { ProFeatureHeader } from '@/pro/shared/ProFeatureHeader';
+import { ProFeatureTabs } from '@/pro/shared/ProFeatureTabs';
 import { ProDetailDialog } from '@/pro/shared/ProSurface';
 import { ProInformationDetails, type ProInformationDetailsTone } from '@/pro/shared/ProInformationDetails';
 import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
@@ -498,21 +499,17 @@ export function RoutingPolicyPage() {
         onToggle={handleEnabledChange}
       />
 
-      <nav className={styles.viewTabs} aria-label={t('routing_policy.title')}>
-        {VIEW_KEYS.map((view) => (
-          <button
-            key={view}
-            type="button"
-            className={`${styles.viewTab} ${activeView === view ? styles.viewTabActive : ''}`}
-            onClick={() => setActiveView(view)}
-          >
-            {t(`routing_policy.views.${view}`)}
-            {view === 'runtime' && data?.active?.length ? (
-              <span className={styles.tabCount}>{data.active.length}</span>
-            ) : null}
-          </button>
-        ))}
-      </nav>
+      <ProFeatureTabs
+        ariaLabel={t('routing_policy.title')}
+        activeKey={activeView}
+        onChange={(key) => setActiveView(key as RoutingPolicyView)}
+        items={VIEW_KEYS.map((view) => ({
+          key: view,
+          label: t(`routing_policy.views.${view}`),
+          icon: view === 'providers' ? <IconShield size={17} /> : <IconInfo size={17} />,
+          badge: view === 'runtime' && data?.active?.length ? data.active.length : undefined,
+        }))}
+      />
 
       {activeView === 'providers' && (
         <div className={styles.sectionStack}>

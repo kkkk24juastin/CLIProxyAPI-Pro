@@ -90,38 +90,6 @@
   background: var(--muted-bg, rgba(148, 163, 184, 0.12));
 }
 
-.viewTabs {
-  display: inline-flex;
-  align-self: flex-start;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--border-color);
-  border-radius: 11px;
-  background: var(--bg-secondary);
-}
-.viewTabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 8px;
-  color: var(--text-secondary);
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-}
-.viewTabs button:hover {
-  color: var(--text-primary);
-  background: var(--muted-bg, rgba(148, 163, 184, 0.1));
-}
-.viewTabs .viewTabActive {
-  color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 11%, transparent);
-}
-
 .quickSettings {
   display: grid;
   grid-template-columns: minmax(220px, 320px) minmax(190px, 240px) minmax(0, 1fr);
@@ -1019,22 +987,6 @@
   .overviewItem strong {
     font-size: 12px;
   }
-  .viewTabs {
-    display: grid;
-    width: 100%;
-    box-sizing: border-box;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .viewTabs button {
-    justify-content: center;
-    padding: 8px 5px;
-  }
-  .viewTabs button span {
-    overflow: hidden;
-    font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   .quickSettings {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 11px;
@@ -1153,9 +1105,6 @@
   }
   .overviewItem small {
     font-size: 9px;
-  }
-  .viewTabs svg {
-    display: none;
   }
   .quickSettings {
     grid-template-columns: 1fr;

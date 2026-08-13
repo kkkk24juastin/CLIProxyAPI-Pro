@@ -70,6 +70,7 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('.durationControl', styles)
         self.assertIn('DurationInput', features)
         self.assertIn('formatProxyPoolSuccessRate', features)
+        self.assertIn('<ProFeatureTabs', source)
 
     def test_new_node_is_only_added_after_sheet_confirmation(self) -> None:
         source = PAGE.read_text()
