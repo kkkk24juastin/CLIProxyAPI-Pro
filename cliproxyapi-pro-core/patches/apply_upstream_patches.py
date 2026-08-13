@@ -232,6 +232,7 @@ new_customization_paths = (
     'internal/pluginhost/gemini_cli_quota_legacy_test.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
+    'internal/pluginhost/plugin_executor_usage_test.go',
     'internal/pluginhost/quota_provider.go',
     'internal/pluginhost/quota_provider_test.go',
     'internal/pluginstore/autoinstall.go',
@@ -2936,9 +2937,177 @@ replace_once(
 ''',
 )
 
+add_go_import(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    f'\t"{MODULE_PATH}/internal/registry"\n',
+    f'\t"{MODULE_PATH}/internal/logging"\n\t"{MODULE_PATH}/internal/runtime/executor/helps"\n',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''func (a *executorAdapter) Execute(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (resp coreexecutor.Response, err error) {
+\tif a == nil || a.executor == nil || a.host.isPluginFused(a.pluginID) || !a.host.pluginIdentityCurrent(a.pluginID, a.path, a.version) {
+\t\treturn coreexecutor.Response{}, fmt.Errorf("plugin executor %s is unavailable", a.Identifier())
+\t}
+\tdefer func() {
+''',
+    '''func (a *executorAdapter) Execute(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (resp coreexecutor.Response, err error) {
+\tif a == nil || a.executor == nil || a.host.isPluginFused(a.pluginID) || !a.host.pluginIdentityCurrent(a.pluginID, a.path, a.version) {
+\t\treturn coreexecutor.Response{}, fmt.Errorf("plugin executor %s is unavailable", a.Identifier())
+\t}
+\treporter := helps.NewExecutorUsageReporter(ctx, a, req.Model, auth)
+\tdefer reporter.TrackFailure(ctx, &err)
+\tdefer func() {
+''',
+    'defer reporter.TrackFailure(ctx, &err)',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''func (a *executorAdapter) ExecuteStream(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (result *coreexecutor.StreamResult, err error) {
+\tif a == nil || a.executor == nil || a.host.isPluginFused(a.pluginID) || !a.host.pluginIdentityCurrent(a.pluginID, a.path, a.version) {
+\t\treturn nil, fmt.Errorf("plugin executor %s is unavailable", a.Identifier())
+\t}
+\tdefer func() {
+''',
+    '''func (a *executorAdapter) ExecuteStream(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (result *coreexecutor.StreamResult, err error) {
+\tif a == nil || a.executor == nil || a.host.isPluginFused(a.pluginID) || !a.host.pluginIdentityCurrent(a.pluginID, a.path, a.version) {
+\t\treturn nil, fmt.Errorf("plugin executor %s is unavailable", a.Identifier())
+\t}
+\treporter := helps.NewExecutorUsageReporter(ctx, a, req.Model, auth)
+\tdefer reporter.TrackFailure(ctx, &err)
+\tdefer func() {
+''',
+    'return nil, fmt.Errorf("plugin executor %s is unavailable", a.Identifier())\n\t}\n\treporter := helps.NewExecutorUsageReporter',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\tprepared, errPrepare := a.prepareExecutorCall(req, opts)
+\tif errPrepare != nil {
+\t\treturn coreexecutor.Response{}, errPrepare
+\t}
+\tpluginResp, errExecute := a.executor.Execute(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
+\tif errExecute != nil {
+\t\treturn coreexecutor.Response{}, errExecute
+\t}
+\treturn coreexecutor.Response{
+\t\tPayload:  a.translateExecutorResponse(ctx, prepared, pluginResp.Payload, false, nil),
+\t\tMetadata: cloneAnyMap(pluginResp.Metadata),
+\t\tHeaders:  cloneHeader(pluginResp.Headers),
+\t}, nil
+''',
+    '''\tprepared, errPrepare := a.prepareExecutorCall(req, opts)
+\tif errPrepare != nil {
+\t\treturn coreexecutor.Response{}, errPrepare
+\t}
+\tpluginResp, errExecute := a.executor.Execute(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
+\tif errExecute != nil {
+\t\treturn coreexecutor.Response{}, errExecute
+\t}
+\tctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)
+\treporter.EnsurePublished(ctx)
+\treturn coreexecutor.Response{
+\t\tPayload:  a.translateExecutorResponse(ctx, prepared, pluginResp.Payload, false, nil),
+\t\tMetadata: cloneAnyMap(pluginResp.Metadata),
+\t\tHeaders:  cloneHeader(pluginResp.Headers),
+\t}, nil
+''',
+    'reporter.EnsurePublished(ctx)',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\tprepared, errPrepare := a.prepareExecutorCall(req, opts)
+\tif errPrepare != nil {
+\t\treturn nil, errPrepare
+\t}
+\tpluginResp, errExecuteStream := a.executor.ExecuteStream(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
+\tif errExecuteStream != nil {
+\t\treturn nil, errExecuteStream
+\t}
+\treturn &coreexecutor.StreamResult{
+\t\tHeaders: cloneHeader(pluginResp.Headers),
+\t\tChunks:  mapExecutorStreamChunks(ctx, a.translateExecutorStreamChunks(ctx, prepared, pluginResp.Chunks)),
+\t}, nil
+''',
+    '''\tprepared, errPrepare := a.prepareExecutorCall(req, opts)
+\tif errPrepare != nil {
+\t\treturn nil, errPrepare
+\t}
+\tpluginResp, errExecuteStream := a.executor.ExecuteStream(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
+\tif errExecuteStream != nil {
+\t\treturn nil, errExecuteStream
+\t}
+\tctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)
+\treturn &coreexecutor.StreamResult{
+\t\tHeaders: cloneHeader(pluginResp.Headers),
+\t\tChunks: trackPluginExecutorStreamUsage(
+\t\t\tctx,
+\t\t\tmapExecutorStreamChunks(ctx, a.translateExecutorStreamChunks(ctx, prepared, pluginResp.Chunks)),
+\t\t\treporter,
+\t\t),
+\t}, nil
+''',
+    'trackPluginExecutorStreamUsage(',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''func mapExecutorStreamChunks(ctx context.Context, in <-chan pluginapi.ExecutorStreamChunk) <-chan coreexecutor.StreamChunk {
+''',
+    '''func pluginExecutorUsageContext(ctx context.Context, headers http.Header) context.Context {
+\tlogging.SetResponseHeaders(ctx, headers)
+\tif len(headers) == 0 || len(logging.GetResponseHeaders(ctx)) > 0 {
+\t\treturn ctx
+\t}
+\tctx = logging.WithResponseHeadersHolder(ctx)
+\tlogging.SetResponseHeaders(ctx, headers)
+\treturn ctx
+}
+
+func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.StreamChunk, reporter *helps.UsageReporter) <-chan coreexecutor.StreamChunk {
+\tif ctx == nil {
+\t\tctx = context.Background()
+\t}
+\tout := make(chan coreexecutor.StreamChunk)
+\tgo func() {
+\t\tdefer close(out)
+\t\tfor {
+\t\t\tselect {
+\t\t\tcase <-ctx.Done():
+\t\t\t\treporter.PublishFailure(ctx, ctx.Err())
+\t\t\t\treturn
+\t\t\tcase chunk, ok := <-in:
+\t\t\t\tif !ok {
+\t\t\t\t\treporter.EnsurePublished(ctx)
+\t\t\t\t\treturn
+\t\t\t\t}
+\t\t\t\tif chunk.Err != nil {
+\t\t\t\t\treporter.PublishFailure(ctx, chunk.Err)
+\t\t\t\t}
+\t\t\t\tselect {
+\t\t\t\tcase <-ctx.Done():
+\t\t\t\t\treporter.PublishFailure(ctx, ctx.Err())
+\t\t\t\t\treturn
+\t\t\t\tcase out <- chunk:
+\t\t\t\t}
+\t\t\t}
+\t\t}
+\t}()
+\treturn out
+}
+
+func mapExecutorStreamChunks(ctx context.Context, in <-chan pluginapi.ExecutorStreamChunk) <-chan coreexecutor.StreamChunk {
+''',
+    'func trackPluginExecutorStreamUsage(',
+)
+
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat.go')
 
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat_test.go')
+
+queue_go_source('internal/pluginhost/plugin_executor_usage_test.go')
 
 server = ROOT / 'internal/api/server.go'
 server_routes = ROOT / 'internal/api/server_routes.go'
@@ -3877,13 +4046,14 @@ replace_once(
 ''',
     '''\tpluginReleaseCacheMu    sync.Mutex
 \tpluginReleaseCache      map[string]pluginReleaseCacheEntry
+\tproAuthMutationMu       sync.Mutex
 \tlifecycleContext        context.Context
 \tlifecycleCancel         context.CancelFunc
 \tlifecycleWG             sync.WaitGroup
 \tshutdownOnce            sync.Once
 }
 ''',
-    'lifecycleContext        context.Context',
+    'proAuthMutationMu       sync.Mutex',
 )
 replace_once(
     handler,

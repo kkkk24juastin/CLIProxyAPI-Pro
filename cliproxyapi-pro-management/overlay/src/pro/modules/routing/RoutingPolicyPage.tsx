@@ -197,6 +197,7 @@ export function RoutingPolicyPage() {
   const floatingActionsRef = useRef<HTMLDivElement>(null);
   const runtimeRequestIdRef = useRef(0);
   const dirtyRef = useRef(false);
+  const draftRevisionRef = useRef(0);
 
   const disabled = connectionStatus !== 'connected';
   const shouldRenderFloatingActions = isCurrentLayer && dirty;
@@ -222,8 +223,9 @@ export function RoutingPolicyPage() {
     shouldRenderFloatingActions
   );
 
-  const applyConfigResponse = useCallback((response: RoutingPolicyResponse) => {
+  const applyConfigResponse = useCallback((response: RoutingPolicyResponse, replaceDraft = true) => {
     setData(response);
+    if (!replaceDraft) return;
     setRequestProtection(response.requestProtection);
     setStatusCodeInputs(
       Object.fromEntries(
@@ -300,6 +302,7 @@ export function RoutingPolicyPage() {
       value: RoutingRequestProtectionConfig[Key]
     ) => {
       setRequestProtection((current) => (current ? { ...current, [key]: value } : current));
+      draftRevisionRef.current += 1;
       setDirty(true);
       dirtyRef.current = true;
     },
@@ -322,6 +325,7 @@ export function RoutingPolicyPage() {
           },
         };
       });
+      draftRevisionRef.current += 1;
       setDirty(true);
       dirtyRef.current = true;
     },
@@ -330,10 +334,11 @@ export function RoutingPolicyPage() {
 
   const handleSave = async (nextProtection = requestProtection) => {
     if (!nextProtection) return;
+    const savedRevision = draftRevisionRef.current;
     const providers = { ...nextProtection.providers };
     for (const provider of ROUTING_POLICY_PROVIDERS) {
       const statusCodes = parseStatusCodes(statusCodeInputs[provider]);
-      if (statusCodes.length === 0 && nextProtection.enabled) {
+      if (statusCodes.length === 0 && nextProtection.enabled && providers[provider]?.enabled) {
         showNotification(
           t('routing_policy.status_codes_required', {
             provider: t(`routing_policy.providers.${provider}`),
@@ -357,7 +362,7 @@ export function RoutingPolicyPage() {
         providers,
       });
       if (runtimeRequestIdRef.current !== requestId) return;
-      applyConfigResponse(response);
+      applyConfigResponse(response, draftRevisionRef.current === savedRevision);
       showNotification(t('routing_policy.save_success'), 'success');
     } catch (error: unknown) {
       if (runtimeRequestIdRef.current !== requestId) return;
@@ -565,6 +570,7 @@ export function RoutingPolicyPage() {
                           ...current,
                           [provider]: event.target.value,
                         }));
+                        draftRevisionRef.current += 1;
                         setDirty(true);
                         dirtyRef.current = true;
                       }}

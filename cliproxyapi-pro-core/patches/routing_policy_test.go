@@ -2,19 +2,156 @@ package management
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
+	prorouting "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/routing"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
+
+func TestUpdateProAuthSerializesInspectionPriority(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	registered, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "serialized-auth",
+		Provider: "xai",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{authManager: manager}
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- h.updateProAuth(context.Background(), registered.Index, func(auth *coreauth.Auth) {
+			close(firstEntered)
+			<-releaseFirst
+			setProAuthDisabledState(auth, true)
+			auth.Metadata[routingProtectionMetadataKey] = map[string]any{"owner": routingProtectionOwner}
+		})
+	}()
+	<-firstEntered
+	inspectionDone := make(chan error, 1)
+	go func() {
+		inspectionDone <- h.updateProAuth(context.Background(), registered.Index, func(auth *coreauth.Auth) {
+			setProAuthDisabledState(auth, false)
+		})
+	}()
+	select {
+	case err = <-inspectionDone:
+		t.Fatalf("inspection mutation bypassed serialization: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseFirst)
+	if err = <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if err = <-inspectionDone; err != nil {
+		t.Fatal(err)
+	}
+	updated, ok := manager.GetByID(registered.ID)
+	if !ok || updated == nil {
+		t.Fatal("updated auth missing")
+	}
+	if updated.Disabled || routingProtectionOwned(updated) {
+		t.Fatalf("inspection must win: disabled=%v metadata=%#v", updated.Disabled, updated.Metadata)
+	}
+}
+
+func TestRoutingProtectionNonMatchingFailureBreaksConfirmationSequence(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "confirmation-auth", Provider: "xai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{
+		h:             &Handler{authManager: manager},
+		confirmations: prorouting.NewConfirmationTracker(),
+		requestProtection: routingRequestProtectionConfig{
+			Enabled: true,
+			Mode:    routingProtectionModeObserve,
+			Providers: map[string]routingProtectionProviderPolicy{
+				"xai": {Enabled: true, StatusCodes: []int{429}, Confirmations: 2, ConfirmationWindowSeconds: 600},
+			},
+		},
+	}
+	for _, status := range []int{429, 500, 429} {
+		controller.HandleUsage(context.Background(), coreusage.Record{
+			Provider: "xai",
+			AuthID:   auth.ID,
+			Failed:   true,
+			Fail:     coreusage.Failure{StatusCode: status},
+		})
+	}
+	events := controller.recentEvents()
+	if len(events) != 2 || events[0].Count != 1 || events[0].Action != "pending" {
+		t.Fatalf("events = %#v, want restarted 1/2 confirmation", events)
+	}
+}
+
+func TestConcurrentRoutingPolicySavesApplyLatestStoredValue(t *testing.T) {
+	oldSet, oldGet := setRoutingPolicyProSetting, getRoutingPolicyProSetting
+	defer func() { setRoutingPolicyProSetting, getRoutingPolicyProSetting = oldSet, oldGet }()
+	var storeMu sync.Mutex
+	var stored embeddedusage.ProSetting
+	firstStored := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	setRoutingPolicyProSetting = func(_ context.Context, item embeddedusage.ProSetting) error {
+		var value routingRequestProtectionConfig
+		if err := json.Unmarshal(item.Settings, &value); err != nil {
+			return err
+		}
+		storeMu.Lock()
+		stored = item
+		storeMu.Unlock()
+		if value.Mode == routingProtectionModeObserve {
+			close(firstStored)
+			<-releaseFirst
+		}
+		return nil
+	}
+	getRoutingPolicyProSetting = func(context.Context, string) (embeddedusage.ProSetting, bool, error) {
+		storeMu.Lock()
+		defer storeMu.Unlock()
+		return stored, len(stored.Settings) > 0, nil
+	}
+	h := &Handler{}
+	controller := &routingPolicyController{requestProtection: defaultRoutingRequestProtectionConfig()}
+	routingPolicyControllers.Store(h, controller)
+	defer routingPolicyControllers.Delete(h)
+	save := func(mode string) bool {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/routing-policy", nil)
+		return h.persistRoutingRequestProtection(ctx, routingRequestProtectionConfig{Mode: mode})
+	}
+	firstDone := make(chan bool, 1)
+	go func() { firstDone <- save(routingProtectionModeObserve) }()
+	<-firstStored
+	if !save(routingProtectionModeEnforce) {
+		t.Fatal("second save failed")
+	}
+	close(releaseFirst)
+	if !<-firstDone {
+		t.Fatal("first save failed")
+	}
+	if got := controller.requestProtectionConfig().Mode; got != routingProtectionModeEnforce {
+		t.Fatalf("runtime mode = %q, want latest stored enforce", got)
+	}
+}
 
 func TestRoutingProtectionProviders(t *testing.T) {
 	want := []string{

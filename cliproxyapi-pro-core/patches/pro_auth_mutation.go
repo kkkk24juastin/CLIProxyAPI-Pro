@@ -282,6 +282,12 @@ func (h *Handler) updateProAuth(ctx context.Context, authIndex string, mutate fu
 	if h == nil || h.authManager == nil {
 		return fmt.Errorf("core auth manager unavailable")
 	}
+	h.proAuthMutationMu.Lock()
+	defer h.proAuthMutationMu.Unlock()
+	return h.updateProAuthLocked(ctx, authIndex, mutate)
+}
+
+func (h *Handler) updateProAuthLocked(ctx context.Context, authIndex string, mutate func(*coreauth.Auth)) error {
 	auth := h.authByIndex(authIndex)
 	if auth == nil {
 		return fmt.Errorf("auth not found")
@@ -323,12 +329,14 @@ func (h *Handler) updateProErrorAuth(ctx context.Context, authIndex string, muta
 	if h == nil || h.authManager == nil {
 		return fmt.Errorf("core auth manager unavailable")
 	}
+	h.proAuthMutationMu.Lock()
+	defer h.proAuthMutationMu.Unlock()
 	auth := h.authByIndex(authIndex)
 	if auth == nil {
 		return fmt.Errorf("auth not found")
 	}
 	if !coreauth.IsPluginVirtualAuth(auth) {
-		return h.updateProAuth(ctx, authIndex, mutate)
+		return h.updateProAuthLocked(ctx, authIndex, mutate)
 	}
 	if mutate == nil {
 		return nil

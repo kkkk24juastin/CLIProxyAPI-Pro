@@ -127,6 +127,23 @@ class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
         self.assertIn('if (!dirtyRef.current) {', disconnected)
         self.assertIn('setRequestProtection(null);', disconnected)
 
+    def test_routing_save_preserves_edits_made_while_request_is_in_flight(self) -> None:
+        routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()
+
+        self.assertIn('const draftRevisionRef = useRef(0)', routing)
+        self.assertGreaterEqual(routing.count('draftRevisionRef.current += 1'), 3)
+        self.assertIn('const savedRevision = draftRevisionRef.current', routing)
+        self.assertIn('draftRevisionRef.current === savedRevision', routing)
+        self.assertIn('if (!replaceDraft) return;', routing)
+
+    def test_routing_validation_skips_disabled_providers(self) -> None:
+        routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()
+
+        self.assertIn(
+            'statusCodes.length === 0 && nextProtection.enabled && providers[provider]?.enabled',
+            routing,
+        )
+
     def test_header_and_discard_actions_cover_all_locales(self) -> None:
         locales = json.loads(LOCALES.read_text())
         routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()
