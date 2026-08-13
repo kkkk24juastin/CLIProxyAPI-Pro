@@ -348,6 +348,20 @@ func (p *Pool) NodesForCheck(now time.Time) []*Node {
 	return nodes
 }
 
+// EligibleCount reports how many nodes can participate in selection at now.
+// Keep this based on Node.eligible so status and Select cannot drift apart.
+func (p *Pool) EligibleCount(now time.Time) int {
+	p.mu.RLock()
+	count := 0
+	for _, node := range p.nodes {
+		if node.eligible(now) {
+			count++
+		}
+	}
+	p.mu.RUnlock()
+	return count
+}
+
 func (p *Pool) Select(excluded map[string]struct{}) *Node {
 	p.mu.RLock()
 	now := time.Now()

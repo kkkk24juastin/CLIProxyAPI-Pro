@@ -60,7 +60,7 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('automaticLocationAttemptsRef', source)
         self.assertIn("runtimeByID.get(node.id)?.location", source)
         self.assertIn("!node.enabled || !node.url.trim()", source)
-        self.assertIn("proxyPoolApi.testNode(\n                node.id,\n                '',", source)
+        self.assertIn("proxyPoolApi.testNode(\n                node.id,\n                node.url,", source)
         self.assertIn('if (item?.result.success) next[item.key] = item.result', source)
         self.assertIn('automaticLocationAttemptsRef.current.clear()', source)
 

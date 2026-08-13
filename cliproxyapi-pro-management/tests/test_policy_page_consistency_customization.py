@@ -80,7 +80,15 @@ class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
 
         self.assertIn('isCurrentLayer && dirty', routing)
         self.assertIn('{dirty &&', account)
-        self.assertIn('visible={dirty}', proxy_page)
+        self.assertIn('visible={isCurrentLayer && dirty}', proxy_page)
+
+    def test_optional_feature_pages_guard_unsaved_proxy_drafts(self) -> None:
+        proxy_page = (PRO_ROOT / 'proxyPool/ProxyPoolPage.tsx').read_text()
+
+        self.assertIn('usePageTransitionLayer', proxy_page)
+        self.assertIn('useUnsavedChangesGuard({', proxy_page)
+        self.assertIn('enabled: isCurrentLayer', proxy_page)
+        self.assertIn('shouldBlock: dirty', proxy_page)
 
     def test_status_overviews_keep_two_columns_on_narrow_screens(self) -> None:
         account_styles = (PRO_ROOT / 'oauthPolicy/OAuthPolicyPage.module.scss').read_text()

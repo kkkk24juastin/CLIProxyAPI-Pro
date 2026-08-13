@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconInfo, IconNetwork, IconSettings } from '@/components/ui/icons';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { ProxyPoolDiagnostics } from '@/pro/modules/proxyPool/features/ProxyPoolDiagnostics';
 import { ProxyPoolHeader } from '@/pro/modules/proxyPool/features/ProxyPoolHeader';
 import { ProxyPoolImportModal } from '@/pro/modules/proxyPool/features/ProxyPoolImportModal';
@@ -130,6 +132,8 @@ const validateProxyPoolConfig = (config: ProxyPoolConfig): ValidationError | nul
 
 export function ProxyPoolPage() {
   const { t, i18n } = useTranslation();
+  const pageTransitionLayer = usePageTransitionLayer();
+  const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.isCurrentLayer : true;
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
@@ -158,6 +162,22 @@ export function ProxyPoolPage() {
   const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'node' | 'import' | 'takeover'>();
   const importOpen = activeSurface === 'import';
   const takeoverOpen = activeSurface === 'takeover';
+  const unsavedChangesDialog = useMemo(
+    () => ({
+      title: t('common.unsaved_changes_title'),
+      message: t('common.unsaved_changes_message'),
+      confirmText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+    }),
+    [t]
+  );
+
+  useUnsavedChangesGuard({
+    enabled: isCurrentLayer,
+    shouldBlock: dirty,
+    dialog: unsavedChangesDialog,
+  });
+
   const setImportOpen = useCallback((open: boolean) => {
     if (open) openSurface('import');
     else if (activeSurface === 'import') closeSurface();
@@ -231,7 +251,7 @@ export function ProxyPoolPage() {
             try {
               const result = await proxyPoolApi.testNode(
                 node.id,
-                '',
+                node.url,
                 snapshot.config.healthCheck.testUrl
               );
               return { key, result };
@@ -770,7 +790,7 @@ export function ProxyPoolPage() {
               onConfirm={() => void confirmTakeover()}
             />
             <ProxyPoolSaveBar
-              visible={dirty}
+              visible={isCurrentLayer && dirty}
               saving={saving}
               onDiscard={discard}
               onSave={() => void save()}

@@ -73,6 +73,7 @@ export interface ProxyPoolStatus {
   activeTunnels: number;
   totalNodes: number;
   healthyNodes: number;
+  eligibleNodes?: number;
   isolatedNodes: number;
   lastError: string;
   startedAt: string;
@@ -344,7 +345,7 @@ const normalizeNodeStatus = (value: unknown): ProxyPoolNodeStatus => {
   };
 };
 
-const normalizeStatus = (value: unknown): ProxyPoolStatus => {
+export const normalizeProxyPoolStatus = (value: unknown): ProxyPoolStatus => {
   const source = asRecord(value);
   return {
     ready: asBoolean(source.ready),
@@ -355,6 +356,10 @@ const normalizeStatus = (value: unknown): ProxyPoolStatus => {
     activeTunnels: asNumber(source.active_tunnels),
     totalNodes: asNumber(source.total_nodes),
     healthyNodes: asNumber(source.healthy_nodes),
+    eligibleNodes:
+      Object.prototype.hasOwnProperty.call(source, 'eligible_nodes')
+        ? asNumber(source.eligible_nodes)
+        : undefined,
     isolatedNodes: asNumber(source.isolated_nodes),
     lastError: asString(source.last_error),
     startedAt: asString(source.started_at),
@@ -403,7 +408,7 @@ const waitForStatus = async (
   let lastError: unknown = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      const status = normalizeStatus(await apiClient.get('/pro/proxy-pool/status'));
+      const status = normalizeProxyPoolStatus(await apiClient.get('/pro/proxy-pool/status'));
       if (
         status.ready &&
         status.listen === listen.trim() &&
@@ -481,7 +486,7 @@ export const proxyPoolApi = {
       readGlobalProxyUrl(),
       loadBypassCredentials(),
     ]);
-    const status = statusValue ? normalizeStatus(statusValue) : null;
+    const status = statusValue ? normalizeProxyPoolStatus(statusValue) : null;
     const config = normalizeProxyPoolConfig(rawConfig);
     const effectiveBypassCredentials = bypassCredentials.filter(
       (item) => !isProxyPoolListenerUrl(item.proxyUrl, config.listen)
@@ -525,7 +530,7 @@ export const proxyPoolApi = {
   },
 
   async status(): Promise<ProxyPoolStatus> {
-    return normalizeStatus(await apiClient.get('/pro/proxy-pool/status'));
+    return normalizeProxyPoolStatus(await apiClient.get('/pro/proxy-pool/status'));
   },
 
   async testNode(

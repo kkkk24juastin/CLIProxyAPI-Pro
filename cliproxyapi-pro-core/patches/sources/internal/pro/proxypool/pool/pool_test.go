@@ -60,6 +60,36 @@ func TestIsolationRemovesNodeUntilExpiry(t *testing.T) {
 	}
 }
 
+func TestEligibleCountMatchesSelectionRules(t *testing.T) {
+	cfg := testConfig("round-robin")
+	cfg.Nodes = append(cfg.Nodes,
+		proxyconfig.NodeConfig{ID: "disabled", URL: "http://127.0.0.1:19003", Enabled: false, Weight: 1, Order: 30},
+	)
+	p := New(cfg)
+	now := time.Now()
+
+	// Unknown and degraded nodes are both selectable until actively isolated.
+	p.Node("b").mu.Lock()
+	p.Node("b").state = HealthDegraded
+	p.Node("b").mu.Unlock()
+	if got := p.EligibleCount(now); got != 2 {
+		t.Fatalf("EligibleCount() = %d, want 2", got)
+	}
+
+	p.Node("a").MarkAttempt()
+	p.Node("a").MarkFailure(errors.New("dial failed"), 1, time.Hour)
+	if got := p.EligibleCount(now); got != 1 {
+		t.Fatalf("EligibleCount() with active isolation = %d, want 1", got)
+	}
+	if selected := p.Select(nil); selected == nil || selected.ID() != "b" {
+		t.Fatalf("Select() with active isolation = %#v, want b", selected)
+	}
+
+	if got := p.EligibleCount(now.Add(2 * time.Hour)); got != 2 {
+		t.Fatalf("EligibleCount() after isolation expiry = %d, want 2", got)
+	}
+}
+
 func TestRecoverClearsIsolationAndPreservesStats(t *testing.T) {
 	p := New(testConfig("round-robin"))
 	node := p.Node("a")

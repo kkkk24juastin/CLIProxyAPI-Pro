@@ -30,6 +30,7 @@ type Status struct {
 	ActiveTunnels int64               `json:"active_tunnels"`
 	TotalNodes    int                 `json:"total_nodes"`
 	HealthyNodes  int                 `json:"healthy_nodes"`
+	EligibleNodes int                 `json:"eligible_nodes"`
 	IsolatedNodes int                 `json:"isolated_nodes"`
 	LastError     string              `json:"last_error,omitempty"`
 	StartedAt     time.Time           `json:"started_at,omitempty"`
@@ -171,6 +172,7 @@ func (e *Engine) Status() Status {
 	}
 	status.Nodes = poolRef.Snapshots()
 	status.TotalNodes = len(status.Nodes)
+	status.EligibleNodes = poolRef.EligibleCount(time.Now())
 	for _, node := range status.Nodes {
 		status.ActiveTunnels += node.ActiveTunnels
 		switch node.State {

@@ -26,7 +26,9 @@ export function ProxyPoolTakeoverDialog({
   const { t } = useTranslation();
   const activating = !snapshot.takeoverActive;
   const readyNodes =
-    snapshot.status?.healthyNodes ?? draft.nodes.filter((node) => node.enabled).length;
+    snapshot.status?.eligibleNodes ??
+    snapshot.status?.healthyNodes ??
+    draft.nodes.filter((node) => node.enabled).length;
   const endpoint = snapshot.status?.proxyUrl || `socks5://${draft.listen}`;
 
   return (

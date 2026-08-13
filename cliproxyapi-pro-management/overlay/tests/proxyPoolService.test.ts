@@ -3,6 +3,7 @@ import {
   isProxyPoolListenerUrl,
   normalizeProxyPoolInteger,
   normalizeProxyPoolConfig,
+  normalizeProxyPoolStatus,
   parseProxyPoolImport,
   serializeProxyPoolConfig,
 } from '../src/pro/modules/proxyPool/proxyPool';
@@ -113,5 +114,16 @@ describe('proxy pool service model', () => {
     expect(proxyPoolDurationValue('90s', 'm')).toBe(1.5);
     expect(proxyPoolDurationValue('invalid', 's')).toBeNull();
     expect(serializeProxyPoolDuration(1.5, 'm')).toBe('1.5m');
+  });
+
+  test('normalizes eligible node counts while remaining compatible with older cores', () => {
+    expect(
+      normalizeProxyPoolStatus({
+        healthy_nodes: 1,
+        eligible_nodes: 3,
+        nodes: [],
+      }).eligibleNodes
+    ).toBe(3);
+    expect(normalizeProxyPoolStatus({ healthy_nodes: 1, nodes: [] }).eligibleNodes).toBeUndefined();
   });
 });

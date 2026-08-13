@@ -173,7 +173,7 @@ func TestEngineRoutesSOCKSConnectionsRoundRobin(t *testing.T) {
 		t.Fatalf("proxy counts = a:%d b:%d", proxyA.count.Load(), proxyB.count.Load())
 	}
 	status := engine.Status()
-	if !status.Ready || status.TotalNodes != 2 || status.Generation != 1 {
+	if !status.Ready || status.TotalNodes != 2 || status.EligibleNodes != 2 || status.Generation != 1 {
 		t.Fatalf("Status() = %+v", status)
 	}
 }
