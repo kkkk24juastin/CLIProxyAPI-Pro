@@ -180,7 +180,7 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertNotIn('.priceServiceTierRow {', styles)
         self.assertGreaterEqual(responsive.count('grid-row: auto;'), 2)
 
-    def test_model_price_editor_prioritizes_status_and_expanded_price_sections(self) -> None:
+    def test_model_price_editor_prioritizes_status_and_inline_add_actions(self) -> None:
         prices = (
             PRO_ROOT / 'modules/monitoring/features/components/ModelPriceManagerModal.tsx'
         ).read_text()
@@ -191,7 +191,22 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         header = prices[header_start:prices.index('</header>', header_start)]
         self.assertNotIn('model_price_model_scope', header)
         self.assertLess(header.index('priceRuleEditorBadges'), header.index('priceRuleEditorActions'))
-        self.assertEqual(prices.count('styles.priceAdvancedSection}`} open>'), 3)
+        self.assertNotIn('<details', prices)
+        self.assertNotIn('model_price_advanced', prices)
+        self.assertEqual(prices.count('styles.priceRuleCollectionSection'), 3)
+        self.assertEqual(prices.count('styles.priceRuleCollectionContent'), 3)
+        self.assertNotIn('priceAdvanced', prices + styles)
+        for title, handler in (
+            ('model_price_context_tier', 'addPriceTier'),
+            ('model_price_service_tiers', 'addServiceTier'),
+            ('model_price_speeds', 'addSpeed'),
+        ):
+            self.assertEqual(prices.count(f'onClick={{{handler}}}'), 1)
+            title_index = prices.index(title)
+            action_index = prices.index(f'onClick={{{handler}}}', title_index)
+            content_index = prices.index('styles.priceRuleCollectionContent', action_index)
+            self.assertLess(title_index, action_index)
+            self.assertLess(action_index, content_index)
         actions_start = styles.index('.priceRuleEditorActions {')
         actions = styles[actions_start:styles.index('}', actions_start)]
         self.assertNotIn('grid-column: 1 / -1;', actions)

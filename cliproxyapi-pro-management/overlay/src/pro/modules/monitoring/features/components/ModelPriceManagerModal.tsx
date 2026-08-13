@@ -381,23 +381,17 @@ export function ModelPriceManagerModal({
                         </div>
                       </section>
 
-                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`} open>
-                        <summary className={styles.priceAdvancedSummary}>
+                      <section className={`${styles.priceRuleSection} ${styles.priceRuleCollectionSection}`}>
+                        <div className={styles.priceRuleSectionHeader}>
                           <div>
                             <h4>{t('usage_stats.model_price_context_tier')}</h4>
                             <span>{t('usage_stats.model_price_tier_count', { count: priceDraft.tiers.length })}</span>
                           </div>
-                          <span className={styles.priceAdvancedSummaryAction}>
-                            {t('usage_stats.model_price_advanced')}
-                            <span className={styles.priceAdvancedChevron} aria-hidden="true">⌄</span>
-                          </span>
-                        </summary>
-                        <div className={styles.priceAdvancedContent}>
-                          <div className={styles.priceAdvancedActions}>
-                            <Button variant="secondary" size="sm" onClick={addPriceTier}>
-                              {t('usage_stats.model_price_tier_add')}
-                            </Button>
-                          </div>
+                          <Button variant="secondary" size="sm" onClick={addPriceTier}>
+                            {t('usage_stats.model_price_tier_add')}
+                          </Button>
+                        </div>
+                        <div className={styles.priceRuleCollectionContent}>
                           <div className={styles.priceTierList}>
                           {priceDraft.tiers.map((tier, index) => (
                             <div className={styles.priceTierCompactRow} key={index}>
@@ -442,25 +436,19 @@ export function ModelPriceManagerModal({
                           ) : null}
                           </div>
                         </div>
-                      </details>
+                      </section>
 
-                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`} open>
-                        <summary className={styles.priceAdvancedSummary}>
+                      <section className={`${styles.priceRuleSection} ${styles.priceRuleCollectionSection}`}>
+                        <div className={styles.priceRuleSectionHeader}>
                           <div>
                             <h4>{t('usage_stats.model_price_service_tiers')}</h4>
                             <span>{t('usage_stats.model_price_service_tier_count', { count: priceDraft.serviceTiers.length })}</span>
                           </div>
-                          <span className={styles.priceAdvancedSummaryAction}>
-                            {t('usage_stats.model_price_advanced')}
-                            <span className={styles.priceAdvancedChevron} aria-hidden="true">⌄</span>
-                          </span>
-                        </summary>
-                        <div className={styles.priceAdvancedContent}>
-                          <div className={styles.priceAdvancedActions}>
-                            <Button variant="secondary" size="sm" onClick={addServiceTier}>
-                              {t('usage_stats.model_price_service_tier_add')}
-                            </Button>
-                          </div>
+                          <Button variant="secondary" size="sm" onClick={addServiceTier}>
+                            {t('usage_stats.model_price_service_tier_add')}
+                          </Button>
+                        </div>
+                        <div className={styles.priceRuleCollectionContent}>
                           <p className={styles.priceRuleSectionHint}>{t('usage_stats.model_price_service_tier_hint')}</p>
                           {selectedPriceTarget.rule?.source === 'models.dev' ? (
                             <p className={styles.priceRuleSectionNotice}>{t('usage_stats.model_price_service_tier_synced_notice')}</p>
@@ -509,25 +497,19 @@ export function ModelPriceManagerModal({
                           ) : null}
                           </div>
                         </div>
-                      </details>
+                      </section>
 
-                      <details className={`${styles.priceRuleSection} ${styles.priceAdvancedSection}`} open>
-                        <summary className={styles.priceAdvancedSummary}>
+                      <section className={`${styles.priceRuleSection} ${styles.priceRuleCollectionSection}`}>
+                        <div className={styles.priceRuleSectionHeader}>
                           <div>
                             <h4>{t('usage_stats.model_price_speeds')}</h4>
                             <span>{t('usage_stats.model_price_speed_count', { count: priceDraft.speeds.length })}</span>
                           </div>
-                          <span className={styles.priceAdvancedSummaryAction}>
-                            {t('usage_stats.model_price_advanced')}
-                            <span className={styles.priceAdvancedChevron} aria-hidden="true">⌄</span>
-                          </span>
-                        </summary>
-                        <div className={styles.priceAdvancedContent}>
-                          <div className={styles.priceAdvancedActions}>
-                            <Button variant="secondary" size="sm" onClick={addSpeed}>
-                              {t('usage_stats.model_price_speed_add')}
-                            </Button>
-                          </div>
+                          <Button variant="secondary" size="sm" onClick={addSpeed}>
+                            {t('usage_stats.model_price_speed_add')}
+                          </Button>
+                        </div>
+                        <div className={styles.priceRuleCollectionContent}>
                           <p className={styles.priceRuleSectionHint}>{t('usage_stats.model_price_speed_hint')}</p>
                           {selectedPriceTarget.rule?.source === 'models.dev' ? (
                             <p className={styles.priceRuleSectionNotice}>{t('usage_stats.model_price_speed_synced_notice')}</p>
@@ -576,7 +558,7 @@ export function ModelPriceManagerModal({
                           ) : null}
                           </div>
                         </div>
-                      </details>
+                      </section>
                     </div>
 
                   </>
