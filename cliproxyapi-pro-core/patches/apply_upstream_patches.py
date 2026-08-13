@@ -4742,6 +4742,7 @@ format_go_writes([
     'internal/pro/oauthpolicy/management.go',
     'internal/pro/proxypool/management.go',
     'internal/pro/proxypool/service.go',
+    'internal/pro/proxypool/service_test.go',
     'internal/pro/settings/store.go',
     'internal/pro/state/types.go',
     'internal/pro/state/writer.go',

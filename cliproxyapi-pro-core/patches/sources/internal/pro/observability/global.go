@@ -189,24 +189,32 @@ func GetProSetting(ctx context.Context, namespace string) (ProSetting, bool, err
 
 func SetProSetting(ctx context.Context, item ProSetting) error {
 	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
-		globalStateMu.RLock()
-		defer globalStateMu.RUnlock()
-		if globalService == nil || globalService.store == nil {
-			return fmt.Errorf("usage service is not available")
-		}
-		return globalService.store.SetProSetting(ctx, item)
+		return setProSetting(ctx, item)
 	})
+}
+
+func setProSetting(ctx context.Context, item ProSetting) error {
+	globalStateMu.RLock()
+	defer globalStateMu.RUnlock()
+	if globalService == nil || globalService.store == nil {
+		return fmt.Errorf("usage service is not available")
+	}
+	return globalService.store.SetProSetting(ctx, item)
 }
 
 func DeleteProSetting(ctx context.Context, namespace string) error {
 	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
-		globalStateMu.RLock()
-		defer globalStateMu.RUnlock()
-		if globalService == nil || globalService.store == nil {
-			return fmt.Errorf("usage service is not available")
-		}
-		return globalService.store.DeleteProSetting(ctx, namespace)
+		return deleteProSetting(ctx, namespace)
 	})
+}
+
+func deleteProSetting(ctx context.Context, namespace string) error {
+	globalStateMu.RLock()
+	defer globalStateMu.RUnlock()
+	if globalService == nil || globalService.store == nil {
+		return fmt.Errorf("usage service is not available")
+	}
+	return globalService.store.DeleteProSetting(ctx, namespace)
 }
 
 func QueueRoutingCursorState(state RoutingCursorState) {

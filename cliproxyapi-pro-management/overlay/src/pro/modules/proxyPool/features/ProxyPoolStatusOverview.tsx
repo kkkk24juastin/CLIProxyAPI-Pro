@@ -6,6 +6,7 @@ import {
   IconShield,
 } from '@/components/ui/icons';
 import type { ProxyPoolConfig, ProxyPoolSnapshot } from '@/pro/modules/proxyPool/proxyPool';
+import { resolveProxyPoolEndpoint } from './proxyPoolUi';
 import styles from './ProxyPool.module.scss';
 
 interface ProxyPoolStatusOverviewProps {
@@ -18,7 +19,7 @@ export function ProxyPoolStatusOverview({ snapshot, draft }: ProxyPoolStatusOver
   const status = snapshot.status;
   const available = status?.eligibleNodes ?? status?.healthyNodes ?? 0;
   const total = status?.totalNodes ?? draft.nodes.length;
-  const endpoint = status?.proxyUrl || `socks5://${draft.listen}`;
+  const endpoint = resolveProxyPoolEndpoint(status?.proxyUrl, draft.listen);
   const ready = status?.ready === true;
 
   return (

@@ -14,6 +14,7 @@ import { ProWorkspaceSheet } from '@/pro/shared/ProSurface';
 import {
   formatProxyPoolSuccessRate,
   formatProxyPoolTime,
+  hasProxyCredentials,
   maskProxyCredentials,
   proxyPoolStateLabel,
 } from './proxyPoolUi';
@@ -64,7 +65,7 @@ export function ProxyPoolNodeSheet({
   if (!value) return null;
   const state = runtime?.state ?? (value.enabled ? 'unknown' : 'disabled');
   const displayUrl = showCredentials ? value.url : maskProxyCredentials(value.url);
-  const hasCredentials = displayUrl !== value.url;
+  const hasCredentials = hasProxyCredentials(value.url);
 
   return (
     <ProWorkspaceSheet

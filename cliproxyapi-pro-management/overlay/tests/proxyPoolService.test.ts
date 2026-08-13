@@ -9,7 +9,9 @@ import {
 } from '../src/pro/modules/proxyPool/proxyPool';
 import {
   formatProxyPoolSuccessRate,
+  hasProxyCredentials,
   proxyPoolDurationValue,
+  resolveProxyPoolEndpoint,
   serializeProxyPoolDuration,
 } from '../src/pro/modules/proxyPool/features/proxyPoolUi';
 
@@ -114,6 +116,22 @@ describe('proxy pool service model', () => {
     expect(proxyPoolDurationValue('90s', 'm')).toBe(1.5);
     expect(proxyPoolDurationValue('invalid', 's')).toBeNull();
     expect(serializeProxyPoolDuration(1.5, 'm')).toBe('1.5m');
+  });
+
+  test('keeps credential detection stable after the URL is revealed', () => {
+    const value = 'socks5://alice:secret@proxy.example:1080';
+    expect(hasProxyCredentials(value)).toBe(true);
+    expect(hasProxyCredentials('socks5://proxy.example:1080')).toBe(false);
+  });
+
+  test('falls back from an uninitialized runtime endpoint to the configured listener', () => {
+    expect(resolveProxyPoolEndpoint('socks5://', '127.0.0.1:8318')).toBe(
+      'socks5://127.0.0.1:8318'
+    );
+    expect(resolveProxyPoolEndpoint('', '127.0.0.1:8318')).toBe('socks5://127.0.0.1:8318');
+    expect(resolveProxyPoolEndpoint('socks5://127.0.0.1:9000', '127.0.0.1:8318')).toBe(
+      'socks5://127.0.0.1:9000'
+    );
   });
 
   test('normalizes eligible node counts while remaining compatible with older cores', () => {

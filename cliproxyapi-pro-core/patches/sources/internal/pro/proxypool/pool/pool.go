@@ -106,21 +106,30 @@ func (n *Node) hasURL(rawURL string) bool {
 func (n *Node) ActiveTunnels() int64 { return n.activeTunnels.Load() }
 
 func (n *Node) eligible(now time.Time) bool {
-	if n == nil || !n.config.Enabled {
+	if n == nil {
 		return false
 	}
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	return n.state != HealthIsolated || !now.Before(n.isolationUntil)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.refreshExpiredIsolationLocked(now)
+	return n.config.Enabled && n.state != HealthIsolated
 }
 
 func (n *Node) checkable(now time.Time) bool {
-	if n == nil || !n.config.Enabled {
+	if n == nil {
 		return false
 	}
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	return n.state != HealthIsolated || !now.Before(n.isolationUntil)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.refreshExpiredIsolationLocked(now)
+	return n.config.Enabled && n.state != HealthIsolated
+}
+
+func (n *Node) refreshExpiredIsolationLocked(now time.Time) {
+	if n.state == HealthIsolated && !now.Before(n.isolationUntil) {
+		n.state = HealthUnknown
+		n.isolationUntil = time.Time{}
+	}
 }
 
 func (n *Node) MarkAttempt() {
@@ -244,7 +253,8 @@ func (n *Node) Recover() {
 }
 
 func (n *Node) Snapshot() NodeSnapshot {
-	n.mu.RLock()
+	n.mu.Lock()
+	n.refreshExpiredIsolationLocked(time.Now())
 	totalConnects := n.totalConnects.Load()
 	successConnects := n.successConnects.Load()
 	failedConnects := n.failedConnects.Load()
@@ -276,7 +286,7 @@ func (n *Node) Snapshot() NodeSnapshot {
 		SuccessConnects:     successConnects,
 		FailedConnects:      failedConnects,
 	}
-	n.mu.RUnlock()
+	n.mu.Unlock()
 	return snapshot
 }
 

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { IconAlertTriangle, IconCheckCircle2, IconRefreshCw } from '@/components/ui/icons';
 import type { ProxyPoolConfig, ProxyPoolSnapshot } from '@/pro/modules/proxyPool/proxyPool';
-import { formatProxyPoolTime, maskProxyCredentials } from './proxyPoolUi';
+import { formatProxyPoolTime, maskProxyCredentials, resolveProxyPoolEndpoint } from './proxyPoolUi';
 import styles from './ProxyPool.module.scss';
 
 interface ProxyPoolDiagnosticsProps {
@@ -32,7 +32,7 @@ export function ProxyPoolDiagnostics({
 }: ProxyPoolDiagnosticsProps) {
   const { t } = useTranslation();
   const status = snapshot.status;
-  const endpoint = status?.proxyUrl || `socks5://${draft.listen}`;
+  const endpoint = resolveProxyPoolEndpoint(status?.proxyUrl, draft.listen);
   const diagnosticText = useMemo(
     () =>
       JSON.stringify(

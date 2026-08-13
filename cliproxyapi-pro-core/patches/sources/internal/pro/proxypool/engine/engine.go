@@ -155,10 +155,14 @@ func (e *Engine) Status() Status {
 	lastAppliedAt := e.lastAppliedAt
 	lastHealthAt := e.lastHealthAt
 	e.mu.RUnlock()
+	proxyURL := ""
+	if cfg.Listen != "" {
+		proxyURL = "socks5://" + cfg.Listen
+	}
 	status := Status{
 		Ready:         server != nil,
 		Listen:        cfg.Listen,
-		ProxyURL:      "socks5://" + cfg.Listen,
+		ProxyURL:      proxyURL,
 		Strategy:      cfg.Strategy,
 		Generation:    e.generation.Load(),
 		LastError:     lastError,

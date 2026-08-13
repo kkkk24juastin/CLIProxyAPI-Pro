@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/Button';
 import { ProTaskDialog } from '@/pro/shared/ProSurface';
 import { IconAlertTriangle, IconCheckCircle2 } from '@/components/ui/icons';
 import type { ProxyPoolConfig, ProxyPoolSnapshot } from '@/pro/modules/proxyPool/proxyPool';
-import { maskProxyCredentials } from './proxyPoolUi';
+import { maskProxyCredentials, resolveProxyPoolEndpoint } from './proxyPoolUi';
 import styles from './ProxyPool.module.scss';
 
 interface ProxyPoolTakeoverDialogProps {
@@ -29,7 +29,7 @@ export function ProxyPoolTakeoverDialog({
     snapshot.status?.eligibleNodes ??
     snapshot.status?.healthyNodes ??
     draft.nodes.filter((node) => node.enabled).length;
-  const endpoint = snapshot.status?.proxyUrl || `socks5://${draft.listen}`;
+  const endpoint = resolveProxyPoolEndpoint(snapshot.status?.proxyUrl, draft.listen);
 
   return (
     <ProTaskDialog

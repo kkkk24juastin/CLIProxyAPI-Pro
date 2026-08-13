@@ -58,6 +58,10 @@ func TestIsolationRemovesNodeUntilExpiry(t *testing.T) {
 	if !foundA {
 		t.Fatal("expired isolated node did not become eligible")
 	}
+	snapshot := node.Snapshot()
+	if snapshot.State != HealthUnknown || !snapshot.IsolationUntil.IsZero() {
+		t.Fatalf("expired isolation remained visible in snapshot: %+v", snapshot)
+	}
 }
 
 func TestEligibleCountMatchesSelectionRules(t *testing.T) {

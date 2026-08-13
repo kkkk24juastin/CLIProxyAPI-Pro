@@ -134,40 +134,52 @@ func (s *Service) UpdateConfig(ctx context.Context, cfg proxyconfig.Config) erro
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return fmt.Errorf("proxy pool service is closed")
-	}
-	oldConfig := s.config
-	oldRaw, _ := proxyconfig.Marshal(oldConfig)
-	if err := s.store.Put(ctx, settings.Item{
-		Namespace: settings.NamespaceProxyPool, SchemaVersion: settings.SchemaVersionOne, Settings: raw,
-	}); err != nil {
-		return err
-	}
-	if cfg.Enabled {
-		if s.engine == nil {
-			s.engine = proxyengine.New()
+	return s.executeWrite(ctx, func(ctx context.Context, store settings.Store) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.closed {
+			return fmt.Errorf("proxy pool service is closed")
 		}
-		if err := s.engine.ApplyConfig(cfg); err != nil {
-			_ = s.store.Put(context.Background(), settings.Item{
-				Namespace: settings.NamespaceProxyPool, SchemaVersion: settings.SchemaVersionOne, Settings: oldRaw,
-			})
-			s.configErr = err.Error()
+		oldConfig := s.config
+		oldRaw, _ := proxyconfig.Marshal(oldConfig)
+		if err := store.Put(ctx, settings.Item{
+			Namespace: settings.NamespaceProxyPool, SchemaVersion: settings.SchemaVersionOne, Settings: raw,
+		}); err != nil {
 			return err
 		}
-	} else {
-		oldEngine := s.engine
-		s.engine = proxyengine.New()
-		if oldEngine != nil {
-			go oldEngine.Close()
+		if cfg.Enabled {
+			if s.engine == nil {
+				s.engine = proxyengine.New()
+			}
+			if err := s.engine.ApplyConfig(cfg); err != nil {
+				_ = store.Put(context.Background(), settings.Item{
+					Namespace: settings.NamespaceProxyPool, SchemaVersion: settings.SchemaVersionOne, Settings: oldRaw,
+				})
+				s.configErr = err.Error()
+				return err
+			}
+		} else {
+			oldEngine := s.engine
+			s.engine = proxyengine.New()
+			if oldEngine != nil {
+				go oldEngine.Close()
+			}
 		}
+		s.config = cfg
+		s.configErr = ""
+		s.refreshOverrideLocked()
+		return nil
+	})
+}
+
+func (s *Service) executeWrite(
+	ctx context.Context,
+	operation func(context.Context, settings.Store) error,
+) error {
+	if coordinator, ok := s.store.(settings.WriteCoordinator); ok {
+		return coordinator.ExecuteWrite(ctx, operation)
 	}
-	s.config = cfg
-	s.configErr = ""
-	s.refreshOverrideLocked()
-	return nil
+	return operation(ctx, s.store)
 }
 
 func (s *Service) applyImportedSetting(_ context.Context, item settings.Item) error {
@@ -219,11 +231,19 @@ func (s *Service) Status() proxyengine.Status {
 	s.mu.RLock()
 	engine := s.engine
 	configErr := s.configErr
+	cfg := s.config
 	s.mu.RUnlock()
 	if engine == nil {
 		return proxyengine.Status{LastError: configErr}
 	}
 	status := engine.Status()
+	if status.Listen == "" {
+		status.Listen = cfg.Listen
+		status.ProxyURL = "socks5://" + cfg.Listen
+	}
+	if status.Strategy == "" {
+		status.Strategy = cfg.Strategy
+	}
 	if status.LastError == "" {
 		status.LastError = configErr
 	}

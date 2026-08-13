@@ -160,26 +160,34 @@ func (s *Service) UpdateConfig(ctx context.Context, cfg modelconfig.Config) erro
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return fmt.Errorf("account policy service is closed")
+	operation := func(ctx context.Context, store settings.Store) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.closed {
+			return fmt.Errorf("account policy service is closed")
+		}
+		if err := store.Put(ctx, settings.Item{
+			Namespace: settings.NamespaceOAuthPolicy, SchemaVersion: settings.SchemaVersionOne, Settings: raw,
+		}); err != nil {
+			return err
+		}
+		engine := modelengine.New()
+		engine.ApplyConfig(normalized)
+		s.config = normalized
+		s.engine = engine
+		s.revision++
+		s.configErr = ""
+		s.effective = make(map[string]modelengine.EffectivePolicy)
+		s.decisions = make(map[string]modelengine.Result)
+		return nil
 	}
-	if err := s.store.Put(ctx, settings.Item{
-		Namespace: settings.NamespaceOAuthPolicy, SchemaVersion: settings.SchemaVersionOne, Settings: raw,
-	}); err != nil {
-		s.mu.Unlock()
+	if coordinator, ok := s.store.(settings.WriteCoordinator); ok {
+		if err := coordinator.ExecuteWrite(ctx, operation); err != nil {
+			return err
+		}
+	} else if err := operation(ctx, s.store); err != nil {
 		return err
 	}
-	engine := modelengine.New()
-	engine.ApplyConfig(normalized)
-	s.config = normalized
-	s.engine = engine
-	s.revision++
-	s.configErr = ""
-	s.effective = make(map[string]modelengine.EffectivePolicy)
-	s.decisions = make(map[string]modelengine.Result)
-	s.mu.Unlock()
 	s.queueChange()
 	return nil
 }

@@ -97,6 +97,21 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('nodes: [...current.nodes, node]', apply_block)
         self.assertIn('onClose={closeNodeSheet}', source)
 
+    def test_proxy_credentials_remain_hideable_after_reveal(self) -> None:
+        sheet = (FEATURE_DIR / 'ProxyPoolNodeSheet.tsx').read_text()
+        self.assertIn('hasProxyCredentials(value.url)', sheet)
+        self.assertNotIn('const hasCredentials = displayUrl !== value.url', sheet)
+
+    def test_proxy_endpoint_rejects_uninitialized_runtime_value(self) -> None:
+        helper = (FEATURE_DIR / 'proxyPoolUi.ts').read_text()
+        self.assertIn("endpoint !== 'socks5://'", helper)
+        for name in (
+            'ProxyPoolStatusOverview.tsx',
+            'ProxyPoolDiagnostics.tsx',
+            'ProxyPoolTakeoverDialog.tsx',
+        ):
+            self.assertIn('resolveProxyPoolEndpoint(', (FEATURE_DIR / name).read_text())
+
     def test_proxy_pool_locales_cover_page_keys(self) -> None:
         locales = json.loads(LOCALES.read_text())
         source = PAGE.read_text() + self.feature_source()

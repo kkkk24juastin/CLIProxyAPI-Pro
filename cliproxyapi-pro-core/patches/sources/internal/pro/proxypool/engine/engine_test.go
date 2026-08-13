@@ -127,6 +127,13 @@ func TestNormalizeProbeConcurrency(t *testing.T) {
 	}
 }
 
+func TestUnconfiguredEngineStatusDoesNotPublishMalformedProxyURL(t *testing.T) {
+	status := New().Status()
+	if status.ProxyURL != "" || status.Listen != "" || status.Strategy != "" || status.Ready {
+		t.Fatalf("Status() = %+v", status)
+	}
+}
+
 func TestEngineRoutesSOCKSConnectionsRoundRobin(t *testing.T) {
 	proxyA := startConnectProxy(t)
 	proxyB := startConnectProxy(t)

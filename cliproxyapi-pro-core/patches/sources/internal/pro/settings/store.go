@@ -31,3 +31,10 @@ type Store interface {
 	Delete(context.Context, string) error
 	Subscribe(string, func(context.Context, Item) error) func()
 }
+
+// WriteCoordinator keeps a persisted setting and its in-memory application
+// inside the same backup write barrier. The Store passed to operation performs
+// uncoordinated writes because the outer barrier is already held.
+type WriteCoordinator interface {
+	ExecuteWrite(context.Context, func(context.Context, Store) error) error
+}

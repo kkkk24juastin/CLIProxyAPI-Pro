@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/settings"
 )
 
@@ -14,6 +15,31 @@ import (
 type SettingsStore struct{}
 
 func NewSettingsStore() SettingsStore { return SettingsStore{} }
+
+type uncoordinatedSettingsStore struct{ SettingsStore }
+
+func (uncoordinatedSettingsStore) Put(ctx context.Context, item settings.Item) error {
+	return setProSetting(ctx, ProSetting{
+		Namespace: item.Namespace, SchemaVersion: item.SchemaVersion,
+		Settings: append(json.RawMessage(nil), item.Settings...), UpdatedAtMS: item.UpdatedAtMS,
+	})
+}
+
+func (uncoordinatedSettingsStore) Delete(ctx context.Context, namespace string) error {
+	return deleteProSetting(ctx, namespace)
+}
+
+func (SettingsStore) ExecuteWrite(
+	ctx context.Context,
+	operation func(context.Context, settings.Store) error,
+) error {
+	if operation == nil {
+		return nil
+	}
+	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		return operation(ctx, uncoordinatedSettingsStore{})
+	})
+}
 
 func (SettingsStore) Get(ctx context.Context, namespace string) (settings.Item, bool, error) {
 	stored, found, err := GetProSetting(ctx, namespace)
