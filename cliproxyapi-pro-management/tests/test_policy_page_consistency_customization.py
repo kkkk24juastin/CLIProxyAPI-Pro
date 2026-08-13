@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PRO_ROOT = ROOT / 'overlay/src/pro/modules'
 SHARED_ROOT = ROOT / 'overlay/src/pro/shared'
 LOCALES = ROOT / 'monitoring-locales.json'
+CUSTOMIZER = ROOT / 'apply_customizations.py'
 
 
 class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
@@ -55,6 +56,22 @@ class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
         self.assertIn('grid-auto-flow: column;', styles)
         self.assertIn('overflow-x: auto;', styles)
         self.assertIn('@media (max-width: 480px)', styles)
+
+    def test_optional_feature_navigation_icons_have_distinct_product_semantics(self) -> None:
+        routing = (PRO_ROOT / 'routing/manifest.tsx').read_text()
+        account = (PRO_ROOT / 'oauthPolicy/manifest.tsx').read_text()
+        proxy = (PRO_ROOT / 'proxyPool/manifest.tsx').read_text()
+        customizer = CUSTOMIZER.read_text()
+
+        self.assertIn('<IconSidebarRouting size={18} />', routing)
+        self.assertIn('<IconSidebarAccountPolicy size={18} />', account)
+        self.assertIn('<IconSidebarProxyPool size={18} />', proxy)
+        self.assertIn('M6 5h9l3 3-3 3H6', customizer)
+        self.assertIn('M5.5 16c.7-2 1.7-3 3-3s2.3 1 3 3', customizer)
+        self.assertIn('x=\\"3\\" y=\\"14\\" width=\\"18\\" height=\\"6\\"', customizer)
+        self.assertIn("('IconSidebarAccountPolicy', account_policy_icon)", customizer)
+        self.assertIn("if icon_source in text:", customizer)
+        self.assertIn("re.subn(", customizer)
 
     def test_floating_save_bars_only_render_for_modified_drafts(self) -> None:
         routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()

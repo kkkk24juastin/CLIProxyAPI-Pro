@@ -1306,6 +1306,7 @@ def patch_layout(target: Path) -> None:
 def patch_icons(target: Path) -> None:
     path = target / 'src/components/ui/icons.tsx'
     text = read(path)
+    original_text = text
 
     if "baseSvgProps" in text:
         svg_props = "baseSvgProps"
@@ -1343,12 +1344,23 @@ def patch_icons(target: Path) -> None:
         "export function IconSidebarRouting({ size = 20, ...props }: IconProps) {\n"
         "  return (\n"
         f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <circle cx=\"6\" cy=\"6\" r=\"2\" />\n"
-        "      <circle cx=\"18\" cy=\"6\" r=\"2\" />\n"
-        "      <circle cx=\"12\" cy=\"18\" r=\"2\" />\n"
-        "      <path d=\"M8 6h8\" />\n"
-        "      <path d=\"m7.5 7.5 3.2 7.2\" />\n"
-        "      <path d=\"m16.5 7.5-3.2 7.2\" />\n"
+        "      <path d=\"M6 3v18\" />\n"
+        "      <path d=\"M6 5h9l3 3-3 3H6\" />\n"
+        "      <path d=\"M6 13h6l3 3-3 3H6\" />\n"
+        "    </svg>\n"
+        "  );\n"
+        "}\n\n"
+    )
+    account_policy_icon = (
+        "export function IconSidebarAccountPolicy({ size = 20, ...props }: IconProps) {\n"
+        "  return (\n"
+        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
+        "      <rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2.5\" />\n"
+        "      <circle cx=\"8.5\" cy=\"9.5\" r=\"2.5\" />\n"
+        "      <path d=\"M5.5 16c.7-2 1.7-3 3-3s2.3 1 3 3\" />\n"
+        "      <path d=\"M15 8h3\" />\n"
+        "      <path d=\"M15 12h3\" />\n"
+        "      <path d=\"M15 16h3\" />\n"
         "    </svg>\n"
         "  );\n"
         "}\n\n"
@@ -1357,27 +1369,43 @@ def patch_icons(target: Path) -> None:
         "export function IconSidebarProxyPool({ size = 20, ...props }: IconProps) {\n"
         "  return (\n"
         f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <circle cx=\"6\" cy=\"7\" r=\"2.5\" />\n"
-        "      <circle cx=\"18\" cy=\"7\" r=\"2.5\" />\n"
-        "      <circle cx=\"12\" cy=\"18\" r=\"2.5\" />\n"
-        "      <path d=\"M8.5 7h7\" />\n"
-        "      <path d=\"m7.4 9 3.2 6.6\" />\n"
-        "      <path d=\"m16.6 9-3.2 6.6\" />\n"
-        "      <path d=\"m12.5 4.5 2 2.5-2 2.5\" />\n"
+        "      <rect x=\"3\" y=\"4\" width=\"18\" height=\"6\" rx=\"2\" />\n"
+        "      <rect x=\"3\" y=\"14\" width=\"18\" height=\"6\" rx=\"2\" />\n"
+        "      <path d=\"M7 7h.01\" />\n"
+        "      <path d=\"M7 17h.01\" />\n"
+        "      <path d=\"M11 7h6\" />\n"
+        "      <path d=\"M11 17h6\" />\n"
         "    </svg>\n"
         "  );\n"
         "}\n\n"
     )
     icons_to_insert = ""
-    if "export function IconSidebarMonitor" not in text:
-        icons_to_insert += monitor_icon
-    if "export function IconSidebarAccountInspection" not in text:
-        icons_to_insert += account_inspection_icon
-    if "export function IconSidebarRouting" not in text:
-        icons_to_insert += routing_icon
-    if "export function IconSidebarProxyPool" not in text:
-        icons_to_insert += proxy_pool_icon
+    for icon_name, icon_source in (
+        ('IconSidebarMonitor', monitor_icon),
+        ('IconSidebarAccountInspection', account_inspection_icon),
+        ('IconSidebarRouting', routing_icon),
+        ('IconSidebarAccountPolicy', account_policy_icon),
+        ('IconSidebarProxyPool', proxy_pool_icon),
+    ):
+        marker = f'export function {icon_name}'
+        if marker not in text:
+            icons_to_insert += icon_source
+            continue
+        if icon_source in text:
+            continue
+        text, replaced = re.subn(
+            rf'export function {icon_name}\(.*?\n\}}\n\n',
+            icon_source,
+            text,
+            count=1,
+            flags=re.DOTALL,
+        )
+        if replaced != 1:
+            raise RuntimeError(f'Unable to replace existing {icon_name} in {path}')
+
     if not icons_to_insert:
+        if text != original_text:
+            write(path, text)
         return
     for marker in (
         "export function IconSidebarLogs({ size = 20, ...props }: IconProps) {\n",

@@ -1,4 +1,4 @@
-import { IconModelCluster } from '@/components/ui/icons';
+import { IconSidebarAccountPolicy } from '@/components/ui/icons';
 import type { ProModuleManifest } from '@/pro/manifest';
 import { Navigate } from 'react-router-dom';
 import { OAuthPolicyPage } from './OAuthPolicyPage';
@@ -15,6 +15,6 @@ export const oauthPolicyModule: ProModuleManifest = {
     path: '/oauth-policy',
     labelKey: 'nav.oauth_policy',
     metaKey: 'nav_meta.oauth_policy',
-    icon: <IconModelCluster size={18} />,
+    icon: <IconSidebarAccountPolicy size={18} />,
   },
 };

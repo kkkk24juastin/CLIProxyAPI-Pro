@@ -73,7 +73,7 @@ class OAuthPolicyCustomizationTest(unittest.TestCase):
         self.assertIn('oauthPolicyModule,', registry)
         self.assertIn("path: '/oauth-policy'", manifest)
         self.assertIn("path: '/oauth-model-policy'", manifest)
-        self.assertIn('<IconModelCluster size={18} />', manifest)
+        self.assertIn('<IconSidebarAccountPolicy size={18} />', manifest)
         self.assertIn("import { proRoutes } from '@/pro/registry'", source)
         self.assertIn('...proNavigationGroups', source)
         self.assertIn('OAUTH_POLICY_NAV_LOCALE_KEYS', source)
