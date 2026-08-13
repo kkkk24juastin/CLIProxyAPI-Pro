@@ -145,6 +145,8 @@ export function ProxyPoolPage() {
   const [recoveringNode, setRecoveringNode] = useState('');
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(false);
+  const mountedRef = useRef(true);
+  const automaticLocationAttemptsRef = useRef(new Set<string>());
   const [loadError, setLoadError] = useState('');
   const [probeResults, setProbeResults] = useState<Record<string, ProxyPoolProbeResult>>({});
   const [activeView, setActiveView] = useState<ProxyPoolView>('nodes');
@@ -190,6 +192,12 @@ export function ProxyPoolPage() {
     void load();
   }, [load]);
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  useEffect(() => {
     if (connectionStatus !== 'connected') return;
     const timer = window.setInterval(() => void load(true), 10_000);
     return () => window.clearInterval(timer);
@@ -199,6 +207,50 @@ export function ProxyPoolPage() {
     () => new Map((snapshot?.status?.nodes ?? []).map((node) => [node.id, node])),
     [snapshot?.status?.nodes]
   );
+  useEffect(() => {
+    if (connectionStatus !== 'connected' || !snapshot || dirtyRef.current) return;
+    const runtimeByID = new Map((snapshot.status?.nodes ?? []).map((node) => [node.id, node]));
+    const candidates = snapshot.config.nodes
+      .map((node, index) => ({
+        node,
+        key: proxyNodeKey(node, index),
+        attemptKey: `${node.id}\n${node.url}\n${snapshot.config.healthCheck.testUrl}`,
+      }))
+      .filter(({ node, attemptKey }) => {
+        if (!node.enabled || !node.url.trim() || runtimeByID.get(node.id)?.location) return false;
+        if (automaticLocationAttemptsRef.current.has(attemptKey)) return false;
+        automaticLocationAttemptsRef.current.add(attemptKey);
+        return true;
+      });
+    if (candidates.length === 0) return;
+
+    void (async () => {
+      for (let offset = 0; offset < candidates.length; offset += testConcurrency) {
+        const results = await Promise.all(
+          candidates.slice(offset, offset + testConcurrency).map(async ({ node, key }) => {
+            try {
+              const result = await proxyPoolApi.testNode(
+                node.id,
+                '',
+                snapshot.config.healthCheck.testUrl
+              );
+              return { key, result };
+            } catch {
+              return null;
+            }
+          })
+        );
+        if (!mountedRef.current) return;
+        setProbeResults((current) => {
+          const next = { ...current };
+          results.forEach((item) => {
+            if (item?.result.success) next[item.key] = item.result;
+          });
+          return next;
+        });
+      }
+    })();
+  }, [connectionStatus, snapshot, testConcurrency]);
   const editingNode =
     pendingNode ?? (editingIndex === null ? null : (draft.nodes[editingIndex] ?? null));
   const editingNodeIndex = pendingNode ? draft.nodes.length : editingIndex;
@@ -434,6 +486,7 @@ export function ProxyPoolPage() {
       onConfirm: async () => {
         try {
           await proxyPoolApi.resetStats();
+          automaticLocationAttemptsRef.current.clear();
           setProbeResults({});
           await load(true);
           showNotification(

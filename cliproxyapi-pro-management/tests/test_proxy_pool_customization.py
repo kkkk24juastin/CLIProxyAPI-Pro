@@ -54,6 +54,16 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('proxy_pool.validation_recursive_url', source)
         self.assertIn('maskProxyCredentials(item.proxyUrl)', features)
 
+    def test_page_silently_resolves_missing_saved_node_locations_once(self) -> None:
+        source = PAGE.read_text()
+
+        self.assertIn('automaticLocationAttemptsRef', source)
+        self.assertIn("runtimeByID.get(node.id)?.location", source)
+        self.assertIn("!node.enabled || !node.url.trim()", source)
+        self.assertIn("proxyPoolApi.testNode(\n                node.id,\n                '',", source)
+        self.assertIn('if (item?.result.success) next[item.key] = item.result', source)
+        self.assertIn('automaticLocationAttemptsRef.current.clear()', source)
+
     def test_page_uses_node_first_operational_layout(self) -> None:
         source = PAGE.read_text()
         features = self.feature_source()
