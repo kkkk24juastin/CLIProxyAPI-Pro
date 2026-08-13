@@ -248,6 +248,21 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('dedupeKey: `model-price:discard:${priceModel}`', prices)
         self.assertIn('onConfirm: () => selectPriceTarget(model)', prices)
         self.assertIn('onClick={() => requestPriceTargetChange(item.model)}', prices)
+
+    def test_models_dev_import_discards_stale_searches_and_hides_dead_end_actions(self) -> None:
+        prices = (PRO_ROOT / 'modules/monitoring/features/components/ModelPriceManagerModal.tsx').read_text()
+        self.assertIn('const modelsDevSearchRequestRef = useRef(0);', prices)
+        self.assertIn("const modelsDevSearchTargetRef = useRef(selectedPriceTarget?.model ?? '');", prices)
+        self.assertIn('modelsDevSearchRequestRef.current += 1;', prices)
+        self.assertGreaterEqual(
+            prices.count(
+                'modelsDevSearchRequestRef.current !== requestID || modelsDevSearchTargetRef.current !== targetModel'
+            ),
+            2,
+        )
+        self.assertIn('const configuredRule = priceRuleTargetByModel.get(change.model)?.rule;', prices)
+        self.assertIn('const configuredRule = priceRuleTargetByModel.get(item.model)?.rule;', prices)
+        self.assertEqual(prices.count("'usage_stats.model_price_manual_configured'"), 2)
         self.assertNotIn('onClick={() => selectPriceTarget(item.model)}', prices)
 
     def test_loading_requests_reopen_the_surface_before_reusing_inflight_work(self) -> None:

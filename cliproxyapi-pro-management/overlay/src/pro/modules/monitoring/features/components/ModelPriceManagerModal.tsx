@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -125,16 +125,25 @@ export function ModelPriceManagerModal({
     () => priceRuleTargets.find((item) => item.model === priceModel),
     [priceModel, priceRuleTargets]
   );
+  const priceRuleTargetByModel = useMemo(
+    () => new Map(priceRuleTargets.map((item) => [item.model, item])),
+    [priceRuleTargets]
+  );
   const [modelsDevSearchQuery, setModelsDevSearchQuery] = useState('');
   const [modelsDevSearchResults, setModelsDevSearchResults] = useState<ModelsDevPriceSearchItem[]>([]);
   const [modelsDevSearchError, setModelsDevSearchError] = useState('');
   const [isModelsDevSearching, setIsModelsDevSearching] = useState(false);
   const [hasModelsDevSearched, setHasModelsDevSearched] = useState(false);
-  useEffect(() => {
+  const modelsDevSearchRequestRef = useRef(0);
+  const modelsDevSearchTargetRef = useRef(selectedPriceTarget?.model ?? '');
+  useLayoutEffect(() => {
+    modelsDevSearchTargetRef.current = selectedPriceTarget?.model ?? '';
+    modelsDevSearchRequestRef.current += 1;
     setModelsDevSearchQuery(selectedPriceTarget?.model ?? '');
     setModelsDevSearchResults([]);
     setModelsDevSearchError('');
     setHasModelsDevSearched(false);
+    setIsModelsDevSearching(false);
   }, [selectedPriceTarget?.model]);
   const priceEditorDirty = useMemo(
     () => JSON.stringify(priceDraft) !== JSON.stringify(createPriceDraft(selectedPriceTarget?.rule)),
@@ -256,17 +265,24 @@ export function ModelPriceManagerModal({
     event?.preventDefault();
     const query = modelsDevSearchQuery.trim();
     if (!query || isModelsDevSearching) return;
+    const targetModel = selectedPriceTarget?.model ?? '';
+    const requestID = modelsDevSearchRequestRef.current + 1;
+    modelsDevSearchRequestRef.current = requestID;
     setIsModelsDevSearching(true);
     setModelsDevSearchError('');
     setHasModelsDevSearched(true);
     try {
       const items = await searchModelsDevPrices(query);
+      if (modelsDevSearchRequestRef.current !== requestID || modelsDevSearchTargetRef.current !== targetModel) return;
       setModelsDevSearchResults(items);
     } catch (error) {
+      if (modelsDevSearchRequestRef.current !== requestID || modelsDevSearchTargetRef.current !== targetModel) return;
       setModelsDevSearchResults([]);
       setModelsDevSearchError(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsModelsDevSearching(false);
+      if (modelsDevSearchRequestRef.current === requestID && modelsDevSearchTargetRef.current === targetModel) {
+        setIsModelsDevSearching(false);
+      }
     }
   };
   const importModelsDevPrice = (item: ModelsDevPriceSearchItem) => {
@@ -415,7 +431,14 @@ export function ModelPriceManagerModal({
                               <IconSearch size={15} />
                               <Input
                                 value={modelsDevSearchQuery}
-                                onChange={(event) => setModelsDevSearchQuery(event.target.value)}
+                                onChange={(event) => {
+                                  modelsDevSearchRequestRef.current += 1;
+                                  setModelsDevSearchQuery(event.target.value);
+                                  setModelsDevSearchResults([]);
+                                  setModelsDevSearchError('');
+                                  setHasModelsDevSearched(false);
+                                  setIsModelsDevSearching(false);
+                                }}
                                 placeholder={t('usage_stats.model_price_models_dev_search_placeholder')}
                               />
                             </label>
@@ -800,6 +823,7 @@ export function ModelPriceManagerModal({
 
                   <div className={styles.priceSyncChangeList}>
                     {filteredPriceSyncChanges.map((change) => {
+                      const configuredRule = priceRuleTargetByModel.get(change.model)?.rule;
                       const rateChanges = MODEL_PRICE_SYNC_RATE_FIELDS.filter(([field]) => (
                         change.after && (!change.before || change.before.base[field] !== change.after.base[field])
                       ));
@@ -901,6 +925,13 @@ export function ModelPriceManagerModal({
                                 </label>
                               ) : null}
                             </div>
+                          ) : configuredRule ? (
+                            <span className={styles.priceSyncChangeUnmatchedActions}>
+                              <span className={styles.priceSyncChangeHint}>{t('usage_stats.model_price_sync_change_unmatched_hint')}</span>
+                              <span className={styles.priceRuleConfigured}>{t(configuredRule.source === 'manual'
+                                ? 'usage_stats.model_price_manual_configured'
+                                : 'usage_stats.model_price_configured')}</span>
+                            </span>
                           ) : (
                             <span className={styles.priceSyncChangeUnmatchedActions}>
                               <span className={styles.priceSyncChangeHint}>{t('usage_stats.model_price_sync_change_unmatched_hint')}</span>
@@ -932,26 +963,35 @@ export function ModelPriceManagerModal({
                     </div>
                   </div>
                   <div className={styles.priceUnmatchedList}>
-                  {unmatchedPriceModels.map((item) => (
+                  {unmatchedPriceModels.map((item) => {
+                    const configuredRule = priceRuleTargetByModel.get(item.model)?.rule;
+                    return (
                     <div key={item.model}>
                       <span>
                         <strong title={item.model}>{item.model}</strong>
                         {item.alias ? <small title={item.alias}>{item.alias}</small> : null}
                       </span>
-                      <span className={styles.priceUnmatchedActions}>
-                        <small>{t('usage_stats.model_price_requests', { count: item.requests })}</small>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            requestPriceManagementViewChange('rules', () => selectPriceTarget(item.model));
-                          }}
-                        >
-                          {t('usage_stats.model_price_models_dev_import_title')}
-                        </Button>
-                      </span>
+                      {configuredRule ? (
+                        <span className={styles.priceRuleConfigured}>{t(configuredRule.source === 'manual'
+                          ? 'usage_stats.model_price_manual_configured'
+                          : 'usage_stats.model_price_configured')}</span>
+                      ) : (
+                        <span className={styles.priceUnmatchedActions}>
+                          <small>{t('usage_stats.model_price_requests', { count: item.requests })}</small>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              requestPriceManagementViewChange('rules', () => selectPriceTarget(item.model));
+                            }}
+                          >
+                            {t('usage_stats.model_price_models_dev_import_title')}
+                          </Button>
+                        </span>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                   </div>
                 </section>
               ) : null}
