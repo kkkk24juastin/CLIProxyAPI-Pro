@@ -14,6 +14,7 @@ var globalService *Service
 var proSettingConsumers = make(map[string][]proSettingConsumerRegistration)
 var proSettingConsumerGeneration uint64
 var globalStateMu sync.RWMutex
+var proSettingApplyMu sync.Mutex
 var globalStateWriter *prostate.Writer
 
 func SetDefaultService(service *Service) {
@@ -190,6 +191,31 @@ func GetProSetting(ctx context.Context, namespace string) (ProSetting, bool, err
 func SetProSetting(ctx context.Context, item ProSetting) error {
 	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
 		return setProSetting(ctx, item)
+	})
+}
+
+// SetProSettingAndApplyLatest keeps a live settings update inside the backup
+// write barrier until the latest committed value has been applied. Concurrent
+// live writers may still overlap, so each caller re-reads the durable winner
+// instead of applying its own possibly stale draft.
+func SetProSettingAndApplyLatest(ctx context.Context, item ProSetting, apply func(context.Context, ProSetting) error) error {
+	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		if err := setProSetting(ctx, item); err != nil {
+			return err
+		}
+		if apply == nil {
+			return nil
+		}
+		proSettingApplyMu.Lock()
+		defer proSettingApplyMu.Unlock()
+		latest, found, err := GetProSetting(ctx, item.Namespace)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("pro setting %q was not persisted", item.Namespace)
+		}
+		return apply(ctx, latest)
 	})
 }
 

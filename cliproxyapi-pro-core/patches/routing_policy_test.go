@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -103,30 +102,22 @@ func TestRoutingProtectionNonMatchingFailureBreaksConfirmationSequence(t *testin
 }
 
 func TestConcurrentRoutingPolicySavesApplyLatestStoredValue(t *testing.T) {
-	oldSet, oldGet := setRoutingPolicyProSetting, getRoutingPolicyProSetting
-	defer func() { setRoutingPolicyProSetting, getRoutingPolicyProSetting = oldSet, oldGet }()
-	var storeMu sync.Mutex
+	oldSetAndApply := setAndApplyLatestRoutingPolicyProSetting
+	defer func() { setAndApplyLatestRoutingPolicyProSetting = oldSetAndApply }()
 	var stored embeddedusage.ProSetting
 	firstStored := make(chan struct{})
 	releaseFirst := make(chan struct{})
-	setRoutingPolicyProSetting = func(_ context.Context, item embeddedusage.ProSetting) error {
+	setAndApplyLatestRoutingPolicyProSetting = func(ctx context.Context, item embeddedusage.ProSetting, apply func(context.Context, embeddedusage.ProSetting) error) error {
 		var value routingRequestProtectionConfig
 		if err := json.Unmarshal(item.Settings, &value); err != nil {
 			return err
 		}
-		storeMu.Lock()
 		stored = item
-		storeMu.Unlock()
 		if value.Mode == routingProtectionModeObserve {
 			close(firstStored)
 			<-releaseFirst
 		}
-		return nil
-	}
-	getRoutingPolicyProSetting = func(context.Context, string) (embeddedusage.ProSetting, bool, error) {
-		storeMu.Lock()
-		defer storeMu.Unlock()
-		return stored, len(stored.Settings) > 0, nil
+		return apply(ctx, stored)
 	}
 	h := &Handler{}
 	controller := &routingPolicyController{requestProtection: defaultRoutingRequestProtectionConfig()}

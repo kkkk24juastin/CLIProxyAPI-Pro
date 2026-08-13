@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	probackup "github.com/router-for-me/CLIProxyAPI/v6/internal/pro/backup"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/pro/observability/internalusage"
 )
 
@@ -1322,5 +1323,59 @@ func TestRunImportTransactionRollsBackAllDomains(t *testing.T) {
 	}
 	if _, ok, err := store.GetProSetting(ctx, "test.atomic"); err != nil || ok {
 		t.Fatalf("pro setting after rollback = _, %v, %v; want missing", ok, err)
+	}
+}
+
+func TestSetProSettingAndApplyLatestBlocksBackupImportUntilRuntimeApplied(t *testing.T) {
+	store := openTestStore(t)
+	service := &Service{ctx: context.Background(), store: store}
+	SetDefaultService(service)
+	t.Cleanup(func() { SetDefaultService(nil) })
+
+	liveApplied := make(chan struct{})
+	releaseLiveApply := make(chan struct{})
+	liveDone := make(chan error, 1)
+	go func() {
+		liveDone <- SetProSettingAndApplyLatest(context.Background(), ProSetting{
+			Namespace: "test.live-apply", SchemaVersion: 1, Settings: json.RawMessage(`{"value":"live"}`),
+		}, func(_ context.Context, item ProSetting) error {
+			if string(item.Settings) != `{"value":"live"}` {
+				return fmt.Errorf("applied setting = %s", item.Settings)
+			}
+			close(liveApplied)
+			<-releaseLiveApply
+			return nil
+		})
+	}()
+	<-liveApplied
+
+	importStarted := make(chan struct{})
+	importDone := make(chan error, 1)
+	go func() {
+		importDone <- probackup.Default.ExecuteImport(context.Background(), probackup.ImportPlan{
+			ImportDatabase: func(context.Context) error {
+				close(importStarted)
+				return nil
+			},
+		})
+	}()
+	select {
+	case <-importStarted:
+		t.Fatal("backup import entered while live runtime apply still held the write barrier")
+	case err := <-importDone:
+		t.Fatalf("backup import completed while live runtime apply was blocked: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseLiveApply)
+	if err := <-liveDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-importStarted:
+	case <-time.After(time.Second):
+		t.Fatal("backup import did not start after live runtime apply completed")
+	}
+	if err := <-importDone; err != nil {
+		t.Fatal(err)
 	}
 }

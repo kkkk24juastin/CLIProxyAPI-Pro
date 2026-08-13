@@ -71,8 +71,7 @@ type routingPolicyResponse struct {
 	RecentEvents       []routingProtectionEvent         `json:"recentEvents"`
 }
 
-var setRoutingPolicyProSetting = embeddedusage.SetProSetting
-var getRoutingPolicyProSetting = embeddedusage.GetProSetting
+var setAndApplyLatestRoutingPolicyProSetting = embeddedusage.SetProSettingAndApplyLatest
 
 type routingProtectionActiveAccount struct {
 	Provider    string `json:"provider"`
@@ -294,24 +293,6 @@ func (c *routingPolicyController) setRequestProtectionConfig(value routingReques
 func (c *routingPolicyController) applyImportedProSetting(_ context.Context, item embeddedusage.ProSetting) error {
 	c.configApplyMu.Lock()
 	defer c.configApplyMu.Unlock()
-	value, err := decodeRoutingRequestProtectionSetting(item)
-	if err != nil {
-		return err
-	}
-	c.setRequestProtectionConfig(value)
-	return nil
-}
-
-func (c *routingPolicyController) applyStoredRequestProtectionConfig(ctx context.Context) error {
-	c.configApplyMu.Lock()
-	defer c.configApplyMu.Unlock()
-	item, found, err := getRoutingPolicyProSetting(ctx, embeddedusage.ProSettingNamespaceRoutingRequestProtection)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return fmt.Errorf("routing request protection setting was not persisted")
-	}
 	value, err := decodeRoutingRequestProtectionSetting(item)
 	if err != nil {
 		return err
@@ -670,17 +651,11 @@ func (h *Handler) persistRoutingRequestProtection(c *gin.Context, value routingR
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "routing policy controller unavailable"})
 		return false
 	}
-	if err := setRoutingPolicyProSetting(c.Request.Context(), embeddedusage.ProSetting{
+	if err := setAndApplyLatestRoutingPolicyProSetting(c.Request.Context(), embeddedusage.ProSetting{
 		Namespace:     embeddedusage.ProSettingNamespaceRoutingRequestProtection,
 		SchemaVersion: routingProtectionSchemaVersion,
 		Settings:      raw,
-	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return false
-	}
-	// A concurrent save or backup import may have committed after this request.
-	// Apply the latest durable value so runtime cannot regress to a stale draft.
-	if err := controller.applyStoredRequestProtectionConfig(c.Request.Context()); err != nil {
+	}, controller.applyImportedProSetting); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return false
 	}

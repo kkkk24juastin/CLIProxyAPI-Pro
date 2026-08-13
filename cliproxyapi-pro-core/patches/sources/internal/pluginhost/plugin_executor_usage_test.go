@@ -75,6 +75,41 @@ func TestPluginExecutorPublishesNonStreamUsage(t *testing.T) {
 	assertNoPluginExecutorUsage(t, recorder.records)
 }
 
+func TestPluginExecutorTranslationPanicPublishesFailure(t *testing.T) {
+	recorder := &pluginExecutorUsageRecorder{records: make(chan coreusage.Record, 2)}
+	coreusage.RegisterNamedPlugin("plugin-executor-translation-panic-test", recorder)
+	defer coreusage.UnregisterNamedPlugin("plugin-executor-translation-panic-test", recorder)
+	customOutput := sdktranslator.Format("plugin-panic-output")
+	sdktranslator.Register(sdktranslator.FormatOpenAI, customOutput, nil, sdktranslator.ResponseTransform{
+		NonStream: func(context.Context, string, []byte, []byte, []byte, *any) []byte {
+			panic("forced response translation panic")
+		},
+	})
+	host := newHostWithRecords(normalizeTestCapabilityRecord(capabilityRecord{id: "translation-panic-executor"}))
+	adapter := newCurrentExecutorAdapterForTest(
+		host,
+		"translation-panic-executor",
+		&fakeExecutor{
+			identifier: "plugin-provider",
+			execute: func(context.Context, pluginapi.ExecutorRequest) (pluginapi.ExecutorResponse, error) {
+				return pluginapi.ExecutorResponse{Payload: []byte(`{"ok":true}`)}, nil
+			},
+		},
+		[]sdktranslator.Format{sdktranslator.FormatOpenAI},
+		[]sdktranslator.Format{customOutput},
+	)
+	_, err := adapter.Execute(context.Background(), &coreauth.Auth{ID: "panic-auth"}, coreexecutor.Request{
+		Model: "panic-model", Format: sdktranslator.FormatOpenAI, Payload: []byte(`{"model":"panic-model"}`),
+	}, coreexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, ResponseFormat: sdktranslator.FormatOpenAI})
+	if err == nil {
+		t.Fatal("Execute() error = nil, want recovered translation panic")
+	}
+	record := waitForPluginExecutorUsage(t, recorder.records)
+	if !record.Failed || record.Fail.Body == "" {
+		t.Fatalf("translation panic failure = %#v", record.Fail)
+	}
+}
+
 func TestPluginExecutorStreamPublishesTerminalOutcome(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -126,6 +161,37 @@ func TestPluginExecutorStreamPublishesTerminalOutcome(t *testing.T) {
 			}
 			assertNoPluginExecutorUsage(t, recorder.records)
 		})
+	}
+}
+
+func TestPluginExecutorEmptyStreamPublishesFailure(t *testing.T) {
+	recorder := &pluginExecutorUsageRecorder{records: make(chan coreusage.Record, 2)}
+	coreusage.RegisterNamedPlugin("plugin-executor-empty-stream-test", recorder)
+	defer coreusage.UnregisterNamedPlugin("plugin-executor-empty-stream-test", recorder)
+	chunks := make(chan pluginapi.ExecutorStreamChunk)
+	close(chunks)
+	host := newHostWithRecords(normalizeTestCapabilityRecord(capabilityRecord{id: "empty-stream-executor"}))
+	adapter := newCurrentExecutorAdapterForTest(
+		host,
+		"empty-stream-executor",
+		&fakeExecutor{
+			identifier: "plugin-provider",
+			executeStream: func(context.Context, pluginapi.ExecutorRequest) (pluginapi.ExecutorStreamResponse, error) {
+				return pluginapi.ExecutorStreamResponse{Chunks: chunks}, nil
+			},
+		},
+		[]sdktranslator.Format{sdktranslator.FormatOpenAI},
+		[]sdktranslator.Format{sdktranslator.FormatOpenAI},
+	)
+	result, err := adapter.ExecuteStream(context.Background(), &coreauth.Auth{ID: "empty-stream-auth"}, coreexecutor.Request{Model: "empty-stream-model"}, coreexecutor.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range result.Chunks {
+	}
+	record := waitForPluginExecutorUsage(t, recorder.records)
+	if !record.Failed || record.Fail.StatusCode != http.StatusBadGateway {
+		t.Fatalf("empty stream failure = %#v", record.Fail)
 	}
 }
 

@@ -3006,12 +3006,13 @@ replace_once(
 \t\treturn coreexecutor.Response{}, errExecute
 \t}
 \tctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)
-\treporter.EnsurePublished(ctx)
-\treturn coreexecutor.Response{
+\tresp = coreexecutor.Response{
 \t\tPayload:  a.translateExecutorResponse(ctx, prepared, pluginResp.Payload, false, nil),
 \t\tMetadata: cloneAnyMap(pluginResp.Metadata),
 \t\tHeaders:  cloneHeader(pluginResp.Headers),
-\t}, nil
+\t}
+\treporter.EnsurePublished(ctx)
+\treturn resp, nil
 ''',
     'reporter.EnsurePublished(ctx)',
 )
@@ -3073,6 +3074,8 @@ func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.
 \tout := make(chan coreexecutor.StreamChunk)
 \tgo func() {
 \t\tdefer close(out)
+\t\tsawPayload := false
+	\tvar terminalErr error
 \t\tfor {
 \t\t\tselect {
 \t\t\tcase <-ctx.Done():
@@ -3080,11 +3083,19 @@ func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.
 \t\t\t\treturn
 \t\t\tcase chunk, ok := <-in:
 \t\t\t\tif !ok {
-\t\t\t\t\treporter.EnsurePublished(ctx)
+\t\t\t\t\tif terminalErr != nil {
+\t\t\t\t\t\treporter.PublishFailure(ctx, terminalErr)
+\t\t\t\t\t} else if sawPayload {
+\t\t\t\t\t\treporter.EnsurePublished(ctx)
+\t\t\t\t\t} else {
+\t\t\t\t\t\treporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})
+\t\t\t\t\t}
 \t\t\t\t\treturn
 \t\t\t\t}
 \t\t\t\tif chunk.Err != nil {
-\t\t\t\t\treporter.PublishFailure(ctx, chunk.Err)
+\t\t\t\t\tterminalErr = chunk.Err
+\t\t\t\t} else if len(chunk.Payload) > 0 {
+\t\t\t\t\tsawPayload = true
 \t\t\t\t}
 \t\t\t\tselect {
 \t\t\t\tcase <-ctx.Done():
@@ -3097,6 +3108,11 @@ func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.
 \t}()
 \treturn out
 }
+
+type pluginExecutorEmptyStreamError struct{}
+
+func (pluginExecutorEmptyStreamError) Error() string { return "plugin executor stream closed before first payload" }
+func (pluginExecutorEmptyStreamError) StatusCode() int { return http.StatusBadGateway }
 
 func mapExecutorStreamChunks(ctx context.Context, in <-chan pluginapi.ExecutorStreamChunk) <-chan coreexecutor.StreamChunk {
 ''',

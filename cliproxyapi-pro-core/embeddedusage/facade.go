@@ -75,6 +75,7 @@ var (
 	GetQuotaCache                             = proobservability.GetQuotaCache
 	GetProSetting                             = proobservability.GetProSetting
 	SetProSetting                             = proobservability.SetProSetting
+	SetProSettingAndApplyLatest               = proobservability.SetProSettingAndApplyLatest
 	QueueRoutingCursorState                   = proobservability.QueueRoutingCursorState
 	GetRoutingCursorState                     = proobservability.GetRoutingCursorState
 	ListRoutingCursorStates                   = proobservability.ListRoutingCursorStates
