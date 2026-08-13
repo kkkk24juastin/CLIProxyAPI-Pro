@@ -18,6 +18,7 @@ import (
 
 const modelsDevAPIURL = "https://models.dev/api.json"
 const modelsDevResponseLimit = 32 << 20
+const modelsDevSearchCacheTTL = 10 * time.Minute
 
 type ModelPriceSyncState struct {
 	Status          string          `json:"status"`
@@ -107,6 +108,7 @@ type modelsDevMode struct {
 
 type modelsDevModel struct {
 	ID           string         `json:"id"`
+	Name         string         `json:"name"`
 	LastUpdated  string         `json:"last_updated"`
 	Cost         *modelsDevCost `json:"cost"`
 	Experimental struct {
@@ -116,7 +118,22 @@ type modelsDevModel struct {
 
 type modelsDevProvider struct {
 	ID     string                    `json:"id"`
+	Name   string                    `json:"name"`
 	Models map[string]modelsDevModel `json:"models"`
+}
+
+type ModelsDevPriceSearchItem struct {
+	Provider     string         `json:"provider"`
+	ProviderName string         `json:"providerName,omitempty"`
+	Model        string         `json:"model"`
+	ModelName    string         `json:"modelName,omitempty"`
+	LastUpdated  string         `json:"lastUpdated,omitempty"`
+	Rule         ModelPriceRule `json:"rule"`
+}
+
+type rankedModelsDevPriceSearchItem struct {
+	item  ModelsDevPriceSearchItem
+	score int
 }
 
 var modelPriceProviderAliases = map[string]string{
@@ -176,6 +193,106 @@ func modelPriceRuleFromModelsDev(observed ObservedModel, providerID, modelID str
 		}
 	}
 	return normalizePriceRule(rule)
+}
+
+func modelsDevSearchScore(query string, providerID string, provider modelsDevProvider, modelID string, model modelsDevModel) (int, bool) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return 0, false
+	}
+	modelIDLower := strings.ToLower(modelID)
+	modelNameLower := strings.ToLower(strings.TrimSpace(model.Name))
+	qualifiedID := strings.ToLower(providerID + "/" + modelID)
+	searchText := strings.Join([]string{qualifiedID, strings.ToLower(provider.Name), modelNameLower}, "\n")
+	for _, token := range strings.Fields(query) {
+		if !strings.Contains(searchText, token) {
+			return 0, false
+		}
+	}
+	switch {
+	case query == modelIDLower || query == qualifiedID:
+		return 0, true
+	case strings.HasPrefix(modelIDLower, query):
+		return 1, true
+	case strings.Contains(modelIDLower, query):
+		return 2, true
+	case modelNameLower != "" && strings.HasPrefix(modelNameLower, query):
+		return 3, true
+	default:
+		return 4, true
+	}
+}
+
+func searchModelsDevCatalog(catalog map[string]modelsDevProvider, query, providerFilter string, limit int) []ModelsDevPriceSearchItem {
+	providerFilter = normalizePriceProvider(providerFilter)
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	ranked := make([]rankedModelsDevPriceSearchItem, 0)
+	for providerID, provider := range catalog {
+		if providerFilter != "" && normalizePriceProvider(providerID) != providerFilter {
+			continue
+		}
+		for modelID, model := range provider.Models {
+			if model.Cost == nil {
+				continue
+			}
+			score, matched := modelsDevSearchScore(query, providerID, provider, modelID, model)
+			if !matched {
+				continue
+			}
+			rule := modelPriceRuleFromModelsDev(ObservedModel{Model: modelID}, providerID, modelID, model, time.Now().UnixMilli())
+			ranked = append(ranked, rankedModelsDevPriceSearchItem{
+				score: score,
+				item: ModelsDevPriceSearchItem{
+					Provider: providerID, ProviderName: provider.Name, Model: modelID, ModelName: model.Name,
+					LastUpdated: model.LastUpdated, Rule: rule,
+				},
+			})
+		}
+	}
+	sort.Slice(ranked, func(left, right int) bool {
+		if ranked[left].score != ranked[right].score {
+			return ranked[left].score < ranked[right].score
+		}
+		if ranked[left].item.Provider != ranked[right].item.Provider {
+			return ranked[left].item.Provider < ranked[right].item.Provider
+		}
+		return ranked[left].item.Model < ranked[right].item.Model
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	items := make([]ModelsDevPriceSearchItem, len(ranked))
+	for index := range ranked {
+		items[index] = ranked[index].item
+	}
+	return items
+}
+
+func (s *Store) SearchModelsDevPrices(ctx context.Context, query, provider string, limit int) ([]ModelsDevPriceSearchItem, error) {
+	s.priceCatalogMu.Lock()
+	defer s.priceCatalogMu.Unlock()
+	now := time.Now()
+	if s.priceCatalog != nil && now.Before(s.priceCatalogExpiresAt) {
+		return searchModelsDevCatalog(s.priceCatalog, query, provider, limit), nil
+	}
+	catalog, etag, notModified, err := fetchModelsDevCatalog(ctx, s.priceCatalogETag)
+	if err != nil {
+		return nil, err
+	}
+	if !notModified {
+		s.priceCatalog = catalog
+		s.priceCatalogETag = etag
+	}
+	if s.priceCatalog == nil {
+		return nil, fmt.Errorf("models.dev catalog is unavailable")
+	}
+	s.priceCatalogExpiresAt = now.Add(modelsDevSearchCacheTTL)
+	return searchModelsDevCatalog(s.priceCatalog, query, provider, limit), nil
 }
 
 func providerCandidates(value string) []string {

@@ -1349,3 +1349,114 @@
   gap: 3px;
   min-width: 0;
 }
+
+.priceUnmatchedActions {
+  display: flex !important;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px !important;
+}
+
+.modelsDevImportSection {
+  background: color-mix(in srgb, var(--monitor-accent) 3%, var(--monitor-surface));
+}
+
+.modelsDevSearchForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.modelsDevSearchForm label {
+  position: relative;
+  min-width: 0;
+}
+
+.modelsDevSearchForm label > svg {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 11px;
+  color: var(--monitor-muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.modelsDevSearchForm label input {
+  padding-left: 34px;
+}
+
+.modelsDevSearchResults {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+}
+
+.modelsDevSearchResults > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 60px;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--monitor-line);
+  background: var(--monitor-surface);
+  color: var(--monitor-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.modelsDevSearchResults > button:last-child {
+  border-bottom: 0;
+}
+
+.modelsDevSearchResults > button:hover {
+  background: var(--monitor-surface-muted);
+}
+
+.modelsDevSearchResults > button > span:first-child,
+.modelsDevSearchRates {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.modelsDevSearchResults strong,
+.modelsDevSearchResults small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelsDevSearchResults small,
+.modelsDevSearchRates,
+.modelsDevSearchEmpty {
+  color: var(--monitor-muted);
+  font-size: 11px;
+}
+
+.modelsDevSearchResults > button > span:last-child {
+  color: var(--monitor-accent);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.modelsDevSearchError {
+  color: var(--monitor-danger);
+  font-size: 12px;
+}
+
+.modelsDevSearchEmpty {
+  padding: 10px 0 2px;
+  text-align: center;
+}
+
+.priceSyncChangeUnmatchedActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+}

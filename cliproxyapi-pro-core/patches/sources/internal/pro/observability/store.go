@@ -341,15 +341,19 @@ type usageExportSnapshot struct {
 }
 
 type Store struct {
-	database     *prostorage.Database
-	db           *sql.DB
-	quotaCacheMu sync.Mutex
-	usageWriteMu sync.Mutex
-	summaryMu    sync.RWMutex
-	summaryCache *cachedUsageSummary
-	eventMu      sync.Mutex
-	eventSignal  chan struct{}
-	priceSyncMu  sync.Mutex
+	database              *prostorage.Database
+	db                    *sql.DB
+	quotaCacheMu          sync.Mutex
+	usageWriteMu          sync.Mutex
+	summaryMu             sync.RWMutex
+	summaryCache          *cachedUsageSummary
+	eventMu               sync.Mutex
+	eventSignal           chan struct{}
+	priceSyncMu           sync.Mutex
+	priceCatalogMu        sync.Mutex
+	priceCatalog          map[string]modelsDevProvider
+	priceCatalogETag      string
+	priceCatalogExpiresAt time.Time
 }
 
 func transactionContext(ctx context.Context) *storeTransactionContext {

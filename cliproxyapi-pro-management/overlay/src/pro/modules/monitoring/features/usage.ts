@@ -91,6 +91,15 @@ export interface ModelPriceSyncChange {
   after?: ModelPriceRule;
 }
 
+export interface ModelsDevPriceSearchItem {
+  provider: string;
+  providerName?: string;
+  model: string;
+  modelName?: string;
+  lastUpdated?: string;
+  rule: ModelPriceRule;
+}
+
 export interface UsageTokens {
   input_tokens?: number;
   output_tokens?: number;
@@ -790,6 +799,13 @@ export async function loadModelPriceSyncState(): Promise<ModelPriceSyncState> {
     ...state,
     unmatchedModels: Array.isArray(state.unmatchedModels) ? state.unmatchedModels : [],
   };
+}
+
+export async function searchModelsDevPrices(query: string, limit = 20): Promise<ModelsDevPriceSearchItem[]> {
+  const payload = await apiClient.get<{ items?: ModelsDevPriceSearchItem[] }>('/usage/model-prices/models-dev/search', {
+    params: { q: query.trim(), limit },
+  });
+  return Array.isArray(payload?.items) ? payload.items : [];
 }
 
 export async function recalculateModelPriceHistory(all = false): Promise<number> {

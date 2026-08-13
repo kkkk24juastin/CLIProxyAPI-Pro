@@ -39,6 +39,67 @@ func testClaudeSpeedPriceRule() ModelPriceRule {
 	}
 }
 
+func TestSearchModelsDevCatalogReturnsPricedMatchesInUsefulOrder(t *testing.T) {
+	catalog := map[string]modelsDevProvider{
+		"google": {
+			Name: "Google",
+			Models: map[string]modelsDevModel{
+				"gemini-3.5-flash": {
+					Name: "Gemini 3.5 Flash", LastUpdated: "2026-08-01",
+					Cost: &modelsDevCost{Input: 0.5, Output: 3, CacheRead: 0.05},
+				},
+				"gemini-3.5-flash-preview": {
+					Name: "Gemini 3.5 Flash Preview",
+					Cost: &modelsDevCost{Input: 0.6, Output: 3.5},
+				},
+				"gemini-3.5-flash-free": {Name: "Gemini 3.5 Flash Free"},
+			},
+		},
+		"other": {
+			Name: "Other",
+			Models: map[string]modelsDevModel{
+				"gemini-3.5-flash": {Cost: &modelsDevCost{Input: 9, Output: 9}},
+			},
+		},
+	}
+
+	items := searchModelsDevCatalog(catalog, "gemini-3.5-flash", "google", 20)
+	if len(items) != 2 {
+		t.Fatalf("search result count = %d, want 2: %+v", len(items), items)
+	}
+	if items[0].Provider != "google" || items[0].ProviderName != "Google" || items[0].Model != "gemini-3.5-flash" ||
+		items[0].ModelName != "Gemini 3.5 Flash" || items[0].LastUpdated != "2026-08-01" {
+		t.Fatalf("first search item = %+v", items[0])
+	}
+	if items[0].Rule.Model != "gemini-3.5-flash" || items[0].Rule.SourceProvider != "google" ||
+		items[0].Rule.SourceModel != "gemini-3.5-flash" || items[0].Rule.Base.Input != 0.5 || items[0].Rule.Base.Output != 3 {
+		t.Fatalf("first search rule = %+v", items[0].Rule)
+	}
+	if items[1].Model != "gemini-3.5-flash-preview" {
+		t.Fatalf("second search item = %+v", items[1])
+	}
+}
+
+func TestSearchModelsDevCatalogRequiresAllQueryTokensAndClampsLimit(t *testing.T) {
+	catalog := map[string]modelsDevProvider{
+		"google": {
+			Name: "Google",
+			Models: map[string]modelsDevModel{
+				"gemini-flash": {Name: "Gemini Flash", Cost: &modelsDevCost{Input: 1}},
+				"gemini-pro":   {Name: "Gemini Pro", Cost: &modelsDevCost{Input: 2}},
+			},
+		},
+	}
+
+	items := searchModelsDevCatalog(catalog, "google flash", "", 1)
+	if len(items) != 1 || items[0].Model != "gemini-flash" {
+		t.Fatalf("search items = %+v, want only gemini-flash", items)
+	}
+	if items := searchModelsDevCatalog(catalog, "gemini", "anthropic", 20); len(items) != 0 {
+		t.Fatalf("provider-filtered search items = %+v, want none", items)
+	}
+}
+
 func TestModelPriceRulePublicJSONOmitsLegacyProvider(t *testing.T) {
 	raw, err := json.Marshal(testGPT56PriceRule())
 	if err != nil {

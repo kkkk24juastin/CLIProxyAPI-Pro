@@ -210,6 +210,19 @@
   .priceUnmatchedList > div:not(.priceTierEmpty) {
     align-items: flex-start;
   }
+
+  .modelsDevSearchResults > button {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .modelsDevSearchRates {
+    display: none !important;
+  }
+
+  .priceSyncChangeUnmatchedActions {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 
 @media (min-width: 540px) and (max-width: 680px) {
@@ -252,5 +265,30 @@
 
   .priceRuleEditorActions :global(.btn:only-child) {
     grid-column: 1 / -1;
+  }
+
+  .modelsDevSearchForm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .modelsDevSearchForm :global(.btn) {
+    width: 100%;
+  }
+
+  .priceUnmatchedActions {
+    align-items: flex-end;
+  }
+
+  .priceUnmatchedActions > small {
+    display: none;
+  }
+
+  .priceSyncChangeUnmatchedActions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .priceSyncChangeUnmatchedActions > * {
+    flex: 1 1 100%;
   }
 }

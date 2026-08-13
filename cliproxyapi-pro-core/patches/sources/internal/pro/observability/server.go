@@ -132,6 +132,9 @@ func RegisterGinRoutes(group *gin.RouterGroup) {
 		group.GET("/model-prices/sync-status", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
+		group.GET("/model-prices/models-dev/search", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
 		group.POST("/model-prices/recalculate", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
@@ -166,6 +169,7 @@ func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
 	group.DELETE("/model-price-rules", withBackupWriteBarrier(s.handleModelPriceRulesDelete))
 	group.POST("/model-prices/sync", withBackupWriteBarrier(s.handleModelPricesSync))
 	group.GET("/model-prices/sync-status", s.handleModelPricesSyncStatus)
+	group.GET("/model-prices/models-dev/search", s.handleModelsDevPriceSearch)
 	group.POST("/model-prices/recalculate", withBackupWriteBarrier(s.handleModelPricesRecalculate))
 	group.GET("/settings", s.handleMonitoringSettingsGet)
 	group.PUT("/settings", withBackupWriteBarrier(s.handleMonitoringSettingsPut))
@@ -1479,6 +1483,33 @@ func (s *Server) handleModelPricesSyncStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"state": state})
+}
+
+func (s *Server) handleModelsDevPriceSearch(c *gin.Context) {
+	query := strings.TrimSpace(c.Query("q"))
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "q is required"})
+		return
+	}
+	if len(query) > 200 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "q is too long"})
+		return
+	}
+	limit := 20
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a positive integer"})
+			return
+		}
+		limit = parsed
+	}
+	items, err := s.store.SearchModelsDevPrices(c.Request.Context(), query, c.Query("provider"), limit)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
 func (s *Server) handleModelPricesRecalculate(c *gin.Context) {
