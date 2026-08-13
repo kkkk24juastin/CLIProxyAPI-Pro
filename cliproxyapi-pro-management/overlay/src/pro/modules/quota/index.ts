@@ -1,4 +1,5 @@
 export { quotaModule } from './manifest';
+export { isRuntimeOnlyAuthFile } from './quotaFile';
 export { quotaPersistenceMiddleware } from './extensions/persistenceMiddleware';
 export { resolveAccountPlanLabel, type AccountPlanQuotaStore } from './accountPlan';
 export { GEMINI_CLI_CONFIG } from './extensions/geminiCliQuotaConfig';

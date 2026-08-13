@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { authFilesApi } from "@/services/api/authFiles";
 import {
   IconAlertTriangle,
   IconCheck,
@@ -24,11 +25,12 @@ import {
 } from "@/components/ui/icons";
 import {
   defaultOAuthPolicyConfig,
+  countOAuthPolicyProvidersWithRules,
   isPositiveDuration,
   isValidOAuthModelPattern,
   normalizeOAuthPolicyPrefix,
   normalizeOAuthModelPlanKey,
-  oauthModelProviderDefinitions,
+  oauthModelProviderDefinitionsForAuthProviders,
   oauthPolicyDurationValue,
   oauthPolicyApi,
   planDefinitionsForProvider,
@@ -42,6 +44,8 @@ import {
 } from "@/pro/modules/oauthPolicy/oauthPolicy";
 import { useActionBarHeightVar } from "@/hooks/useActionBarHeightVar";
 import { useAuthStore, useNotificationStore } from "@/stores";
+import { resolveAuthProvider } from "@/utils/quota";
+import { isRuntimeOnlyAuthFile } from "@/pro/modules/quota";
 import { DurationInput, type DurationFieldProps } from '@/pro/shared/DurationInput';
 import configStyles from "@/pro/shared/FloatingActionBar.module.scss";
 import { ProFeatureHeader } from "@/pro/shared/ProFeatureHeader";
@@ -185,6 +189,7 @@ export function OAuthPolicyPage() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [authProviders, setAuthProviders] = useState<string[]>([]);
   const [activeProvider, setActiveProvider] = useState("xai");
   const [customPlan, setCustomPlan] = useState("");
   const [effectiveProvider, setEffectiveProvider] = useState("all");
@@ -205,8 +210,25 @@ export function OAuthPolicyPage() {
       }
       setLoading(true);
       try {
-        const next = await oauthPolicyApi.load();
+        const [next, authFileResponse] = await Promise.all([
+          oauthPolicyApi.load(),
+          authFilesApi.list().catch(() => null),
+        ]);
         setSnapshot(next);
+        if (authFileResponse) {
+          const nextAuthProviders = Array.from(
+            new Set(
+              (Array.isArray(authFileResponse.files)
+                ? authFileResponse.files
+                : []
+              )
+                .filter((file) => !isRuntimeOnlyAuthFile(file))
+                .map(resolveAuthProvider)
+                .filter(Boolean),
+            ),
+          );
+          setAuthProviders(nextAuthProviders);
+        }
         if (!dirtyRef.current || replaceDraft) setDraft(next.config);
         setLoadError("");
       } catch (error) {
@@ -292,21 +314,25 @@ export function OAuthPolicyPage() {
   };
 
   const providerDefinitions = useMemo(
-    () => oauthModelProviderDefinitions(draft.providers),
-    [draft.providers],
+    () =>
+      oauthModelProviderDefinitionsForAuthProviders(
+        draft.providers,
+        authProviders,
+      ),
+    [authProviders, draft.providers],
   );
   const resolvedActiveProvider = resolveOAuthPolicyActiveProvider(
     activeProvider,
     draft.providers,
+    providerDefinitions,
   );
   const activeProviderDefinition = providerDefinitions.find(
     ({ key }) => key === resolvedActiveProvider,
   ) ?? providerDefinitions[0];
-  const activePlans = draft.providers[resolvedActiveProvider].plans;
-  const activePlanDefinitions = planDefinitionsForProvider(
-    activeProviderDefinition,
-    activePlans,
-  );
+  const activePlans = draft.providers[resolvedActiveProvider]?.plans ?? {};
+  const activePlanDefinitions = activeProviderDefinition
+    ? planDefinitionsForProvider(activeProviderDefinition, activePlans)
+    : [];
 
   useEffect(() => {
     if (activeProvider === resolvedActiveProvider) return;
@@ -323,6 +349,10 @@ export function OAuthPolicyPage() {
             .length,
         0,
       ),
+    [draft.providers],
+  );
+  const configuredProviderCount = useMemo(
+    () => countOAuthPolicyProvidersWithRules(draft.providers),
     [draft.providers],
   );
   const excludedCount = useMemo(
@@ -594,16 +624,16 @@ export function OAuthPolicyPage() {
               </div>
               <div>
                 <span className={styles.statusMuted}>
-                  {snapshot.status.providers}
+                  {configuredProviderCount}
                 </span>
                 <small>
-                  {t("oauth_policy.providers", {
-                    defaultValue: "Providers",
+                  {t("oauth_policy.providers_with_rules", {
+                    defaultValue: "Rule providers",
                   })}
                 </small>
                 <strong>
-                  {t("oauth_policy.oauth_accounts", {
-                    defaultValue: "OAuth accounts",
+                  {t("oauth_policy.providers_with_rules_hint", {
+                    defaultValue: "Rules enabled",
                   })}
                 </strong>
               </div>
@@ -661,30 +691,49 @@ export function OAuthPolicyPage() {
             </section>
 
             <section className={styles.policyPanel}>
-              <ProFeatureTabs
-                className={styles.providerTabBar}
-                ariaLabel={t("oauth_policy.providers", {
-                  defaultValue: "Providers",
-                })}
-                activeKey={resolvedActiveProvider}
-                onChange={(key) => {
-                  setActiveProvider(key);
-                  setCustomPlan("");
-                }}
-                items={providerDefinitions.map((provider) => {
-                  const count = Object.values(
-                    draft.providers[provider.key].plans,
-                  ).filter(({ configured }) => configured).length;
-                  return {
-                    key: provider.key,
-                    label: t(
-                      `oauth_policy.provider_${provider.key.replace(/-/g, "_")}`,
-                      { defaultValue: provider.key },
-                    ),
-                    badge: count > 0 ? count : undefined,
-                  };
-                })}
-              />
+              {providerDefinitions.length === 0 ? (
+                <div className={styles.emptyProviders}>
+                  <IconInfo size={21} />
+                  <div>
+                    <strong>
+                      {t("oauth_policy.no_auth_providers", {
+                        defaultValue: "No authentication-file providers",
+                      })}
+                    </strong>
+                    <p>
+                      {t("oauth_policy.no_auth_providers_hint", {
+                        defaultValue:
+                          "Add an authentication file to configure provider rules.",
+                      })}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <ProFeatureTabs
+                    className={styles.providerTabBar}
+                    ariaLabel={t("oauth_policy.providers", {
+                      defaultValue: "Providers",
+                    })}
+                    activeKey={resolvedActiveProvider}
+                    onChange={(key) => {
+                      setActiveProvider(key);
+                      setCustomPlan("");
+                    }}
+                    items={providerDefinitions.map((provider) => {
+                      const count = Object.values(
+                        draft.providers[provider.key].plans,
+                      ).filter(({ configured }) => configured).length;
+                      return {
+                        key: provider.key,
+                        label: t(
+                          `oauth_policy.provider_${provider.key.replace(/-/g, "_")}`,
+                          { defaultValue: provider.key },
+                        ),
+                        badge: count > 0 ? count : undefined,
+                      };
+                    })}
+                  />
               <div className={styles.policyHeader}>
                 <div>
                   <h2>
@@ -925,6 +974,8 @@ export function OAuthPolicyPage() {
                   })}
                 </p>
               </div>
+                </>
+              )}
             </section>
             <section className={styles.effectivePanel}>
               <div className={styles.effectiveHeader}>

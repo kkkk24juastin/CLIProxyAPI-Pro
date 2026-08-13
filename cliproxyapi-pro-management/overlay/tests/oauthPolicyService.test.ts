@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  countOAuthPolicyProvidersWithRules,
   isPositiveDuration,
   isValidOAuthModelPattern,
   normalizeOAuthPolicyPrefix,
   normalizeOAuthPolicyConfig,
   oauthModelProviderDefinitions,
+  oauthModelProviderDefinitionsForAuthProviders,
   oauthPolicyDurationValue,
   OAUTH_MODEL_PROVIDER_DEFINITIONS,
   planDefinitionsForProvider,
@@ -212,5 +214,46 @@ describe("oauth account policy service", () => {
         afterRemoval.providers,
       ),
     ).toBe("xai");
+  });
+
+  it("shows only providers backed by authentication files", () => {
+    const config = normalizeOAuthPolicyConfig({
+      providers: {
+        "future-provider": { plans: { premium: { "excluded-models": [] } } },
+      },
+    });
+    const visible = oauthModelProviderDefinitionsForAuthProviders(
+      config.providers,
+      ["codex", "future-provider", "not-policy-aware"],
+    );
+
+    expect(visible.map(({ key }) => key)).toEqual([
+      "codex",
+      "future-provider",
+    ]);
+    expect(
+      resolveOAuthPolicyActiveProvider("xai", config.providers, visible),
+    ).toBe("codex");
+    expect(resolveOAuthPolicyActiveProvider("codex", config.providers, [])).toBe(
+      "",
+    );
+  });
+
+  it("counts providers with at least one enabled rule", () => {
+    const config = normalizeOAuthPolicyConfig({
+      providers: {
+        xai: { plans: { free: { "excluded-models": [] } } },
+        codex: {
+          plans: {
+            plus: { "excluded-models": [] },
+            pro: { "excluded-models": ["gpt-5-pro"] },
+          },
+        },
+      },
+    });
+
+    expect(countOAuthPolicyProvidersWithRules(config.providers)).toBe(2);
+    config.providers.xai.plans.free.configured = false;
+    expect(countOAuthPolicyProvidersWithRules(config.providers)).toBe(1);
   });
 });

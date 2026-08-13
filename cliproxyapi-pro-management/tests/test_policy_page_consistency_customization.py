@@ -84,6 +84,16 @@ class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
             source = (PRO_ROOT / relative).read_text()
             self.assertIn('dirtyRef', source)
 
+    def test_account_policy_provider_stats_and_tabs_use_distinct_semantics(self) -> None:
+        account = (PRO_ROOT / 'oauthPolicy/OAuthPolicyPage.tsx').read_text()
+        service = (PRO_ROOT / 'oauthPolicy/oauthPolicy.ts').read_text()
+
+        self.assertIn('countOAuthPolicyProvidersWithRules(draft.providers)', account)
+        self.assertIn('oauthModelProviderDefinitionsForAuthProviders(', account)
+        self.assertIn('.filter((file) => !isRuntimeOnlyAuthFile(file))', account)
+        self.assertIn('providerDefinitions.length === 0', account)
+        self.assertIn('Object.values(provider.plans).some(({ configured }) => configured)', service)
+
     def test_routing_disconnect_preserves_modified_draft(self) -> None:
         routing = (PRO_ROOT / 'routing/RoutingPolicyPage.tsx').read_text()
         disconnected = routing[routing.index("if (connectionStatus !== 'connected') {"):]
@@ -98,7 +108,13 @@ class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
         account = (PRO_ROOT / 'oauthPolicy/OAuthPolicyPage.tsx').read_text()
         required = {
             'routing_policy': {'discard_changes'},
-            'oauth_policy': {'discard_changes'},
+            'oauth_policy': {
+                'discard_changes',
+                'providers_with_rules',
+                'providers_with_rules_hint',
+                'no_auth_providers',
+                'no_auth_providers_hint',
+            },
             'proxy_pool': {'discard_changes'},
             'pro_feature_header': {
                 'active',

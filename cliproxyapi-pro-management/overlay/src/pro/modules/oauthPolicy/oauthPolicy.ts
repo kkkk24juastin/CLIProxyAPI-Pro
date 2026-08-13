@@ -163,14 +163,35 @@ export const oauthModelProviderDefinitions = (
   return [...OAUTH_MODEL_PROVIDER_DEFINITIONS, ...custom];
 };
 
+export const oauthModelProviderDefinitionsForAuthProviders = (
+  providers: OAuthPolicyConfig["providers"],
+  authProviders: Iterable<string>,
+): OAuthModelProviderDefinition[] => {
+  const available = new Set(authProviders);
+  return oauthModelProviderDefinitions(providers).filter(({ key }) =>
+    available.has(key),
+  );
+};
+
+export const countOAuthPolicyProvidersWithRules = (
+  providers: OAuthPolicyConfig["providers"],
+): number =>
+  Object.values(providers).filter((provider) =>
+    Object.values(provider.plans).some(({ configured }) => configured),
+  ).length;
+
 export const resolveOAuthPolicyActiveProvider = (
   activeProvider: string,
   providers: OAuthPolicyConfig["providers"],
+  providerDefinitions = oauthModelProviderDefinitions(providers),
 ): string => {
-  if (Object.prototype.hasOwnProperty.call(providers, activeProvider)) {
+  if (
+    Object.prototype.hasOwnProperty.call(providers, activeProvider) &&
+    providerDefinitions.some(({ key }) => key === activeProvider)
+  ) {
     return activeProvider;
   }
-  return oauthModelProviderDefinitions(providers)[0]?.key ?? "";
+  return providerDefinitions[0]?.key ?? "";
 };
 
 export const normalizeOAuthModelPlanKey = (

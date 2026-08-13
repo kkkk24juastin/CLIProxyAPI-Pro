@@ -24,6 +24,33 @@
   align-items: center;
 }
 
+.emptyProviders {
+  display: flex;
+  min-height: 132px;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  padding: 22px;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.emptyProviders > svg {
+  flex: 0 0 auto;
+}
+
+.emptyProviders strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-primary);
+}
+
+.emptyProviders p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .ruleTitleLine code,
 .flowBadge {
   border-radius: 999px;

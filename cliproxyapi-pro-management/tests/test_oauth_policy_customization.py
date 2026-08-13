@@ -20,7 +20,7 @@ LOCALES = ROOT / 'monitoring-locales.json'
 class OAuthPolicyCustomizationTest(unittest.TestCase):
     def test_page_exposes_plan_settings_rules_and_fallbacks(self) -> None:
         source = PAGE.read_text()
-        self.assertIn('oauthModelProviderDefinitions(draft.providers)', source)
+        self.assertIn('oauthModelProviderDefinitionsForAuthProviders(', source)
         self.assertIn('providerDefinitions.map', source)
         self.assertIn('activePlanDefinitions.map', source)
         self.assertIn('normalizeOAuthModelPlanKey', source)
