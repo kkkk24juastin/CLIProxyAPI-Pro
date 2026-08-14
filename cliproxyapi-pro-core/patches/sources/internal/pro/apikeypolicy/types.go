@@ -27,6 +27,7 @@ const (
 
 var (
 	ErrUnavailable             = errors.New("api key policy unavailable")
+	ErrTakeoverStateChanged    = errors.New("api key policy takeover state changed")
 	ErrPolicyNotFound          = errors.New("api key policy not found")
 	ErrProfileNotFound         = errors.New("api key profile not found")
 	ErrVersionConflict         = errors.New("api key policy version conflict")

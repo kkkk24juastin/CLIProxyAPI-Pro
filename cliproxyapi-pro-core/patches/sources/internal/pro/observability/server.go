@@ -342,6 +342,8 @@ func (s *Server) handleUsageImportPreview(c *gin.Context) {
 			}
 			preview.PreservePolicies = currentPreview.TargetPolicies
 			preview.PreserveProfiles = currentPreview.TargetProfiles
+			preview.CurrentTakeoverEnabled = currentPreview.CurrentTakeoverEnabled
+			preview.TargetTakeoverEnabled = currentPreview.CurrentTakeoverEnabled
 		}
 		c.JSON(http.StatusOK, gin.H{"policyBackup": preview, "legacyBackup": true, "restoresAPIKeys": false})
 		return
@@ -1183,6 +1185,8 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 					}
 					importPreview.PreservePolicies = currentPreview.TargetPolicies
 					importPreview.PreserveProfiles = currentPreview.TargetProfiles
+					importPreview.CurrentTakeoverEnabled = currentPreview.CurrentTakeoverEnabled
+					importPreview.TargetTakeoverEnabled = currentPreview.CurrentTakeoverEnabled
 				}
 			}
 			previousProSettings, errPrevious := s.store.ListProSettings(ctx)

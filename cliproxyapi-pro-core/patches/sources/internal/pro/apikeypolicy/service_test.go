@@ -81,6 +81,92 @@ func TestTakeoverControlsNewRequestDecisionsAndPersists(t *testing.T) {
 	}
 }
 
+func TestUnhealthyPolicyServiceCanPersistEmergencyTakeoverStop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "takeover-emergency-stop.sqlite")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := testIdentity(t, "emergency-stop-key")
+	if _, err = service.Create(context.Background(), identity, "Emergency", ProfileInput{
+		Name: "Restricted", Providers: []string{"codex"}, Models: []string{"gpt-5"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	service.MarkUnavailable()
+	if service.Healthy() || !service.TakeoverEnabled() {
+		t.Fatalf("unavailable state healthy=%v takeover=%v", service.Healthy(), service.TakeoverEnabled())
+	}
+	if err = service.SetTakeoverIfGeneration(context.Background(), true, service.PolicyGeneration(), service.ConfiguredGeneration()); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("unhealthy activation error=%v", err)
+	}
+	if err = service.SetTakeover(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if service.Healthy() || service.TakeoverEnabled() {
+		t.Fatalf("emergency stop state healthy=%v takeover=%v", service.Healthy(), service.TakeoverEnabled())
+	}
+	decision, err := service.Decide(identity)
+	if err != nil || decision.Mode != ModePassthrough {
+		t.Fatalf("emergency stop decision=%#v err=%v", decision, err)
+	}
+	if err = service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopenedStore, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewService(reopenedStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if reopened.TakeoverEnabled() {
+		t.Fatal("emergency stop did not persist")
+	}
+}
+
+func TestTakeoverActivationRequiresConfirmedPolicyAndConfiguredGenerations(t *testing.T) {
+	service := newTestService(t)
+	if err := service.SetTakeover(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	service.SetConfiguredAPIKeys([]string{"generation-key"})
+	policyGeneration := service.PolicyGeneration()
+	configuredGeneration := service.ConfiguredGeneration()
+	identity := testIdentity(t, "generation-key")
+	if _, err := service.Create(context.Background(), identity, "Generation", ProfileInput{
+		Name: "Restricted", Providers: []string{"codex"}, Models: []string{"gpt-5"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetTakeoverIfGeneration(context.Background(), true, policyGeneration, configuredGeneration); !errors.Is(err, ErrTakeoverStateChanged) {
+		t.Fatalf("stale policy generation error=%v", err)
+	}
+	if service.TakeoverEnabled() {
+		t.Fatal("stale policy generation enabled takeover")
+	}
+	policyGeneration = service.PolicyGeneration()
+	service.SetConfiguredAPIKeys([]string{"generation-key", "new-key"})
+	if err := service.SetTakeoverIfGeneration(context.Background(), true, policyGeneration, configuredGeneration); !errors.Is(err, ErrTakeoverStateChanged) {
+		t.Fatalf("stale configured generation error=%v", err)
+	}
+	if service.TakeoverEnabled() {
+		t.Fatal("stale configured generation enabled takeover")
+	}
+	if err := service.SetTakeoverIfGeneration(context.Background(), true, service.PolicyGeneration(), service.ConfiguredGeneration()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testIdentity(t *testing.T, raw string) AuthenticatedAPIKeyIdentity {
 	t.Helper()
 	identity, err := NewAuthenticatedAPIKeyIdentity(raw)
@@ -569,7 +655,7 @@ func TestPolicyBackupPreviewUsesCommittedConfiguredKeysAndLegacyArrayStillImport
 		t.Fatal(err)
 	}
 	preview, err := service.PreviewBackup(context.Background(), payload, []string{first.Hash()})
-	if err != nil || preview.TargetPolicies != 2 || preview.TargetProfiles != 2 || preview.ReplacePolicies != 2 || preview.AssociatedPolicies != 1 || preview.OrphanedPolicies != 1 {
+	if err != nil || preview.TargetPolicies != 2 || preview.TargetProfiles != 2 || preview.ReplacePolicies != 2 || preview.AssociatedPolicies != 1 || preview.OrphanedPolicies != 1 || !preview.CurrentTakeoverEnabled || !preview.TargetTakeoverEnabled {
 		t.Fatalf("preview = %+v, %v", preview, err)
 	}
 	var document backupDocument
@@ -579,6 +665,10 @@ func TestPolicyBackupPreviewUsesCommittedConfiguredKeysAndLegacyArrayStillImport
 	legacy, err := json.Marshal(document.Policies)
 	if err != nil {
 		t.Fatal(err)
+	}
+	legacyPreview, err := service.PreviewBackup(context.Background(), legacy, []string{first.Hash()})
+	if err != nil || !legacyPreview.CurrentTakeoverEnabled || legacyPreview.TargetTakeoverEnabled {
+		t.Fatalf("legacy preview = %+v, %v", legacyPreview, err)
 	}
 	if err := service.ImportBackup(context.Background(), legacy); err != nil {
 		t.Fatalf("legacy policy array import = %v", err)

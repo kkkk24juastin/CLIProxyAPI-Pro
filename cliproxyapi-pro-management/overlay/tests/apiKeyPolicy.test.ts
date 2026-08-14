@@ -30,6 +30,9 @@ describe('usage policy backup preview contract', () => {
     expect(page).toContain("'/usage/import/preview'");
     expect(page).toContain('import_policy_preview_replace');
     expect(page).toContain('import_policy_preview_preserve');
+		expect(page).toContain('currentTakeoverEnabled?: boolean');
+		expect(page).toContain('targetTakeoverEnabled?: boolean');
+		expect(page).toContain('import_policy_preview_takeover_change');
     expect(page).toContain('import_policy_no_api_keys');
     expect(page).toContain('onConfirm: () => executeUsageImport(content, allowLegacy)');
   });
@@ -150,8 +153,14 @@ describe('API Key Policy profile drafts', () => {
 		expect(client).toContain("'takeover_control'");
 		expect(client).toContain("'/api-key-policy-status'");
 		expect(client).toContain("'/api-key-policy-takeover'");
-		expect(page).toContain('active={snapshot?.takeoverEnabled === true}');
-		expect(page).toContain('apiKeyPolicyApi.setTakeover(enabled)');
+		expect(client).toContain('policyGeneration: status.policyGeneration');
+		expect(client).toContain('configuredGeneration: status.configuredGeneration');
+		expect(page).toContain('const [takeoverStatus, setTakeoverStatus]');
+		expect(page).toContain('active={takeoverActive}');
+		expect(page).toContain('!takeoverActive && !takeoverScopeReady');
+		expect(page).toContain('apiKeyPolicyApi.setTakeover(enabled, takeoverStatus)');
+		expect(page).toContain("apiKeyPolicyErrorCode(error) === 'api_key_policy_state_changed'");
+		expect(page).toContain("navigate('/config')");
 	});
 
   test('keeps the draft on 409 and does not replace it when server state is reloaded for manual merge', () => {

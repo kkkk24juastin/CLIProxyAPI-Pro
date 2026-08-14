@@ -60,6 +60,9 @@ export interface APIKeyPolicyCapabilities {
 
 export interface APIKeyPolicyStatus {
 	takeoverEnabled: boolean;
+	healthy: boolean;
+	policyGeneration: number;
+	configuredGeneration: number;
 }
 
 export interface APIKeyPolicyDeletePreview {
@@ -81,7 +84,6 @@ export interface APIKeyPolicySnapshot {
   bindings: APIKeyPolicyBindingPage;
   catalog: APIKeyPolicyCatalog;
   capabilities: APIKeyPolicyCapabilities;
-	takeoverEnabled: boolean;
 }
 
 const REQUIRED_API_KEY_POLICY_FEATURES = [
@@ -209,16 +211,25 @@ export const apiKeyPolicyApi = {
     const capabilities = validateAPIKeyPolicyCapabilities(
       await apiClient.get<APIKeyPolicyCapabilities>('/api-key-policy-capabilities'),
     );
-	const [bindings, catalog, status] = await Promise.all([
+	const [bindings, catalog] = await Promise.all([
       this.bindings(),
       apiClient.get<APIKeyPolicyCatalog>('/api-key-policy-catalog'),
-	  apiClient.get<APIKeyPolicyStatus>('/api-key-policy-status'),
     ]);
-	return { capabilities, bindings, catalog, takeoverEnabled: status.takeoverEnabled === true };
+	return { capabilities, bindings, catalog };
   },
 
-	async setTakeover(enabled: boolean): Promise<APIKeyPolicyStatus> {
-		return apiClient.put<APIKeyPolicyStatus>('/api-key-policy-takeover', { enabled });
+	status(): Promise<APIKeyPolicyStatus> {
+		return apiClient.get<APIKeyPolicyStatus>('/api-key-policy-status');
+	},
+
+	async setTakeover(enabled: boolean, status?: APIKeyPolicyStatus): Promise<APIKeyPolicyStatus> {
+		return apiClient.put<APIKeyPolicyStatus>('/api-key-policy-takeover', {
+			enabled,
+			...(enabled && status ? {
+				policyGeneration: status.policyGeneration,
+				configuredGeneration: status.configuredGeneration,
+			} : {}),
+		});
 	},
 
   async get(policyId: string): Promise<APIKeyPolicy> {

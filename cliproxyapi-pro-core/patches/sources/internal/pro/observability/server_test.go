@@ -38,12 +38,12 @@ func TestUsageImportPreviewReportsPolicyReplacementAssociationAndLegacyPreservat
 		func(context.Context, []byte) error { return nil },
 		func(_ context.Context, payload []byte) (probackup.PolicyBackupPreview, error) {
 			if bytes.Equal(payload, current) {
-				return probackup.PolicyBackupPreview{TargetPolicies: 1, TargetProfiles: 3}, nil
+				return probackup.PolicyBackupPreview{TargetPolicies: 1, TargetProfiles: 3, CurrentTakeoverEnabled: true, TargetTakeoverEnabled: true}, nil
 			}
 			if !bytes.Equal(payload, target) {
 				t.Fatalf("preview payload = %s", payload)
 			}
-			return probackup.PolicyBackupPreview{HasPolicies: true, ReplacePolicies: 1, ReplaceProfiles: 3, TargetPolicies: 2, TargetProfiles: 4, AssociatedPolicies: 1, OrphanedPolicies: 1}, nil
+			return probackup.PolicyBackupPreview{HasPolicies: true, ReplacePolicies: 1, ReplaceProfiles: 3, TargetPolicies: 2, TargetProfiles: 4, AssociatedPolicies: 1, OrphanedPolicies: 1, CurrentTakeoverEnabled: true, TargetTakeoverEnabled: false}, nil
 		},
 	)
 	backup, err := coordinator.ExportJSONL(context.Background(), nil, func(context.Context) ([]byte, error) { return nil, nil })
@@ -59,13 +59,13 @@ func TestUsageImportPreviewReportsPolicyReplacementAssociationAndLegacyPreservat
 
 	previewRecorder := httptest.NewRecorder()
 	testUsageRouter(openTestStore(t)).ServeHTTP(previewRecorder, httptest.NewRequest(http.MethodPost, "/usage/import/preview", bytes.NewReader(backup)))
-	if previewRecorder.Code != http.StatusOK || !strings.Contains(previewRecorder.Body.String(), `"associatedPolicies":1`) || !strings.Contains(previewRecorder.Body.String(), `"orphanedPolicies":1`) || !strings.Contains(previewRecorder.Body.String(), `"restoresAPIKeys":false`) {
+	if previewRecorder.Code != http.StatusOK || !strings.Contains(previewRecorder.Body.String(), `"associatedPolicies":1`) || !strings.Contains(previewRecorder.Body.String(), `"orphanedPolicies":1`) || !strings.Contains(previewRecorder.Body.String(), `"currentTakeoverEnabled":true`) || !strings.Contains(previewRecorder.Body.String(), `"targetTakeoverEnabled":false`) || !strings.Contains(previewRecorder.Body.String(), `"restoresAPIKeys":false`) {
 		t.Fatalf("preview response = %d %s", previewRecorder.Code, previewRecorder.Body.String())
 	}
 
 	legacyRecorder := httptest.NewRecorder()
 	testUsageRouter(openTestStore(t)).ServeHTTP(legacyRecorder, httptest.NewRequest(http.MethodPost, "/usage/import/preview?allow_legacy=1", strings.NewReader(`{"model":"old"}`)))
-	if legacyRecorder.Code != http.StatusOK || !strings.Contains(legacyRecorder.Body.String(), `"preservePolicies":1`) || !strings.Contains(legacyRecorder.Body.String(), `"preserveProfiles":3`) {
+	if legacyRecorder.Code != http.StatusOK || !strings.Contains(legacyRecorder.Body.String(), `"preservePolicies":1`) || !strings.Contains(legacyRecorder.Body.String(), `"preserveProfiles":3`) || !strings.Contains(legacyRecorder.Body.String(), `"currentTakeoverEnabled":true`) || !strings.Contains(legacyRecorder.Body.String(), `"targetTakeoverEnabled":true`) {
 		t.Fatalf("legacy preview response = %d %s", legacyRecorder.Code, legacyRecorder.Body.String())
 	}
 }

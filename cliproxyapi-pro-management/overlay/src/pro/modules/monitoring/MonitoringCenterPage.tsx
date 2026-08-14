@@ -263,6 +263,8 @@ type PolicyBackupPreview = {
   targetProfiles?: number;
   associatedPolicies?: number;
   orphanedPolicies?: number;
+	currentTakeoverEnabled?: boolean;
+	targetTakeoverEnabled?: boolean;
 };
 
 type UsageImportPreview = {
@@ -278,8 +280,11 @@ type UsageResetResult = {
   resetAtMs: number;
 };
 
-const buildPolicyBackupSummary = (policy: PolicyBackupPreview, t: (key: string, options?: Record<string, unknown>) => string) => (
-  policy.hasPolicies
+const buildPolicyBackupSummary = (
+  policy: PolicyBackupPreview,
+  t: (key: string, options?: Record<string, unknown>) => string,
+) => {
+  const summary = policy.hasPolicies
     ? t('usage_stats.import_policy_preview_replace', {
       replacePolicies: policy.replacePolicies ?? 0,
       replaceProfiles: policy.replaceProfiles ?? 0,
@@ -291,8 +296,20 @@ const buildPolicyBackupSummary = (policy: PolicyBackupPreview, t: (key: string, 
     : t('usage_stats.import_policy_preview_preserve', {
       policies: policy.preservePolicies ?? 0,
       profiles: policy.preserveProfiles ?? 0,
-    })
-);
+    });
+  if (
+    !policy.hasPolicies
+    || policy.currentTakeoverEnabled === policy.targetTakeoverEnabled
+  ) return summary;
+  return `${summary} ${t('usage_stats.import_policy_preview_takeover_change', {
+    current: t(policy.currentTakeoverEnabled
+      ? 'usage_stats.import_policy_takeover_on'
+      : 'usage_stats.import_policy_takeover_off'),
+    target: t(policy.targetTakeoverEnabled
+      ? 'usage_stats.import_policy_takeover_on'
+      : 'usage_stats.import_policy_takeover_off'),
+  })}`;
+};
 
 export function MonitoringCenterPage() {
   const { t, i18n } = useTranslation();

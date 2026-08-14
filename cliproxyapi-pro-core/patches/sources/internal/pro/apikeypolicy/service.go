@@ -19,6 +19,7 @@ import (
 type runtimeIndex struct {
 	healthy         bool
 	takeoverEnabled bool
+	generation      uint64
 	items           map[string]RequestPolicySnapshot
 }
 
@@ -130,11 +131,17 @@ func profileCount(policies []Policy) int {
 // as import, then derives association counts from the committed config key
 // fingerprints supplied by the Management handler.
 func (s *Service) PreviewBackup(ctx context.Context, payload []byte, configuredHashes []string) (probackup.PolicyBackupPreview, error) {
-	policies, _, _, _, err := s.stageBackup(payload)
+	policies, _, targetTakeoverEnabled, _, err := s.stageBackup(payload)
 	if err != nil {
 		return probackup.PolicyBackupPreview{}, err
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	current, err := s.store.List(ctx)
+	if err != nil {
+		return probackup.PolicyBackupPreview{}, err
+	}
+	currentTakeoverEnabled, err := s.store.TakeoverEnabled(ctx)
 	if err != nil {
 		return probackup.PolicyBackupPreview{}, err
 	}
@@ -142,7 +149,15 @@ func (s *Service) PreviewBackup(ctx context.Context, payload []byte, configuredH
 	for _, hash := range configuredHashes {
 		configured[hash] = struct{}{}
 	}
-	preview := probackup.PolicyBackupPreview{HasPolicies: true, ReplacePolicies: len(current), ReplaceProfiles: profileCount(current), TargetPolicies: len(policies), TargetProfiles: profileCount(policies)}
+	preview := probackup.PolicyBackupPreview{
+		HasPolicies:            true,
+		ReplacePolicies:        len(current),
+		ReplaceProfiles:        profileCount(current),
+		TargetPolicies:         len(policies),
+		TargetProfiles:         profileCount(policies),
+		CurrentTakeoverEnabled: currentTakeoverEnabled,
+		TargetTakeoverEnabled:  targetTakeoverEnabled,
+	}
 	for _, policy := range policies {
 		if _, ok := configured[policy.APIKeyHash]; ok {
 			preview.AssociatedPolicies++
@@ -220,9 +235,13 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-		s.index.Store(next)
+		s.publishNextLocked(next)
 	} else {
-		probackup.AfterCommit(ctx, func() { s.index.Store(next) })
+		probackup.AfterCommit(ctx, func() {
+			s.writeMu.Lock()
+			defer s.writeMu.Unlock()
+			s.publishNextLocked(next)
+		})
 	}
 	return nil
 }
@@ -302,13 +321,14 @@ func (s *Service) normalizeBackupPolicies(policies []Policy) ([]Policy, error) {
 }
 
 type Service struct {
-	store            *Store
-	writeMu          sync.Mutex
-	catalogMu        sync.RWMutex
-	catalogProvider  func() (ProfileCatalog, error)
-	configuredMu     sync.RWMutex
-	configuredHashes atomic.Value
-	index            atomic.Pointer[runtimeIndex]
+	store                *Store
+	writeMu              sync.Mutex
+	catalogMu            sync.RWMutex
+	catalogProvider      func() (ProfileCatalog, error)
+	configuredMu         sync.RWMutex
+	configuredHashes     atomic.Value
+	configuredGeneration atomic.Uint64
+	index                atomic.Pointer[runtimeIndex]
 }
 
 func (s *Service) SetConfiguredAPIKeys(keys []string) {
@@ -330,7 +350,15 @@ func (s *Service) SetConfiguredAPIKeys(keys []string) {
 	}
 	s.configuredMu.Lock()
 	s.configuredHashes.Store(hashes)
+	s.configuredGeneration.Add(1)
 	s.configuredMu.Unlock()
+}
+
+func (s *Service) ConfiguredGeneration() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.configuredGeneration.Load()
 }
 
 func (s *Service) ConfiguredHashes() []string {
@@ -436,7 +464,11 @@ func (s *Service) MarkUnavailable() {
 	if s != nil {
 		current := s.index.Load()
 		takeoverEnabled := current != nil && current.takeoverEnabled
-		s.index.Store(&runtimeIndex{healthy: false, takeoverEnabled: takeoverEnabled})
+		generation := uint64(0)
+		if current != nil {
+			generation = current.generation
+		}
+		s.index.Store(&runtimeIndex{healthy: false, takeoverEnabled: takeoverEnabled, generation: generation})
 	}
 }
 
@@ -465,8 +497,25 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		s.MarkUnavailable()
 		return err
 	}
-	s.index.Store(index)
+	s.publishNextLocked(index)
 	return nil
+}
+
+func nextRuntimeGeneration(current *runtimeIndex) uint64 {
+	if current == nil || current.generation == ^uint64(0) {
+		return 1
+	}
+	return current.generation + 1
+}
+
+// publishNextLocked publishes a fully built immutable index. Callers must hold
+// writeMu so policy mutations and takeover confirmations share one generation.
+func (s *Service) publishNextLocked(next *runtimeIndex) {
+	if next == nil {
+		return
+	}
+	next.generation = nextRuntimeGeneration(s.index.Load())
+	s.index.Store(next)
 }
 
 func buildRuntimeIndex(policies []Policy, takeoverEnabled bool) (*runtimeIndex, error) {
@@ -535,16 +584,55 @@ func (s *Service) TakeoverEnabled() bool {
 	return index != nil && index.takeoverEnabled
 }
 
+func (s *Service) PolicyGeneration() uint64 {
+	index := s.index.Load()
+	if index == nil {
+		return 0
+	}
+	return index.generation
+}
+
 // SetTakeover changes the runtime enforcement boundary for new requests. An
 // in-flight request keeps its immutable decision; disabling takeover makes all
 // subsequent authenticated upstream keys use normal passthrough behavior.
 func (s *Service) SetTakeover(ctx context.Context, enabled bool) error {
+	return s.setTakeover(ctx, enabled, 0, 0, false)
+}
+
+// SetTakeoverIfGeneration binds takeover activation to the policy snapshot the
+// operator confirmed. Emergency disable remains available without a healthy
+// policy index and therefore does not require a matching generation.
+func (s *Service) SetTakeoverIfGeneration(ctx context.Context, enabled bool, expectedPolicyGeneration, expectedConfiguredGeneration uint64) error {
+	return s.setTakeover(ctx, enabled, expectedPolicyGeneration, expectedConfiguredGeneration, enabled)
+}
+
+func (s *Service) setTakeover(ctx context.Context, enabled bool, expectedPolicyGeneration, expectedConfiguredGeneration uint64, requireGeneration bool) error {
 	if s == nil || s.store == nil {
 		return ErrUnavailable
 	}
 	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
 		s.writeMu.Lock()
 		defer s.writeMu.Unlock()
+		current := s.index.Load()
+		if requireGeneration {
+			if current == nil || !current.healthy {
+				return ErrUnavailable
+			}
+			if current.generation != expectedPolicyGeneration {
+				return ErrTakeoverStateChanged
+			}
+		}
+		if requireGeneration {
+			// Hold the configured-key snapshot stable through the database commit
+			// and runtime publication. Config reloads publish through the matching
+			// write lock, so activation is bound to exactly the scope confirmed by
+			// the operator without taking the Management handler lock.
+			s.configuredMu.RLock()
+			defer s.configuredMu.RUnlock()
+			if s.configuredGeneration.Load() != expectedConfiguredGeneration {
+				return ErrTakeoverStateChanged
+			}
+		}
 		tx, err := s.store.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -553,18 +641,27 @@ func (s *Service) SetTakeover(ctx context.Context, enabled bool) error {
 		if _, err = tx.ExecContext(ctx, `update api_key_policy_settings set takeover_enabled = ? where id = 1`, enabled); err != nil {
 			return err
 		}
-		policies, err := listPolicies(ctx, tx)
-		if err != nil {
-			return err
-		}
-		next, err := buildRuntimeIndex(policies, enabled)
-		if err != nil {
-			return err
+		var next *runtimeIndex
+		if enabled {
+			policies, listErr := listPolicies(ctx, tx)
+			if listErr != nil {
+				return listErr
+			}
+			next, err = buildRuntimeIndex(policies, true)
+			if err != nil {
+				return err
+			}
+		} else {
+			next = &runtimeIndex{takeoverEnabled: false}
+			if current != nil {
+				next.healthy = current.healthy
+				next.items = current.items
+			}
 		}
 		if err = tx.Commit(); err != nil {
 			return err
 		}
-		s.index.Store(next)
+		s.publishNextLocked(next)
 		return nil
 	})
 }
@@ -842,21 +939,23 @@ func (s *Service) DeletePolicy(ctx context.Context, policyID string, version int
 // exists. The caller must prove orphaned state from the committed config
 // snapshot; unlike DeletePolicy this is not a passthrough permission change.
 func (s *Service) PurgeOrphaned(ctx context.Context, policyID string, version int64) error {
-	// The configured-key read lock is shared with SetConfiguredAPIKeys. Runtime
-	// config reload publishes keys here before making them acceptable to access
-	// authentication, so a restored key can never race this purge into deleting
-	// a policy that has become effective again.
-	s.configuredMu.RLock()
-	defer s.configuredMu.RUnlock()
-	policy, err := s.store.Get(ctx, policyID)
-	if err != nil {
-		return err
-	}
-	if s.configuredHashExists(policy.APIKeyHash) {
-		return ErrNotOrphaned
-	}
 	now := time.Now().UnixMilli()
-	_, err = s.write(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	_, err := s.write(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		// Acquire configuredMu only after the global write barrier and writeMu
+		// owned by write(). Takeover activation follows the same lock order.
+		s.configuredMu.RLock()
+		defer s.configuredMu.RUnlock()
+		policies, err := listPolicies(ctx, tx)
+		if err != nil {
+			return err
+		}
+		policy, err := findPolicy(policies, policyID)
+		if err != nil {
+			return err
+		}
+		if s.configuredHashExists(policy.APIKeyHash) {
+			return ErrNotOrphaned
+		}
 		if err := requireVersion(ctx, tx, policyID, version); err != nil {
 			return err
 		}
@@ -866,7 +965,7 @@ func (s *Service) PurgeOrphaned(ctx context.Context, policyID string, version in
 		if _, err := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = null where id = ?`, policyID); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `delete from api_key_policies where id = ?`, policyID)
+		_, err = tx.ExecContext(ctx, `delete from api_key_policies where id = ?`, policyID)
 		return err
 	})
 	return err
@@ -903,7 +1002,7 @@ func (s *Service) write(ctx context.Context, operation func(context.Context, *sq
 		}
 		// The database commit is the durable linearization point. Publishing the
 		// already-built immutable index performs no fallible I/O afterward.
-		s.index.Store(next)
+		s.publishNextLocked(next)
 		published = policies
 		return nil
 	})

@@ -29,15 +29,17 @@ type ExportFunc func(context.Context) ([]byte, error)
 // legacy backup) and the staged target's association with the current upstream
 // API-key configuration. It never contains a key or fingerprint.
 type PolicyBackupPreview struct {
-	HasPolicies        bool `json:"hasPolicies"`
-	ReplacePolicies    int  `json:"replacePolicies"`
-	PreservePolicies   int  `json:"preservePolicies"`
-	ReplaceProfiles    int  `json:"replaceProfiles"`
-	PreserveProfiles   int  `json:"preserveProfiles"`
-	TargetPolicies     int  `json:"targetPolicies"`
-	TargetProfiles     int  `json:"targetProfiles"`
-	AssociatedPolicies int  `json:"associatedPolicies"`
-	OrphanedPolicies   int  `json:"orphanedPolicies"`
+	HasPolicies            bool `json:"hasPolicies"`
+	ReplacePolicies        int  `json:"replacePolicies"`
+	PreservePolicies       int  `json:"preservePolicies"`
+	ReplaceProfiles        int  `json:"replaceProfiles"`
+	PreserveProfiles       int  `json:"preserveProfiles"`
+	TargetPolicies         int  `json:"targetPolicies"`
+	TargetProfiles         int  `json:"targetProfiles"`
+	AssociatedPolicies     int  `json:"associatedPolicies"`
+	OrphanedPolicies       int  `json:"orphanedPolicies"`
+	CurrentTakeoverEnabled bool `json:"currentTakeoverEnabled"`
+	TargetTakeoverEnabled  bool `json:"targetTakeoverEnabled"`
 }
 
 type transactionContextKey struct{}

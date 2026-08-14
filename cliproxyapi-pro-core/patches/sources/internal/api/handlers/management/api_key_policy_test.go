@@ -138,6 +138,25 @@ func bindingResponse(t *testing.T, recorder *httptest.ResponseRecorder) struct {
 	return response
 }
 
+func takeoverStatusResponse(t *testing.T, recorder *httptest.ResponseRecorder) struct {
+	TakeoverEnabled      bool   `json:"takeoverEnabled"`
+	Healthy              bool   `json:"healthy"`
+	PolicyGeneration     uint64 `json:"policyGeneration"`
+	ConfiguredGeneration uint64 `json:"configuredGeneration"`
+} {
+	t.Helper()
+	var response struct {
+		TakeoverEnabled      bool   `json:"takeoverEnabled"`
+		Healthy              bool   `json:"healthy"`
+		PolicyGeneration     uint64 `json:"policyGeneration"`
+		ConfiguredGeneration uint64 `json:"configuredGeneration"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
 func createPolicyBody(keyRef string) map[string]any {
 	return map[string]any{
 		"keyRef":      keyRef,
@@ -233,7 +252,10 @@ func TestAPIKeyPolicyRoutesRequireRealManagementMiddlewareAndBindSession(t *test
 	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"takeoverEnabled":false`) {
 		t.Fatalf("initial takeover status=%d body=%s", status.Code, status.Body.String())
 	}
-	toggled := authenticatedPolicyRequest(t, router, http.MethodPut, "/v0/management/api-key-policy-takeover", "management-policy-test-secret", map[string]any{"enabled": true})
+	initialStatus := takeoverStatusResponse(t, status)
+	toggled := authenticatedPolicyRequest(t, router, http.MethodPut, "/v0/management/api-key-policy-takeover", "management-policy-test-secret", map[string]any{
+		"enabled": true, "policyGeneration": initialStatus.PolicyGeneration, "configuredGeneration": initialStatus.ConfiguredGeneration,
+	})
 	if toggled.Code != http.StatusOK || !strings.Contains(toggled.Body.String(), `"takeoverEnabled":true`) {
 		t.Fatalf("takeover update status=%d body=%s", toggled.Code, toggled.Body.String())
 	}
@@ -241,6 +263,46 @@ func TestAPIKeyPolicyRoutesRequireRealManagementMiddlewareAndBindSession(t *test
 	created := authenticatedPolicyRequest(t, router, http.MethodPost, "/v0/management/api-key-policies", "management-policy-test-secret", createPolicyBody(keyRef))
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	}
+}
+
+func TestAPIKeyPolicyTakeoverSupportsEmergencyStopAndRejectsStaleActivation(t *testing.T) {
+	h, router := newAPIKeyPolicyManagementHarness(t, []string{"takeover-handler-key"})
+	statusRecorder := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-status", "session-a", nil)
+	if statusRecorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", statusRecorder.Code, statusRecorder.Body.String())
+	}
+	status := takeoverStatusResponse(t, statusRecorder)
+	missingGeneration := policyRequest(t, router, http.MethodPut, "/v0/management/api-key-policy-takeover", "session-a", map[string]any{"enabled": true})
+	if missingGeneration.Code != http.StatusBadRequest {
+		t.Fatalf("missing generation status=%d body=%s", missingGeneration.Code, missingGeneration.Body.String())
+	}
+	staleGeneration := policyRequest(t, router, http.MethodPut, "/v0/management/api-key-policy-takeover", "session-a", map[string]any{
+		"enabled": true, "policyGeneration": status.PolicyGeneration + 1, "configuredGeneration": status.ConfiguredGeneration,
+	})
+	if staleGeneration.Code != http.StatusConflict || !strings.Contains(staleGeneration.Body.String(), "api_key_policy_state_changed") {
+		t.Fatalf("stale generation status=%d body=%s", staleGeneration.Code, staleGeneration.Body.String())
+	}
+	enabled := policyRequest(t, router, http.MethodPut, "/v0/management/api-key-policy-takeover", "session-a", map[string]any{
+		"enabled": true, "policyGeneration": status.PolicyGeneration, "configuredGeneration": status.ConfiguredGeneration,
+	})
+	if enabled.Code != http.StatusOK || !takeoverStatusResponse(t, enabled).TakeoverEnabled {
+		t.Fatalf("enable status=%d body=%s", enabled.Code, enabled.Body.String())
+	}
+	h.apiKeyPolicyService().MarkUnavailable()
+	capabilities := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-capabilities", "session-a", nil)
+	if capabilities.Code != http.StatusOK {
+		t.Fatalf("unhealthy capabilities=%d body=%s", capabilities.Code, capabilities.Body.String())
+	}
+	unhealthyRecorder := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-status", "session-a", nil)
+	unhealthy := takeoverStatusResponse(t, unhealthyRecorder)
+	if unhealthyRecorder.Code != http.StatusOK || unhealthy.Healthy || !unhealthy.TakeoverEnabled {
+		t.Fatalf("unhealthy status=%d body=%s", unhealthyRecorder.Code, unhealthyRecorder.Body.String())
+	}
+	disabled := policyRequest(t, router, http.MethodPut, "/v0/management/api-key-policy-takeover", "session-a", map[string]any{"enabled": false})
+	disabledStatus := takeoverStatusResponse(t, disabled)
+	if disabled.Code != http.StatusOK || disabledStatus.Healthy || disabledStatus.TakeoverEnabled {
+		t.Fatalf("emergency stop status=%d body=%s", disabled.Code, disabled.Body.String())
 	}
 }
 

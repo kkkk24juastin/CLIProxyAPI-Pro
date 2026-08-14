@@ -35,6 +35,7 @@ import {
   type APIKeyPolicyCatalog,
   type APIKeyPolicyDeletePreview,
   type APIKeyPolicySnapshot,
+	type APIKeyPolicyStatus,
   type APIKeyProfileInput,
 } from './apiKeyPolicy';
 import styles from './APIKeyPolicyPage.module.scss';
@@ -186,6 +187,7 @@ export function APIKeyPolicyPage() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const [snapshot, setSnapshot] = useState<APIKeyPolicySnapshot | null>(null);
+	const [takeoverStatus, setTakeoverStatus] = useState<APIKeyPolicyStatus | null>(null);
   const [capability, setCapability] = useState<CapabilityState>('checking');
   const [loadError, setLoadError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
@@ -245,15 +247,24 @@ export function APIKeyPolicyPage() {
     if (connectionStatus !== 'connected') {
       setLoading(false);
       setCapability('checking');
+		setTakeoverStatus(null);
       return;
     }
     const revision = ++requestRevisionRef.current;
     setLoading(true);
     setLoadError(null);
     try {
-      const next = await apiKeyPolicyApi.snapshot();
+		const [statusResult, snapshotResult] = await Promise.allSettled([
+			apiKeyPolicyApi.status(),
+			apiKeyPolicyApi.snapshot(),
+		]);
       if (revision !== requestRevisionRef.current) return;
-      setSnapshot(next);
+		if (statusResult.status === 'fulfilled') {
+			setTakeoverStatus(statusResult.value);
+		}
+		if (snapshotResult.status === 'rejected') throw snapshotResult.reason;
+		if (statusResult.status === 'rejected') throw statusResult.reason;
+		setSnapshot(snapshotResult.value);
       setCapability('ready');
     } catch (error) {
       if (revision !== requestRevisionRef.current) return;
@@ -311,14 +322,12 @@ export function APIKeyPolicyPage() {
 	}, [closeWorkspace, dirty, t]);
 
 	const toggleTakeover = useCallback(async () => {
-		if (!snapshot || takeoverBusy) return;
-		const enabled = !snapshot.takeoverEnabled;
+		if (!takeoverStatus || takeoverBusy) return;
+		const enabled = !takeoverStatus.takeoverEnabled;
 		setTakeoverBusy(true);
 		try {
-			const status = await apiKeyPolicyApi.setTakeover(enabled);
-			setSnapshot((current) => current
-				? { ...current, takeoverEnabled: status.takeoverEnabled }
-				: current);
+			const status = await apiKeyPolicyApi.setTakeover(enabled, takeoverStatus);
+			setTakeoverStatus(status);
 			setTakeoverOpen(false);
 			showNotification(
 				status.takeoverEnabled
@@ -327,11 +336,15 @@ export function APIKeyPolicyPage() {
 				'success',
 			);
 		} catch (error) {
+			if (apiKeyPolicyErrorCode(error) === 'api_key_policy_state_changed') {
+				setTakeoverOpen(false);
+				await load();
+			}
 			showNotification(errorMessage(error), 'error');
 		} finally {
 			setTakeoverBusy(false);
 		}
-	}, [errorMessage, showNotification, snapshot, t, takeoverBusy]);
+	}, [errorMessage, load, showNotification, t, takeoverBusy, takeoverStatus]);
 
   const updateDraft = useCallback((updater: (current: WorkspaceDraft) => WorkspaceDraft) => {
     draftRevisionRef.current += 1;
@@ -556,6 +569,13 @@ export function APIKeyPolicyPage() {
     configured: snapshot?.bindings.items.filter((item) => item.state === 'configured').length ?? 0,
     orphaned: snapshot?.bindings.orphaned.length ?? 0,
   }), [snapshot]);
+	const takeoverActive = takeoverStatus?.takeoverEnabled === true;
+	const takeoverScopeReady = Boolean(
+		takeoverStatus?.healthy && snapshot && capability === 'ready',
+	);
+	const takeoverActionDisabled = !takeoverStatus || (
+		!takeoverActive && !takeoverScopeReady
+	);
 
   const currentPolicy = workspaceTarget?.kind === 'policy' ? workspaceTarget.policy : null;
   const readOnly = workspaceTarget?.kind === 'policy' && workspaceTarget.readOnly;
@@ -581,10 +601,10 @@ export function APIKeyPolicyPage() {
 			title={t('api_key_policy.title')}
 			subtitle={t('api_key_policy.subtitle')}
 			icon={<IconKey size={20} />}
-			active={snapshot?.takeoverEnabled === true}
+			active={takeoverActive}
 			loading={loading}
 			actionBusy={takeoverBusy}
-			actionDisabled={!snapshot || capability !== 'ready'}
+			actionDisabled={takeoverActionDisabled}
 			onRefresh={() => void load()}
 			onToggle={() => setTakeoverOpen(true)}
 		/>
@@ -603,10 +623,10 @@ export function APIKeyPolicyPage() {
         <>
 			<section className={styles.statusOverview} aria-label={t('api_key_policy.overview')}>
 				<div className={styles.overviewItem}>
-					<span className={snapshot?.takeoverEnabled ? styles.overviewGood : styles.overviewMuted}>
-						{snapshot?.takeoverEnabled ? <IconCheckCircle2 size={18} /> : <IconAlertTriangle size={18} />}
+					<span className={takeoverActive ? styles.overviewGood : styles.overviewMuted}>
+						{takeoverActive ? <IconCheckCircle2 size={18} /> : <IconAlertTriangle size={18} />}
 					</span>
-					<div><small>{t('api_key_policy.runtime')}</small><strong>{snapshot?.takeoverEnabled ? t('api_key_policy.running') : t('api_key_policy.stopped')}</strong></div>
+					<div><small>{t('api_key_policy.runtime')}</small><strong>{takeoverActive ? t('api_key_policy.running') : t('api_key_policy.stopped')}</strong></div>
 				</div>
 				<div className={styles.overviewItem}>
 					<span className={styles.overviewAccent}><IconKey size={18} /></span>
@@ -630,7 +650,7 @@ export function APIKeyPolicyPage() {
               options={(['all', 'unconfigured', 'configured', 'orphaned'] as const).map((value) => ({ value, label: t(`api_key_policy.filter.${value}`) }))}
               ariaLabel={t('api_key_policy.filter_label')}
             />
-				<Button variant="secondary" size="sm" onClick={() => navigate('/config?section=api-keys')}>
+				<Button variant="secondary" size="sm" onClick={() => navigate('/config')}>
 					{t('api_key_policy.manage_upstream_keys')}
 				</Button>
           </div>
@@ -652,7 +672,7 @@ export function APIKeyPolicyPage() {
                   </div>
                   <p className={styles.cardSummary}>
                     {policy
-							? t(snapshot?.takeoverEnabled ? 'api_key_policy.configured_summary' : 'api_key_policy.configured_inactive_summary', { profile: activeProfile?.name ?? '-', count: policy.profiles.length })
+							? t(takeoverActive ? 'api_key_policy.configured_summary' : 'api_key_policy.configured_inactive_summary', { profile: activeProfile?.name ?? '-', count: policy.profiles.length })
                       : t('api_key_policy.passthrough_summary')}
                   </p>
                   {binding.weakKey ? <div className={styles.weakKey}><IconAlertTriangle size={15} /> {t('api_key_policy.weak_key')}</div> : null}
@@ -804,16 +824,20 @@ export function APIKeyPolicyPage() {
 			open={takeoverOpen}
 			onClose={() => setTakeoverOpen(false)}
 			closeDisabled={takeoverBusy}
-			title={snapshot?.takeoverEnabled ? t('api_key_policy.stop_takeover_title') : t('api_key_policy.start_takeover_title')}
-			footer={<><Button variant="secondary" onClick={() => setTakeoverOpen(false)} disabled={takeoverBusy}>{t('common.cancel')}</Button><Button variant={snapshot?.takeoverEnabled ? 'danger' : 'primary'} onClick={() => void toggleTakeover()} loading={takeoverBusy}>{snapshot?.takeoverEnabled ? t('pro_feature_header.stop_takeover') : t('pro_feature_header.start_takeover')}</Button></>}
+			title={takeoverActive ? t('api_key_policy.stop_takeover_title') : t('api_key_policy.start_takeover_title')}
+			footer={<><Button variant="secondary" onClick={() => setTakeoverOpen(false)} disabled={takeoverBusy}>{t('common.cancel')}</Button><Button variant={takeoverActive ? 'danger' : 'primary'} onClick={() => void toggleTakeover()} loading={takeoverBusy}>{takeoverActive ? t('pro_feature_header.stop_takeover') : t('pro_feature_header.start_takeover')}</Button></>}
 		>
 			<div className={styles.takeoverBody}>
 				<span><IconInfo size={22} /></span>
 				<div>
-					<p>{snapshot?.takeoverEnabled ? t('api_key_policy.stop_takeover_body') : t('api_key_policy.start_takeover_body')}</p>
+					<p>{takeoverActive ? t('api_key_policy.stop_takeover_body') : t('api_key_policy.start_takeover_body')}</p>
 					<ul>
-						<li>{t('api_key_policy.takeover_configured_count', { count: statusCounts.configured })}</li>
-						<li>{t('api_key_policy.takeover_passthrough_count', { count: statusCounts.unconfigured })}</li>
+						{takeoverScopeReady ? (
+							<>
+								<li>{t('api_key_policy.takeover_configured_count', { count: statusCounts.configured })}</li>
+								<li>{t('api_key_policy.takeover_passthrough_count', { count: statusCounts.unconfigured })}</li>
+							</>
+						) : <li>{t('api_key_policy.takeover_scope_unavailable')}</li>}
 						<li>{t('api_key_policy.takeover_new_requests_only')}</li>
 					</ul>
 				</div>

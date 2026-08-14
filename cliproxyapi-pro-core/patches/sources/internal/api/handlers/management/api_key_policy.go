@@ -85,7 +85,7 @@ func (h *Handler) RegisterAPIKeyPolicyRoutes(group *gin.RouterGroup) {
 
 func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 	service := h.apiKeyPolicyService()
-	if service == nil || !service.Healthy() {
+	if service == nil {
 		writeAPIKeyPolicyError(c, apikeypolicy.ErrUnavailable)
 		return
 	}
@@ -106,31 +106,63 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 
 func (h *Handler) GetAPIKeyPolicyStatus(c *gin.Context) {
 	service := h.apiKeyPolicyService()
-	if service == nil || !service.Healthy() {
+	if service == nil {
 		writeAPIKeyPolicyError(c, apikeypolicy.ErrUnavailable)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"takeoverEnabled": service.TakeoverEnabled()})
+	writeAPIKeyPolicyStatus(c, service)
 }
 
 func (h *Handler) UpdateAPIKeyPolicyTakeover(c *gin.Context) {
 	service := h.apiKeyPolicyService()
-	if service == nil || !service.Healthy() {
+	if service == nil {
 		writeAPIKeyPolicyError(c, apikeypolicy.ErrUnavailable)
 		return
 	}
 	var request struct {
-		Enabled *bool `json:"enabled" binding:"required"`
+		Enabled              *bool   `json:"enabled" binding:"required"`
+		ConfiguredGeneration *uint64 `json:"configuredGeneration"`
+		PolicyGeneration     *uint64 `json:"policyGeneration"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil || request.Enabled == nil {
 		writeAPIKeyPolicyHTTPError(c, http.StatusBadRequest, "invalid_api_key_policy_takeover", "enabled must be a boolean")
 		return
 	}
-	if err := service.SetTakeover(c.Request.Context(), *request.Enabled); err != nil {
+	if !*request.Enabled {
+		if err := service.SetTakeover(c.Request.Context(), false); err != nil {
+			writeAPIKeyPolicyError(c, err)
+			return
+		}
+		writeAPIKeyPolicyStatus(c, service)
+		return
+	}
+	if !service.Healthy() {
+		writeAPIKeyPolicyError(c, apikeypolicy.ErrUnavailable)
+		return
+	}
+	if request.ConfiguredGeneration == nil || request.PolicyGeneration == nil {
+		writeAPIKeyPolicyHTTPError(c, http.StatusBadRequest, "invalid_api_key_policy_takeover", "configuredGeneration and policyGeneration are required when enabling takeover")
+		return
+	}
+	if err := service.SetTakeoverIfGeneration(
+		c.Request.Context(),
+		true,
+		*request.PolicyGeneration,
+		*request.ConfiguredGeneration,
+	); err != nil {
 		writeAPIKeyPolicyError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"takeoverEnabled": service.TakeoverEnabled()})
+	writeAPIKeyPolicyStatus(c, service)
+}
+
+func writeAPIKeyPolicyStatus(c *gin.Context, service *apikeypolicy.Service) {
+	c.JSON(http.StatusOK, gin.H{
+		"takeoverEnabled":      service.TakeoverEnabled(),
+		"healthy":              service.Healthy(),
+		"policyGeneration":     service.PolicyGeneration(),
+		"configuredGeneration": service.ConfiguredGeneration(),
+	})
 }
 
 func (h *Handler) apiKeyPolicyService() *apikeypolicy.Service {
@@ -631,6 +663,8 @@ func writeAPIKeyPolicyError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, apikeypolicy.ErrUnavailable):
 		status, code, message = 503, "api_key_policy_unavailable", "API key policy is unavailable"
+	case errors.Is(err, apikeypolicy.ErrTakeoverStateChanged):
+		status, code, message = 409, "api_key_policy_state_changed", "API key policies changed; refresh the takeover preview"
 	case errors.Is(err, apikeypolicy.ErrPolicyNotFound):
 		status, code = 404, "api_key_policy_not_found"
 	case errors.Is(err, apikeypolicy.ErrProfileNotFound):
