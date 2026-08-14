@@ -61,6 +61,7 @@ export interface OAuthPolicySnapshot {
   config: OAuthPolicyConfig;
   status: {
     enabled: boolean;
+    refreshing: boolean;
     cacheTTL: string;
     resolveTimeout: string;
     providers: number;
@@ -490,5 +491,9 @@ export const oauthPolicyApi = {
       serializeOAuthPolicyConfig(config),
     );
     return this.load();
+  },
+
+  async refreshPlanDetection(): Promise<void> {
+    await apiClient.post('/pro/oauth-policy/refresh', {});
   },
 };

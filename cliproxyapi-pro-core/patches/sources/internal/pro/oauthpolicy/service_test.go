@@ -19,6 +19,20 @@ type memorySettingsStore struct {
 	items map[string]settings.Item
 }
 
+type planSettingsStore struct {
+	*memorySettingsStore
+	raw          []byte
+	observedAtMS int64
+	provider     string
+	fileName     string
+	authIndex    string
+}
+
+func (s *planSettingsStore) GetPlanSnapshot(_ context.Context, provider, fileName, authIndex string) ([]byte, int64, bool, error) {
+	s.provider, s.fileName, s.authIndex = provider, fileName, authIndex
+	return append([]byte(nil), s.raw...), s.observedAtMS, len(s.raw) > 0, nil
+}
+
 func (s *memorySettingsStore) Get(_ context.Context, namespace string) (settings.Item, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -63,6 +77,34 @@ func TestNewMigratesLegacyNamespace(t *testing.T) {
 	}
 	if _, found := store.items[settings.NamespaceOAuthPolicy]; !found {
 		t.Fatal("new OAuth policy namespace was not written")
+	}
+}
+
+func TestFilterReadsFreshQuotaSnapshotByAuthIdentity(t *testing.T) {
+	store := &planSettingsStore{
+		memorySettingsStore: &memorySettingsStore{items: map[string]settings.Item{
+			settings.NamespaceOAuthPolicy: {
+				Namespace: settings.NamespaceOAuthPolicy, SchemaVersion: 1,
+				Settings: json.RawMessage(`{"enabled":true,"providers":{"gemini-cli":{"plans":{"pro":{"priority":42}}}}}`),
+			},
+		}},
+		raw:          []byte(`{"schema_version":1,"plan":{"id":"standard-tier","label":"Google AI Pro","kind":"standard"}}`),
+		observedAtMS: time.Now().UnixMilli(),
+	}
+	service, err := New(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	result := service.Filter(context.Background(), modelengine.Input{
+		AuthID: "gemini-1", AuthIndex: "auth-index-1", FileName: "gemini.json",
+		AuthProvider: "gemini-cli", AuthKind: "oauth",
+	})
+	if !result.Handled || result.Annotations["plan_key"] != "pro" || result.Annotations["plan_source"] != "quota-provider" {
+		t.Fatalf("Filter() = %#v", result)
+	}
+	if store.provider != "gemini-cli" || store.fileName != "gemini.json" || store.authIndex != "auth-index-1" {
+		t.Fatalf("snapshot identity = %q, %q, %q", store.provider, store.fileName, store.authIndex)
 	}
 }
 

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
+	proinspection "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/inspection"
 	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
 	proquota "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/quota"
 	upstreamexecutor "github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
@@ -45,15 +47,20 @@ type HTTPResponse struct {
 type HTTPDo func(context.Context, HTTPRequest) (HTTPResponse, error)
 
 type Input struct {
-	AuthID       string
-	AuthProvider string
-	AuthKind     string
-	StorageJSON  []byte
-	Metadata     map[string]any
-	Attributes   map[string]string
-	AuthPrefix   string
-	Models       []ModelInfo
-	HTTPDo       HTTPDo
+	AuthID             string
+	AuthIndex          string
+	FileName           string
+	AuthProvider       string
+	AuthKind           string
+	StorageJSON        []byte
+	Metadata           map[string]any
+	Attributes         map[string]string
+	AuthPrefix         string
+	Models             []ModelInfo
+	HTTPDo             HTTPDo
+	QuotaSnapshotJSON  []byte
+	QuotaObservedAtMS  int64
+	QuotaSnapshotError string
 }
 
 type Result struct {
@@ -155,8 +162,24 @@ func (e *Engine) Filter(ctx context.Context, input Input) Result {
 }
 
 func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconfig.Config, input Input) (string, string, error) {
+	if provider == "gemini-cli" || provider == "antigravity" {
+		if plan := strongGoogleLocalPlan(provider, input); plan != "" && plan != "unknown" {
+			return plan, "auth", nil
+		}
+	}
+	quotaPlan, quotaSource, quotaErr := "", "quota-cache", error(nil)
+	if provider != "xai" {
+		quotaPlan, quotaSource, quotaErr = planFromQuotaSnapshot(provider, input)
+	}
+	quotaFresh := quotaErr == nil && quotaPlan != "" && quotaPlan != "unknown" && snapshotIsFresh(snapshotObservedAtMS(input), cfg.CacheTTL)
+	if (provider == "gemini-cli" || provider == "antigravity") && quotaFresh {
+		return quotaPlan, quotaSource, nil
+	}
 	if plan := localPlan(provider, input); plan != "" && plan != "unknown" {
 		return plan, "auth", nil
+	}
+	if provider != "xai" && quotaFresh {
+		return quotaPlan, quotaSource, nil
 	}
 	useCache := provider != "xai"
 	now := time.Now()
@@ -183,13 +206,112 @@ func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconf
 		}
 		return plan, source, nil
 	}
+	if provider != "xai" && quotaPlan != "" && quotaPlan != "unknown" {
+		return quotaPlan, "stale-" + quotaSource, combinePlanErrors(errResolve, quotaErr)
+	}
 	if useCache && hasCache && cached.Plan != "" {
 		return cached.Plan, "stale-cache", errResolve
 	}
 	if errResolve == nil {
 		errResolve = fmt.Errorf("%s plan is unavailable", provider)
 	}
-	return "unknown", "unknown", errResolve
+	return "unknown", "unknown", combinePlanErrors(errResolve, quotaErr)
+}
+
+func strongGoogleLocalPlan(provider string, input Input) string {
+	sources := []map[string]any{input.Metadata, stringMapToAny(input.Attributes)}
+	storage := map[string]any{}
+	if len(input.StorageJSON) > 0 && json.Unmarshal(input.StorageJSON, &storage) == nil {
+		sources = append(sources, storage)
+	}
+	for _, source := range sources {
+		for _, key := range []string{"paidTier", "paid_tier"} {
+			if tier, ok := source[key].(map[string]any); ok {
+				if plan := googleTierPlan(provider, tier, true); plan != "" && plan != "unknown" {
+					return plan
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func snapshotObservedAtMS(input Input) int64 {
+	if input.QuotaObservedAtMS > 0 {
+		return input.QuotaObservedAtMS
+	}
+	payload := map[string]any{}
+	if json.Unmarshal(input.QuotaSnapshotJSON, &payload) == nil {
+		if value, known := numberValue(firstValue(payload, "observed_at_ms", "observedAtMS", "cachedAt")); known {
+			return int64(value)
+		}
+	}
+	return 0
+}
+
+func snapshotIsFresh(observedAtMS int64, ttl time.Duration) bool {
+	if observedAtMS <= 0 {
+		return false
+	}
+	age := time.Since(time.UnixMilli(observedAtMS))
+	return age >= -5*time.Minute && age <= ttl
+}
+
+func combinePlanErrors(primary, secondary error) error {
+	if primary == nil {
+		return secondary
+	}
+	if secondary == nil {
+		return primary
+	}
+	return fmt.Errorf("%v; quota snapshot: %v", primary, secondary)
+}
+
+func planFromQuotaSnapshot(provider string, input Input) (string, string, error) {
+	if len(input.QuotaSnapshotJSON) == 0 {
+		if strings.TrimSpace(input.QuotaSnapshotError) != "" {
+			return "", "quota-cache", fmt.Errorf("%s", input.QuotaSnapshotError)
+		}
+		return "", "quota-cache", nil
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(input.QuotaSnapshotJSON, &payload); err != nil {
+		return "", "quota-cache", fmt.Errorf("decode snapshot: %w", err)
+	}
+	if status := normalizeKey(stringValue(payload["status"])); status != "" && status != "success" {
+		return "", "quota-cache", fmt.Errorf("snapshot status is %s", status)
+	}
+	if rawPlan, ok := payload["plan"].(map[string]any); ok {
+		if stale, _ := boolValue(rawPlan["stale"]); stale {
+			return planFromQuotaPlan(provider, rawPlan), "quota-provider", fmt.Errorf("snapshot plan is stale")
+		}
+		if message := stringValue(rawPlan["error"]); message != "" {
+			return planFromQuotaPlan(provider, rawPlan), "quota-provider", fmt.Errorf("%s", proinspection.HTTPErrorDetail(message))
+		}
+		if plan := planFromQuotaPlan(provider, rawPlan); plan != "" && plan != "unknown" {
+			return plan, "quota-provider", nil
+		}
+	}
+	if plan := planFromMap(provider, payload); plan != "" && plan != "unknown" {
+		return plan, "quota-inspection", nil
+	}
+	return "", "quota-cache", fmt.Errorf("snapshot contains no supported plan")
+}
+
+func planFromQuotaPlan(provider string, plan map[string]any) string {
+	if plan == nil {
+		return ""
+	}
+	keys := []string{"kind", "id", "label"}
+	if provider == "gemini-cli" {
+		keys = []string{"label", "kind", "id"}
+	}
+	for _, key := range keys {
+		if normalized := normalizeProviderPlan(provider, stringValue(plan[key])); normalized != "" && normalized != "unknown" {
+			return normalized
+		}
+	}
+	return ""
 }
 
 func localPlan(provider string, input Input) string {
@@ -389,15 +511,20 @@ func resolveGooglePlan(ctx context.Context, provider string, timeout time.Durati
 	if errMarshal != nil {
 		return "", fmt.Errorf("encode %s plan request: %w", provider, errMarshal)
 	}
+	headers := http.Header{
+		"Authorization": []string{"Bearer " + token},
+		"Accept":        []string{"application/json"},
+		"Content-Type":  []string{"application/json"},
+	}
+	if provider == "antigravity" {
+		headers.Set("Accept", "*/*")
+		headers.Set("User-Agent", misc.AntigravityUserAgent())
+	}
 	resp, errDo := doProviderRequest(ctx, timeout, input, HTTPRequest{
-		Method: http.MethodPost,
-		URL:    url,
-		Headers: http.Header{
-			"Authorization": []string{"Bearer " + token},
-			"Accept":        []string{"application/json"},
-			"Content-Type":  []string{"application/json"},
-		},
-		Body: rawBody,
+		Method:  http.MethodPost,
+		URL:     url,
+		Headers: headers,
+		Body:    rawBody,
 	})
 	if errDo != nil {
 		return "", fmt.Errorf("fetch %s plan: %w", provider, errDo)
@@ -438,7 +565,7 @@ func googlePlanFromMap(provider string, source map[string]any) string {
 	}
 	for _, key := range []string{"paidTier", "paid_tier", "currentTier", "current_tier"} {
 		if tier, ok := source[key].(map[string]any); ok {
-			if plan := normalizeProviderPlan(provider, stringValue(firstValue(tier, "id", "name"))); plan != "" {
+			if plan := googleTierPlan(provider, tier, key == "paidTier" || key == "paid_tier"); plan != "" && plan != "unknown" {
 				return plan
 			}
 		}
@@ -450,12 +577,17 @@ func googlePlanFromMap(provider string, source map[string]any) string {
 			if !isDefault {
 				continue
 			}
-			if plan := normalizeProviderPlan(provider, stringValue(firstValue(tier, "id", "name"))); plan != "" {
+			if plan := googleTierPlan(provider, tier, false); plan != "" && plan != "unknown" {
 				return plan
 			}
 		}
 	}
-	for _, key := range []string{"body", "data", "response", "result"} {
+	if plan, ok := source["plan"].(map[string]any); ok {
+		if normalized := planFromQuotaPlan(provider, plan); normalized != "" {
+			return normalized
+		}
+	}
+	for _, key := range []string{"body", "bodyText", "data", "response", "result"} {
 		switch nested := source[key].(type) {
 		case map[string]any:
 			if plan := googlePlanFromMap(provider, nested); plan != "" {
@@ -471,6 +603,20 @@ func googlePlanFromMap(provider string, source map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func googleTierPlan(provider string, tier map[string]any, paid bool) string {
+	id := stringValue(tier["id"])
+	name := stringValue(tier["name"])
+	if provider == "gemini-cli" && paid {
+		if plan := normalizeProviderPlan(provider, name); plan != "" && plan != "unknown" && plan != "standard" {
+			return plan
+		}
+	}
+	if plan := normalizeProviderPlan(provider, id); plan != "" && plan != "unknown" {
+		return plan
+	}
+	return normalizeProviderPlan(provider, name)
 }
 
 func resolveXAIPlan(ctx context.Context, timeout time.Duration, input Input) (string, error) {
@@ -594,6 +740,14 @@ func normalizeProviderPlan(provider, value string) string {
 			return "pro-lite"
 		}
 	case "gemini-cli":
+		switch {
+		case strings.Contains(value, "google-ai-ultra") || strings.Contains(value, "gemini-ultra"):
+			return "ultra"
+		case strings.Contains(value, "google-ai-pro") || strings.Contains(value, "gemini-ai-pro"):
+			return "pro"
+		case strings.Contains(value, "gemini-code-assist"):
+			return "standard"
+		}
 		switch value {
 		case "free-tier":
 			return "free"
@@ -608,14 +762,16 @@ func normalizeProviderPlan(provider, value string) string {
 		}
 	case "antigravity":
 		switch value {
-		case "free-tier":
+		case "free", "free-tier":
 			return "free"
-		case "g1-pro-tier":
+		case "pro", "g1-pro-tier":
 			return "pro"
-		case "g1-ultra-tier":
+		case "ultra", "g1-ultra-tier":
 			return "ultra"
-		case "g1-ultra-lite-tier":
+		case "ultra-lite", "g1-ultra-lite-tier":
 			return "ultra-lite"
+		default:
+			return "unknown"
 		}
 	}
 	return value
@@ -623,6 +779,7 @@ func normalizeProviderPlan(provider, value string) string {
 
 func normalizeKey(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.Join(strings.Fields(value), "-")
 	if strings.HasPrefix(value, "_") {
 		return "_" + strings.ReplaceAll(strings.TrimPrefix(value, "_"), "_", "-")
 	}

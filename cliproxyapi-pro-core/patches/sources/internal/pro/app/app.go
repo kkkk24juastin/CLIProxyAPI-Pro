@@ -236,11 +236,17 @@ func (a *App) OAuthStatus() oauthpolicy.Status {
 	return a.oauthPolicy.Status()
 }
 
-func (a *App) FilterModels(ctx context.Context, hostCfg *internalconfig.Config, auth *coreauth.Auth, models []*registry.ModelInfo) []*registry.ModelInfo {
+func (a *App) FilterModels(ctx context.Context, hostCfg *internalconfig.Config, auth *coreauth.Auth, models []*registry.ModelInfo, requester host.AuthHTTPRequester) []*registry.ModelInfo {
 	if a == nil || a.oauthPolicy == nil {
 		return models
 	}
-	return host.FilterModels(ctx, hostCfg, auth, models, a.oauthPolicy)
+	return host.FilterModels(ctx, hostCfg, auth, models, a.oauthPolicy, requester)
+}
+
+func (a *App) RefreshAccountPolicies() {
+	if a != nil && a.oauthPolicy != nil {
+		a.oauthPolicy.RefreshPlanDetection()
+	}
 }
 
 func (a *App) ApplyCachedAccountPolicy(auth *coreauth.Auth) *coreauth.Auth {

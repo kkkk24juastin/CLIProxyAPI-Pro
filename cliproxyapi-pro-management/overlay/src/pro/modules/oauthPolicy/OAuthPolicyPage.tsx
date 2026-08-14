@@ -523,6 +523,46 @@ export function OAuthPolicyPage() {
     void save({ ...draft, enabled });
   };
 
+  const refreshPlanDetection = async () => {
+    if (connectionStatus !== "connected") return;
+    setLoading(true);
+    try {
+      await oauthPolicyApi.refreshPlanDetection();
+      let next = await oauthPolicyApi.load();
+      for (let attempt = 0; attempt < 60 && next.status.refreshing; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        next = await oauthPolicyApi.load();
+      }
+      if (next.status.refreshing) {
+        throw new Error(
+          t("oauth_policy.refresh_timeout", {
+            defaultValue: "Plan re-identification is still running. Try again shortly.",
+          }),
+        );
+      }
+      setSnapshot(next);
+      if (!dirtyRef.current) setDraft(next.config);
+      setLoadError("");
+      await load();
+      showNotification(
+        t("oauth_policy.refresh_success", {
+          defaultValue: "Account plans were re-identified",
+        }),
+        "success",
+      );
+    } catch (error) {
+      showNotification(
+        t("oauth_policy.refresh_failed", {
+          defaultValue: "Plan re-identification failed: {{message}}",
+          message: errorMessage(error),
+        }),
+        "error",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const discard = () => {
     setDraft(snapshot?.config ?? defaultOAuthPolicyConfig());
     setDirty(false);
@@ -542,7 +582,7 @@ export function OAuthPolicyPage() {
         loading={loading}
         actionBusy={saving}
         actionDisabled={!snapshot}
-        onRefresh={() => void load()}
+        onRefresh={() => void refreshPlanDetection()}
         onToggle={toggleEnabled}
       />
 
@@ -1061,7 +1101,17 @@ export function OAuthPolicyPage() {
                     <tbody>{filteredEffectivePolicies.map((item) => (
                       <tr key={item.authId}>
                         <td><code>{item.authId}</code></td><td>{item.provider}</td>
-                        <td>{item.planKey}<small>{item.planSource}</small></td>
+                        <td>
+                          {item.planKey}<small>{item.planSource}</small>
+                          {item.planError && (
+                            <small className={styles.planError} title={item.planError}>
+                              {t("oauth_policy.plan_error", {
+                                defaultValue: "Detection error: {{message}}",
+                                message: item.planError,
+                              })}
+                            </small>
+                          )}
+                        </td>
                         <td><code>{item.matchedRule}</code></td>
                         <td>{item.prefix ?? "—"}</td><td>{item.priority ?? "—"}</td><td>{item.weight ?? "—"}</td>
                       </tr>

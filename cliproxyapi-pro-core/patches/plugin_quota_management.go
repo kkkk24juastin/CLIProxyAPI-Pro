@@ -88,6 +88,9 @@ func (h *Handler) fetchAndPersistPluginQuota(ctx context.Context, auth *coreauth
 	if errPersist := persistPluginQuotaSnapshot(ctx, auth.Provider, auth.FileName, auth.Index, result.Snapshot); errPersist != nil {
 		return result, http.StatusInternalServerError, "quota persistence failed", fmt.Errorf("quota persistence failed: %w", errPersist)
 	}
+	if application := h.proApplication(); application != nil {
+		application.RefreshAccountPolicies()
+	}
 	return result, http.StatusOK, "", nil
 }
 

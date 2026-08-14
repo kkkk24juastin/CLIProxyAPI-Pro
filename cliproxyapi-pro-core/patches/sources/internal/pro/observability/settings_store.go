@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/settings"
@@ -58,6 +59,26 @@ func (SettingsStore) Put(ctx context.Context, item settings.Item) error {
 
 func (SettingsStore) Delete(ctx context.Context, namespace string) error {
 	return DeleteProSetting(ctx, namespace)
+}
+
+func (SettingsStore) GetPlanSnapshot(ctx context.Context, provider, fileName, authIndex string) ([]byte, int64, bool, error) {
+	provider = strings.TrimSpace(provider)
+	fileName = strings.TrimSpace(fileName)
+	authIndex = strings.TrimSpace(authIndex)
+	if fileName == "" {
+		fileName = authIndex
+	}
+	entries, err := GetQuotaCache(ctx, provider, fileName)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	for _, entry := range entries {
+		if entry.AuthIndex != "" && authIndex != "" && entry.AuthIndex != authIndex {
+			continue
+		}
+		return append([]byte(nil), entry.Data...), entry.ObservedAt, true, nil
+	}
+	return nil, 0, false, nil
 }
 
 func (SettingsStore) Subscribe(namespace string, apply func(context.Context, settings.Item) error) func() {

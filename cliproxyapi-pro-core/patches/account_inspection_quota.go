@@ -25,6 +25,11 @@ func (s *accountInspectionScheduler) persistQuotaState(ctx context.Context, acco
 		s.appendLog("warning", fmt.Sprintf("%s 配额缓存写入失败：%s", account.identity(), err.Error()))
 		return
 	}
+	if s != nil && s.h != nil {
+		if application := s.h.proApplication(); application != nil {
+			application.RefreshAccountPolicies()
+		}
+	}
 	if err := s.cleanupLegacyQuotaCacheFromAuth(ctx, account); err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 旧认证文件配额缓存清理失败：%s", account.identity(), err.Error()))
 	}

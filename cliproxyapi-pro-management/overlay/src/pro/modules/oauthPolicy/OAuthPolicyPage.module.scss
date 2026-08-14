@@ -701,6 +701,14 @@
   font-size: 12px;
 }
 
+.effectiveTable td .planError {
+  color: var(--danger-color, #dc2626);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .effectiveTable th,
 .effectiveTable td {
   padding: 9px 10px;

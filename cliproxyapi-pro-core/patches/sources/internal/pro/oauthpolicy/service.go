@@ -15,16 +15,24 @@ import (
 
 type Status struct {
 	Enabled        bool   `json:"enabled"`
+	Refreshing     bool   `json:"refreshing"`
 	CacheTTL       string `json:"cacheTTL"`
 	ResolveTimeout string `json:"resolveTimeout"`
 	Providers      int    `json:"providers"`
 	LastError      string `json:"lastError,omitempty"`
 }
 
+// PlanSnapshotReader is the narrow persistence port used by account policy to
+// consume provider quota/inspection evidence without depending on SQLite.
+type PlanSnapshotReader interface {
+	GetPlanSnapshot(context.Context, string, string, string) ([]byte, int64, bool, error)
+}
+
 // Service owns OAuth account-plan model filtering and its persisted policy.
 type Service struct {
 	mu         sync.RWMutex
 	store      settings.Store
+	planStore  PlanSnapshotReader
 	config     modelconfig.Config
 	engine     *modelengine.Engine
 	revision   uint64
@@ -58,6 +66,7 @@ func New(ctx context.Context, store settings.Store) (*Service, error) {
 		effective: make(map[string]modelengine.EffectivePolicy), decisions: make(map[string]modelengine.Result),
 		changeCtx: changeCtx, changeStop: changeStop,
 	}
+	service.planStore, _ = store.(PlanSnapshotReader)
 	if loadErr != nil {
 		service.configErr = loadErr.Error()
 	}
@@ -266,7 +275,7 @@ func (s *Service) Status() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return Status{
-		Enabled: s.config.Enabled, CacheTTL: s.config.CacheTTL.String(),
+		Enabled: s.config.Enabled, Refreshing: s.changeRun || s.changeNext, CacheTTL: s.config.CacheTTL.String(),
 		ResolveTimeout: s.config.ResolveTimeout.String(), Providers: len(s.config.Providers), LastError: s.configErr,
 	}
 }
@@ -274,6 +283,18 @@ func (s *Service) Status() Status {
 func (s *Service) Filter(ctx context.Context, input modelengine.Input) modelengine.Result {
 	if s == nil {
 		return modelengine.Result{}
+	}
+	if s.planStore != nil && len(input.QuotaSnapshotJSON) == 0 {
+		raw, observedAtMS, found, err := s.planStore.GetPlanSnapshot(
+			ctx, input.AuthProvider, input.FileName, input.AuthIndex,
+		)
+		if found {
+			input.QuotaSnapshotJSON = raw
+			input.QuotaObservedAtMS = observedAtMS
+		}
+		if err != nil {
+			input.QuotaSnapshotError = err.Error()
+		}
 	}
 	for {
 		s.mu.RLock()
@@ -314,6 +335,27 @@ func (s *Service) Filter(ctx context.Context, input modelengine.Input) modelengi
 		s.mu.Unlock()
 		return result
 	}
+}
+
+// RefreshPlanDetection invalidates runtime decisions and schedules a
+// generation-safe re-registration of every current auth account.
+func (s *Service) RefreshPlanDetection() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	engine := modelengine.New()
+	engine.ApplyConfig(s.config)
+	s.engine = engine
+	s.revision++
+	s.effective = make(map[string]modelengine.EffectivePolicy)
+	s.decisions = make(map[string]modelengine.Result)
+	s.mu.Unlock()
+	s.queueChange()
 }
 
 // ForgetAuth removes runtime-only policy state for an authentication account.

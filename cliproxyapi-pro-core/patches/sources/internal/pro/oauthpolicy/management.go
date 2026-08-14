@@ -20,6 +20,7 @@ func RegisterManagementRoutes(group *gin.RouterGroup, service *Service) {
 	group.PATCH("/pro/oauth-policy/config", management.putConfig)
 	group.GET("/pro/oauth-policy/status", management.getStatus)
 	group.GET("/pro/oauth-policy/effective", management.getEffective)
+	group.POST("/pro/oauth-policy/refresh", management.refresh)
 	// Deprecated compatibility aliases. New clients must use /pro/oauth-policy.
 	group.GET("/pro/oauth-model-policy/config", management.deprecated, management.getConfig)
 	group.PUT("/pro/oauth-model-policy/config", management.deprecated, management.putConfig)
@@ -95,4 +96,12 @@ func (h *managementHandler) getEffective(c *gin.Context) {
 	if h.available(c) {
 		c.JSON(http.StatusOK, gin.H{"items": h.service.EffectivePolicies()})
 	}
+}
+
+func (h *managementHandler) refresh(c *gin.Context) {
+	if !h.available(c) {
+		return
+	}
+	h.service.RefreshPlanDetection()
+	c.JSON(http.StatusAccepted, gin.H{"status": "refreshing"})
 }

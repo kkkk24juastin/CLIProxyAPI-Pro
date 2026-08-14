@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -22,9 +23,13 @@ type ModelFilter interface {
 	EffectivePolicy(string) (oauthpolicy.Result, bool)
 }
 
+type AuthHTTPRequester interface {
+	HttpRequest(context.Context, *coreauth.Auth, *http.Request) (*http.Response, error)
+}
+
 // FilterModels converts volatile upstream auth/model types at the boundary,
 // leaving the OAuth account-policy module independent from host internals.
-func FilterModels(ctx context.Context, hostCfg *internalconfig.Config, auth *coreauth.Auth, models []*registry.ModelInfo, filter ModelFilter) []*registry.ModelInfo {
+func FilterModels(ctx context.Context, hostCfg *internalconfig.Config, auth *coreauth.Auth, models []*registry.ModelInfo, filter ModelFilter, requester AuthHTTPRequester) []*registry.ModelInfo {
 	if auth == nil || filter == nil {
 		return models
 	}
@@ -36,9 +41,10 @@ func FilterModels(ctx context.Context, hostCfg *internalconfig.Config, auth *cor
 	}
 	result := filter.Filter(ctx, oauthpolicy.Input{
 		AuthID: auth.ID, AuthProvider: auth.Provider, AuthKind: auth.AuthKind(),
+		AuthIndex: auth.Index, FileName: auth.FileName,
 		StorageJSON: storageJSONFromAuth(auth), Metadata: auth.Metadata, Attributes: auth.Attributes, AuthPrefix: auth.Prefix, Models: inputModels,
 		HTTPDo: func(callCtx context.Context, req oauthpolicy.HTTPRequest) (oauthpolicy.HTTPResponse, error) {
-			return doPolicyHTTP(callCtx, hostCfg, auth, req)
+			return doPolicyHTTP(callCtx, hostCfg, auth, req, requester)
 		},
 	})
 	applyAccountPolicy(auth, result)
@@ -107,7 +113,7 @@ func storageJSONFromAuth(auth *coreauth.Auth) []byte {
 	return raw
 }
 
-func doPolicyHTTP(ctx context.Context, cfg *internalconfig.Config, auth *coreauth.Auth, req oauthpolicy.HTTPRequest) (oauthpolicy.HTTPResponse, error) {
+func doPolicyHTTP(ctx context.Context, cfg *internalconfig.Config, auth *coreauth.Auth, req oauthpolicy.HTTPRequest, requester AuthHTTPRequester) (oauthpolicy.HTTPResponse, error) {
 	method := strings.TrimSpace(req.Method)
 	if method == "" {
 		method = http.MethodGet
@@ -121,11 +127,19 @@ func doPolicyHTTP(ctx context.Context, cfg *internalconfig.Config, auth *coreaut
 			httpReq.Header.Add(key, value)
 		}
 	}
-	client := helps.NewProxyAwareHTTPClient(ctx, cfg, auth, 0)
-	resp, err := client.Do(httpReq)
+	var resp *http.Response
+	if requester != nil {
+		resp, err = requester.HttpRequest(ctx, auth, httpReq)
+	} else {
+		client := helps.NewProxyAwareHTTPClient(ctx, cfg, auth, 0)
+		resp, err = client.Do(httpReq)
+	}
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, cfg, err)
 		return oauthpolicy.HTTPResponse{}, err
+	}
+	if resp == nil {
+		return oauthpolicy.HTTPResponse{}, fmt.Errorf("auth HTTP executor returned no response")
 	}
 	defer resp.Body.Close()
 	helps.RecordAPIResponseMetadata(ctx, cfg, resp.StatusCode, resp.Header.Clone())

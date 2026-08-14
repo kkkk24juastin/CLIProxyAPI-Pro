@@ -984,7 +984,7 @@ insert_before(
 \tif s == nil || s.proApp == nil || auth == nil || len(models) == 0 {
 \t\treturn models
 \t}
-\treturn s.proApp.FilterModels(ctx, s.cfg, auth, models)
+\treturn s.proApp.FilterModels(ctx, s.cfg, auth, models, s.coreManager)
 }
 
 ''',

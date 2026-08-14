@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -154,6 +155,7 @@ providers:
 	called := false
 	result := engine.Filter(context.Background(), Input{
 		AuthID: "xai-3", AuthProvider: "xai", AuthKind: "oauth", StorageJSON: storage,
+		QuotaSnapshotJSON: []byte(`{"status":"success","billing":{"planType":"free"}}`), QuotaObservedAtMS: time.Now().UnixMilli(),
 		Models: []ModelInfo{{ID: "grok-imagine-video"}},
 		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
 			called = true
@@ -407,5 +409,100 @@ providers:
 				t.Fatalf("Filter() = %#v", result)
 			}
 		})
+	}
+}
+
+func TestFilterUsesFreshQuotaPlanSnapshotsAcrossProviders(t *testing.T) {
+	cfg, errParse := modelconfig.Parse([]byte(`
+providers:
+  codex: {plans: {plus: {priority: 1}}}
+  claude: {plans: {max: {priority: 1}}}
+  gemini-cli: {plans: {pro: {priority: 1}}}
+  antigravity: {plans: {ultra: {priority: 1}}}
+  kimi: {plans: {team: {priority: 1}}}
+`))
+	if errParse != nil {
+		t.Fatalf("Parse() error = %v", errParse)
+	}
+	tests := []struct {
+		provider, snapshot, wantPlan, wantSource string
+	}{
+		{"codex", `{"status":"success","planType":"plus"}`, "plus", "quota-inspection"},
+		{"claude", `{"status":"success","planType":"max"}`, "max", "quota-inspection"},
+		{"gemini-cli", `{"schema_version":1,"plan":{"id":"standard-tier","label":"Google AI Pro","kind":"standard"}}`, "pro", "quota-provider"},
+		{"antigravity", `{"status":"success","subscription":{"plan":"ultra","tierId":"g1-ultra-tier"}}`, "ultra", "quota-inspection"},
+		{"kimi", `{"schema_version":1,"plan":{"id":"team","label":"Team","kind":"team"}}`, "team", "quota-provider"},
+	}
+	for _, test := range tests {
+		t.Run(test.provider, func(t *testing.T) {
+			engine := New()
+			engine.ApplyConfig(cfg)
+			result := engine.Filter(context.Background(), Input{
+				AuthID: test.provider + "-snapshot", AuthProvider: test.provider, AuthKind: "oauth",
+				QuotaSnapshotJSON: []byte(test.snapshot), QuotaObservedAtMS: time.Now().UnixMilli(),
+				HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+					t.Fatal("fresh quota snapshot should avoid provider request")
+					return HTTPResponse{}, nil
+				},
+			})
+			if !result.Handled || result.Annotations["plan_key"] != test.wantPlan || result.Annotations["plan_source"] != test.wantSource {
+				t.Fatalf("Filter() = %#v", result)
+			}
+		})
+	}
+}
+
+func TestGeminiPaidTierLabelAndWrappedPlanKeepPaidSemantics(t *testing.T) {
+	for name, payload := range map[string]map[string]any{
+		"direct": {
+			"currentTier": map[string]any{"id": "standard-tier", "name": "Gemini Code Assist"},
+			"paidTier":    map[string]any{"id": "standard-tier", "name": "Google AI Pro"},
+		},
+		"bodyText": {
+			"bodyText": `{"currentTier":{"id":"standard-tier"},"paidTier":{"id":"standard-tier","name":"Google AI Pro"}}`,
+		},
+		"plan": {
+			"plan": map[string]any{"id": "standard-tier", "label": "Google AI Pro", "kind": "standard"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := googlePlanFromMap("gemini-cli", payload); got != "pro" {
+				t.Fatalf("googlePlanFromMap() = %q, want pro", got)
+			}
+		})
+	}
+}
+
+func TestAntigravityStandardTierUsesUnknownFallback(t *testing.T) {
+	cfg, _ := modelconfig.Parse([]byte(`
+providers:
+  antigravity:
+    plans:
+      _unknown: {priority: 1}
+      _default: {priority: 2}
+`))
+	engine := New()
+	engine.ApplyConfig(cfg)
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "antigravity-standard", AuthProvider: "antigravity", AuthKind: "oauth",
+		StorageJSON: []byte(`{"access_token":"token"}`),
+		HTTPDo: func(_ context.Context, request HTTPRequest) (HTTPResponse, error) {
+			if request.Headers.Get("Accept") != "*/*" || request.Headers.Get("User-Agent") == "" {
+				t.Fatalf("Antigravity headers = %#v", request.Headers)
+			}
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"currentTier":{"id":"standard-tier","name":"Standard"}}`)}, nil
+		},
+	})
+	if !result.Handled || result.Annotations["plan_key"] != "unknown" || result.Annotations["matched_rule"] != "_unknown" {
+		t.Fatalf("Filter() = %#v", result)
+	}
+}
+
+func TestQuotaSnapshotPlanErrorIsRedacted(t *testing.T) {
+	_, _, err := planFromQuotaSnapshot("gemini-cli", Input{
+		QuotaSnapshotJSON: []byte(`{"schema_version":1,"plan":{"kind":"pro","error":"authorization=Bearer secret-token"}}`),
+	})
+	if err == nil || strings.Contains(err.Error(), "secret-token") || !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("snapshot error = %v", err)
 	}
 }
