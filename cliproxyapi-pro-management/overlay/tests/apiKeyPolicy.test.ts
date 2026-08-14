@@ -122,7 +122,8 @@ describe('API Key Policy profile drafts', () => {
     expect(page).toContain('apiKeyPolicyApi.updateWorkspace(');
     expect(page).not.toContain('policy = await apiKeyPolicyApi.rename');
     expect(page).toContain('savingRef.current = true');
-    expect(page).toContain('if (!workspaceTarget || !draft || !validateDraft() || savingRef.current) return;');
+    expect(page).toContain('if (!workspaceTarget || !draft || savingRef.current) return;');
+    expect(page).toContain('if (!validateDraft(changedProfile)) return;');
     expect(client).toContain("'/api-key-policy-capabilities'");
     expect(client).toContain('buildAPIKeyPolicyWorkspaceUpdate(');
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false)).toEqual({
@@ -155,7 +156,7 @@ describe('API Key Policy profile drafts', () => {
 		expect(page.indexOf('className={styles.mappingSection}')).toBeLessThan(page.indexOf('className={styles.policyGrid}'));
 	});
 
-	test('limits mapping targets to currently available catalog models', () => {
+	test('limits mapping targets to currently available catalog models without hiding saved unavailable selections', () => {
 		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
 		expect(resolveMappingTargetModels([], ['gpt-5', 'claude-sonnet-4'])).toEqual([
 			'gpt-5',
@@ -165,8 +166,24 @@ describe('API Key Policy profile drafts', () => {
 			['retired-model', 'gpt-5'],
 			['gpt-5', 'new-model'],
 		)).toEqual(['gpt-5']);
-		expect(page).toContain('const availableSelected = selected.filter((value) => values.includes(value));');
-		expect(page).toContain('availableSelected.length > 0 ? availableSelected.length : allLabel');
+		expect(page).toContain('const unavailableSelected = selected.filter((value) => !values.includes(value));');
+		expect(page).toContain('selected.length > 0 ? selected.length : allLabel');
+		expect(page).toContain('onClick={() => onChange(selected.filter((item) => item !== value))}');
+		expect(page).toContain("? [...selected, value]");
+		expect(page).toContain(': selected.filter((item) => item !== value)');
+		expect(page).toContain("t('api_key_policy.unavailable_selections')");
+	});
+
+	test('validates the live catalog only when the saved profile changes', () => {
+		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+		const validate = page.slice(page.indexOf('const validateDraft'), page.indexOf('const saveWorkspace'));
+		const save = page.slice(page.indexOf('const saveWorkspace'), page.indexOf('const activateProfile'));
+		expect(validate).toContain('if (validateProfile)');
+		expect(validate).toContain('validateProfileInput(draft.profile, snapshot.catalog)');
+		expect(save).toContain("const persisted = workspaceTarget.kind === 'policy'");
+		expect(save).toContain("const changedProfile = workspaceTarget.kind === 'create' || draft.isNewProfile || !persisted ||");
+		expect(save).toContain('profileSignature(persisted) !== profileSignature(draft.profile);');
+		expect(save).toContain('if (!validateDraft(changedProfile)) return;');
 	});
 
 	test('matches the account-policy status overview structure and responsive grid', () => {

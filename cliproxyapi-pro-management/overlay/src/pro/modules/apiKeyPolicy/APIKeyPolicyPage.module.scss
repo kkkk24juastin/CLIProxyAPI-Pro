@@ -198,6 +198,12 @@
 .choiceHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; font-size: 12px; }
 .choiceHeader span { color: var(--text-secondary); }
 .choiceHint { min-height: 34px; margin: -2px 0 9px; color: var(--text-secondary); font-size: 10px; line-height: 1.55; }
+.unavailableSelections { display: grid; gap: 6px; margin: 0 0 9px; padding: 8px; border: 1px solid color-mix(in srgb, var(--warning-color) 34%, var(--border-color)); border-radius: 7px; background: color-mix(in srgb, var(--warning-color) 8%, transparent); }
+.unavailableSelections > span { color: var(--warning-text); font-size: 10px; line-height: 1.4; }
+.unavailableSelections > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.unavailableSelections button { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--warning-color) 32%, var(--border-color)); border-radius: 999px; color: var(--warning-text); background: var(--bg-primary); font-size: 10px; cursor: pointer; }
+.unavailableSelections button > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.unavailableSelections button:disabled { cursor: not-allowed; opacity: .58; }
 .choiceList { display: grid; align-content: start; gap: 3px; max-height: 220px; margin-top: 8px; overflow: auto; }
 .choiceItem { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 7px; border-radius: 6px; font-size: 11px; cursor: pointer; }
 .choiceItem:hover { background: var(--bg-primary); }

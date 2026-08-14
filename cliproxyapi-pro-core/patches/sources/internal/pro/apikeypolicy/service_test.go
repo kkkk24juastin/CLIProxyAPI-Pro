@@ -665,8 +665,12 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	if err := service.DeletePolicy(context.Background(), created.ID, created.Version, PassthroughConfirmation); err != nil {
 		t.Fatal(err)
 	}
+	service.SetCatalogProvider(func() (ProfileCatalog, error) { return ProfileCatalog{}, nil })
+	if _, err := service.PreviewBackup(context.Background(), payload, []string{identity.Hash()}); err != nil {
+		t.Fatalf("preview backup without a live catalog: %v", err)
+	}
 	if err := service.ImportBackup(context.Background(), payload); err != nil {
-		t.Fatal(err)
+		t.Fatalf("restore backup without a live catalog: %v", err)
 	}
 	decision, err := service.Decide(identity)
 	if err != nil || decision.Mode != ModeProfile || decision.Snapshot == nil || decision.Snapshot.ProfileName != "Production" {
@@ -676,9 +680,17 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	if err != nil || len(audits) != 1 || audits[0].PolicyID != created.ID || audits[0].EventType != "policy_created" {
 		t.Fatalf("restored audits = %#v, %v", audits, err)
 	}
-	invalid := strings.Replace(string(payload), `"codex"`, `"unknown-provider"`, 1)
-	if err := service.ImportBackup(context.Background(), []byte(invalid)); err == nil || !strings.Contains(err.Error(), "unknown provider") {
-		t.Fatalf("invalid catalog import error = %v", err)
+	var invalid backupDocument
+	if err := json.Unmarshal(payload, &invalid); err != nil {
+		t.Fatal(err)
+	}
+	invalid.Policies[0].Profiles[0].Name = ""
+	invalidPayload, err := json.Marshal(invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ImportBackup(context.Background(), invalidPayload); err == nil || !strings.Contains(err.Error(), "profile name is required") {
+		t.Fatalf("invalid structural import error = %v", err)
 	}
 	decision, err = service.Decide(identity)
 	if err != nil || decision.Mode != ModeProfile || decision.Snapshot.ProfileName != "Production" {

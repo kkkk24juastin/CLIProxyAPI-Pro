@@ -125,6 +125,8 @@ function ChoiceList({
   emptyLabel,
   allLabel,
   emptySelectionHint,
+  unavailableLabel,
+  removeUnavailableLabel,
 }: {
   title: string;
   values: string[];
@@ -134,18 +136,40 @@ function ChoiceList({
   emptyLabel: string;
   allLabel: string;
   emptySelectionHint: string;
+  unavailableLabel: string;
+  removeUnavailableLabel: (value: string) => string;
 }) {
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
   const filtered = values.filter((value) => !query || value.toLowerCase().includes(query));
-  const availableSelected = selected.filter((value) => values.includes(value));
+  const unavailableSelected = selected.filter((value) => !values.includes(value));
   return (
     <section className={styles.choiceSection}>
       <div className={styles.choiceHeader}>
         <strong>{title}</strong>
-        <span>{availableSelected.length > 0 ? availableSelected.length : allLabel}</span>
+        <span>{selected.length > 0 ? selected.length : allLabel}</span>
       </div>
       <p className={styles.choiceHint}>{emptySelectionHint}</p>
+      {unavailableSelected.length ? (
+        <div className={styles.unavailableSelections} role="note">
+          <span>{unavailableLabel}</span>
+          <div>
+            {unavailableSelected.map((value) => (
+              <button
+                key={value}
+                type="button"
+                disabled={disabled}
+                aria-label={removeUnavailableLabel(value)}
+                title={removeUnavailableLabel(value)}
+                onClick={() => onChange(selected.filter((item) => item !== value))}
+              >
+                <span>{value}</span>
+                <span aria-hidden="true">×</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <input
         className="input"
         value={search}
@@ -160,13 +184,13 @@ function ChoiceList({
             <label className={styles.choiceItem} key={value}>
               <input
                 type="checkbox"
-                checked={availableSelected.includes(value)}
+                checked={selected.includes(value)}
                 disabled={disabled}
                 onChange={(event) =>
                   onChange(
                     event.target.checked
-                      ? [...availableSelected, value]
-                      : availableSelected.filter((item) => item !== value),
+                      ? [...selected, value]
+                      : selected.filter((item) => item !== value),
                   )
                 }
               />
@@ -397,22 +421,30 @@ export function APIKeyPolicyPage() {
     }
   }, [errorMessage, replacePolicyInSnapshot, showNotification, snapshot, workspaceTarget]);
 
-  const validateDraft = useCallback((): boolean => {
+  const validateDraft = useCallback((validateProfile: boolean): boolean => {
     if (!snapshot || !draft) return false;
     if (!draft.displayName.trim()) {
       showNotification(t('api_key_policy.validation.display_name'), 'warning');
       return false;
     }
-    const problem = validateProfileInput(draft.profile, snapshot.catalog);
-    if (problem) {
-      showNotification(t(`api_key_policy.validation.${problem}`), 'warning');
-      return false;
+    if (validateProfile) {
+      const problem = validateProfileInput(draft.profile, snapshot.catalog);
+      if (problem) {
+        showNotification(t(`api_key_policy.validation.${problem}`), 'warning');
+        return false;
+      }
     }
     return true;
   }, [draft, showNotification, snapshot, t]);
 
   const saveWorkspace = useCallback(async () => {
-    if (!workspaceTarget || !draft || !validateDraft() || savingRef.current) return;
+    if (!workspaceTarget || !draft || savingRef.current) return;
+    const persisted = workspaceTarget.kind === 'policy'
+      ? workspaceTarget.policy.profiles.find((item) => item.id === draft.profileId)
+      : undefined;
+    const changedProfile = workspaceTarget.kind === 'create' || draft.isNewProfile || !persisted ||
+      profileSignature(persisted) !== profileSignature(draft.profile);
+    if (!validateDraft(changedProfile)) return;
     const revision = ++saveRevisionRef.current;
     const submittedDraftRevision = draftRevisionRef.current;
     savingRef.current = true;
@@ -427,9 +459,6 @@ export function APIKeyPolicyPage() {
           draft.profile,
         );
       } else {
-        const persisted = workspaceTarget.policy.profiles.find((item) => item.id === draft.profileId);
-        const changedProfile = draft.isNewProfile || !persisted ||
-          profileSignature(persisted) !== profileSignature(draft.profile);
         policy = await apiKeyPolicyApi.updateWorkspace(
           workspaceTarget.policy.id,
           draft.displayName.trim(),
@@ -816,8 +845,8 @@ export function APIKeyPolicyPage() {
             </section>
 
             <div className={styles.policyGrid}>
-              <ChoiceList title={t('api_key_policy.allowed_providers')} values={snapshot.catalog.providers} selected={draft.profile.providers} onChange={(providers) => updateDraft((current) => ({ ...current, profile: { ...current.profile, providers } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_providers')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_providers_when_empty')} />
-              <ChoiceList title={t('api_key_policy.allowed_models')} values={snapshot.catalog.models} selected={draft.profile.models} onChange={(models) => updateDraft((current) => ({ ...current, profile: { ...current.profile, models, mappings: models.length === 0 ? current.profile.mappings : current.profile.mappings.filter((mapping) => models.includes(mapping.target)) } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_models')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_models_when_empty')} />
+              <ChoiceList title={t('api_key_policy.allowed_providers')} values={snapshot.catalog.providers} selected={draft.profile.providers} onChange={(providers) => updateDraft((current) => ({ ...current, profile: { ...current.profile, providers } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_providers')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_providers_when_empty')} unavailableLabel={t('api_key_policy.unavailable_selections')} removeUnavailableLabel={(value) => t('api_key_policy.remove_unavailable_selection', { value })} />
+              <ChoiceList title={t('api_key_policy.allowed_models')} values={snapshot.catalog.models} selected={draft.profile.models} onChange={(models) => updateDraft((current) => ({ ...current, profile: { ...current.profile, models, mappings: models.length === 0 ? current.profile.mappings : current.profile.mappings.filter((mapping) => models.includes(mapping.target)) } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_models')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_models_when_empty')} unavailableLabel={t('api_key_policy.unavailable_selections')} removeUnavailableLabel={(value) => t('api_key_policy.remove_unavailable_selection', { value })} />
             </div>
 
             {currentPolicy ? (

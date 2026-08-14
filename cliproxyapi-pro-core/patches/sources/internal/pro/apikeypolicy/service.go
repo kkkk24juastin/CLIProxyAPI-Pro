@@ -301,7 +301,11 @@ func (s *Service) normalizeBackupPolicies(policies []Policy) ([]Policy, error) {
 			}
 			profileIDs[profile.ID] = struct{}{}
 			input := ProfileInput{Name: profile.Name, Providers: profile.Providers, Models: profile.Models, Mappings: profile.Mappings}
-			normalized, err := s.normalizeProfileForWrite(input)
+			// Backups are durable policy state, so restoring them must not depend on
+			// which provider credentials happen to be registered at restore time.
+			// Keep structural normalization here; the live catalog still validates
+			// new and edited Profiles through normalizeProfileForWrite.
+			normalized, err := normalizeProfileInput(input)
 			if err != nil {
 				return nil, fmt.Errorf("profile %q: %w", profile.ID, err)
 			}
