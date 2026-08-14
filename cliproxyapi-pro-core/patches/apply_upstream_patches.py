@@ -3508,7 +3508,6 @@ replace_once(
     openai_compat_execute,
     '''\t\tvar streamUsage helps.StreamUsageBuffer
 \t\tvar seenDone bool
-\t\tdefer streamUsage.Publish(ctx, reporter)
 ''',
     '''\t\tvar streamUsage helps.StreamUsageBuffer
 \t\tvar seenDone bool
@@ -3521,29 +3520,72 @@ replace_once(
     'publishStreamFailure := func(errStream error)',
 )
 openai_stream_text = read(openai_compat_execute)
-openai_stream_text = openai_stream_text.replace(
-    '''\t\t\t\t\treporter.PublishFailure(ctx, streamErr)
-''',
-    '''\t\t\t\t\tpublishStreamFailure(streamErr)
-''',
-    1,
+deferred_stream_publish = '''\t\tdefer streamUsage.Publish(ctx, reporter)
+'''
+if deferred_stream_publish in openai_stream_text:
+    if openai_stream_text.count(deferred_stream_publish) != 1:
+        raise SystemExit('expected one deferred OpenAI-compatible stream usage publish')
+    openai_stream_text = openai_stream_text.replace(deferred_stream_publish, '', 1)
+elif 'publishStreamFailure := func(errStream error)' not in openai_stream_text:
+    raise SystemExit('OpenAI-compatible stream failure publisher patch missing')
+openai_stream_start = '''func (e *OpenAICompatExecutor) ExecuteStream'''
+openai_stream_end = '''func (e *OpenAICompatExecutor) executeImagesStream'''
+if openai_stream_text.count(openai_stream_start) != 1 or openai_stream_text.count(openai_stream_end) != 1:
+    raise SystemExit('expected one OpenAI-compatible stream function boundary')
+openai_stream_prefix, openai_stream_body = openai_stream_text.split(openai_stream_start, 1)
+openai_stream_body, openai_stream_suffix = openai_stream_body.split(openai_stream_end, 1)
+stream_failure_publish = 'reporter.PublishFailure(ctx, streamErr)'
+stream_failure_count = openai_stream_body.count(stream_failure_publish)
+if stream_failure_count not in (1, 2):
+    raise SystemExit(
+        f'expected one or two OpenAI-compatible stream error publications, found {stream_failure_count}'
+    )
+openai_stream_body = openai_stream_body.replace(
+    stream_failure_publish,
+    'publishStreamFailure(streamErr)',
+    stream_failure_count,
 )
-openai_stream_text = openai_stream_text.replace(
-    '''\t\t\t\tcase <-ctx.Done():
+logged_stream_failure = 'reporter.PublishFailure(ctx, loggedErr)'
+logged_stream_failure_count = openai_stream_body.count(logged_stream_failure)
+if logged_stream_failure_count not in (0, 1):
+    raise SystemExit('expected at most one sanitized OpenAI-compatible stream error publication')
+openai_stream_body = openai_stream_body.replace(
+    logged_stream_failure,
+    'publishStreamFailure(loggedErr)',
+    logged_stream_failure_count,
+)
+stream_cancel_return = '''\t\t\t\tcase <-ctx.Done():
 \t\t\t\t\treturn
-''',
+'''
+stream_cancel_count = openai_stream_body.count(stream_cancel_return)
+if stream_cancel_count not in (1, 2):
+    raise SystemExit(
+        f'expected one or two OpenAI-compatible stream cancellation returns, found {stream_cancel_count}'
+    )
+openai_stream_body = openai_stream_body.replace(
+    stream_cancel_return,
     '''\t\t\t\tcase <-ctx.Done():
 \t\t\t\t\tpublishStreamFailure(ctx.Err())
 \t\t\t\t\treturn
 ''',
-    2,
+    stream_cancel_count,
 )
-openai_stream_text = openai_stream_text.replace(
-    '''\t\t\treporter.PublishFailure(ctx, errScan)
-''',
+stream_scan_failure = '''\t\t\treporter.PublishFailure(ctx, errScan)
+'''
+if openai_stream_body.count(stream_scan_failure) != 1:
+    raise SystemExit('expected one OpenAI-compatible scanner failure publication')
+openai_stream_body = openai_stream_body.replace(
+    stream_scan_failure,
     '''\t\t\tpublishStreamFailure(errScan)
 ''',
     1,
+)
+openai_stream_text = (
+    openai_stream_prefix
+    + openai_stream_start
+    + openai_stream_body
+    + openai_stream_end
+    + openai_stream_suffix
 )
 write(openai_compat_execute, openai_stream_text)
 replace_once(

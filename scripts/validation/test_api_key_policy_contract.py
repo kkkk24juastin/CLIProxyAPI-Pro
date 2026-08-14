@@ -4,7 +4,9 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OPENAPI = (ROOT / "docs/api-key-policy-openapi.yaml").read_text()
+OPENAPI = (
+    ROOT / "scripts/validation/contracts/api-key-policy-openapi.yaml"
+).read_text()
 GO_TYPES = (
     ROOT
     / "cliproxyapi-pro-core/patches/sources/internal/pro/apikeypolicy/types.go"
