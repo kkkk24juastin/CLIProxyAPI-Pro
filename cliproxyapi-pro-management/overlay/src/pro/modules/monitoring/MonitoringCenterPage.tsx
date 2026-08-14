@@ -20,6 +20,10 @@ import { useRealtimeLogData } from '@/pro/modules/monitoring/features/hooks/useR
 import { useUsageData, type UsageEventPageFilters, type UsagePayload } from '@/pro/modules/monitoring/features/hooks/useUsageData';
 import { useUsageAggregates, type UsageAggregateBucket } from '@/pro/modules/monitoring/features/hooks/useUsageAggregates';
 import { findMonitoringAuthIndexes } from '@/pro/modules/monitoring/features/monitoringAuthSearch';
+import {
+  buildProfileFilterOptions,
+  resolveUsageProfileSnapshot,
+} from '@/pro/modules/monitoring/features/profileUsage';
 import { ModelPriceManagerModal } from '@/pro/modules/monitoring/features/components/ModelPriceManagerModal';
 import { MonitoringSettingsModal } from '@/pro/modules/monitoring/features/components/MonitoringSettingsModal';
 import { WebDAVRestoreDialog, type WebDAVBackup } from '@/pro/modules/monitoring/features/components/WebDAVRestoreDialog';
@@ -102,6 +106,8 @@ import {
   type RealtimeLogRow,
 } from '@/pro/modules/monitoring/features/realtimeLogPresentation';
 import { hasUsageBackupManifest } from '@/pro/modules/monitoring/features/usageBackup';
+import { apiKeyPolicyApi } from '@/pro/modules/apiKeyPolicy';
+import { readMonitoringUsageLocationState } from '@/pro/shared/monitoringNavigation';
 import {
   DEFAULT_PRO_PAGE_SIZE,
   PRO_PAGE_SIZE_OPTIONS,
@@ -329,9 +335,13 @@ export function MonitoringCenterPage() {
   const [selectedProvider, setSelectedProvider] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
   const [selectedApiKey, setSelectedApiKey] = useState('all');
-  const [selectedAPIKeyPolicy, setSelectedAPIKeyPolicy] = useState('all');
+  const [selectedApiKeyFallbackLabel, setSelectedApiKeyFallbackLabel] = useState('');
   const [selectedProfile, setSelectedProfile] = useState('all');
-  const [selectedPolicyMode, setSelectedPolicyMode] = useState('all');
+  const [selectedProfileFallbackName, setSelectedProfileFallbackName] = useState('');
+  const [currentProfileCatalog, setCurrentProfileCatalog] = useState<{
+    loaded: boolean;
+    names: Map<string, string>;
+  }>({ loaded: false, names: new Map() });
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
   const [linkedRequestLogScope, setLinkedRequestLogScope] = useState<LinkedRequestLogScope | null>(null);
   const [selectedRealtimeErrorRow, setSelectedRealtimeErrorRowState] = useState<RealtimeLogRow | null>(null);
@@ -396,15 +406,15 @@ export function MonitoringCenterPage() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const authIndex = params.get('auth_index')?.trim() ?? '';
-    const apiKeyPolicyId = params.get('api_key_policy_id')?.trim() ?? '';
-    const profileId = params.get('profile_id')?.trim() ?? '';
-    const policyMode = params.get('policy_mode')?.trim() ?? '';
+    const linkedUsage = readMonitoringUsageLocationState(location.state);
+    const profileId = linkedUsage?.profileId ?? params.get('profile_id')?.trim() ?? '';
     const fromMs = Number(params.get('from_ms'));
     const toMs = Number(params.get('to_ms'));
-    if (apiKeyPolicyId || profileId || policyMode) {
-      setSelectedAPIKeyPolicy(apiKeyPolicyId || 'all');
+    if (linkedUsage || profileId) {
+      setSelectedApiKey(linkedUsage?.apiKeyHash || 'all');
+      setSelectedApiKeyFallbackLabel(linkedUsage?.apiKeyLabel || '');
       setSelectedProfile(profileId || 'all');
-      setSelectedPolicyMode(policyMode || 'all');
+      setSelectedProfileFallbackName(linkedUsage?.profileName || '');
       setLinkedRequestLogScope(null);
       window.requestAnimationFrame(() => {
         document.getElementById('request-events')?.scrollIntoView({ block: 'start' });
@@ -420,7 +430,35 @@ export function MonitoringCenterPage() {
     window.requestAnimationFrame(() => {
       document.getElementById('request-events')?.scrollIntoView({ block: 'start' });
     });
-  }, [location.search]);
+  }, [location.search, location.state]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (connectionStatus !== 'connected') {
+      setCurrentProfileCatalog({ loaded: false, names: new Map() });
+      return () => {
+        cancelled = true;
+      };
+    }
+    void apiKeyPolicyApi.bindings()
+      .then((bindings) => {
+        if (cancelled) return;
+        const names = new Map<string, string>();
+        bindings.items.forEach((binding) => {
+          binding.policy?.profiles.forEach((profile) => names.set(profile.id, profile.name));
+        });
+        bindings.orphaned.forEach((policy) => {
+          policy.profiles.forEach((profile) => names.set(profile.id, profile.name));
+        });
+        setCurrentProfileCatalog({ loaded: true, names });
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentProfileCatalog({ loaded: false, names: new Map() });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionStatus]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDeferredSearch(deferredSearchInput), 300);
@@ -460,9 +498,6 @@ export function MonitoringCenterPage() {
     latestId,
     timeRange,
     apiKeyHash: usageTrendApiKey,
-    apiKeyPolicyId: selectedAPIKeyPolicy === 'all' ? undefined : selectedAPIKeyPolicy,
-    profileId: selectedProfile === 'all' ? undefined : selectedProfile,
-    policyMode: selectedPolicyMode === 'all' ? undefined : selectedPolicyMode,
     enabled: connectionStatus === 'connected',
   });
 
@@ -481,14 +516,12 @@ export function MonitoringCenterPage() {
       authIndex: linkedRequestLogScope?.authIndex,
       searchAuthIndexes: linkedRequestLogScope ? undefined : (searchMatchedAuthIndexFilter || undefined),
       apiKeyHash: selectedApiKey === 'all' ? undefined : selectedApiKey,
-      apiKeyPolicyId: selectedAPIKeyPolicy === 'all' ? undefined : selectedAPIKeyPolicy,
       profileId: selectedProfile === 'all' ? undefined : selectedProfile,
-      policyMode: selectedPolicyMode === 'all' ? undefined : selectedPolicyMode,
       status: selectedStatus,
       search: linkedRequestLogScope ? undefined : deferredSearch,
       limit: realtimeLogPageSize,
     };
-  }, [deferredSearch, linkedRequestLogScope, realtimeLogPageSize, searchMatchedAuthIndexFilter, selectedAPIKeyPolicy, selectedApiKey, selectedModel, selectedPolicyMode, selectedProfile, selectedProvider, selectedStatus, timeRange]);
+  }, [deferredSearch, linkedRequestLogScope, realtimeLogPageSize, searchMatchedAuthIndexFilter, selectedApiKey, selectedModel, selectedProfile, selectedProvider, selectedStatus, timeRange]);
 
   const handleRealtimeLogGenerationChange = useCallback(() => {
     setSelectedRealtimeErrorRow(null);
@@ -875,6 +908,13 @@ export function MonitoringCenterPage() {
         apiKeys.set(bucket.apiKeyHash, maskSensitiveText(bucket.apiKeyHash));
       }
     });
+    if (selectedApiKey !== 'all') {
+      if (selectedApiKeyFallbackLabel) {
+        apiKeys.set(selectedApiKey, selectedApiKeyFallbackLabel);
+      } else if (!apiKeys.has(selectedApiKey)) {
+        apiKeys.set(selectedApiKey, maskSensitiveText(selectedApiKey));
+      }
+    }
 
     const sortedModels = Array.from(models).filter(Boolean).sort((left, right) => left.localeCompare(right));
 
@@ -897,7 +937,7 @@ export function MonitoringCenterPage() {
           .map(([value, label]) => ({ value, label })),
       ],
     };
-  }, [allRows, t, usageAggregates]);
+  }, [allRows, selectedApiKey, selectedApiKeyFallbackLabel, t, usageAggregates]);
   const {
     providerOptions,
     modelOptions,
@@ -913,36 +953,18 @@ export function MonitoringCenterPage() {
     [t]
   );
 
-  const policyFilterOptions = useMemo(() => {
-    const policies = new Set<string>();
-    const profiles = new Map<string, string>();
-    allRows.forEach((row) => {
-      if (row.apiKeyPolicyId) policies.add(row.apiKeyPolicyId);
-      if (row.profileId) profiles.set(row.profileId, row.profileName || row.profileId);
-    });
-    usageAggregates?.trend.forEach((bucket) => {
-      if (bucket.apiKeyPolicyId) policies.add(bucket.apiKeyPolicyId);
-      if (bucket.profileId) profiles.set(bucket.profileId, bucket.profileId);
-    });
-    if (selectedAPIKeyPolicy !== 'all') policies.add(selectedAPIKeyPolicy);
-    if (selectedProfile !== 'all') profiles.set(selectedProfile, profiles.get(selectedProfile) || selectedProfile);
-    return {
-      policies: [
-        { value: 'all', label: t('monitoring.filter_all_policies') },
-        ...Array.from(policies).sort().map((value) => ({ value, label: value })),
-      ],
-      profiles: [
-        { value: 'all', label: t('monitoring.filter_all_profiles') },
-        ...Array.from(profiles.entries()).sort((left, right) => left[1].localeCompare(right[1])).map(([value, label]) => ({ value, label })),
-      ],
-      modes: [
-        { value: 'all', label: t('monitoring.filter_all_policy_modes') },
-        { value: 'profile', label: t('monitoring.policy_mode_profile') },
-        { value: 'passthrough', label: t('monitoring.policy_mode_passthrough') },
-        { value: 'unknown', label: t('monitoring.policy_mode_unknown') },
-      ],
-    };
-  }, [allRows, selectedAPIKeyPolicy, selectedProfile, t, usageAggregates]);
+  const profileFilterOptions = useMemo(() => buildProfileFilterOptions({
+    observations: allRows,
+    currentNames: currentProfileCatalog.names,
+    currentNamesLoaded: currentProfileCatalog.loaded,
+    selectedProfileId: selectedProfile,
+    selectedProfileName: selectedProfileFallbackName,
+    copy: {
+      allProfiles: t('monitoring.filter_all_profiles'),
+      renamed: (name, previous) => t('monitoring.profile_filter_renamed', { name, previous }),
+      deleted: (name) => t('monitoring.profile_filter_deleted', { name }),
+    },
+  }), [allRows, currentProfileCatalog, selectedProfile, selectedProfileFallbackName, t]);
 
   useEffect(() => {
     if (selectedProvider !== 'all' && !providerOptions.some((option) => option.value === selectedProvider)) {
@@ -1033,9 +1055,6 @@ export function MonitoringCenterPage() {
     usageAggregates
       && usageAggregates.scopeTimeRange === timeRange
       && usageAggregates.scopeApiKeyHash === usageTrendApiKey
-      && usageAggregates.scopeAPIKeyPolicyId === (selectedAPIKeyPolicy === 'all' ? '' : selectedAPIKeyPolicy)
-      && usageAggregates.scopeProfileId === (selectedProfile === 'all' ? '' : selectedProfile)
-      && usageAggregates.scopePolicyMode === (selectedPolicyMode === 'all' ? '' : selectedPolicyMode)
   );
   const usageTrendAnalytics = useMemo(() => {
     if (!serverUsageTrendAnalytics || !aggregateTrendScopeMatches) {
@@ -1233,7 +1252,20 @@ export function MonitoringCenterPage() {
       label: t('monitoring.api_key_label'),
       colClassName: styles.realtimeApiKeyCol,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.apiKey,
-      render: (row) => <span className={styles.monoCell}>{row.clientApiKey.masked}</span>,
+      render: (row) => (
+        <div className={styles.primaryCell}>
+          <span className={styles.monoCell}>{row.clientApiKey.masked}</span>
+          <small title={row.profileId || undefined}>
+            {t('monitoring.api_key_profile', {
+              profile: resolveUsageProfileSnapshot(
+                row.profileName,
+                row.profileId,
+                t('monitoring.api_key_profile_none'),
+              ),
+            })}
+          </small>
+        </div>
+      ),
     },
     recent: {
       key: 'recent',
@@ -1454,7 +1486,7 @@ export function MonitoringCenterPage() {
   }, [observedPriceModels, priceRules]);
 
   const selectedFiltersCount =
-    [selectedProvider, selectedModel, selectedApiKey, selectedStatus, selectedAPIKeyPolicy, selectedProfile, selectedPolicyMode].filter(
+    [selectedProvider, selectedModel, selectedApiKey, selectedStatus, selectedProfile].filter(
       (value) => value !== 'all'
     ).length + (deferredSearch.trim() ? 1 : 0);
 
@@ -1511,10 +1543,10 @@ export function MonitoringCenterPage() {
     setSelectedProvider('all');
     setSelectedModel('all');
     setSelectedApiKey('all');
+    setSelectedApiKeyFallbackLabel('');
     setSelectedStatus('all');
-    setSelectedAPIKeyPolicy('all');
     setSelectedProfile('all');
-    setSelectedPolicyMode('all');
+    setSelectedProfileFallbackName('');
   }, []);
 
   const updateRealtimeLogColumns = useCallback((updater: (columns: RealtimeLogColumnPreference[]) => RealtimeLogColumnPreference[]) => {
@@ -1989,7 +2021,10 @@ export function MonitoringCenterPage() {
           <Select
             value={selectedApiKey}
             options={apiKeyOptions}
-            onChange={setSelectedApiKey}
+            onChange={(value) => {
+              setSelectedApiKey(value);
+              setSelectedApiKeyFallbackLabel('');
+            }}
             ariaLabel={t('monitoring.filter_api_key')}
           />
           <Select
@@ -2011,22 +2046,13 @@ export function MonitoringCenterPage() {
             ariaLabel={t('monitoring.filter_status')}
           />
           <Select
-            value={selectedAPIKeyPolicy}
-            options={policyFilterOptions.policies}
-            onChange={setSelectedAPIKeyPolicy}
-            ariaLabel={t('monitoring.filter_api_key_policy')}
-          />
-          <Select
             value={selectedProfile}
-            options={policyFilterOptions.profiles}
-            onChange={setSelectedProfile}
+            options={profileFilterOptions}
+            onChange={(value) => {
+              setSelectedProfile(value);
+              setSelectedProfileFallbackName('');
+            }}
             ariaLabel={t('monitoring.filter_profile')}
-          />
-          <Select
-            value={selectedPolicyMode}
-            options={policyFilterOptions.modes}
-            onChange={setSelectedPolicyMode}
-            ariaLabel={t('monitoring.filter_policy_mode')}
           />
           <button type="button" className={styles.clearButton} onClick={clearFilters}>
             <IconSlidersHorizontal size={16} />

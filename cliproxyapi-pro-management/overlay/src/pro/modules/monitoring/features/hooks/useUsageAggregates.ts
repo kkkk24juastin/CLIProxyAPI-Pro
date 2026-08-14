@@ -11,9 +11,6 @@ export type UsageAggregateBucket = {
   endpoint?: string;
   authIndex?: string;
   apiKeyHash?: string;
-  apiKeyPolicyId?: string;
-  profileId?: string;
-  policyMode?: string;
   lastSeenAtMs?: number;
   totalRequests: number;
   successCount: number;
@@ -48,18 +45,12 @@ export type UsageAggregates = {
   snapshotAtMs: number;
   scopeTimeRange: MonitoringTimeRange;
   scopeApiKeyHash: string;
-  scopeAPIKeyPolicyId: string;
-  scopeProfileId: string;
-  scopePolicyMode: string;
 };
 
 type UseUsageAggregatesParams = {
   latestId: number;
   timeRange: MonitoringTimeRange;
   apiKeyHash: string;
-  apiKeyPolicyId?: string;
-  profileId?: string;
-  policyMode?: string;
   enabled?: boolean;
 };
 
@@ -80,9 +71,6 @@ export function useUsageAggregates({
   latestId,
   timeRange,
   apiKeyHash,
-  apiKeyPolicyId = '',
-  profileId = '',
-  policyMode = '',
   enabled = true,
 }: UseUsageAggregatesParams): UseUsageAggregatesReturn {
   const [data, setData] = useState<UsageAggregates | null>(null);
@@ -143,19 +131,12 @@ export function useUsageAggregates({
     if (apiKeyHash !== 'all') {
       trendParams.api_key_hash = apiKeyHash;
     }
-    const policyParams = {
-      api_key_policy_id: apiKeyPolicyId || undefined,
-      profile_id: profileId || undefined,
-      policy_mode: policyMode || undefined,
-    };
-    Object.assign(trendParams, policyParams);
     const rankingParams = {
       from_ms: Math.max(rangeStartMs, 0),
       to_ms: nowMs,
       interval: 'all',
       limit: 10000,
       timezone_offset_minutes: timezoneOffsetMinutes,
-      ...policyParams,
     };
 
     try {
@@ -177,7 +158,6 @@ export function useUsageAggregates({
             group_by: 'model',
             limit: 10000,
             timezone_offset_minutes: timezoneOffsetMinutes,
-            ...policyParams,
           },
         }),
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
@@ -188,7 +168,6 @@ export function useUsageAggregates({
             group_by: 'model',
             limit: 10000,
             timezone_offset_minutes: timezoneOffsetMinutes,
-            ...policyParams,
           },
         }),
       ]);
@@ -219,9 +198,6 @@ export function useUsageAggregates({
         snapshotAtMs,
         scopeTimeRange: timeRange,
         scopeApiKeyHash: apiKeyHash,
-        scopeAPIKeyPolicyId: apiKeyPolicyId,
-        scopeProfileId: profileId,
-        scopePolicyMode: policyMode,
       });
       hasDataRef.current = true;
       lastFetchedAtRef.current = Date.now();
@@ -240,7 +216,7 @@ export function useUsageAggregates({
         }
       }
     }
-  }, [apiKeyHash, apiKeyPolicyId, effectiveEnabled, policyMode, profileId, timeRange]);
+  }, [apiKeyHash, effectiveEnabled, timeRange]);
 
   const loadRef = useRef(load);
 
@@ -264,7 +240,7 @@ export function useUsageAggregates({
       refreshTimerRef.current = null;
     }
     setRefreshNonce((value) => value + 1);
-  }, [apiBase, apiKeyHash, apiKeyPolicyId, effectiveEnabled, managementKey, policyMode, profileId, timeRange]);
+  }, [apiBase, apiKeyHash, effectiveEnabled, managementKey, timeRange]);
 
   useEffect(() => {
     if (!effectiveEnabled) {
@@ -280,7 +256,7 @@ export function useUsageAggregates({
       refreshTimerRef.current = null;
       void loadRef.current();
     }, lastFetchedAtRef.current > 0 ? AGGREGATE_REFRESH_DEBOUNCE_MS : 0);
-  }, [apiKeyPolicyId, effectiveEnabled, latestId, policyMode, profileId, refreshNonce, timeRange]);
+  }, [effectiveEnabled, latestId, refreshNonce, timeRange]);
 
   useEffect(() => () => {
     if (refreshTimerRef.current) {

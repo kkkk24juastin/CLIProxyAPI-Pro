@@ -262,12 +262,13 @@ describe('API Key Policy profile drafts', () => {
     expect(client).toContain('for (let attempt = 0; attempt < 2; attempt += 1)');
   });
 
-  test('requires the complete policy-filter scope before reusing failed aggregate results', () => {
+  test('keeps aggregate fallback scoped only to aggregate controls', () => {
     const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/MonitoringCenterPage.tsx'), 'utf8');
     const hook = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/features/hooks/useUsageAggregates.ts'), 'utf8');
-    expect(page).toContain("usageAggregates.scopeAPIKeyPolicyId === (selectedAPIKeyPolicy === 'all' ? '' : selectedAPIKeyPolicy)");
-    expect(page).toContain("usageAggregates.scopeProfileId === (selectedProfile === 'all' ? '' : selectedProfile)");
-    expect(page).toContain("usageAggregates.scopePolicyMode === (selectedPolicyMode === 'all' ? '' : selectedPolicyMode)");
+    expect(page).toContain('usageAggregates.scopeTimeRange === timeRange');
+    expect(page).toContain('usageAggregates.scopeApiKeyHash === usageTrendApiKey');
+    expect(page).not.toContain('scopeAPIKeyPolicyId');
+    expect(page).not.toContain('scopePolicyMode');
     expect(page).toContain('if (!serverUsageTrendAnalytics || !aggregateTrendScopeMatches)');
     expect(hook).toContain('hasDataRef.current = false;');
     expect(hook).toContain('setData(null);');

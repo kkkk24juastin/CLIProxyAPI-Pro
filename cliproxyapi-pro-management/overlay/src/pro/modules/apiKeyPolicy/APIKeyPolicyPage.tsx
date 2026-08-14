@@ -20,9 +20,10 @@ import {
 	IconShield,
   IconTrash2,
 } from '@/components/ui/icons';
-import { useAuthStore, useNotificationStore } from '@/stores';
+import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
 import { ProFeatureHeader } from '@/pro/shared/ProFeatureHeader';
 import { ProTaskDialog, ProWorkspaceSheet } from '@/pro/shared/ProSurface';
+import { buildMonitoringUsageLocationState } from '@/pro/shared/monitoringNavigation';
 import {
   apiKeyPolicyApi,
   apiKeyPolicyErrorCode,
@@ -39,6 +40,7 @@ import {
   type APIKeyProfileInput,
 } from './apiKeyPolicy';
 import styles from './APIKeyPolicyPage.module.scss';
+import { resolveAPIKeyUsageHash } from './usageKey';
 
 type BindingFilter = 'all' | 'unconfigured' | 'configured' | 'orphaned';
 type CapabilityState = 'checking' | 'ready' | 'unsupported' | 'error';
@@ -213,6 +215,7 @@ export function APIKeyPolicyPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
+  const fetchConfig = useConfigStore((state) => state.fetchConfig);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const [snapshot, setSnapshot] = useState<APIKeyPolicySnapshot | null>(null);
@@ -330,6 +333,30 @@ export function APIKeyPolicyPage() {
     },
     [snapshot],
   );
+
+  const openUsage = useCallback(async (
+    binding: APIKeyPolicyBinding,
+    profile?: { id: string; name: string },
+  ) => {
+    const bindingIndex = snapshot?.bindings.items.findIndex((item) => item.keyRef === binding.keyRef) ?? -1;
+    try {
+      const latestConfig = await fetchConfig(true);
+      const apiKeyHash = await resolveAPIKeyUsageHash({
+        configuredKeys: latestConfig.apiKeys ?? [],
+        bindingIndex,
+        maskedKey: binding.maskedKey,
+      });
+      navigate('/monitoring#request-events', {
+        state: buildMonitoringUsageLocationState({
+          apiKeyHash,
+          apiKeyLabel: binding.maskedKey,
+          ...(profile ? { profileId: profile.id, profileName: profile.name } : {}),
+        }),
+      });
+    } catch {
+      showNotification(t('api_key_policy.error.usage_key_unavailable'), 'error');
+    }
+  }, [fetchConfig, navigate, showNotification, snapshot, t]);
 
   const closeWorkspace = useCallback(() => {
     saveRevisionRef.current += 1;
@@ -612,6 +639,9 @@ export function APIKeyPolicyPage() {
 	);
 
   const currentPolicy = workspaceTarget?.kind === 'policy' ? workspaceTarget.policy : null;
+  const currentBinding = currentPolicy
+    ? snapshot?.bindings.items.find((binding) => binding.policy?.id === currentPolicy.id)
+    : undefined;
   const readOnly = workspaceTarget?.kind === 'policy' && workspaceTarget.readOnly;
   const selectedProfile = currentPolicy?.profiles.find((profile) => profile.id === draft?.profileId);
   const active = Boolean(currentPolicy && draft?.profileId === currentPolicy.activeProfileId);
@@ -726,7 +756,7 @@ export function APIKeyPolicyPage() {
                     {policy ? (
                       <>
                         <Button variant="secondary" size="sm" onClick={() => openWorkspace({ kind: 'policy', policy, readOnly: false })}>{t('api_key_policy.open_workspace')}</Button>
-                        <Button variant="ghost" size="sm" onClick={() => navigate(`/monitoring?api_key_policy_id=${encodeURIComponent(policy.id)}`)}>{t('api_key_policy.view_usage')}</Button>
+                        <Button variant="ghost" size="sm" onClick={() => void openUsage(binding)}>{t('api_key_policy.view_usage')}</Button>
                       </>
                     ) : (
                       <Button size="sm" onClick={() => openWorkspace({ kind: 'create', binding })}>{t('api_key_policy.configure')}</Button>
@@ -851,7 +881,7 @@ export function APIKeyPolicyPage() {
 
             {currentPolicy ? (
               <div className={styles.workspaceFooterActions}>
-                <Button variant="ghost" size="sm" onClick={() => navigate(`/monitoring?api_key_policy_id=${encodeURIComponent(currentPolicy.id)}${draft.profileId ? `&profile_id=${encodeURIComponent(draft.profileId)}` : ''}`)}>{t('api_key_policy.view_profile_usage')}</Button>
+                <Button variant="ghost" size="sm" disabled={!currentBinding || !selectedProfile} onClick={() => { if (currentBinding && selectedProfile) void openUsage(currentBinding, selectedProfile); }}>{t('api_key_policy.view_profile_usage')}</Button>
                 {!readOnly ? <Button variant="danger" size="sm" onClick={() => void openPolicyDeletePreview(currentPolicy)} disabled={saving || dangerBusy}><IconAlertTriangle size={14} /> {t('api_key_policy.delete_policy')}</Button> : null}
               </div>
             ) : null}
