@@ -13,7 +13,14 @@ func (h *Handler) SetProApp(application *proapp.App) {
 	}
 	h.mu.Lock()
 	h.proApp = application
+	var keys []string
+	if h.cfg != nil {
+		keys = append(keys, h.cfg.APIKeys...)
+	}
 	h.mu.Unlock()
+	if application != nil && application.APIKeyPolicy() != nil {
+		application.APIKeyPolicy().SetConfiguredAPIKeys(keys)
+	}
 }
 
 func (h *Handler) proApplication() *proapp.App {

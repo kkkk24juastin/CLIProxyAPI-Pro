@@ -36,6 +36,12 @@ func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Eve
 		Endpoint:             "POST /v1/test",
 		Method:               "POST",
 		Path:                 "/v1/test",
+		APIKeyPolicyID:       "policy-a",
+		ProfileID:            "profile-a",
+		ProfileNameSnapshot:  "Production",
+		PolicyMode:           "profile",
+		RequestedModel:       "smart",
+		EffectiveModel:       "model",
 		ClientIP:             "192.0.2.10",
 		XForwardedFor:        "203.0.113.5, 198.51.100.8",
 		UserAgent:            "test-client/1.0",
@@ -53,6 +59,60 @@ func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Eve
 		EffectiveServiceTier: "default",
 		Failed:               failed,
 		CreatedAtMS:          timestamp.UnixMilli(),
+	}
+}
+
+func TestUsagePolicyAttributionRoundTripAndFilters(t *testing.T) {
+	store := openTestStore(t)
+	profile := testUsageEvent(0, false, 10)
+	passthrough := testUsageEvent(1, false, 20)
+	passthrough.APIKeyPolicyID = ""
+	passthrough.ProfileID = ""
+	passthrough.ProfileNameSnapshot = ""
+	passthrough.PolicyMode = "passthrough"
+	passthrough.RequestedModel = "model"
+	passthrough.EffectiveModel = "model"
+	insertTestUsageEvents(t, store, profile, passthrough)
+
+	page, err := store.QueryEvents(context.Background(), UsageEventQueryOptions{APIKeyPolicyID: "policy-a", ProfileID: "profile-a", PolicyMode: "profile", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Events) != 1 || page.Events[0].ProfileNameSnapshot != "Production" || page.Events[0].RequestedModel != "smart" || page.Events[0].EffectiveModel != "model" {
+		t.Fatalf("profile events = %#v", page.Events)
+	}
+	passthroughPage, err := store.QueryEvents(context.Background(), UsageEventQueryOptions{PolicyMode: "passthrough", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(passthroughPage.Events) != 1 || passthroughPage.Events[0].ProfileID != "" {
+		t.Fatalf("passthrough events = %#v", passthroughPage.Events)
+	}
+	buckets, err := store.UsageAggregates(context.Background(), UsageAggregateOptions{Interval: "all", GroupBy: []string{"api_key_policy_id", "profile_id", "policy_mode"}, APIKeyPolicyID: "policy-a", ProfileID: "profile-a", PolicyMode: "profile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(buckets) != 1 || buckets[0].APIKeyPolicyID != "policy-a" || buckets[0].ProfileID != "profile-a" || buckets[0].PolicyMode != "profile" {
+		t.Fatalf("policy buckets = %#v", buckets)
+	}
+}
+
+func TestUsageUnknownPolicyModeMatchesOnlyPreMigrationRows(t *testing.T) {
+	store := openTestStore(t)
+	legacy := testUsageEvent(0, false, 10)
+	legacy.PolicyMode = ""
+	legacy.APIKeyPolicyID = ""
+	legacy.ProfileID = ""
+	profile := testUsageEvent(1, false, 20)
+	insertTestUsageEvents(t, store, legacy, profile)
+
+	page, err := store.QueryEvents(context.Background(), UsageEventQueryOptions{PolicyMode: "unknown", Limit: 10})
+	if err != nil || len(page.Events) != 1 || page.Events[0].RequestID != legacy.RequestID {
+		t.Fatalf("unknown events = %#v, %v", page.Events, err)
+	}
+	buckets, err := store.UsageAggregates(context.Background(), UsageAggregateOptions{Interval: "all", GroupBy: []string{"policy_mode"}, PolicyMode: "unknown", Limit: 10})
+	if err != nil || len(buckets) != 1 || buckets[0].TotalRequests != 1 || buckets[0].PolicyMode != "" {
+		t.Fatalf("unknown buckets = %#v, %v", buckets, err)
 	}
 }
 
@@ -1185,7 +1245,7 @@ func TestServerExportFlushesQueuedRuntimeState(t *testing.T) {
 		AuthIndex: "idx-a", AuthID: "auth-a", SelectedCount: 7, SuccessCount: 5, FailureCount: 2, UpdatedAtMS: 456,
 	})
 
-	server := NewServer(Config{}, store)
+	server := NewServer(Config{Enabled: true}, store)
 	exported, err := server.exportJSONL(ctx)
 	if err != nil {
 		t.Fatalf("exportJSONL() error = %v", err)

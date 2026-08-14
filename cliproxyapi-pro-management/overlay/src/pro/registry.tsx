@@ -5,6 +5,7 @@ import { routingModule } from '@/pro/modules/routing';
 import { proxyPoolModule } from '@/pro/modules/proxyPool';
 import { oauthPolicyModule } from '@/pro/modules/oauthPolicy';
 import { quotaModule } from '@/pro/modules/quota';
+import { apiKeyPolicyModule } from '@/pro/modules/apiKeyPolicy';
 
 export interface ProRouteEntry {
   path: string;
@@ -31,6 +32,7 @@ const proModules = [
   inspectionModule,
   routingModule,
   oauthPolicyModule,
+  apiKeyPolicyModule,
   proxyPoolModule,
   quotaModule,
 ];

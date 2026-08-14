@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -16,10 +17,78 @@ import (
 
 type JSONExporter func() ([]byte, bool, error)
 type JSONImporter func([]byte) error
+type ContextJSONImporter func(context.Context, []byte) error
+type PolicyPreviewer func(context.Context, []byte) (PolicyBackupPreview, error)
 type RuntimeStateImporter func([]prostate.RoutingCursor, []prostate.AuthRuntimeStats) error
 
 type FlushFunc func(context.Context) error
 type ExportFunc func(context.Context) ([]byte, error)
+
+// PolicyBackupPreview is transport-neutral restore metadata. Counts describe
+// the committed policy database that would be replaced (or preserved for a
+// legacy backup) and the staged target's association with the current upstream
+// API-key configuration. It never contains a key or fingerprint.
+type PolicyBackupPreview struct {
+	HasPolicies        bool `json:"hasPolicies"`
+	ReplacePolicies    int  `json:"replacePolicies"`
+	PreservePolicies   int  `json:"preservePolicies"`
+	ReplaceProfiles    int  `json:"replaceProfiles"`
+	PreserveProfiles   int  `json:"preserveProfiles"`
+	TargetPolicies     int  `json:"targetPolicies"`
+	TargetProfiles     int  `json:"targetProfiles"`
+	AssociatedPolicies int  `json:"associatedPolicies"`
+	OrphanedPolicies   int  `json:"orphanedPolicies"`
+}
+
+type transactionContextKey struct{}
+type transactionState struct {
+	tx          *sql.Tx
+	afterCommit []func()
+}
+
+// WithTransaction lets backup domains that share the Pro SQLite file join the
+// observability import transaction without importing each other.
+func WithTransaction(ctx context.Context, tx *sql.Tx) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if tx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, transactionContextKey{}, &transactionState{tx: tx})
+}
+
+func Transaction(ctx context.Context) *sql.Tx {
+	if ctx == nil {
+		return nil
+	}
+	state, _ := ctx.Value(transactionContextKey{}).(*transactionState)
+	if state == nil {
+		return nil
+	}
+	return state.tx
+}
+
+func AfterCommit(ctx context.Context, callback func()) bool {
+	state, _ := ctx.Value(transactionContextKey{}).(*transactionState)
+	if state == nil || callback == nil {
+		return false
+	}
+	state.afterCommit = append(state.afterCommit, callback)
+	return true
+}
+
+func RunAfterCommit(ctx context.Context) {
+	state, _ := ctx.Value(transactionContextKey{}).(*transactionState)
+	if state == nil {
+		return
+	}
+	callbacks := state.afterCommit
+	state.afterCommit = nil
+	for _, callback := range callbacks {
+		callback()
+	}
+}
 
 // ImportPlan captures the cross-module restore barriers. Parsing remains at the
 // HTTP boundary, while this coordinator owns lifecycle and application order.
@@ -30,6 +99,7 @@ type ImportPlan struct {
 	ApplyRuntimeState   func(context.Context) error
 	RestoreInspection   func(context.Context) error
 	CleanupLegacy       func(context.Context) error
+	Rollback            func(context.Context) error
 }
 
 type Lifecycle struct {
@@ -41,6 +111,13 @@ type inspectionRegistration struct {
 	owner    uint64
 	exporter JSONExporter
 	importer JSONImporter
+}
+
+type policyRegistration struct {
+	owner     uint64
+	exporter  JSONExporter
+	importer  ContextJSONImporter
+	previewer PolicyPreviewer
 }
 
 type runtimeRegistration struct {
@@ -71,6 +148,11 @@ type Coordinator struct {
 	snapshotImporter JSONImporter
 	snapshotOwner    uint64
 	snapshotOwners   []inspectionRegistration
+	policyExporter   JSONExporter
+	policyImporter   ContextJSONImporter
+	policyPreviewer  PolicyPreviewer
+	policyOwner      uint64
+	policyOwners     []policyRegistration
 	runtimeImporter  RuntimeStateImporter
 	runtimeOwner     uint64
 	runtimeOwners    []runtimeRegistration
@@ -79,6 +161,82 @@ type Coordinator struct {
 	cleanupOwners    []cleanupRegistration
 	nextOwner        uint64
 	lifecycles       []lifecycleRegistration
+}
+
+// RegisterAPIKeyPolicies installs the single policy backup domain used by
+// JSONL and WebDAV. The owner stack prevents an older App shutdown from
+// unregistering a newer replacement.
+func (c *Coordinator) RegisterAPIKeyPolicies(exporter JSONExporter, importer ContextJSONImporter, previewer PolicyPreviewer) func() {
+	if c == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	c.nextOwner++
+	owner := c.nextOwner
+	c.policyOwner = owner
+	c.policyExporter, c.policyImporter, c.policyPreviewer = exporter, importer, previewer
+	c.policyOwners = append(c.policyOwners, policyRegistration{owner: owner, exporter: exporter, importer: importer, previewer: previewer})
+	c.mu.Unlock()
+	return func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		for index := range c.policyOwners {
+			if c.policyOwners[index].owner == owner {
+				c.policyOwners = append(c.policyOwners[:index], c.policyOwners[index+1:]...)
+				break
+			}
+		}
+		if c.policyOwner != owner {
+			return
+		}
+		if count := len(c.policyOwners); count > 0 {
+			current := c.policyOwners[count-1]
+			c.policyOwner = current.owner
+			c.policyExporter, c.policyImporter, c.policyPreviewer = current.exporter, current.importer, current.previewer
+			return
+		}
+		c.policyOwner = 0
+		c.policyExporter, c.policyImporter, c.policyPreviewer = nil, nil, nil
+	}
+}
+
+func (c *Coordinator) ExportAPIKeyPolicies() ([]byte, bool, error) {
+	if c == nil {
+		return nil, false, nil
+	}
+	c.mu.RLock()
+	exporter := c.policyExporter
+	c.mu.RUnlock()
+	if exporter == nil {
+		return nil, false, nil
+	}
+	return exporter()
+}
+
+func (c *Coordinator) ImportAPIKeyPolicies(ctx context.Context, payload []byte) error {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	importer := c.policyImporter
+	c.mu.RUnlock()
+	if importer == nil {
+		return fmt.Errorf("API key policy backup importer is unavailable")
+	}
+	return importer(ctx, payload)
+}
+
+func (c *Coordinator) PreviewAPIKeyPolicies(ctx context.Context, payload []byte) (PolicyBackupPreview, error) {
+	if c == nil {
+		return PolicyBackupPreview{}, nil
+	}
+	c.mu.RLock()
+	previewer := c.policyPreviewer
+	c.mu.RUnlock()
+	if previewer == nil {
+		return PolicyBackupPreview{}, fmt.Errorf("API key policy backup previewer is unavailable")
+	}
+	return previewer(ctx, payload)
 }
 
 func NewCoordinator() *Coordinator { return &Coordinator{} }
@@ -401,7 +559,13 @@ func (c *Coordinator) ExecuteImport(ctx context.Context, plan ImportPlan) (err e
 			err = resumeErr
 		}
 	}()
-	return executeImportPhases(ctx, plan)
+	err = executeImportPhases(ctx, plan)
+	if err != nil && plan.Rollback != nil {
+		if rollbackErr := plan.Rollback(cleanupCtx); rollbackErr != nil {
+			return fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
+		}
+	}
+	return err
 }
 
 func executeImportPhases(ctx context.Context, plan ImportPlan) error {
@@ -449,6 +613,75 @@ type inspectionSnapshotRecord struct {
 	ExportedAt int64           `json:"exported_at_ms"`
 }
 
+type apiKeyPoliciesRecord struct {
+	RecordType string          `json:"record_type"`
+	Version    int             `json:"version"`
+	Policies   json.RawMessage `json:"policies"`
+	ExportedAt int64           `json:"exported_at_ms"`
+}
+
+// ExtractAPIKeyPoliciesRecord verifies the manifest when present and returns
+// the single policy domain payload. A missing record is a valid legacy backup.
+func ExtractAPIKeyPoliciesRecord(data []byte, allowLegacy bool) ([]byte, bool, error) {
+	lines := bytes.Split(data, []byte{'\n'})
+	var manifest *manifestRecord
+	var payload []byte
+	policyRecords := 0
+	var hashed []byte
+	nonEmpty := 0
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var header struct {
+			RecordType string `json:"record_type"`
+		}
+		if err := json.Unmarshal(line, &header); err != nil {
+			return nil, false, err
+		}
+		if header.RecordType == "backup_manifest" {
+			if nonEmpty != 0 || manifest != nil {
+				return nil, false, fmt.Errorf("backup manifest must be the first and only manifest record")
+			}
+			var parsed manifestRecord
+			if err := json.Unmarshal(line, &parsed); err != nil || parsed.Version != 1 || parsed.Records < 0 || len(parsed.SHA256) != sha256.Size*2 {
+				return nil, false, fmt.Errorf("invalid backup manifest")
+			}
+			manifest = &parsed
+			nonEmpty++
+			continue
+		}
+		nonEmpty++
+		if manifest != nil {
+			hashed = append(hashed, line...)
+			hashed = append(hashed, '\n')
+		}
+		if header.RecordType != "api_key_policies" {
+			continue
+		}
+		var record apiKeyPoliciesRecord
+		if err := json.Unmarshal(line, &record); err != nil || (record.Version != 1 && record.Version != 2) || !json.Valid(record.Policies) {
+			return nil, false, fmt.Errorf("invalid API key policy backup record")
+		}
+		payload = append(payload[:0], record.Policies...)
+		policyRecords++
+	}
+	if manifest == nil && !allowLegacy {
+		return nil, false, fmt.Errorf("backup manifest is required")
+	}
+	if manifest != nil {
+		digest := sha256.Sum256(hashed)
+		if manifest.Records != bytes.Count(hashed, []byte{'\n'}) || manifest.SHA256 != fmt.Sprintf("%x", digest) {
+			return nil, false, fmt.Errorf("backup manifest verification failed")
+		}
+	}
+	if policyRecords > 1 {
+		return nil, false, fmt.Errorf("backup contains multiple API key policy records")
+	}
+	return payload, policyRecords == 1, nil
+}
+
 type manifestRecord struct {
 	RecordType string `json:"record_type"`
 	Version    int    `json:"version"`
@@ -464,6 +697,10 @@ func (c *Coordinator) ExportJSONL(ctx context.Context, flush FlushFunc, export E
 		if err := flush(ctx); err != nil {
 			return nil, err
 		}
+	}
+	if c != nil {
+		c.writeGate.RLock()
+		defer c.writeGate.RUnlock()
 	}
 	var data []byte
 	var err error
@@ -503,6 +740,22 @@ func (c *Coordinator) ExportJSONL(ctx context.Context, flush FlushFunc, export E
 			if err := appendRecord(inspectionSnapshotRecord{
 				RecordType: "account_inspection_snapshot", Version: 1,
 				Snapshot: snapshot, ExportedAt: time.Now().UnixMilli(),
+			}); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if policies, ok, err := c.ExportAPIKeyPolicies(); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			if !json.Valid(policies) {
+				return nil, fmt.Errorf("API key policy exporter returned invalid JSON")
+			}
+			if err := appendRecord(apiKeyPoliciesRecord{
+				RecordType: "api_key_policies", Version: 2,
+				Policies: policies, ExportedAt: time.Now().UnixMilli(),
 			}); err != nil {
 				return nil, err
 			}

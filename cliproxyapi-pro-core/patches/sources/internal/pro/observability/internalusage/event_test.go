@@ -194,6 +194,28 @@ func TestNormalizeRawPreservesExportedHashes(t *testing.T) {
 	}
 }
 
+func TestNormalizeRawPreservesFrozenAPIKeyPolicyAttribution(t *testing.T) {
+	event, err := NormalizeRaw([]byte(`{
+		"event_hash":"policy-event",
+		"timestamp_ms":1781308800000,
+		"timestamp":"2026-06-13T00:00:00Z",
+		"model":"gpt-5",
+		"api_key_hash":"key-hash",
+		"api_key_policy_id":"policy-a",
+		"profile_id":"profile-a",
+		"profile_name_snapshot":"Production",
+		"policy_mode":"profile",
+		"requested_model":"smart",
+		"effective_model":"gpt-5"
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.APIKeyPolicyID != "policy-a" || event.ProfileID != "profile-a" || event.ProfileNameSnapshot != "Production" || event.PolicyMode != "profile" || event.RequestedModel != "smart" || event.EffectiveModel != "gpt-5" {
+		t.Fatalf("policy attribution = %#v", event)
+	}
+}
+
 func TestNormalizeRawEventHashSeparatesAPIKeys(t *testing.T) {
 	first, err := NormalizeRaw([]byte(`{
 		"timestamp":"2026-06-13T00:00:00Z",

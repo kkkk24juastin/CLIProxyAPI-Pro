@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,12 +18,155 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/pro/observability/internalusage"
+	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
 )
 
 type failingImportReader struct{}
 
 func (failingImportReader) Read([]byte) (int, error) {
 	return 0, errors.New("forced import read failure")
+}
+
+func TestUsageImportPreviewReportsPolicyReplacementAssociationAndLegacyPreservation(t *testing.T) {
+	defer func(previous *probackup.Coordinator) { probackup.Default = previous }(probackup.Default)
+	coordinator := probackup.NewCoordinator()
+	probackup.Default = coordinator
+	current := []byte(`{"schema_version":2,"policies":[{"id":"current"}],"audits":[]}`)
+	target := []byte(`{"schema_version":2,"policies":[{"id":"target-a"},{"id":"target-b"}],"audits":[]}`)
+	coordinator.RegisterAPIKeyPolicies(
+		func() ([]byte, bool, error) { return current, true, nil },
+		func(context.Context, []byte) error { return nil },
+		func(_ context.Context, payload []byte) (probackup.PolicyBackupPreview, error) {
+			if bytes.Equal(payload, current) {
+				return probackup.PolicyBackupPreview{TargetPolicies: 1, TargetProfiles: 3}, nil
+			}
+			if !bytes.Equal(payload, target) {
+				t.Fatalf("preview payload = %s", payload)
+			}
+			return probackup.PolicyBackupPreview{HasPolicies: true, ReplacePolicies: 1, ReplaceProfiles: 3, TargetPolicies: 2, TargetProfiles: 4, AssociatedPolicies: 1, OrphanedPolicies: 1}, nil
+		},
+	)
+	backup, err := coordinator.ExportJSONL(context.Background(), nil, func(context.Context) ([]byte, error) { return nil, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Replace the coordinator-produced current payload with a valid manifest for
+	// the staged target so the transport verification is exercised too.
+	line, _ := json.Marshal(map[string]any{"record_type": "api_key_policies", "version": 2, "policies": json.RawMessage(target), "exported_at_ms": 1})
+	digest := sha256.Sum256(append(append([]byte(nil), line...), '\n'))
+	manifest, _ := json.Marshal(map[string]any{"record_type": "backup_manifest", "version": 1, "records": 1, "sha256": fmt.Sprintf("%x", digest), "exported_at_ms": 1})
+	backup = append(append(append([]byte(nil), manifest...), '\n'), append(line, '\n')...)
+
+	previewRecorder := httptest.NewRecorder()
+	testUsageRouter(openTestStore(t)).ServeHTTP(previewRecorder, httptest.NewRequest(http.MethodPost, "/usage/import/preview", bytes.NewReader(backup)))
+	if previewRecorder.Code != http.StatusOK || !strings.Contains(previewRecorder.Body.String(), `"associatedPolicies":1`) || !strings.Contains(previewRecorder.Body.String(), `"orphanedPolicies":1`) || !strings.Contains(previewRecorder.Body.String(), `"restoresAPIKeys":false`) {
+		t.Fatalf("preview response = %d %s", previewRecorder.Code, previewRecorder.Body.String())
+	}
+
+	legacyRecorder := httptest.NewRecorder()
+	testUsageRouter(openTestStore(t)).ServeHTTP(legacyRecorder, httptest.NewRequest(http.MethodPost, "/usage/import/preview?allow_legacy=1", strings.NewReader(`{"model":"old"}`)))
+	if legacyRecorder.Code != http.StatusOK || !strings.Contains(legacyRecorder.Body.String(), `"preservePolicies":1`) || !strings.Contains(legacyRecorder.Body.String(), `"preserveProfiles":3`) {
+		t.Fatalf("legacy preview response = %d %s", legacyRecorder.Code, legacyRecorder.Body.String())
+	}
+}
+
+func TestWebDAVPolicyBackupUsesSharedPreviewAndImportPipeline(t *testing.T) {
+	defer func(previous *probackup.Coordinator) { probackup.Default = previous }(probackup.Default)
+	coordinator := probackup.NewCoordinator()
+	probackup.Default = coordinator
+	policyPayload := []byte(`{"schema_version":2,"policies":[],"audits":[]}`)
+	imported := false
+	coordinator.RegisterAPIKeyPolicies(
+		func() ([]byte, bool, error) { return policyPayload, true, nil },
+		func(_ context.Context, payload []byte) error {
+			if !bytes.Equal(payload, policyPayload) {
+				t.Fatalf("imported policy payload = %s", payload)
+			}
+			imported = true
+			return nil
+		},
+		func(context.Context, []byte) (probackup.PolicyBackupPreview, error) {
+			return probackup.PolicyBackupPreview{HasPolicies: true, TargetPolicies: 2, TargetProfiles: 3, AssociatedPolicies: 1, OrphanedPolicies: 1}, nil
+		},
+	)
+	backup, err := coordinator.ExportJSONL(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := openTestStore(t)
+	if err := store.SetMonitoringSettings(context.Background(), MonitoringSettings{WebDAV: MonitoringWebDAVBackupConfig{URL: "https://dav.example/backups", Username: "operator", Password: "secret"}}); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: webDAVRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet || request.URL.String() != "https://dav.example/backups/usage-export-20260814_120000.jsonl" {
+			t.Fatalf("WebDAV request = %s %s", request.Method, request.URL)
+		}
+		user, password, ok := request.BasicAuth()
+		if !ok || user != "operator" || password != "secret" {
+			t.Fatalf("WebDAV auth = %q, %q, %v", user, password, ok)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(backup)), Header: make(http.Header)}, nil
+	})}
+	server := NewServer(Config{Enabled: true, QueryLimit: 50000, BatchSize: 100}, store)
+	server.webDAVClient = client
+	router := gin.New()
+	server.RegisterGinRoutes(router.Group("/usage"))
+	body := `{"fileName":"usage-export-20260814_120000.jsonl"}`
+
+	previewRecorder := httptest.NewRecorder()
+	previewRequest := httptest.NewRequest(http.MethodPost, "/usage/webdav/preview", strings.NewReader(body))
+	previewRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(previewRecorder, previewRequest)
+	if previewRecorder.Code != http.StatusOK || !strings.Contains(previewRecorder.Body.String(), `"targetPolicies":2`) || imported {
+		t.Fatalf("WebDAV preview = %d %s imported=%v", previewRecorder.Code, previewRecorder.Body.String(), imported)
+	}
+
+	restoreRecorder := httptest.NewRecorder()
+	restoreRequest := httptest.NewRequest(http.MethodPost, "/usage/webdav/restore", strings.NewReader(body))
+	restoreRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(restoreRecorder, restoreRequest)
+	if restoreRecorder.Code != http.StatusOK || !imported || !strings.Contains(restoreRecorder.Body.String(), `"apiKeyPolicies":1`) {
+		t.Fatalf("WebDAV restore = %d %s imported=%v", restoreRecorder.Code, restoreRecorder.Body.String(), imported)
+	}
+}
+
+func TestWebDAVBackupListingFiltersAndSortsKnownFiles(t *testing.T) {
+	store := openTestStore(t)
+	if err := store.SetMonitoringSettings(context.Background(), MonitoringSettings{WebDAV: MonitoringWebDAVBackupConfig{URL: "https://dav.example/backups", Username: "operator", Password: "secret"}}); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: webDAVRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != "PROPFIND" || request.URL.String() != "https://dav.example/backups/" || request.Header.Get("Depth") != "1" {
+			t.Fatalf("WebDAV request = %s %s depth=%s", request.Method, request.URL, request.Header.Get("Depth"))
+		}
+		if user, password, ok := request.BasicAuth(); !ok || user != "operator" || password != "secret" {
+			t.Fatalf("WebDAV auth = %q, %q, %v", user, password, ok)
+		}
+		body := `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
+			<d:response><d:href>/backups/usage-export-20260813_120000.jsonl</d:href><d:propstat><d:prop><d:getcontentlength>12</d:getcontentlength><d:getlastmodified>Thu, 13 Aug 2026 12:00:00 GMT</d:getlastmodified></d:prop></d:propstat></d:response>
+			<d:response><d:href>/backups/notes.txt</d:href><d:propstat><d:prop><d:getcontentlength>99</d:getcontentlength></d:prop></d:propstat></d:response>
+			<d:response><d:href>/backups/usage-export-20260814_120000.jsonl</d:href><d:propstat><d:prop><d:getcontentlength>34</d:getcontentlength><d:getlastmodified>Fri, 14 Aug 2026 12:00:00 GMT</d:getlastmodified></d:prop></d:propstat></d:response>
+		</d:multistatus>`
+		return &http.Response{StatusCode: http.StatusMultiStatus, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	server := NewServer(Config{Enabled: true, QueryLimit: 50000, BatchSize: 100}, store)
+	server.webDAVClient = client
+	router := gin.New()
+	server.RegisterGinRoutes(router.Group("/usage"))
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage/webdav/backups", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Backups []WebDAVBackup `json:"backups"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Backups) != 2 || response.Backups[0].FileName != "usage-export-20260814_120000.jsonl" || response.Backups[0].SizeBytes != 34 || response.Backups[1].FileName != "usage-export-20260813_120000.jsonl" {
+		t.Fatalf("backups=%#v", response.Backups)
+	}
 }
 
 func TestUsageStreamPushesInsertedEventsWithoutPollingDelay(t *testing.T) {
@@ -75,7 +220,7 @@ func TestUsageStreamPushesInsertedEventsWithoutPollingDelay(t *testing.T) {
 func testUsageRouter(store *Store) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	server := NewServer(Config{QueryLimit: 50000, BatchSize: 100}, store)
+	server := NewServer(Config{Enabled: true, QueryLimit: 50000, BatchSize: 100}, store)
 	group := router.Group("/usage")
 	server.RegisterGinRoutes(group)
 	return router
@@ -109,7 +254,7 @@ func TestUsageImportDoesNotWriteBeforeRequestIsFullyRead(t *testing.T) {
 	store := openTestStore(t)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	server := NewServer(Config{QueryLimit: 50000, BatchSize: 1}, store)
+	server := NewServer(Config{Enabled: true, QueryLimit: 50000, BatchSize: 1}, store)
 	server.RegisterGinRoutes(router.Group("/usage"))
 	event, err := json.Marshal(testUsageEvent(0, false, 10))
 	if err != nil {
@@ -762,7 +907,7 @@ func TestLoadUsageEventPageUsesSentinelForStreamBatches(t *testing.T) {
 		testUsageEvent(1, false, 20),
 		testUsageEvent(2, false, 30),
 	)
-	server := NewServer(Config{QueryLimit: 50000, BatchSize: 2}, store)
+	server := NewServer(Config{Enabled: true, QueryLimit: 50000, BatchSize: 2}, store)
 
 	events, limit, detailsLimited, err := server.loadUsageEventPage(context.Background(), 0, server.cfg.BatchSize)
 	if err != nil {
@@ -998,6 +1143,39 @@ func TestUsageExportImportPreservesRoutingCursorAndAuthRuntimeStats(t *testing.T
 	stats, ok, err := targetStore.GetAuthRuntimeStats(ctx, "idx-a", "auth-a")
 	if err != nil || !ok || stats.SelectedCount != 9 || stats.SuccessCount != 7 || stats.FailureCount != 2 {
 		t.Fatalf("restored stats = %+v, %v, %v", stats, ok, err)
+	}
+}
+
+func TestUsageImportWithoutProSettingsContinuesIntoRuntimeRestore(t *testing.T) {
+	defer SetAuthRuntimeStateImportHandler(nil)
+	called := false
+	SetAuthRuntimeStateImportHandler(func(cursors []RoutingCursorState, stats []AuthRuntimeStats) error {
+		called = true
+		if len(cursors) != 1 || cursors[0].LastAuthID != "auth-without-settings" || len(stats) != 0 {
+			t.Fatalf("runtime import callback cursors=%+v stats=%+v", cursors, stats)
+		}
+		return nil
+	})
+
+	sourceStore := openTestStore(t)
+	if err := sourceStore.SetRoutingCursorState(context.Background(), RoutingCursorState{
+		CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "auth-without-settings", UpdatedAtMS: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	exportRecorder := httptest.NewRecorder()
+	testUsageRouter(sourceStore).ServeHTTP(exportRecorder, httptest.NewRequest(http.MethodGet, "/usage/export", nil))
+	if exportRecorder.Code != http.StatusOK || bytes.Contains(exportRecorder.Body.Bytes(), []byte(`"record_type":"pro_settings"`)) {
+		t.Fatalf("export = %d %s, want backup without Pro settings", exportRecorder.Code, exportRecorder.Body.String())
+	}
+
+	importRecorder := httptest.NewRecorder()
+	testUsageRouter(openTestStore(t)).ServeHTTP(importRecorder, httptest.NewRequest(http.MethodPost, "/usage/import", bytes.NewReader(exportRecorder.Body.Bytes())))
+	if importRecorder.Code != http.StatusOK {
+		t.Fatalf("import = %d %s", importRecorder.Code, importRecorder.Body.String())
+	}
+	if !called {
+		t.Fatal("runtime restore was skipped after importing zero Pro settings")
 	}
 }
 

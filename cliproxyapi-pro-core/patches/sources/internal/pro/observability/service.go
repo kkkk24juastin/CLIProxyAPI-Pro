@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,19 +32,15 @@ type Service struct {
 const webDAVRequestTimeout = 2 * time.Minute
 
 func Start(ctx context.Context) (*Service, error) {
-	cfg := LoadConfig()
-	if !cfg.Enabled {
-		log.Info("embedded usage service disabled")
-		return nil, nil
-	}
+	return StartForPath(ctx, "")
+}
 
+func StartForPath(ctx context.Context, configFilePath string) (*Service, error) {
+	cfg := LoadConfigForPath(configFilePath)
 	store, err := OpenStore(cfg.DBPath)
 	if err != nil {
 		return nil, err
 	}
-
-	redisqueue.SetEnabled(true)
-	redisqueue.SetUsageStatisticsEnabled(true)
 
 	service := &Service{
 		ctx:          ctx,
@@ -56,10 +53,19 @@ func Start(ctx context.Context) (*Service, error) {
 		Pause: service.module.Pause, Resume: service.module.Resume,
 	})
 	service.server = NewServer(cfg, store)
-	service.startWorker(func() { service.collect(ctx) })
-	service.startWorker(func() { service.maintain(ctx) })
-	service.startWorker(func() { service.runWebDAVBackups(ctx) })
-	service.startWorker(func() { service.runModelPriceSync(ctx) })
+	service.server.webDAVClient = service.webDAVClient
+	if cfg.Enabled {
+		redisqueue.SetEnabled(true)
+		redisqueue.SetUsageStatisticsEnabled(true)
+		service.startWorker(func() { service.collect(ctx) })
+		service.startWorker(func() { service.maintain(ctx) })
+		service.startWorker(func() { service.runWebDAVBackups(ctx) })
+		service.startWorker(func() { service.runModelPriceSync(ctx) })
+	} else {
+		redisqueue.SetEnabled(false)
+		redisqueue.SetUsageStatisticsEnabled(false)
+		log.Info("embedded usage collection disabled; shared Pro policy storage remains available")
+	}
 	go func() {
 		<-ctx.Done()
 		service.workers.Wait()
@@ -72,7 +78,7 @@ func Start(ctx context.Context) (*Service, error) {
 		}
 	}()
 
-	log.Infof("embedded usage service started with db %s", cfg.DBPath)
+	log.Infof("shared Pro SQLite service started with db %s", cfg.DBPath)
 	return service, nil
 }
 
@@ -341,7 +347,58 @@ type webDAVPropstat struct {
 }
 
 type webDAVProp struct {
-	LastModified string `xml:"getlastmodified"`
+	ContentLength int64  `xml:"getcontentlength"`
+	LastModified  string `xml:"getlastmodified"`
+}
+
+type WebDAVBackup struct {
+	FileName       string `json:"fileName"`
+	SizeBytes      int64  `json:"sizeBytes"`
+	LastModified   string `json:"lastModified,omitempty"`
+	LastModifiedMS int64  `json:"lastModifiedMs,omitempty"`
+}
+
+func listWebDAVBackups(ctx context.Context, client *http.Client, baseURL string, cfg MonitoringWebDAVBackupConfig) ([]WebDAVBackup, error) {
+	if client == nil {
+		client = newWebDAVHTTPClient()
+	}
+	req, err := http.NewRequestWithContext(ctx, "PROPFIND", strings.TrimRight(baseURL, "/")+"/", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Depth", "1")
+	setWebDAVAuth(req, cfg)
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("webdav propfind failed with status %d", response.StatusCode)
+	}
+	var listing webDAVMultistatus
+	if err := xml.NewDecoder(response.Body).Decode(&listing); err != nil {
+		return nil, err
+	}
+	backups := make([]WebDAVBackup, 0, len(listing.Responses))
+	for _, item := range listing.Responses {
+		fileName := path.Base(strings.TrimRight(item.Href, "/"))
+		if !strings.HasPrefix(fileName, "usage-export-") || !strings.HasSuffix(fileName, ".jsonl") || path.Base(fileName) != fileName {
+			continue
+		}
+		backup := WebDAVBackup{FileName: fileName, SizeBytes: item.Propstat.Prop.ContentLength, LastModified: strings.TrimSpace(item.Propstat.Prop.LastModified)}
+		if modifiedAt, parseErr := http.ParseTime(backup.LastModified); parseErr == nil {
+			backup.LastModifiedMS = modifiedAt.UnixMilli()
+		}
+		backups = append(backups, backup)
+	}
+	sort.Slice(backups, func(i, j int) bool {
+		if backups[i].LastModifiedMS != backups[j].LastModifiedMS {
+			return backups[i].LastModifiedMS > backups[j].LastModifiedMS
+		}
+		return backups[i].FileName > backups[j].FileName
+	})
+	return backups, nil
 }
 
 func pruneWebDAVBackups(ctx context.Context, client *http.Client, baseURL string, cfg MonitoringWebDAVBackupConfig, now time.Time) (int, error) {

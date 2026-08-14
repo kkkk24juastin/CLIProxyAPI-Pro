@@ -59,7 +59,7 @@ func TestWebDAVBackupHonorsHTTPClientTimeout(t *testing.T) {
 	}
 	service := &Service{
 		store:        store,
-		server:       NewServer(Config{BatchSize: 10}, store),
+		server:       NewServer(Config{Enabled: true, BatchSize: 10}, store),
 		webDAVClient: client,
 	}
 	startedAt := time.Now()

@@ -20,7 +20,22 @@ const usageEventsPageLimit = 5000
 const usageEventsSentinelLimit = usageEventsPageLimit + 1
 
 func LoadConfig() Config {
-	dataDir := env("USAGE_DATA_DIR", "/CLIProxyAPI/usage")
+	return LoadConfigForPath("")
+}
+
+// LoadConfigForPath keeps the historical Docker default while giving SDK and
+// native deployments a writable default beside config.yaml. Explicit
+// USAGE_DB_PATH and USAGE_DATA_DIR always remain authoritative.
+func LoadConfigForPath(configFilePath string) Config {
+	dataDir := strings.TrimSpace(os.Getenv("USAGE_DATA_DIR"))
+	if dataDir == "" {
+		configFilePath = strings.TrimSpace(configFilePath)
+		if configFilePath == "" {
+			dataDir = "/CLIProxyAPI/usage"
+		} else {
+			dataDir = filepath.Join(filepath.Dir(configFilePath), "usage")
+		}
+	}
 	return Config{
 		Enabled:      envBool("USAGE_SERVICE_ENABLED", true),
 		DBPath:       env("USAGE_DB_PATH", filepath.Join(dataDir, "usage.sqlite")),

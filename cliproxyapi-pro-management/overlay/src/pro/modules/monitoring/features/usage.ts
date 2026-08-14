@@ -168,6 +168,12 @@ export interface UsageDetail {
   source: string;
   auth_index: string | number | null;
   api_key_hash?: string;
+  api_key_policy_id?: string;
+  profile_id?: string;
+  profile_name_snapshot?: string;
+  policy_mode?: string;
+  requested_model?: string;
+  effective_model?: string;
   provider?: string;
   executor_type?: string;
   alias?: string;
@@ -531,6 +537,36 @@ const buildUsageDetail = (
       ? detailRaw.api_key_hash
       : typeof detailRaw.apiKeyHash === 'string'
         ? detailRaw.apiKeyHash
+        : undefined,
+    api_key_policy_id: typeof detailRaw.api_key_policy_id === 'string'
+      ? detailRaw.api_key_policy_id.trim()
+      : typeof detailRaw.apiKeyPolicyId === 'string'
+        ? detailRaw.apiKeyPolicyId.trim()
+        : undefined,
+    profile_id: typeof detailRaw.profile_id === 'string'
+      ? detailRaw.profile_id.trim()
+      : typeof detailRaw.profileId === 'string'
+        ? detailRaw.profileId.trim()
+        : undefined,
+    profile_name_snapshot: typeof detailRaw.profile_name_snapshot === 'string'
+      ? detailRaw.profile_name_snapshot.trim()
+      : typeof detailRaw.profileNameSnapshot === 'string'
+        ? detailRaw.profileNameSnapshot.trim()
+        : undefined,
+    policy_mode: typeof detailRaw.policy_mode === 'string'
+      ? detailRaw.policy_mode.trim()
+      : typeof detailRaw.policyMode === 'string'
+        ? detailRaw.policyMode.trim()
+        : undefined,
+    requested_model: typeof detailRaw.requested_model === 'string'
+      ? detailRaw.requested_model.trim()
+      : typeof detailRaw.requestedModel === 'string'
+        ? detailRaw.requestedModel.trim()
+        : undefined,
+    effective_model: typeof detailRaw.effective_model === 'string'
+      ? detailRaw.effective_model.trim()
+      : typeof detailRaw.effectiveModel === 'string'
+        ? detailRaw.effectiveModel.trim()
         : undefined,
     provider: provider || undefined,
     executor_type: executorType || undefined,

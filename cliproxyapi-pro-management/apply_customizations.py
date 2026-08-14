@@ -1365,6 +1365,19 @@ def patch_icons(target: Path) -> None:
         "  );\n"
         "}\n\n"
     )
+    api_key_policy_icon = (
+        "export function IconSidebarAPIKeyPolicy({ size = 20, ...props }: IconProps) {\n"
+        "  return (\n"
+        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
+        "      <circle cx=\"9\" cy=\"13\" r=\"4\" />\n"
+        "      <path d=\"m12 10 7-7\" />\n"
+        "      <path d=\"m16 6 2 2\" />\n"
+        "      <path d=\"m14 8 2 2\" />\n"
+        "      <path d=\"M6 16 3 19v2h2l3-3\" />\n"
+        "    </svg>\n"
+        "  );\n"
+        "}\n\n"
+    )
     proxy_pool_icon = (
         "export function IconSidebarProxyPool({ size = 20, ...props }: IconProps) {\n"
         "  return (\n"
@@ -1385,6 +1398,7 @@ def patch_icons(target: Path) -> None:
         ('IconSidebarAccountInspection', account_inspection_icon),
         ('IconSidebarRouting', routing_icon),
         ('IconSidebarAccountPolicy', account_policy_icon),
+        ('IconSidebarAPIKeyPolicy', api_key_policy_icon),
         ('IconSidebarProxyPool', proxy_pool_icon),
     ):
         marker = f'export function {icon_name}'

@@ -211,7 +211,11 @@ if customization_sentinel.exists():
 
 new_customization_paths = (
     'internal/pro',
+    'internal/api/api_key_policy_middleware_test.go',
+	'internal/api/api_key_policy_models_test.go',
     'internal/api/handlers/management/account_inspection_host.go',
+    'internal/api/handlers/management/api_key_policy.go',
+    'internal/api/handlers/management/api_key_policy_test.go',
     'internal/api/handlers/management/api_tools_executor_proxy_test.go',
     'internal/api/handlers/management/auth_file_connection.go',
     'internal/api/handlers/management/auth_file_connection_test.go',
@@ -245,10 +249,15 @@ new_customization_paths = (
     'internal/requestmeta/observer_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
-	'internal/runtime/executor/helps/usage_speed_test.go',
+    'internal/runtime/executor/helps/usage_speed_test.go',
 	'internal/runtime/executor/claude_usage_speed_test.go',
+	'internal/runtime/executor/api_key_policy_usage_test.go',
+	'internal/runtime/executor/response_translation.go',
+	'internal/pro/observability/config_test.go',
 	'internal/redisqueue/speed_test.go',
+	'internal/redisqueue/api_key_policy_usage_test.go',
 	'sdk/api/handlers/handlers_speed_test.go',
+	'sdk/api/handlers/api_key_policy_test.go',
 	'sdk/cliproxy/auth/conductor_speed_test.go',
 	'sdk/cliproxy/executor/speed.go',
 	'sdk/cliproxy/usage/speed.go',
@@ -270,6 +279,14 @@ for relative_path in new_customization_paths:
 
 queue_tree(PATCH_SOURCE_DIR / 'internal/pro', ROOT / 'internal/pro')
 queue_tree(PATCH_SOURCE_DIR / 'sdk/proxyutil', ROOT / 'sdk/proxyutil')
+queue_go_source('internal/api/api_key_policy_middleware_test.go')
+queue_go_source('internal/api/api_key_policy_models_test.go')
+queue_go_source('internal/api/handlers/management/api_key_policy.go')
+queue_go_source('internal/api/handlers/management/api_key_policy_test.go')
+queue_go_source('sdk/api/handlers/api_key_policy_test.go')
+queue_go_source('internal/runtime/executor/api_key_policy_usage_test.go')
+queue_go_source('internal/runtime/executor/response_translation.go')
+queue_go_source('internal/pro/observability/config_test.go')
 
 codex_device = ROOT / 'sdk/auth/codex_device.go'
 replace_once(
@@ -1356,13 +1373,1115 @@ replace_once(
     '\tpluginHost              *pluginhost.Host\n\tproApp                 *proapp.App\n',
     'proApp                 *proapp.App',
 )
+add_go_import(management_handler_source, '"crypto/subtle"\n', '\t"crypto/sha256"\n\t"encoding/hex"\n')
+replace_once(
+    management_handler_source,
+    '\tappliedReloadGeneration uint64\n',
+    '\tappliedReloadGeneration uint64\n\tconfigGeneration        uint64\n',
+    'configGeneration        uint64',
+)
+replace_once(
+    management_handler_source,
+    '\tproApp                 *proapp.App\n',
+    '\tproApp                 *proapp.App\n\tapiKeyRefsMu           sync.Mutex\n\tapiKeyRefs             map[string]apiKeyReference\n',
+    'apiKeyRefs              map[string]apiKeyReference',
+)
+replace_once(
+    management_handler_source,
+    '''\t\tenvSecret:           envSecret,
+''',
+    '''\t\tenvSecret:           envSecret,
+\t\tconfigGeneration:    1,
+\t\tapiKeyRefs:          make(map[string]apiKeyReference),
+''',
+    'apiKeyRefs:          make(map[string]apiKeyReference)',
+)
+replace_once(
+    management_handler_source,
+    '''\th.mu.Lock()
+\th.cfg = cfg
+\th.mu.Unlock()
+''',
+    '''\th.mu.Lock()
+\th.cfg = cfg
+\th.configGeneration++
+\tapplication := h.proApp
+\tvar apiKeys []string
+\tif cfg != nil {
+\t\tapiKeys = append(apiKeys, cfg.APIKeys...)
+\t}
+\th.mu.Unlock()
+\tif application != nil && application.APIKeyPolicy() != nil {
+\t\tapplication.APIKeyPolicy().SetConfiguredAPIKeys(apiKeys)
+\t}
+''',
+    'application.APIKeyPolicy().SetConfiguredAPIKeys(apiKeys)',
+)
+replace_once(
+    management_handler_source,
+    '''\t\tallowed, statusCode, errMsg := h.AuthenticateManagementKey(clientIP, localClient, provided)
+\t\tif !allowed {
+''',
+    '''\t\tallowed, statusCode, errMsg := h.AuthenticateManagementKey(clientIP, localClient, provided)
+\t\tif !allowed {
+''',
+    'AuthenticateManagementKey(clientIP, localClient, provided)',
+)
+replace_once(
+    management_handler_source,
+    '''\t\t\tc.AbortWithStatusJSON(statusCode, gin.H{"error": errMsg})
+\t\t\treturn
+\t\t}
+\t\tc.Next()
+''',
+    '''\t\t\tc.AbortWithStatusJSON(statusCode, gin.H{"error": errMsg})
+\t\t\treturn
+\t\t}
+\t\tsessionSum := sha256.Sum256([]byte(clientIP + "\\x00" + provided))
+\t\tc.Set(apiKeyPolicyManagementSessionContextKey, hex.EncodeToString(sessionSum[:]))
+\t\tc.Next()
+''',
+    'apiKeyPolicyManagementSessionContextKey',
+)
+
+insert_before(
+    management_handler_source,
+    'type attemptInfo struct {\n',
+    'const apiKeyPolicyManagementSessionContextKey = "apiKeyPolicyManagementSession"\n\n',
+    'const apiKeyPolicyManagementSessionContextKey',
+)
+
+replace_once(
+    management_handler_source,
+    '''\tif err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg); err != nil {
+''',
+    '''\tif err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg); err != nil {
+''',
+    'config.SaveConfigPreserveComments(h.configFilePath, h.cfg)',
+)
+replace_once(
+    management_handler_source,
+    '''\t\treturn false
+\t}
+\tsnapshot := h.reloadSnapshotConfigLocked()
+''',
+    '''\t\treturn false
+\t}
+\th.configGeneration++
+\tsnapshot := h.reloadSnapshotConfigLocked()
+''',
+    'h.configGeneration++\n\tsnapshot := h.reloadSnapshotConfigLocked()',
+)
 
 server_source = ROOT / 'internal/api/server.go'
+add_go_import(server_source, '"' + import_path('internal/pluginhost') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+replace_once(
+    server_source,
+    '\t// requestLogger is the request logger instance for dynamic configuration updates.\n',
+    '\t// apiKeyPolicy freezes the authenticated API-key policy for each request.\n\tapiKeyPolicy *apikeypolicy.Service\n\n\t// requestLogger is the request logger instance for dynamic configuration updates.\n',
+    'apiKeyPolicy *apikeypolicy.Service',
+)
 replace_once(
     server_source,
     '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n',
     '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n\ts.mgmt.SetProApp(optionState.proApp)\n',
     's.mgmt.SetProApp(optionState.proApp)',
+)
+replace_once(
+    server_source,
+    '\ts.handlers.SetPluginHost(optionState.pluginHost)\n',
+    '''\tif optionState.proApp != nil {
+\t\ts.apiKeyPolicy = optionState.proApp.APIKeyPolicy()
+\t}
+\ts.handlers.SetPluginHost(optionState.pluginHost)
+''',
+    's.apiKeyPolicy = optionState.proApp.APIKeyPolicy()',
+)
+
+server_reload_source = ROOT / 'internal/api/server_reload.go'
+replace_once(
+    server_reload_source,
+    '''	accessConfigApplied := s.applyAccessConfig(oldCfg, cfg)
+''',
+    '''	// Publish the committed Key set to the policy service before access auth
+	// can accept a restored Key. Orphan purge shares this service guard, so it
+	// cannot delete a policy in the gap between auth and Management reload.
+	if s.apiKeyPolicy != nil {
+		s.apiKeyPolicy.SetConfiguredAPIKeys(cfg.APIKeys)
+	}
+	accessConfigApplied := s.applyAccessConfig(oldCfg, cfg)
+''',
+    's.apiKeyPolicy.SetConfiguredAPIKeys(cfg.APIKeys)',
+)
+
+server_middleware_source = ROOT / 'internal/api/server_middleware.go'
+add_go_import(server_middleware_source, 'codexlive "' + import_path('internal/client/codex/live') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+replace_once(
+    server_middleware_source,
+    '''func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
+\treturn accessAuthMiddleware(manager, false)
+}
+
+func realtimeStandardAuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
+\treturn accessAuthMiddleware(manager, true)
+}
+
+func accessAuthMiddleware(manager *sdkaccess.Manager, realtimeError bool) gin.HandlerFunc {
+''',
+    '''func AuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service) gin.HandlerFunc {
+\treturn accessAuthMiddleware(manager, policy, false)
+}
+
+func realtimeStandardAuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service) gin.HandlerFunc {
+\treturn accessAuthMiddleware(manager, policy, true)
+}
+
+func accessAuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service, realtimeError bool) gin.HandlerFunc {
+''',
+    'func AuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service)',
+)
+replace_once(
+    server_middleware_source,
+    '''\t\tif err == nil {
+\t\t\tif result != nil {
+\t\t\t\tc.Set("userApiKey", result.Principal)
+\t\t\t\tc.Set("accessProvider", result.Provider)
+\t\t\t\tif len(result.Metadata) > 0 {
+\t\t\t\t\tc.Set("accessMetadata", result.Metadata)
+\t\t\t\t}
+\t\t\t}
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+''',
+    '''\t\tif err == nil {
+\t\t\tif result != nil {
+\t\t\t\tc.Set("userApiKey", result.Principal)
+\t\t\t\tc.Set("accessProvider", result.Provider)
+\t\t\t\tif len(result.Metadata) > 0 {
+\t\t\t\t\tc.Set("accessMetadata", result.Metadata)
+\t\t\t\t}
+\t\t\t\tif result.Provider == sdkaccess.DefaultAccessProviderName && policy != nil {
+\t\t\t\t\tidentity, identityErr := apikeypolicy.NewAuthenticatedAPIKeyIdentity(result.Principal)
+\t\t\t\t\tif identityErr != nil {
+\t\t\t\t\t\twriteAPIKeyPolicyMiddlewareError(c, realtimeError, identityErr)
+\t\t\t\t\t\treturn
+\t\t\t\t\t}
+\t\t\t\t\tdecision, decisionErr := policy.Decide(identity)
+\t\t\t\t\tif decisionErr != nil {
+\t\t\t\t\t\twriteAPIKeyPolicyMiddlewareError(c, realtimeError, decisionErr)
+\t\t\t\t\t\treturn
+\t\t\t\t\t}
+\t\t\t\t\trequestCtx := apikeypolicy.WithIdentity(c.Request.Context(), identity)
+\t\t\t\t\trequestCtx = apikeypolicy.WithDecision(requestCtx, decision)
+\t\t\t\t\tc.Request = c.Request.WithContext(requestCtx)
+\t\t\t\t}
+\t\t\t}
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+''',
+    'requestCtx = apikeypolicy.WithDecision(requestCtx, decision)',
+)
+replace_once(
+    server_middleware_source,
+    '''func realtimeAuthMiddleware(manager *sdkaccess.Manager, handler *codexlive.Handler) gin.HandlerFunc {
+\tfallback := realtimeStandardAuthMiddleware(manager)
+''',
+    '''func writeAPIKeyPolicyMiddlewareError(c *gin.Context, realtimeError bool, err error) {
+\tstatus := http.StatusServiceUnavailable
+\tcode := "api_key_policy_unavailable"
+\tmessage := "API key policy is unavailable"
+\tif policyErr, ok := err.(*apikeypolicy.PolicyError); ok {
+\t\tstatus = http.StatusForbidden
+\t\tcode = policyErr.Code
+\t\tmessage = policyErr.Message
+\t}
+\terrorType := "server_error"
+\tif status == http.StatusForbidden {
+\t\terrorType = "permission_error"
+\t}
+\tif realtimeError {
+\t\tc.AbortWithStatusJSON(status, gin.H{"error": gin.H{"message": message, "type": errorType, "param": nil, "code": code}})
+\t\treturn
+\t}
+\tif c != nil && c.Request != nil {
+\t\tpath := c.Request.URL.Path
+\t\tif strings.HasPrefix(path, "/v1beta/") {
+\t\t\tstatusName := "UNAVAILABLE"
+\t\t\tif status == http.StatusForbidden {
+\t\t\t\tstatusName = "PERMISSION_DENIED"
+\t\t\t}
+\t\t\tc.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": status, "message": message, "status": statusName, "reason": code}})
+\t\t\treturn
+\t\t}
+\t\tif c.GetHeader("Anthropic-Version") != "" || strings.HasPrefix(c.GetHeader("User-Agent"), "claude-cli") || strings.HasPrefix(path, "/v1/messages") {
+\t\t\tclaudeType := "api_error"
+\t\t\tif status == http.StatusForbidden {
+\t\t\t\tclaudeType = "permission_error"
+\t\t\t}
+\t\t\tc.AbortWithStatusJSON(status, gin.H{"type": "error", "error": gin.H{"type": claudeType, "message": message + " (" + code + ")"}})
+\t\t\treturn
+\t\t}
+\t}
+\tc.AbortWithStatusJSON(status, gin.H{"error": gin.H{"message": message, "type": errorType, "code": code}})
+}
+
+func realtimeAuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service, handler *codexlive.Handler) gin.HandlerFunc {
+\tfallback := realtimeStandardAuthMiddleware(manager, policy)
+''',
+    'func realtimeAuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service',
+)
+replace_once(
+    server_middleware_source,
+    '''\t\tc.Set("userApiKey", principal)
+\t\tc.Set("accessProvider", provider)
+''',
+    '''\t\tc.Set("userApiKey", principal)
+\t\tc.Set("accessProvider", provider)
+\t\tif identity := authorization.IssuerAPIKeyIdentity; identity.Valid() && policy != nil {
+\t\t\tdecision, decisionErr := policy.Decide(identity)
+\t\t\tif decisionErr != nil {
+\t\t\t\twriteAPIKeyPolicyMiddlewareError(c, true, decisionErr)
+\t\t\t\treturn
+\t\t\t}
+\t\t\trequestCtx := apikeypolicy.WithIdentity(c.Request.Context(), identity)
+\t\t\trequestCtx = apikeypolicy.WithDecision(requestCtx, decision)
+\t\t\tc.Request = c.Request.WithContext(requestCtx)
+\t\t}
+''',
+    'authorization.IssuerAPIKeyIdentity',
+)
+
+server_routes_source = ROOT / 'internal/api/server_routes.go'
+routes_text = read(server_routes_source)
+routes_text = routes_text.replace('AuthMiddleware(s.accessManager)', 'AuthMiddleware(s.accessManager, s.apiKeyPolicy)')
+routes_text = routes_text.replace('realtimeAuthMiddleware(s.accessManager, s.codexLiveHandler)', 'realtimeAuthMiddleware(s.accessManager, s.apiKeyPolicy, s.codexLiveHandler)')
+routes_text = routes_text.replace('realtimeStandardAuthMiddleware(s.accessManager)', 'realtimeStandardAuthMiddleware(s.accessManager, s.apiKeyPolicy)')
+write(server_routes_source, routes_text)
+
+client_secret_source = ROOT / 'internal/client/codex/live/client_secret.go'
+add_go_import(client_secret_source, '"github.com/gin-gonic/gin"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+replace_once(
+    client_secret_source,
+    '''type ClientSecretAuthorization struct {
+\tPrincipal       string
+\tIssuerPrincipal string
+\tIssuerProvider  string
+\tSession         json.RawMessage
+}
+''',
+    '''type ClientSecretAuthorization struct {
+\tPrincipal           string
+\tIssuerPrincipal     string
+\tIssuerProvider      string
+\tIssuerAPIKeyIdentity apikeypolicy.AuthenticatedAPIKeyIdentity
+\tSession             json.RawMessage
+}
+''',
+    'IssuerAPIKeyIdentity apikeypolicy.AuthenticatedAPIKeyIdentity',
+)
+replace_once(
+    client_secret_source,
+    'func (s *clientSecretStore) create(session json.RawMessage, lifetime time.Duration, issuerPrincipal, issuerProvider string) (string, ClientSecretAuthorization, time.Time, error) {\n',
+    'func (s *clientSecretStore) create(session json.RawMessage, lifetime time.Duration, issuerPrincipal, issuerProvider string, issuerIdentity apikeypolicy.AuthenticatedAPIKeyIdentity) (string, ClientSecretAuthorization, time.Time, error) {\n',
+    'issuerIdentity apikeypolicy.AuthenticatedAPIKeyIdentity',
+)
+replace_once(
+    client_secret_source,
+    '''\t\tIssuerPrincipal: strings.TrimSpace(issuerPrincipal),
+\t\tIssuerProvider:  strings.TrimSpace(issuerProvider),
+\t\tSession:         append(json.RawMessage(nil), session...),
+''',
+    '''\t\tIssuerPrincipal:      strings.TrimSpace(issuerPrincipal),
+\t\tIssuerProvider:       strings.TrimSpace(issuerProvider),
+\t\tIssuerAPIKeyIdentity: issuerIdentity,
+\t\tSession:              append(json.RawMessage(nil), session...),
+''',
+    'IssuerAPIKeyIdentity: issuerIdentity',
+)
+replace_once(
+    client_secret_source,
+    '''\tissuerPrincipalValue, _ := issuerPrincipal.(string)
+\tissuerProviderValue, _ := issuerProvider.(string)
+\ttoken, authorization, expiresAt, errCreate := h.clientSecrets.create(upstreamSession, lifetime, issuerPrincipalValue, issuerProviderValue)
+''',
+    '''\tissuerPrincipalValue, _ := issuerPrincipal.(string)
+\tissuerProviderValue, _ := issuerProvider.(string)
+\tissuerIdentity, _ := apikeypolicy.IdentityFromContext(c.Request.Context())
+\ttoken, authorization, expiresAt, errCreate := h.clientSecrets.create(upstreamSession, lifetime, issuerPrincipalValue, issuerProviderValue, issuerIdentity)
+''',
+    'issuerIdentity, _ := apikeypolicy.IdentityFromContext',
+)
+
+client_secret_test_source = ROOT / 'internal/client/codex/live/client_secret_test.go'
+client_secret_test_text = read(client_secret_test_source).replace(
+    '.create(session, time.Minute, ',
+    '.create(session, time.Minute, ',
+)
+client_secret_test_text = re.sub(
+    r'(clientSecrets\.create\([^\n]*?,\s*time\.[^\n]*?,\s*[^,\n]+,\s*[^)\n]+)(\))',
+    r'\1, apikeypolicy.AuthenticatedAPIKeyIdentity{}\2',
+    client_secret_test_text,
+)
+client_secret_test_text = re.sub(
+    r'(store\.create\([^\n]*?,\s*[^,\n]+,\s*[^,\n]+,\s*[^)\n]+)(\))',
+    r'\1, apikeypolicy.AuthenticatedAPIKeyIdentity{}\2',
+    client_secret_test_text,
+)
+if 'apikeypolicy.AuthenticatedAPIKeyIdentity{}' in client_secret_test_text:
+    if 'internal/pro/apikeypolicy' not in client_secret_test_text:
+        client_secret_test_text = client_secret_test_text.replace(
+            '"github.com/gin-gonic/gin"\n',
+            '"github.com/gin-gonic/gin"\n\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n',
+            1,
+        )
+    write(client_secret_test_source, client_secret_test_text)
+
+handlers_routing_source = ROOT / 'sdk/api/handlers/handlers_routing.go'
+add_go_import(handlers_routing_source, '"' + import_path('internal/interfaces') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+insert_before(
+    handlers_routing_source,
+    'func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {\n',
+    '''func applyAPIKeyModelPolicy(h *BaseAPIHandler, ctx context.Context, modelName string, rawJSON []byte) (context.Context, string, []byte, *interfaces.ErrorMessage) {
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured {
+\t\treturn ctx, modelName, rawJSON, nil
+\t}
+\t// A Profile's exact alias contract wins over the host-wide auto resolver.
+\t// Passthrough keeps the upstream order unchanged; profile requests first
+\t// apply their exact mapping and only resolve an unmapped auto model.
+\tparsed := thinking.ParseSuffix(modelName)
+\tprofileOwnsMapping := decision.Mode == apikeypolicy.ModeProfile && (decision.HasExactModelMapping(modelName) || (parsed.HasSuffix && decision.HasExactModelMapping(parsed.ModelName)))
+\tif profileOwnsMapping {
+\t\teffectiveModel, errApply := decision.ApplyModel(modelName)
+\t\tif errApply != nil {
+\t\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(errApply)
+\t\t}
+\t\tctx = apikeypolicy.WithDecision(ctx, decision.WithModels(modelName, effectiveModel))
+\t\tif effectiveModel == modelName || len(rawJSON) == 0 {
+\t\t\treturn ctx, effectiveModel, rawJSON, nil
+\t\t}
+\t\tupdated, errSet := sjson.SetBytes(rawJSON, "model", effectiveModel)
+\t\tif errSet != nil {
+\t\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(apikeypolicy.ErrUnavailable)
+\t\t}
+\t\treturn ctx, effectiveModel, updated, nil
+\t}
+\tresolvedModel := modelName
+\thomeEnabled := h != nil && h.AuthManager != nil && h.AuthManager.HomeEnabled()
+\tif parsed.ModelName == "auto" && !homeEnabled {
+\t\tresolvedBase := util.ResolveAutoModel(parsed.ModelName)
+\t\tif parsed.HasSuffix {
+\t\t\tresolvedModel = fmt.Sprintf("%s(%s)", resolvedBase, parsed.RawSuffix)
+\t\t} else {
+\t\t\tresolvedModel = resolvedBase
+\t\t}
+\t} else if !homeEnabled {
+\t\tresolvedModel = util.ResolveAutoModel(modelName)
+\t}
+\teffectiveModel, errApply := decision.ApplyModel(resolvedModel)
+\tif errApply != nil {
+\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(errApply)
+\t}
+\tctx = apikeypolicy.WithDecision(ctx, decision.WithModels(modelName, effectiveModel))
+\tif effectiveModel == modelName || len(rawJSON) == 0 {
+\t\treturn ctx, effectiveModel, rawJSON, nil
+\t}
+\tupdated, errSet := sjson.SetBytes(rawJSON, "model", effectiveModel)
+\tif errSet != nil {
+\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(apikeypolicy.ErrUnavailable)
+\t}
+\treturn ctx, effectiveModel, updated, nil
+}
+
+func applyAPIKeyRoutedModelPolicy(ctx context.Context, modelName string, rawJSON []byte, routeDecision *modelRouteDecision) (context.Context, string, []byte, *interfaces.ErrorMessage) {
+\tif routeDecision == nil || routeDecision.Provider == "" || strings.TrimSpace(routeDecision.Model) == "" {
+\t\treturn ctx, modelName, rawJSON, nil
+\t}
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured {
+\t\treturn ctx, modelName, rawJSON, nil
+\t}
+\teffectiveModel, errApply := decision.ValidateEffectiveModel(routeDecision.Model)
+\tif errApply != nil {
+\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(errApply)
+\t}
+\trouteDecision.Model = effectiveModel
+\tattribution := decision.UsageAttribution()
+\tctx = apikeypolicy.WithDecision(ctx, decision.WithModels(attribution.RequestedModel, effectiveModel))
+\tif len(rawJSON) == 0 {
+\t\treturn ctx, modelName, rawJSON, nil
+\t}
+\tupdated, errSet := sjson.SetBytes(rawJSON, "model", effectiveModel)
+\tif errSet != nil {
+\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(apikeypolicy.ErrUnavailable)
+\t}
+\treturn ctx, modelName, updated, nil
+}
+
+func applyAPIKeyProviderPolicy(ctx context.Context, providers []string) ([]string, *interfaces.ErrorMessage) {
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured {
+\t\treturn providers, nil
+\t}
+\tfiltered, errFilter := decision.FilterProviders(providers)
+\tif errFilter != nil {
+\t\treturn nil, apiKeyPolicyExecutionError(errFilter)
+\t}
+\treturn filtered, nil
+}
+
+func requireAPIKeyExecutionProvider(ctx context.Context, provider string) *interfaces.ErrorMessage {
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured {
+\t\treturn nil
+\t}
+\tif errAllowed := decision.AllowsProvider(provider); errAllowed != nil {
+\t\treturn apiKeyPolicyExecutionError(errAllowed)
+\t}
+\treturn nil
+}
+
+func apiKeyPolicyExecutionError(err error) *interfaces.ErrorMessage {
+\tstatus := http.StatusServiceUnavailable
+\tcode := "api_key_policy_unavailable"
+\tmessage := "API key policy is unavailable"
+\terrorType := "server_error"
+\tif policyErr, ok := err.(*apikeypolicy.PolicyError); ok {
+\t\tstatus = http.StatusForbidden
+\t\tcode = policyErr.Code
+\t\tmessage = policyErr.Message
+\t\terrorType = "permission_error"
+\t}
+\tbody := `{"error":{"message":"","type":"","code":""}}`
+\tbody, _ = sjson.Set(body, "error.message", message)
+\tbody, _ = sjson.Set(body, "error.type", errorType)
+\tbody, _ = sjson.Set(body, "error.code", code)
+\treturn &interfaces.ErrorMessage{StatusCode: status, Error: errors.New(body)}
+}
+
+''',
+    'func applyAPIKeyModelPolicy(',
+)
+
+handlers_execution_source = ROOT / 'sdk/api/handlers/handlers_execution.go'
+insert_before(
+    handlers_execution_source,
+    '// ExecuteWithAuthManager executes a non-streaming request via the core auth manager.\n',
+    '''type pluginExecutorProviderResolver interface {
+\tPluginExecutorProvider(string) (string, bool)
+}
+
+func (h *BaseAPIHandler) validateAPIKeyPluginExecutor(ctx context.Context, pluginID string) *interfaces.ErrorMessage {
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured || decision.Mode == apikeypolicy.ModePassthrough {
+\t\treturn nil
+\t}
+\thost := h.pluginExecutorHost()
+\tresolver, ok := host.(pluginExecutorProviderResolver)
+\tif !ok || resolver == nil {
+\t\treturn apiKeyPolicyExecutionError(&apikeypolicy.PolicyError{Code: "profile_provider_forbidden", Message: "plugin execution provider cannot be resolved for the active API key profile"})
+\t}
+\tprovider, resolved := resolver.PluginExecutorProvider(pluginID)
+\tif !resolved {
+\t\treturn apiKeyPolicyExecutionError(&apikeypolicy.PolicyError{Code: "profile_provider_forbidden", Message: "plugin execution provider cannot be resolved for the active API key profile"})
+\t}
+\treturn requireAPIKeyExecutionProvider(ctx, provider)
+}
+
+''',
+    'func (h *BaseAPIHandler) validateAPIKeyPluginExecutor(',
+)
+add_go_import(handlers_execution_source, '"' + import_path('internal/interfaces') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+replace_once(
+    handlers_execution_source,
+    '''\toriginalRequestedModel := modelName
+\trouteDecision := h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, false, execOptions)
+''',
+    '''\toriginalRequestedModel := modelName
+\tvar policyErr *interfaces.ErrorMessage
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)
+\tif policyErr != nil {
+\t\treturn nil, nil, policyErr
+\t}
+\trouteDecision := h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, false, execOptions)
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyRoutedModelPolicy(ctx, modelName, rawJSON, &routeDecision)
+\tif policyErr != nil {
+\t\treturn nil, nil, policyErr
+\t}
+''',
+    'ctx, modelName, rawJSON, policyErr = applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)',
+)
+replace_once(
+    handlers_execution_source,
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\treturn h.executeWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\tif errMsg := h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID); errMsg != nil {
+\t\t\treturn nil, nil, errMsg
+\t\t}
+\t\treturn h.executeWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    'h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID)',
+)
+replace_once(
+    handlers_execution_source,
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+\tproviders, errMsg = applyAPIKeyProviderPolicy(ctx, providers)
+\tif errMsg != nil {
+\t\treturn nil, nil, errMsg
+\t}
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    'providers, errMsg = applyAPIKeyProviderPolicy(ctx, providers)',
+)
+replace_once(
+    handlers_execution_source,
+    '''func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+\toriginalRequestedModel := modelName
+\trouteDecision := h.applyModelRouter(ctx, handlerType, modelName, rawJSON, false, execOptions)
+''',
+    '''func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+\toriginalRequestedModel := modelName
+\tvar policyErr *interfaces.ErrorMessage
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)
+\tif policyErr != nil {
+\t\treturn nil, nil, policyErr
+\t}
+\trouteDecision := h.applyModelRouter(ctx, handlerType, modelName, rawJSON, false, execOptions)
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyRoutedModelPolicy(ctx, modelName, rawJSON, &routeDecision)
+\tif policyErr != nil {
+\t\treturn nil, nil, policyErr
+\t}
+''',
+    'executeCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {\n\toriginalRequestedModel := modelName\n\tvar policyErr *interfaces.ErrorMessage',
+)
+replace_once(
+    handlers_execution_source,
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\treturn h.countWithPluginExecutor(ctx, handlerType, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\tif errMsg := h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID); errMsg != nil {
+\t\t\treturn nil, nil, errMsg
+\t\t}
+\t\treturn h.countWithPluginExecutor(ctx, handlerType, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    'if errMsg := h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID); errMsg != nil {\n\t\t\treturn nil, nil, errMsg\n\t\t}\n\t\treturn h.countWithPluginExecutor',
+)
+replace_once(
+    handlers_execution_source,
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(handlerType, providers)
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(handlerType, providers)
+\tproviders, errMsg = applyAPIKeyProviderPolicy(ctx, providers)
+\tif errMsg != nil {
+\t\treturn nil, nil, errMsg
+\t}
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    'adjustExecutionProvidersForEntryProtocol(handlerType, providers)\n\tproviders, errMsg = applyAPIKeyProviderPolicy',
+)
+
+handlers_stream_source = ROOT / 'sdk/api/handlers/handlers_stream.go'
+replace_once(
+    handlers_stream_source,
+    '''\toriginalRequestedModel := modelName
+\trouteDecision, preparedRoute := preparedModelRouteFromContext(ctx, execOptions.SkipRouterPluginID)
+''',
+    '''\toriginalRequestedModel := modelName
+\tvar policyErr *interfaces.ErrorMessage
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)
+\tif policyErr != nil {
+\t\terrChan := make(chan *interfaces.ErrorMessage, 1)
+\t\terrChan <- policyErr
+\t\tclose(errChan)
+\t\treturn nil, nil, errChan
+\t}
+\trouteDecision, preparedRoute := preparedModelRouteFromContext(ctx, execOptions.SkipRouterPluginID)
+''',
+    'ctx, modelName, rawJSON, policyErr = applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)',
+)
+replace_once(
+    handlers_stream_source,
+    '''\tif !preparedRoute {
+\t\trouteDecision = h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, true, execOptions)
+\t}
+''',
+    '''\tif !preparedRoute {
+\t\trouteDecision = h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, true, execOptions)
+\t}
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyRoutedModelPolicy(ctx, modelName, rawJSON, &routeDecision)
+\tif policyErr != nil {
+\t\terrChan := make(chan *interfaces.ErrorMessage, 1)
+\t\terrChan <- policyErr
+\t\tclose(errChan)
+\t\treturn nil, nil, errChan
+\t}
+''',
+    'applyAPIKeyRoutedModelPolicy(ctx, modelName, rawJSON, &routeDecision)',
+)
+replace_once(
+    handlers_stream_source,
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\treturn h.streamWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\tif errMsg := h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID); errMsg != nil {
+\t\t\terrChan := make(chan *interfaces.ErrorMessage, 1)
+\t\t\terrChan <- errMsg
+\t\t\tclose(errChan)
+\t\t\treturn nil, nil, errChan
+\t\t}
+\t\treturn h.streamWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    'h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID); errMsg != nil',
+)
+replace_once(
+    handlers_stream_source,
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+\tproviders, errMsg = applyAPIKeyProviderPolicy(ctx, providers)
+\tif errMsg != nil {
+\t\terrChan := make(chan *interfaces.ErrorMessage, 1)
+\t\terrChan <- errMsg
+\t\tclose(errChan)
+\t\treturn nil, nil, errChan
+\t}
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    'adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)\n\tproviders, errMsg = applyAPIKeyProviderPolicy',
+)
+
+handlers_context_source = ROOT / 'sdk/api/handlers/handlers_context.go'
+replace_once(
+    handlers_context_source,
+    '''\tdecision := h.applyModelRouter(ctx, handlerType, modelName, rawJSON, true, modelExecutionOptions{})
+\tctx = context.WithValue(ctx, preparedModelRouteContextKey{}, decision)
+''',
+    '''\tpolicyCtx, effectiveModel, effectiveBody, policyErr := applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)
+\tif policyErr != nil {
+\t\tctx = context.WithValue(ctx, preparedModelRouteContextKey{}, modelRouteDecision{})
+\t\treturn ctx, false
+\t}
+\tdecision := h.applyModelRouter(policyCtx, handlerType, effectiveModel, effectiveBody, true, modelExecutionOptions{})
+\tctx = context.WithValue(policyCtx, preparedModelRouteContextKey{}, decision)
+''',
+    'policyCtx, effectiveModel, effectiveBody, policyErr := applyAPIKeyModelPolicy',
+)
+
+handlers_metadata_test_source = ROOT / 'sdk/api/handlers/handlers_metadata_test.go'
+add_go_import(handlers_metadata_test_source, '"' + import_path('internal/logging') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+insert_before(
+    handlers_metadata_test_source,
+    'func TestRequestExecutionMetadataIncludesExecutionSessionWithoutIdempotencyKey(t *testing.T) {\n',
+    '''func TestGetContextWithCancelInheritsServerAPIKeyPolicySnapshot(t *testing.T) {
+\tgin.SetMode(gin.TestMode)
+\tginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+\tidentity, errIdentity := apikeypolicy.NewAuthenticatedAPIKeyIdentity("server-authenticated-key")
+\tif errIdentity != nil {
+\t\tt.Fatal(errIdentity)
+\t}
+\tdecision := apikeypolicy.PassthroughDecision()
+\trequestCtx := apikeypolicy.WithIdentity(context.Background(), identity)
+\trequestCtx = apikeypolicy.WithDecision(requestCtx, decision)
+\tginCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(requestCtx)
+
+\thandler := &BaseAPIHandler{Cfg: &config.SDKConfig{}}
+\tctx, cancel := handler.GetContextWithCancel(nil, ginCtx, context.Background())
+\tdefer cancel()
+\tgotIdentity, okIdentity := apikeypolicy.IdentityFromContext(ctx)
+\tgotDecision, okDecision := apikeypolicy.DecisionFromContext(ctx)
+\tif !okIdentity || gotIdentity.Hash() != identity.Hash() {
+\t\tt.Fatalf("identity inherited = %#v, %t", gotIdentity, okIdentity)
+\t}
+\tif !okDecision || gotDecision.Mode != apikeypolicy.ModePassthrough {
+\t\tt.Fatalf("decision inherited = %#v, %t", gotDecision, okDecision)
+\t}
+}
+
+''',
+    'func TestGetContextWithCancelInheritsServerAPIKeyPolicySnapshot(',
+)
+
+client_secret_test_text = read(client_secret_test_source)
+insert_marker = 'func TestStandardRealtimeCallMapsModelAndLocation(t *testing.T) {\n'
+if 'func TestCreateClientSecretRetainsServerIssuedAPIKeyIdentity(' not in client_secret_test_text:
+    identity_test = '''func TestCreateClientSecretRetainsServerIssuedAPIKeyIdentity(t *testing.T) {
+\tgin.SetMode(gin.TestMode)
+\thandler := &Handler{clientSecrets: newClientSecretStore()}
+\tidentity, errIdentity := apikeypolicy.NewAuthenticatedAPIKeyIdentity("issuer-key")
+\tif errIdentity != nil {
+\t\tt.Fatal(errIdentity)
+\t}
+\trouter := gin.New()
+\trouter.POST("/v1/realtime/client_secrets", func(c *gin.Context) {
+\t\tc.Set("userApiKey", "issuer-key")
+\t\tc.Set("accessProvider", "config-inline")
+\t\tc.Request = c.Request.WithContext(apikeypolicy.WithIdentity(c.Request.Context(), identity))
+\t}, handler.CreateClientSecret)
+\trequest := httptest.NewRequest(http.MethodPost, "/v1/realtime/client_secrets", strings.NewReader(`{"session":{"type":"realtime","model":"gpt-realtime"}}`))
+\trequest.Header.Set("Content-Type", "application/json")
+\trecorder := httptest.NewRecorder()
+\trouter.ServeHTTP(recorder, request)
+\tif recorder.Code != http.StatusOK {
+\t\tt.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+\t}
+\tvar response clientSecretCreateResponse
+\tif errDecode := json.Unmarshal(recorder.Body.Bytes(), &response); errDecode != nil {
+\t\tt.Fatal(errDecode)
+\t}
+\tauthRequest := httptest.NewRequest(http.MethodPost, "/v1/realtime", nil)
+\tauthRequest.Header.Set("Authorization", "Bearer "+response.Value)
+\tauthorization, matched, errAuthenticate := handler.AuthenticateClientSecret(authRequest)
+\tif errAuthenticate != nil || !matched || authorization.IssuerAPIKeyIdentity.Hash() != identity.Hash() {
+\t\tt.Fatalf("authorization = %#v matched=%t error=%v", authorization, matched, errAuthenticate)
+\t}
+}
+
+'''
+    client_secret_test_text = client_secret_test_text.replace(insert_marker, identity_test + insert_marker, 1)
+    write(client_secret_test_source, client_secret_test_text)
+
+plugin_executor_route_source = ROOT / 'internal/pluginhost/executor_route.go'
+insert_before(
+    plugin_executor_route_source,
+    '// ExecutePluginExecutor executes a request with the named plugin executor without changing the requested model.\n',
+    '''// PluginExecutorProvider resolves the normalized execution provider declared by a plugin executor.
+func (h *Host) PluginExecutorProvider(pluginID string) (string, bool) {
+\tadapter, errAdapter := h.executorAdapterForPlugin(pluginID)
+\tif errAdapter != nil || adapter == nil {
+\t\treturn "", false
+\t}
+\tprovider := strings.ToLower(strings.TrimSpace(adapter.Identifier()))
+\treturn provider, provider != ""
+}
+
+''',
+    'func (h *Host) PluginExecutorProvider(',
+)
+
+handlers_source = ROOT / 'sdk/api/handlers/handlers.go'
+insert_before(
+    handlers_source,
+    '// BaseAPIHandler contains the handlers for API endpoints.\n',
+    '''type PolicyVisibleModel struct {
+\tID          string
+\tEffectiveID string
+}
+
+// FilterModelsForRequest applies the frozen API-key policy to one model catalog.
+// providers resolves current provider carriage for canonical model IDs.
+func FilterModelsForRequest(ctx context.Context, modelIDs []string, providers func(string) []string) ([]PolicyVisibleModel, *interfaces.ErrorMessage) {
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured {
+\t\tout := make([]PolicyVisibleModel, 0, len(modelIDs))
+\t\tfor _, id := range modelIDs {
+\t\t\tout = append(out, PolicyVisibleModel{ID: id, EffectiveID: id})
+\t\t}
+\t\treturn out, nil
+\t}
+\tcandidates := make([]apikeypolicy.ModelCandidate, 0, len(modelIDs))
+\tfor _, id := range modelIDs {
+\t\tvar carrying []string
+\t\tif providers != nil {
+\t\t\tcarrying = providers(id)
+\t\t}
+\t\tcandidates = append(candidates, apikeypolicy.ModelCandidate{ID: id, Providers: carrying})
+\t}
+\tvisible, errFilter := decision.FilterVisibleModels(candidates)
+\tif errFilter != nil {
+\t\treturn nil, apiKeyPolicyExecutionError(errFilter)
+\t}
+\tout := make([]PolicyVisibleModel, 0, len(visible))
+\tfor _, model := range visible {
+\t\tout = append(out, PolicyVisibleModel{ID: model.ID, EffectiveID: model.EffectiveID})
+\t}
+\treturn out, nil
+}
+
+// FilterModelMapsForRequest clones canonical model maps and duplicates mapped
+// aliases without mutating registry-owned values.
+func FilterModelMapsForRequest(ctx context.Context, models []map[string]any, idKey string, providers func(string) []string) ([]map[string]any, *interfaces.ErrorMessage) {
+\tids := make([]string, 0, len(models))
+\tbyID := make(map[string]map[string]any, len(models))
+\tfor _, model := range models {
+\t\tid, _ := model[idKey].(string)
+\t\tid = strings.TrimPrefix(strings.TrimSpace(id), "models/")
+\t\tif id == "" {
+\t\t\tcontinue
+\t\t}
+\t\tids = append(ids, id)
+\t\tbyID[id] = model
+\t}
+\tvisible, errMsg := FilterModelsForRequest(ctx, ids, providers)
+\tif errMsg != nil {
+\t\treturn nil, errMsg
+\t}
+\tout := make([]map[string]any, 0, len(visible))
+\tfor _, item := range visible {
+\t\tsource := byID[item.EffectiveID]
+\t\tclone := make(map[string]any, len(source))
+\t\tfor key, value := range source {
+\t\t\tclone[key] = value
+\t\t}
+\t\tvalue := item.ID
+\t\tif idKey == "name" {
+\t\t\tvalue = "models/" + item.ID
+\t\t}
+\t\tclone[idKey] = value
+\t\tout = append(out, clone)
+\t}
+\treturn out, nil
+}
+
+''',
+    'func FilterModelsForRequest(',
+)
+
+openai_handlers_source = ROOT / 'sdk/api/handlers/openai/openai_handlers.go'
+replace_once(
+    openai_handlers_source,
+    '''\tif _, ok := c.Request.URL.Query()["client_version"]; ok {
+\t\tc.JSON(http.StatusOK, h.codexClientModelsResponse())
+\t\treturn
+\t}
+
+\t// Get all available models
+\tallModels := h.Models()
+''',
+    '''\tallModels, policyErr := handlers.FilterModelMapsForRequest(c.Request.Context(), h.Models(), "id", registry.GetGlobalRegistry().GetModelProviders)
+\tif policyErr != nil {
+\t\th.WriteErrorResponse(c, policyErr)
+\t\treturn
+\t}
+\tif _, ok := c.Request.URL.Query()["client_version"]; ok {
+\t\tc.JSON(http.StatusOK, codexmodels.BuildResponse(allModels, registry.GetGlobalRegistry().GetModelProviders, h.Cfg != nil && h.Cfg.CodexOptimizeMultiAgentV2))
+\t\treturn
+\t}
+
+\t// Get all models visible to the frozen request policy.
+''',
+    'allModels, policyErr := handlers.FilterModelMapsForRequest',
+)
+add_go_import(openai_handlers_source, '"' + import_path('internal/registry') + '"\n', '\tcodexmodels "' + import_path('internal/client/codex/models') + '"\n')
+
+claude_handlers_source = ROOT / 'sdk/api/handlers/claude/code_handlers.go'
+replace_once(
+    claude_handlers_source,
+    '''\t\t\t\tif m, ok := e["message"].(string); ok && strings.TrimSpace(m) != "" {
+\t\t\t\t\tmessage = strings.TrimSpace(m)
+\t\t\t\t} else if c, ok := e["code"].(string); ok && strings.TrimSpace(c) != "" {
+\t\t\t\t\tmessage = strings.TrimSpace(c)
+\t\t\t\t}
+''',
+    '''\t\t\t\tif m, ok := e["message"].(string); ok && strings.TrimSpace(m) != "" {
+\t\t\t\t\tmessage = strings.TrimSpace(m)
+\t\t\t\t\tif code, okCode := e["code"].(string); okCode && (strings.HasPrefix(code, "profile_") || strings.HasPrefix(code, "api_key_policy_")) {
+\t\t\t\t\t\tmessage += " (" + strings.TrimSpace(code) + ")"
+\t\t\t\t\t}
+\t\t\t\t} else if c, ok := e["code"].(string); ok && strings.TrimSpace(c) != "" {
+\t\t\t\t\tmessage = strings.TrimSpace(c)
+\t\t\t\t}
+''',
+    'strings.HasPrefix(code, "profile_")',
+)
+replace_once(
+    claude_handlers_source,
+    '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
+\tdisableCloaking := h.Cfg != nil && h.Cfg.ClaudeCode.DisableCloakingModelList
+\tc.JSON(http.StatusOK, claudemodels.BuildResponse(h.Models(), disableCloaking))
+}
+''',
+    '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
+\trequestCtx := context.Background()
+\tif c != nil && c.Request != nil {
+\t\trequestCtx = c.Request.Context()
+\t}
+\tmodels, policyErr := handlers.FilterModelMapsForRequest(requestCtx, h.Models(), "id", registry.GetGlobalRegistry().GetModelProviders)
+\tif policyErr != nil {
+\t\th.WriteErrorResponse(c, policyErr)
+\t\treturn
+\t}
+\tdisableCloaking := h.Cfg != nil && h.Cfg.ClaudeCode.DisableCloakingModelList
+\tc.JSON(http.StatusOK, claudemodels.BuildResponse(models, disableCloaking))
+}
+''',
+    'models, policyErr := handlers.FilterModelMapsForRequest',
+)
+
+gemini_handlers_source = ROOT / 'sdk/api/handlers/gemini/gemini_handlers.go'
+add_go_import(gemini_handlers_source, '"context"\n', '"encoding/json"\n')
+insert_before(
+    gemini_handlers_source,
+    'func (h *GeminiAPIHandler) GeminiModels(c *gin.Context) {\n',
+    '''func (h *GeminiAPIHandler) WriteErrorResponse(c *gin.Context, msg *interfaces.ErrorMessage) {
+\tstatus := http.StatusInternalServerError
+\tif msg != nil && msg.StatusCode > 0 {
+\t\tstatus = msg.StatusCode
+\t}
+\tvar policyEnvelope struct {
+\t\tError struct {
+\t\t\tMessage string `json:"message"`
+\t\t\tCode    string `json:"code"`
+\t\t} `json:"error"`
+\t}
+\tif msg != nil && msg.Error != nil && json.Unmarshal([]byte(msg.Error.Error()), &policyEnvelope) == nil &&
+\t\t(strings.HasPrefix(policyEnvelope.Error.Code, "profile_") || strings.HasPrefix(policyEnvelope.Error.Code, "api_key_policy_")) {
+\t\tstatusName := "UNAVAILABLE"
+\t\tif status == http.StatusForbidden {
+\t\t\tstatusName = "PERMISSION_DENIED"
+\t\t}
+\t\tc.JSON(status, gin.H{"error": gin.H{
+\t\t\t"code": status, "message": policyEnvelope.Error.Message,
+\t\t\t"status": statusName, "reason": policyEnvelope.Error.Code,
+\t\t}})
+\t\treturn
+\t}
+\th.BaseAPIHandler.WriteErrorResponse(c, msg)
+}
+
+''',
+    'func (h *GeminiAPIHandler) WriteErrorResponse',
+)
+replace_once(
+    gemini_handlers_source,
+    '''func (h *GeminiAPIHandler) GeminiModels(c *gin.Context) {
+\trawModels := h.Models()
+''',
+    '''func (h *GeminiAPIHandler) GeminiModels(c *gin.Context) {
+\trequestCtx := context.Background()
+\tif c != nil && c.Request != nil {
+\t\trequestCtx = c.Request.Context()
+\t}
+\trawModels, policyErr := handlers.FilterModelMapsForRequest(requestCtx, h.Models(), "name", registry.GetGlobalRegistry().GetModelProviders)
+\tif policyErr != nil {
+\t\th.WriteErrorResponse(c, policyErr)
+\t\treturn
+\t}
+''',
+    'rawModels, policyErr := handlers.FilterModelMapsForRequest',
+)
+replace_once(
+    gemini_handlers_source,
+    '''\t// Get dynamic models from the global registry and find the matching one
+\tavailableModels := h.Models()
+''',
+    '''\t// Get dynamic models visible to the frozen request policy.
+\tavailableModels, policyErr := handlers.FilterModelMapsForRequest(c.Request.Context(), h.Models(), "name", registry.GetGlobalRegistry().GetModelProviders)
+\tif policyErr != nil {
+\t\th.WriteErrorResponse(c, policyErr)
+\t\treturn
+\t}
+''',
+    'availableModels, policyErr := handlers.FilterModelMapsForRequest',
+)
+
+insert_before(
+    server_routes_source,
+    'func grokModelsFromHomeEntries(entries []homeModelEntry) []grokbuild.ModelInfo {\n',
+    '''func (s *Server) filterHomeModelEntries(c *gin.Context, entries []homeModelEntry) ([]homeModelEntry, bool) {
+\tids := make([]string, 0, len(entries))
+\tbyID := make(map[string]homeModelEntry, len(entries))
+\tfor _, entry := range entries {
+\t\tids = append(ids, entry.id)
+\t\tbyID[entry.id] = entry
+\t}
+\tvisible, policyErr := handlers.FilterModelsForRequest(c.Request.Context(), ids, func(string) []string { return []string{"home"} })
+\tif policyErr != nil {
+\t\ts.handlers.WriteErrorResponse(c, policyErr)
+\t\treturn nil, false
+\t}
+\tout := make([]homeModelEntry, 0, len(visible))
+\tfor _, model := range visible {
+\t\tentry, exists := byID[model.EffectiveID]
+\t\tif !exists {
+\t\t\tcontinue
+\t\t}
+\t\tentry.id = model.ID
+\t\tout = append(out, entry)
+\t}
+\treturn out, true
+}
+
+func (s *Server) filterRegistryGrokModels(c *gin.Context, infos []*registry.ModelInfo) ([]grokbuild.ModelInfo, bool) {
+\tids := make([]string, 0, len(infos))
+\tbyID := make(map[string]*registry.ModelInfo, len(infos))
+\tfor _, info := range infos {
+\t\tif info == nil {
+\t\t\tcontinue
+\t\t}
+\t\tids = append(ids, info.ID)
+\t\tbyID[info.ID] = info
+\t}
+\tvisible, policyErr := handlers.FilterModelsForRequest(c.Request.Context(), ids, registry.GetGlobalRegistry().GetModelProviders)
+\tif policyErr != nil {
+\t\ts.handlers.WriteErrorResponse(c, policyErr)
+\t\treturn nil, false
+\t}
+\tout := make([]grokbuild.ModelInfo, 0, len(visible))
+\tfor _, model := range visible {
+\t\tinfo := byID[model.EffectiveID]
+\t\tif info == nil {
+\t\t\tcontinue
+\t\t}
+\t\tentry := grokbuild.ModelInfo{ID: model.ID, DisplayName: info.DisplayName, ContextLength: info.ContextLength}
+\t\tif info.Thinking != nil {
+\t\t\tentry.ReasoningLevels = append([]string(nil), info.Thinking.Levels...)
+\t\t}
+\t\tout = append(out, entry)
+\t}
+\treturn out, true
+}
+
+''',
+    'func (s *Server) filterHomeModelEntries(',
+)
+replace_once(
+    server_routes_source,
+    '''\t} else {
+\t\tmodels = grokModelsFromRegistryInfos(registry.GetGlobalRegistry().GetAvailableModelInfos())
+\t}
+\tc.JSON(http.StatusOK, grokbuild.BuildResponse(models))
+''',
+    '''\t} else {
+\t\tvar ok bool
+\t\tmodels, ok = s.filterRegistryGrokModels(c, registry.GetGlobalRegistry().GetAvailableModelInfos())
+\t\tif !ok {
+\t\t\treturn
+\t\t}
+\t}
+\tc.JSON(http.StatusOK, grokbuild.BuildResponse(models))
+''',
+    'models, ok = s.filterRegistryGrokModels',
+)
+replace_once(
+    server_routes_source,
+    '''\treturn entries, true
+}
+
+func formatHomeGeminiModels(entries []homeModelEntry) []map[string]any {
+''',
+    '''\treturn s.filterHomeModelEntries(c, entries)
+}
+
+func formatHomeGeminiModels(entries []homeModelEntry) []map[string]any {
+''',
+    'return s.filterHomeModelEntries(c, entries)',
 )
 
 server_test_source = ROOT / 'internal/api/server_test.go'
@@ -1474,8 +2593,21 @@ for speed_source in (
     'sdk/cliproxy/usage/speed_test.go',
 ):
     queue_go_source(speed_source)
+queue_go_source('internal/redisqueue/api_key_policy_usage_test.go')
 
 handlers_source = ROOT / 'sdk/api/handlers/handlers.go'
+add_go_import(handlers_source, '"' + import_path('internal/logging') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+replace_once(
+    handlers_source,
+    '''\tif requestCtx != nil && logging.GetRequestID(parentCtx) == "" {
+''',
+    '''\tif requestCtx != nil {
+\t\tparentCtx = apikeypolicy.InheritContext(parentCtx, requestCtx)
+\t}
+\tif requestCtx != nil && logging.GetRequestID(parentCtx) == "" {
+''',
+    'parentCtx = apikeypolicy.InheritContext(parentCtx, requestCtx)',
+)
 replace_once(
     handlers_source,
     '''\tmeta[coreexecutor.ServiceTierMetadataKey] = serviceTier
@@ -2209,6 +3341,17 @@ func (b *StreamUsageBuffer) PublishFailure(ctx context.Context, reporter *UsageR
 claude_execute = ROOT / 'internal/runtime/executor/claude_executor_execute.go'
 replace_once(
     claude_execute,
+    '''\tif upstreamStream {
+\t\tif errValidate := validateClaudeStreamingResponse(data); errValidate != nil {
+''',
+    '''\tvar responseUsageBuffer helps.StreamUsageBuffer
+\tif upstreamStream {
+\t\tif errValidate := validateClaudeStreamingResponse(data); errValidate != nil {
+''',
+    'var responseUsageBuffer helps.StreamUsageBuffer',
+)
+replace_once(
+    claude_execute,
     '''\t\tlines := bytes.Split(data, []byte("\\n"))
 \t\tfor i, line := range lines {
 \t\t\tif detail, ok := helps.ParseClaudeStreamUsage(line); ok {
@@ -2216,11 +3359,48 @@ replace_once(
 \t\t\t}
 ''',
     '''\t\tlines := bytes.Split(data, []byte("\\n"))
-\t\tvar usageBuffer helps.StreamUsageBuffer
 \t\tfor i, line := range lines {
-\t\t\tusageBuffer.ObserveClaude(helps.ParseClaudeStreamUsage(line))
+\t\t\tresponseUsageBuffer.ObserveClaude(helps.ParseClaudeStreamUsage(line))
 ''',
-    'var usageBuffer helps.StreamUsageBuffer',
+    'responseUsageBuffer.ObserveClaude(',
+)
+replace_once(
+    claude_execute,
+    '''\t\t\trestoredLine, errRestore := restoreClaudeOAuthToolNamesFromStreamLine(line, oauthToolNamesReverseMap)
+\t\t\tif errRestore != nil {
+\t\t\t\terrRestore = fmt.Errorf("restore Claude OAuth tool name from streaming response: %w", errRestore)
+\t\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errRestore)
+\t\t\t\treturn resp, wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errRestore)
+\t\t\t}
+''',
+    '''\t\t\trestoredLine, errRestore := restoreClaudeOAuthToolNamesFromStreamLine(line, oauthToolNamesReverseMap)
+\t\t\tif errRestore != nil {
+\t\t\t\terrRestore = fmt.Errorf("restore Claude OAuth tool name from streaming response: %w", errRestore)
+\t\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errRestore)
+\t\t\t\terr = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errRestore)
+\t\t\t\tif !responseUsageBuffer.PublishFailure(ctx, reporter, err) {
+\t\t\t\t\treporter.PublishFailure(ctx, err)
+\t\t\t\t}
+\t\t\t\treturn resp, err
+\t\t\t}
+''',
+)
+replace_once(
+    claude_execute,
+    '''\t\tif errRestore != nil {
+\t\t\terrRestore = fmt.Errorf("restore Claude OAuth tool name from response: %w", errRestore)
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errRestore)
+\t\t\treturn resp, wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errRestore)
+\t\t}
+''',
+    '''\t\tif errRestore != nil {
+\t\t\terrRestore = fmt.Errorf("restore Claude OAuth tool name from response: %w", errRestore)
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errRestore)
+\t\t\terr = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errRestore)
+\t\t\treporter.PublishFailureWithDetail(ctx, helps.ParseClaudeUsage(data), err)
+\t\t\treturn resp, err
+\t\t}
+''',
 )
 replace_once(
     claude_execute,
@@ -2230,10 +3410,151 @@ replace_once(
 ''',
     '''\t\t\tlines[i] = restoredLine
 \t\t}
-\t\tusageBuffer.Publish(ctx, reporter)
 \t\tdata = bytes.Join(lines, []byte("\\n"))
 ''',
-    'usageBuffer.Publish(ctx, reporter)',
+    'responseUsageBuffer.ObserveClaude(',
+)
+replace_once(
+    claude_execute,
+    '''\t} else {
+\t\tcommitClaudeDiagnostics(diagnosticsState, claudeMessageIDFromResponse(data))
+\t\treporter.Publish(ctx, helps.ParseClaudeUsage(data))
+\t\tvar errRestore error
+''',
+    '''\t} else {
+\t\tcommitClaudeDiagnostics(diagnosticsState, claudeMessageIDFromResponse(data))
+\t\tvar errRestore error
+''',
+)
+replace_once(
+    claude_execute,
+    '''\tvar param any
+\tout := sdktranslator.TranslateNonStream(
+\t\tctx,
+\t\tto,
+\t\tresponseFormat,
+\t\treq.Model,
+\t\topts.OriginalRequest,
+\t\tbodyForTranslation,
+\t\tdata,
+\t\t&param,
+\t)
+\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
+''',
+    '''\tvar param any
+\tout, errTranslate := translateNonStreamResponse(
+\t\tctx,
+\t\tto,
+\t\tresponseFormat,
+\t\treq.Model,
+\t\topts.OriginalRequest,
+\t\tbodyForTranslation,
+\t\tdata,
+\t\t&param,
+\t)
+\tif errTranslate != nil {
+\t\terr = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errTranslate)
+\t\tif upstreamStream {
+\t\t\tif !responseUsageBuffer.PublishFailure(ctx, reporter, err) {
+\t\t\t\treporter.PublishFailure(ctx, err)
+\t\t\t}
+\t\t} else {
+\t\t\treporter.PublishFailureWithDetail(ctx, helps.ParseClaudeUsage(data), err)
+\t\t}
+\t\treturn resp, err
+\t}
+\tif upstreamStream {
+\t\tresponseUsageBuffer.Publish(ctx, reporter)
+\t} else {
+\t\treporter.Publish(ctx, helps.ParseClaudeUsage(data))
+\t}
+\treporter.EnsurePublished(ctx)
+\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
+''',
+    'translateNonStreamResponse(',
+)
+
+openai_compat_execute = ROOT / 'internal/runtime/executor/openai_compat_executor.go'
+replace_once(
+    openai_compat_execute,
+    '''\thelps.AppendAPIResponseChunk(ctx, e.cfg, body)
+\treporter.Publish(ctx, helps.ParseOpenAIUsage(body))
+\t// Ensure we at least record the request even if upstream doesn't return usage
+\treporter.EnsurePublished(ctx)
+\t// Translate response back to source format when needed
+\tvar param any
+\tout := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, body, &param)
+\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
+''',
+    '''\thelps.AppendAPIResponseChunk(ctx, e.cfg, body)
+\t// Translate response back to source format before publishing success. A
+\t// translator panic is an upstream-attempt failure and must win the one-shot
+\t// terminal usage publication while retaining the parsed token detail.
+\tvar param any
+\tout, errTranslate := translateNonStreamResponse(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, body, &param)
+\tif errTranslate != nil {
+\t\terr = errTranslate
+\t\treporter.PublishFailureWithDetail(ctx, helps.ParseOpenAIUsage(body), err)
+\t\treturn resp, err
+\t}
+\treporter.Publish(ctx, helps.ParseOpenAIUsage(body))
+\t// Ensure we at least record the request even if upstream doesn't return usage.
+\treporter.EnsurePublished(ctx)
+\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
+''',
+    'translator panic is an upstream-attempt failure',
+)
+replace_once(
+    openai_compat_execute,
+    '''\t\tvar streamUsage helps.StreamUsageBuffer
+\t\tvar seenDone bool
+\t\tdefer streamUsage.Publish(ctx, reporter)
+''',
+    '''\t\tvar streamUsage helps.StreamUsageBuffer
+\t\tvar seenDone bool
+\t\tpublishStreamFailure := func(errStream error) {
+\t\t\tif !streamUsage.PublishFailure(ctx, reporter, errStream) {
+\t\t\t\treporter.PublishFailure(ctx, errStream)
+\t\t\t}
+\t\t}
+''',
+    'publishStreamFailure := func(errStream error)',
+)
+openai_stream_text = read(openai_compat_execute)
+openai_stream_text = openai_stream_text.replace(
+    '''\t\t\t\t\treporter.PublishFailure(ctx, streamErr)
+''',
+    '''\t\t\t\t\tpublishStreamFailure(streamErr)
+''',
+    1,
+)
+openai_stream_text = openai_stream_text.replace(
+    '''\t\t\t\tcase <-ctx.Done():
+\t\t\t\t\treturn
+''',
+    '''\t\t\t\tcase <-ctx.Done():
+\t\t\t\t\tpublishStreamFailure(ctx.Err())
+\t\t\t\t\treturn
+''',
+    2,
+)
+openai_stream_text = openai_stream_text.replace(
+    '''\t\t\treporter.PublishFailure(ctx, errScan)
+''',
+    '''\t\t\tpublishStreamFailure(errScan)
+''',
+    1,
+)
+write(openai_compat_execute, openai_stream_text)
+replace_once(
+    openai_compat_execute,
+    '''\t\tstreamUsage.Publish(ctx, reporter)
+\t\treporter.EnsurePublished(ctx)
+''',
+    '''\t\tstreamUsage.Publish(ctx, reporter)
+\t\treporter.EnsurePublished(ctx)
+''',
+    'publishStreamFailure := func(errStream error)',
 )
 
 claude_stream = ROOT / 'internal/runtime/executor/claude_executor_stream.go'
@@ -3128,6 +4449,12 @@ queue_go_source('internal/pluginhost/plugin_executor_usage_test.go')
 server = ROOT / 'internal/api/server.go'
 server_routes = ROOT / 'internal/api/server_routes.go'
 server_management = ROOT / 'internal/api/server_management.go'
+replace_once(
+    server_management,
+    '\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n',
+    '\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterAPIKeyPolicyRoutes(mgmt)\n',
+    's.mgmt.RegisterAPIKeyPolicyRoutes(mgmt)',
+)
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 auth_files_fields = ROOT / 'internal/api/handlers/management/auth_files_fields.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
@@ -3574,6 +4901,11 @@ if 'internallogging.' in redisqueue_plugin_text:
     write(redisqueue_plugin, redisqueue_plugin_text.replace('internallogging.', 'requestmeta.'))
 elif 'requestmeta.' not in redisqueue_plugin_text:
     raise SystemExit(f'request metadata calls not found in {redisqueue_plugin}')
+add_go_import(
+    redisqueue_plugin,
+    '"' + import_path('internal/requestmeta') + '"\n',
+    '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n',
+)
 replace_once(
     redisqueue_plugin,
     '''\tif p == nil {
@@ -3626,6 +4958,64 @@ replace_once(
 \tclientRequestMetadata := requestmeta.GetClientRequestMetadata(ctx)
 ''',
     'responseSpeed := strings.TrimSpace(record.ResponseSpeed)',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\tclientRequestMetadata := requestmeta.GetClientRequestMetadata(ctx)
+
+\tusageDetail := coreusage.EnsureTokenBreakdownForProvider''',
+    '''\tclientRequestMetadata := requestmeta.GetClientRequestMetadata(ctx)
+\tpolicyDecision, hasPolicyDecision := apikeypolicy.DecisionFromContext(ctx)
+\tpolicyMode := ""
+\tapiKeyPolicyID := ""
+\tprofileID := ""
+\tprofileNameSnapshot := ""
+\trequestedModel := ""
+\teffectiveModel := ""
+\tif hasPolicyDecision {
+\t\tattribution := policyDecision.UsageAttribution()
+\t\tpolicyMode = attribution.PolicyMode
+\t\tapiKeyPolicyID = attribution.APIKeyPolicyID
+\t\tprofileID = attribution.ProfileID
+\t\tprofileNameSnapshot = attribution.ProfileName
+\t\trequestedModel = attribution.RequestedModel
+\t\teffectiveModel = attribution.EffectiveModel
+\t}
+
+\tusageDetail := coreusage.EnsureTokenBreakdownForProvider''',
+    'profileNameSnapshot = attribution.ProfileName',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\t\tAPIKey:              apiKey,
+\t\tRequestID:           requestID,
+''',
+    '''\t\tAPIKey:              apiKey,
+\t\tAPIKeyPolicyID:      apiKeyPolicyID,
+\t\tProfileID:           profileID,
+\t\tProfileNameSnapshot: profileNameSnapshot,
+\t\tPolicyMode:          policyMode,
+\t\tRequestedModel:      requestedModel,
+\t\tEffectiveModel:      effectiveModel,
+\t\tRequestID:           requestID,
+''',
+    'APIKeyPolicyID:      apiKeyPolicyID',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\tAPIKey              string                   `json:"api_key"`
+\tRequestID           string                   `json:"request_id"`
+''',
+    '''\tAPIKey              string                   `json:"api_key"`
+\tAPIKeyPolicyID      string                   `json:"api_key_policy_id,omitempty"`
+\tProfileID           string                   `json:"profile_id,omitempty"`
+\tProfileNameSnapshot string                   `json:"profile_name_snapshot,omitempty"`
+\tPolicyMode          string                   `json:"policy_mode,omitempty"`
+\tRequestedModel      string                   `json:"requested_model,omitempty"`
+\tEffectiveModel      string                   `json:"effective_model,omitempty"`
+\tRequestID           string                   `json:"request_id"`
+''',
+    '`json:"api_key_policy_id,omitempty"`',
 )
 replace_once(
     redisqueue_plugin,
@@ -4085,10 +5475,14 @@ replace_once(
     handler,
     '''\t\tallowRemoteOverride: envSecret != "",
 \t\tenvSecret:           envSecret,
+\t\tconfigGeneration:    1,
+\t\tapiKeyRefs:          make(map[string]apiKeyReference),
 \t}
 ''',
     '''\t\tallowRemoteOverride: envSecret != "",
 \t\tenvSecret:           envSecret,
+\t\tconfigGeneration:    1,
+\t\tapiKeyRefs:          make(map[string]apiKeyReference),
 \t\tlifecycleContext:    lifecycleContext,
 \t\tlifecycleCancel:     lifecycleCancel,
 \t}
@@ -4199,7 +5593,7 @@ insert_before_nth(
     run,
     '''\tservice, err := builder.Build()
 ''',
-    '''\tusageService, err := embeddedusage.Start(ctx)
+    '''\tusageService, err := embeddedusage.StartForPath(ctx, configPath)
 \tif err != nil {
 \t\tlog.Errorf("failed to start embedded usage service: %v", err)
 \t\tclose(doneCh)
@@ -4210,13 +5604,13 @@ insert_before_nth(
 
 ''',
     2,
-    'embeddedusage.Start(ctx)',
+    'embeddedusage.StartForPath(ctx, configPath)',
 )
 insert_before_nth(
     run,
     '''\tservice, err := builder.Build()
 ''',
-    '''\tusageService, err := embeddedusage.Start(runCtx)
+    '''\tusageService, err := embeddedusage.StartForPath(runCtx, configPath)
 \tif err != nil {
 \t\tlog.Errorf("failed to start embedded usage service: %v", err)
 \t\treturn
@@ -4226,7 +5620,7 @@ insert_before_nth(
 
 ''',
     1,
-    'embeddedusage.Start(runCtx)',
+    'embeddedusage.StartForPath(runCtx, configPath)',
 )
 
 queue_go_source('sdk/cliproxy/auth/inspection_refresh.go')
@@ -4853,13 +6247,17 @@ replace_once(
 format_go_writes([
     'cmd/server/main.go',
     'internal/api/server.go',
+    'internal/api/api_key_policy_middleware_test.go',
+    'internal/api/server_middleware.go',
     'internal/api/server_options.go',
+    'internal/api/server_routes.go',
     'internal/api/server_test.go',
     *[
         f'internal/api/handlers/management/{name}'
         for name in ACCOUNT_INSPECTION_SOURCE_FILES
     ],
     'internal/api/handlers/management/account_inspection_host.go',
+    'internal/api/handlers/management/api_key_policy.go',
     'internal/api/handlers/management/auth_file_connection.go',
     'internal/api/handlers/management/auth_file_connection_test.go',
     'internal/api/handlers/management/auth_files_fields.go',
@@ -4869,6 +6267,8 @@ format_go_writes([
     'internal/api/handlers/management/management_panel_test.go',
     'internal/managementasset/updater.go',
     'internal/managementasset/gitstore_token_test.go',
+    'internal/client/codex/live/client_secret.go',
+    'internal/client/codex/live/client_secret_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
     'internal/api/handlers/management/pro_auth_mutation.go',
@@ -4892,6 +6292,7 @@ format_go_writes([
     'internal/pluginhost/rpc_client.go',
     'internal/pluginhost/rpc_schema.go',
     'internal/pluginhost/snapshot.go',
+    'internal/pluginhost/executor_route.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
     'internal/pluginstore/auth.go',
@@ -4920,6 +6321,10 @@ format_go_writes([
     'internal/pro/app/migration_test.go',
     'internal/pro/app/app.go',
     'internal/pro/app/app_test.go',
+	'internal/pro/apikeypolicy/service.go',
+	'internal/pro/apikeypolicy/service_test.go',
+	'internal/pro/apikeypolicy/store.go',
+	'internal/pro/apikeypolicy/types.go',
     'internal/pro/backup/coordinator.go',
     'internal/pro/backup/coordinator_test.go',
     'internal/pro/host/oauth_policy.go',
@@ -4977,6 +6382,7 @@ format_go_writes([
     'internal/pro/observability/module.go',
     'internal/pro/observability/module_test.go',
     'internal/pro/observability/config.go',
+	'internal/pro/observability/config_test.go',
     'internal/pro/observability/global.go',
     'internal/pro/observability/pricing.go',
     'internal/pro/observability/pricing_sync.go',
@@ -5009,6 +6415,14 @@ format_go_writes([
     'sdk/auth/filestore.go',
     'sdk/auth/filestore_test.go',
     'sdk/api/handlers/handlers.go',
+    'sdk/api/handlers/api_key_policy_test.go',
+    'sdk/api/handlers/handlers_context.go',
+    'sdk/api/handlers/handlers_execution.go',
+    'sdk/api/handlers/handlers_routing.go',
+    'sdk/api/handlers/handlers_stream.go',
+    'sdk/api/handlers/openai/openai_handlers.go',
+    'sdk/api/handlers/claude/code_handlers.go',
+    'sdk/api/handlers/gemini/gemini_handlers.go',
     'sdk/api/handlers/handlers_speed_test.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',

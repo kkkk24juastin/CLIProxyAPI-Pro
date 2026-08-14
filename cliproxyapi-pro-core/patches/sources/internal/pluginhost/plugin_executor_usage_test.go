@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/apikeypolicy"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
@@ -22,6 +24,23 @@ func (r *pluginExecutorUsageRecorder) HandleUsage(_ context.Context, record core
 	if record.Provider == "plugin-provider" {
 		r.records <- record
 	}
+}
+
+type pluginExecutorPolicyUsage struct {
+	decision apikeypolicy.RequestPolicyDecision
+	record   coreusage.Record
+}
+
+type pluginExecutorPolicyUsageRecorder struct {
+	records chan pluginExecutorPolicyUsage
+}
+
+func (r *pluginExecutorPolicyUsageRecorder) HandleUsage(ctx context.Context, record coreusage.Record) {
+	if record.Provider != "plugin-provider" {
+		return
+	}
+	decision, _ := apikeypolicy.DecisionFromContext(ctx)
+	r.records <- pluginExecutorPolicyUsage{decision: decision, record: record}
 }
 
 type pluginExecutorStatusError struct {
@@ -76,7 +95,7 @@ func TestPluginExecutorPublishesNonStreamUsage(t *testing.T) {
 }
 
 func TestPluginExecutorTranslationPanicPublishesFailure(t *testing.T) {
-	recorder := &pluginExecutorUsageRecorder{records: make(chan coreusage.Record, 2)}
+	recorder := &pluginExecutorPolicyUsageRecorder{records: make(chan pluginExecutorPolicyUsage, 2)}
 	coreusage.RegisterNamedPlugin("plugin-executor-translation-panic-test", recorder)
 	defer coreusage.UnregisterNamedPlugin("plugin-executor-translation-panic-test", recorder)
 	customOutput := sdktranslator.Format("plugin-panic-output")
@@ -98,15 +117,24 @@ func TestPluginExecutorTranslationPanicPublishesFailure(t *testing.T) {
 		[]sdktranslator.Format{sdktranslator.FormatOpenAI},
 		[]sdktranslator.Format{customOutput},
 	)
-	_, err := adapter.Execute(context.Background(), &coreauth.Auth{ID: "panic-auth"}, coreexecutor.Request{
+	decision := apikeypolicy.RequestPolicyDecision{Mode: apikeypolicy.ModeProfile, Snapshot: &apikeypolicy.RequestPolicySnapshot{
+		PolicyID: "translation-policy", ProfileID: "translation-profile", ProfileName: "Translation",
+		RequestedModel: "translation-alias", EffectiveModel: "panic-model",
+	}}
+	ctx := apikeypolicy.WithDecision(context.Background(), decision)
+	_, err := adapter.Execute(ctx, &coreauth.Auth{ID: "panic-auth"}, coreexecutor.Request{
 		Model: "panic-model", Format: sdktranslator.FormatOpenAI, Payload: []byte(`{"model":"panic-model"}`),
 	}, coreexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, ResponseFormat: sdktranslator.FormatOpenAI})
 	if err == nil {
 		t.Fatal("Execute() error = nil, want recovered translation panic")
 	}
-	record := waitForPluginExecutorUsage(t, recorder.records)
-	if !record.Failed || record.Fail.Body == "" {
-		t.Fatalf("translation panic failure = %#v", record.Fail)
+	captured := waitForPluginExecutorPolicyUsage(t, recorder.records)
+	if !captured.record.Failed || captured.record.Fail.Body == "" {
+		t.Fatalf("translation panic failure = %#v", captured.record.Fail)
+	}
+	attribution := captured.decision.UsageAttribution()
+	if attribution.APIKeyPolicyID != "translation-policy" || attribution.ProfileID != "translation-profile" || attribution.RequestedModel != "translation-alias" || attribution.EffectiveModel != "panic-model" {
+		t.Fatalf("translation panic attribution=%#v", attribution)
 	}
 }
 
@@ -192,6 +220,114 @@ func TestPluginExecutorEmptyStreamPublishesFailure(t *testing.T) {
 	record := waitForPluginExecutorUsage(t, recorder.records)
 	if !record.Failed || record.Fail.StatusCode != http.StatusBadGateway {
 		t.Fatalf("empty stream failure = %#v", record.Fail)
+	}
+}
+
+func TestPluginExecutorUsageKeepsFrozenAPIKeyPolicyAttribution(t *testing.T) {
+	decision := apikeypolicy.RequestPolicyDecision{Mode: apikeypolicy.ModeProfile, Snapshot: &apikeypolicy.RequestPolicySnapshot{
+		PolicyID: "plugin-policy", ProfileID: "plugin-profile", ProfileName: "Plugin restricted",
+		RequestedModel: "plugin-alias", EffectiveModel: "plugin-model",
+	}}
+	assertAttribution := func(t *testing.T, captured pluginExecutorPolicyUsage, wantFailed bool) {
+		t.Helper()
+		attribution := captured.decision.UsageAttribution()
+		if attribution.PolicyMode != apikeypolicy.ModeProfile || attribution.APIKeyPolicyID != "plugin-policy" || attribution.ProfileID != "plugin-profile" || attribution.ProfileName != "Plugin restricted" || attribution.RequestedModel != "plugin-alias" || attribution.EffectiveModel != "plugin-model" {
+			t.Fatalf("attribution=%#v", attribution)
+		}
+		if captured.record.Failed != wantFailed {
+			t.Fatalf("failed=%v, want %v; record=%#v", captured.record.Failed, wantFailed, captured.record)
+		}
+	}
+
+	for _, test := range []struct {
+		name       string
+		stream     bool
+		fail       bool
+		terminal   error
+		cancel     bool
+		wantFailed bool
+	}{
+		{name: "execute success"},
+		{name: "execute failure", fail: true, wantFailed: true},
+		{name: "stream success", stream: true},
+		{name: "stream terminal failure", stream: true, terminal: pluginExecutorStatusError{status: http.StatusBadGateway}, wantFailed: true},
+		{name: "stream cancellation", stream: true, cancel: true, wantFailed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := &pluginExecutorPolicyUsageRecorder{records: make(chan pluginExecutorPolicyUsage, 2)}
+			pluginName := "plugin-executor-policy-usage-" + strings.ReplaceAll(test.name, " ", "-")
+			coreusage.RegisterNamedPlugin(pluginName, recorder)
+			defer coreusage.UnregisterNamedPlugin(pluginName, recorder)
+			host := newHostWithRecords(normalizeTestCapabilityRecord(capabilityRecord{id: "policy-usage-executor"}))
+			executeErr := pluginExecutorStatusError{status: http.StatusBadGateway}
+			executor := &fakeExecutor{identifier: "plugin-provider"}
+			executor.execute = func(context.Context, pluginapi.ExecutorRequest) (pluginapi.ExecutorResponse, error) {
+				if test.fail {
+					return pluginapi.ExecutorResponse{}, executeErr
+				}
+				return pluginapi.ExecutorResponse{Payload: []byte(`{"ok":true}`)}, nil
+			}
+			executor.executeStream = func(context.Context, pluginapi.ExecutorRequest) (pluginapi.ExecutorStreamResponse, error) {
+				chunks := make(chan pluginapi.ExecutorStreamChunk, 2)
+				if test.cancel {
+					return pluginapi.ExecutorStreamResponse{Chunks: chunks}, nil
+				}
+				chunks <- pluginapi.ExecutorStreamChunk{Payload: []byte("data")}
+				if test.terminal != nil {
+					chunks <- pluginapi.ExecutorStreamChunk{Err: test.terminal}
+				}
+				close(chunks)
+				return pluginapi.ExecutorStreamResponse{Chunks: chunks}, nil
+			}
+			adapter := newCurrentExecutorAdapterForTest(host, "policy-usage-executor", executor, []sdktranslator.Format{sdktranslator.FormatOpenAI}, []sdktranslator.Format{sdktranslator.FormatOpenAI})
+			ctx := apikeypolicy.WithDecision(context.Background(), decision)
+			var cancel context.CancelFunc
+			if test.cancel {
+				ctx, cancel = context.WithCancel(ctx)
+				defer cancel()
+			}
+			if test.stream {
+				result, err := adapter.ExecuteStream(ctx, &coreauth.Auth{ID: "plugin-policy-auth"}, coreexecutor.Request{Model: "plugin-model"}, coreexecutor.Options{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if test.cancel {
+					cancel()
+				}
+				for range result.Chunks {
+				}
+			} else {
+				_, err := adapter.Execute(ctx, &coreauth.Auth{ID: "plugin-policy-auth"}, coreexecutor.Request{Model: "plugin-model"}, coreexecutor.Options{})
+				if test.fail && !errors.Is(err, executeErr) {
+					t.Fatalf("Execute() error=%v", err)
+				}
+				if !test.fail && err != nil {
+					t.Fatal(err)
+				}
+			}
+			select {
+			case captured := <-recorder.records:
+				assertAttribution(t, captured, test.wantFailed)
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for policy-attributed plugin usage")
+			}
+			select {
+			case duplicate := <-recorder.records:
+				t.Fatalf("duplicate usage=%#v", duplicate.record)
+			case <-time.After(25 * time.Millisecond):
+			}
+		})
+	}
+}
+
+func waitForPluginExecutorPolicyUsage(t *testing.T, records <-chan pluginExecutorPolicyUsage) pluginExecutorPolicyUsage {
+	t.Helper()
+	select {
+	case record := <-records:
+		return record
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for plugin executor policy usage")
+		return pluginExecutorPolicyUsage{}
 	}
 }
 

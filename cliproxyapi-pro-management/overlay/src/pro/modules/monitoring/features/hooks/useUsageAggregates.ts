@@ -11,6 +11,9 @@ export type UsageAggregateBucket = {
   endpoint?: string;
   authIndex?: string;
   apiKeyHash?: string;
+  apiKeyPolicyId?: string;
+  profileId?: string;
+  policyMode?: string;
   lastSeenAtMs?: number;
   totalRequests: number;
   successCount: number;
@@ -45,12 +48,18 @@ export type UsageAggregates = {
   snapshotAtMs: number;
   scopeTimeRange: MonitoringTimeRange;
   scopeApiKeyHash: string;
+  scopeAPIKeyPolicyId: string;
+  scopeProfileId: string;
+  scopePolicyMode: string;
 };
 
 type UseUsageAggregatesParams = {
   latestId: number;
   timeRange: MonitoringTimeRange;
   apiKeyHash: string;
+  apiKeyPolicyId?: string;
+  profileId?: string;
+  policyMode?: string;
   enabled?: boolean;
 };
 
@@ -71,6 +80,9 @@ export function useUsageAggregates({
   latestId,
   timeRange,
   apiKeyHash,
+  apiKeyPolicyId = '',
+  profileId = '',
+  policyMode = '',
   enabled = true,
 }: UseUsageAggregatesParams): UseUsageAggregatesReturn {
   const [data, setData] = useState<UsageAggregates | null>(null);
@@ -85,11 +97,9 @@ export function useUsageAggregates({
   const refreshPendingRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasDataRef = useRef(false);
-  const activeConnectionKeyRef = useRef('');
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
-  const connectionKey = `${apiBase}\n${managementKey}`;
   const effectiveEnabled = enabled
     && connectionStatus === 'connected'
     && Boolean(apiBase)
@@ -133,12 +143,19 @@ export function useUsageAggregates({
     if (apiKeyHash !== 'all') {
       trendParams.api_key_hash = apiKeyHash;
     }
+    const policyParams = {
+      api_key_policy_id: apiKeyPolicyId || undefined,
+      profile_id: profileId || undefined,
+      policy_mode: policyMode || undefined,
+    };
+    Object.assign(trendParams, policyParams);
     const rankingParams = {
       from_ms: Math.max(rangeStartMs, 0),
       to_ms: nowMs,
       interval: 'all',
       limit: 10000,
       timezone_offset_minutes: timezoneOffsetMinutes,
+      ...policyParams,
     };
 
     try {
@@ -160,6 +177,7 @@ export function useUsageAggregates({
             group_by: 'model',
             limit: 10000,
             timezone_offset_minutes: timezoneOffsetMinutes,
+            ...policyParams,
           },
         }),
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
@@ -170,6 +188,7 @@ export function useUsageAggregates({
             group_by: 'model',
             limit: 10000,
             timezone_offset_minutes: timezoneOffsetMinutes,
+            ...policyParams,
           },
         }),
       ]);
@@ -200,6 +219,9 @@ export function useUsageAggregates({
         snapshotAtMs,
         scopeTimeRange: timeRange,
         scopeApiKeyHash: apiKeyHash,
+        scopeAPIKeyPolicyId: apiKeyPolicyId,
+        scopeProfileId: profileId,
+        scopePolicyMode: policyMode,
       });
       hasDataRef.current = true;
       lastFetchedAtRef.current = Date.now();
@@ -218,7 +240,7 @@ export function useUsageAggregates({
         }
       }
     }
-  }, [apiKeyHash, effectiveEnabled, timeRange]);
+  }, [apiKeyHash, apiKeyPolicyId, effectiveEnabled, policyMode, profileId, timeRange]);
 
   const loadRef = useRef(load);
 
@@ -227,16 +249,12 @@ export function useUsageAggregates({
   }, [load]);
 
   useEffect(() => {
-    const connectionChanged = activeConnectionKeyRef.current !== connectionKey;
-    activeConnectionKeyRef.current = connectionKey;
     queryGenerationRef.current += 1;
-    if (connectionChanged || !effectiveEnabled) {
-      requestIdRef.current += 1;
-      refreshInFlightRef.current = false;
-      refreshPendingRef.current = false;
-      hasDataRef.current = false;
-      setData(null);
-    }
+    requestIdRef.current += 1;
+    refreshInFlightRef.current = false;
+    refreshPendingRef.current = false;
+    hasDataRef.current = false;
+    setData(null);
     lastFetchedAtRef.current = 0;
     refreshPendingRef.current = refreshInFlightRef.current;
     setError('');
@@ -246,7 +264,7 @@ export function useUsageAggregates({
       refreshTimerRef.current = null;
     }
     setRefreshNonce((value) => value + 1);
-  }, [apiKeyHash, connectionKey, effectiveEnabled, timeRange]);
+  }, [apiBase, apiKeyHash, apiKeyPolicyId, effectiveEnabled, managementKey, policyMode, profileId, timeRange]);
 
   useEffect(() => {
     if (!effectiveEnabled) {
@@ -262,7 +280,7 @@ export function useUsageAggregates({
       refreshTimerRef.current = null;
       void loadRef.current();
     }, lastFetchedAtRef.current > 0 ? AGGREGATE_REFRESH_DEBOUNCE_MS : 0);
-  }, [effectiveEnabled, latestId, refreshNonce, timeRange]);
+  }, [apiKeyPolicyId, effectiveEnabled, latestId, policyMode, profileId, refreshNonce, timeRange]);
 
   useEffect(() => () => {
     if (refreshTimerRef.current) {

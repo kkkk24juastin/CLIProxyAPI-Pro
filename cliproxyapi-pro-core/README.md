@@ -48,6 +48,9 @@ internal/embeddedusage
 - `GET /v0/management/usage/stream` — usage 实时更新 SSE 流。
 - `GET /v0/management/usage/export` — JSONL/NDJSON 导出。
 - `POST /v0/management/usage/import` — JSONL/NDJSON 导入。
+- `GET /v0/management/usage/webdav/backups` — 列出已配置 WebDAV 目录中的 `usage-export-*.jsonl` 备份。
+- `POST /v0/management/usage/webdav/preview` — 下载选定备份，并复用本地文件的完整性校验与导入预检。
+- `POST /v0/management/usage/webdav/restore` — 通过同一 JSONL 解析器和原子导入管线恢复选定备份。
 - `POST /v0/management/usage/reset` — 在独占运行态屏障内清空请求事件、派生统计和账号调度/成功/失败计数；保留路由轮询游标、监控设置、模型价格、配额缓存和备份。
 - `GET /v0/management/usage/status` — 服务状态和记录数量。
 - `GET /v0/management/usage/quota-cache` — 读取配额缓存或统计信息。
@@ -88,6 +91,8 @@ detail 还会保留 upstream `ClientRequestMetadata` 提供的 `client_ip`、`x_
 - `account_inspection_snapshot` — 最近一次已结束的账号巡检结果，包含运行设置、汇总、健康统计、完整结果和原始错误详情，不包含巡检日志。
 
 `/usage/import` 接受同样的 JSONL 格式。导入时会先完整读取和校验请求，再在一个 SQLite 事务中导入 usage events、模型价格、quota cache entries、运行时路由状态、监控设置和 Pro 设置；Pro 设置的 live 配置会在提交前应用，应用失败会回滚数据库，提交失败则恢复导入前配置。提交成功后再按固定顺序恢复其余运行态、账号巡检调度和最近一次巡检结果快照。整个导入由独占写屏障保护；同步管理写会等待导入结束，高频路由/账号运行态快照会在导入窗口内丢弃，避免旧快照覆盖恢复结果。恢复的结果快照为只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。无 manifest 的旧版 event-only 或混合 JSONL 默认拒绝，因为它们无法获得文件级完整性校验；可信旧备份可显式使用 `?allow_legacy=1` 或 `X-CLIProxy-Allow-Legacy-Backup: true` 请求头导入，管理端会在启用兼容模式前要求确认。
+
+API Key 策略备份记录包含稳定 SHA-256 Key 指纹、Profile 规则、active Profile 状态和策略审计历史，但绝不包含或恢复 `config.yaml api-keys`。指纹属于敏感标识；JSONL 与 WebDAV 备份必须沿用敏感配置导出的访问控制、传输加密和存储保留要求。WebDAV 恢复只接受列表中的 `usage-export-*.jsonl` 文件名，并复用本地导入的预检和原子恢复管线。
 
 导入响应示例字段：
 

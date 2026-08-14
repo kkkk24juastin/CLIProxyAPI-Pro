@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/pro/observability/internalusage"
+	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
 	prostate "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/state"
 	prostorage "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/storage"
 )
@@ -50,6 +51,9 @@ type UsageEventQueryOptions struct {
 	AuthIndex         string
 	SearchAuthIndexes string
 	APIKeyHash        string
+	APIKeyPolicyID    string
+	ProfileID         string
+	PolicyMode        string
 	Failed            *bool
 	Search            string
 	Limit             int
@@ -71,6 +75,9 @@ type UsageAggregateBucket struct {
 	Endpoint         string  `json:"endpoint,omitempty"`
 	AuthIndex        string  `json:"authIndex,omitempty"`
 	APIKeyHash       string  `json:"apiKeyHash,omitempty"`
+	APIKeyPolicyID   string  `json:"apiKeyPolicyId,omitempty"`
+	ProfileID        string  `json:"profileId,omitempty"`
+	PolicyMode       string  `json:"policyMode,omitempty"`
 	LastSeenAtMS     int64   `json:"lastSeenAtMs"`
 	TotalRequests    int64   `json:"totalRequests"`
 	SuccessCount     int64   `json:"successCount"`
@@ -95,6 +102,9 @@ type UsageAggregateOptions struct {
 	GroupBy               []string
 	Limit                 int
 	APIKeyHash            string
+	APIKeyPolicyID        string
+	ProfileID             string
+	PolicyMode            string
 	TimezoneOffsetMinutes int
 }
 
@@ -419,6 +429,7 @@ func (s *Store) RunImportTransaction(ctx context.Context, run func(context.Conte
 	defer func() { _ = tx.Rollback() }()
 	transaction := &storeTransactionContext{tx: tx}
 	transactionCtx := context.WithValue(ctx, storeTransactionContextKey{}, transaction)
+	transactionCtx = probackup.WithTransaction(transactionCtx, tx)
 	if err := run(transactionCtx); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -426,6 +437,7 @@ func (s *Store) RunImportTransaction(ctx context.Context, run func(context.Conte
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	probackup.RunAfterCommit(transactionCtx)
 	for _, callback := range transaction.afterCommit {
 		callback()
 	}
@@ -498,6 +510,12 @@ func (s *Store) init() error {
 			source text,
 			source_hash text,
 			api_key_hash text,
+			api_key_policy_id text,
+			profile_id text,
+			profile_name_snapshot text,
+			policy_mode text,
+			requested_model text,
+			effective_model text,
 			client_ip text,
 			x_forwarded_for text,
 			user_agent text,
@@ -546,6 +564,9 @@ func (s *Store) init() error {
 		`create index if not exists idx_usage_events_auth_index_timestamp on usage_events(auth_index, timestamp_ms, id)`,
 		`create index if not exists idx_usage_events_api_key_timestamp on usage_events(api_key_hash, timestamp_ms)`,
 		`create index if not exists idx_usage_events_api_key_recent on usage_events(api_key_hash, timestamp_ms desc, id desc)`,
+		`create index if not exists idx_usage_events_policy_recent on usage_events(api_key_policy_id, timestamp_ms desc, id desc)`,
+		`create index if not exists idx_usage_events_profile_recent on usage_events(profile_id, timestamp_ms desc, id desc)`,
+		`create index if not exists idx_usage_events_policy_mode_recent on usage_events(policy_mode, timestamp_ms desc, id desc)`,
 		`create table if not exists usage_summary (
 			id integer primary key check (id = 1),
 			latest_event_id integer not null default 0,
@@ -677,6 +698,12 @@ func (s *Store) init() error {
 		`alter table usage_events add column client_ip text`,
 		`alter table usage_events add column x_forwarded_for text`,
 		`alter table usage_events add column user_agent text`,
+		`alter table usage_events add column api_key_policy_id text`,
+		`alter table usage_events add column profile_id text`,
+		`alter table usage_events add column profile_name_snapshot text`,
+		`alter table usage_events add column policy_mode text`,
+		`alter table usage_events add column requested_model text`,
+		`alter table usage_events add column effective_model text`,
 		`alter table usage_summary add column generation integer not null default 1`,
 		`alter table usage_summary add column reset_at_ms integer not null default 0`,
 		`alter table quota_cache add column auth_index text not null default ''`,
@@ -866,12 +893,12 @@ func (s *Store) insertEvents(ctx context.Context, events []internalusage.Event) 
 
 	stmt, err := tx.PrepareContext(ctx, `insert or ignore into usage_events (
 		request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
-		auth_type, auth_index, source, source_hash, api_key_hash, client_ip, x_forwarded_for, user_agent,
+		auth_type, auth_index, source, source_hash, api_key_hash, api_key_policy_id, profile_id, profile_name_snapshot, policy_mode, requested_model, effective_model, client_ip, x_forwarded_for, user_agent,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
 		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier, effective_service_tier, speed, effective_speed,
 		estimated_cost, price_rule_id, cost_breakdown_json, failed, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return InsertResult{}, err
 	}
@@ -903,7 +930,7 @@ func (s *Store) insertEvents(ctx context.Context, events []internalusage.Event) 
 		res, err := stmt.ExecContext(ctx,
 			nullString(event.RequestID), event.EventHash, event.TimestampMS, event.Timestamp,
 			nullString(event.Provider), nullString(event.ExecutorType), event.Model, nullString(event.Alias), nullString(event.Endpoint), nullString(event.Method), nullString(event.Path),
-			nullString(event.AuthType), nullString(event.AuthIndex), nullString(event.Source), nullString(event.SourceHash), nullString(event.APIKeyHash), nullString(event.ClientIP), nullString(event.XForwardedFor), nullString(event.UserAgent),
+			nullString(event.AuthType), nullString(event.AuthIndex), nullString(event.Source), nullString(event.SourceHash), nullString(event.APIKeyHash), nullString(event.APIKeyPolicyID), nullString(event.ProfileID), nullString(event.ProfileNameSnapshot), nullString(event.PolicyMode), nullString(event.RequestedModel), nullString(event.EffectiveModel), nullString(event.ClientIP), nullString(event.XForwardedFor), nullString(event.UserAgent),
 			event.InputTokens, event.OutputTokens, event.ReasoningTokens, event.CachedTokens, event.CacheTokens, event.CacheReadTokens, event.CacheWriteTokens, event.TotalTokens,
 			event.AccountingVersion, nullString(event.AccountingQuality), event.UncachedInputTokens, event.UnclassifiedTokens, nullString(breakdownJSON),
 			nullInt64(event.LatencyMS), nullInt64(event.TTFTMS), nullInt(event.StatusCode), nullString(event.ErrorCode), nullString(event.ErrorMessage), nullString(event.UpstreamRequestID), nullString(event.RetryAfter), nullInt64(event.AttemptIndex), boolToInt(event.Stream), nullString(event.ReasoningEffort), nullString(event.ServiceTier), nullString(event.EffectiveServiceTier), nullString(event.Speed), nullString(event.EffectiveSpeed),
@@ -1090,7 +1117,7 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 	events := make([]internalusage.Event, 0)
 	for rows.Next() {
 		var event internalusage.Event
-		var requestID, provider, executorType, alias, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, clientIP, xForwardedFor, userAgent, rawJSON sql.NullString
+		var requestID, provider, executorType, alias, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, apiKeyPolicyID, profileID, profileNameSnapshot, policyMode, requestedModel, effectiveModel, clientIP, xForwardedFor, userAgent, rawJSON sql.NullString
 		var latency, ttft, attemptIndex sql.NullInt64
 		var statusCode sql.NullInt64
 		var errorCode, errorMessage, upstreamRequestID, retryAfter, reasoningEffort, serviceTier, effectiveServiceTier, speed, effectiveSpeed, costBreakdown, accountingQuality, tokenBreakdownJSON sql.NullString
@@ -1099,7 +1126,7 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		var stream, failed int
 		if err := rows.Scan(
 			&event.ID, &requestID, &event.EventHash, &event.TimestampMS, &event.Timestamp, &provider, &executorType, &event.Model,
-			&alias, &endpoint, &method, &path, &authType, &authIndex, &source, &sourceHash, &apiKeyHash, &clientIP, &xForwardedFor, &userAgent,
+			&alias, &endpoint, &method, &path, &authType, &authIndex, &source, &sourceHash, &apiKeyHash, &apiKeyPolicyID, &profileID, &profileNameSnapshot, &policyMode, &requestedModel, &effectiveModel, &clientIP, &xForwardedFor, &userAgent,
 			&event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheTokens, &event.CacheReadTokens, &event.CacheWriteTokens, &event.TotalTokens,
 			&event.AccountingVersion, &accountingQuality, &event.UncachedInputTokens, &event.UnclassifiedTokens, &tokenBreakdownJSON,
 			&latency, &ttft, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &attemptIndex, &stream, &reasoningEffort, &serviceTier, &effectiveServiceTier, &speed, &effectiveSpeed,
@@ -1119,6 +1146,12 @@ func (s *Store) scanEvents(rows *sql.Rows) ([]internalusage.Event, error) {
 		event.Source = source.String
 		event.SourceHash = sourceHash.String
 		event.APIKeyHash = apiKeyHash.String
+		event.APIKeyPolicyID = apiKeyPolicyID.String
+		event.ProfileID = profileID.String
+		event.ProfileNameSnapshot = profileNameSnapshot.String
+		event.PolicyMode = policyMode.String
+		event.RequestedModel = requestedModel.String
+		event.EffectiveModel = effectiveModel.String
 		event.ClientIP = clientIP.String
 		event.XForwardedFor = xForwardedFor.String
 		event.UserAgent = userAgent.String
@@ -1175,7 +1208,7 @@ func (s *Store) recentEventsFrom(ctx context.Context, queryer sqlQueryer, limit 
 	}
 	rows, err := queryer.QueryContext(ctx, `select
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
-		auth_type, auth_index, source, source_hash, api_key_hash, client_ip, x_forwarded_for, user_agent,
+		auth_type, auth_index, source, source_hash, api_key_hash, api_key_policy_id, profile_id, profile_name_snapshot, policy_mode, requested_model, effective_model, client_ip, x_forwarded_for, user_agent,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
 		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier, effective_service_tier, speed, effective_speed,
@@ -1196,7 +1229,7 @@ func (s *Store) EventsAfter(ctx context.Context, afterID int64, limit int) ([]in
 	}
 	rows, err := s.executor(ctx).QueryContext(ctx, `select
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
-		auth_type, auth_index, source, source_hash, api_key_hash, client_ip, x_forwarded_for, user_agent,
+		auth_type, auth_index, source, source_hash, api_key_hash, api_key_policy_id, profile_id, profile_name_snapshot, policy_mode, requested_model, effective_model, client_ip, x_forwarded_for, user_agent,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
 		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier, effective_service_tier, speed, effective_speed,
@@ -1249,6 +1282,22 @@ func appendUsageEventQueryFilters(options UsageEventQueryOptions, includeCursor 
 		wheres = append(wheres, `api_key_hash = ?`)
 		args = append(args, value)
 	}
+	if value := strings.TrimSpace(options.APIKeyPolicyID); value != "" {
+		wheres = append(wheres, `api_key_policy_id = ?`)
+		args = append(args, value)
+	}
+	if value := strings.TrimSpace(options.ProfileID); value != "" {
+		wheres = append(wheres, `profile_id = ?`)
+		args = append(args, value)
+	}
+	if value := strings.TrimSpace(options.PolicyMode); value != "" {
+		if strings.EqualFold(value, "unknown") {
+			wheres = append(wheres, `coalesce(policy_mode, '') = ''`)
+		} else {
+			wheres = append(wheres, `policy_mode = ?`)
+			args = append(args, value)
+		}
+	}
 	if options.Failed != nil {
 		failed := 0
 		if *options.Failed {
@@ -1271,7 +1320,10 @@ func appendUsageEventQueryFilters(options UsageEventQueryOptions, includeCursor 
 			coalesce(method, '') || char(10) || coalesce(path, '') || char(10) ||
 			coalesce(auth_type, '') || char(10) || coalesce(auth_index, '') || char(10) ||
 			coalesce(source, '') || char(10) || coalesce(source_hash, '') || char(10) ||
-			coalesce(api_key_hash, '') || char(10) || coalesce(client_ip, '') || char(10) ||
+			coalesce(api_key_hash, '') || char(10) || coalesce(api_key_policy_id, '') || char(10) ||
+			coalesce(profile_id, '') || char(10) || coalesce(profile_name_snapshot, '') || char(10) ||
+			coalesce(policy_mode, '') || char(10) || coalesce(requested_model, '') || char(10) ||
+			coalesce(effective_model, '') || char(10) || coalesce(client_ip, '') || char(10) ||
 			coalesce(x_forwarded_for, '') || char(10) || coalesce(user_agent, '') || char(10) ||
 			coalesce(error_code, '') || char(10) ||
 			coalesce(error_message, '') || char(10) || coalesce(upstream_request_id, '')
@@ -1335,7 +1387,7 @@ func (s *Store) QueryEvents(ctx context.Context, options UsageEventQueryOptions)
 	queryWheres, queryArgs := appendUsageEventQueryFilters(options, true)
 	query := `select
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
-		auth_type, auth_index, source, source_hash, api_key_hash, client_ip, x_forwarded_for, user_agent,
+		auth_type, auth_index, source, source_hash, api_key_hash, api_key_policy_id, profile_id, profile_name_snapshot, policy_mode, requested_model, effective_model, client_ip, x_forwarded_for, user_agent,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
 		accounting_version, accounting_quality, uncached_input_tokens, unclassified_tokens, token_breakdown_json,
 		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, attempt_index, stream, reasoning_effort, service_tier, effective_service_tier, speed, effective_speed,
@@ -1598,6 +1650,22 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 		wheres = append(wheres, `api_key_hash = ?`)
 		args = append(args, strings.TrimSpace(options.APIKeyHash))
 	}
+	if strings.TrimSpace(options.APIKeyPolicyID) != "" {
+		wheres = append(wheres, `api_key_policy_id = ?`)
+		args = append(args, strings.TrimSpace(options.APIKeyPolicyID))
+	}
+	if strings.TrimSpace(options.ProfileID) != "" {
+		wheres = append(wheres, `profile_id = ?`)
+		args = append(args, strings.TrimSpace(options.ProfileID))
+	}
+	if strings.TrimSpace(options.PolicyMode) != "" {
+		if strings.EqualFold(strings.TrimSpace(options.PolicyMode), "unknown") {
+			wheres = append(wheres, `coalesce(policy_mode, '') = ''`)
+		} else {
+			wheres = append(wheres, `policy_mode = ?`)
+			args = append(args, strings.TrimSpace(options.PolicyMode))
+		}
+	}
 	if len(wheres) > 0 {
 		query += ` where ` + strings.Join(wheres, ` and `)
 	}
@@ -1616,7 +1684,7 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 		groupValues := make([]sql.NullString, len(groupColumns))
 		for index, group := range groupColumns {
 			switch group {
-			case "provider", "model", "endpoint", "auth_index", "api_key_hash":
+			case "provider", "model", "endpoint", "auth_index", "api_key_hash", "api_key_policy_id", "profile_id", "policy_mode":
 				dest = append(dest, &groupValues[index])
 			}
 		}
@@ -1638,6 +1706,12 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 				bucket.AuthIndex = value
 			case "api_key_hash":
 				bucket.APIKeyHash = value
+			case "api_key_policy_id":
+				bucket.APIKeyPolicyID = value
+			case "profile_id":
+				bucket.ProfileID = value
+			case "policy_mode":
+				bucket.PolicyMode = value
 			}
 		}
 		bucket.BucketStart = time.UnixMilli(bucket.BucketStartMS).UTC().Format(time.RFC3339Nano)
@@ -1858,13 +1932,19 @@ func aggregateIntervalMS(interval string) int64 {
 
 func normalizeAggregateGroups(groups []string) []string {
 	allowed := map[string]string{
-		"provider":     "provider",
-		"model":        "model",
-		"endpoint":     "endpoint",
-		"auth_index":   "auth_index",
-		"authIndex":    "auth_index",
-		"api_key_hash": "api_key_hash",
-		"apiKeyHash":   "api_key_hash",
+		"provider":          "provider",
+		"model":             "model",
+		"endpoint":          "endpoint",
+		"auth_index":        "auth_index",
+		"authIndex":         "auth_index",
+		"api_key_hash":      "api_key_hash",
+		"apiKeyHash":        "api_key_hash",
+		"api_key_policy_id": "api_key_policy_id",
+		"apiKeyPolicyId":    "api_key_policy_id",
+		"profile_id":        "profile_id",
+		"profileId":         "profile_id",
+		"policy_mode":       "policy_mode",
+		"policyMode":        "policy_mode",
 	}
 	out := make([]string, 0, len(groups))
 	seen := map[string]struct{}{}

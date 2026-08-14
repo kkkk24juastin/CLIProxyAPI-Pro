@@ -292,7 +292,7 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         monitoring = (PRO_ROOT / 'modules/monitoring/MonitoringCenterPage.tsx').read_text()
         inspection = (PRO_ROOT / 'modules/inspection/AccountInspectionPage.tsx').read_text()
         proxy_pool = (PRO_ROOT / 'modules/proxyPool/ProxyPoolPage.tsx').read_text()
-        self.assertIn("useProSurfaceState<'realtime-detail' | 'monitoring-settings' | 'price-management'>", monitoring)
+        self.assertIn("useProSurfaceState<'realtime-detail' | 'monitoring-settings' | 'price-management' | 'webdav-restore'>", monitoring)
         self.assertIn("useProSurfaceState<'settings' | 'detail'>", inspection)
         self.assertIn("useProSurfaceState<'node' | 'import' | 'takeover'>", proxy_pool)
 

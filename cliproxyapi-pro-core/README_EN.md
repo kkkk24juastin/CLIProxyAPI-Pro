@@ -48,6 +48,9 @@ The embedded service exposes these management routes:
 - `GET /v0/management/usage/stream` — SSE stream for live usage updates.
 - `GET /v0/management/usage/export` — JSONL/NDJSON export.
 - `POST /v0/management/usage/import` — JSONL/NDJSON import.
+- `GET /v0/management/usage/webdav/backups` — list known `usage-export-*.jsonl` backups from the configured WebDAV directory.
+- `POST /v0/management/usage/webdav/preview` — download one listed backup and run the same verified import preview used for local files.
+- `POST /v0/management/usage/webdav/restore` — restore one listed backup through the same JSONL parser and atomic import pipeline.
 - `POST /v0/management/usage/reset` — clear request events, derived statistics, and account scheduling/success/failure counters behind an exclusive runtime-state barrier while preserving routing cursors, monitoring settings, model prices, quota cache, and backups.
 - `GET /v0/management/usage/status` — service status and record counts.
 - `GET /v0/management/usage/quota-cache` — read quota cache entries or stats.
@@ -88,6 +91,8 @@ The export contains usage events and may also include metadata records:
 - `account_inspection_snapshot` — the latest finished inspection result, including run settings, summary, health counts, complete results, and raw error details, but excluding inspection logs.
 
 `/usage/import` accepts the same JSONL format. It reads and verifies the complete request before writing, then imports usage events, model prices, quota cache entries, routing runtime state, monitoring settings, and Pro settings in one SQLite transaction. Imported Pro settings are applied to live configuration before commit, so an apply failure rolls back the database and a commit failure restores the pre-import configuration. After commit, the remaining runtime state, account-inspection schedule, and latest inspection-result snapshot are restored in a fixed order. An exclusive write barrier covers the complete import: synchronous management writes wait, while high-frequency routing and auth-runtime snapshots are dropped during the import window so stale state cannot overwrite the restore. A restored result snapshot is read-only until a new full inspection runs. Manifest-free event-only and mixed JSONL files are rejected by default because they cannot receive file-level integrity verification. A trusted legacy backup can be imported explicitly with `?allow_legacy=1` or the `X-CLIProxy-Allow-Legacy-Backup: true` header; the management UI asks for confirmation before using this compatibility mode.
+
+API-key policy backup records include stable SHA-256 key fingerprints, Profile rules, active Profile state, and policy audit history. They never include or restore `config.yaml api-keys`. Treat the fingerprints as sensitive identifiers: protect JSONL and WebDAV backups with the same access control, transport security, and storage retention used for other sensitive configuration exports. WebDAV restore accepts only listed `usage-export-*.jsonl` file names and reuses the local import preview and atomic restore pipeline.
 
 Example import response fields:
 

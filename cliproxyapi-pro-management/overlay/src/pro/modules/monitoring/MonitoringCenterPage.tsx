@@ -22,6 +22,7 @@ import { useUsageAggregates, type UsageAggregateBucket } from '@/pro/modules/mon
 import { findMonitoringAuthIndexes } from '@/pro/modules/monitoring/features/monitoringAuthSearch';
 import { ModelPriceManagerModal } from '@/pro/modules/monitoring/features/components/ModelPriceManagerModal';
 import { MonitoringSettingsModal } from '@/pro/modules/monitoring/features/components/MonitoringSettingsModal';
+import { WebDAVRestoreDialog, type WebDAVBackup } from '@/pro/modules/monitoring/features/components/WebDAVRestoreDialog';
 import {
   RealtimeRequestDetailsPanel,
   RecentPattern,
@@ -249,6 +250,25 @@ type UsageImportResult = {
   monitoringSettings?: boolean;
   monitoringSettingsRecords?: number;
   legacyBackup?: boolean;
+  policyBackup?: PolicyBackupPreview;
+};
+
+type PolicyBackupPreview = {
+  hasPolicies?: boolean;
+  replacePolicies?: number;
+  preservePolicies?: number;
+  replaceProfiles?: number;
+  preserveProfiles?: number;
+  targetPolicies?: number;
+  targetProfiles?: number;
+  associatedPolicies?: number;
+  orphanedPolicies?: number;
+};
+
+type UsageImportPreview = {
+  policyBackup: PolicyBackupPreview;
+  legacyBackup: boolean;
+  restoresAPIKeys: false;
 };
 
 type UsageResetResult = {
@@ -257,6 +277,22 @@ type UsageResetResult = {
   generation: number;
   resetAtMs: number;
 };
+
+const buildPolicyBackupSummary = (policy: PolicyBackupPreview, t: (key: string, options?: Record<string, unknown>) => string) => (
+  policy.hasPolicies
+    ? t('usage_stats.import_policy_preview_replace', {
+      replacePolicies: policy.replacePolicies ?? 0,
+      replaceProfiles: policy.replaceProfiles ?? 0,
+      targetPolicies: policy.targetPolicies ?? 0,
+      targetProfiles: policy.targetProfiles ?? 0,
+      associated: policy.associatedPolicies ?? 0,
+      orphaned: policy.orphanedPolicies ?? 0,
+    })
+    : t('usage_stats.import_policy_preview_preserve', {
+      policies: policy.preservePolicies ?? 0,
+      profiles: policy.preserveProfiles ?? 0,
+    })
+);
 
 export function MonitoringCenterPage() {
   const { t, i18n } = useTranslation();
@@ -276,10 +312,13 @@ export function MonitoringCenterPage() {
   const [selectedProvider, setSelectedProvider] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
   const [selectedApiKey, setSelectedApiKey] = useState('all');
+  const [selectedAPIKeyPolicy, setSelectedAPIKeyPolicy] = useState('all');
+  const [selectedProfile, setSelectedProfile] = useState('all');
+  const [selectedPolicyMode, setSelectedPolicyMode] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
   const [linkedRequestLogScope, setLinkedRequestLogScope] = useState<LinkedRequestLogScope | null>(null);
   const [selectedRealtimeErrorRow, setSelectedRealtimeErrorRowState] = useState<RealtimeLogRow | null>(null);
-  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'realtime-detail' | 'monitoring-settings' | 'price-management'>();
+  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'realtime-detail' | 'monitoring-settings' | 'price-management' | 'webdav-restore'>();
   const setSelectedRealtimeErrorRow = useCallback((row: RealtimeLogRow | null) => {
     if (row) {
       setSelectedRealtimeErrorRowState(row);
@@ -317,6 +356,8 @@ export function MonitoringCenterPage() {
   const [isPriceSaving, setIsPriceSaving] = useState(false);
   const [isPriceSyncing, setIsPriceSyncing] = useState(false);
   const [isImportingUsage, setIsImportingUsage] = useState(false);
+  const [webDAVBackups, setWebDAVBackups] = useState<WebDAVBackup[]>([]);
+  const [isWebDAVBackupsLoading, setIsWebDAVBackupsLoading] = useState(false);
   const monitoringSettingsRequestRef = useRef<Promise<void> | null>(null);
   const priceManagementRequestRef = useRef<Promise<void> | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -338,8 +379,21 @@ export function MonitoringCenterPage() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const authIndex = params.get('auth_index')?.trim() ?? '';
+    const apiKeyPolicyId = params.get('api_key_policy_id')?.trim() ?? '';
+    const profileId = params.get('profile_id')?.trim() ?? '';
+    const policyMode = params.get('policy_mode')?.trim() ?? '';
     const fromMs = Number(params.get('from_ms'));
     const toMs = Number(params.get('to_ms'));
+    if (apiKeyPolicyId || profileId || policyMode) {
+      setSelectedAPIKeyPolicy(apiKeyPolicyId || 'all');
+      setSelectedProfile(profileId || 'all');
+      setSelectedPolicyMode(policyMode || 'all');
+      setLinkedRequestLogScope(null);
+      window.requestAnimationFrame(() => {
+        document.getElementById('request-events')?.scrollIntoView({ block: 'start' });
+      });
+      return;
+    }
     if (!authIndex || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs < 0 || toMs <= 0 || fromMs > toMs) {
       setLinkedRequestLogScope(null);
       return;
@@ -384,12 +438,14 @@ export function MonitoringCenterPage() {
 
   const {
     data: usageAggregates,
-    error: aggregatesError,
     refresh: refreshAggregates,
   } = useUsageAggregates({
     latestId,
     timeRange,
     apiKeyHash: usageTrendApiKey,
+    apiKeyPolicyId: selectedAPIKeyPolicy === 'all' ? undefined : selectedAPIKeyPolicy,
+    profileId: selectedProfile === 'all' ? undefined : selectedProfile,
+    policyMode: selectedPolicyMode === 'all' ? undefined : selectedPolicyMode,
     enabled: connectionStatus === 'connected',
   });
 
@@ -408,11 +464,14 @@ export function MonitoringCenterPage() {
       authIndex: linkedRequestLogScope?.authIndex,
       searchAuthIndexes: linkedRequestLogScope ? undefined : (searchMatchedAuthIndexFilter || undefined),
       apiKeyHash: selectedApiKey === 'all' ? undefined : selectedApiKey,
+      apiKeyPolicyId: selectedAPIKeyPolicy === 'all' ? undefined : selectedAPIKeyPolicy,
+      profileId: selectedProfile === 'all' ? undefined : selectedProfile,
+      policyMode: selectedPolicyMode === 'all' ? undefined : selectedPolicyMode,
       status: selectedStatus,
       search: linkedRequestLogScope ? undefined : deferredSearch,
       limit: realtimeLogPageSize,
     };
-  }, [deferredSearch, linkedRequestLogScope, realtimeLogPageSize, searchMatchedAuthIndexFilter, selectedApiKey, selectedModel, selectedProvider, selectedStatus, timeRange]);
+  }, [deferredSearch, linkedRequestLogScope, realtimeLogPageSize, searchMatchedAuthIndexFilter, selectedAPIKeyPolicy, selectedApiKey, selectedModel, selectedPolicyMode, selectedProfile, selectedProvider, selectedStatus, timeRange]);
 
   const handleRealtimeLogGenerationChange = useCallback(() => {
     setSelectedRealtimeErrorRow(null);
@@ -612,6 +671,19 @@ export function MonitoringCenterPage() {
         result.accountInspectionSchedule ? t('usage_stats.import_account_inspection_schedule_restored') : '',
         result.accountInspectionSnapshot ? t('usage_stats.import_account_inspection_snapshot_restored') : '',
         result.monitoringSettings ? t('usage_stats.import_monitoring_settings_restored') : '',
+        result.policyBackup?.hasPolicies
+          ? t('usage_stats.import_policy_restored', {
+            policies: result.policyBackup.targetPolicies ?? 0,
+            profiles: result.policyBackup.targetProfiles ?? 0,
+            associated: result.policyBackup.associatedPolicies ?? 0,
+            orphaned: result.policyBackup.orphanedPolicies ?? 0,
+          })
+          : result.policyBackup?.preservePolicies
+            ? t('usage_stats.import_policy_preserved', {
+              policies: result.policyBackup.preservePolicies ?? 0,
+              profiles: result.policyBackup.preserveProfiles ?? 0,
+            })
+            : '',
       ].filter(Boolean).join(' · ');
       showNotification(
         [
@@ -647,24 +719,99 @@ export function MonitoringCenterPage() {
           showNotification(t('usage_stats.import_invalid'), 'error');
           return;
         }
-        if (!hasUsageBackupManifest(content)) {
-          showConfirmation({
-            title: t('usage_stats.import_legacy_confirm_title'),
-            message: t('usage_stats.import_legacy_confirm_message'),
-            confirmText: t('usage_stats.import_legacy_confirm_button'),
-            cancelText: t('common.cancel'),
-            variant: 'danger',
-            onConfirm: () => executeUsageImport(content, true),
-          });
-          return;
-        }
-        await executeUsageImport(content, false);
+        const allowLegacy = !hasUsageBackupManifest(content);
+        const preview = await apiClient.post<UsageImportPreview>('/usage/import/preview', content, {
+          headers: { 'Content-Type': 'application/x-ndjson' },
+          params: allowLegacy ? { allow_legacy: 1 } : undefined,
+        });
+        const policySummary = buildPolicyBackupSummary(preview.policyBackup ?? {}, t);
+        showConfirmation({
+          dedupeKey: `usage-import:${file.name}:${file.size}:${file.lastModified}`,
+          title: t(allowLegacy ? 'usage_stats.import_legacy_confirm_title' : 'usage_stats.import_preview_title'),
+          message: (
+            <div>
+              <p>{policySummary}</p>
+              <p>{t('usage_stats.import_policy_no_api_keys')}</p>
+              {allowLegacy ? <p>{t('usage_stats.import_legacy_confirm_message')}</p> : null}
+            </div>
+          ),
+          confirmText: t(allowLegacy ? 'usage_stats.import_legacy_confirm_button' : 'usage_stats.import_preview_confirm_button'),
+          cancelText: t('common.cancel'),
+          variant: allowLegacy ? 'danger' : 'primary',
+          onConfirm: () => executeUsageImport(content, allowLegacy),
+        });
       } catch (error) {
         showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
       }
     },
     [executeUsageImport, showConfirmation, showNotification, t]
   );
+
+  const loadWebDAVBackups = useCallback(async () => {
+    if (connectionStatus !== 'connected') {
+      showNotification(t('notification.connection_required'), 'warning');
+      return;
+    }
+    setIsWebDAVBackupsLoading(true);
+    try {
+      const result = await apiClient.get<{ backups?: WebDAVBackup[] }>('/usage/webdav/backups');
+      setWebDAVBackups(Array.isArray(result.backups) ? result.backups : []);
+      openSurface('webdav-restore');
+    } catch (error) {
+      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
+    } finally {
+      setIsWebDAVBackupsLoading(false);
+    }
+  }, [connectionStatus, openSurface, showNotification, t]);
+
+  const executeWebDAVRestore = useCallback(async (backup: WebDAVBackup, allowLegacy: boolean) => {
+    setIsImportingUsage(true);
+    try {
+      const result = await apiClient.post<UsageImportResult>('/usage/webdav/restore', { fileName: backup.fileName }, {
+        params: allowLegacy ? { allow_legacy: 1 } : undefined,
+      });
+      closeSurface();
+      showNotification(t('usage_stats.webdav_restore_success', {
+        name: backup.fileName,
+        added: result.added ?? 0,
+        policies: result.policyBackup?.targetPolicies ?? result.policyBackup?.preservePolicies ?? 0,
+        profiles: result.policyBackup?.targetProfiles ?? result.policyBackup?.preserveProfiles ?? 0,
+      }), 'success');
+      quotaPersistenceMiddleware.markStale();
+      await quotaPersistenceMiddleware.ensureFresh();
+      await refreshAll();
+    } catch (error) {
+      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
+    } finally {
+      setIsImportingUsage(false);
+    }
+  }, [closeSurface, refreshAll, showNotification, t]);
+
+  const previewWebDAVRestore = useCallback(async (backup: WebDAVBackup) => {
+    try {
+      const preview = await apiClient.post<UsageImportPreview>('/usage/webdav/preview', { fileName: backup.fileName });
+      const allowLegacy = preview.legacyBackup;
+      const policySummary = buildPolicyBackupSummary(preview.policyBackup ?? {}, t);
+      showConfirmation({
+        dedupeKey: `usage-webdav-restore:${backup.fileName}`,
+        title: t('usage_stats.webdav_restore_confirm_title'),
+        message: (
+          <div>
+            <p>{t('usage_stats.webdav_restore_confirm_file', { name: backup.fileName })}</p>
+            <p>{policySummary}</p>
+            <p>{t('usage_stats.import_policy_no_api_keys')}</p>
+            {allowLegacy ? <p>{t('usage_stats.import_legacy_confirm_message')}</p> : null}
+          </div>
+        ),
+        confirmText: t('usage_stats.webdav_restore_confirm_button'),
+        cancelText: t('common.cancel'),
+        variant: allowLegacy ? 'danger' : 'primary',
+        onConfirm: () => executeWebDAVRestore(backup, allowLegacy),
+      });
+    } catch (error) {
+      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
+    }
+  }, [executeWebDAVRestore, showConfirmation, showNotification, t]);
 
   const handleCopyRealtimeDiagnostic = useCallback((row: RealtimeLogRow) => {
     const text = buildRealtimeDiagnosticClipboardText(row, t, i18n.language);
@@ -748,6 +895,37 @@ export function MonitoringCenterPage() {
     ],
     [t]
   );
+
+  const policyFilterOptions = useMemo(() => {
+    const policies = new Set<string>();
+    const profiles = new Map<string, string>();
+    allRows.forEach((row) => {
+      if (row.apiKeyPolicyId) policies.add(row.apiKeyPolicyId);
+      if (row.profileId) profiles.set(row.profileId, row.profileName || row.profileId);
+    });
+    usageAggregates?.trend.forEach((bucket) => {
+      if (bucket.apiKeyPolicyId) policies.add(bucket.apiKeyPolicyId);
+      if (bucket.profileId) profiles.set(bucket.profileId, bucket.profileId);
+    });
+    if (selectedAPIKeyPolicy !== 'all') policies.add(selectedAPIKeyPolicy);
+    if (selectedProfile !== 'all') profiles.set(selectedProfile, profiles.get(selectedProfile) || selectedProfile);
+    return {
+      policies: [
+        { value: 'all', label: t('monitoring.filter_all_policies') },
+        ...Array.from(policies).sort().map((value) => ({ value, label: value })),
+      ],
+      profiles: [
+        { value: 'all', label: t('monitoring.filter_all_profiles') },
+        ...Array.from(profiles.entries()).sort((left, right) => left[1].localeCompare(right[1])).map(([value, label]) => ({ value, label })),
+      ],
+      modes: [
+        { value: 'all', label: t('monitoring.filter_all_policy_modes') },
+        { value: 'profile', label: t('monitoring.policy_mode_profile') },
+        { value: 'passthrough', label: t('monitoring.policy_mode_passthrough') },
+        { value: 'unknown', label: t('monitoring.policy_mode_unknown') },
+      ],
+    };
+  }, [allRows, selectedAPIKeyPolicy, selectedProfile, t, usageAggregates]);
 
   useEffect(() => {
     if (selectedProvider !== 'all' && !providerOptions.some((option) => option.value === selectedProvider)) {
@@ -838,9 +1016,12 @@ export function MonitoringCenterPage() {
     usageAggregates
       && usageAggregates.scopeTimeRange === timeRange
       && usageAggregates.scopeApiKeyHash === usageTrendApiKey
+      && usageAggregates.scopeAPIKeyPolicyId === (selectedAPIKeyPolicy === 'all' ? '' : selectedAPIKeyPolicy)
+      && usageAggregates.scopeProfileId === (selectedProfile === 'all' ? '' : selectedProfile)
+      && usageAggregates.scopePolicyMode === (selectedPolicyMode === 'all' ? '' : selectedPolicyMode)
   );
   const usageTrendAnalytics = useMemo(() => {
-    if (!serverUsageTrendAnalytics || (aggregatesError && !aggregateTrendScopeMatches)) {
+    if (!serverUsageTrendAnalytics || !aggregateTrendScopeMatches) {
       return clientUsageTrendAnalytics;
     }
     if (serverUsageTrendAnalytics.apiKeyRows.length > 0 || clientUsageTrendAnalytics.apiKeyRows.length === 0) {
@@ -850,7 +1031,7 @@ export function MonitoringCenterPage() {
       ...serverUsageTrendAnalytics,
       apiKeyRows: clientUsageTrendAnalytics.apiKeyRows,
     };
-  }, [aggregateTrendScopeMatches, aggregatesError, clientUsageTrendAnalytics, serverUsageTrendAnalytics]);
+  }, [aggregateTrendScopeMatches, clientUsageTrendAnalytics, serverUsageTrendAnalytics]);
   const usageTrendApiKeyOptions = usageTrendAnalytics.apiKeyOptions;
   const usageTrendPoints = usageTrendAnalytics.trendPoints;
   const tokenDistributionPoints = usageTrendAnalytics.tokenDistributionPoints;
@@ -1256,7 +1437,7 @@ export function MonitoringCenterPage() {
   }, [observedPriceModels, priceRules]);
 
   const selectedFiltersCount =
-    [selectedProvider, selectedModel, selectedApiKey, selectedStatus].filter(
+    [selectedProvider, selectedModel, selectedApiKey, selectedStatus, selectedAPIKeyPolicy, selectedProfile, selectedPolicyMode].filter(
       (value) => value !== 'all'
     ).length + (deferredSearch.trim() ? 1 : 0);
 
@@ -1314,6 +1495,9 @@ export function MonitoringCenterPage() {
     setSelectedModel('all');
     setSelectedApiKey('all');
     setSelectedStatus('all');
+    setSelectedAPIKeyPolicy('all');
+    setSelectedProfile('all');
+    setSelectedPolicyMode('all');
   }, []);
 
   const updateRealtimeLogColumns = useCallback((updater: (columns: RealtimeLogColumnPreference[]) => RealtimeLogColumnPreference[]) => {
@@ -1643,6 +1827,14 @@ export function MonitoringCenterPage() {
               <button
                 type="button"
                 className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
+                onClick={() => void loadWebDAVBackups()}
+                disabled={isImportingUsage || isWebDAVBackupsLoading}
+              >
+                {isWebDAVBackupsLoading ? t('common.loading') : t('usage_stats.webdav_restore_action')}
+              </button>
+              <button
+                type="button"
+                className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
 				onClick={() => void openPriceManagement()}
 				disabled={isPriceLoading}
 				aria-busy={isPriceLoading}
@@ -1800,6 +1992,24 @@ export function MonitoringCenterPage() {
             options={statusOptions}
             onChange={(value) => setSelectedStatus(value as StatusFilter)}
             ariaLabel={t('monitoring.filter_status')}
+          />
+          <Select
+            value={selectedAPIKeyPolicy}
+            options={policyFilterOptions.policies}
+            onChange={setSelectedAPIKeyPolicy}
+            ariaLabel={t('monitoring.filter_api_key_policy')}
+          />
+          <Select
+            value={selectedProfile}
+            options={policyFilterOptions.profiles}
+            onChange={setSelectedProfile}
+            ariaLabel={t('monitoring.filter_profile')}
+          />
+          <Select
+            value={selectedPolicyMode}
+            options={policyFilterOptions.modes}
+            onChange={setSelectedPolicyMode}
+            ariaLabel={t('monitoring.filter_policy_mode')}
           />
           <button type="button" className={styles.clearButton} onClick={clearFilters}>
             <IconSlidersHorizontal size={16} />
@@ -2065,6 +2275,17 @@ export function MonitoringCenterPage() {
         isMonitoringSettingsSaving={isMonitoringSettingsSaving}
         handleMonitoringStatisticsReset={handleMonitoringStatisticsReset}
         handleSaveMonitoringSettings={handleSaveMonitoringSettings}
+        t={t}
+      />
+
+      <WebDAVRestoreDialog
+        open={activeSurface === 'webdav-restore'}
+        loading={isWebDAVBackupsLoading}
+        restoring={isImportingUsage}
+        backups={webDAVBackups}
+        onClose={closeSurface}
+        onRefresh={() => void loadWebDAVBackups()}
+        onSelect={(backup) => void previewWebDAVRestore(backup)}
         t={t}
       />
 

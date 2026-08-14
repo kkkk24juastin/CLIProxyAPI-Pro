@@ -56,9 +56,11 @@ type (
 
 var (
 	LoadConfig                                = proobservability.LoadConfig
+	LoadConfigForPath                         = proobservability.LoadConfigForPath
 	OpenStore                                 = proobservability.OpenStore
 	NewServer                                 = proobservability.NewServer
 	Start                                     = proobservability.Start
+	StartForPath                              = proobservability.StartForPath
 	RegisterGinRoutes                         = proobservability.RegisterGinRoutes
 	SetDefaultService                         = proobservability.SetDefaultService
 	SetAccountInspectionScheduleHandlers      = proobservability.SetAccountInspectionScheduleHandlers

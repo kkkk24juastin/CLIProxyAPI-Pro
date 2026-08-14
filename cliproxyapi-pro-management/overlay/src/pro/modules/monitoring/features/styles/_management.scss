@@ -241,6 +241,65 @@
   font-weight: 700;
 }
 
+.webdavRestoreDialog {
+  display: grid;
+  gap: 14px;
+}
+
+.webdavRestoreWarning,
+.webdavRestoreEmpty {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--monitor-cyan) 24%, var(--monitor-line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--monitor-cyan) 7%, var(--monitor-surface));
+  color: var(--monitor-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.webdavBackupList {
+  display: grid;
+  gap: 8px;
+}
+
+.webdavBackupRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 12px;
+  background: var(--monitor-surface);
+  color: var(--monitor-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.webdavBackupRow:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--monitor-accent) 42%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 5%, var(--monitor-surface));
+}
+
+.webdavBackupRow > span:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.webdavBackupRow strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.webdavBackupRow small,
+.webdavBackupRow > span:last-child {
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
 .priceManager {
   display: grid;
   gap: 18px;

@@ -250,3 +250,58 @@ func TestExportJSONLFlushesAndIncludesInspectionBeforeManifest(t *testing.T) {
 		t.Fatalf("unexpected JSONL records: %q", lines)
 	}
 }
+
+func TestExportJSONLIncludesAPIKeyPoliciesAndOwnerSafety(t *testing.T) {
+	coordinator := NewCoordinator()
+	unregisterOld := coordinator.RegisterAPIKeyPolicies(func() ([]byte, bool, error) {
+		return []byte(`[{"id":"old"}]`), true, nil
+	}, nil, nil)
+	unregisterNew := coordinator.RegisterAPIKeyPolicies(func() ([]byte, bool, error) {
+		return []byte(`[{"id":"new"}]`), true, nil
+	}, nil, nil)
+	unregisterOld()
+	data, err := coordinator.ExportJSONL(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"record_type":"api_key_policies"`) || !strings.Contains(string(data), `"id":"new"`) || strings.Contains(string(data), `"id":"old"`) {
+		t.Fatalf("policy JSONL = %s", data)
+	}
+	unregisterNew()
+}
+
+func TestExecuteImportRollsBackAfterPostDatabaseFailure(t *testing.T) {
+	coordinator := NewCoordinator()
+	var calls []string
+	wantErr := errors.New("runtime failed")
+	err := coordinator.ExecuteImport(context.Background(), ImportPlan{
+		ImportDatabase:    func(context.Context) error { calls = append(calls, "import"); return nil },
+		ApplyRuntimeState: func(context.Context) error { calls = append(calls, "runtime"); return wantErr },
+		Rollback:          func(context.Context) error { calls = append(calls, "rollback"); return nil },
+	})
+	if !errors.Is(err, wantErr) || strings.Join(calls, ",") != "import,runtime,rollback" {
+		t.Fatalf("import rollback = %v, %q", err, calls)
+	}
+}
+
+func TestExtractAPIKeyPoliciesRecordVerifiesManifestAndLegacyAbsence(t *testing.T) {
+	coordinator := NewCoordinator()
+	coordinator.RegisterAPIKeyPolicies(func() ([]byte, bool, error) {
+		return []byte(`{"schema_version":2,"policies":[],"audits":[]}`), true, nil
+	}, nil, nil)
+	data, err := coordinator.ExportJSONL(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, ok, err := ExtractAPIKeyPoliciesRecord(data, false)
+	if err != nil || !ok || !strings.Contains(string(payload), `"schema_version":2`) {
+		t.Fatalf("extract = %s, %v, %v", payload, ok, err)
+	}
+	tampered := bytes.Replace(data, []byte(`"schema_version":2`), []byte(`"schema_version":3`), 1)
+	if _, _, err := ExtractAPIKeyPoliciesRecord(tampered, false); err == nil || !strings.Contains(err.Error(), "manifest verification") {
+		t.Fatalf("tampered extract error = %v", err)
+	}
+	if payload, ok, err := ExtractAPIKeyPoliciesRecord([]byte(`{"model":"legacy"}`), true); err != nil || ok || payload != nil {
+		t.Fatalf("legacy absence = %s, %v, %v", payload, ok, err)
+	}
+}

@@ -31,6 +31,12 @@ type Event struct {
 	Source               string                   `json:"source,omitempty"`
 	SourceHash           string                   `json:"source_hash,omitempty"`
 	APIKeyHash           string                   `json:"api_key_hash,omitempty"`
+	APIKeyPolicyID       string                   `json:"api_key_policy_id,omitempty"`
+	ProfileID            string                   `json:"profile_id,omitempty"`
+	ProfileNameSnapshot  string                   `json:"profile_name_snapshot,omitempty"`
+	PolicyMode           string                   `json:"policy_mode,omitempty"`
+	RequestedModel       string                   `json:"requested_model,omitempty"`
+	EffectiveModel       string                   `json:"effective_model,omitempty"`
 	ClientIP             string                   `json:"client_ip,omitempty"`
 	XForwardedFor        string                   `json:"x_forwarded_for,omitempty"`
 	UserAgent            string                   `json:"user_agent,omitempty"`
@@ -88,6 +94,12 @@ type Detail struct {
 	Source               string                   `json:"source"`
 	AuthIndex            string                   `json:"auth_index,omitempty"`
 	APIKeyHash           string                   `json:"api_key_hash,omitempty"`
+	APIKeyPolicyID       string                   `json:"api_key_policy_id,omitempty"`
+	ProfileID            string                   `json:"profile_id,omitempty"`
+	ProfileNameSnapshot  string                   `json:"profile_name_snapshot,omitempty"`
+	PolicyMode           string                   `json:"policy_mode,omitempty"`
+	RequestedModel       string                   `json:"requested_model,omitempty"`
+	EffectiveModel       string                   `json:"effective_model,omitempty"`
 	ClientIP             string                   `json:"client_ip,omitempty"`
 	XForwardedFor        string                   `json:"x_forwarded_for,omitempty"`
 	UserAgent            string                   `json:"user_agent,omitempty"`
@@ -246,6 +258,12 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		Source:               source,
 		SourceHash:           sourceHash,
 		APIKeyHash:           apiKeyHash,
+		APIKeyPolicyID:       readString(record, "api_key_policy_id"),
+		ProfileID:            readString(record, "profile_id"),
+		ProfileNameSnapshot:  readString(record, "profile_name_snapshot"),
+		PolicyMode:           readString(record, "policy_mode"),
+		RequestedModel:       readString(record, "requested_model"),
+		EffectiveModel:       readString(record, "effective_model"),
 		ClientIP:             readString(record, "client_ip", "clientIp"),
 		XForwardedFor:        readString(record, "x_forwarded_for", "xForwardedFor"),
 		UserAgent:            readString(record, "user_agent", "userAgent"),
@@ -336,6 +354,12 @@ func BuildPayload(events []Event) Payload {
 			Source:               event.Source,
 			AuthIndex:            event.AuthIndex,
 			APIKeyHash:           event.APIKeyHash,
+			APIKeyPolicyID:       event.APIKeyPolicyID,
+			ProfileID:            event.ProfileID,
+			ProfileNameSnapshot:  event.ProfileNameSnapshot,
+			PolicyMode:           event.PolicyMode,
+			RequestedModel:       event.RequestedModel,
+			EffectiveModel:       event.EffectiveModel,
 			ClientIP:             event.ClientIP,
 			XForwardedFor:        event.XForwardedFor,
 			UserAgent:            event.UserAgent,
@@ -764,6 +788,11 @@ func buildEventHash(event Event) string {
 		event.AuthIndex,
 		event.SourceHash,
 		event.APIKeyHash,
+		event.APIKeyPolicyID,
+		event.ProfileID,
+		event.PolicyMode,
+		event.RequestedModel,
+		event.EffectiveModel,
 		event.ServiceTier,
 		event.EffectiveServiceTier,
 		event.Speed,

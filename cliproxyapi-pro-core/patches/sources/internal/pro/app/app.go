@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/apikeypolicy"
+	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/host"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy"
 	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
@@ -23,9 +25,11 @@ import (
 // controllers keep their natural host lifecycles and register owner-safe ports
 // with the shared backup coordinator.
 type App struct {
-	proxyPool   *proxypool.Service
-	oauthPolicy *oauthpolicy.Service
-	closeOnce   sync.Once
+	proxyPool              *proxypool.Service
+	oauthPolicy            *oauthpolicy.Service
+	apiKeyPolicy           *apikeypolicy.Service
+	policyBackupUnregister func()
+	closeOnce              sync.Once
 }
 
 func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error) {
@@ -40,16 +44,72 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 		baseProxyURL = baseProxyURLFromConfigFile(configFilePath, baseProxyURL)
 	}
 	store := observability.NewSettingsStore()
+	policyStore, err := apikeypolicy.OpenStore(observability.LoadConfigForPath(configFilePath).DBPath)
+	if err != nil {
+		return nil, fmt.Errorf("initialize API key policy store: %w", err)
+	}
+	apiKeyPolicy, err := apikeypolicy.NewService(policyStore)
+	if err != nil {
+		_ = policyStore.Close()
+		return nil, fmt.Errorf("initialize API key policy module: %w", err)
+	}
+	apiKeyPolicy.SetCatalogProvider(func() (apikeypolicy.ProfileCatalog, error) {
+		modelRegistry := registry.GetGlobalRegistry()
+		models := modelRegistry.GetAvailableModelInfos()
+		modelIDs := make([]string, 0, len(models))
+		providers := []string{"home"}
+		// A Profile is configuration, not a point-in-time health snapshot. Merge
+		// the embedded server-owned catalog so operators can preconfigure a
+		// known model before credentials are registered or while every account is
+		// temporarily unavailable. Dynamic/user-defined models below remain
+		// accepted when the live registry knows them.
+		for _, provider := range []string{"claude", "gemini", "vertex", "aistudio", "codex", "kimi", "antigravity", "xai"} {
+			staticModels := registry.GetStaticModelDefinitionsByChannel(provider)
+			if len(staticModels) == 0 {
+				continue
+			}
+			providers = append(providers, provider)
+			for _, model := range staticModels {
+				if model != nil && model.ID != "" {
+					modelIDs = append(modelIDs, model.ID)
+				}
+			}
+		}
+		for _, model := range models {
+			if model == nil || model.ID == "" {
+				continue
+			}
+			modelIDs = append(modelIDs, model.ID)
+			providers = append(providers, modelRegistry.GetModelProviders(model.ID)...)
+		}
+		return apikeypolicy.NewProfileCatalog(providers, modelIDs), nil
+	})
+	policyBackupUnregister := probackup.Default.RegisterAPIKeyPolicies(
+		func() ([]byte, bool, error) {
+			payload, err := apiKeyPolicy.ExportBackup(context.Background())
+			return payload, err == nil, err
+		},
+		func(ctx context.Context, payload []byte) error {
+			return apiKeyPolicy.ImportBackup(ctx, payload)
+		},
+		func(ctx context.Context, payload []byte) (probackup.PolicyBackupPreview, error) {
+			return apiKeyPolicy.PreviewBackup(ctx, payload, apiKeyPolicy.ConfiguredHashes())
+		},
+	)
 	proxyPool, err := proxypool.New(ctx, store, host.NewProxyOverride(), baseProxyURL)
 	if err != nil {
+		policyBackupUnregister()
+		_ = apiKeyPolicy.Close()
 		return nil, fmt.Errorf("initialize proxy pool module: %w", err)
 	}
 	oauthPolicy, err := oauthpolicy.New(ctx, store)
 	if err != nil {
 		proxyPool.Close()
+		policyBackupUnregister()
+		_ = apiKeyPolicy.Close()
 		return nil, fmt.Errorf("initialize account policy module: %w", err)
 	}
-	return &App{proxyPool: proxyPool, oauthPolicy: oauthPolicy}, nil
+	return &App{proxyPool: proxyPool, oauthPolicy: oauthPolicy, apiKeyPolicy: apiKeyPolicy, policyBackupUnregister: policyBackupUnregister}, nil
 }
 
 func (a *App) Close() {
@@ -57,6 +117,12 @@ func (a *App) Close() {
 		return
 	}
 	a.closeOnce.Do(func() {
+		if a.policyBackupUnregister != nil {
+			a.policyBackupUnregister()
+		}
+		if a.apiKeyPolicy != nil {
+			_ = a.apiKeyPolicy.Close()
+		}
 		if a.oauthPolicy != nil {
 			a.oauthPolicy.Close()
 		}
@@ -64,6 +130,13 @@ func (a *App) Close() {
 			a.proxyPool.Close()
 		}
 	})
+}
+
+func (a *App) APIKeyPolicy() *apikeypolicy.Service {
+	if a == nil {
+		return nil
+	}
+	return a.apiKeyPolicy
 }
 
 func (a *App) ProxyPool() *proxypool.Service {

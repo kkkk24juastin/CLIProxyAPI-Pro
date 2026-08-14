@@ -158,6 +158,12 @@ export type MonitoringEventRow = {
   authIndex: string;
   authIndexMasked: string;
   clientApiKey: MonitoringApiKeyIdentity;
+  apiKeyPolicyId: string;
+  profileId: string;
+  profileName: string;
+  policyMode: string;
+  requestedModel: string;
+  effectiveModel: string;
   authLabel: string;
   provider: string;
   executorType: string;
@@ -532,6 +538,12 @@ const buildEventRows = (
       authIndex,
       authIndexMasked: maskAuthIndex(authIndex),
       clientApiKey: clientApiKeyIdentity,
+      apiKeyPolicyId: detail.api_key_policy_id || '',
+      profileId: detail.profile_id || '',
+      profileName: detail.profile_name_snapshot || '',
+      policyMode: detail.policy_mode || '',
+      requestedModel: detail.requested_model || '',
+      effectiveModel: detail.effective_model || '',
       authLabel: isDeletedCredential ? deletedCredentialLabel : authMeta?.label || sourceMasked,
       provider: resolvedProvider,
       executorType,
@@ -600,6 +612,12 @@ const buildEventRows = (
         detail.effective_speed,
         authMeta?.planType,
         clientApiKeyIdentity.masked
+        ,detail.api_key_policy_id,
+        detail.profile_id,
+        detail.profile_name_snapshot,
+        detail.policy_mode,
+        detail.requested_model,
+        detail.effective_model
       ),
     });
   });

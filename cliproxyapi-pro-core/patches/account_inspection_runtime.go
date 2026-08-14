@@ -432,6 +432,25 @@ func (s *accountInspectionScheduler) importResultSnapshot(raw []byte) error {
 	if s == nil {
 		return nil
 	}
+	if strings.TrimSpace(string(raw)) == "null" {
+		s.mu.Lock()
+		if s.isRunningLocked() {
+			s.mu.Unlock()
+			return fmt.Errorf("account inspection is running")
+		}
+		s.status = accountInspectionStatus{State: accountInspectionStateIdle}
+		s.healthCounts = accountInspectionHealthCounts{}
+		s.lastRunSettings = s.schedule.Settings
+		s.autoActionConfirmations.Reset()
+		err := os.Remove(s.snapshotPath)
+		if os.IsNotExist(err) {
+			err = nil
+		}
+		broadcast := s.statusBroadcastLocked()
+		s.mu.Unlock()
+		broadcast.send()
+		return err
+	}
 	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
 	if err != nil {
 		return err
