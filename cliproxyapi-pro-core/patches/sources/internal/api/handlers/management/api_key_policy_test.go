@@ -167,6 +167,21 @@ func createPolicyBody(keyRef string) map[string]any {
 	}
 }
 
+func TestAPIKeyPolicyMaskMatchesManagementDisplayContract(t *testing.T) {
+	for raw, want := range map[string]string{
+		"":                                  "",
+		"a":                                 "a********a",
+		"abc":                               "a********c",
+		"abcd":                              "ab******cd",
+		"sk-sensitive-canary-123456789":     "sk******89",
+		"another-upstream-key-abcdefghijkl": "an******kl",
+	} {
+		if got := maskAPIKey(raw); got != want {
+			t.Fatalf("maskAPIKey(%q)=%q, want %q", raw, got, want)
+		}
+	}
+}
+
 func TestAPIKeyPolicyBindingsAndKeyReferenceSecurity(t *testing.T) {
 	h, router := newAPIKeyPolicyManagementHarness(t, []string{"sk-sensitive-canary-123456789"})
 	listed := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil)

@@ -230,7 +230,27 @@ describe('API Key Policy profile drafts', () => {
     expect(validateProfileInput({ ...validProfile(), providers: ['unknown'] }, catalog)).toBe('providers');
     expect(validateProfileInput({ ...validProfile(), models: ['unknown'] }, catalog)).toBe('models');
     expect(validateProfileInput({ ...validProfile(), mappings: [{ source: 'smart', target: 'claude-sonnet-4' }] }, catalog)).toBe('mappings');
+		expect(validateProfileInput({
+			...validProfile(),
+			providers: [],
+			models: [],
+			mappings: [{ source: 'smart', target: 'claude-sonnet-4' }],
+		}, catalog)).toBeNull();
+		expect(validateProfileInput({
+			...validProfile(),
+			providers: [],
+			models: [],
+			mappings: [{ source: 'smart', target: 'unknown' }],
+		}, catalog)).toBe('mappings');
   });
+
+	test('documents empty provider and model selections as allow-all and keeps catalog mapping targets', () => {
+		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+		expect(page).toContain("all_providers_when_empty");
+		expect(page).toContain("all_models_when_empty");
+		expect(page).toContain("models.length === 0 ? current.profile.mappings");
+		expect(page).toContain("snapshot?.catalog.models ?? []");
+	});
 
   test('rejects duplicate or partial mapping sources', () => {
     expect(validateProfileInput({

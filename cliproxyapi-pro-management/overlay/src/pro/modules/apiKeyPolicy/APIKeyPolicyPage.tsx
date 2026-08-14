@@ -32,7 +32,6 @@ import {
   validateProfileInput,
   type APIKeyPolicy,
   type APIKeyPolicyBinding,
-  type APIKeyPolicyCatalog,
   type APIKeyPolicyDeletePreview,
   type APIKeyPolicySnapshot,
 	type APIKeyPolicyStatus,
@@ -53,20 +52,19 @@ interface WorkspaceDraft {
   isNewProfile: boolean;
 }
 
-const emptyProfile = (catalog: APIKeyPolicyCatalog): APIKeyProfileInput => ({
+const emptyProfile = (): APIKeyProfileInput => ({
   name: '',
-  providers: catalog.providers.length === 1 ? [catalog.providers[0]] : [],
+  providers: [],
   models: [],
   mappings: [],
 });
 
 const workspaceDraftFromTarget = (
   target: WorkspaceTarget,
-  catalog: APIKeyPolicyCatalog,
   profileId?: string,
 ): WorkspaceDraft => {
   if (target.kind === 'create') {
-    return { displayName: '', profileId: '', profile: emptyProfile(catalog), isNewProfile: false };
+    return { displayName: '', profileId: '', profile: emptyProfile(), isNewProfile: false };
   }
   const selected =
     target.policy.profiles.find((profile) => profile.id === profileId) ??
@@ -75,7 +73,7 @@ const workspaceDraftFromTarget = (
   return {
     displayName: target.policy.displayName,
     profileId: selected?.id ?? '',
-    profile: selected ? cloneProfileInput(selected) : emptyProfile(catalog),
+    profile: selected ? cloneProfileInput(selected) : emptyProfile(),
     isNewProfile: false,
   };
 };
@@ -124,6 +122,8 @@ function ChoiceList({
   onChange,
   disabled,
   emptyLabel,
+  allLabel,
+  emptySelectionHint,
 }: {
   title: string;
   values: string[];
@@ -131,6 +131,8 @@ function ChoiceList({
   onChange: (values: string[]) => void;
   disabled: boolean;
   emptyLabel: string;
+  allLabel: string;
+  emptySelectionHint: string;
 }) {
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
@@ -139,8 +141,9 @@ function ChoiceList({
     <section className={styles.choiceSection}>
       <div className={styles.choiceHeader}>
         <strong>{title}</strong>
-        <span>{selected.length}</span>
+        <span>{selected.length > 0 ? selected.length : allLabel}</span>
       </div>
+      <p className={styles.choiceHint}>{emptySelectionHint}</p>
       <input
         className="input"
         value={search}
@@ -296,7 +299,7 @@ export function APIKeyPolicyPage() {
       if (!snapshot) return;
       setWorkspaceTarget(target);
       draftRevisionRef.current += 1;
-      setDraft(workspaceDraftFromTarget(target, snapshot.catalog, profileId));
+      setDraft(workspaceDraftFromTarget(target, profileId));
       setConflict(false);
     },
     [snapshot],
@@ -446,7 +449,7 @@ export function APIKeyPolicyPage() {
         : policy.profiles.find((item) => item.id === draft.profileId);
       if (submittedDraftRevision === draftRevisionRef.current) {
         draftRevisionRef.current += 1;
-        setDraft(workspaceDraftFromTarget(target, snapshot!.catalog, savedProfile?.id));
+        setDraft(workspaceDraftFromTarget(target, savedProfile?.id));
       }
       showNotification(t('api_key_policy.saved'), 'success');
       await load();
@@ -467,7 +470,7 @@ export function APIKeyPolicyPage() {
         setSaving(false);
       }
     }
-  }, [closeWorkspace, draft, errorMessage, load, replacePolicyInSnapshot, showNotification, snapshot, t, validateDraft, workspaceTarget]);
+  }, [closeWorkspace, draft, errorMessage, load, replacePolicyInSnapshot, showNotification, t, validateDraft, workspaceTarget]);
 
   const activateProfile = useCallback(async () => {
     if (!workspaceTarget || workspaceTarget.kind !== 'policy' || !draft || dirty || savingRef.current) return;
@@ -487,7 +490,7 @@ export function APIKeyPolicyPage() {
       setWorkspaceTarget(target);
       if (submittedDraftRevision === draftRevisionRef.current) {
         draftRevisionRef.current += 1;
-        setDraft(workspaceDraftFromTarget(target, snapshot!.catalog, draft.profileId));
+        setDraft(workspaceDraftFromTarget(target, draft.profileId));
       }
       showNotification(t('api_key_policy.activated'), 'success');
     } catch (error) {
@@ -500,7 +503,7 @@ export function APIKeyPolicyPage() {
         setSaving(false);
       }
     }
-  }, [dirty, draft, errorMessage, replacePolicyInSnapshot, showNotification, snapshot, t, workspaceTarget]);
+  }, [dirty, draft, errorMessage, replacePolicyInSnapshot, showNotification, t, workspaceTarget]);
 
   const runDangerAction = useCallback(async () => {
     if (!dangerPolicy || !dangerKind || dangerBusyRef.current) return;
@@ -581,6 +584,9 @@ export function APIKeyPolicyPage() {
   const readOnly = workspaceTarget?.kind === 'policy' && workspaceTarget.readOnly;
   const selectedProfile = currentPolicy?.profiles.find((profile) => profile.id === draft?.profileId);
   const active = Boolean(currentPolicy && draft?.profileId === currentPolicy.activeProfileId);
+  const mappingTargetModels = draft?.profile.models.length
+    ? draft.profile.models
+    : snapshot?.catalog.models ?? [];
 
   useEffect(() => {
     if (!snapshot || workspaceTarget || capability !== 'ready') return;
@@ -765,14 +771,14 @@ export function APIKeyPolicyPage() {
                   <button
                     key={profile.id}
                     className={draft.profileId === profile.id && !draft.isNewProfile ? styles.profileActive : ''}
-                    onClick={() => updateDraft(() => workspaceDraftFromTarget(workspaceTarget!, snapshot.catalog, profile.id))}
+                    onClick={() => updateDraft(() => workspaceDraftFromTarget(workspaceTarget!, profile.id))}
                     disabled={saving || dirty}
                   >
                     <span>{profile.name}</span>
                     {profile.id === currentPolicy.activeProfileId ? <small>{t('api_key_policy.active')}</small> : null}
                   </button>
                 ))}
-                {!readOnly ? <button className={draft.isNewProfile ? styles.profileActive : ''} onClick={() => updateDraft((current) => ({ displayName: current.displayName, profileId: '', profile: emptyProfile(snapshot.catalog), isNewProfile: true }))} disabled={saving || dirty}><IconPlus size={14} /> {t('api_key_policy.new_profile')}</button> : null}
+                {!readOnly ? <button className={draft.isNewProfile ? styles.profileActive : ''} onClick={() => updateDraft((current) => ({ displayName: current.displayName, profileId: '', profile: emptyProfile(), isNewProfile: true }))} disabled={saving || dirty}><IconPlus size={14} /> {t('api_key_policy.new_profile')}</button> : null}
               </div>
             ) : null}
 
@@ -794,17 +800,17 @@ export function APIKeyPolicyPage() {
             />
 
             <div className={styles.policyGrid}>
-              <ChoiceList title={t('api_key_policy.allowed_providers')} values={snapshot.catalog.providers} selected={draft.profile.providers} onChange={(providers) => updateDraft((current) => ({ ...current, profile: { ...current.profile, providers } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_providers')} />
-              <ChoiceList title={t('api_key_policy.allowed_models')} values={snapshot.catalog.models} selected={draft.profile.models} onChange={(models) => updateDraft((current) => ({ ...current, profile: { ...current.profile, models, mappings: current.profile.mappings.filter((mapping) => models.includes(mapping.target)) } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_models')} />
+              <ChoiceList title={t('api_key_policy.allowed_providers')} values={snapshot.catalog.providers} selected={draft.profile.providers} onChange={(providers) => updateDraft((current) => ({ ...current, profile: { ...current.profile, providers } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_providers')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_providers_when_empty')} />
+              <ChoiceList title={t('api_key_policy.allowed_models')} values={snapshot.catalog.models} selected={draft.profile.models} onChange={(models) => updateDraft((current) => ({ ...current, profile: { ...current.profile, models, mappings: models.length === 0 ? current.profile.mappings : current.profile.mappings.filter((mapping) => models.includes(mapping.target)) } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_models')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_models_when_empty')} />
             </div>
 
             <section className={styles.mappingSection}>
-              <div className={styles.mappingHeader}><div><h3>{t('api_key_policy.mappings')}</h3><p>{t('api_key_policy.mappings_hint')}</p></div>{!readOnly ? <Button variant="secondary" size="sm" onClick={() => updateDraft((current) => ({ ...current, profile: { ...current.profile, mappings: [...current.profile.mappings, { source: '', target: current.profile.models[0] ?? '' }] } }))} disabled={saving || draft.profile.models.length === 0}><IconPlus size={14} /> {t('common.add')}</Button> : null}</div>
+              <div className={styles.mappingHeader}><div><h3>{t('api_key_policy.mappings')}</h3><p>{t('api_key_policy.mappings_hint')}</p></div>{!readOnly ? <Button variant="secondary" size="sm" onClick={() => updateDraft((current) => ({ ...current, profile: { ...current.profile, mappings: [...current.profile.mappings, { source: '', target: mappingTargetModels[0] ?? '' }] } }))} disabled={saving || mappingTargetModels.length === 0}><IconPlus size={14} /> {t('common.add')}</Button> : null}</div>
               {draft.profile.mappings.length ? draft.profile.mappings.map((mapping, index) => (
                 <div className={styles.mappingRow} key={`${index}-${mapping.source}`}>
                   <input className="input" value={mapping.source} placeholder={t('api_key_policy.source_model')} disabled={readOnly || saving} onChange={(event) => updateDraft((current) => { const mappings = current.profile.mappings.map((item, itemIndex) => itemIndex === index ? { ...item, source: event.target.value } : item); return { ...current, profile: { ...current.profile, mappings } }; })} />
                   <span>→</span>
-                  <Select value={mapping.target} options={draft.profile.models.map((model) => ({ value: model, label: model }))} onChange={(target) => updateDraft((current) => { const mappings = current.profile.mappings.map((item, itemIndex) => itemIndex === index ? { ...item, target } : item); return { ...current, profile: { ...current.profile, mappings } }; })} disabled={Boolean(readOnly || saving)} ariaLabel={t('api_key_policy.target_model')} />
+                  <Select value={mapping.target} options={mappingTargetModels.map((model) => ({ value: model, label: model }))} onChange={(target) => updateDraft((current) => { const mappings = current.profile.mappings.map((item, itemIndex) => itemIndex === index ? { ...item, target } : item); return { ...current, profile: { ...current.profile, mappings } }; })} disabled={Boolean(readOnly || saving)} ariaLabel={t('api_key_policy.target_model')} />
                   {!readOnly ? <button className={styles.iconButton} onClick={() => updateDraft((current) => ({ ...current, profile: { ...current.profile, mappings: current.profile.mappings.filter((_, itemIndex) => itemIndex !== index) } }))} disabled={saving} aria-label={t('common.delete')}><IconTrash2 size={15} /></button> : null}
                 </div>
               )) : <div className={styles.mappingEmpty}>{t('api_key_policy.no_mappings')}</div>}
@@ -856,7 +862,7 @@ export function APIKeyPolicyPage() {
           <div>
             <strong>{dangerPolicy?.displayName}</strong>
             <p>{dangerKind === 'policy' ? t('api_key_policy.delete_policy_preview') : dangerKind === 'orphaned' ? t('api_key_policy.purge_preview') : t('api_key_policy.delete_profile_preview', { profile: selectedProfile?.name ?? '' })}</p>
-            {dangerKind === 'policy' && deletePreview ? <ul><li>{t('api_key_policy.permission_change_models_count', { count: deletePreview.activeProfile.models.length })}</li><li>{t('api_key_policy.permission_change_providers_count', { count: deletePreview.activeProfile.providers.length })}</li><li>{t('api_key_policy.permission_change_new_requests')}</li></ul> : null}
+            {dangerKind === 'policy' && deletePreview ? <ul><li>{deletePreview.activeProfile.models.length ? t('api_key_policy.permission_change_models_count', { count: deletePreview.activeProfile.models.length }) : t('api_key_policy.permission_change_models_all')}</li><li>{deletePreview.activeProfile.providers.length ? t('api_key_policy.permission_change_providers_count', { count: deletePreview.activeProfile.providers.length }) : t('api_key_policy.permission_change_providers_all')}</li><li>{t('api_key_policy.permission_change_new_requests')}</li></ul> : null}
           </div>
         </div>
       </ProTaskDialog>

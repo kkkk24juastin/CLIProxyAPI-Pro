@@ -395,6 +395,54 @@ func TestRequestDecisionNormalizesThinkingSuffixWithoutBroadeningModelAccess(t *
 	}
 }
 
+func TestEmptyProviderAndModelSelectionsAllowAllCatalogAndFutureValues(t *testing.T) {
+	service := newTestService(t)
+	service.SetCatalogProvider(func() (ProfileCatalog, error) {
+		return NewProfileCatalog([]string{"codex"}, []string{"gpt-5"}), nil
+	})
+	identity := testIdentity(t, "allow-all-key")
+	policy, err := service.Create(context.Background(), identity, "Allow all", ProfileInput{
+		Name: "Open", Mappings: []ModelMapping{{Source: "smart", Target: "gpt-5"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policy.Profiles) != 1 || len(policy.Profiles[0].Providers) != 0 || len(policy.Profiles[0].Models) != 0 {
+		t.Fatalf("persisted wildcard profile=%#v", policy.Profiles)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil || decision.Snapshot == nil {
+		t.Fatalf("decision=%#v err=%v", decision, err)
+	}
+	for requested, want := range map[string]string{
+		"future-model": "future-model",
+		"smart":        "gpt-5",
+		"smart(high)":  "gpt-5(high)",
+	} {
+		if got, applyErr := decision.ApplyModel(requested); applyErr != nil || got != want {
+			t.Fatalf("ApplyModel(%q)=%q, %v; want %q", requested, got, applyErr, want)
+		}
+	}
+	if err = decision.AllowsProvider("future-provider"); err != nil {
+		t.Fatalf("future provider rejected: %v", err)
+	}
+	providers, err := decision.FilterProviders([]string{"Future-Provider", "codex", "future-provider"})
+	if err != nil || len(providers) != 2 || providers[0] != "future-provider" || providers[1] != "codex" {
+		t.Fatalf("filtered providers=%#v err=%v", providers, err)
+	}
+	visible, err := decision.FilterVisibleModels([]ModelCandidate{
+		{ID: "future-model", Providers: []string{"future-provider"}},
+		{ID: "gpt-5", Providers: []string{"codex"}},
+	})
+	if err != nil || len(visible) != 3 || visible[0].ID != "future-model" || visible[1].ID != "gpt-5" || visible[2] != (VisibleModel{ID: "smart", EffectiveID: "gpt-5"}) {
+		t.Fatalf("visible models=%#v err=%v", visible, err)
+	}
+	invalid := ProfileInput{Name: "Open", Mappings: []ModelMapping{{Source: "smart", Target: "unknown"}}}
+	if _, err = service.Create(context.Background(), testIdentity(t, "invalid-open-key"), "", invalid); err == nil || !strings.Contains(err.Error(), "unknown model") {
+		t.Fatalf("unknown wildcard mapping target error=%v", err)
+	}
+}
+
 func TestRequestDecisionExactAutoAndPrefixedMappingsWinBeforeNormalization(t *testing.T) {
 	decision := RequestPolicyDecision{Mode: ModeProfile, Snapshot: &RequestPolicySnapshot{
 		ModelMappings: map[string]string{"auto": "gpt-5", "team/gpt": "gpt-5"},

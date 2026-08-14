@@ -257,10 +257,18 @@ func configuredAPIKeyIdentities(keys []string) map[string]apikeypolicy.Authentic
 
 func maskAPIKey(value string) string {
 	value = strings.TrimSpace(value)
-	if len(value) <= 8 {
-		return strings.Repeat("*", len(value))
+	if value == "" {
+		return ""
 	}
-	return value[:4] + strings.Repeat("*", len(value)-8) + value[len(value)-4:]
+	visibleChars := 2
+	if len(value) < 4 {
+		visibleChars = 1
+	}
+	maskedLength := 10 - visibleChars*2
+	if maskedLength < 1 {
+		maskedLength = 1
+	}
+	return value[:visibleChars] + strings.Repeat("*", maskedLength) + value[len(value)-visibleChars:]
 }
 
 func weakAPIKey(value string) bool { return len(strings.TrimSpace(value)) < 16 }

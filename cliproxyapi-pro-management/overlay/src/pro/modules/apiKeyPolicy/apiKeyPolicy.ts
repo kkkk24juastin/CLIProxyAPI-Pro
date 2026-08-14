@@ -332,8 +332,6 @@ export const validateProfileInput = (
   catalog: APIKeyPolicyCatalog,
 ): string | null => {
   if (!profile.name.trim()) return 'name';
-  if (profile.providers.length === 0) return 'providers';
-  if (profile.models.length === 0) return 'models';
   const providers = new Set(catalog.providers);
   const models = new Set(catalog.models);
   if (profile.providers.some((provider) => !providers.has(provider))) return 'providers';
@@ -342,7 +340,10 @@ export const validateProfileInput = (
   for (const mapping of profile.mappings) {
     const source = mapping.source.trim();
     const target = mapping.target.trim();
-    if (!source || !target || sources.has(source) || !profile.models.includes(target)) return 'mappings';
+    const targetAllowed = profile.models.length === 0
+      ? models.has(target)
+      : profile.models.includes(target);
+    if (!source || !target || sources.has(source) || !targetAllowed) return 'mappings';
     sources.add(source);
   }
   return null;

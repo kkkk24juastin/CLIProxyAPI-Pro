@@ -204,6 +204,7 @@
 .mappingSection { min-width: 0; padding: 14px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
 .choiceHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; font-size: 12px; }
 .choiceHeader span { color: var(--text-secondary); }
+.choiceHint { min-height: 34px; margin: -2px 0 9px; color: var(--text-secondary); font-size: 10px; line-height: 1.55; }
 .choiceList { display: grid; align-content: start; gap: 3px; max-height: 220px; margin-top: 8px; overflow: auto; }
 .choiceItem { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 7px; border-radius: 6px; font-size: 11px; cursor: pointer; }
 .choiceItem:hover { background: var(--bg-primary); }

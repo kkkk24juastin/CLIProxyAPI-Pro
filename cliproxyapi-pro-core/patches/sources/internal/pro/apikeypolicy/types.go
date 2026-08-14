@@ -202,6 +202,11 @@ func (c ProfileCatalog) Validate(input ProfileInput) error {
 			return fmt.Errorf("unknown model %q", model)
 		}
 	}
+	for _, mapping := range input.Mappings {
+		if _, ok := models[mapping.Target]; !ok {
+			return fmt.Errorf("unknown model %q", mapping.Target)
+		}
+	}
 	return nil
 }
 
@@ -223,6 +228,22 @@ func (s RequestPolicySnapshot) Clone() RequestPolicySnapshot {
 	s.AllowedModels = cloneStringSet(s.AllowedModels)
 	s.AllowedProviders = cloneStringSet(s.AllowedProviders)
 	return s
+}
+
+func (s RequestPolicySnapshot) allowsModel(model string) bool {
+	if len(s.AllowedModels) == 0 {
+		return true
+	}
+	_, allowed := s.AllowedModels[normalizeModel(model)]
+	return allowed
+}
+
+func (s RequestPolicySnapshot) allowsProvider(provider string) bool {
+	if len(s.AllowedProviders) == 0 {
+		return true
+	}
+	_, allowed := s.AllowedProviders[normalizeProvider(provider)]
+	return allowed
 }
 
 type RequestPolicyDecision struct {
@@ -320,13 +341,25 @@ func (d RequestPolicyDecision) applyProfileModel(model string, applyMapping bool
 	// exact aliases win before a trailing segment is interpreted as thinking.
 	if applyMapping {
 		if mapped := normalizeModel(d.Snapshot.ModelMappings[model]); mapped != "" {
-			if _, allowed := d.Snapshot.AllowedModels[mapped]; !allowed {
+			if !d.Snapshot.allowsModel(mapped) {
 				return "", profileModelForbiddenError()
 			}
 			return mapped, nil
 		}
 	}
-	if _, allowed := d.Snapshot.AllowedModels[model]; allowed {
+	if len(d.Snapshot.AllowedModels) == 0 {
+		if applyMapping {
+			parsed := thinking.ParseSuffix(model)
+			baseModel := normalizeModel(parsed.ModelName)
+			if parsed.HasSuffix && baseModel != "" && baseModel != model {
+				if mapped := normalizeModel(d.Snapshot.ModelMappings[baseModel]); mapped != "" {
+					return mapped + "(" + parsed.RawSuffix + ")", nil
+				}
+			}
+		}
+		return model, nil
+	}
+	if d.Snapshot.allowsModel(model) {
 		return model, nil
 	}
 
@@ -341,7 +374,7 @@ func (d RequestPolicyDecision) applyProfileModel(model string, applyMapping bool
 			effectiveBase = mapped
 		}
 	}
-	if _, allowed := d.Snapshot.AllowedModels[effectiveBase]; !allowed {
+	if !d.Snapshot.allowsModel(effectiveBase) {
 		return "", profileModelForbiddenError()
 	}
 	return effectiveBase + "(" + parsed.RawSuffix + ")", nil
@@ -373,7 +406,7 @@ func (d RequestPolicyDecision) AllowsProvider(provider string) error {
 	if provider == "" {
 		return &PolicyError{Code: "profile_provider_forbidden", Message: "execution provider cannot be resolved for the active API key profile"}
 	}
-	if _, allowed := d.Snapshot.AllowedProviders[provider]; !allowed {
+	if !d.Snapshot.allowsProvider(provider) {
 		return &PolicyError{Code: "profile_provider_forbidden", Message: "provider is not allowed by the active API key profile"}
 	}
 	return nil
@@ -393,7 +426,7 @@ func (d RequestPolicyDecision) FilterProviders(providers []string) ([]string, er
 		if provider == "" {
 			continue
 		}
-		if _, allowed := d.Snapshot.AllowedProviders[provider]; !allowed {
+		if !d.Snapshot.allowsProvider(provider) {
 			continue
 		}
 		if _, duplicate := seen[provider]; duplicate {
@@ -436,8 +469,11 @@ func (d RequestPolicyDecision) FilterVisibleModels(candidates []ModelCandidate) 
 		available[candidate.ID] = candidate
 	}
 	providerVisible := func(candidate ModelCandidate) bool {
+		if len(d.Snapshot.AllowedProviders) == 0 {
+			return true
+		}
 		for _, provider := range candidate.Providers {
-			if _, allowed := d.Snapshot.AllowedProviders[normalizeProvider(provider)]; allowed {
+			if d.Snapshot.allowsProvider(normalizeProvider(provider)) {
 				return true
 			}
 		}
@@ -446,7 +482,7 @@ func (d RequestPolicyDecision) FilterVisibleModels(candidates []ModelCandidate) 
 	out := make([]VisibleModel, 0, len(order)+len(d.Snapshot.ModelMappings))
 	for _, id := range order {
 		candidate := available[id]
-		if _, allowed := d.Snapshot.AllowedModels[id]; allowed && providerVisible(candidate) {
+		if d.Snapshot.allowsModel(id) && providerVisible(candidate) {
 			out = append(out, VisibleModel{ID: id, EffectiveID: id})
 		}
 	}
@@ -484,12 +520,6 @@ func normalizeProfileInput(input ProfileInput) (ProfileInput, error) {
 	}
 	input.Providers = normalizeUnique(input.Providers, normalizeProvider)
 	input.Models = normalizeUnique(input.Models, normalizeModel)
-	if len(input.Providers) == 0 {
-		return ProfileInput{}, errors.New("at least one provider is required")
-	}
-	if len(input.Models) == 0 {
-		return ProfileInput{}, errors.New("at least one model is required")
-	}
 	allowedModels := make(map[string]struct{}, len(input.Models))
 	for _, model := range input.Models {
 		allowedModels[model] = struct{}{}
@@ -505,7 +535,7 @@ func normalizeProfileInput(input ProfileInput) (ProfileInput, error) {
 		if _, duplicate := sources[mapping.Source]; duplicate {
 			return ProfileInput{}, errors.New("model mapping source must be unique")
 		}
-		if _, allowed := allowedModels[mapping.Target]; !allowed {
+		if _, allowed := allowedModels[mapping.Target]; len(allowedModels) > 0 && !allowed {
 			return ProfileInput{}, errors.New("model mapping target must be allowed")
 		}
 		sources[mapping.Source] = struct{}{}
