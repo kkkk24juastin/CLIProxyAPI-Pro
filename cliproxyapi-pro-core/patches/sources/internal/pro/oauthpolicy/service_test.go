@@ -23,14 +23,25 @@ type planSettingsStore struct {
 	*memorySettingsStore
 	raw          []byte
 	observedAtMS int64
+	snapshots    []PlanSnapshot
 	provider     string
 	fileName     string
 	authIndex    string
 }
 
-func (s *planSettingsStore) GetPlanSnapshot(_ context.Context, provider, fileName, authIndex string) ([]byte, int64, bool, error) {
+func (s *planSettingsStore) GetPlanSnapshots(_ context.Context, provider, fileName, authIndex string) ([]PlanSnapshot, error) {
 	s.provider, s.fileName, s.authIndex = provider, fileName, authIndex
-	return append([]byte(nil), s.raw...), s.observedAtMS, len(s.raw) > 0, nil
+	if len(s.snapshots) > 0 {
+		out := make([]PlanSnapshot, len(s.snapshots))
+		for index, snapshot := range s.snapshots {
+			out[index] = PlanSnapshot{Data: append([]byte(nil), snapshot.Data...), ObservedAtMS: snapshot.ObservedAtMS}
+		}
+		return out, nil
+	}
+	if len(s.raw) == 0 {
+		return nil, nil
+	}
+	return []PlanSnapshot{{Data: append([]byte(nil), s.raw...), ObservedAtMS: s.observedAtMS}}, nil
 }
 
 func (s *memorySettingsStore) Get(_ context.Context, namespace string) (settings.Item, bool, error) {
@@ -105,6 +116,34 @@ func TestFilterReadsFreshQuotaSnapshotByAuthIdentity(t *testing.T) {
 	}
 	if store.provider != "gemini-cli" || store.fileName != "gemini.json" || store.authIndex != "auth-index-1" {
 		t.Fatalf("snapshot identity = %q, %q, %q", store.provider, store.fileName, store.authIndex)
+	}
+}
+
+func TestFilterSkipsUnsupportedNewestPlanSnapshot(t *testing.T) {
+	now := time.Now().UnixMilli()
+	store := &planSettingsStore{
+		memorySettingsStore: &memorySettingsStore{items: map[string]settings.Item{
+			settings.NamespaceOAuthPolicy: {
+				Namespace: settings.NamespaceOAuthPolicy, SchemaVersion: 1,
+				Settings: json.RawMessage(`{"enabled":true,"providers":{"antigravity":{"plans":{"ultra":{"priority":42},"_unknown":{"priority":1}}}}}`),
+			},
+		}},
+		snapshots: []PlanSnapshot{
+			{Data: []byte(`{"schema_version":1,"plan":{"id":"standard-tier","kind":"unknown","error":"plan unavailable"}}`), ObservedAtMS: now},
+			{Data: []byte(`{"status":"success","subscription":{"plan":"ultra"}}`), ObservedAtMS: now - 1},
+		},
+	}
+	service, err := New(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	result := service.Filter(context.Background(), modelengine.Input{
+		AuthID: "antigravity-1", AuthIndex: "idx", FileName: "account.json",
+		AuthProvider: "antigravity", AuthKind: "oauth",
+	})
+	if !result.Handled || result.Annotations["plan_key"] != "ultra" || result.Annotations["plan_source"] != "quota-inspection" {
+		t.Fatalf("Filter() = %#v", result)
 	}
 }
 
@@ -201,6 +240,62 @@ func TestUpdateConfigCoalescesConcurrentAccountRefreshes(t *testing.T) {
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("account refresh calls = %d, want 2", got)
+	}
+}
+
+func TestRefreshPlanDetectionCoalescesEngineInvalidation(t *testing.T) {
+	store := &memorySettingsStore{items: map[string]settings.Item{}}
+	service, err := New(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondFinished := make(chan struct{})
+	var calls atomic.Int32
+	service.SetChangeHandler(func(ctx context.Context) {
+		switch calls.Add(1) {
+		case 1:
+			close(firstStarted)
+			select {
+			case <-releaseFirst:
+			case <-ctx.Done():
+			}
+		case 2:
+			close(secondFinished)
+		}
+	})
+	initialRevision := service.revision
+	service.RefreshPlanDetection()
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first refresh did not start")
+	}
+	for range 3 {
+		service.RefreshPlanDetection()
+	}
+	service.mu.RLock()
+	revision := service.revision
+	service.mu.RUnlock()
+	if revision != initialRevision+1 {
+		t.Fatalf("revision = %d, want %d", revision, initialRevision+1)
+	}
+	close(releaseFirst)
+	select {
+	case <-secondFinished:
+	case <-time.After(time.Second):
+		t.Fatal("coalesced follow-up refresh did not finish")
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("refresh calls = %d, want 2", calls.Load())
+	}
+	service.mu.RLock()
+	revision = service.revision
+	service.mu.RUnlock()
+	if revision != initialRevision+2 {
+		t.Fatalf("revision after follow-up = %d, want %d", revision, initialRevision+2)
 	}
 }
 

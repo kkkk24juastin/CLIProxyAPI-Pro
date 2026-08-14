@@ -22,10 +22,14 @@ type Status struct {
 	LastError      string `json:"lastError,omitempty"`
 }
 
+type PlanSnapshot = settings.PlanSnapshot
+
 // PlanSnapshotReader is the narrow persistence port used by account policy to
 // consume provider quota/inspection evidence without depending on SQLite.
+// Multiple sources can exist for the same auth (for example plugin quota and
+// account inspection), ordered newest first.
 type PlanSnapshotReader interface {
-	GetPlanSnapshot(context.Context, string, string, string) ([]byte, int64, bool, error)
+	GetPlanSnapshots(context.Context, string, string, string) ([]settings.PlanSnapshot, error)
 }
 
 // Service owns OAuth account-plan model filtering and its persisted policy.
@@ -46,6 +50,7 @@ type Service struct {
 	changeStop context.CancelFunc
 	changeRun  bool
 	changeNext bool
+	planReset  bool
 	closed     bool
 }
 
@@ -236,19 +241,23 @@ func (s *Service) queueChange() {
 		return
 	}
 	s.mu.Lock()
+	ctx, start := s.queueChangeLocked()
+	s.mu.Unlock()
+	if start {
+		go s.runChanges(ctx)
+	}
+}
+
+func (s *Service) queueChangeLocked() (context.Context, bool) {
 	if s.closed || s.onChange == nil || s.changeCtx == nil {
-		s.mu.Unlock()
-		return
+		return nil, false
 	}
 	s.changeNext = true
 	if s.changeRun {
-		s.mu.Unlock()
-		return
+		return nil, false
 	}
 	s.changeRun = true
-	ctx := s.changeCtx
-	s.mu.Unlock()
-	go s.runChanges(ctx)
+	return s.changeCtx, true
 }
 
 func (s *Service) runChanges(ctx context.Context) {
@@ -260,6 +269,10 @@ func (s *Service) runChanges(ctx context.Context) {
 			return
 		}
 		s.changeNext = false
+		if s.planReset {
+			s.resetEngineLocked()
+			s.planReset = false
+		}
 		handler := s.onChange
 		s.mu.Unlock()
 		if handler != nil {
@@ -285,12 +298,19 @@ func (s *Service) Filter(ctx context.Context, input modelengine.Input) modelengi
 		return modelengine.Result{}
 	}
 	if s.planStore != nil && len(input.QuotaSnapshotJSON) == 0 {
-		raw, observedAtMS, found, err := s.planStore.GetPlanSnapshot(
+		snapshots, err := s.planStore.GetPlanSnapshots(
 			ctx, input.AuthProvider, input.FileName, input.AuthIndex,
 		)
-		if found {
-			input.QuotaSnapshotJSON = raw
-			input.QuotaObservedAtMS = observedAtMS
+		if len(snapshots) > 0 {
+			selected := snapshots[0]
+			for _, snapshot := range snapshots {
+				if modelengine.QuotaSnapshotHasSupportedPlan(input.AuthProvider, snapshot.Data) {
+					selected = snapshot
+					break
+				}
+			}
+			input.QuotaSnapshotJSON = append([]byte(nil), selected.Data...)
+			input.QuotaObservedAtMS = selected.ObservedAtMS
 		}
 		if err != nil {
 			input.QuotaSnapshotError = err.Error()
@@ -348,14 +368,30 @@ func (s *Service) RefreshPlanDetection() {
 		s.mu.Unlock()
 		return
 	}
+	// A running refresh consumes one coalesced follow-up pass. Defer the engine
+	// reset to that pass so repeated quota writes do not restart every in-flight
+	// provider lookup, while a write that arrives during a pass still invalidates
+	// the cache before the follow-up handler runs.
+	if s.onChange == nil || s.changeCtx == nil {
+		s.resetEngineLocked()
+		s.mu.Unlock()
+		return
+	}
+	s.planReset = true
+	changeCtx, start := s.queueChangeLocked()
+	s.mu.Unlock()
+	if start {
+		go s.runChanges(changeCtx)
+	}
+}
+
+func (s *Service) resetEngineLocked() {
 	engine := modelengine.New()
 	engine.ApplyConfig(s.config)
 	s.engine = engine
 	s.revision++
 	s.effective = make(map[string]modelengine.EffectivePolicy)
 	s.decisions = make(map[string]modelengine.Result)
-	s.mu.Unlock()
-	s.queueChange()
 }
 
 // ForgetAuth removes runtime-only policy state for an authentication account.

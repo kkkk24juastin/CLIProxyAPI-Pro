@@ -498,6 +498,51 @@ providers:
 	}
 }
 
+func TestGeminiAmbiguousStandardSnapshotChecksPaidTier(t *testing.T) {
+	cfg, _ := modelconfig.Parse([]byte(`
+providers:
+  gemini-cli:
+    plans:
+      standard: {priority: 1}
+      pro: {priority: 77}
+`))
+	engine := New()
+	engine.ApplyConfig(cfg)
+	called := false
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "gemini-paid-standard", AuthProvider: "gemini-cli", AuthKind: "oauth",
+		StorageJSON:       []byte(`{"access_token":"token","project_id":"project"}`),
+		QuotaSnapshotJSON: []byte(`{"schema_version":1,"plan":{"id":"standard-tier","label":"Gemini Code Assist","kind":"standard"}}`),
+		QuotaObservedAtMS: time.Now().UnixMilli(),
+		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+			called = true
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"paidTier":{"id":"standard-tier","name":"Google AI Pro"}}`)}, nil
+		},
+	})
+	if !called || !result.Handled || result.Annotations["plan_key"] != "pro" || result.Annotations["plan_source"] != "provider-api" {
+		t.Fatalf("Filter() = %#v, provider called = %t", result, called)
+	}
+}
+
+func TestAntigravityCustomPlanMatchesConfiguredRule(t *testing.T) {
+	cfg, _ := modelconfig.Parse([]byte(`
+providers:
+  antigravity:
+    plans:
+      enterprise: {priority: 77}
+      _unknown: {priority: 1}
+`))
+	engine := New()
+	engine.ApplyConfig(cfg)
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "antigravity-enterprise", AuthProvider: "antigravity", AuthKind: "oauth",
+		Metadata: map[string]any{"plan_type": "enterprise"},
+	})
+	if !result.Handled || result.Annotations["plan_key"] != "enterprise" || result.Annotations["matched_rule"] != "enterprise" || result.Priority == nil || *result.Priority != 77 {
+		t.Fatalf("Filter() = %#v", result)
+	}
+}
+
 func TestQuotaSnapshotPlanErrorIsRedacted(t *testing.T) {
 	_, _, err := planFromQuotaSnapshot("gemini-cli", Input{
 		QuotaSnapshotJSON: []byte(`{"schema_version":1,"plan":{"kind":"pro","error":"authorization=Bearer secret-token"}}`),

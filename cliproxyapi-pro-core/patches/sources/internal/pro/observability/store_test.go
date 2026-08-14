@@ -792,6 +792,71 @@ func TestOpenStoreMigratesLegacyTokenAccountingFromRawPayload(t *testing.T) {
 	}
 }
 
+func TestOpenStoreMigratesAPIKeyPolicyColumnsBeforeIndexes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v7.2.130-usage.sqlite")
+	legacy, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore(seed) error = %v", err)
+	}
+	for _, statement := range []string{
+		`drop index idx_usage_events_policy_recent`,
+		`drop index idx_usage_events_profile_recent`,
+		`drop index idx_usage_events_policy_mode_recent`,
+		`alter table usage_events drop column api_key_policy_id`,
+		`alter table usage_events drop column profile_id`,
+		`alter table usage_events drop column profile_name_snapshot`,
+		`alter table usage_events drop column policy_mode`,
+		`alter table usage_events drop column requested_model`,
+		`alter table usage_events drop column effective_model`,
+	} {
+		if _, err = legacy.db.Exec(statement); err != nil {
+			t.Fatalf("prepare legacy schema with %q: %v", statement, err)
+		}
+	}
+	if err = legacy.Close(); err != nil {
+		t.Fatalf("Close(legacy) error = %v", err)
+	}
+
+	migrated, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore(migrate v7.2.130 schema) error = %v", err)
+	}
+	defer func() { _ = migrated.Close() }()
+
+	columns := map[string]bool{}
+	rows, err := migrated.db.Query(`pragma table_info(usage_events)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue any
+		if err = rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			t.Fatal(err)
+		}
+		columns[name] = true
+	}
+	if err = rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"api_key_policy_id", "profile_id", "profile_name_snapshot", "policy_mode", "requested_model", "effective_model"} {
+		if !columns[name] {
+			t.Errorf("usage_events column %q was not migrated", name)
+		}
+	}
+	for _, name := range []string{"idx_usage_events_policy_recent", "idx_usage_events_profile_recent", "idx_usage_events_policy_mode_recent"} {
+		var count int
+		if err = migrated.db.QueryRow(`select count(*) from sqlite_master where type = 'index' and name = ?`, name).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Errorf("usage_events index %q count = %d, want 1", name, count)
+		}
+	}
+}
+
 func TestUsageAggregatesIncludesUnattributedAPIKeyBucket(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()

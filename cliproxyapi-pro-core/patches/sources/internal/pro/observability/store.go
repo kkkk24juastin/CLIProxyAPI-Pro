@@ -564,9 +564,6 @@ func (s *Store) init() error {
 		`create index if not exists idx_usage_events_auth_index_timestamp on usage_events(auth_index, timestamp_ms, id)`,
 		`create index if not exists idx_usage_events_api_key_timestamp on usage_events(api_key_hash, timestamp_ms)`,
 		`create index if not exists idx_usage_events_api_key_recent on usage_events(api_key_hash, timestamp_ms desc, id desc)`,
-		`create index if not exists idx_usage_events_policy_recent on usage_events(api_key_policy_id, timestamp_ms desc, id desc)`,
-		`create index if not exists idx_usage_events_profile_recent on usage_events(profile_id, timestamp_ms desc, id desc)`,
-		`create index if not exists idx_usage_events_policy_mode_recent on usage_events(policy_mode, timestamp_ms desc, id desc)`,
 		`create table if not exists usage_summary (
 			id integer primary key check (id = 1),
 			latest_event_id integer not null default 0,
@@ -714,6 +711,17 @@ func (s *Store) init() error {
 		`alter table auth_runtime_stats add column file_name text not null default ''`,
 	}
 	if err := prostorage.ApplySchema(context.Background(), s.db, prostorage.Schema{Alter: alterations}); err != nil {
+		return err
+	}
+	// Indexes that reference additive columns must be created after migrations.
+	// On an existing database CREATE TABLE IF NOT EXISTS is a no-op, so creating
+	// these indexes earlier would abort startup before the missing columns could
+	// be added.
+	if err := prostorage.ApplySchema(context.Background(), s.db, prostorage.Schema{Create: []string{
+		`create index if not exists idx_usage_events_policy_recent on usage_events(api_key_policy_id, timestamp_ms desc, id desc)`,
+		`create index if not exists idx_usage_events_profile_recent on usage_events(profile_id, timestamp_ms desc, id desc)`,
+		`create index if not exists idx_usage_events_policy_mode_recent on usage_events(policy_mode, timestamp_ms desc, id desc)`,
+	}}); err != nil {
 		return err
 	}
 	if err := prostorage.ApplySchema(context.Background(), s.db, prostorage.Schema{Seed: []string{`insert or ignore into runtime_state_meta(state_key, generation, updated_at_ms) values

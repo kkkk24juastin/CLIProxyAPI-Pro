@@ -142,6 +142,7 @@ type accountInspectionScheduler struct {
 	autoActionConfirmations *proinspection.ConfirmationCounter
 	subscribers             map[chan accountInspectionLogStreamMessage]struct{}
 	lastProgressBroadcastAt int64
+	policyRefreshPending    bool
 	runWG                   sync.WaitGroup
 	stopped                 bool
 	lifecycle               *proinspection.Lifecycle
@@ -795,6 +796,7 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 		return accountInspectionResult{}, err
 	}
 	defer release()
+	defer s.refreshAccountPoliciesIfQuotaChanged()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -852,6 +854,7 @@ func (s *accountInspectionScheduler) inspectMany(ctx context.Context, items []ac
 		return nil, err
 	}
 	defer release()
+	defer s.refreshAccountPoliciesIfQuotaChanged()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1095,6 +1098,7 @@ func (s *accountInspectionScheduler) executeSingleInspection(ctx context.Context
 
 func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.CancelFunc, schedule accountInspectionSchedule, manual bool) {
 	defer cancel()
+	defer s.refreshAccountPoliciesIfQuotaChanged()
 	s.appendLog("info", "后端账号巡检开始")
 	results, summary, runErr := s.executeInspection(ctx, schedule.Settings)
 	finishedAt := time.Now().UnixMilli()

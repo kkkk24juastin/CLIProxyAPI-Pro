@@ -13,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
 	proapp "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/app"
 	internalregistry "github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	runtimeexecutor "github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
@@ -149,6 +150,7 @@ func TestOAuthPolicyInFlightRegistrationCannotRestoreRemovedAuthModels(t *testin
 	}
 	t.Cleanup(runtime.Close)
 	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(runtimeexecutor.NewClaudeExecutor(cfg))
 	service := &Service{cfg: cfg, proApp: runtime, coreManager: manager}
 	auth := &coreauth.Auth{
 		ID: "claude-in-flight-removal", FileName: "claude-in-flight-removal.json", Provider: "claude", Status: coreauth.StatusActive,

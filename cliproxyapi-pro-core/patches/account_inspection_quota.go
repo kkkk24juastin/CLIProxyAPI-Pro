@@ -25,13 +25,35 @@ func (s *accountInspectionScheduler) persistQuotaState(ctx context.Context, acco
 		s.appendLog("warning", fmt.Sprintf("%s 配额缓存写入失败：%s", account.identity(), err.Error()))
 		return
 	}
-	if s != nil && s.h != nil {
-		if application := s.h.proApplication(); application != nil {
-			application.RefreshAccountPolicies()
-		}
-	}
+	s.markAccountPoliciesForRefresh()
 	if err := s.cleanupLegacyQuotaCacheFromAuth(ctx, account); err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 旧认证文件配额缓存清理失败：%s", account.identity(), err.Error()))
+	}
+}
+
+func (s *accountInspectionScheduler) markAccountPoliciesForRefresh() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.policyRefreshPending = true
+	s.mu.Unlock()
+}
+
+func (s *accountInspectionScheduler) refreshAccountPoliciesIfQuotaChanged() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	pending := s.policyRefreshPending
+	s.policyRefreshPending = false
+	handler := s.h
+	s.mu.Unlock()
+	if !pending || handler == nil {
+		return
+	}
+	if application := handler.proApplication(); application != nil {
+		application.RefreshAccountPolicies()
 	}
 }
 

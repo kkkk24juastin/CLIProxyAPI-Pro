@@ -61,7 +61,7 @@ func (SettingsStore) Delete(ctx context.Context, namespace string) error {
 	return DeleteProSetting(ctx, namespace)
 }
 
-func (SettingsStore) GetPlanSnapshot(ctx context.Context, provider, fileName, authIndex string) ([]byte, int64, bool, error) {
+func (SettingsStore) GetPlanSnapshots(ctx context.Context, provider, fileName, authIndex string) ([]settings.PlanSnapshot, error) {
 	provider = strings.TrimSpace(provider)
 	fileName = strings.TrimSpace(fileName)
 	authIndex = strings.TrimSpace(authIndex)
@@ -70,15 +70,19 @@ func (SettingsStore) GetPlanSnapshot(ctx context.Context, provider, fileName, au
 	}
 	entries, err := GetQuotaCache(ctx, provider, fileName)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, err
 	}
+	snapshots := make([]settings.PlanSnapshot, 0, len(entries))
 	for _, entry := range entries {
-		if entry.AuthIndex != "" && authIndex != "" && entry.AuthIndex != authIndex {
+		entryAuthIndex := strings.TrimSpace(entry.AuthIndex)
+		if (authIndex == "" && entryAuthIndex != "") || (authIndex != "" && entryAuthIndex != "" && entryAuthIndex != authIndex) {
 			continue
 		}
-		return append([]byte(nil), entry.Data...), entry.ObservedAt, true, nil
+		snapshots = append(snapshots, settings.PlanSnapshot{
+			Data: append([]byte(nil), entry.Data...), ObservedAtMS: entry.ObservedAt,
+		})
 	}
-	return nil, 0, false, nil
+	return snapshots, nil
 }
 
 func (SettingsStore) Subscribe(namespace string, apply func(context.Context, settings.Item) error) func() {

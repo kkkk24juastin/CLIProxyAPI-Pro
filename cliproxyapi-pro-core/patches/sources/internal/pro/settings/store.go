@@ -24,6 +24,13 @@ type Item struct {
 	UpdatedAtMS   int64
 }
 
+// PlanSnapshot is provider plan evidence retained by an independent
+// persistence source. Readers return candidates newest first.
+type PlanSnapshot struct {
+	Data         []byte
+	ObservedAtMS int64
+}
+
 // Store is the persistence port consumed by static Pro business modules.
 type Store interface {
 	Get(context.Context, string) (Item, bool, error)

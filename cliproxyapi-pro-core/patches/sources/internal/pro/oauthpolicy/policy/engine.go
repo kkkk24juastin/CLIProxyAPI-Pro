@@ -172,6 +172,13 @@ func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconf
 		quotaPlan, quotaSource, quotaErr = planFromQuotaSnapshot(provider, input)
 	}
 	quotaFresh := quotaErr == nil && quotaPlan != "" && quotaPlan != "unknown" && snapshotIsFresh(snapshotObservedAtMS(input), cfg.CacheTTL)
+	// A flattened Gemini snapshot cannot tell whether standard-tier came from
+	// currentTier or from a paidTier whose display name was dropped. The official
+	// client gives paidTier precedence, so re-resolve this ambiguous value before
+	// accepting it as the account's effective plan.
+	if provider == "gemini-cli" && quotaPlan == "standard" {
+		quotaFresh = false
+	}
 	if (provider == "gemini-cli" || provider == "antigravity") && quotaFresh {
 		return quotaPlan, quotaSource, nil
 	}
@@ -296,6 +303,15 @@ func planFromQuotaSnapshot(provider string, input Input) (string, string, error)
 		return plan, "quota-inspection", nil
 	}
 	return "", "quota-cache", fmt.Errorf("snapshot contains no supported plan")
+}
+
+// QuotaSnapshotHasSupportedPlan reports whether a persisted snapshot contains
+// usable plan evidence. Persistence adapters may retain multiple independent
+// sources for one auth, so callers use this to skip a newer source that has no
+// plan without duplicating provider-specific normalization rules.
+func QuotaSnapshotHasSupportedPlan(provider string, raw []byte) bool {
+	plan, _, _ := planFromQuotaSnapshot(normalizeKey(provider), Input{QuotaSnapshotJSON: raw})
+	return plan != "" && plan != "unknown"
 }
 
 func planFromQuotaPlan(provider string, plan map[string]any) string {
@@ -762,6 +778,8 @@ func normalizeProviderPlan(provider, value string) string {
 		}
 	case "antigravity":
 		switch value {
+		case "":
+			return ""
 		case "free", "free-tier":
 			return "free"
 		case "pro", "g1-pro-tier":
@@ -770,8 +788,13 @@ func normalizeProviderPlan(provider, value string) string {
 			return "ultra"
 		case "ultra-lite", "g1-ultra-lite-tier":
 			return "ultra-lite"
-		default:
+		case "standard", "standard-tier":
 			return "unknown"
+		default:
+			// Provider plans are extensible and Management supports custom keys.
+			// Preserve future or organization-specific tiers instead of silently
+			// forcing their configured rules through _unknown.
+			return value
 		}
 	}
 	return value
