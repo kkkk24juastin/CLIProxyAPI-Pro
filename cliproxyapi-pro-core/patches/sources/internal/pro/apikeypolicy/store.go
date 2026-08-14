@@ -86,9 +86,24 @@ func (s *Store) init(ctx context.Context) error {
 			details_json text not null default '{}',
 			created_at_ms integer not null
 		)`,
+		`create table if not exists api_key_policy_settings (
+			id integer primary key check(id = 1),
+			takeover_enabled integer not null default 0 check(takeover_enabled in (0, 1))
+		)`,
+		`insert into api_key_policy_settings(id, takeover_enabled) values(1, 0) on conflict(id) do nothing`,
 		`create index if not exists idx_api_key_profiles_policy on api_key_profiles(policy_id, created_at_ms, id)`,
 		`create index if not exists idx_api_key_policy_audit_policy on api_key_policy_audit(policy_id, created_at_ms)`,
 	}})
+}
+
+func (s *Store) TakeoverEnabled(ctx context.Context) (bool, error) {
+	return takeoverEnabled(ctx, s.db)
+}
+
+func takeoverEnabled(ctx context.Context, queryer sqlQueryer) (bool, error) {
+	var enabled bool
+	err := queryer.QueryRowContext(ctx, `select takeover_enabled from api_key_policy_settings where id = 1`).Scan(&enabled)
+	return enabled, err
 }
 
 type sqlQueryer interface {

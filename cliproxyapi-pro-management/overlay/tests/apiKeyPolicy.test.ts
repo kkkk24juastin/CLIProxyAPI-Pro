@@ -50,9 +50,9 @@ describe('usage policy backup preview contract', () => {
 describe('API Key Policy profile drafts', () => {
   test('requires the explicit minimum Core capability contract', () => {
     expect(validateAPIKeyPolicyCapabilities({
-      apiVersion: 1,
-      features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard'],
-    }).apiVersion).toBe(1);
+		apiVersion: 2,
+		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
+		}).apiVersion).toBe(2);
     expect(() => validateAPIKeyPolicyCapabilities({
       apiVersion: 1,
       features: ['policy_crud', 'profile_crud', 'optimistic_concurrency'],
@@ -62,21 +62,21 @@ describe('API Key Policy profile drafts', () => {
   test('rejects Core that omits only policy backup and restore support', () => {
     expect(() => validateAPIKeyPolicyCapabilities({
       apiVersion: 1,
-      features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_delete_preview', 'orphaned_purge_guard'],
+		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
     })).toThrow(APIKeyPolicyCapabilityError);
   });
 
   test('rejects Core that cannot provide a server-derived delete preview', () => {
     expect(() => validateAPIKeyPolicyCapabilities({
       apiVersion: 1,
-      features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'orphaned_purge_guard'],
+		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'orphaned_purge_guard', 'takeover_control'],
     })).toThrow(APIKeyPolicyCapabilityError);
   });
 
   test('rejects Core that cannot atomically guard orphaned-policy purge', () => {
     expect(() => validateAPIKeyPolicyCapabilities({
       apiVersion: 1,
-      features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview'],
+		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'takeover_control'],
     })).toThrow(APIKeyPolicyCapabilityError);
   });
 
@@ -134,15 +134,25 @@ describe('API Key Policy profile drafts', () => {
     });
   });
 
-  test('keeps dirty workspace actions clickable above the Sheet and below danger dialogs', () => {
+	test('uses the standard 720px Workspace Sheet with fixed save and cancel actions', () => {
     const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
     const styles = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.module.scss'), 'utf8');
-    expect(page).toContain('dirty && !readOnly && !dangerPolicy');
-    expect(page).toContain('styles.workspaceActionBar');
-    expect(styles).toContain('.workspaceActionBar');
-    expect(styles).toContain('z-index: 2010;');
-    expect(styles).toContain('left: calc(100vw - min(480px, 50vw));');
+		expect(page).toContain('className={styles.policySheet}');
+		expect(page).toContain('footer={');
+		expect(page).toContain('disabled={!dirty || saving}');
+		expect(page).not.toContain('workspaceActionBar');
+		expect(styles).toContain('width: min(720px, 100vw) !important;');
   });
+
+	test('loads and updates the explicit takeover contract', () => {
+		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+		const client = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/apiKeyPolicy.ts'), 'utf8');
+		expect(client).toContain("'takeover_control'");
+		expect(client).toContain("'/api-key-policy-status'");
+		expect(client).toContain("'/api-key-policy-takeover'");
+		expect(page).toContain('active={snapshot?.takeoverEnabled === true}');
+		expect(page).toContain('apiKeyPolicyApi.setTakeover(enabled)');
+	});
 
   test('keeps the draft on 409 and does not replace it when server state is reloaded for manual merge', () => {
     const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');

@@ -45,6 +45,9 @@ func newAPIKeyPolicyModelsServer(t *testing.T) (*Server, *apikeypolicy.Service) 
 	}
 	t.Cleanup(application.Close)
 	service := application.APIKeyPolicy()
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
 	identity, err := apikeypolicy.NewAuthenticatedAPIKeyIdentity("test-key")
 	if err != nil {
 		t.Fatal(err)

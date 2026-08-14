@@ -226,8 +226,16 @@ func TestAPIKeyPolicyRoutesRequireRealManagementMiddlewareAndBindSession(t *test
 		t.Fatalf("authenticated status=%d body=%s", listed.Code, listed.Body.String())
 	}
 	capabilities := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-capabilities", "management-policy-test-secret", nil)
-	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"apiVersion":1`) || !strings.Contains(capabilities.Body.String(), `"atomic_workspace_save"`) || !strings.Contains(capabilities.Body.String(), `"orphaned_purge_guard"`) {
+	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"apiVersion":2`) || !strings.Contains(capabilities.Body.String(), `"atomic_workspace_save"`) || !strings.Contains(capabilities.Body.String(), `"orphaned_purge_guard"`) || !strings.Contains(capabilities.Body.String(), `"takeover_control"`) {
 		t.Fatalf("capabilities status=%d body=%s", capabilities.Code, capabilities.Body.String())
+	}
+	status := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-status", "management-policy-test-secret", nil)
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"takeoverEnabled":false`) {
+		t.Fatalf("initial takeover status=%d body=%s", status.Code, status.Body.String())
+	}
+	toggled := authenticatedPolicyRequest(t, router, http.MethodPut, "/v0/management/api-key-policy-takeover", "management-policy-test-secret", map[string]any{"enabled": true})
+	if toggled.Code != http.StatusOK || !strings.Contains(toggled.Body.String(), `"takeoverEnabled":true`) {
+		t.Fatalf("takeover update status=%d body=%s", toggled.Code, toggled.Body.String())
 	}
 	keyRef := bindingResponse(t, listed).Items[0].KeyRef
 	created := authenticatedPolicyRequest(t, router, http.MethodPost, "/v0/management/api-key-policies", "management-policy-test-secret", createPolicyBody(keyRef))

@@ -6,7 +6,6 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
@@ -14,15 +13,15 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import {
   IconAlertTriangle,
-  IconCheck,
+	IconCheckCircle2,
+	IconInfo,
   IconKey,
   IconPlus,
-  IconRefreshCw,
+	IconShield,
   IconTrash2,
 } from '@/components/ui/icons';
-import { useActionBarHeightVar } from '@/hooks/useActionBarHeightVar';
 import { useAuthStore, useNotificationStore } from '@/stores';
-import configStyles from '@/pro/shared/FloatingActionBar.module.scss';
+import { ProFeatureHeader } from '@/pro/shared/ProFeatureHeader';
 import { ProTaskDialog, ProWorkspaceSheet } from '@/pro/shared/ProSurface';
 import {
   apiKeyPolicyApi,
@@ -195,6 +194,8 @@ export function APIKeyPolicyPage() {
   const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null);
   const [draft, setDraft] = useState<WorkspaceDraft | null>(null);
   const [saving, setSaving] = useState(false);
+	const [takeoverOpen, setTakeoverOpen] = useState(false);
+	const [takeoverBusy, setTakeoverBusy] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [dangerPolicy, setDangerPolicy] = useState<APIKeyPolicy | null>(null);
   const [dangerKind, setDangerKind] = useState<'policy' | 'profile' | 'orphaned' | null>(null);
@@ -206,9 +207,7 @@ export function APIKeyPolicyPage() {
   const savingRef = useRef(false);
   const dangerRevisionRef = useRef(0);
   const dangerBusyRef = useRef(false);
-  const actionBarRef = useRef<HTMLDivElement>(null);
   const dirty = workspaceIsDirty(workspaceTarget, draft);
-  useActionBarHeightVar(actionBarRef, '--api-key-policy-action-bar-height', dirty);
 
   const errorMessage = useCallback((error: unknown): string => {
     const key = apiKeyPolicyErrorTranslationKey(error);
@@ -305,6 +304,34 @@ export function APIKeyPolicyPage() {
     setDraft(null);
     setConflict(false);
   }, []);
+
+	const requestWorkspaceClose = useCallback(async () => {
+		if (dirty && !window.confirm(t('api_key_policy.discard_confirm'))) return;
+		closeWorkspace();
+	}, [closeWorkspace, dirty, t]);
+
+	const toggleTakeover = useCallback(async () => {
+		if (!snapshot || takeoverBusy) return;
+		const enabled = !snapshot.takeoverEnabled;
+		setTakeoverBusy(true);
+		try {
+			const status = await apiKeyPolicyApi.setTakeover(enabled);
+			setSnapshot((current) => current
+				? { ...current, takeoverEnabled: status.takeoverEnabled }
+				: current);
+			setTakeoverOpen(false);
+			showNotification(
+				status.takeoverEnabled
+					? t('api_key_policy.takeover_started')
+					: t('api_key_policy.takeover_stopped'),
+				'success',
+			);
+		} catch (error) {
+			showNotification(errorMessage(error), 'error');
+		} finally {
+			setTakeoverBusy(false);
+		}
+	}, [errorMessage, showNotification, snapshot, t, takeoverBusy]);
 
   const updateDraft = useCallback((updater: (current: WorkspaceDraft) => WorkspaceDraft) => {
     draftRevisionRef.current += 1;
@@ -548,62 +575,19 @@ export function APIKeyPolicyPage() {
     if (policy) openWorkspace({ kind: 'policy', policy, readOnly: policy.state === 'orphaned' }, profileId);
   }, [capability, location.search, openWorkspace, snapshot, workspaceTarget]);
 
-  const actionBar = dirty && !readOnly && !dangerPolicy ? (
-    <div className={`${configStyles.floatingActionContainer} ${styles.workspaceActionBar}`} ref={actionBarRef}>
-      <div className={configStyles.floatingActionList}>
-        <span className={`${configStyles.floatingStatus} ${conflict ? configStyles.error : configStyles.modified}`}>
-          {conflict ? t('api_key_policy.conflict_short') : t('config_management.status_dirty_short')}
-        </span>
-        <button
-          type="button"
-          className={configStyles.floatingActionButton}
-          onClick={() => {
-            if (workspaceTarget && snapshot) {
-              draftRevisionRef.current += 1;
-              setDraft(workspaceDraftFromTarget(workspaceTarget, snapshot.catalog, draft?.profileId));
-            }
-            setConflict(false);
-          }}
-          disabled={saving}
-          aria-label={t('api_key_policy.discard')}
-          title={t('api_key_policy.discard')}
-        >
-          <IconRefreshCw size={16} />
-        </button>
-        <button
-          type="button"
-          className={configStyles.floatingActionButton}
-          onClick={() => void saveWorkspace()}
-          disabled={saving}
-          aria-label={t('common.save')}
-          title={t('common.save')}
-        >
-          <IconCheck size={16} />
-          {!saving ? <span className={configStyles.dirtyDot} aria-hidden="true" /> : null}
-        </button>
-      </div>
-    </div>
-  ) : null;
-
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <div className={styles.heading}>
-          <span className={styles.headingIcon}><IconKey size={23} /></span>
-          <div>
-            <h1>{t('api_key_policy.title')}</h1>
-            <p>{t('api_key_policy.subtitle')}</p>
-          </div>
-        </div>
-        <div className={styles.headerActions}>
-          <Button variant="secondary" size="sm" onClick={() => navigate('/config?section=api-keys')}>
-            {t('api_key_policy.manage_upstream_keys')}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => void load()} disabled={loading}>
-            <IconRefreshCw size={16} /> {t('common.refresh')}
-          </Button>
-        </div>
-      </header>
+		<ProFeatureHeader
+			title={t('api_key_policy.title')}
+			subtitle={t('api_key_policy.subtitle')}
+			icon={<IconKey size={20} />}
+			active={snapshot?.takeoverEnabled === true}
+			loading={loading}
+			actionBusy={takeoverBusy}
+			actionDisabled={!snapshot || capability !== 'ready'}
+			onRefresh={() => void load()}
+			onToggle={() => setTakeoverOpen(true)}
+		/>
 
       {capability === 'unsupported' ? (
         <section className={styles.capabilityNotice}>
@@ -617,13 +601,26 @@ export function APIKeyPolicyPage() {
         </section>
       ) : (
         <>
-          <section className={styles.overview}>
-            {(['all', 'unconfigured', 'configured', 'orphaned'] as const).map((state) => (
-              <button key={state} className={filter === state ? styles.overviewActive : ''} onClick={() => setFilter(state)}>
-                <span>{t(`api_key_policy.filter.${state}`)}</span><strong>{statusCounts[state]}</strong>
-              </button>
-            ))}
-          </section>
+			<section className={styles.statusOverview} aria-label={t('api_key_policy.overview')}>
+				<div className={styles.overviewItem}>
+					<span className={snapshot?.takeoverEnabled ? styles.overviewGood : styles.overviewMuted}>
+						{snapshot?.takeoverEnabled ? <IconCheckCircle2 size={18} /> : <IconAlertTriangle size={18} />}
+					</span>
+					<div><small>{t('api_key_policy.runtime')}</small><strong>{snapshot?.takeoverEnabled ? t('api_key_policy.running') : t('api_key_policy.stopped')}</strong></div>
+				</div>
+				<div className={styles.overviewItem}>
+					<span className={styles.overviewAccent}><IconKey size={18} /></span>
+					<div><small>{t('api_key_policy.upstream_keys')}</small><strong>{snapshot?.bindings.items.length ?? 0}</strong></div>
+				</div>
+				<div className={styles.overviewItem}>
+					<span className={styles.overviewGood}><IconShield size={18} /></span>
+					<div><small>{t('api_key_policy.configured_policies')}</small><strong>{statusCounts.configured}</strong></div>
+				</div>
+				<div className={styles.overviewItem}>
+					<span className={statusCounts.orphaned ? styles.overviewBad : styles.overviewMuted}><IconAlertTriangle size={18} /></span>
+					<div><small>{t('api_key_policy.orphaned_policies')}</small><strong>{statusCounts.orphaned}</strong></div>
+				</div>
+			</section>
 
           <div className={styles.toolbar}>
             <input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('api_key_policy.search')} />
@@ -633,6 +630,9 @@ export function APIKeyPolicyPage() {
               options={(['all', 'unconfigured', 'configured', 'orphaned'] as const).map((value) => ({ value, label: t(`api_key_policy.filter.${value}`) }))}
               ariaLabel={t('api_key_policy.filter_label')}
             />
+				<Button variant="secondary" size="sm" onClick={() => navigate('/config?section=api-keys')}>
+					{t('api_key_policy.manage_upstream_keys')}
+				</Button>
           </div>
 
           {loading && !snapshot ? <div className={styles.empty}>{t('common.loading')}</div> : null}
@@ -652,7 +652,7 @@ export function APIKeyPolicyPage() {
                   </div>
                   <p className={styles.cardSummary}>
                     {policy
-                      ? t('api_key_policy.configured_summary', { profile: activeProfile?.name ?? '-', count: policy.profiles.length })
+							? t(snapshot?.takeoverEnabled ? 'api_key_policy.configured_summary' : 'api_key_policy.configured_inactive_summary', { profile: activeProfile?.name ?? '-', count: policy.profiles.length })
                       : t('api_key_policy.passthrough_summary')}
                   </p>
                   {binding.weakKey ? <div className={styles.weakKey}><IconAlertTriangle size={15} /> {t('api_key_policy.weak_key')}</div> : null}
@@ -699,13 +699,25 @@ export function APIKeyPolicyPage() {
 
       <ProWorkspaceSheet
         open={Boolean(workspaceTarget && draft)}
-        onClose={closeWorkspace}
+		onClose={closeWorkspace}
         confirmClose={() => !dirty || window.confirm(t('api_key_policy.discard_confirm'))}
         closeDisabled={saving}
-        size="xl"
+		size="lg"
+		className={styles.policySheet}
         eyebrow={workspaceTarget?.kind === 'create' ? t('api_key_policy.create_eyebrow') : t('api_key_policy.workspace_eyebrow')}
         title={workspaceTarget?.kind === 'create' ? t('api_key_policy.create_title') : currentPolicy?.displayName}
         description={readOnly ? t('api_key_policy.orphaned_read_only') : t('api_key_policy.workspace_description')}
+		footer={
+			<div className={styles.sheetFooter}>
+				<span>{dirty ? t('config_management.status_dirty_short') : t('api_key_policy.workspace_saved')}</span>
+				<div>
+					<Button variant="secondary" onClick={() => void requestWorkspaceClose()} disabled={saving}>
+						{readOnly ? t('common.close') : t('common.cancel')}
+					</Button>
+					{!readOnly ? <Button onClick={() => void saveWorkspace()} loading={saving} disabled={!dirty || saving}>{t('common.save')}</Button> : null}
+				</div>
+			</div>
+		}
       >
         {draft && snapshot ? (
           <div className={styles.workspace}>
@@ -788,6 +800,26 @@ export function APIKeyPolicyPage() {
         ) : null}
       </ProWorkspaceSheet>
 
+		<ProTaskDialog
+			open={takeoverOpen}
+			onClose={() => setTakeoverOpen(false)}
+			closeDisabled={takeoverBusy}
+			title={snapshot?.takeoverEnabled ? t('api_key_policy.stop_takeover_title') : t('api_key_policy.start_takeover_title')}
+			footer={<><Button variant="secondary" onClick={() => setTakeoverOpen(false)} disabled={takeoverBusy}>{t('common.cancel')}</Button><Button variant={snapshot?.takeoverEnabled ? 'danger' : 'primary'} onClick={() => void toggleTakeover()} loading={takeoverBusy}>{snapshot?.takeoverEnabled ? t('pro_feature_header.stop_takeover') : t('pro_feature_header.start_takeover')}</Button></>}
+		>
+			<div className={styles.takeoverBody}>
+				<span><IconInfo size={22} /></span>
+				<div>
+					<p>{snapshot?.takeoverEnabled ? t('api_key_policy.stop_takeover_body') : t('api_key_policy.start_takeover_body')}</p>
+					<ul>
+						<li>{t('api_key_policy.takeover_configured_count', { count: statusCounts.configured })}</li>
+						<li>{t('api_key_policy.takeover_passthrough_count', { count: statusCounts.unconfigured })}</li>
+						<li>{t('api_key_policy.takeover_new_requests_only')}</li>
+					</ul>
+				</div>
+			</div>
+		</ProTaskDialog>
+
       <ProTaskDialog
         open={Boolean(dangerPolicy && dangerKind)}
         onClose={() => { if (!dangerBusy) { setDangerPolicy(null); setDangerKind(null); setDeletePreview(null); } }}
@@ -805,7 +837,6 @@ export function APIKeyPolicyPage() {
         </div>
       </ProTaskDialog>
 
-      {actionBar && typeof document !== 'undefined' ? createPortal(actionBar, document.body) : actionBar}
     </div>
   );
 }

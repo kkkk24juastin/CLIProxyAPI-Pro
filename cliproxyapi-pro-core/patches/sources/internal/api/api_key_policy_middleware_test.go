@@ -39,6 +39,9 @@ func newAPIKeyPolicyMiddlewareService(t *testing.T) *apikeypolicy.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = service.Close() })
 	return service
 }

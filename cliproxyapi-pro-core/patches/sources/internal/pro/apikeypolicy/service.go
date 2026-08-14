@@ -17,8 +17,9 @@ import (
 )
 
 type runtimeIndex struct {
-	healthy bool
-	items   map[string]RequestPolicySnapshot
+	healthy         bool
+	takeoverEnabled bool
+	items           map[string]RequestPolicySnapshot
 }
 
 type backupPolicy struct {
@@ -33,9 +34,10 @@ type backupPolicy struct {
 }
 
 type backupDocument struct {
-	SchemaVersion int            `json:"schema_version"`
-	Policies      []backupPolicy `json:"policies"`
-	Audits        []AuditRecord  `json:"audits"`
+	SchemaVersion   int            `json:"schema_version"`
+	TakeoverEnabled bool           `json:"takeover_enabled"`
+	Policies        []backupPolicy `json:"policies"`
+	Audits          []AuditRecord  `json:"audits"`
 }
 
 func policiesToBackup(policies []Policy) []backupPolicy {
@@ -78,24 +80,28 @@ func (s *Service) ExportBackup(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(backupDocument{SchemaVersion: 2, Policies: policiesToBackup(policies), Audits: audits})
+	takeoverEnabled, err := s.store.TakeoverEnabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(backupDocument{SchemaVersion: 3, TakeoverEnabled: takeoverEnabled, Policies: policiesToBackup(policies), Audits: audits})
 }
 
-func decodeBackup(payload []byte) ([]Policy, []AuditRecord, error) {
+func decodeBackup(payload []byte) ([]Policy, []AuditRecord, bool, error) {
 	var document backupDocument
 	if err := json.Unmarshal(payload, &document); err == nil && document.SchemaVersion != 0 {
-		if document.SchemaVersion != 2 {
-			return nil, nil, fmt.Errorf("unsupported API key policy backup schema %d", document.SchemaVersion)
+		if document.SchemaVersion != 2 && document.SchemaVersion != 3 {
+			return nil, nil, false, fmt.Errorf("unsupported API key policy backup schema %d", document.SchemaVersion)
 		}
-		return backupToPolicies(document.Policies), document.Audits, nil
+		return backupToPolicies(document.Policies), document.Audits, document.SchemaVersion >= 3 && document.TakeoverEnabled, nil
 	}
 	// Version 1 was a bare policy array. It remains importable and contains no
 	// audit history by definition.
 	var legacy []backupPolicy
 	if err := json.Unmarshal(payload, &legacy); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	return backupToPolicies(legacy), nil, nil
+	return backupToPolicies(legacy), nil, false, nil
 }
 
 func validateBackupAudits(items []AuditRecord) error {
@@ -124,7 +130,7 @@ func profileCount(policies []Policy) int {
 // as import, then derives association counts from the committed config key
 // fingerprints supplied by the Management handler.
 func (s *Service) PreviewBackup(ctx context.Context, payload []byte, configuredHashes []string) (probackup.PolicyBackupPreview, error) {
-	policies, _, _, err := s.stageBackup(payload)
+	policies, _, _, _, err := s.stageBackup(payload)
 	if err != nil {
 		return probackup.PolicyBackupPreview{}, err
 	}
@@ -154,7 +160,7 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 	if s == nil || s.store == nil {
 		return ErrUnavailable
 	}
-	policies, audits, next, err := s.stageBackup(payload)
+	policies, audits, takeoverEnabled, next, err := s.stageBackup(payload)
 	if err != nil {
 		return err
 	}
@@ -176,6 +182,9 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `delete from api_key_policy_audit`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `update api_key_policy_settings set takeover_enabled = ? where id = 1`, takeoverEnabled); err != nil {
 		return err
 	}
 	for _, policy := range policies {
@@ -204,7 +213,7 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	if _, err := buildRuntimeIndex(loaded); err != nil {
+	if _, err := buildRuntimeIndex(loaded, takeoverEnabled); err != nil {
 		return err
 	}
 	if owned {
@@ -221,23 +230,23 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 // stageBackup is the single canonical boundary shared by preview, runtime-index
 // construction and persistence. The returned policies contain exactly the
 // normalized values that a successful import will publish and store.
-func (s *Service) stageBackup(payload []byte) ([]Policy, []AuditRecord, *runtimeIndex, error) {
-	policies, audits, err := decodeBackup(payload)
+func (s *Service) stageBackup(payload []byte) ([]Policy, []AuditRecord, bool, *runtimeIndex, error) {
+	policies, audits, takeoverEnabled, err := decodeBackup(payload)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, false, nil, err
 	}
 	policies, err = s.normalizeBackupPolicies(policies)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, false, nil, err
 	}
 	if err = validateBackupAudits(audits); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, false, nil, err
 	}
-	next, err := buildRuntimeIndex(policies)
+	next, err := buildRuntimeIndex(policies, takeoverEnabled)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, false, nil, err
 	}
-	return policies, audits, next, nil
+	return policies, audits, takeoverEnabled, next, nil
 }
 
 func (s *Service) normalizeBackupPolicies(policies []Policy) ([]Policy, error) {
@@ -425,7 +434,9 @@ func (s *Service) Healthy() bool {
 
 func (s *Service) MarkUnavailable() {
 	if s != nil {
-		s.index.Store(&runtimeIndex{healthy: false})
+		current := s.index.Load()
+		takeoverEnabled := current != nil && current.takeoverEnabled
+		s.index.Store(&runtimeIndex{healthy: false, takeoverEnabled: takeoverEnabled})
 	}
 }
 
@@ -439,12 +450,17 @@ func (s *Service) Reload(ctx context.Context) error {
 }
 
 func (s *Service) reloadLocked(ctx context.Context) error {
+	takeoverEnabled, err := s.store.TakeoverEnabled(ctx)
+	if err != nil {
+		s.MarkUnavailable()
+		return err
+	}
 	policies, err := s.store.List(ctx)
 	if err != nil {
 		s.MarkUnavailable()
 		return err
 	}
-	index, err := buildRuntimeIndex(policies)
+	index, err := buildRuntimeIndex(policies, takeoverEnabled)
 	if err != nil {
 		s.MarkUnavailable()
 		return err
@@ -453,8 +469,8 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 	return nil
 }
 
-func buildRuntimeIndex(policies []Policy) (*runtimeIndex, error) {
-	index := &runtimeIndex{healthy: true, items: make(map[string]RequestPolicySnapshot, len(policies))}
+func buildRuntimeIndex(policies []Policy, takeoverEnabled bool) (*runtimeIndex, error) {
+	index := &runtimeIndex{healthy: true, takeoverEnabled: takeoverEnabled, items: make(map[string]RequestPolicySnapshot, len(policies))}
 	for _, policy := range policies {
 		if policy.APIKeyHash == "" || policy.ActiveProfileID == "" || policy.Version <= 0 {
 			return nil, fmt.Errorf("policy %q is incomplete", policy.ID)
@@ -500,6 +516,9 @@ func (s *Service) Decide(identity AuthenticatedAPIKeyIdentity) (RequestPolicyDec
 		return RequestPolicyDecision{}, ErrUnavailable
 	}
 	index := s.index.Load()
+	if index != nil && !index.takeoverEnabled {
+		return PassthroughDecision(), nil
+	}
 	if index == nil || !index.healthy {
 		return RequestPolicyDecision{}, ErrUnavailable
 	}
@@ -509,6 +528,45 @@ func (s *Service) Decide(identity AuthenticatedAPIKeyIdentity) (RequestPolicyDec
 	}
 	cloned := snapshot.Clone()
 	return RequestPolicyDecision{Mode: ModeProfile, Snapshot: &cloned}, nil
+}
+
+func (s *Service) TakeoverEnabled() bool {
+	index := s.index.Load()
+	return index != nil && index.takeoverEnabled
+}
+
+// SetTakeover changes the runtime enforcement boundary for new requests. An
+// in-flight request keeps its immutable decision; disabling takeover makes all
+// subsequent authenticated upstream keys use normal passthrough behavior.
+func (s *Service) SetTakeover(ctx context.Context, enabled bool) error {
+	if s == nil || s.store == nil {
+		return ErrUnavailable
+	}
+	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		s.writeMu.Lock()
+		defer s.writeMu.Unlock()
+		tx, err := s.store.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err = tx.ExecContext(ctx, `update api_key_policy_settings set takeover_enabled = ? where id = 1`, enabled); err != nil {
+			return err
+		}
+		policies, err := listPolicies(ctx, tx)
+		if err != nil {
+			return err
+		}
+		next, err := buildRuntimeIndex(policies, enabled)
+		if err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		s.index.Store(next)
+		return nil
+	})
 }
 
 func (s *Service) List(ctx context.Context) ([]Policy, error) { return s.store.List(ctx) }
@@ -834,7 +892,9 @@ func (s *Service) write(ctx context.Context, operation func(context.Context, *sq
 		if err != nil {
 			return err
 		}
-		next, err := buildRuntimeIndex(policies)
+		current := s.index.Load()
+		takeoverEnabled := current != nil && current.takeoverEnabled
+		next, err := buildRuntimeIndex(policies, takeoverEnabled)
 		if err != nil {
 			return err
 		}

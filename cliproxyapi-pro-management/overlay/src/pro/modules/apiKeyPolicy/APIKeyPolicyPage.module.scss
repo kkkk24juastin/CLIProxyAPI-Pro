@@ -1,8 +1,9 @@
 .page {
-  width: 100%;
-  max-width: 1460px;
-  margin: 0 auto;
-  padding: 24px 28px calc(40px + var(--api-key-policy-action-bar-height, 0px));
+	display: flex;
+	min-width: 0;
+	flex-direction: column;
+	gap: 14px;
+	padding: 2px 2px 24px;
 }
 
 .header,
@@ -60,39 +61,42 @@
 .capabilityNotice p,
 .conflict p { margin: 4px 0 0; line-height: 1.5; }
 
-.overview {
+.statusOverview {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
+	overflow: hidden;
+	border: 1px solid var(--border-color);
+	border-radius: 14px;
+	background: var(--bg-secondary);
 }
 
-.overview button {
-  display: flex;
+.overviewItem {
+	display: grid;
+	min-width: 0;
+	grid-template-columns: 34px minmax(0, 1fr);
+	grid-template-rows: auto auto;
+	column-gap: 10px;
   align-items: center;
-  justify-content: space-between;
-  min-height: 68px;
-  padding: 14px 16px;
-  border: 1px solid var(--border-color);
-  border-radius: 11px;
-  color: var(--text-secondary);
-  background: var(--bg-primary);
-  cursor: pointer;
+	padding: 13px 15px;
+	border-right: 1px solid var(--border-color);
 }
 
-.overview button:hover,
-.overview .overviewActive {
-  border-color: color-mix(in srgb, var(--primary-color) 54%, var(--border-color));
-  background: color-mix(in srgb, var(--primary-color) 6%, var(--bg-primary));
-}
-
-.overview strong { color: var(--text-primary); font-size: 22px; }
+.overviewItem:last-child { border-right: 0; }
+.overviewItem > span { display: grid; width: 34px; height: 34px; grid-row: 1 / 3; place-items: center; border-radius: 9px; }
+.overviewItem small,
+.overviewItem strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overviewItem small { color: var(--text-secondary); font-size: 11px; }
+.overviewItem strong { color: var(--text-primary); font-size: 13px; }
+.overviewGood { color: #15803d; background: rgba(34, 197, 94, .12); }
+.overviewBad { color: #b91c1c; background: rgba(239, 68, 68, .1); }
+.overviewAccent { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 12%, transparent); }
+.overviewMuted { color: var(--text-secondary); background: var(--muted-bg, rgba(148, 163, 184, .12)); }
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(180px, 260px);
+	grid-template-columns: minmax(240px, 1fr) minmax(180px, 240px) auto;
   gap: 10px;
-  margin-bottom: 16px;
+	align-items: center;
 }
 
 .cards {
@@ -150,6 +154,10 @@
 .empty { padding: 48px 20px; color: var(--text-secondary); text-align: center; }
 
 .workspace { display: grid; gap: 18px; min-width: 0; }
+.policySheet { width: min(720px, 100vw) !important; }
+.sheetFooter { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 16px; }
+.sheetFooter > span { color: var(--text-secondary); font-size: 12px; }
+.sheetFooter > div { display: flex; align-items: center; gap: 10px; }
 .conflict { justify-content: space-between; gap: 18px; }
 .workspaceTop { align-items: end; gap: 16px; }
 .workspaceTop > :first-child { flex: 1; }
@@ -214,13 +222,19 @@
 .dangerBody > span { display: grid; place-items: center; flex: 0 0 auto; width: 42px; height: 42px; border-radius: 10px; color: var(--warning-text); background: var(--warning-bg); }
 .dangerBody p { color: var(--text-secondary); line-height: 1.55; }
 .dangerBody ul { margin: 12px 0 0; padding-left: 20px; color: var(--warning-text); line-height: 1.7; }
+.takeoverBody { display: flex; align-items: flex-start; gap: 14px; }
+.takeoverBody > span { display: grid; place-items: center; flex: 0 0 auto; width: 42px; height: 42px; border-radius: 10px; color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 12%, transparent); }
+.takeoverBody p { margin: 0; color: var(--text-secondary); line-height: 1.6; }
+.takeoverBody ul { margin: 14px 0 0; padding-left: 20px; color: var(--text-secondary); line-height: 1.75; }
 
 @media (max-width: 760px) {
-  .page { padding: 16px 14px calc(28px + var(--api-key-policy-action-bar-height, 0px)); }
+	.page { padding: 2px 2px 18px; }
   .header { align-items: flex-start; flex-direction: column; }
   .headerActions { width: 100%; }
   .headerActions :global(.btn) { flex: 1; }
-  .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.statusOverview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.overviewItem:nth-child(2) { border-right: 0; }
+	.overviewItem:nth-child(-n + 2) { border-bottom: 1px solid var(--border-color); }
   .toolbar,
   .policyGrid { grid-template-columns: 1fr; }
   .cards { grid-template-columns: 1fr; }
@@ -233,12 +247,8 @@
   .mappingRow > span { display: none; }
   .mappingRow > :nth-child(3) { grid-column: 1; }
   .mappingRow > :nth-child(4) { grid-column: 2; grid-row: 1 / span 2; }
-  .workspaceFooterActions { align-items: stretch; flex-direction: column; }
-}
-.workspaceActionBar {
-  // The shared action bar normally sits below modal layers. This page edits
-  // inside a Sheet, so its dirty actions must be above that Sheet while still
-  // disappearing whenever a confirmation Modal owns the top overlay layer.
-  left: calc(100vw - min(480px, 50vw));
-  z-index: 2010;
+	.workspaceFooterActions { align-items: stretch; flex-direction: column; }
+	.sheetFooter { align-items: stretch; flex-direction: column; }
+	.sheetFooter > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.sheetFooter > div :global(.btn) { width: 100%; }
 }

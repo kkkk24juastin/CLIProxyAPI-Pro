@@ -68,6 +68,8 @@ func (h *Handler) RegisterAPIKeyPolicyRoutes(group *gin.RouterGroup) {
 	}
 	group.GET("/api-key-policy-bindings", h.ListAPIKeyPolicyBindings)
 	group.GET("/api-key-policy-capabilities", h.GetAPIKeyPolicyCapabilities)
+	group.GET("/api-key-policy-status", h.GetAPIKeyPolicyStatus)
+	group.PUT("/api-key-policy-takeover", h.UpdateAPIKeyPolicyTakeover)
 	group.GET("/api-key-policy-catalog", h.GetAPIKeyPolicyCatalog)
 	group.POST("/api-key-policies", h.CreateAPIKeyPolicy)
 	group.GET("/api-key-policies/:policyId", h.GetAPIKeyPolicy)
@@ -88,7 +90,7 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"apiVersion": 1,
+		"apiVersion": 2,
 		"features": []string{
 			"policy_crud",
 			"profile_crud",
@@ -97,8 +99,38 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 			"policy_backup_restore",
 			"policy_delete_preview",
 			"orphaned_purge_guard",
+			"takeover_control",
 		},
 	})
+}
+
+func (h *Handler) GetAPIKeyPolicyStatus(c *gin.Context) {
+	service := h.apiKeyPolicyService()
+	if service == nil || !service.Healthy() {
+		writeAPIKeyPolicyError(c, apikeypolicy.ErrUnavailable)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"takeoverEnabled": service.TakeoverEnabled()})
+}
+
+func (h *Handler) UpdateAPIKeyPolicyTakeover(c *gin.Context) {
+	service := h.apiKeyPolicyService()
+	if service == nil || !service.Healthy() {
+		writeAPIKeyPolicyError(c, apikeypolicy.ErrUnavailable)
+		return
+	}
+	var request struct {
+		Enabled *bool `json:"enabled" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || request.Enabled == nil {
+		writeAPIKeyPolicyHTTPError(c, http.StatusBadRequest, "invalid_api_key_policy_takeover", "enabled must be a boolean")
+		return
+	}
+	if err := service.SetTakeover(c.Request.Context(), *request.Enabled); err != nil {
+		writeAPIKeyPolicyError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"takeoverEnabled": service.TakeoverEnabled()})
 }
 
 func (h *Handler) apiKeyPolicyService() *apikeypolicy.Service {

@@ -20,8 +20,65 @@ func newTestService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = service.Close() })
 	return service
+}
+
+func TestTakeoverControlsNewRequestDecisionsAndPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "takeover.sqlite")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := testIdentity(t, "takeover-key")
+	if _, err = service.Create(context.Background(), identity, "Takeover", ProfileInput{
+		Name: "Restricted", Providers: []string{"codex"}, Models: []string{"gpt-5"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil || decision.Mode != ModePassthrough || decision.Snapshot != nil {
+		t.Fatalf("disabled decision = %#v, %v", decision, err)
+	}
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := service.Decide(identity)
+	if err != nil || frozen.Mode != ModeProfile || frozen.Snapshot == nil {
+		t.Fatalf("enabled decision = %#v, %v", frozen, err)
+	}
+	if err = service.SetTakeover(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	decision, err = service.Decide(identity)
+	if err != nil || decision.Mode != ModePassthrough || frozen.Mode != ModeProfile {
+		t.Fatalf("disabled/frozen decisions = %#v / %#v, %v", decision, frozen, err)
+	}
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopenedStore, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewService(reopenedStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if !reopened.TakeoverEnabled() {
+		t.Fatal("takeover setting did not persist")
+	}
 }
 
 func testIdentity(t *testing.T, raw string) AuthenticatedAPIKeyIdentity {
@@ -468,7 +525,7 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	if strings.Contains(string(payload), "backup-key") || !strings.Contains(string(payload), identity.Hash()) {
 		t.Fatalf("backup secret/hash boundary = %s", payload)
 	}
-	if !strings.Contains(string(payload), `"schema_version":2`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) {
+	if !strings.Contains(string(payload), `"schema_version":3`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) {
 		t.Fatalf("backup schema/audit record = %s", payload)
 	}
 	if err := service.DeletePolicy(context.Background(), created.ID, created.Version, PassthroughConfirmation); err != nil {

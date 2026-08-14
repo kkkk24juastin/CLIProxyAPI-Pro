@@ -88,6 +88,10 @@ func TestAPIKeyPolicyLifecycleIsIndependentOfUsageService(t *testing.T) {
 		first.Close()
 		t.Fatal(err)
 	}
+	if err = first.APIKeyPolicy().SetTakeover(ctx, true); err != nil {
+		first.Close()
+		t.Fatal(err)
+	}
 	first.Close()
 
 	second, err := New(ctx, filepath.Join(t.TempDir(), "missing-config.yaml"), "")
