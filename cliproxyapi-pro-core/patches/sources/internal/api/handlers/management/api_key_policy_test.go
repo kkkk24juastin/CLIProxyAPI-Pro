@@ -17,10 +17,20 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/apikeypolicy"
 	proapp "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/app"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
+
+func registerAPIKeyPolicyTestCatalog(t *testing.T) {
+	t.Helper()
+	const clientID = "api-key-policy-management-test"
+	modelRegistry := registry.GetGlobalRegistry()
+	modelRegistry.RegisterClient(clientID, "claude", []*registry.ModelInfo{{ID: "claude-sonnet-4-6"}})
+	t.Cleanup(func() { modelRegistry.UnregisterClient(clientID) })
+}
 
 func newAPIKeyPolicyManagementHarness(t *testing.T, keys []string) (*Handler, *gin.Engine) {
 	t.Helper()
+	registerAPIKeyPolicyTestCatalog(t)
 	gin.SetMode(gin.TestMode)
 	t.Setenv("USAGE_DB_PATH", filepath.Join(t.TempDir(), "usage.sqlite"))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -47,6 +57,7 @@ func newAPIKeyPolicyManagementHarness(t *testing.T, keys []string) (*Handler, *g
 
 func newAuthenticatedAPIKeyPolicyManagementHarness(t *testing.T, keys []string) (*Handler, *gin.Engine) {
 	t.Helper()
+	registerAPIKeyPolicyTestCatalog(t)
 	const managementPassword = "management-policy-test-secret"
 	t.Setenv("MANAGEMENT_PASSWORD", managementPassword)
 	gin.SetMode(gin.TestMode)

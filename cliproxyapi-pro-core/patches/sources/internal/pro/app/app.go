@@ -55,34 +55,10 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 	}
 	apiKeyPolicy.SetCatalogProvider(func() (apikeypolicy.ProfileCatalog, error) {
 		modelRegistry := registry.GetGlobalRegistry()
-		models := modelRegistry.GetAvailableModelInfos()
-		modelIDs := make([]string, 0, len(models))
-		providers := []string{"home"}
-		// A Profile is configuration, not a point-in-time health snapshot. Merge
-		// the embedded server-owned catalog so operators can preconfigure a
-		// known model before credentials are registered or while every account is
-		// temporarily unavailable. Dynamic/user-defined models below remain
-		// accepted when the live registry knows them.
-		for _, provider := range []string{"claude", "gemini", "vertex", "aistudio", "codex", "kimi", "antigravity", "xai"} {
-			staticModels := registry.GetStaticModelDefinitionsByChannel(provider)
-			if len(staticModels) == 0 {
-				continue
-			}
-			providers = append(providers, provider)
-			for _, model := range staticModels {
-				if model != nil && model.ID != "" {
-					modelIDs = append(modelIDs, model.ID)
-				}
-			}
-		}
-		for _, model := range models {
-			if model == nil || model.ID == "" {
-				continue
-			}
-			modelIDs = append(modelIDs, model.ID)
-			providers = append(providers, modelRegistry.GetModelProviders(model.ID)...)
-		}
-		return apikeypolicy.NewProfileCatalog(providers, modelIDs), nil
+		return apiKeyPolicyCatalogFromAvailableModels(
+			modelRegistry.GetAvailableModelInfos(),
+			modelRegistry.GetModelProviders,
+		), nil
 	})
 	policyBackupUnregister := probackup.Default.RegisterAPIKeyPolicies(
 		func() ([]byte, bool, error) {
@@ -110,6 +86,24 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 		return nil, fmt.Errorf("initialize account policy module: %w", err)
 	}
 	return &App{proxyPool: proxyPool, oauthPolicy: oauthPolicy, apiKeyPolicy: apiKeyPolicy, policyBackupUnregister: policyBackupUnregister}, nil
+}
+
+func apiKeyPolicyCatalogFromAvailableModels(
+	models []*registry.ModelInfo,
+	providersForModel func(string) []string,
+) apikeypolicy.ProfileCatalog {
+	modelIDs := make([]string, 0, len(models))
+	providers := make([]string, 0, len(models))
+	for _, model := range models {
+		if model == nil || model.ID == "" {
+			continue
+		}
+		modelIDs = append(modelIDs, model.ID)
+		if providersForModel != nil {
+			providers = append(providers, providersForModel(model.ID)...)
+		}
+	}
+	return apikeypolicy.NewProfileCatalog(providers, modelIDs)
 }
 
 func (a *App) Close() {

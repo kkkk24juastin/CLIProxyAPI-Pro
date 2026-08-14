@@ -6,6 +6,7 @@ import {
   buildAPIKeyPolicyWorkspaceUpdate,
   cloneProfileInput,
   apiKeyPolicyErrorTranslationKey,
+  resolveMappingTargetModels,
   validateAPIKeyPolicyCapabilities,
   validateProfileInput,
   type APIKeyPolicyCatalog,
@@ -146,6 +147,27 @@ describe('API Key Policy profile drafts', () => {
 		expect(page).not.toContain('workspaceActionBar');
 		expect(styles).toContain('width: min(720px, 100vw) !important;');
   });
+
+	test('prioritizes mappings and omits the internal policy version from the workspace', () => {
+		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+		expect(page).not.toContain('styles.versionBox');
+		expect(page).not.toContain("t('api_key_policy.version')");
+		expect(page.indexOf('className={styles.mappingSection}')).toBeLessThan(page.indexOf('className={styles.policyGrid}'));
+	});
+
+	test('limits mapping targets to currently available catalog models', () => {
+		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+		expect(resolveMappingTargetModels([], ['gpt-5', 'claude-sonnet-4'])).toEqual([
+			'gpt-5',
+			'claude-sonnet-4',
+		]);
+		expect(resolveMappingTargetModels(
+			['retired-model', 'gpt-5'],
+			['gpt-5', 'new-model'],
+		)).toEqual(['gpt-5']);
+		expect(page).toContain('const availableSelected = selected.filter((value) => values.includes(value));');
+		expect(page).toContain('availableSelected.length > 0 ? availableSelected.length : allLabel');
+	});
 
 	test('matches the account-policy status overview structure and responsive grid', () => {
 		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');

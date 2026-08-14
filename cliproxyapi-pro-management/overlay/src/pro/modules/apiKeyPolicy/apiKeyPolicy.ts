@@ -327,6 +327,15 @@ export const cloneProfileInput = (profile: APIKeyProfileInput): APIKeyProfileInp
   mappings: (profile.mappings ?? []).map((mapping) => ({ ...mapping })),
 });
 
+export const resolveMappingTargetModels = (
+  selectedModels: string[],
+  availableModels: string[],
+): string[] => {
+  if (selectedModels.length === 0) return [...availableModels];
+  const available = new Set(availableModels);
+  return selectedModels.filter((model) => available.has(model));
+};
+
 export const validateProfileInput = (
   profile: APIKeyProfileInput,
   catalog: APIKeyPolicyCatalog,

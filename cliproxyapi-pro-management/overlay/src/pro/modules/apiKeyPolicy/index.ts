@@ -7,6 +7,7 @@ export {
   buildAPIKeyPolicyWorkspaceUpdate,
   cloneProfileInput,
   isAPIKeyPolicyUnsupported,
+  resolveMappingTargetModels,
   validateAPIKeyPolicyCapabilities,
   validateProfileInput,
 } from './apiKeyPolicy';

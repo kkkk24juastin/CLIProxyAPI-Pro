@@ -29,6 +29,7 @@ import {
   apiKeyPolicyErrorTranslationKey,
   cloneProfileInput,
   isAPIKeyPolicyUnsupported,
+  resolveMappingTargetModels,
   validateProfileInput,
   type APIKeyPolicy,
   type APIKeyPolicyBinding,
@@ -137,11 +138,12 @@ function ChoiceList({
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
   const filtered = values.filter((value) => !query || value.toLowerCase().includes(query));
+  const availableSelected = selected.filter((value) => values.includes(value));
   return (
     <section className={styles.choiceSection}>
       <div className={styles.choiceHeader}>
         <strong>{title}</strong>
-        <span>{selected.length > 0 ? selected.length : allLabel}</span>
+        <span>{availableSelected.length > 0 ? availableSelected.length : allLabel}</span>
       </div>
       <p className={styles.choiceHint}>{emptySelectionHint}</p>
       <input
@@ -158,13 +160,13 @@ function ChoiceList({
             <label className={styles.choiceItem} key={value}>
               <input
                 type="checkbox"
-                checked={selected.includes(value)}
+                checked={availableSelected.includes(value)}
                 disabled={disabled}
                 onChange={(event) =>
                   onChange(
                     event.target.checked
-                      ? [...selected, value]
-                      : selected.filter((item) => item !== value),
+                      ? [...availableSelected, value]
+                      : availableSelected.filter((item) => item !== value),
                   )
                 }
               />
@@ -584,9 +586,10 @@ export function APIKeyPolicyPage() {
   const readOnly = workspaceTarget?.kind === 'policy' && workspaceTarget.readOnly;
   const selectedProfile = currentPolicy?.profiles.find((profile) => profile.id === draft?.profileId);
   const active = Boolean(currentPolicy && draft?.profileId === currentPolicy.activeProfileId);
-  const mappingTargetModels = draft?.profile.models.length
-    ? draft.profile.models
-    : snapshot?.catalog.models ?? [];
+  const mappingTargetModels = resolveMappingTargetModels(
+    draft?.profile.models ?? [],
+    snapshot?.catalog.models ?? [],
+  );
 
   useEffect(() => {
     if (!snapshot || workspaceTarget || capability !== 'ready') return;
@@ -758,16 +761,13 @@ export function APIKeyPolicyPage() {
               </div>
             ) : null}
 
-            <div className={styles.workspaceTop}>
-              <Input
-                label={t('api_key_policy.display_name')}
-                value={draft.displayName}
-                onChange={(event) => updateDraft((current) => ({ ...current, displayName: event.target.value }))}
-                disabled={readOnly || saving}
-                hint={t('api_key_policy.display_name_hint')}
-              />
-              {currentPolicy ? <div className={styles.versionBox}><span>{t('api_key_policy.version')}</span><strong>{currentPolicy.version}</strong></div> : null}
-            </div>
+            <Input
+              label={t('api_key_policy.display_name')}
+              value={draft.displayName}
+              onChange={(event) => updateDraft((current) => ({ ...current, displayName: event.target.value }))}
+              disabled={readOnly || saving}
+              hint={t('api_key_policy.display_name_hint')}
+            />
 
             {currentPolicy ? (
               <div className={styles.profileRail}>
@@ -803,11 +803,6 @@ export function APIKeyPolicyPage() {
               disabled={readOnly || saving}
             />
 
-            <div className={styles.policyGrid}>
-              <ChoiceList title={t('api_key_policy.allowed_providers')} values={snapshot.catalog.providers} selected={draft.profile.providers} onChange={(providers) => updateDraft((current) => ({ ...current, profile: { ...current.profile, providers } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_providers')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_providers_when_empty')} />
-              <ChoiceList title={t('api_key_policy.allowed_models')} values={snapshot.catalog.models} selected={draft.profile.models} onChange={(models) => updateDraft((current) => ({ ...current, profile: { ...current.profile, models, mappings: models.length === 0 ? current.profile.mappings : current.profile.mappings.filter((mapping) => models.includes(mapping.target)) } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_models')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_models_when_empty')} />
-            </div>
-
             <section className={styles.mappingSection}>
               <div className={styles.mappingHeader}><div><h3>{t('api_key_policy.mappings')}</h3><p>{t('api_key_policy.mappings_hint')}</p></div>{!readOnly ? <Button variant="secondary" size="sm" onClick={() => updateDraft((current) => ({ ...current, profile: { ...current.profile, mappings: [...current.profile.mappings, { source: '', target: mappingTargetModels[0] ?? '' }] } }))} disabled={saving || mappingTargetModels.length === 0}><IconPlus size={14} /> {t('common.add')}</Button> : null}</div>
               {draft.profile.mappings.length ? draft.profile.mappings.map((mapping, index) => (
@@ -819,6 +814,11 @@ export function APIKeyPolicyPage() {
                 </div>
               )) : <div className={styles.mappingEmpty}>{t('api_key_policy.no_mappings')}</div>}
             </section>
+
+            <div className={styles.policyGrid}>
+              <ChoiceList title={t('api_key_policy.allowed_providers')} values={snapshot.catalog.providers} selected={draft.profile.providers} onChange={(providers) => updateDraft((current) => ({ ...current, profile: { ...current.profile, providers } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_providers')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_providers_when_empty')} />
+              <ChoiceList title={t('api_key_policy.allowed_models')} values={snapshot.catalog.models} selected={draft.profile.models} onChange={(models) => updateDraft((current) => ({ ...current, profile: { ...current.profile, models, mappings: models.length === 0 ? current.profile.mappings : current.profile.mappings.filter((mapping) => models.includes(mapping.target)) } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_models')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_models_when_empty')} />
+            </div>
 
             {currentPolicy ? (
               <div className={styles.workspaceFooterActions}>

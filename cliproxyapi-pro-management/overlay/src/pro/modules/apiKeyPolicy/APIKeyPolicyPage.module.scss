@@ -13,7 +13,6 @@
 .cardIdentity,
 .cardActions,
 .sectionHeading,
-.workspaceTop,
 .profileHeading,
 .profileActions,
 .mappingHeader,
@@ -159,12 +158,6 @@
 .sheetFooter > span { color: var(--text-secondary); font-size: 12px; }
 .sheetFooter > div { display: flex; align-items: center; gap: 10px; }
 .conflict { justify-content: space-between; gap: 18px; }
-.workspaceTop { align-items: end; gap: 16px; }
-.workspaceTop > :first-child { flex: 1; }
-.versionBox { display: grid; gap: 4px; min-width: 90px; padding: 10px 13px; border: 1px solid var(--border-color); border-radius: 8px; }
-.versionBox span { color: var(--text-secondary); font-size: 10px; }
-.versionBox strong { font-size: 15px; }
-
 .profileRail {
   display: flex;
   gap: 7px;
@@ -242,7 +235,6 @@
   .toolbar,
   .policyGrid { grid-template-columns: 1fr; }
   .cards { grid-template-columns: 1fr; }
-  .workspaceTop,
   .profileHeading,
   .conflict { align-items: stretch; flex-direction: column; }
   .profileActions { display: grid; grid-template-columns: 1fr 1fr; }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
@@ -12,6 +13,33 @@ import (
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/proxypool/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
+
+func TestAPIKeyPolicyCatalogContainsOnlyAvailableRuntimeEntries(t *testing.T) {
+	catalog := apiKeyPolicyCatalogFromAvailableModels(
+		[]*registry.ModelInfo{
+			{ID: "runtime-z"},
+			nil,
+			{ID: ""},
+			{ID: "runtime-a"},
+		},
+		func(modelID string) []string {
+			switch modelID {
+			case "runtime-z":
+				return []string{"Codex", ""}
+			case "runtime-a":
+				return []string{"claude", "codex"}
+			default:
+				return []string{"static-only"}
+			}
+		},
+	)
+	if !reflect.DeepEqual(catalog.Models, []string{"runtime-a", "runtime-z"}) {
+		t.Fatalf("catalog models = %#v", catalog.Models)
+	}
+	if !reflect.DeepEqual(catalog.Providers, []string{"claude", "codex"}) {
+		t.Fatalf("catalog providers = %#v", catalog.Providers)
+	}
+}
 
 func TestAppModulesPersistSettingsOnlyToSQLite(t *testing.T) {
 	ctx := startMigrationStore(t)
