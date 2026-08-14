@@ -182,8 +182,20 @@ func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconf
 	if (provider == "gemini-cli" || provider == "antigravity") && quotaFresh {
 		return quotaPlan, quotaSource, nil
 	}
-	if plan := localPlan(provider, input); plan != "" && plan != "unknown" {
-		return plan, "auth", nil
+	localPlanValue := localPlan(provider, input)
+	deferredLocalPlan := ""
+	if localPlanValue != "" && localPlanValue != "unknown" {
+		// currentTier=standard-tier does not prove that a Gemini account has no
+		// paidTier. Give the provider response a chance to supply the authoritative
+		// paid plan, while retaining the local tier as a fallback when lookup fails.
+		deferGeminiStandard := provider == "gemini-cli" &&
+			localPlanValue == "standard" &&
+			input.HTTPDo != nil && accessToken(input) != "" && projectID(input) != ""
+		if deferGeminiStandard {
+			deferredLocalPlan = localPlanValue
+		} else {
+			return localPlanValue, "auth", nil
+		}
 	}
 	if provider != "xai" && quotaFresh {
 		return quotaPlan, quotaSource, nil
@@ -212,6 +224,9 @@ func (e *Engine) resolvePlan(ctx context.Context, provider string, cfg modelconf
 			source = "billing"
 		}
 		return plan, source, nil
+	}
+	if deferredLocalPlan != "" {
+		return deferredLocalPlan, "auth", errResolve
 	}
 	if provider != "xai" && quotaPlan != "" && quotaPlan != "unknown" {
 		return quotaPlan, "stale-" + quotaSource, combinePlanErrors(errResolve, quotaErr)
@@ -624,7 +639,7 @@ func googlePlanFromMap(provider string, source map[string]any) string {
 func googleTierPlan(provider string, tier map[string]any, paid bool) string {
 	id := stringValue(tier["id"])
 	name := stringValue(tier["name"])
-	if provider == "gemini-cli" && paid {
+	if (provider == "gemini-cli" || provider == "antigravity") && paid {
 		if plan := normalizeProviderPlan(provider, name); plan != "" && plan != "unknown" && plan != "standard" {
 			return plan
 		}
@@ -777,6 +792,12 @@ func normalizeProviderPlan(provider, value string) string {
 			return "ultra"
 		}
 	case "antigravity":
+		switch {
+		case strings.Contains(value, "google-ai-ultra") || strings.Contains(value, "gemini-ultra"):
+			return "ultra"
+		case strings.Contains(value, "google-ai-pro") || strings.Contains(value, "gemini-ai-pro"):
+			return "pro"
+		}
 		switch value {
 		case "":
 			return ""

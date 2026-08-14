@@ -498,6 +498,28 @@ providers:
 	}
 }
 
+func TestAntigravityPaidTierNameOverridesAmbiguousID(t *testing.T) {
+	cfg, _ := modelconfig.Parse([]byte(`
+providers:
+  antigravity:
+    plans:
+      pro: {priority: 77}
+      _default: {priority: 1}
+`))
+	engine := New()
+	engine.ApplyConfig(cfg)
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "antigravity-paid-standard", AuthProvider: "antigravity", AuthKind: "oauth",
+		StorageJSON: []byte(`{"access_token":"token"}`),
+		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"paidTier":{"id":"standard-tier","name":"Google AI Pro"}}`)}, nil
+		},
+	})
+	if !result.Handled || result.Annotations["plan_key"] != "pro" || result.Annotations["matched_rule"] != "pro" || result.Annotations["plan_source"] != "provider-api" {
+		t.Fatalf("Filter() = %#v", result)
+	}
+}
+
 func TestGeminiAmbiguousStandardSnapshotChecksPaidTier(t *testing.T) {
 	cfg, _ := modelconfig.Parse([]byte(`
 providers:
@@ -511,7 +533,7 @@ providers:
 	called := false
 	result := engine.Filter(context.Background(), Input{
 		AuthID: "gemini-paid-standard", AuthProvider: "gemini-cli", AuthKind: "oauth",
-		StorageJSON:       []byte(`{"access_token":"token","project_id":"project"}`),
+		StorageJSON:       []byte(`{"access_token":"token","project_id":"project","currentTier":{"id":"standard-tier"}}`),
 		QuotaSnapshotJSON: []byte(`{"schema_version":1,"plan":{"id":"standard-tier","label":"Gemini Code Assist","kind":"standard"}}`),
 		QuotaObservedAtMS: time.Now().UnixMilli(),
 		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
