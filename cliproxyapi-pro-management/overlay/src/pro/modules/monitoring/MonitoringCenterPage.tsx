@@ -388,6 +388,9 @@ export function MonitoringCenterPage() {
   const [isWebDAVBackupsLoading, setIsWebDAVBackupsLoading] = useState(false);
   const monitoringSettingsRequestRef = useRef<Promise<void> | null>(null);
   const priceManagementRequestRef = useRef<Promise<void> | null>(null);
+  const profileCatalogRequestRef = useRef<Promise<void> | null>(null);
+  const profileCatalogFetchedAtRef = useRef(0);
+  const profileCatalogGenerationRef = useRef<number | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [isUsageTrendHidden, setIsUsageTrendHidden] = useState(false);
   const [modelRankingMetric, setModelRankingMetric] = useState<RankingMetric>('requests');
@@ -436,42 +439,58 @@ export function MonitoringCenterPage() {
   useEffect(() => {
     let cancelled = false;
     if (connectionStatus !== 'connected') {
+      profileCatalogRequestRef.current = null;
+      profileCatalogFetchedAtRef.current = 0;
+      profileCatalogGenerationRef.current = null;
       setCurrentProfileCatalog({ loaded: false, names: new Map() });
       return () => {
         cancelled = true;
       };
     }
-    const refreshProfileCatalog = () => {
-      void apiKeyPolicyApi.bindings().then((bindings) => {
-        if (cancelled) return;
-        const names = new Map<string, string>();
-        bindings.items.forEach((binding) => {
-          binding.policy?.profiles.forEach((profile) => names.set(profile.id, profile.name));
+    const refreshProfileCatalog = (force = false): Promise<void> => {
+      const fetchedAt = profileCatalogFetchedAtRef.current;
+      if (!force && fetchedAt > 0 && Date.now() - fetchedAt < PROFILE_CATALOG_REFRESH_MS) {
+        return Promise.resolve();
+      }
+      if (profileCatalogRequestRef.current) return profileCatalogRequestRef.current;
+      const request = apiKeyPolicyApi.profileCatalog()
+        .then((catalog) => {
+          if (cancelled) return;
+          profileCatalogFetchedAtRef.current = Date.now();
+          if (profileCatalogGenerationRef.current === catalog.policyGeneration) return;
+          profileCatalogGenerationRef.current = catalog.policyGeneration;
+          setCurrentProfileCatalog({
+            loaded: true,
+            names: new Map(catalog.items.map((profile) => [profile.id, profile.name])),
+          });
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setCurrentProfileCatalog((current) => current.loaded
+              ? current
+              : { loaded: false, names: new Map() });
+          }
         });
-        bindings.orphaned.forEach((policy) => {
-          policy.profiles.forEach((profile) => names.set(profile.id, profile.name));
-        });
-        setCurrentProfileCatalog({ loaded: true, names });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setCurrentProfileCatalog((current) => current.loaded
-            ? current
-            : { loaded: false, names: new Map() });
+      profileCatalogRequestRef.current = request;
+      void request.then(() => {
+        if (profileCatalogRequestRef.current === request) {
+          profileCatalogRequestRef.current = null;
         }
       });
+      return request;
     };
     const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') refreshProfileCatalog();
+      if (document.visibilityState === 'visible') void refreshProfileCatalog();
     };
-    refreshProfileCatalog();
+    void refreshProfileCatalog(true);
     const interval = window.setInterval(refreshWhenVisible, PROFILE_CATALOG_REFRESH_MS);
-    window.addEventListener('focus', refreshProfileCatalog);
+    const refreshWhenFocused = () => void refreshProfileCatalog();
+    window.addEventListener('focus', refreshWhenFocused);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
-      window.removeEventListener('focus', refreshProfileCatalog);
+      window.removeEventListener('focus', refreshWhenFocused);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [connectionStatus]);

@@ -58,6 +58,17 @@ export interface APIKeyPolicyCapabilities {
   features: string[];
 }
 
+export interface APIKeyPolicyProfileCatalogItem {
+  id: string;
+  name: string;
+  updatedAtMs: number;
+}
+
+export interface APIKeyPolicyProfileCatalog {
+  items: APIKeyPolicyProfileCatalogItem[];
+  policyGeneration: number;
+}
+
 export interface APIKeyPolicyStatus {
 	takeoverEnabled: boolean;
 	healthy: boolean;
@@ -99,8 +110,7 @@ const REQUIRED_API_KEY_POLICY_FEATURES = [
   'policy_backup_restore',
   'policy_delete_preview',
   'orphaned_purge_guard',
-	'takeover_control',
-	'usage_key_target',
+  'takeover_control',
 ] as const;
 
 export class APIKeyPolicyCapabilityError extends Error {
@@ -131,6 +141,10 @@ export const validateAPIKeyPolicyCapabilities = (
   }
   return capabilities;
 };
+
+export const supportsAPIKeyPolicyUsageTarget = (
+  capabilities: APIKeyPolicyCapabilities,
+): boolean => capabilities.features?.includes('usage_key_target') === true;
 
 export const PASSTHROUGH_CONFIRMATION = 'RESTORE_UNRESTRICTED_PASSTHROUGH';
 
@@ -215,6 +229,10 @@ export const apiKeyPolicyApi = {
 
   usageTarget(keyRef: string): Promise<APIKeyPolicyUsageTarget> {
     return apiClient.post<APIKeyPolicyUsageTarget>('/api-key-policy-usage-target', { keyRef });
+  },
+
+  profileCatalog(): Promise<APIKeyPolicyProfileCatalog> {
+    return apiClient.get<APIKeyPolicyProfileCatalog>('/api-key-policy-profile-catalog');
   },
 
   async snapshot(): Promise<APIKeyPolicySnapshot> {

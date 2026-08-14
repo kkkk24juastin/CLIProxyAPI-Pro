@@ -115,6 +115,23 @@ func (s *Store) List(ctx context.Context) ([]Policy, error) {
 	return listPolicies(ctx, s.db)
 }
 
+func (s *Store) ListProfileCatalog(ctx context.Context) ([]ProfileCatalogItem, error) {
+	rows, err := s.db.QueryContext(ctx, `select id, name, updated_at_ms from api_key_profiles order by id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ProfileCatalogItem, 0)
+	for rows.Next() {
+		var item ProfileCatalogItem
+		if err := rows.Scan(&item.ID, &item.Name, &item.UpdatedAtMS); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) ListAudits(ctx context.Context) ([]AuditRecord, error) {
 	return listAudits(ctx, s.db)
 }

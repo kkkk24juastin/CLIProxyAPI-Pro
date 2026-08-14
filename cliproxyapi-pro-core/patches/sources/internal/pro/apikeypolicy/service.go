@@ -671,6 +671,23 @@ func (s *Service) setTakeover(ctx context.Context, enabled bool, expectedPolicyG
 }
 
 func (s *Service) List(ctx context.Context) ([]Policy, error) { return s.store.List(ctx) }
+func (s *Service) ListProfileCatalog(ctx context.Context) (ProfileCatalogSnapshot, error) {
+	if s == nil || s.store == nil {
+		return ProfileCatalogSnapshot{}, ErrUnavailable
+	}
+	// Keep the rows and generation from one committed service state so callers
+	// never cache newer names under an older generation (or the reverse).
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if !s.Healthy() {
+		return ProfileCatalogSnapshot{}, ErrUnavailable
+	}
+	items, err := s.store.ListProfileCatalog(ctx)
+	if err != nil {
+		return ProfileCatalogSnapshot{}, err
+	}
+	return ProfileCatalogSnapshot{Items: items, PolicyGeneration: s.PolicyGeneration()}, nil
+}
 func (s *Service) ListConfigured(ctx context.Context, configuredHashes []string) ([]Policy, error) {
 	if s == nil || s.store == nil {
 		return nil, ErrUnavailable

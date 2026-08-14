@@ -76,6 +76,17 @@ class APIKeyPolicyContractTest(unittest.TestCase):
             self.assertIn("apiKeyHash", source)
         self.assertNotIn('json:"apiKeyHash"', GO_HANDLER.split("type apiKeyPolicyBinding struct", 1)[1].split("}", 1)[0])
 
+    def test_lightweight_profile_catalog_is_generation_bound_across_contracts(self) -> None:
+        for source in (GO_HANDLER, TS_CLIENT, OPENAPI):
+            self.assertIn("api-key-policy-profile-catalog", source)
+            self.assertIn("policyGeneration", source)
+        self.assertIn("ListProfileCatalog", GO_HANDLER)
+        self.assertIn("ProfileCatalogSnapshot", GO_TYPES)
+        self.assertRegex(
+            OPENAPI,
+            r"ProfileCatalogItem:\n(?:.|\n)*?additionalProperties: false(?:.|\n)*?required: \[id, name, updatedAtMs\]",
+        )
+
     def test_profile_response_does_not_inherit_write_version(self) -> None:
         profile_schema = OPENAPI.split("    Profile:\n", 1)[1].split(
             "    Policy:\n", 1

@@ -80,6 +80,11 @@ describe('monitoring API key and Profile usage navigation', () => {
     expect(monitoringPage).toContain('profileFilterObservations');
     expect(monitoringPage).toContain('...filteredRows');
     expect(monitoringPage).toContain('PROFILE_CATALOG_REFRESH_MS');
+    expect(monitoringPage).toContain('apiKeyPolicyApi.profileCatalog()');
+    expect(monitoringPage).not.toContain('apiKeyPolicyApi.bindings()');
+    expect(monitoringPage).toContain('profileCatalogRequestRef.current');
+    expect(monitoringPage).toContain('profileCatalogFetchedAtRef.current');
+    expect(monitoringPage).toContain('profileCatalogGenerationRef.current === catalog.policyGeneration');
     expect(monitoringPage).toContain('styles.realtimeApiKeyCell');
     expect(monitoringPage).not.toContain("t('monitoring.api_key_profile'");
     expect(monitoringPage).toContain('profileId: selectedProfile');

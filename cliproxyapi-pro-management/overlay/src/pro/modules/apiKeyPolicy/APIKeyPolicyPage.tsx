@@ -31,6 +31,7 @@ import {
   cloneProfileInput,
   isAPIKeyPolicyUnsupported,
   resolveMappingTargetModels,
+  supportsAPIKeyPolicyUsageTarget,
   validateProfileInput,
   type APIKeyPolicy,
   type APIKeyPolicyBinding,
@@ -644,6 +645,9 @@ export function APIKeyPolicyPage() {
     draft?.profile.models ?? [],
     snapshot?.catalog.models ?? [],
   );
+  const usageTargetSupported = Boolean(
+    snapshot && supportsAPIKeyPolicyUsageTarget(snapshot.capabilities),
+  );
 
   useEffect(() => {
     if (!snapshot || workspaceTarget || capability !== 'ready') return;
@@ -751,7 +755,7 @@ export function APIKeyPolicyPage() {
                     {policy ? (
                       <>
                         <Button variant="secondary" size="sm" onClick={() => openWorkspace({ kind: 'policy', policy, readOnly: false })}>{t('api_key_policy.open_workspace')}</Button>
-                        <Button variant="ghost" size="sm" onClick={() => void openUsage(binding)}>{t('api_key_policy.view_usage')}</Button>
+                        {usageTargetSupported ? <Button variant="ghost" size="sm" onClick={() => void openUsage(binding)}>{t('api_key_policy.view_usage')}</Button> : null}
                       </>
                     ) : (
                       <Button size="sm" onClick={() => openWorkspace({ kind: 'create', binding })}>{t('api_key_policy.configure')}</Button>
@@ -876,7 +880,7 @@ export function APIKeyPolicyPage() {
 
             {currentPolicy ? (
               <div className={styles.workspaceFooterActions}>
-                <Button variant="ghost" size="sm" disabled={!currentBinding || !selectedProfile} onClick={() => { if (currentBinding && selectedProfile) void openUsage(currentBinding, selectedProfile); }}>{t('api_key_policy.view_profile_usage')}</Button>
+                {usageTargetSupported ? <Button variant="ghost" size="sm" disabled={!currentBinding || !selectedProfile} onClick={() => { if (currentBinding && selectedProfile) void openUsage(currentBinding, selectedProfile); }}>{t('api_key_policy.view_profile_usage')}</Button> : null}
                 {!readOnly ? <Button variant="danger" size="sm" onClick={() => void openPolicyDeletePreview(currentPolicy)} disabled={saving || dangerBusy}><IconAlertTriangle size={14} /> {t('api_key_policy.delete_policy')}</Button> : null}
               </div>
             ) : null}

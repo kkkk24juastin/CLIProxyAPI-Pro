@@ -7,6 +7,7 @@ import {
   cloneProfileInput,
   apiKeyPolicyErrorTranslationKey,
   resolveMappingTargetModels,
+  supportsAPIKeyPolicyUsageTarget,
   validateAPIKeyPolicyCapabilities,
   validateProfileInput,
   type APIKeyPolicyCatalog,
@@ -55,7 +56,7 @@ describe('API Key Policy profile drafts', () => {
   test('requires the explicit minimum Core capability contract', () => {
     expect(validateAPIKeyPolicyCapabilities({
 		apiVersion: 2,
-		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control', 'usage_key_target'],
+		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
 		}).apiVersion).toBe(2);
     expect(() => validateAPIKeyPolicyCapabilities({
       apiVersion: 1,
@@ -84,11 +85,16 @@ describe('API Key Policy profile drafts', () => {
     })).toThrow(APIKeyPolicyCapabilityError);
   });
 
-  test('rejects Core that cannot resolve an opaque Key reference for usage filtering', () => {
-    expect(() => validateAPIKeyPolicyCapabilities({
+  test('keeps usage navigation optional for older compatible Core versions', () => {
+    const legacyCapabilities = validateAPIKeyPolicyCapabilities({
       apiVersion: 2,
       features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
-    })).toThrow(APIKeyPolicyCapabilityError);
+    });
+    expect(supportsAPIKeyPolicyUsageTarget(legacyCapabilities)).toBe(false);
+    expect(supportsAPIKeyPolicyUsageTarget({
+      ...legacyCapabilities,
+      features: [...legacyCapabilities.features, 'usage_key_target'],
+    })).toBe(true);
   });
 
   test('localizes API errors and keeps orphan purge bound to version and config generation', () => {
@@ -101,6 +107,7 @@ describe('API Key Policy profile drafts', () => {
     expect(client).toContain("'orphaned_purge_guard'");
     expect(client).toContain("'usage_key_target'");
     expect(client).toContain("'/api-key-policy-usage-target'");
+    expect(page).toContain('usageTargetSupported ?');
   });
 
   test('has complete distinct translations for every supported language', async () => {

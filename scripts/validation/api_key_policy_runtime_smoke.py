@@ -78,6 +78,15 @@ def main() -> None:
     assert policy["state"] == "configured", policy
     assert policy["profiles"][0]["providers"] == [catalog["providers"][0]], policy
 
+    status, profile_catalog = request(base, args.management_key, "GET", "/v0/management/api-key-policy-profile-catalog")
+    assert status == 200, (status, profile_catalog)
+    assert profile_catalog["policyGeneration"] >= 1, profile_catalog
+    assert profile_catalog["items"] == [{
+        "id": policy["profiles"][0]["id"],
+        "name": "Smoke",
+        "updatedAtMs": policy["profiles"][0]["updatedAtMs"],
+    }], profile_catalog
+
     policy_path = "/v0/management/api-key-policies/" + policy["id"]
     purge_path = "/v0/management/orphaned-api-key-policies/" + policy["id"]
     status, preview = request(base, args.management_key, "GET", policy_path + "/delete-preview")

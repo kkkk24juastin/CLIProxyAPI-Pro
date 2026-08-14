@@ -67,6 +67,7 @@ func (h *Handler) RegisterAPIKeyPolicyRoutes(group *gin.RouterGroup) {
 		return
 	}
 	group.GET("/api-key-policy-bindings", h.ListAPIKeyPolicyBindings)
+	group.GET("/api-key-policy-profile-catalog", h.GetAPIKeyPolicyProfileCatalog)
 	group.POST("/api-key-policy-usage-target", h.ResolveAPIKeyPolicyUsageTarget)
 	group.GET("/api-key-policy-capabilities", h.GetAPIKeyPolicyCapabilities)
 	group.GET("/api-key-policy-status", h.GetAPIKeyPolicyStatus)
@@ -406,6 +407,20 @@ func (h *Handler) GetAPIKeyPolicyCatalog(c *gin.Context) {
 	catalog, err := service.Catalog()
 	if err != nil {
 		writeAPIKeyPolicyError(c, apikeypolicy.ErrUnavailable)
+		return
+	}
+	c.JSON(http.StatusOK, catalog)
+}
+
+func (h *Handler) GetAPIKeyPolicyProfileCatalog(c *gin.Context) {
+	service := h.apiKeyPolicyService()
+	if service == nil || !service.Healthy() {
+		writeAPIKeyPolicyError(c, apikeypolicy.ErrUnavailable)
+		return
+	}
+	catalog, err := service.ListProfileCatalog(c.Request.Context())
+	if err != nil {
+		writeAPIKeyPolicyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, catalog)

@@ -124,6 +124,19 @@ type Profile struct {
 	UpdatedAtMS int64          `json:"updatedAtMs"`
 }
 
+// ProfileCatalogItem is the lightweight Management-facing identity for one
+// persisted Profile. It intentionally excludes policy rules and API-key data.
+type ProfileCatalogItem struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	UpdatedAtMS int64  `json:"updatedAtMs"`
+}
+
+type ProfileCatalogSnapshot struct {
+	Items            []ProfileCatalogItem `json:"items"`
+	PolicyGeneration uint64               `json:"policyGeneration"`
+}
+
 type Policy struct {
 	ID              string    `json:"id"`
 	APIKeyHash      string    `json:"-"`

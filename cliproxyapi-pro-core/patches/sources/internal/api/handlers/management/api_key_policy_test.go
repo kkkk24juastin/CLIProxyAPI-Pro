@@ -269,6 +269,44 @@ func TestAPIKeyPolicyUsageTargetIsSessionAndGenerationBoundWithoutConsumingRefer
 	}
 }
 
+func TestAPIKeyPolicyProfileCatalogIncludesOrphanedProfilesWithoutPolicyRules(t *testing.T) {
+	h, router := newAPIKeyPolicyManagementHarness(t, []string{"profile-catalog-key-123456789"})
+	listed := bindingResponse(t, policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil))
+	created := policyRequest(t, router, http.MethodPost, "/v0/management/api-key-policies", "session-a", createPolicyBody(listed.Items[0].KeyRef))
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	}
+	var policy apikeypolicy.Policy
+	if err := json.Unmarshal(created.Body.Bytes(), &policy); err != nil {
+		t.Fatal(err)
+	}
+	assertCatalog := func(label string) uint64 {
+		t.Helper()
+		catalog := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-profile-catalog", "session-a", nil)
+		if catalog.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", label, catalog.Code, catalog.Body.String())
+		}
+		var response apikeypolicy.ProfileCatalogSnapshot
+		if err := json.Unmarshal(catalog.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if len(response.Items) != 1 || response.Items[0].ID != policy.ActiveProfileID || response.Items[0].Name != "Production" || response.PolicyGeneration == 0 {
+			t.Fatalf("%s catalog=%#v", label, response)
+		}
+		for _, forbidden := range []string{"profile-catalog-key-123456789", policy.ID, "providers", "models", "mappings", "keyRef"} {
+			if strings.Contains(catalog.Body.String(), forbidden) {
+				t.Fatalf("%s catalog leaked %q: %s", label, forbidden, catalog.Body.String())
+			}
+		}
+		return response.PolicyGeneration
+	}
+	generation := assertCatalog("configured")
+	h.SetConfig(&config.Config{SDKConfig: config.SDKConfig{APIKeys: nil}})
+	if orphanedGeneration := assertCatalog("orphaned"); orphanedGeneration != generation {
+		t.Fatalf("upstream config change altered policy generation: before=%d after=%d", generation, orphanedGeneration)
+	}
+}
+
 func TestAPIKeyPolicySameSessionReferenceCreatesOnceAndResponsesHideSecrets(t *testing.T) {
 	const rawKey = "sk-sensitive-canary-abcdefghijklmnopqrstuvwxyz"
 	_, router := newAPIKeyPolicyManagementHarness(t, []string{rawKey})

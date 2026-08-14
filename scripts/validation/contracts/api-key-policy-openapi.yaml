@@ -25,6 +25,18 @@ paths:
                 $ref: "#/components/schemas/BindingPage"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/PolicyUnavailable" }
+  /v0/management/api-key-policy-profile-catalog:
+    get:
+      operationId: listApiKeyPolicyProfileCatalog
+      description: Lightweight current Profile-name directory for request-monitoring filters; includes Profiles whose policies are currently orphaned
+      responses:
+        "200":
+          description: Profile names from one atomic policy generation without API-key or policy-rule data
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileCatalogSnapshot" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/PolicyUnavailable" }
   /v0/management/api-key-policy-usage-target:
     post:
       operationId: resolveApiKeyPolicyUsageTarget
@@ -329,6 +341,23 @@ components:
           pattern: "^[a-f0-9]{64}$"
           description: Returned only for the explicitly selected protected keyRef
         configGeneration: { type: integer, minimum: 1 }
+    ProfileCatalogItem:
+      type: object
+      additionalProperties: false
+      required: [id, name, updatedAtMs]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        updatedAtMs: { type: integer }
+    ProfileCatalogSnapshot:
+      type: object
+      additionalProperties: false
+      required: [items, policyGeneration]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ProfileCatalogItem" }
+        policyGeneration: { type: integer, minimum: 1 }
     Binding:
       type: object
       required: [maskedKey, keyRef, state, weakKey]

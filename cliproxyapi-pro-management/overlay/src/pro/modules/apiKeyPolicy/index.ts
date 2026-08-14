@@ -8,6 +8,7 @@ export {
   cloneProfileInput,
   isAPIKeyPolicyUnsupported,
   resolveMappingTargetModels,
+  supportsAPIKeyPolicyUsageTarget,
   validateAPIKeyPolicyCapabilities,
   validateProfileInput,
 } from './apiKeyPolicy';
@@ -18,6 +19,8 @@ export type {
   APIKeyPolicyBindingPage,
   APIKeyPolicyCatalog,
   APIKeyPolicyCapabilities,
+  APIKeyPolicyProfileCatalog,
+  APIKeyPolicyProfileCatalogItem,
   APIKeyPolicySnapshot,
   APIKeyPolicyState,
   APIKeyProfile,

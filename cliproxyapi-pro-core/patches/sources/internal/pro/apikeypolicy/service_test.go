@@ -270,6 +270,40 @@ func TestPolicyJSONUsesEmptyCollectionsInsteadOfNull(t *testing.T) {
 	}
 }
 
+func TestProfileCatalogReturnsOnlyCurrentNamesWithAtomicGeneration(t *testing.T) {
+	service := newTestService(t)
+	policy, err := service.Create(context.Background(), testIdentity(t, "profile-catalog-key"), "Catalog", ProfileInput{
+		Name: "Original", Providers: []string{"codex"}, Models: []string{"gpt-5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.ListProfileCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 1 || first.Items[0].ID != policy.ActiveProfileID || first.Items[0].Name != "Original" || first.PolicyGeneration != service.PolicyGeneration() {
+		t.Fatalf("first catalog = %#v", first)
+	}
+	edited, err := service.ReplaceProfile(context.Background(), policy.ID, policy.ActiveProfileID, policy.Version, ProfileInput{
+		Name: "Current", Providers: []string{"codex"}, Models: []string{"gpt-5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.ListProfileCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 1 || second.Items[0].Name != "Current" || second.Items[0].UpdatedAtMS != edited.Profiles[0].UpdatedAtMS || second.PolicyGeneration <= first.PolicyGeneration {
+		t.Fatalf("second catalog = %#v; first generation = %d", second, first.PolicyGeneration)
+	}
+	service.MarkUnavailable()
+	if _, err := service.ListProfileCatalog(context.Background()); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("unhealthy profile catalog error = %v", err)
+	}
+}
+
 func TestInFlightSnapshotSurvivesProfileEditActivationAndPolicyDelete(t *testing.T) {
 	service := newTestService(t)
 	identity := testIdentity(t, "in-flight-key")
