@@ -158,11 +158,9 @@ func (m *Manager) refreshForInspection(ctx context.Context, id string, force boo
 				current.NextRefreshAfter = now.Add(refreshFailureBackoff)
 			}
 			m.auths[id] = current
-			if m.scheduler != nil {
-				m.scheduler.upsertAuth(current.Clone())
-			}
 		}
 		m.mu.Unlock()
+		m.RefreshSchedulerEntry(id)
 		m.queueRefreshReschedule(id)
 		return cloned, false, err
 	}

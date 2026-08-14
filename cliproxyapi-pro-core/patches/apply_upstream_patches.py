@@ -5805,6 +5805,23 @@ replace_once(
 ''',
     'auth.Selected = existing.Selected',
 )
+auth_conductor_text = read(auth_conductor)
+lifecycle_scheduler_upsert = '''\tif m.scheduler != nil {
+\t\tm.scheduler.upsertAuth(authClone)
+\t}
+'''
+if auth_conductor_text.count(lifecycle_scheduler_upsert) != 2:
+    raise SystemExit(
+        f'expected two lifecycle scheduler upserts in {auth_conductor}, '
+        f'found {auth_conductor_text.count(lifecycle_scheduler_upsert)}'
+    )
+write(
+    auth_conductor,
+    auth_conductor_text.replace(
+        lifecycle_scheduler_upsert,
+        '\tm.RefreshSchedulerEntry(authClone.ID)\n',
+    ),
+)
 
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_cooldown.go'
 replace_once(
@@ -5816,11 +5833,54 @@ replace_once(
 ''',
     '''\tm.mu.Unlock()
 \tqueueAuthRuntimeStats(authSnapshot)
-\tif m.scheduler != nil && authSnapshot != nil {
-\t\tm.scheduler.upsertAuth(authSnapshot)
+\tif authSnapshot != nil {
+\t\tm.RefreshSchedulerEntry(authSnapshot.ID)
 \t}
 ''',
     'queueAuthRuntimeStats(authSnapshot)',
+)
+replace_once(
+    auth_conductor,
+    '''\tif m.scheduler != nil {
+\t\tfor _, snapshot := range snapshots {
+\t\t\tm.scheduler.upsertAuth(snapshot)
+\t\t}
+\t}
+''',
+    '''\tfor _, snapshot := range snapshots {
+\t\tm.RefreshSchedulerEntry(snapshot.ID)
+\t}
+''',
+    'm.RefreshSchedulerEntry(snapshot.ID)',
+)
+replace_once(
+    auth_conductor,
+    '''\tif m.scheduler != nil {
+\t\tfor _, snapshot := range snapshotsByID {
+\t\t\tm.scheduler.upsertAuth(snapshot)
+\t\t}
+\t}
+''',
+    '''\tfor _, snapshot := range snapshotsByID {
+\t\tm.RefreshSchedulerEntry(snapshot.ID)
+\t}
+''',
+    'for _, snapshot := range snapshotsByID {\n\t\tm.RefreshSchedulerEntry(snapshot.ID)',
+)
+replace_once(
+    auth_conductor,
+    '''\tif m.scheduler != nil && snapshot != nil {
+\t\tm.scheduler.upsertAuth(snapshot)
+\t}
+''',
+    '''\tif snapshot != nil {
+\t\tm.RefreshSchedulerEntry(snapshot.ID)
+\t}
+''',
+    '''\tif snapshot != nil {
+\t\tm.RefreshSchedulerEntry(snapshot.ID)
+\t}
+\tif snapshot != nil && cooldownStateChanged''',
 )
 
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_selection.go'
@@ -5860,6 +5920,21 @@ replace_once(
 ''',
     'snapshot := resolveAccountPolicy(auth, resolver)',
 )
+replace_once(
+    auth_conductor,
+    '''\tif m.scheduler != nil && snapshot != nil {
+\t\tm.scheduler.upsertAuth(snapshot)
+\t}
+}''',
+    '''\tif snapshot != nil {
+\t\tm.RefreshSchedulerEntry(snapshot.ID)
+\t}
+}''',
+    '''\tif snapshot != nil {
+\t\tm.RefreshSchedulerEntry(snapshot.ID)
+\t}
+}''',
+)
 auth_conductor_text = read(auth_conductor)
 candidate_append = '\t\tcandidates = append(candidates, candidate)\n'
 policy_candidate_append = '\t\tcandidates = append(candidates, resolveAccountPolicy(candidate, m.accountPolicyResolver))\n'
@@ -5867,6 +5942,32 @@ if policy_candidate_append not in auth_conductor_text:
     if auth_conductor_text.count(candidate_append) < 2:
         raise SystemExit(f'expected at least two legacy candidate appends in {auth_conductor}')
     write(auth_conductor, auth_conductor_text.replace(candidate_append, policy_candidate_append))
+
+auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_refresh.go'
+replace_once(
+    auth_conductor,
+    '''\t\t\tm.auths[id] = current
+\t\t\tshouldReschedule = true
+\t\t\tif m.scheduler != nil {
+\t\t\t\tm.scheduler.upsertAuth(current.Clone())
+\t\t\t}
+\t\t}
+\t\tm.mu.Unlock()
+\t\tif shouldReschedule {
+\t\t\tm.queueRefreshReschedule(id)
+''',
+    '''\t\t\tm.auths[id] = current
+\t\t\tshouldReschedule = true
+\t\t}
+\t\tm.mu.Unlock()
+\t\tif shouldReschedule {
+\t\t\tm.RefreshSchedulerEntry(id)
+\t\t\tm.queueRefreshReschedule(id)
+''',
+    'shouldReschedule {\n\t\t\tm.RefreshSchedulerEntry(id)',
+)
+
+auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_selection.go'
 replace_once(
     auth_conductor,
     'func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, error) {\n',
@@ -6285,6 +6386,27 @@ replace_once(
 ''',
     's.persistedCursors[persistedCursorKey] = picked.ID',
 )
+
+# Account policy fields are execution-only overlays. Every Manager-driven
+# incremental scheduler refresh must therefore go through RefreshSchedulerEntry,
+# whose single low-level upsert resolves the latest cached account policy.
+auth_package = ROOT / 'sdk/cliproxy/auth'
+auth_go_paths = set(auth_package.glob('*.go'))
+auth_go_paths.update(
+    path for path in _writes
+    if path.parent == auth_package and path.suffix == '.go'
+)
+direct_scheduler_upserts = {
+    path.relative_to(ROOT).as_posix(): read(path).count('m.scheduler.upsertAuth(')
+    for path in auth_go_paths
+    if read(path).count('m.scheduler.upsertAuth(') > 0
+}
+expected_direct_scheduler_upserts = {'sdk/cliproxy/auth/conductor_selection.go': 1}
+if direct_scheduler_upserts != expected_direct_scheduler_upserts:
+    raise SystemExit(
+        'Manager scheduler upserts must be centralized in RefreshSchedulerEntry: '
+        f'found {direct_scheduler_upserts}'
+    )
 
 format_go_writes([
     'cmd/server/main.go',
