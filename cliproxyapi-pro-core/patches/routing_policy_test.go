@@ -141,6 +141,85 @@ func TestRoutingProtectionConfigChangeResetsConfirmationSequence(t *testing.T) {
 	}
 }
 
+func TestRoutingProtectionRequiresAllAvailableAuthIdentityFields(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "identity-auth",
+		Provider: "xai",
+		FileName: "identity.json",
+		Metadata: map[string]any{"email": "user@example.com", "access_token": "current-token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{h: &Handler{authManager: manager}}
+	matching := coreusage.Record{
+		Provider:          auth.Provider,
+		AuthID:            auth.ID,
+		AuthIndex:         auth.Index,
+		AccessTokenSHA256: coreauth.AccessTokenSHA256(auth),
+	}
+	if got := controller.authForRecord(matching); got == nil || got.ID != auth.ID {
+		t.Fatalf("matching record resolved auth = %#v", got)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*coreusage.Record)
+	}{
+		{name: "auth id", mutate: func(record *coreusage.Record) { record.AuthID = "other" }},
+		{name: "auth index", mutate: func(record *coreusage.Record) { record.AuthIndex = "other" }},
+		{name: "provider", mutate: func(record *coreusage.Record) { record.Provider = "codex" }},
+		{name: "access token", mutate: func(record *coreusage.Record) { record.AccessTokenSHA256 = strings.Repeat("0", 64) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			record := matching
+			tt.mutate(&record)
+			if got := controller.authForRecord(record); got != nil {
+				t.Fatalf("mismatched record resolved auth = %#v", got)
+			}
+		})
+	}
+}
+
+func TestRoutingProtectionDisableRechecksObservedToken(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "reauthenticated-routing-auth",
+		Provider: "xai",
+		FileName: "reauthenticated.json",
+		Metadata: map[string]any{"email": "user@example.com", "access_token": "old-token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := routingProtectionEvent{
+		Provider:          auth.Provider,
+		AuthID:            auth.ID,
+		AuthIndex:         auth.Index,
+		StatusCode:        http.StatusTooManyRequests,
+		accessTokenSHA256: coreauth.AccessTokenSHA256(auth),
+	}
+	reauthenticated := auth.Clone()
+	reauthenticated.Metadata["access_token"] = "new-token"
+	if _, err = manager.Update(context.Background(), reauthenticated); err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{h: &Handler{authManager: manager}}
+	disabled, err := controller.disableAuth(context.Background(), auth, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled {
+		t.Fatal("routing protection disabled an auth after its observed token changed")
+	}
+	current, _ := manager.GetByID(auth.ID)
+	if current == nil || current.Disabled {
+		t.Fatalf("reauthenticated auth mutated = %#v", current)
+	}
+}
+
 func TestRoutingProtectionSkippedDisableReportsActualOutcome(t *testing.T) {
 	manager := coreauth.NewManager(nil, nil, nil)
 	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "skipped-disable-auth", Provider: "xai"})

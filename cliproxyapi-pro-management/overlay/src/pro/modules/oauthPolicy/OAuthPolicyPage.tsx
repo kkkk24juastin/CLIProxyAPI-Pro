@@ -198,6 +198,7 @@ export function OAuthPolicyPage() {
   const [effectivePlan, setEffectivePlan] = useState("all");
   const actionBarRef = useRef<HTMLDivElement>(null);
   const dirtyRef = useRef(false);
+  const draftRevisionRef = useRef(0);
   useActionBarHeightVar(
     actionBarRef,
     "--oauth-policy-action-bar-height",
@@ -261,6 +262,7 @@ export function OAuthPolicyPage() {
       setDraft((current) =>
         typeof next === "function" ? next(current) : next,
       );
+      draftRevisionRef.current += 1;
       setDirty(true);
       dirtyRef.current = true;
     },
@@ -491,13 +493,16 @@ export function OAuthPolicyPage() {
       showNotification(validation, "error");
       return;
     }
+    const savedRevision = draftRevisionRef.current;
     setSaving(true);
     try {
       const next = await oauthPolicyApi.save(nextDraft);
       setSnapshot(next);
-      setDraft(next.config);
-      setDirty(false);
-      dirtyRef.current = false;
+      if (draftRevisionRef.current === savedRevision) {
+        setDraft(next.config);
+        setDirty(false);
+        dirtyRef.current = false;
+      }
       setLoadError("");
       showNotification(
         t("oauth_policy.save_success", {
@@ -564,6 +569,7 @@ export function OAuthPolicyPage() {
   };
 
   const discard = () => {
+    draftRevisionRef.current += 1;
     setDraft(snapshot?.config ?? defaultOAuthPolicyConfig());
     setDirty(false);
     dirtyRef.current = false;

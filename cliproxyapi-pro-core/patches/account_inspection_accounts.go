@@ -169,15 +169,17 @@ func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 	email := accountInspectionAuthEmail(auth)
 	displayName := firstNonEmptyStringValue(email, fileName)
 	return accountInspectionAccount{
-		Auth:        auth,
-		Key:         proinspection.AccountKey(fileName, auth.Index),
-		Provider:    provider,
-		FileName:    fileName,
-		DisplayName: displayName,
-		Email:       email,
-		Name:        name,
-		AuthIndex:   auth.Index,
-		Disabled:    auth.Disabled,
+		Auth:              auth,
+		AuthID:            strings.TrimSpace(auth.ID),
+		Key:               proinspection.AccountKey(fileName, auth.Index),
+		Provider:          provider,
+		FileName:          fileName,
+		DisplayName:       displayName,
+		Email:             email,
+		Name:              name,
+		AuthIndex:         auth.Index,
+		AccessTokenSHA256: coreauth.AccessTokenSHA256(auth),
+		Disabled:          auth.Disabled,
 	}
 }
 
@@ -414,17 +416,64 @@ func (account accountInspectionAccount) nextRefreshAtMillis() int64 {
 
 func (account accountInspectionAccount) baseResult() accountInspectionResult {
 	return accountInspectionResult{
-		Key:          account.Key,
-		Provider:     account.Provider,
-		FileName:     account.FileName,
-		DisplayName:  account.DisplayName,
-		Email:        account.Email,
-		Name:         account.Name,
-		AuthIndex:    account.AuthIndex,
-		Disabled:     account.Disabled,
-		Action:       accountInspectionActionKeep,
-		ActionReason: "无需处理",
+		AuthID:            account.AuthID,
+		Key:               account.Key,
+		Provider:          account.Provider,
+		FileName:          account.FileName,
+		DisplayName:       account.DisplayName,
+		Email:             account.Email,
+		Name:              account.Name,
+		AuthIndex:         account.AuthIndex,
+		AccessTokenSHA256: account.AccessTokenSHA256,
+		Disabled:          account.Disabled,
+		Action:            accountInspectionActionKeep,
+		ActionReason:      "无需处理",
 	}
+}
+
+func accountInspectionObservationMatchesAuth(authID, authIndex, provider, fileName, accessTokenSHA256 string, auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	current := accountFromAuth(auth)
+	if authID != "" && strings.TrimSpace(authID) != current.AuthID {
+		return false
+	}
+	if authIndex != "" && strings.TrimSpace(authIndex) != current.AuthIndex {
+		return false
+	}
+	if provider != "" && !strings.EqualFold(strings.TrimSpace(provider), current.Provider) {
+		return false
+	}
+	if fileName != "" && strings.TrimSpace(fileName) != current.FileName {
+		return false
+	}
+	if accessTokenSHA256 != "" && strings.TrimSpace(accessTokenSHA256) != current.AccessTokenSHA256 {
+		return false
+	}
+	return true
+}
+
+func accountInspectionAccountMatchesAuth(account accountInspectionAccount, auth *coreauth.Auth) bool {
+	return accountInspectionObservationMatchesAuth(
+		account.AuthID,
+		account.AuthIndex,
+		account.Provider,
+		account.FileName,
+		account.AccessTokenSHA256,
+		auth,
+	)
+}
+
+func accountInspectionResultMatchesAuth(result accountInspectionResult, auth *coreauth.Auth) bool {
+	return accountInspectionObservationMatchesAuth(
+		result.AuthID,
+		result.AuthIndex,
+		result.Provider,
+		result.FileName,
+		result.AccessTokenSHA256,
+		auth,
+	)
 }
 
 func formatAccountInspectionIdentity(fileName string, email string, name string, displayName string) string {
@@ -454,6 +503,9 @@ func (s *accountInspectionScheduler) syncInspectionAuthError(ctx context.Context
 	if s == nil || s.h == nil || s.h.authManager == nil || account.AuthIndex == "" {
 		return
 	}
+	if !accountInspectionAccountMatchesAuth(account, s.h.authByIndex(account.AuthIndex)) {
+		return
+	}
 	err := s.h.updateProErrorAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
 		auth.Status = coreauth.StatusError
 		auth.StatusMessage = message
@@ -471,7 +523,7 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 		return
 	}
 	auth := s.h.authByIndex(account.AuthIndex)
-	if auth == nil {
+	if !accountInspectionAccountMatchesAuth(account, auth) {
 		return
 	}
 	if !isInspectionAuthErrorCode(authInspectionLastErrorCode(auth)) {
@@ -790,17 +842,11 @@ func (s *accountInspectionScheduler) actionAuthForResult(result accountInspectio
 		return nil, errAccountInspectionResultStale
 	}
 	auth := s.h.authByIndex(result.AuthIndex)
-	if auth == nil {
+	if !accountInspectionResultMatchesAuth(result, auth) {
 		return nil, errAccountInspectionResultStale
 	}
 	account := accountFromAuth(auth)
 	if result.Key != "" && result.Key != account.Key {
-		return nil, errAccountInspectionResultStale
-	}
-	if result.FileName != "" && result.FileName != account.FileName {
-		return nil, errAccountInspectionResultStale
-	}
-	if result.Provider != "" && !strings.EqualFold(strings.TrimSpace(result.Provider), account.Provider) {
 		return nil, errAccountInspectionResultStale
 	}
 	return auth, nil

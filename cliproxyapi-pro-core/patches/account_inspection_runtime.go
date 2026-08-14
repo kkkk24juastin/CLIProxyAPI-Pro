@@ -151,15 +151,17 @@ type accountInspectionScheduler struct {
 }
 
 type accountInspectionAccount struct {
-	Auth        *coreauth.Auth
-	Key         string
-	Provider    string
-	FileName    string
-	DisplayName string
-	Email       string
-	Name        string
-	AuthIndex   string
-	Disabled    bool
+	Auth              *coreauth.Auth
+	AuthID            string
+	Key               string
+	Provider          string
+	FileName          string
+	DisplayName       string
+	Email             string
+	Name              string
+	AuthIndex         string
+	AccessTokenSHA256 string
+	Disabled          bool
 }
 
 type accountInspectionDecision = proinspection.Decision

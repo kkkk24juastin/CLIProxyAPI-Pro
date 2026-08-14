@@ -136,6 +136,13 @@ class OAuthPolicyCustomizationTest(unittest.TestCase):
         ):
             self.assertIn(class_name, source)
 
+    def test_save_preserves_edits_made_while_request_is_in_flight(self) -> None:
+        source = PAGE.read_text()
+        self.assertIn('const draftRevisionRef = useRef(0)', source)
+        self.assertIn('draftRevisionRef.current += 1', source)
+        self.assertIn('const savedRevision = draftRevisionRef.current', source)
+        self.assertIn('draftRevisionRef.current === savedRevision', source)
+
 
 if __name__ == '__main__':
     unittest.main()

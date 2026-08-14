@@ -8,6 +8,8 @@ import (
 )
 
 type Result struct {
+	AuthID                string   `json:"-"`
+	AccessTokenSHA256     string   `json:"-"`
 	Key                   string   `json:"key"`
 	Provider              string   `json:"provider"`
 	FileName              string   `json:"fileName"`

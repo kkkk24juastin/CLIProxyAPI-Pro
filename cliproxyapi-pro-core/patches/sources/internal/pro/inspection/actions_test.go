@@ -17,10 +17,10 @@ func TestDedupeActionItems(t *testing.T) {
 }
 
 func TestActionItemResultRoundTrip(t *testing.T) {
-	result := Result{Key: "key", Provider: "xai", FileName: "xai.json", AuthIndex: "auth", Disabled: true}
+	result := Result{AuthID: "auth-id", AccessTokenSHA256: "token-sha256", Key: "key", Provider: "xai", FileName: "xai.json", AuthIndex: "auth", Disabled: true}
 	item := ActionItemFromResult(result, ActionEnable)
 	roundTrip := item.ToResult()
-	if roundTrip.Key != result.Key || roundTrip.Provider != result.Provider || roundTrip.Action != ActionEnable || !roundTrip.Disabled {
+	if roundTrip.AuthID != result.AuthID || roundTrip.AccessTokenSHA256 != result.AccessTokenSHA256 || roundTrip.Key != result.Key || roundTrip.Provider != result.Provider || roundTrip.Action != ActionEnable || !roundTrip.Disabled {
 		t.Fatalf("round trip = %#v", roundTrip)
 	}
 }

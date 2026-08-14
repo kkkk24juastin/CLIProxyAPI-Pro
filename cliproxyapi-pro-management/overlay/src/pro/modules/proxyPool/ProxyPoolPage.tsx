@@ -150,6 +150,9 @@ export function ProxyPoolPage() {
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(false);
   const draftRevisionRef = useRef(0);
+  const loadSequenceRef = useRef(0);
+  const appliedLoadSequenceRef = useRef(0);
+  const pollInFlightRef = useRef(false);
   const mountedRef = useRef(true);
   const automaticLocationAttemptsRef = useRef(new Set<string>());
   const [loadError, setLoadError] = useState('');
@@ -190,13 +193,17 @@ export function ProxyPoolPage() {
 
   const load = useCallback(
     async (silent = false, replaceDraftRevision?: number): Promise<boolean> => {
+      const loadSequence = ++loadSequenceRef.current;
       if (connectionStatus !== 'connected') {
+        appliedLoadSequenceRef.current = loadSequence;
         setLoading(false);
         return false;
       }
       if (!silent) setLoading(true);
       try {
         const next = await proxyPoolApi.load();
+        if (loadSequence < appliedLoadSequenceRef.current) return false;
+        appliedLoadSequenceRef.current = loadSequence;
         setSnapshot(next);
         const canReplaceSavedDraft =
           replaceDraftRevision !== undefined &&
@@ -209,10 +216,12 @@ export function ProxyPoolPage() {
         setLoadError('');
         return canReplaceSavedDraft;
       } catch (error) {
+        if (loadSequence < appliedLoadSequenceRef.current) return false;
+        appliedLoadSequenceRef.current = loadSequence;
         setLoadError(errorMessage(error));
         return false;
       } finally {
-        if (!silent) setLoading(false);
+        if (loadSequence === loadSequenceRef.current) setLoading(false);
       }
     },
     [connectionStatus]
@@ -229,7 +238,13 @@ export function ProxyPoolPage() {
   }, []);
   useEffect(() => {
     if (connectionStatus !== 'connected') return;
-    const timer = window.setInterval(() => void load(true), 10_000);
+    const timer = window.setInterval(() => {
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      void load(true).finally(() => {
+        pollInFlightRef.current = false;
+      });
+    }, 10_000);
     return () => window.clearInterval(timer);
   }, [connectionStatus, load]);
 

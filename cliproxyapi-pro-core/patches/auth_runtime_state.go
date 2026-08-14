@@ -117,11 +117,11 @@ func authRuntimeStatsSnapshot(auth *Auth, now time.Time) embeddedusage.AuthRunti
 	return stats
 }
 
-func queueAuthRuntimeStats(auth *Auth) {
+func queueAuthRuntimeStats(auth *Auth, observedAt time.Time) {
 	if auth == nil {
 		return
 	}
-	embeddedusage.QueueAuthRuntimeStats(authRuntimeStatsSnapshot(auth, time.Now()))
+	embeddedusage.QueueAuthRuntimeStats(authRuntimeStatsSnapshot(auth, observedAt))
 }
 
 const legacyRoundRobinCursorPrefix = prorouting.LegacyRoundRobinCursorPrefix
@@ -205,13 +205,15 @@ func (m *Manager) recordAuthSelected(authID string) {
 		return
 	}
 	var snapshot *Auth
+	var observedAt time.Time
 	m.mu.Lock()
 	if auth := m.auths[authID]; auth != nil {
 		auth.Selected++
 		snapshot = auth.Clone()
+		observedAt = time.Now()
 	}
 	m.mu.Unlock()
-	queueAuthRuntimeStats(snapshot)
+	queueAuthRuntimeStats(snapshot, observedAt)
 }
 
 // ApplyImportedRuntimeState applies authoritative imported cursor/stat state to the running manager.

@@ -98,6 +98,8 @@ type routingProtectionEvent struct {
 	Required    int    `json:"required"`
 	TriggeredAt int64  `json:"triggeredAt"`
 	ReleaseAt   int64  `json:"releaseAt"`
+
+	accessTokenSHA256 string
 }
 
 type routingPolicyReleaseRequest struct {
@@ -242,18 +244,19 @@ func (c *routingPolicyController) HandleUsage(ctx context.Context, record coreus
 	releaseAt := routingProtectionReleaseAt(record, policy, now)
 	mode := normalizeRoutingProtectionMode(policyConfig.Mode)
 	event := routingProtectionEvent{
-		ID:          fmt.Sprintf("%d-%s-%s", now.UnixNano(), provider, auth.Index),
-		Provider:    provider,
-		AuthID:      auth.ID,
-		AuthIndex:   auth.Index,
-		FileName:    routingProtectionAuthFileName(auth),
-		StatusCode:  statusCode,
-		Mode:        mode,
-		Action:      "observe",
-		Reason:      routingProtectionReason(record),
-		Count:       count,
-		Required:    required,
-		TriggeredAt: now.UnixMilli(),
+		ID:                fmt.Sprintf("%d-%s-%s", now.UnixNano(), provider, auth.Index),
+		Provider:          provider,
+		AuthID:            auth.ID,
+		AuthIndex:         auth.Index,
+		FileName:          routingProtectionAuthFileName(auth),
+		StatusCode:        statusCode,
+		Mode:              mode,
+		Action:            "observe",
+		Reason:            routingProtectionReason(record),
+		Count:             count,
+		Required:          required,
+		TriggeredAt:       now.UnixMilli(),
+		accessTokenSHA256: strings.TrimSpace(record.AccessTokenSHA256),
 	}
 	if !releaseAt.IsZero() {
 		event.ReleaseAt = releaseAt.UnixMilli()
@@ -322,19 +325,40 @@ func (c *routingPolicyController) authForRecord(record coreusage.Record) *coreau
 	if c == nil || c.h == nil || c.h.authManager == nil {
 		return nil
 	}
+	var auth *coreauth.Auth
 	if authID := strings.TrimSpace(record.AuthID); authID != "" {
-		if auth, ok := c.h.authManager.GetByID(authID); ok {
-			auth.EnsureIndex()
-			return auth
+		if current, ok := c.h.authManager.GetByID(authID); ok {
+			auth = current
+		}
+	} else if authIndex := strings.TrimSpace(record.AuthIndex); authIndex != "" {
+		if current := c.h.authByIndex(authIndex); current != nil {
+			auth = current
 		}
 	}
-	if authIndex := strings.TrimSpace(record.AuthIndex); authIndex != "" {
-		if auth := c.h.authByIndex(authIndex); auth != nil {
-			auth.EnsureIndex()
-			return auth
-		}
+	if !routingProtectionRecordMatchesAuth(record, auth) {
+		return nil
 	}
-	return nil
+	return auth
+}
+
+func routingProtectionRecordMatchesAuth(record coreusage.Record, auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	auth.EnsureIndex()
+	if authID := strings.TrimSpace(record.AuthID); authID != "" && authID != strings.TrimSpace(auth.ID) {
+		return false
+	}
+	if authIndex := strings.TrimSpace(record.AuthIndex); authIndex != "" && authIndex != strings.TrimSpace(auth.Index) {
+		return false
+	}
+	if provider := strings.TrimSpace(record.Provider); provider != "" && !strings.EqualFold(provider, strings.TrimSpace(auth.Provider)) {
+		return false
+	}
+	if tokenHash := strings.TrimSpace(record.AccessTokenSHA256); tokenHash != "" && tokenHash != coreauth.AccessTokenSHA256(auth) {
+		return false
+	}
+	return true
 }
 
 func (c *routingPolicyController) confirm(authID, provider string, statusCode int, policy routingProtectionProviderPolicy, now time.Time) (bool, int, int) {
@@ -357,6 +381,13 @@ func (c *routingPolicyController) disableAuth(ctx context.Context, auth *coreaut
 	mutated := false
 	err := c.h.updateProAuth(ctx, auth.Index, func(updated *coreauth.Auth) {
 		if updated == nil || (updated.Disabled && !routingProtectionOwned(updated)) {
+			return
+		}
+		updated.EnsureIndex()
+		if event.AuthID != "" && event.AuthID != updated.ID ||
+			event.AuthIndex != "" && event.AuthIndex != updated.Index ||
+			event.Provider != "" && !strings.EqualFold(event.Provider, updated.Provider) ||
+			event.accessTokenSHA256 != "" && event.accessTokenSHA256 != coreauth.AccessTokenSHA256(updated) {
 			return
 		}
 		setProAuthDisabledState(updated, true)

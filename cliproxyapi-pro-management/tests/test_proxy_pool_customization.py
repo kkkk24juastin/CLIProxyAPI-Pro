@@ -120,6 +120,16 @@ class ProxyPoolCustomizationTest(unittest.TestCase):
         self.assertIn('await load(true, savedRevision)', source)
         self.assertNotIn('await load(true, true)', source)
 
+    def test_loads_are_ordered_and_polling_is_single_flight(self) -> None:
+        source = PAGE.read_text()
+        self.assertIn('const loadSequenceRef = useRef(0)', source)
+        self.assertIn('const appliedLoadSequenceRef = useRef(0)', source)
+        self.assertIn('const pollInFlightRef = useRef(false)', source)
+        self.assertIn('const loadSequence = ++loadSequenceRef.current', source)
+        self.assertIn('loadSequence < appliedLoadSequenceRef.current', source)
+        self.assertIn('if (pollInFlightRef.current) return', source)
+        self.assertIn('void load(true).finally', source)
+
     def test_takeover_confirmation_previews_the_draft_being_applied(self) -> None:
         source = (FEATURE_DIR / 'ProxyPoolTakeoverDialog.tsx').read_text()
         self.assertIn('draft.nodes.filter((node) => node.enabled).length', source)

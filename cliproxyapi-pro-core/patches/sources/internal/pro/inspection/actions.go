@@ -3,15 +3,17 @@ package inspection
 import "strings"
 
 type ActionItem struct {
-	Key         string `json:"key"`
-	Provider    string `json:"provider"`
-	FileName    string `json:"fileName"`
-	DisplayName string `json:"displayName"`
-	Email       string `json:"email"`
-	Name        string `json:"name"`
-	AuthIndex   string `json:"authIndex"`
-	Disabled    bool   `json:"disabled"`
-	Action      Action `json:"action"`
+	AuthID            string `json:"-"`
+	AccessTokenSHA256 string `json:"-"`
+	Key               string `json:"key"`
+	Provider          string `json:"provider"`
+	FileName          string `json:"fileName"`
+	DisplayName       string `json:"displayName"`
+	Email             string `json:"email"`
+	Name              string `json:"name"`
+	AuthIndex         string `json:"authIndex"`
+	Disabled          bool   `json:"disabled"`
+	Action            Action `json:"action"`
 }
 
 type ActionRequest struct {
@@ -71,29 +73,33 @@ func AccountKey(fileName, authIndex string) string {
 
 func (item ActionItem) ToResult() Result {
 	return Result{
-		Key:         item.Key,
-		Provider:    item.Provider,
-		FileName:    item.FileName,
-		DisplayName: item.DisplayName,
-		Email:       item.Email,
-		Name:        item.Name,
-		AuthIndex:   item.AuthIndex,
-		Disabled:    item.Disabled,
-		Action:      item.Action,
+		AuthID:            item.AuthID,
+		AccessTokenSHA256: item.AccessTokenSHA256,
+		Key:               item.Key,
+		Provider:          item.Provider,
+		FileName:          item.FileName,
+		DisplayName:       item.DisplayName,
+		Email:             item.Email,
+		Name:              item.Name,
+		AuthIndex:         item.AuthIndex,
+		Disabled:          item.Disabled,
+		Action:            item.Action,
 	}
 }
 
 func ActionItemFromResult(result Result, action Action) ActionItem {
 	return ActionItem{
-		Key:         result.Key,
-		Provider:    result.Provider,
-		FileName:    result.FileName,
-		DisplayName: result.DisplayName,
-		Email:       result.Email,
-		Name:        result.Name,
-		AuthIndex:   result.AuthIndex,
-		Disabled:    result.Disabled,
-		Action:      action,
+		AuthID:            result.AuthID,
+		AccessTokenSHA256: result.AccessTokenSHA256,
+		Key:               result.Key,
+		Provider:          result.Provider,
+		FileName:          result.FileName,
+		DisplayName:       result.DisplayName,
+		Email:             result.Email,
+		Name:              result.Name,
+		AuthIndex:         result.AuthIndex,
+		Disabled:          result.Disabled,
+		Action:            action,
 	}
 }
 
@@ -133,6 +139,8 @@ func SummarizeActionOutcomes(outcomes []ActionOutcome) ActionOutcomeSummary {
 }
 
 func MergeManualActionResult(current, executed Result) (Result, bool) {
+	current.AuthID = executed.AuthID
+	current.AccessTokenSHA256 = executed.AccessTokenSHA256
 	current.Provider = executed.Provider
 	current.FileName = executed.FileName
 	current.DisplayName = executed.DisplayName

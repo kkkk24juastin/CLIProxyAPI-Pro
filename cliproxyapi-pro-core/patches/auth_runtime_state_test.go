@@ -67,6 +67,16 @@ func runtimeStateTestEntries(ids ...string) []*scheduledAuth {
 	return entries
 }
 
+func TestAuthRuntimeStatsSnapshotUsesObservationTime(t *testing.T) {
+	auth := &Auth{ID: "observed-auth", Provider: "codex", Index: "observed-index"}
+	observedAt := time.UnixMilli(1_725_000_000_123)
+
+	stats := authRuntimeStatsSnapshot(auth, observedAt)
+	if stats.UpdatedAtMS != observedAt.UnixMilli() {
+		t.Fatalf("UpdatedAtMS = %d, want %d", stats.UpdatedAtMS, observedAt.UnixMilli())
+	}
+}
+
 func TestPickNextMixedFastPathRecordsSelectedAuth(t *testing.T) {
 	manager := NewManager(nil, &RoundRobinSelector{}, nil)
 	manager.RegisterExecutor(&runtimeStateTestExecutor{})

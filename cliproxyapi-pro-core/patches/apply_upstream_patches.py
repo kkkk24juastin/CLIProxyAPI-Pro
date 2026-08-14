@@ -5826,18 +5826,40 @@ write(
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_cooldown.go'
 replace_once(
     auth_conductor,
+    '''\tvar authSnapshot *Auth
+\tcooldownStateChanged := false
+''',
+    '''\tvar authSnapshot *Auth
+\tvar authStatsObservedAt time.Time
+\tcooldownStateChanged := false
+''',
+    'var authStatsObservedAt time.Time',
+)
+replace_once(
+    auth_conductor,
+    '''\t\tnow := time.Now()
+\t\tvar cooldownRecordsBefore []CooldownStateRecord
+''',
+    '''\t\tnow := time.Now()
+\t\tauthStatsObservedAt = now
+\t\tvar cooldownRecordsBefore []CooldownStateRecord
+''',
+    'authStatsObservedAt = now',
+)
+replace_once(
+    auth_conductor,
     '''\tm.mu.Unlock()
 \tif m.scheduler != nil && authSnapshot != nil {
 \t\tm.scheduler.upsertAuth(authSnapshot)
 \t}
 ''',
     '''\tm.mu.Unlock()
-\tqueueAuthRuntimeStats(authSnapshot)
+\tqueueAuthRuntimeStats(authSnapshot, authStatsObservedAt)
 \tif authSnapshot != nil {
 \t\tm.RefreshSchedulerEntry(authSnapshot.ID)
 \t}
 ''',
-    'queueAuthRuntimeStats(authSnapshot)',
+    'queueAuthRuntimeStats(authSnapshot, authStatsObservedAt)',
 )
 replace_once(
     auth_conductor,
