@@ -632,19 +632,23 @@ export function APIKeyPolicyPage() {
 					<span className={takeoverActive ? styles.overviewGood : styles.overviewMuted}>
 						{takeoverActive ? <IconCheckCircle2 size={18} /> : <IconAlertTriangle size={18} />}
 					</span>
-					<div><small>{t('api_key_policy.runtime')}</small><strong>{takeoverActive ? t('api_key_policy.running') : t('api_key_policy.stopped')}</strong></div>
+					<small>{t('api_key_policy.runtime')}</small>
+					<strong>{takeoverActive ? t('api_key_policy.running') : t('api_key_policy.stopped')}</strong>
 				</div>
 				<div className={styles.overviewItem}>
 					<span className={styles.overviewAccent}><IconKey size={18} /></span>
-					<div><small>{t('api_key_policy.upstream_keys')}</small><strong>{snapshot?.bindings.items.length ?? 0}</strong></div>
+					<small>{t('api_key_policy.upstream_keys')}</small>
+					<strong>{snapshot?.bindings.items.length ?? 0}</strong>
 				</div>
 				<div className={styles.overviewItem}>
 					<span className={styles.overviewGood}><IconShield size={18} /></span>
-					<div><small>{t('api_key_policy.configured_policies')}</small><strong>{statusCounts.configured}</strong></div>
+					<small>{t('api_key_policy.configured_policies')}</small>
+					<strong>{statusCounts.configured}</strong>
 				</div>
 				<div className={styles.overviewItem}>
 					<span className={statusCounts.orphaned ? styles.overviewBad : styles.overviewMuted}><IconAlertTriangle size={18} /></span>
-					<div><small>{t('api_key_policy.orphaned_policies')}</small><strong>{statusCounts.orphaned}</strong></div>
+					<small>{t('api_key_policy.orphaned_policies')}</small>
+					<strong>{statusCounts.orphaned}</strong>
 				</div>
 			</section>
 

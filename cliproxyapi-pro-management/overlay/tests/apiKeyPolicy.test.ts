@@ -147,6 +147,15 @@ describe('API Key Policy profile drafts', () => {
 		expect(styles).toContain('width: min(720px, 100vw) !important;');
   });
 
+	test('matches the account-policy status overview structure and responsive grid', () => {
+		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+		const styles = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.module.scss'), 'utf8');
+		expect(page).not.toContain('<div><small>{t(\'api_key_policy.');
+		expect(page).toContain("<small>{t('api_key_policy.runtime')}</small>");
+		expect(styles).toContain('@media (max-width: 980px)');
+		expect(styles).toContain('.overviewItem:nth-child(-n + 2) { border-bottom: 1px solid var(--border-color); }');
+	});
+
 	test('loads and updates the explicit takeover contract', () => {
 		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
 		const client = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/apiKeyPolicy.ts'), 'utf8');
