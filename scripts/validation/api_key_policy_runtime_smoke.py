@@ -43,6 +43,7 @@ def main() -> None:
     assert status == 200, (status, capabilities)
     assert "policy_delete_preview" in capabilities["features"], capabilities
     assert "orphaned_purge_guard" in capabilities["features"], capabilities
+    assert "usage_key_target" in capabilities["features"], capabilities
 
     status, api_keys = request(base, args.management_key, "GET", "/v0/management/api-keys")
     assert status == 200 and api_keys["api-keys"], (status, api_keys)
@@ -53,6 +54,12 @@ def main() -> None:
     assert len(bindings["items"]) == 1, bindings
     assert bindings["configGeneration"] >= 1, bindings
     key_ref = bindings["items"][0]["keyRef"]
+    status, usage_target = request(base, args.management_key, "POST", "/v0/management/api-key-policy-usage-target", {
+        "keyRef": key_ref,
+    })
+    assert status == 200, (status, usage_target)
+    assert len(usage_target["apiKeyHash"]) == 64, usage_target
+    assert usage_target["configGeneration"] == bindings["configGeneration"], usage_target
 
     status, catalog = request(base, args.management_key, "GET", "/v0/management/api-key-policy-catalog")
     assert status == 200 and catalog["providers"] and catalog["models"], (status, catalog)

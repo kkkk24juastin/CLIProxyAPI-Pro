@@ -65,6 +65,11 @@ export interface APIKeyPolicyStatus {
 	configuredGeneration: number;
 }
 
+export interface APIKeyPolicyUsageTarget {
+  apiKeyHash: string;
+  configGeneration: number;
+}
+
 export interface APIKeyPolicyDeletePreview {
   policyId: string;
   version: number;
@@ -95,6 +100,7 @@ const REQUIRED_API_KEY_POLICY_FEATURES = [
   'policy_delete_preview',
   'orphaned_purge_guard',
 	'takeover_control',
+	'usage_key_target',
 ] as const;
 
 export class APIKeyPolicyCapabilityError extends Error {
@@ -205,6 +211,10 @@ export const apiKeyPolicyApi = {
       'api_key_policy_pagination_unstable',
       'API key configuration kept changing during policy pagination',
     );
+  },
+
+  usageTarget(keyRef: string): Promise<APIKeyPolicyUsageTarget> {
+    return apiClient.post<APIKeyPolicyUsageTarget>('/api-key-policy-usage-target', { keyRef });
   },
 
   async snapshot(): Promise<APIKeyPolicySnapshot> {

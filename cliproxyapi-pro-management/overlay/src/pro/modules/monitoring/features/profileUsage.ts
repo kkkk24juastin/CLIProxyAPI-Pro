@@ -11,14 +11,12 @@ export interface ProfileFilterOption {
 
 export interface ProfileFilterCopy {
   allProfiles: string;
-  renamed: (name: string, previous: string) => string;
   deleted: (name: string) => string;
 }
 
-interface ProfileNameHistory {
+interface ProfileNameObservation {
   latestName: string;
   latestTimestampMs: number;
-  names: Map<string, number>;
 }
 
 export const resolveUsageProfileSnapshot = (
@@ -42,58 +40,47 @@ export const buildProfileFilterOptions = ({
   selectedProfileName: string;
   copy: ProfileFilterCopy;
 }): ProfileFilterOption[] => {
-  const histories = new Map<string, ProfileNameHistory>();
+  const observedNames = new Map<string, ProfileNameObservation>();
   observations.forEach((observation) => {
     const profileId = observation.profileId.trim();
     const profileName = observation.profileName.trim();
     if (!profileId) return;
-    const history = histories.get(profileId) ?? {
+    const observed = observedNames.get(profileId) ?? {
       latestName: '',
       latestTimestampMs: Number.NEGATIVE_INFINITY,
-      names: new Map<string, number>(),
     };
     if (profileName) {
       const timestampMs = Number.isFinite(observation.timestampMs) ? observation.timestampMs : 0;
-      history.names.set(profileName, Math.max(history.names.get(profileName) ?? Number.NEGATIVE_INFINITY, timestampMs));
-      if (timestampMs >= history.latestTimestampMs) {
-        history.latestName = profileName;
-        history.latestTimestampMs = timestampMs;
+      if (timestampMs >= observed.latestTimestampMs) {
+        observed.latestName = profileName;
+        observed.latestTimestampMs = timestampMs;
       }
     }
-    histories.set(profileId, history);
+    observedNames.set(profileId, observed);
   });
 
   currentNames.forEach((_name, profileId) => {
     const normalizedId = profileId.trim();
     if (!normalizedId) return;
-    const history = histories.get(normalizedId) ?? {
+    const observed = observedNames.get(normalizedId) ?? {
       latestName: '',
       latestTimestampMs: Number.NEGATIVE_INFINITY,
-      names: new Map<string, number>(),
     };
-    histories.set(normalizedId, history);
+    observedNames.set(normalizedId, observed);
   });
 
   const normalizedSelectedId = selectedProfileId.trim();
-  if (normalizedSelectedId && normalizedSelectedId !== 'all' && !histories.has(normalizedSelectedId)) {
-    histories.set(normalizedSelectedId, {
+  if (normalizedSelectedId && normalizedSelectedId !== 'all' && !observedNames.has(normalizedSelectedId)) {
+    observedNames.set(normalizedSelectedId, {
       latestName: selectedProfileName.trim(),
       latestTimestampMs: Number.POSITIVE_INFINITY,
-      names: new Map(selectedProfileName.trim() ? [[selectedProfileName.trim(), Number.POSITIVE_INFINITY]] : []),
     });
   }
 
-  const options = Array.from(histories.entries()).map(([profileId, history]) => {
+  const options = Array.from(observedNames.entries()).map(([profileId, observed]) => {
     const currentName = currentNames.get(profileId)?.trim() ?? '';
     const selectedName = profileId === normalizedSelectedId ? selectedProfileName.trim() : '';
-    const primaryName = currentName || selectedName || history.latestName || profileId;
-    const previousNames = Array.from(history.names.entries())
-      .filter(([name]) => name !== primaryName)
-      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-      .map(([name]) => name);
-    let label = previousNames.length > 0
-      ? copy.renamed(primaryName, previousNames.join(', '))
-      : primaryName;
+    let label = currentName || selectedName || observed.latestName || profileId;
     if (currentNamesLoaded && !currentNames.has(profileId)) {
       label = copy.deleted(label);
     }

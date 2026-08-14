@@ -9,11 +9,9 @@ import {
   buildMonitoringUsageLocationState,
   readMonitoringUsageLocationState,
 } from '@/pro/shared/monitoringNavigation';
-import { resolveAPIKeyUsageHash } from '@/pro/modules/apiKeyPolicy/usageKey';
 
 const copy = {
   allProfiles: 'All profiles',
-  renamed: (name: string, previous: string) => `${name} (previously: ${previous})`,
   deleted: (name: string) => `${name} (deleted)`,
 };
 
@@ -34,21 +32,7 @@ describe('monitoring API key and Profile usage navigation', () => {
     expect(JSON.stringify(state)).not.toContain('api_key_policy_id');
   });
 
-  test('derives the selected usage hash from the already loaded upstream Key configuration', async () => {
-    const hash = await resolveAPIKeyUsageHash({
-      configuredKeys: ['sk-first-abcdefgh', 'sk-second-ijklmnop'],
-      bindingIndex: 1,
-      maskedKey: 'sk******op',
-    });
-    expect(hash).toMatch(/^[a-f0-9]{64}$/);
-    await expect(resolveAPIKeyUsageHash({
-      configuredKeys: ['aa-collision-zz', 'aa-different-zz'],
-      bindingIndex: -1,
-      maskedKey: 'aa******zz',
-    })).rejects.toThrow();
-  });
-
-  test('filters a renamed Profile by stable ID while exposing name history', () => {
+  test('filters a renamed Profile by stable ID while showing only its current name', () => {
     const options = buildProfileFilterOptions({
       observations: [
         { profileId: 'profile-1', profileName: 'Old', timestampMs: 100 },
@@ -62,7 +46,7 @@ describe('monitoring API key and Profile usage navigation', () => {
     });
     expect(options).toEqual([
       { value: 'all', label: 'All profiles' },
-      { value: 'profile-1', label: 'Current (previously: New, Old)' },
+      { value: 'profile-1', label: 'Current' },
     ]);
   });
 
@@ -82,14 +66,25 @@ describe('monitoring API key and Profile usage navigation', () => {
 
   test('removes policy and policy-mode filters and renders Profile under the API key', () => {
     const policyPage = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+    const policyClient = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/apiKeyPolicy.ts'), 'utf8');
     const monitoringPage = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/MonitoringCenterPage.tsx'), 'utf8');
+    const preferences = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/features/realtimeLogPreferences.ts'), 'utf8');
+    const baseStyles = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/features/styles/_base.scss'), 'utf8');
     expect(policyPage).toContain("navigate('/monitoring#request-events'");
-    expect(policyPage).toContain('resolveAPIKeyUsageHash({');
+    expect(policyPage).toContain('apiKeyPolicyApi.usageTarget(binding.keyRef)');
+    expect(policyClient).toContain("'/api-key-policy-usage-target'");
     expect(policyPage).toContain('apiKeyHash,');
     expect(policyPage).not.toContain('/monitoring?api_key_policy_id=');
     expect(monitoringPage).not.toContain('selectedAPIKeyPolicy');
     expect(monitoringPage).not.toContain('selectedPolicyMode');
-    expect(monitoringPage).toContain("t('monitoring.api_key_profile'");
+    expect(monitoringPage).toContain('profileFilterObservations');
+    expect(monitoringPage).toContain('...filteredRows');
+    expect(monitoringPage).toContain('PROFILE_CATALOG_REFRESH_MS');
+    expect(monitoringPage).toContain('styles.realtimeApiKeyCell');
+    expect(monitoringPage).not.toContain("t('monitoring.api_key_profile'");
     expect(monitoringPage).toContain('profileId: selectedProfile');
+    expect(preferences).toContain('apiKey: 168');
+    expect(baseStyles).toContain('repeat(5, minmax(0, 1fr))');
+    expect(baseStyles).toContain('.realtimeFilterSelectTrigger');
   });
 });

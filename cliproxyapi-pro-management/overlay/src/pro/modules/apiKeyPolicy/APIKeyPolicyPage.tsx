@@ -20,7 +20,7 @@ import {
 	IconShield,
   IconTrash2,
 } from '@/components/ui/icons';
-import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
+import { useAuthStore, useNotificationStore } from '@/stores';
 import { ProFeatureHeader } from '@/pro/shared/ProFeatureHeader';
 import { ProTaskDialog, ProWorkspaceSheet } from '@/pro/shared/ProSurface';
 import { buildMonitoringUsageLocationState } from '@/pro/shared/monitoringNavigation';
@@ -40,7 +40,6 @@ import {
   type APIKeyProfileInput,
 } from './apiKeyPolicy';
 import styles from './APIKeyPolicyPage.module.scss';
-import { resolveAPIKeyUsageHash } from './usageKey';
 
 type BindingFilter = 'all' | 'unconfigured' | 'configured' | 'orphaned';
 type CapabilityState = 'checking' | 'ready' | 'unsupported' | 'error';
@@ -215,7 +214,6 @@ export function APIKeyPolicyPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const fetchConfig = useConfigStore((state) => state.fetchConfig);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const [snapshot, setSnapshot] = useState<APIKeyPolicySnapshot | null>(null);
@@ -338,14 +336,8 @@ export function APIKeyPolicyPage() {
     binding: APIKeyPolicyBinding,
     profile?: { id: string; name: string },
   ) => {
-    const bindingIndex = snapshot?.bindings.items.findIndex((item) => item.keyRef === binding.keyRef) ?? -1;
     try {
-      const latestConfig = await fetchConfig(true);
-      const apiKeyHash = await resolveAPIKeyUsageHash({
-        configuredKeys: latestConfig.apiKeys ?? [],
-        bindingIndex,
-        maskedKey: binding.maskedKey,
-      });
+      const { apiKeyHash } = await apiKeyPolicyApi.usageTarget(binding.keyRef);
       navigate('/monitoring#request-events', {
         state: buildMonitoringUsageLocationState({
           apiKeyHash,
@@ -353,10 +345,13 @@ export function APIKeyPolicyPage() {
           ...(profile ? { profileId: profile.id, profileName: profile.name } : {}),
         }),
       });
-    } catch {
-      showNotification(t('api_key_policy.error.usage_key_unavailable'), 'error');
+    } catch (error) {
+      if (apiKeyPolicyErrorCode(error) === 'api_key_reference_stale') {
+        await load();
+      }
+      showNotification(errorMessage(error), 'error');
     }
-  }, [fetchConfig, navigate, showNotification, snapshot, t]);
+  }, [errorMessage, load, navigate, showNotification]);
 
   const closeWorkspace = useCallback(() => {
     saveRevisionRef.current += 1;

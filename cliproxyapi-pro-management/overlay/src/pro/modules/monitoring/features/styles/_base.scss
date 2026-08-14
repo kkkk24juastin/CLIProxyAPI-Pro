@@ -504,9 +504,26 @@
 
 .filterGrid {
   display: grid;
-  grid-template-columns: minmax(260px, 1.4fr) repeat(4, minmax(128px, 1fr)) auto auto;
+  grid-template-columns: minmax(260px, 1.4fr) repeat(5, minmax(0, 1fr)) auto auto;
   gap: 10px;
   align-items: center;
+}
+
+.realtimeFilterSelectTrigger {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.realtimeFilterSelectTrigger > span:first-child,
+.realtimeFilterSelectDropdown > button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.realtimeFilterSelectTrigger > span:first-child {
+  flex: 1 1 auto;
 }
 
 .filterGrid :global(.form-group) {

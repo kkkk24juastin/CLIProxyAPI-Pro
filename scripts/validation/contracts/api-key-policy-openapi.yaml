@@ -25,6 +25,24 @@ paths:
                 $ref: "#/components/schemas/BindingPage"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/PolicyUnavailable" }
+  /v0/management/api-key-policy-usage-target:
+    post:
+      operationId: resolveApiKeyPolicyUsageTarget
+      description: Resolve one session- and config-generation-bound opaque Key reference for request-monitoring filtering
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UsageTargetRequest" }
+      responses:
+        "200":
+          description: Stable API Key fingerprint for the selected binding only
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UsageTarget" }
+        "400": { $ref: "#/components/responses/InvalidKeyReference" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/StaleKeyReference" }
   /v0/management/api-key-policies:
     post:
       operationId: createApiKeyPolicy
@@ -226,6 +244,8 @@ components:
               - policy_backup_restore
               - policy_delete_preview
               - orphaned_purge_guard
+              - takeover_control
+              - usage_key_target
     PolicyState:
       type: string
       enum: [unconfigured, configured, orphaned, unavailable]
@@ -293,6 +313,22 @@ components:
         displayName: { type: string }
         initialProfile:
           $ref: "#/components/schemas/ProfileInput"
+    UsageTargetRequest:
+      type: object
+      required: [keyRef]
+      properties:
+        keyRef:
+          type: string
+          description: Short-lived opaque reference returned by the binding list; never place it in a URL
+    UsageTarget:
+      type: object
+      required: [apiKeyHash, configGeneration]
+      properties:
+        apiKeyHash:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+          description: Returned only for the explicitly selected protected keyRef
+        configGeneration: { type: integer, minimum: 1 }
     Binding:
       type: object
       required: [maskedKey, keyRef, state, weakKey]
@@ -350,6 +386,12 @@ components:
   responses:
     Unauthorized:
       description: Management authentication required
+    InvalidKeyReference:
+      description: invalid_api_key_reference
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    StaleKeyReference:
+      description: api_key_reference_stale
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     InvalidProfile:
       description: invalid_api_key_profile
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }

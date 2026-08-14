@@ -67,6 +67,7 @@ func (h *Handler) RegisterAPIKeyPolicyRoutes(group *gin.RouterGroup) {
 		return
 	}
 	group.GET("/api-key-policy-bindings", h.ListAPIKeyPolicyBindings)
+	group.POST("/api-key-policy-usage-target", h.ResolveAPIKeyPolicyUsageTarget)
 	group.GET("/api-key-policy-capabilities", h.GetAPIKeyPolicyCapabilities)
 	group.GET("/api-key-policy-status", h.GetAPIKeyPolicyStatus)
 	group.PUT("/api-key-policy-takeover", h.UpdateAPIKeyPolicyTakeover)
@@ -100,6 +101,7 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 			"policy_delete_preview",
 			"orphaned_purge_guard",
 			"takeover_control",
+			"usage_key_target",
 		},
 	})
 }
@@ -242,6 +244,43 @@ func (h *Handler) consumeAPIKeyReference(c *gin.Context, token string) (apikeypo
 		return apikeypolicy.AuthenticatedAPIKeyIdentity{}, 0, errors.New("api key reference configuration generation changed")
 	}
 	return reference.identity, reference.generation, nil
+}
+
+func (h *Handler) resolveAPIKeyReference(c *gin.Context, token string) (apikeypolicy.AuthenticatedAPIKeyIdentity, uint64, error) {
+	token = strings.TrimSpace(token)
+	h.apiKeyRefsMu.Lock()
+	reference, ok := h.apiKeyRefs[token]
+	h.apiKeyRefsMu.Unlock()
+	if !ok || !reference.expiresAt.After(time.Now()) || reference.session == "" || reference.session != managementSessionID(c) {
+		return apikeypolicy.AuthenticatedAPIKeyIdentity{}, 0, errors.New("api key reference is expired or belongs to another management session")
+	}
+	keys, currentGeneration := h.apiKeyConfigSnapshot()
+	if reference.generation != currentGeneration {
+		return apikeypolicy.AuthenticatedAPIKeyIdentity{}, 0, errors.New("api key reference configuration generation changed")
+	}
+	if _, exists := configuredAPIKeyIdentities(keys)[reference.identity.Hash()]; !exists {
+		return apikeypolicy.AuthenticatedAPIKeyIdentity{}, 0, errors.New("upstream API key no longer exists")
+	}
+	return reference.identity, reference.generation, nil
+}
+
+func (h *Handler) ResolveAPIKeyPolicyUsageTarget(c *gin.Context) {
+	var request struct {
+		KeyRef string `json:"keyRef" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.KeyRef) == "" {
+		writeAPIKeyPolicyHTTPError(c, http.StatusBadRequest, "invalid_api_key_reference", "keyRef is required")
+		return
+	}
+	identity, generation, errRef := h.resolveAPIKeyReference(c, request.KeyRef)
+	if errRef != nil {
+		writeAPIKeyPolicyHTTPError(c, http.StatusConflict, "api_key_reference_stale", errRef.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"apiKeyHash":       identity.Hash(),
+		"configGeneration": generation,
+	})
 }
 
 func configuredAPIKeyIdentities(keys []string) map[string]apikeypolicy.AuthenticatedAPIKeyIdentity {

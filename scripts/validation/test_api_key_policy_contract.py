@@ -69,6 +69,13 @@ class APIKeyPolicyContractTest(unittest.TestCase):
             r"BindingPage:\n(?:.|\n)*?required: \[items, orphaned, nextCursor, configGeneration\]",
         )
 
+    def test_usage_target_is_explicit_and_feature_gated_across_contracts(self) -> None:
+        for source in (GO_HANDLER, TS_CLIENT, OPENAPI):
+            self.assertIn("api-key-policy-usage-target", source)
+            self.assertIn("usage_key_target", source)
+            self.assertIn("apiKeyHash", source)
+        self.assertNotIn('json:"apiKeyHash"', GO_HANDLER.split("type apiKeyPolicyBinding struct", 1)[1].split("}", 1)[0])
+
     def test_profile_response_does_not_inherit_write_version(self) -> None:
         profile_schema = OPENAPI.split("    Profile:\n", 1)[1].split(
             "    Policy:\n", 1

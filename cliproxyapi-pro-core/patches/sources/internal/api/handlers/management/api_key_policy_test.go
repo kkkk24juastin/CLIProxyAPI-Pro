@@ -239,6 +239,36 @@ func TestAPIKeyPolicyBindingsAndKeyReferenceSecurity(t *testing.T) {
 	}
 }
 
+func TestAPIKeyPolicyUsageTargetIsSessionAndGenerationBoundWithoutConsumingReference(t *testing.T) {
+	rawKey := "sk-sensitive-canary-123456789"
+	h, router := newAPIKeyPolicyManagementHarness(t, []string{rawKey})
+	listed := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil)
+	keyRef := bindingResponse(t, listed).Items[0].KeyRef
+	body := map[string]any{"keyRef": keyRef}
+
+	crossSession := policyRequest(t, router, http.MethodPost, "/v0/management/api-key-policy-usage-target", "session-b", body)
+	if crossSession.Code != http.StatusConflict || !strings.Contains(crossSession.Body.String(), "api_key_reference_stale") {
+		t.Fatalf("cross-session status=%d body=%s", crossSession.Code, crossSession.Body.String())
+	}
+
+	identity, errIdentity := apikeypolicy.NewAuthenticatedAPIKeyIdentity(rawKey)
+	if errIdentity != nil {
+		t.Fatal(errIdentity)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		target := policyRequest(t, router, http.MethodPost, "/v0/management/api-key-policy-usage-target", "session-a", body)
+		if target.Code != http.StatusOK || !strings.Contains(target.Body.String(), identity.Hash()) || strings.Contains(target.Body.String(), rawKey) {
+			t.Fatalf("target attempt=%d status=%d body=%s", attempt, target.Code, target.Body.String())
+		}
+	}
+
+	h.SetConfig(&config.Config{SDKConfig: config.SDKConfig{APIKeys: []string{rawKey}}})
+	stale := policyRequest(t, router, http.MethodPost, "/v0/management/api-key-policy-usage-target", "session-a", body)
+	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), "api_key_reference_stale") {
+		t.Fatalf("stale status=%d body=%s", stale.Code, stale.Body.String())
+	}
+}
+
 func TestAPIKeyPolicySameSessionReferenceCreatesOnceAndResponsesHideSecrets(t *testing.T) {
 	const rawKey = "sk-sensitive-canary-abcdefghijklmnopqrstuvwxyz"
 	_, router := newAPIKeyPolicyManagementHarness(t, []string{rawKey})
@@ -271,7 +301,7 @@ func TestAPIKeyPolicyRoutesRequireRealManagementMiddlewareAndBindSession(t *test
 		t.Fatalf("authenticated status=%d body=%s", listed.Code, listed.Body.String())
 	}
 	capabilities := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-capabilities", "management-policy-test-secret", nil)
-	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"apiVersion":2`) || !strings.Contains(capabilities.Body.String(), `"atomic_workspace_save"`) || !strings.Contains(capabilities.Body.String(), `"orphaned_purge_guard"`) || !strings.Contains(capabilities.Body.String(), `"takeover_control"`) {
+	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"apiVersion":2`) || !strings.Contains(capabilities.Body.String(), `"atomic_workspace_save"`) || !strings.Contains(capabilities.Body.String(), `"orphaned_purge_guard"`) || !strings.Contains(capabilities.Body.String(), `"takeover_control"`) || !strings.Contains(capabilities.Body.String(), `"usage_key_target"`) {
 		t.Fatalf("capabilities status=%d body=%s", capabilities.Code, capabilities.Body.String())
 	}
 	status := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-status", "management-policy-test-secret", nil)

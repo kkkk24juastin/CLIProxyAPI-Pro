@@ -122,7 +122,6 @@ const en = {
       upstream_api_key_not_found: 'The upstream API Key no longer exists.',
       api_key_policy_config_changed: 'The upstream Key configuration changed. Refresh and try again.',
 		api_key_policy_state_changed: 'The policy or upstream Key scope changed. The latest state has been refreshed; review it and try again.',
-		usage_key_unavailable: 'The selected upstream API Key could not be matched to the current configuration. Refresh and try again.',
       invalid_api_key_policy_cursor: 'The orphaned-policy page cursor is invalid. Refresh the list.',
       api_key_policy_not_orphaned: 'The upstream API Key has been restored, so this policy cannot be purged.',
       api_key_policy_capability_incompatible: 'This Core does not provide the complete API Key policy contract.',
@@ -135,9 +134,7 @@ const en = {
 Object.assign((en as Record<string, unknown>).monitoring ??= {}, {
   filter_all_profiles: 'All profiles',
   filter_profile: 'Filter by Profile',
-  api_key_profile: 'Profile: {{profile}}',
   api_key_profile_none: 'No profile',
-  profile_filter_renamed: '{{name}} (previously: {{previous}})',
   profile_filter_deleted: '{{name}} (deleted)',
 });
 
@@ -265,7 +262,6 @@ const zhCN = {
       upstream_api_key_not_found: '上游 API Key 已不存在。',
       api_key_policy_config_changed: '上游 Key 配置已变化，请刷新后重试。',
 		api_key_policy_state_changed: '策略或上游 Key 范围已变化，页面已刷新最新状态，请核对后重试。',
-		usage_key_unavailable: '无法将所选上游 API Key 与当前配置对应，请刷新后重试。',
       invalid_api_key_policy_cursor: '孤立策略分页游标无效，请刷新列表。',
       api_key_policy_not_orphaned: '上游 API Key 已恢复，不能再清理此策略。',
       api_key_policy_capability_incompatible: '当前 Core 未提供完整的 API Key 策略契约。',
@@ -278,9 +274,7 @@ const zhCN = {
 Object.assign((zhCN as Record<string, unknown>).monitoring ??= {}, {
   filter_all_profiles: '全部 Profile',
   filter_profile: '按 Profile 筛选',
-  api_key_profile: 'Profile：{{profile}}',
   api_key_profile_none: '未使用 Profile',
-  profile_filter_renamed: '{{name}}（曾用名：{{previous}}）',
   profile_filter_deleted: '{{name}}（已删除）',
 });
 
@@ -408,7 +402,6 @@ const ru = {
       upstream_api_key_not_found: 'Исходный API-ключ больше не существует.',
       api_key_policy_config_changed: 'Конфигурация исходных ключей изменилась. Обновите данные и повторите попытку.',
 		api_key_policy_state_changed: 'Политика или охват исходных ключей изменились. Актуальное состояние загружено; проверьте его и повторите попытку.',
-		usage_key_unavailable: 'Не удалось сопоставить выбранный вышестоящий API-ключ с текущей конфигурацией. Обновите страницу и повторите попытку.',
       invalid_api_key_policy_cursor: 'Курсор страницы политик без ключа недействителен. Обновите список.',
       api_key_policy_not_orphaned: 'Исходный API-ключ восстановлен, поэтому политику нельзя удалить как осиротевшую.',
       api_key_policy_capability_incompatible: 'Core не предоставляет полный контракт политик API-ключей.',
@@ -421,9 +414,7 @@ const ru = {
 Object.assign((ru as Record<string, unknown>).monitoring ??= {}, {
   filter_all_profiles: 'Все профили',
   filter_profile: 'Фильтр по профилю',
-  api_key_profile: 'Профиль: {{profile}}',
   api_key_profile_none: 'Без профиля',
-  profile_filter_renamed: '{{name}} (ранее: {{previous}})',
   profile_filter_deleted: '{{name}} (удалён)',
 });
 
@@ -551,7 +542,6 @@ const zhTW = {
       upstream_api_key_not_found: '上游 API Key 已不存在。',
       api_key_policy_config_changed: '上游 Key 設定已變更，請重新整理後再試。',
 		api_key_policy_state_changed: '策略或上游 Key 範圍已變更，頁面已重新整理最新狀態，請核對後再試。',
-		usage_key_unavailable: '無法將所選上游 API Key 與目前設定對應，請重新整理後再試。',
       invalid_api_key_policy_cursor: '孤立策略分頁游標無效，請重新整理清單。',
       api_key_policy_not_orphaned: '上游 API Key 已恢復，不能再清除此策略。',
       api_key_policy_capability_incompatible: '目前 Core 未提供完整的 API Key 策略契約。',
@@ -564,9 +554,7 @@ const zhTW = {
 Object.assign((zhTW as Record<string, unknown>).monitoring ??= {}, {
   filter_all_profiles: '全部 Profile',
   filter_profile: '依 Profile 篩選',
-  api_key_profile: 'Profile：{{profile}}',
   api_key_profile_none: '未使用 Profile',
-  profile_filter_renamed: '{{name}}（曾用名稱：{{previous}}）',
   profile_filter_deleted: '{{name}}（已刪除）',
 });
 

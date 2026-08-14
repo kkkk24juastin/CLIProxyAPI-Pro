@@ -143,6 +143,7 @@ import styles from '@/pro/modules/monitoring/features/monitoring.module.scss';
 
 type StatusFilter = 'all' | 'success' | 'failed';
 type LinkedRequestLogScope = { authIndex: string; fromMs: number; toMs: number };
+const PROFILE_CATALOG_REFRESH_MS = 30_000;
 
 type RealtimeLogDisplayRow = RealtimeLogRow & { accountPlan: string };
 
@@ -440,8 +441,8 @@ export function MonitoringCenterPage() {
         cancelled = true;
       };
     }
-    void apiKeyPolicyApi.bindings()
-      .then((bindings) => {
+    const refreshProfileCatalog = () => {
+      void apiKeyPolicyApi.bindings().then((bindings) => {
         if (cancelled) return;
         const names = new Map<string, string>();
         bindings.items.forEach((binding) => {
@@ -453,10 +454,25 @@ export function MonitoringCenterPage() {
         setCurrentProfileCatalog({ loaded: true, names });
       })
       .catch(() => {
-        if (!cancelled) setCurrentProfileCatalog({ loaded: false, names: new Map() });
+        if (!cancelled) {
+          setCurrentProfileCatalog((current) => current.loaded
+            ? current
+            : { loaded: false, names: new Map() });
+        }
       });
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refreshProfileCatalog();
+    };
+    refreshProfileCatalog();
+    const interval = window.setInterval(refreshWhenVisible, PROFILE_CATALOG_REFRESH_MS);
+    window.addEventListener('focus', refreshProfileCatalog);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshProfileCatalog);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [connectionStatus]);
 
@@ -953,18 +969,21 @@ export function MonitoringCenterPage() {
     [t]
   );
 
+  const profileFilterObservations = useMemo(
+    () => [...allRows, ...filteredRows],
+    [allRows, filteredRows],
+  );
   const profileFilterOptions = useMemo(() => buildProfileFilterOptions({
-    observations: allRows,
+    observations: profileFilterObservations,
     currentNames: currentProfileCatalog.names,
     currentNamesLoaded: currentProfileCatalog.loaded,
     selectedProfileId: selectedProfile,
     selectedProfileName: selectedProfileFallbackName,
     copy: {
       allProfiles: t('monitoring.filter_all_profiles'),
-      renamed: (name, previous) => t('monitoring.profile_filter_renamed', { name, previous }),
       deleted: (name) => t('monitoring.profile_filter_deleted', { name }),
     },
-  }), [allRows, currentProfileCatalog, selectedProfile, selectedProfileFallbackName, t]);
+  }), [currentProfileCatalog, profileFilterObservations, selectedProfile, selectedProfileFallbackName, t]);
 
   useEffect(() => {
     if (selectedProvider !== 'all' && !providerOptions.some((option) => option.value === selectedProvider)) {
@@ -1253,16 +1272,18 @@ export function MonitoringCenterPage() {
       colClassName: styles.realtimeApiKeyCol,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.apiKey,
       render: (row) => (
-        <div className={styles.primaryCell}>
-          <span className={styles.monoCell}>{row.clientApiKey.masked}</span>
-          <small title={row.profileId || undefined}>
-            {t('monitoring.api_key_profile', {
-              profile: resolveUsageProfileSnapshot(
-                row.profileName,
-                row.profileId,
-                t('monitoring.api_key_profile_none'),
-              ),
-            })}
+        <div className={`${styles.primaryCell} ${styles.realtimeApiKeyCell}`}>
+          <span className={styles.monoCell} title={row.clientApiKey.masked}>{row.clientApiKey.masked}</span>
+          <small title={resolveUsageProfileSnapshot(
+            row.profileName,
+            row.profileId,
+            t('monitoring.api_key_profile_none'),
+          )}>
+            {resolveUsageProfileSnapshot(
+              row.profileName,
+              row.profileId,
+              t('monitoring.api_key_profile_none'),
+            )}
           </small>
         </div>
       ),
@@ -2038,6 +2059,8 @@ export function MonitoringCenterPage() {
             options={modelOptions}
             onChange={setSelectedModel}
             ariaLabel={t('monitoring.filter_model')}
+            triggerClassName={styles.realtimeFilterSelectTrigger}
+            dropdownClassName={styles.realtimeFilterSelectDropdown}
           />
           <Select
             value={selectedStatus}
@@ -2053,6 +2076,8 @@ export function MonitoringCenterPage() {
               setSelectedProfileFallbackName('');
             }}
             ariaLabel={t('monitoring.filter_profile')}
+            triggerClassName={styles.realtimeFilterSelectTrigger}
+            dropdownClassName={styles.realtimeFilterSelectDropdown}
           />
           <button type="button" className={styles.clearButton} onClick={clearFilters}>
             <IconSlidersHorizontal size={16} />

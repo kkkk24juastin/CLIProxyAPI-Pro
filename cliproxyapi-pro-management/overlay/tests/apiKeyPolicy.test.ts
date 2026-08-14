@@ -55,7 +55,7 @@ describe('API Key Policy profile drafts', () => {
   test('requires the explicit minimum Core capability contract', () => {
     expect(validateAPIKeyPolicyCapabilities({
 		apiVersion: 2,
-		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
+		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control', 'usage_key_target'],
 		}).apiVersion).toBe(2);
     expect(() => validateAPIKeyPolicyCapabilities({
       apiVersion: 1,
@@ -66,21 +66,28 @@ describe('API Key Policy profile drafts', () => {
   test('rejects Core that omits only policy backup and restore support', () => {
     expect(() => validateAPIKeyPolicyCapabilities({
       apiVersion: 1,
-		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
+		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control', 'usage_key_target'],
     })).toThrow(APIKeyPolicyCapabilityError);
   });
 
   test('rejects Core that cannot provide a server-derived delete preview', () => {
     expect(() => validateAPIKeyPolicyCapabilities({
       apiVersion: 1,
-		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'orphaned_purge_guard', 'takeover_control'],
+		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'orphaned_purge_guard', 'takeover_control', 'usage_key_target'],
     })).toThrow(APIKeyPolicyCapabilityError);
   });
 
   test('rejects Core that cannot atomically guard orphaned-policy purge', () => {
     expect(() => validateAPIKeyPolicyCapabilities({
       apiVersion: 1,
-		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'takeover_control'],
+		features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'takeover_control', 'usage_key_target'],
+    })).toThrow(APIKeyPolicyCapabilityError);
+  });
+
+  test('rejects Core that cannot resolve an opaque Key reference for usage filtering', () => {
+    expect(() => validateAPIKeyPolicyCapabilities({
+      apiVersion: 2,
+      features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
     })).toThrow(APIKeyPolicyCapabilityError);
   });
 
@@ -92,6 +99,8 @@ describe('API Key Policy profile drafts', () => {
     expect(page).toContain('snapshot.bindings.configGeneration');
     expect(client).toContain('data: { version, configGeneration }');
     expect(client).toContain("'orphaned_purge_guard'");
+    expect(client).toContain("'usage_key_target'");
+    expect(client).toContain("'/api-key-policy-usage-target'");
   });
 
   test('has complete distinct translations for every supported language', async () => {

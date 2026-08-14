@@ -716,6 +716,17 @@
   line-height: 1.45;
 }
 
+.realtimeTable .realtimeApiKeyCell > span,
+.realtimeTable .realtimeApiKeyCell > small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  -webkit-box-orient: initial;
+  -webkit-line-clamp: unset;
+}
+
 .realtimeTokenCell > span,
 .realtimeTokenCell > small {
   display: block;
