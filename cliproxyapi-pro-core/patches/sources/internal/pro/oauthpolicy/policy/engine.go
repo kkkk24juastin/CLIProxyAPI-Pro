@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	proinspection "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/inspection"
 	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
 	proquota "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/quota"
@@ -25,6 +24,7 @@ const (
 	claudeProfileURL         = "https://api.anthropic.com/api/oauth/profile"
 	geminiCodeAssistURL      = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
 	antigravityCodeAssistURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+	antigravityPlanUserAgent = "__MANAGEMENT_ANTIGRAVITY_USER_AGENT__"
 )
 
 type ModelInfo struct {
@@ -32,10 +32,11 @@ type ModelInfo struct {
 }
 
 type HTTPRequest struct {
-	Method  string
-	URL     string
-	Headers http.Header
-	Body    []byte
+	Method         string
+	URL            string
+	Headers        http.Header
+	Body           []byte
+	BypassExecutor bool
 }
 
 type HTTPResponse struct {
@@ -320,17 +321,17 @@ func planFromQuotaSnapshot(provider string, input Input) (string, string, error)
 	return "", "quota-cache", fmt.Errorf("snapshot contains no supported plan")
 }
 
-// QuotaSnapshotHasSupportedPlan reports whether a persisted snapshot contains
-// usable plan evidence. Persistence adapters may retain multiple independent
-// sources for one auth, so callers use this to skip a newer source that has no
-// plan without duplicating provider-specific normalization rules.
-func QuotaSnapshotHasSupportedPlan(provider string, raw []byte) bool {
-	plan, _, _ := planFromQuotaSnapshot(normalizeKey(provider), Input{QuotaSnapshotJSON: raw})
-	return plan != "" && plan != "unknown"
-}
-
 func planFromQuotaPlan(provider string, plan map[string]any) string {
 	if plan == nil {
+		return ""
+	}
+	if provider == "antigravity" {
+		if normalized := normalizeProviderPlan(provider, stringValue(plan["kind"])); isKnownAntigravityPlan(normalized) {
+			return normalized
+		}
+		if normalized := normalizeAntigravityTierID(stringValue(plan["id"])); normalized != "unknown" {
+			return normalized
+		}
 		return ""
 	}
 	keys := []string{"kind", "id", "label"}
@@ -374,7 +375,16 @@ func planFromMap(provider string, source map[string]any) string {
 		"tier", "tier_label", "tierLabel", "subscription_type", "subscriptionType",
 		"chatgpt_plan_type",
 	} {
-		if plan := normalizeProviderPlan(provider, stringValue(source[key])); plan != "" && plan != "unknown" {
+		plan := normalizeProviderPlan(provider, stringValue(source[key]))
+		if provider == "antigravity" {
+			if isAntigravityTierEvidenceKey(key) {
+				plan = normalizeAntigravityTierID(stringValue(source[key]))
+			}
+			if !isKnownAntigravityPlan(plan) {
+				continue
+			}
+		}
+		if plan != "" && plan != "unknown" {
 			return plan
 		}
 	}
@@ -547,15 +557,21 @@ func resolveGooglePlan(ctx context.Context, provider string, timeout time.Durati
 		"Accept":        []string{"application/json"},
 		"Content-Type":  []string{"application/json"},
 	}
+	bypassExecutor := false
 	if provider == "antigravity" {
-		headers.Set("Accept", "*/*")
-		headers.Set("User-Agent", misc.AntigravityUserAgent())
+		// Match the Management auth-card probe exactly. The Antigravity executor
+		// replaces this CLI identity with the Hub user-agent, and Google returns a
+		// different product entitlement instead of the account subscription tier.
+		headers.Del("Accept")
+		headers.Set("User-Agent", antigravityPlanUserAgent)
+		bypassExecutor = true
 	}
 	resp, errDo := doProviderRequest(ctx, timeout, input, HTTPRequest{
-		Method:  http.MethodPost,
-		URL:     url,
-		Headers: headers,
-		Body:    rawBody,
+		Method:         http.MethodPost,
+		URL:            url,
+		Headers:        headers,
+		Body:           rawBody,
+		BypassExecutor: bypassExecutor,
 	})
 	if errDo != nil {
 		return "", fmt.Errorf("fetch %s plan: %w", provider, errDo)
@@ -593,6 +609,18 @@ func doProviderRequest(ctx context.Context, timeout time.Duration, input Input, 
 func googlePlanFromMap(provider string, source map[string]any) string {
 	if source == nil {
 		return ""
+	}
+	if provider == "antigravity" {
+		for _, key := range []string{"paidTier", "paid_tier"} {
+			if tier, ok := source[key].(map[string]any); ok && stringValue(tier["id"]) != "" {
+				return normalizeAntigravityTierID(stringValue(tier["id"]))
+			}
+		}
+		for _, key := range []string{"currentTier", "current_tier"} {
+			if tier, ok := source[key].(map[string]any); ok {
+				return normalizeAntigravityTierID(stringValue(tier["id"]))
+			}
+		}
 	}
 	for _, key := range []string{"paidTier", "paid_tier", "currentTier", "current_tier"} {
 		if tier, ok := source[key].(map[string]any); ok {
@@ -639,7 +667,10 @@ func googlePlanFromMap(provider string, source map[string]any) string {
 func googleTierPlan(provider string, tier map[string]any, paid bool) string {
 	id := stringValue(tier["id"])
 	name := stringValue(tier["name"])
-	if (provider == "gemini-cli" || provider == "antigravity") && paid {
+	if provider == "antigravity" {
+		return normalizeAntigravityTierID(id)
+	}
+	if provider == "gemini-cli" && paid {
 		if plan := normalizeProviderPlan(provider, name); plan != "" && plan != "unknown" && plan != "standard" {
 			return plan
 		}
@@ -648,6 +679,41 @@ func googleTierPlan(provider string, tier map[string]any, paid bool) string {
 		return plan
 	}
 	return normalizeProviderPlan(provider, name)
+}
+
+// normalizeAntigravityTierID mirrors Management's Antigravity subscription
+// parser: tier names are display-only and only upstream tier IDs determine plan.
+func normalizeAntigravityTierID(value string) string {
+	switch normalizeKey(value) {
+	case "free-tier":
+		return "free"
+	case "g1-pro-tier":
+		return "pro"
+	case "g1-ultra-tier":
+		return "ultra"
+	case "g1-ultra-lite-tier":
+		return "ultra-lite"
+	default:
+		return "unknown"
+	}
+}
+
+func isKnownAntigravityPlan(plan string) bool {
+	switch plan {
+	case "free", "pro", "ultra", "ultra-lite":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAntigravityTierEvidenceKey(key string) bool {
+	switch key {
+	case "tier_id", "tierId", "tier", "tier_label", "tierLabel":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveXAIPlan(ctx context.Context, timeout time.Duration, input Input) (string, error) {

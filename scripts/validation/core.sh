@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$#" -lt 1 || "$#" -gt 2 ]]; then
-  echo "Usage: $0 /path/to/CLIProxyAPI [/path/to/models.json]" >&2
+if [[ "$#" -lt 1 || "$#" -gt 3 ]]; then
+  echo "Usage: $0 /path/to/CLIProxyAPI [/path/to/models.json] [/path/to/Management]" >&2
   exit 2
 fi
 
@@ -10,8 +10,15 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 upstream_root="$(cd "$1" && pwd)"
 release_models_file=""
-if [[ "$#" -eq 2 ]]; then
+if [[ "$#" -ge 2 ]]; then
   release_models_file="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+fi
+if [[ "$#" -eq 3 ]]; then
+  export MANAGEMENT_ROOT="$(cd "$3" && pwd)"
+fi
+if [[ -z "${MANAGEMENT_ROOT:-}" || ! -f "${MANAGEMENT_ROOT}/src/utils/quota/constants.ts" ]]; then
+  echo "Management upstream checkout is required to resolve the auth-card user-agent" >&2
+  exit 1
 fi
 
 if [[ ! -f "${upstream_root}/go.mod" || ! -d "${upstream_root}/cmd/server" ]]; then

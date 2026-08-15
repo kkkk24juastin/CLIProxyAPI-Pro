@@ -71,8 +71,11 @@ jobs:
           release_version="${release_tag#v}"
 
           current_version="0.0.0"
+          current_core_contract_management_tag=""
           if [ -n "${current_tag}" ]; then
             current_version="$(normalize_version "${current_tag}")"
+            current_body="$(gh release view "${current_tag}" --repo "${CURRENT_REPO}" --json body --jq '.body // ""')"
+            current_core_contract_management_tag="$(printf '%s\n' "${current_body}" | sed -n 's/^- Core auth-card contract management release: //p' | head -n 1)"
           fi
 
           target_exists="false"
@@ -87,6 +90,8 @@ jobs:
             should_release="true"
           elif version_gt "${core_version}" "${current_version}"; then
             should_release="true"
+          elif [ "${management_tag}" != "${current_core_contract_management_tag}" ]; then
+            should_release="true"
           fi
 
           echo "current_tag=${current_tag:-none}"
@@ -95,6 +100,7 @@ jobs:
           echo "core_version=${core_version}"
           echo "core_sha=${core_sha}"
           echo "management_tag=${management_tag}"
+          echo "current_core_contract_management_tag=${current_core_contract_management_tag:-none}"
           echo "management_version=${management_version}"
           echo "management_sha=${management_sha}"
           echo "models_sha=${models_sha}"
@@ -170,6 +176,13 @@ jobs:
           ref: ${{ needs.check-version.outputs.core_sha }}
           path: upstream-core
 
+      - name: Checkout Management upstream release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: router-for-me/Cli-Proxy-API-Management-Center
+          ref: ${{ needs.check-version.outputs.management_sha }}
+          path: upstream-management
+
       - name: Checkout release models data
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -196,7 +209,8 @@ jobs:
           test "$(git -C upstream-models rev-parse HEAD)" = "${MODELS_SHA}"
           bash customizations-repo/scripts/validation/core.sh \
             upstream-core \
-            upstream-models/models.json
+            upstream-models/models.json \
+            upstream-management
 
   validate-management:
     needs: check-version
@@ -479,6 +493,14 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Checkout management upstream release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: router-for-me/Cli-Proxy-API-Management-Center
+          ref: ${{ needs.check-version.outputs.management_sha }}
+          path: upstream-management
+          fetch-depth: 1
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -495,6 +517,7 @@ jobs:
         id: prepare-core
         env:
           SRC_ROOT: ${{ github.workspace }}/upstream-core
+          MANAGEMENT_ROOT: ${{ github.workspace }}/upstream-management
           RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
           CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
           MODELS_SHA: ${{ needs.check-version.outputs.models_sha }}
@@ -891,6 +914,7 @@ jobs:
             echo "- Core build version: ${RELEASE_TAG}"
             echo "- Management upstream release: ${MANAGEMENT_TAG}"
             echo "- Management build version: v${MANAGEMENT_VERSION}-pro"
+            echo "- Core auth-card contract management release: ${MANAGEMENT_TAG}"
             echo "- Core upstream commit: ${core_sha}"
             echo "- Management upstream commit: ${management_sha}"
             echo "- Models data commit: ${MODELS_SHA}"

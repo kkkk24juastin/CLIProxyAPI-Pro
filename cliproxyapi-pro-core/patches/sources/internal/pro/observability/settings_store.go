@@ -61,7 +61,7 @@ func (SettingsStore) Delete(ctx context.Context, namespace string) error {
 	return DeleteProSetting(ctx, namespace)
 }
 
-func (SettingsStore) GetPlanSnapshots(ctx context.Context, provider, fileName, authIndex string) ([]settings.PlanSnapshot, error) {
+func (SettingsStore) GetPlanSnapshot(ctx context.Context, provider, fileName, authIndex string) (settings.PlanSnapshot, bool, error) {
 	provider = strings.TrimSpace(provider)
 	fileName = strings.TrimSpace(fileName)
 	authIndex = strings.TrimSpace(authIndex)
@@ -70,19 +70,59 @@ func (SettingsStore) GetPlanSnapshots(ctx context.Context, provider, fileName, a
 	}
 	entries, err := GetQuotaCache(ctx, provider, fileName)
 	if err != nil {
-		return nil, err
+		return settings.PlanSnapshot{}, false, err
 	}
-	snapshots := make([]settings.PlanSnapshot, 0, len(entries))
+	var selected *QuotaCacheEntry
 	for _, entry := range entries {
 		entryAuthIndex := strings.TrimSpace(entry.AuthIndex)
 		if (authIndex == "" && entryAuthIndex != "") || (authIndex != "" && entryAuthIndex != "" && entryAuthIndex != authIndex) {
 			continue
 		}
-		snapshots = append(snapshots, settings.PlanSnapshot{
-			Data: append([]byte(nil), entry.Data...), ObservedAtMS: entry.ObservedAt,
-		})
+		if selected == nil || preferredQuotaCacheEntry(provider, entry, *selected) {
+			candidate := entry
+			selected = &candidate
+		}
 	}
-	return snapshots, nil
+	if selected == nil {
+		return settings.PlanSnapshot{}, false, nil
+	}
+	return settings.PlanSnapshot{
+		Data: append([]byte(nil), selected.Data...), ObservedAtMS: selected.ObservedAt,
+	}, true, nil
+}
+
+// preferredQuotaCacheEntry mirrors Management's auth-card cache selection.
+// Both consumers must resolve duplicate inspection/plugin rows to the same
+// effective snapshot before applying provider-specific plan semantics.
+func preferredQuotaCacheEntry(provider string, candidate, current QuotaCacheEntry) bool {
+	if strings.EqualFold(strings.TrimSpace(provider), "gemini-cli") {
+		candidateNormalized := isNormalizedGeminiQuotaSnapshot(candidate.Data)
+		currentNormalized := isNormalizedGeminiQuotaSnapshot(current.Data)
+		if candidateNormalized != currentNormalized {
+			return candidateNormalized
+		}
+	}
+	candidateFreshness := [...]int64{candidate.ObservedAt, candidate.CachedAt, candidate.StoredAt, candidate.Revision}
+	currentFreshness := [...]int64{current.ObservedAt, current.CachedAt, current.StoredAt, current.Revision}
+	for index := range candidateFreshness {
+		if candidateFreshness[index] == currentFreshness[index] {
+			continue
+		}
+		return candidateFreshness[index] > currentFreshness[index]
+	}
+	return false
+}
+
+func isNormalizedGeminiQuotaSnapshot(raw []byte) bool {
+	payload := map[string]json.RawMessage{}
+	if json.Unmarshal(raw, &payload) != nil {
+		return false
+	}
+	if _, hasStatus := payload["status"]; hasStatus {
+		return false
+	}
+	var items []json.RawMessage
+	return json.Unmarshal(payload["items"], &items) == nil && items != nil
 }
 
 func (SettingsStore) Subscribe(namespace string, apply func(context.Context, settings.Item) error) func() {

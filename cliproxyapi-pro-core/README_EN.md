@@ -454,7 +454,7 @@ Example:
 Validate a clean upstream checkout with the repository script. It checks guarded-source preflight, rejected reapplication, `go vet` for `internal/pluginhost`, the relevant Go packages, and the server build:
 
 ```bash
-bash scripts/validation/core.sh /path/to/clean/CLIProxyAPI
+bash scripts/validation/core.sh /path/to/clean/CLIProxyAPI /path/to/models.json /path/to/clean/Management
 ```
 
 Validate only entrypoint syntax:

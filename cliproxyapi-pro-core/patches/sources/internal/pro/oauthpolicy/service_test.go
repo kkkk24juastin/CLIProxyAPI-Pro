@@ -23,25 +23,17 @@ type planSettingsStore struct {
 	*memorySettingsStore
 	raw          []byte
 	observedAtMS int64
-	snapshots    []PlanSnapshot
 	provider     string
 	fileName     string
 	authIndex    string
 }
 
-func (s *planSettingsStore) GetPlanSnapshots(_ context.Context, provider, fileName, authIndex string) ([]PlanSnapshot, error) {
+func (s *planSettingsStore) GetPlanSnapshot(_ context.Context, provider, fileName, authIndex string) (PlanSnapshot, bool, error) {
 	s.provider, s.fileName, s.authIndex = provider, fileName, authIndex
-	if len(s.snapshots) > 0 {
-		out := make([]PlanSnapshot, len(s.snapshots))
-		for index, snapshot := range s.snapshots {
-			out[index] = PlanSnapshot{Data: append([]byte(nil), snapshot.Data...), ObservedAtMS: snapshot.ObservedAtMS}
-		}
-		return out, nil
-	}
 	if len(s.raw) == 0 {
-		return nil, nil
+		return PlanSnapshot{}, false, nil
 	}
-	return []PlanSnapshot{{Data: append([]byte(nil), s.raw...), ObservedAtMS: s.observedAtMS}}, nil
+	return PlanSnapshot{Data: append([]byte(nil), s.raw...), ObservedAtMS: s.observedAtMS}, true, nil
 }
 
 func (s *memorySettingsStore) Get(_ context.Context, namespace string) (settings.Item, bool, error) {
@@ -119,7 +111,7 @@ func TestFilterReadsFreshQuotaSnapshotByAuthIdentity(t *testing.T) {
 	}
 }
 
-func TestFilterSkipsUnsupportedNewestPlanSnapshot(t *testing.T) {
+func TestFilterUsesAuthCardPreferredPlanSnapshot(t *testing.T) {
 	now := time.Now().UnixMilli()
 	store := &planSettingsStore{
 		memorySettingsStore: &memorySettingsStore{items: map[string]settings.Item{
@@ -128,10 +120,8 @@ func TestFilterSkipsUnsupportedNewestPlanSnapshot(t *testing.T) {
 				Settings: json.RawMessage(`{"enabled":true,"providers":{"antigravity":{"plans":{"ultra":{"priority":42},"_unknown":{"priority":1}}}}}`),
 			},
 		}},
-		snapshots: []PlanSnapshot{
-			{Data: []byte(`{"schema_version":1,"plan":{"id":"standard-tier","kind":"unknown","error":"plan unavailable"}}`), ObservedAtMS: now},
-			{Data: []byte(`{"status":"success","subscription":{"plan":"ultra"}}`), ObservedAtMS: now - 1},
-		},
+		raw:          []byte(`{"status":"success","subscription":{"plan":"ultra"}}`),
+		observedAtMS: now,
 	}
 	service, err := New(context.Background(), store)
 	if err != nil {

@@ -453,7 +453,7 @@ CLIPROXY_RENDER_DEPLOY_HOOKS
 使用仓库验证脚本检查干净的 upstream checkout。脚本会验证 source hash 预检、拒绝重复应用、`internal/pluginhost` 的 `go vet`、相关 Go packages 和 server build：
 
 ```bash
-bash scripts/validation/core.sh /path/to/clean/CLIProxyAPI
+bash scripts/validation/core.sh /path/to/clean/CLIProxyAPI /path/to/models.json /path/to/clean/Management
 ```
 
 仅验证 entrypoint 语法：

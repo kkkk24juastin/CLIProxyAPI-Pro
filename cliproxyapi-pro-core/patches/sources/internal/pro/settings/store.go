@@ -24,8 +24,8 @@ type Item struct {
 	UpdatedAtMS   int64
 }
 
-// PlanSnapshot is provider plan evidence retained by an independent
-// persistence source. Readers return candidates newest first.
+// PlanSnapshot is the preferred provider plan evidence selected from the
+// persistence sources shared with Management auth cards.
 type PlanSnapshot struct {
 	Data         []byte
 	ObservedAtMS int64

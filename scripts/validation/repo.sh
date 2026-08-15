@@ -9,6 +9,7 @@ export PYTHONPYCACHEPREFIX="${pycache_root}"
 
 python3 -m py_compile \
   "${repo_root}/cliproxyapi-pro-core/patches/apply_upstream_patches.py" \
+  "${repo_root}/cliproxyapi-pro-core/patches/management_contract.py" \
   "${repo_root}/cliproxyapi-pro-management/apply_customizations.py" \
   "${repo_root}/scripts/validation/check_workflow_actions.py" \
   "${repo_root}/scripts/validation/api_key_policy_runtime_smoke.py" \

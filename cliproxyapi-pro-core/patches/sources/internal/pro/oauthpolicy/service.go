@@ -26,10 +26,10 @@ type PlanSnapshot = settings.PlanSnapshot
 
 // PlanSnapshotReader is the narrow persistence port used by account policy to
 // consume provider quota/inspection evidence without depending on SQLite.
-// Multiple sources can exist for the same auth (for example plugin quota and
-// account inspection), ordered newest first.
+// Multiple persistence rows can exist for the same auth. The adapter resolves
+// them with the auth-card preference contract before returning one snapshot.
 type PlanSnapshotReader interface {
-	GetPlanSnapshots(context.Context, string, string, string) ([]settings.PlanSnapshot, error)
+	GetPlanSnapshot(context.Context, string, string, string) (settings.PlanSnapshot, bool, error)
 }
 
 // Service owns OAuth account-plan model filtering and its persisted policy.
@@ -298,19 +298,12 @@ func (s *Service) Filter(ctx context.Context, input modelengine.Input) modelengi
 		return modelengine.Result{}
 	}
 	if s.planStore != nil && len(input.QuotaSnapshotJSON) == 0 {
-		snapshots, err := s.planStore.GetPlanSnapshots(
+		snapshot, found, err := s.planStore.GetPlanSnapshot(
 			ctx, input.AuthProvider, input.FileName, input.AuthIndex,
 		)
-		if len(snapshots) > 0 {
-			selected := snapshots[0]
-			for _, snapshot := range snapshots {
-				if modelengine.QuotaSnapshotHasSupportedPlan(input.AuthProvider, snapshot.Data) {
-					selected = snapshot
-					break
-				}
-			}
-			input.QuotaSnapshotJSON = append([]byte(nil), selected.Data...)
-			input.QuotaObservedAtMS = selected.ObservedAtMS
+		if found {
+			input.QuotaSnapshotJSON = append([]byte(nil), snapshot.Data...)
+			input.QuotaObservedAtMS = snapshot.ObservedAtMS
 		}
 		if err != nil {
 			input.QuotaSnapshotError = err.Error()

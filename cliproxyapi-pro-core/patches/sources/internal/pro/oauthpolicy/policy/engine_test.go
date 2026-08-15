@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -473,49 +474,84 @@ func TestGeminiPaidTierLabelAndWrappedPlanKeepPaidSemantics(t *testing.T) {
 	}
 }
 
-func TestAntigravityStandardTierUsesUnknownFallback(t *testing.T) {
-	cfg, _ := modelconfig.Parse([]byte(`
-providers:
-  antigravity:
-    plans:
-      _unknown: {priority: 1}
-      _default: {priority: 2}
-`))
-	engine := New()
-	engine.ApplyConfig(cfg)
-	result := engine.Filter(context.Background(), Input{
-		AuthID: "antigravity-standard", AuthProvider: "antigravity", AuthKind: "oauth",
-		StorageJSON: []byte(`{"access_token":"token"}`),
-		HTTPDo: func(_ context.Context, request HTTPRequest) (HTTPResponse, error) {
-			if request.Headers.Get("Accept") != "*/*" || request.Headers.Get("User-Agent") == "" {
-				t.Fatalf("Antigravity headers = %#v", request.Headers)
-			}
-			return HTTPResponse{StatusCode: 200, Body: []byte(`{"currentTier":{"id":"standard-tier","name":"Standard"}}`)}, nil
-		},
-	})
-	if !result.Handled || result.Annotations["plan_key"] != "unknown" || result.Annotations["matched_rule"] != "_unknown" {
-		t.Fatalf("Filter() = %#v", result)
-	}
-}
-
-func TestAntigravityPaidTierNameOverridesAmbiguousID(t *testing.T) {
+func TestAntigravityPlanProbeMatchesAuthCardContract(t *testing.T) {
 	cfg, _ := modelconfig.Parse([]byte(`
 providers:
   antigravity:
     plans:
       pro: {priority: 77}
+      _unknown: {priority: 1}
+`))
+	engine := New()
+	engine.ApplyConfig(cfg)
+	called := false
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "antigravity-pro", AuthProvider: "antigravity", AuthKind: "oauth",
+		StorageJSON:       []byte(`{"access_token":"token"}`),
+		QuotaSnapshotJSON: []byte(`{"status":"success","subscription":{"plan":"antigravity","tierId":"antigravity-starter-quota","tierName":"Antigravity"}}`),
+		QuotaObservedAtMS: time.Now().UnixMilli(),
+		HTTPDo: func(_ context.Context, request HTTPRequest) (HTTPResponse, error) {
+			called = true
+			if request.URL != antigravityCodeAssistURL || request.Method != http.MethodPost || !request.BypassExecutor {
+				t.Fatalf("Antigravity request = %#v", request)
+			}
+			if request.Headers.Get("Authorization") != "Bearer token" || request.Headers.Get("Content-Type") != "application/json" || request.Headers.Get("User-Agent") != antigravityPlanUserAgent || request.Headers.Get("Accept") != "" {
+				t.Fatalf("Antigravity headers = %#v", request.Headers)
+			}
+			if string(request.Body) != `{"metadata":{"ideType":"ANTIGRAVITY"}}` {
+				t.Fatalf("Antigravity body = %s", request.Body)
+			}
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"currentTier":{"id":"free-tier","name":"Free"},"paidTier":{"id":"g1-pro-tier","name":"Google AI Pro"}}`)}, nil
+		},
+	})
+	if !called || !result.Handled || result.Annotations["plan_key"] != "pro" || result.Annotations["matched_rule"] != "pro" || result.Annotations["plan_source"] != "provider-api" {
+		t.Fatalf("Filter() = %#v", result)
+	}
+}
+
+func TestAntigravityCorrectInspectionSnapshotRemainsAuthoritative(t *testing.T) {
+	cfg, _ := modelconfig.Parse([]byte(`
+providers:
+  antigravity:
+    plans:
+      ultra: {priority: 77}
+      _unknown: {priority: 1}
+`))
+	engine := New()
+	engine.ApplyConfig(cfg)
+	called := false
+	result := engine.Filter(context.Background(), Input{
+		AuthID: "antigravity-ultra", AuthProvider: "antigravity", AuthKind: "oauth",
+		QuotaSnapshotJSON: []byte(`{"status":"success","subscription":{"plan":"ultra","tierId":"g1-ultra-tier","tierName":"Google AI Ultra"}}`),
+		QuotaObservedAtMS: time.Now().UnixMilli(),
+		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
+			called = true
+			return HTTPResponse{}, nil
+		},
+	})
+	if called || !result.Handled || result.Annotations["plan_key"] != "ultra" || result.Annotations["matched_rule"] != "ultra" || result.Annotations["plan_source"] != "quota-inspection" {
+		t.Fatalf("Filter() = %#v, provider called = %t", result, called)
+	}
+}
+
+func TestAntigravityPaidTierUsesUpstreamTierIDSemantics(t *testing.T) {
+	cfg, _ := modelconfig.Parse([]byte(`
+providers:
+  antigravity:
+    plans:
+      ultra: {priority: 77}
       _default: {priority: 1}
 `))
 	engine := New()
 	engine.ApplyConfig(cfg)
 	result := engine.Filter(context.Background(), Input{
-		AuthID: "antigravity-paid-standard", AuthProvider: "antigravity", AuthKind: "oauth",
+		AuthID: "antigravity-paid-ultra", AuthProvider: "antigravity", AuthKind: "oauth",
 		StorageJSON: []byte(`{"access_token":"token"}`),
 		HTTPDo: func(context.Context, HTTPRequest) (HTTPResponse, error) {
-			return HTTPResponse{StatusCode: 200, Body: []byte(`{"paidTier":{"id":"standard-tier","name":"Google AI Pro"}}`)}, nil
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"currentTier":{"id":"free-tier"},"paidTier":{"id":"g1-ultra-tier","name":"Google AI Ultra"}}`)}, nil
 		},
 	})
-	if !result.Handled || result.Annotations["plan_key"] != "pro" || result.Annotations["matched_rule"] != "pro" || result.Annotations["plan_source"] != "provider-api" {
+	if !result.Handled || result.Annotations["plan_key"] != "ultra" || result.Annotations["matched_rule"] != "ultra" || result.Annotations["plan_source"] != "provider-api" {
 		t.Fatalf("Filter() = %#v", result)
 	}
 }
@@ -546,7 +582,7 @@ providers:
 	}
 }
 
-func TestAntigravityCustomPlanMatchesConfiguredRule(t *testing.T) {
+func TestAntigravityRejectsNonUpstreamLocalPlan(t *testing.T) {
 	cfg, _ := modelconfig.Parse([]byte(`
 providers:
   antigravity:
@@ -560,7 +596,7 @@ providers:
 		AuthID: "antigravity-enterprise", AuthProvider: "antigravity", AuthKind: "oauth",
 		Metadata: map[string]any{"plan_type": "enterprise"},
 	})
-	if !result.Handled || result.Annotations["plan_key"] != "enterprise" || result.Annotations["matched_rule"] != "enterprise" || result.Priority == nil || *result.Priority != 77 {
+	if !result.Handled || result.Annotations["plan_key"] != "unknown" || result.Annotations["matched_rule"] != "_unknown" || result.Priority == nil || *result.Priority != 1 {
 		t.Fatalf("Filter() = %#v", result)
 	}
 }

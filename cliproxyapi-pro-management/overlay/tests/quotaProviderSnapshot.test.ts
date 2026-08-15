@@ -108,4 +108,37 @@ describe('QuotaProvider snapshot persistence', () => {
     const selected = selectPreferredQuotaCacheEntries('gemini-cli', [older, newer]);
     expect(selected.get('gemini.json')?.id).toBe('newer');
   });
+
+  test('uses observed freshness for the Antigravity auth-card snapshot', () => {
+    const inspection: QuotaCacheEntry = {
+      ...cacheEntry(
+        'antigravity:account.json',
+        {
+          status: 'success',
+          groups: [],
+          subscription: { plan: 'ultra', tierId: 'g1-ultra-tier' },
+        },
+        300
+      ),
+      provider: 'antigravity',
+      fileName: 'account.json',
+      cachedAt: 200,
+    };
+    const plugin: QuotaCacheEntry = {
+      ...cacheEntry(
+        'quota-provider:antigravity:idx',
+        {
+          schema_version: 1,
+          plan: { id: 'antigravity-starter-quota', kind: 'antigravity' },
+        },
+        100
+      ),
+      provider: 'antigravity',
+      fileName: 'account.json',
+      cachedAt: 400,
+    };
+
+    const selected = selectPreferredQuotaCacheEntries('antigravity', [plugin, inspection]);
+    expect(selected.get('account.json')?.id).toBe(inspection.id);
+  });
 });
