@@ -3426,6 +3426,9 @@ replace_once(
 \t\tvar errRestore error
 ''',
 )
+# Keep the replacement scoped to the translator call. Upstream may insert
+# response-format post-processing between translation and response assembly,
+# and those transformations must remain authoritative.
 replace_once(
     claude_execute,
     '''\tvar param any
@@ -3439,7 +3442,6 @@ replace_once(
 \t\tdata,
 \t\t&param,
 \t)
-\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
 ''',
     '''\tvar param any
 \tout, errTranslate := translateNonStreamResponse(
@@ -3463,15 +3465,22 @@ replace_once(
 \t\t}
 \t\treturn resp, err
 \t}
-\tif upstreamStream {
+''',
+    'translateNonStreamResponse(',
+)
+insert_before(
+    claude_execute,
+    '\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}\n',
+    '''\tif upstreamStream {
 \t\tresponseUsageBuffer.Publish(ctx, reporter)
 \t} else {
 \t\treporter.Publish(ctx, helps.ParseClaudeUsage(data))
 \t}
 \treporter.EnsurePublished(ctx)
+''',
+    '''\treporter.EnsurePublished(ctx)
 \tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
 ''',
-    'translateNonStreamResponse(',
 )
 
 openai_compat_execute = ROOT / 'internal/runtime/executor/openai_compat_executor.go'
@@ -3482,27 +3491,39 @@ replace_once(
 \t// Ensure we at least record the request even if upstream doesn't return usage
 \treporter.EnsurePublished(ctx)
 \t// Translate response back to source format when needed
-\tvar param any
-\tout := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, body, &param)
-\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
 ''',
     '''\thelps.AppendAPIResponseChunk(ctx, e.cfg, body)
 \t// Translate response back to source format before publishing success. A
 \t// translator panic is an upstream-attempt failure and must win the one-shot
 \t// terminal usage publication while retaining the parsed token detail.
-\tvar param any
+''',
+    'translator panic is an upstream-attempt failure',
+)
+replace_once(
+    openai_compat_execute,
+    '''\tvar param any
+\tout := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, body, &param)
+''',
+    '''\tvar param any
 \tout, errTranslate := translateNonStreamResponse(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, body, &param)
 \tif errTranslate != nil {
 \t\terr = errTranslate
 \t\treporter.PublishFailureWithDetail(ctx, helps.ParseOpenAIUsage(body), err)
 \t\treturn resp, err
 \t}
-\treporter.Publish(ctx, helps.ParseOpenAIUsage(body))
+''',
+    'out, errTranslate := translateNonStreamResponse(ctx, to, responseFormat',
+)
+insert_before(
+    openai_compat_execute,
+    '\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}\n',
+    '''\treporter.Publish(ctx, helps.ParseOpenAIUsage(body))
 \t// Ensure we at least record the request even if upstream doesn't return usage.
 \treporter.EnsurePublished(ctx)
+''',
+    '''\treporter.EnsurePublished(ctx)
 \tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
 ''',
-    'translator panic is an upstream-attempt failure',
 )
 replace_once(
     openai_compat_execute,
@@ -4303,7 +4324,12 @@ replace_once(
 add_go_import(
     ROOT / 'internal/pluginhost/adapters_executors.go',
     f'\t"{MODULE_PATH}/internal/registry"\n',
-    f'\t"{MODULE_PATH}/internal/logging"\n\t"{MODULE_PATH}/internal/runtime/executor/helps"\n',
+    f'\t"{MODULE_PATH}/internal/logging"\n',
+)
+add_go_import(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    f'\t"{MODULE_PATH}/internal/logging"\n',
+    f'\t"{MODULE_PATH}/internal/runtime/executor/helps"\n',
 )
 
 replace_once(
