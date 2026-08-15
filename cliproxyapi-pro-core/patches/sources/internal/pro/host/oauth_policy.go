@@ -27,10 +27,6 @@ type AuthHTTPRequester interface {
 	HttpRequest(context.Context, *coreauth.Auth, *http.Request) (*http.Response, error)
 }
 
-type authHTTPPreparer interface {
-	PrepareHttpRequest(context.Context, *coreauth.Auth, *http.Request) error
-}
-
 // FilterModels converts volatile upstream auth/model types at the boundary,
 // leaving the OAuth account-policy module independent from host internals.
 func FilterModels(ctx context.Context, hostCfg *internalconfig.Config, auth *coreauth.Auth, models []*registry.ModelInfo, filter ModelFilter, requester AuthHTTPRequester) []*registry.ModelInfo {
@@ -132,18 +128,7 @@ func doPolicyHTTP(ctx context.Context, cfg *internalconfig.Config, auth *coreaut
 		}
 	}
 	var resp *http.Response
-	if req.BypassExecutor {
-		// The Management auth-card probe refreshes/injects the credential first,
-		// then uses an ordinary proxy-aware client. Keep that request identity
-		// intact instead of letting the provider executor rewrite its headers.
-		if preparer, ok := requester.(authHTTPPreparer); ok && preparer != nil {
-			if err = preparer.PrepareHttpRequest(ctx, auth, httpReq); err != nil {
-				return oauthpolicy.HTTPResponse{}, err
-			}
-		}
-		client := helps.NewProxyAwareHTTPClient(ctx, cfg, auth, 0)
-		resp, err = client.Do(httpReq)
-	} else if requester != nil {
+	if requester != nil {
 		resp, err = requester.HttpRequest(ctx, auth, httpReq)
 	} else {
 		client := helps.NewProxyAwareHTTPClient(ctx, cfg, auth, 0)

@@ -11,9 +11,6 @@ ARG CLIPROXY_REPO=router-for-me/CLIProxyAPI
 ARG CLIPROXY_VERSION=""
 ARG CLIPROXY_COMMIT=""
 ARG CLIPROXY_BUILD_VERSION=""
-ARG MANAGEMENT_REPO=router-for-me/Cli-Proxy-API-Management-Center
-ARG MANAGEMENT_VERSION=""
-ARG MANAGEMENT_COMMIT=""
 ARG PRO_MANAGEMENT_REPO=ssfun/CLIProxyAPI-Pro
 ARG SOURCE_DATE_EPOCH=""
 ARG GITHUB_TOKEN=""
@@ -36,20 +33,6 @@ RUN set -eux; \
     curl -fsSL "https://github.com/${CLIPROXY_REPO}/archive/${source_ref}.tar.gz" -o /tmp/cliproxy.tar.gz; \
     tar -xzf /tmp/cliproxy.tar.gz --strip-components=1 -C /src/CLIProxyAPI; \
     rm /tmp/cliproxy.tar.gz; \
-    if [ -z "$MANAGEMENT_VERSION" ]; then \
-      if [ -n "$auth_header" ]; then \
-        MANAGEMENT_VERSION="$(curl -fsSL -H "$auth_header" "https://api.github.com/repos/${MANAGEMENT_REPO}/releases/latest" | jq -r '.tag_name')"; \
-      else \
-        MANAGEMENT_VERSION="$(curl -fsSL "https://api.github.com/repos/${MANAGEMENT_REPO}/releases/latest" | jq -r '.tag_name')"; \
-      fi; \
-    fi; \
-    test -n "$MANAGEMENT_VERSION"; \
-    test "$MANAGEMENT_VERSION" != "null"; \
-    management_ref="${MANAGEMENT_COMMIT:-refs/tags/${MANAGEMENT_VERSION}}"; \
-    mkdir -p /tmp/upstream-management; \
-    curl -fsSL "https://github.com/${MANAGEMENT_REPO}/archive/${management_ref}.tar.gz" -o /tmp/management.tar.gz; \
-    tar -xzf /tmp/management.tar.gz --strip-components=1 -C /tmp/upstream-management; \
-    rm /tmp/management.tar.gz; \
     if [ -n "$auth_header" ]; then \
       management_asset_api="$(curl -fsSL -H "$auth_header" "https://api.github.com/repos/${PRO_MANAGEMENT_REPO}/releases/latest" | jq -er '[.assets[] | select(.name == "management.html") | .url][0]')"; \
       curl -fsSL -H "$auth_header" -H "Accept: application/octet-stream" "$management_asset_api" -o /tmp/pro-management.html; \
@@ -63,7 +46,7 @@ RUN set -eux; \
 COPY cliproxyapi-pro-core/embeddedusage /tmp/embeddedusage
 COPY cliproxyapi-pro-core/patches /tmp/patches
 
-RUN MANAGEMENT_ROOT=/tmp/upstream-management python3 /tmp/patches/apply_upstream_patches.py
+RUN python3 /tmp/patches/apply_upstream_patches.py
 
 RUN set -eux; \
     go mod tidy; \

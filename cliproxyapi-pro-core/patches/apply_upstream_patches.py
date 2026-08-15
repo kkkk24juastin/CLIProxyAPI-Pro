@@ -5,8 +5,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from management_contract import ANTIGRAVITY_USER_AGENT_PLACEHOLDER, antigravity_user_agent
-
 ROOT = Path(os.environ.get('SRC_ROOT', '/src/CLIProxyAPI'))
 PATCH_SOURCE_DIR = Path(__file__).resolve().parent / 'sources'
 PRO_PANEL_REPOSITORY = 'https://github.com/ssfun/CLIProxyAPI-Pro'
@@ -14,7 +12,6 @@ PRO_PANEL_RELEASE_API = 'https://api.github.com/repos/ssfun/CLIProxyAPI-Pro/rele
 
 
 _writes = {}
-_management_antigravity_user_agent = None
 
 
 def read_text(path: Path) -> str:
@@ -33,24 +30,6 @@ def read(path: Path) -> str:
 
 def write(path: Path, text: str) -> None:
     _writes[path] = text
-
-
-def render_patch_source(text: str) -> str:
-    global _management_antigravity_user_agent
-    if ANTIGRAVITY_USER_AGENT_PLACEHOLDER not in text:
-        return text
-    if _management_antigravity_user_agent is None:
-        management_root_raw = os.environ.get('MANAGEMENT_ROOT', '').strip()
-        if not management_root_raw:
-            raise SystemExit('MANAGEMENT_ROOT is required to resolve the Management auth-card user-agent')
-        try:
-            _management_antigravity_user_agent = antigravity_user_agent(Path(management_root_raw))
-        except ValueError as exc:
-            raise SystemExit(str(exc)) from exc
-    return text.replace(
-        ANTIGRAVITY_USER_AGENT_PLACEHOLDER,
-        _management_antigravity_user_agent,
-    )
 
 
 def module_path() -> str:
@@ -92,7 +71,7 @@ def queue_tree(source: Path, target: Path) -> None:
     for source_path in source.rglob('*'):
         if source_path.is_dir():
             continue
-        text = render_patch_source(read_text(source_path))
+        text = read_text(source_path)
         if source_path.suffix == '.go':
             text = re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, text)
         write(target / source_path.relative_to(source), text)
@@ -102,8 +81,7 @@ def queue_go_source(relative_path: str) -> None:
     source = PATCH_SOURCE_DIR / relative_path
     if not source.is_file():
         raise SystemExit(f'Go patch source not found: {source}')
-    text = render_patch_source(read_text(source))
-    text = re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, text)
+    text = re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(source))
     write(ROOT / relative_path, text)
 
 

@@ -4,7 +4,6 @@
  */
 
 import { useQuotaStore } from '@/stores';
-import { isRecordValue } from '@/pro/shared/value';
 import {
   getQuotaProviderMapName,
   getQuotaProviderSetterName,
@@ -14,6 +13,7 @@ import {
 } from '../quotaStoreMetadata';
 import { sqliteQuotaCache, type QuotaCacheEntry } from './sqliteQuotaCache';
 import {
+  isAuthCardQuotaCacheDataCompatible,
   normalizePersistedQuotaState,
   selectPreferredQuotaCacheEntries,
 } from './normalizedQuotaSnapshot';
@@ -298,13 +298,11 @@ class QuotaPersistenceMiddleware {
         });
         cached.forEach((entry, fileName) => {
           const data = normalizePersistedQuotaState(provider, entry.data, entry.cachedAt);
-          if (!this.isCacheEntryCompatible(provider, data)) {
-            void sqliteQuotaCache.delete(provider, fileName);
-            return;
-          }
-          this.syncedVersions.set(`${provider}:${fileName}`, this.getSyncVersion(data));
-          if (next[fileName] === data) return;
-          next[fileName] = data;
+          if (!isAuthCardQuotaCacheDataCompatible(provider, data)) return;
+          const quotaState = data as QuotaStatusState;
+          this.syncedVersions.set(`${provider}:${fileName}`, this.getSyncVersion(quotaState));
+          if (next[fileName] === quotaState) return;
+          next[fileName] = quotaState;
           changed = true;
         });
         return changed ? next : prev;
@@ -313,34 +311,6 @@ class QuotaPersistenceMiddleware {
       this.hydratedKeys.set(provider, new Set(cached.keys()));
 
       console.log(`QuotaPersistenceMiddleware: Preloaded ${cached.size} entries for ${provider}`);
-    }
-  }
-
-  private isCacheEntryCompatible(provider: ProQuotaProviderType, data: unknown): data is QuotaStatusState {
-    if (!isRecordValue(data)) return false;
-
-    const status = data.status;
-    if (!['idle', 'loading', 'success', 'error'].includes(String(status))) return false;
-    if (status !== 'success') return true;
-
-    switch (provider) {
-      case 'antigravity': {
-        const groups = data.groups;
-        return Array.isArray(groups) && groups.every((group) => (
-          isRecordValue(group) && Array.isArray(group.buckets)
-        ));
-      }
-      case 'claude':
-      case 'codex':
-        return Array.isArray(data.windows);
-      case 'gemini-cli':
-        return Array.isArray(data.buckets);
-      case 'kimi':
-        return Array.isArray(data.rows);
-      case 'xai':
-        return isRecordValue(data.billing);
-      default:
-        return false;
     }
   }
 

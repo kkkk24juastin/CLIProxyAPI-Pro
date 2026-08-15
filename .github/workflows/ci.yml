@@ -105,13 +105,6 @@ jobs:
           ref: ${{ needs.resolve-upstream.outputs.core_sha }}
           path: upstream-core
 
-      - name: Checkout Management upstream
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ needs.resolve-upstream.outputs.management_repo }}
-          ref: ${{ needs.resolve-upstream.outputs.management_sha }}
-          path: upstream-management
-
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -134,7 +127,7 @@ jobs:
         env:
           VALIDATION_RACE: "1"
           VALIDATION_STATICCHECK: "1"
-        run: bash customizations-repo/scripts/validation/core.sh upstream-core "" upstream-management
+        run: bash customizations-repo/scripts/validation/core.sh upstream-core
 
   source-image-build:
     needs: resolve-upstream
@@ -151,8 +144,6 @@ jobs:
           CORE_TAG: ${{ needs.resolve-upstream.outputs.core_tag }}
           CORE_SHA: ${{ needs.resolve-upstream.outputs.core_sha }}
           CORE_SOURCE_DATE_EPOCH: ${{ needs.resolve-upstream.outputs.core_source_date_epoch }}
-          MANAGEMENT_TAG: ${{ needs.resolve-upstream.outputs.management_tag }}
-          MANAGEMENT_SHA: ${{ needs.resolve-upstream.outputs.management_sha }}
         run: |
           customization_source_date_epoch="$(git show -s --format=%ct HEAD)"
           source_date_epoch="$(printf '%s\n' "${CORE_SOURCE_DATE_EPOCH}" "${customization_source_date_epoch}" | sort -n | tail -n 1)"
@@ -160,8 +151,6 @@ jobs:
             --build-arg "CLIPROXY_VERSION=${CORE_TAG}" \
             --build-arg "CLIPROXY_COMMIT=${CORE_SHA}" \
             --build-arg "CLIPROXY_BUILD_VERSION=${CORE_TAG}-pro-review" \
-            --build-arg "MANAGEMENT_VERSION=${MANAGEMENT_TAG}" \
-            --build-arg "MANAGEMENT_COMMIT=${MANAGEMENT_SHA}" \
             --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}" \
             --tag cli-proxy-api-pro:review \
             --file cliproxyapi-pro-core/Dockerfile \

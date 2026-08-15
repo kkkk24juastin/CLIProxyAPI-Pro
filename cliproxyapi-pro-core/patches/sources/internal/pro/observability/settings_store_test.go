@@ -13,13 +13,13 @@ func TestSettingsStoreUsesAuthCardPreferredPlanSnapshot(t *testing.T) {
 	entries := []QuotaCacheEntry{
 		{
 			ID: "antigravity:account.json", Provider: "antigravity", FileName: "account.json", AuthIndex: "idx",
-			Data:     []byte(`{"status":"success","groups":[],"subscription":{"plan":"ultra","tierId":"g1-ultra-tier"}}`),
+			Data:     []byte(`{"status":"success","groups":[],"subscription":{"plan":"pro","tierId":"g1-pro-tier"}}`),
 			CachedAt: now - 200, ObservedAt: now - 100,
 		},
 		{
 			ID: "quota-provider:antigravity:idx", Provider: "antigravity", FileName: "account.json", AuthIndex: "idx",
-			Data:     []byte(`{"schema_version":1,"plan":{"id":"antigravity-starter-quota","kind":"antigravity"}}`),
-			CachedAt: now, ObservedAt: now - 300,
+			Data:     []byte(`{"schema_version":1,"provider":"antigravity","items":[],"plan":{"id":"g1-ultra-tier","kind":"ultra"}}`),
+			CachedAt: now, ObservedAt: now,
 		},
 		{
 			ID: "quota-provider:antigravity:other", Provider: "antigravity", FileName: "account.json", AuthIndex: "other",
@@ -38,8 +38,31 @@ func TestSettingsStoreUsesAuthCardPreferredPlanSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found || snapshot.ObservedAtMS != now-100 || !strings.Contains(string(snapshot.Data), `"plan":"ultra"`) {
+	if !found || snapshot.ObservedAtMS != now-100 || !strings.Contains(string(snapshot.Data), `"plan":"pro"`) {
 		t.Fatalf("snapshot = %#v, found = %t", snapshot, found)
+	}
+}
+
+func TestSettingsStoreIgnoresPluginSnapshotThatAuthCardCannotHydrate(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now().UnixMilli()
+	entry := QuotaCacheEntry{
+		ID: "quota-provider:antigravity:idx", Provider: "antigravity", FileName: "account.json", AuthIndex: "idx",
+		Data:     []byte(`{"schema_version":1,"provider":"antigravity","items":[],"plan":{"id":"g1-ultra-tier","kind":"ultra"}}`),
+		CachedAt: now, ObservedAt: now,
+	}
+	if err := store.SetQuotaCache(context.Background(), entry); err != nil {
+		t.Fatal(err)
+	}
+	SetDefaultService(&Service{store: store})
+	t.Cleanup(func() { SetDefaultService(nil) })
+
+	if snapshot, found, err := (SettingsStore{}).GetPlanSnapshot(context.Background(), "antigravity", "account.json", "idx"); err != nil || found {
+		t.Fatalf("snapshot = %#v, found = %t, error = %v", snapshot, found, err)
+	}
+	entries, err := store.GetQuotaCache(context.Background(), "antigravity", "account.json")
+	if err != nil || len(entries) != 1 || entries[0].ID != entry.ID {
+		t.Fatalf("persisted entries = %#v, error = %v", entries, err)
 	}
 }
 
@@ -73,11 +96,37 @@ func TestSettingsStoreMatchesAuthCardGeminiCanonicalPreference(t *testing.T) {
 	}
 }
 
+func TestAuthCardQuotaSnapshotCompatibility(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		raw      string
+		want     bool
+	}{
+		{name: "antigravity inspection", provider: "antigravity", raw: `{"status":"success","groups":[]}`, want: true},
+		{name: "antigravity plugin", provider: "antigravity", raw: `{"schema_version":1,"items":[],"plan":{"kind":"ultra"}}`},
+		{name: "codex inspection", provider: "codex", raw: `{"status":"success","windows":[]}`, want: true},
+		{name: "gemini inspection", provider: "gemini-cli", raw: `{"status":"success","buckets":[]}`, want: true},
+		{name: "gemini normalized plugin", provider: "gemini-cli", raw: `{"schema_version":1,"items":[]}`, want: true},
+		{name: "kimi inspection", provider: "kimi", raw: `{"status":"success","rows":[]}`, want: true},
+		{name: "xai inspection", provider: "xai", raw: `{"status":"success","billing":{}}`, want: true},
+		{name: "error state", provider: "antigravity", raw: `{"status":"error"}`, want: true},
+		{name: "missing shape", provider: "antigravity", raw: `{"status":"success"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isAuthCardQuotaSnapshotCompatible(test.provider, []byte(test.raw)); got != test.want {
+				t.Fatalf("isAuthCardQuotaSnapshotCompatible() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestSettingsStoreDoesNotUseBoundSnapshotWithoutAuthIndex(t *testing.T) {
 	store := openTestStore(t)
 	if err := store.SetQuotaCache(context.Background(), QuotaCacheEntry{
 		ID: "quota-provider:kimi:idx", Provider: "kimi", FileName: "account.json", AuthIndex: "idx",
-		Data: []byte(`{"schema_version":1,"plan":{"kind":"team"}}`), CachedAt: time.Now().UnixMilli(),
+		Data: []byte(`{"status":"success","rows":[],"planType":"team"}`), CachedAt: time.Now().UnixMilli(),
 	}); err != nil {
 		t.Fatal(err)
 	}

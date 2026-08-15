@@ -78,6 +78,9 @@ func (SettingsStore) GetPlanSnapshot(ctx context.Context, provider, fileName, au
 		if (authIndex == "" && entryAuthIndex != "") || (authIndex != "" && entryAuthIndex != "" && entryAuthIndex != authIndex) {
 			continue
 		}
+		if !isAuthCardQuotaSnapshotCompatible(provider, entry.Data) {
+			continue
+		}
 		if selected == nil || preferredQuotaCacheEntry(provider, entry, *selected) {
 			candidate := entry
 			selected = &candidate
@@ -89,6 +92,63 @@ func (SettingsStore) GetPlanSnapshot(ctx context.Context, provider, fileName, au
 	return settings.PlanSnapshot{
 		Data: append([]byte(nil), selected.Data...), ObservedAtMS: selected.ObservedAt,
 	}, true, nil
+}
+
+// isAuthCardQuotaSnapshotCompatible mirrors the Management auth-card
+// persistence contract. Only rows that the card can hydrate participate in
+// account-policy selection; provider-neutral plugin rows for other providers
+// remain persisted without displacing a valid inspection snapshot.
+func isAuthCardQuotaSnapshotCompatible(provider string, raw []byte) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "gemini-cli" && isNormalizedGeminiQuotaSnapshot(raw) {
+		return true
+	}
+	payload := map[string]any{}
+	if json.Unmarshal(raw, &payload) != nil || payload == nil {
+		return false
+	}
+	status, ok := payload["status"].(string)
+	if !ok {
+		return false
+	}
+	switch status {
+	case "idle", "loading", "error":
+		return true
+	case "success":
+	default:
+		return false
+	}
+	switch provider {
+	case "antigravity":
+		groups, okGroups := payload["groups"].([]any)
+		if !okGroups {
+			return false
+		}
+		for _, rawGroup := range groups {
+			group, okGroup := rawGroup.(map[string]any)
+			if !okGroup {
+				return false
+			}
+			if _, okBuckets := group["buckets"].([]any); !okBuckets {
+				return false
+			}
+		}
+		return true
+	case "claude", "codex":
+		_, ok = payload["windows"].([]any)
+		return ok
+	case "gemini-cli":
+		_, ok = payload["buckets"].([]any)
+		return ok
+	case "kimi":
+		_, ok = payload["rows"].([]any)
+		return ok
+	case "xai":
+		_, ok = payload["billing"].(map[string]any)
+		return ok
+	default:
+		return false
+	}
 }
 
 // preferredQuotaCacheEntry mirrors Management's auth-card cache selection.

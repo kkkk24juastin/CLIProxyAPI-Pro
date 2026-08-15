@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	proinspection "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/inspection"
 	modelconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/oauthpolicy/config"
 	proquota "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/quota"
@@ -24,7 +25,6 @@ const (
 	claudeProfileURL         = "https://api.anthropic.com/api/oauth/profile"
 	geminiCodeAssistURL      = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
 	antigravityCodeAssistURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
-	antigravityPlanUserAgent = "__MANAGEMENT_ANTIGRAVITY_USER_AGENT__"
 )
 
 type ModelInfo struct {
@@ -32,11 +32,10 @@ type ModelInfo struct {
 }
 
 type HTTPRequest struct {
-	Method         string
-	URL            string
-	Headers        http.Header
-	Body           []byte
-	BypassExecutor bool
+	Method  string
+	URL     string
+	Headers http.Header
+	Body    []byte
 }
 
 type HTTPResponse struct {
@@ -557,21 +556,15 @@ func resolveGooglePlan(ctx context.Context, provider string, timeout time.Durati
 		"Accept":        []string{"application/json"},
 		"Content-Type":  []string{"application/json"},
 	}
-	bypassExecutor := false
 	if provider == "antigravity" {
-		// Match the Management auth-card probe exactly. The Antigravity executor
-		// replaces this CLI identity with the Hub user-agent, and Google returns a
-		// different product entitlement instead of the account subscription tier.
-		headers.Del("Accept")
-		headers.Set("User-Agent", antigravityPlanUserAgent)
-		bypassExecutor = true
+		headers.Set("Accept", "*/*")
+		headers.Set("User-Agent", misc.AntigravityUserAgent())
 	}
 	resp, errDo := doProviderRequest(ctx, timeout, input, HTTPRequest{
-		Method:         http.MethodPost,
-		URL:            url,
-		Headers:        headers,
-		Body:           rawBody,
-		BypassExecutor: bypassExecutor,
+		Method:  http.MethodPost,
+		URL:     url,
+		Headers: headers,
+		Body:    rawBody,
 	})
 	if errDo != nil {
 		return "", fmt.Errorf("fetch %s plan: %w", provider, errDo)

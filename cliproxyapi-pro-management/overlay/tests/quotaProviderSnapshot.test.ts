@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  isAuthCardQuotaCacheDataCompatible,
   normalizePersistedQuotaState,
   selectPreferredQuotaCacheEntries,
 } from '../src/pro/modules/quota/extensions/normalizedQuotaSnapshot';
@@ -116,7 +117,7 @@ describe('QuotaProvider snapshot persistence', () => {
         {
           status: 'success',
           groups: [],
-          subscription: { plan: 'ultra', tierId: 'g1-ultra-tier' },
+          subscription: { plan: 'pro', tierId: 'g1-pro-tier' },
         },
         300
       ),
@@ -129,9 +130,11 @@ describe('QuotaProvider snapshot persistence', () => {
         'quota-provider:antigravity:idx',
         {
           schema_version: 1,
-          plan: { id: 'antigravity-starter-quota', kind: 'antigravity' },
+          provider: 'antigravity',
+          items: [],
+          plan: { id: 'g1-ultra-tier', kind: 'ultra' },
         },
-        100
+        400
       ),
       provider: 'antigravity',
       fileName: 'account.json',
@@ -140,5 +143,43 @@ describe('QuotaProvider snapshot persistence', () => {
 
     const selected = selectPreferredQuotaCacheEntries('antigravity', [plugin, inspection]);
     expect(selected.get('account.json')?.id).toBe(inspection.id);
+  });
+
+  test('ignores an Antigravity plugin row when no auth-card snapshot exists', () => {
+    const plugin: QuotaCacheEntry = {
+      ...cacheEntry(
+        'quota-provider:antigravity:idx',
+        {
+          schema_version: 1,
+          provider: 'antigravity',
+          items: [],
+          plan: { id: 'g1-ultra-tier', kind: 'ultra' },
+        },
+        400
+      ),
+      provider: 'antigravity',
+      fileName: 'account.json',
+    };
+
+    expect(isAuthCardQuotaCacheDataCompatible('antigravity', plugin.data)).toBe(false);
+    expect(selectPreferredQuotaCacheEntries('antigravity', [plugin]).size).toBe(0);
+  });
+
+  test('uses the auth-card provider shape contract for persisted rows', () => {
+    const cases: Array<[string, unknown, boolean]> = [
+      ['antigravity', { status: 'success', groups: [] }, true],
+      ['antigravity', { schema_version: 1, items: [], plan: { kind: 'ultra' } }, false],
+      ['codex', { status: 'success', windows: [] }, true],
+      ['gemini-cli', { status: 'success', buckets: [] }, true],
+      ['gemini-cli', { schema_version: 1, items: [] }, true],
+      ['kimi', { status: 'success', rows: [] }, true],
+      ['xai', { status: 'success', billing: {} }, true],
+      ['antigravity', { status: 'error' }, true],
+      ['antigravity', { status: 'success' }, false],
+    ];
+
+    cases.forEach(([provider, data, expected]) => {
+      expect(isAuthCardQuotaCacheDataCompatible(provider, data)).toBe(expected);
+    });
   });
 });

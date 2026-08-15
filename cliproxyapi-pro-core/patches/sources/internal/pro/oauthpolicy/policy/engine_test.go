@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -474,37 +473,27 @@ func TestGeminiPaidTierLabelAndWrappedPlanKeepPaidSemantics(t *testing.T) {
 	}
 }
 
-func TestAntigravityPlanProbeMatchesAuthCardContract(t *testing.T) {
+func TestAntigravityStandardTierUsesUnknownFallback(t *testing.T) {
 	cfg, _ := modelconfig.Parse([]byte(`
 providers:
   antigravity:
     plans:
-      pro: {priority: 77}
       _unknown: {priority: 1}
+      _default: {priority: 2}
 `))
 	engine := New()
 	engine.ApplyConfig(cfg)
-	called := false
 	result := engine.Filter(context.Background(), Input{
-		AuthID: "antigravity-pro", AuthProvider: "antigravity", AuthKind: "oauth",
-		StorageJSON:       []byte(`{"access_token":"token"}`),
-		QuotaSnapshotJSON: []byte(`{"status":"success","subscription":{"plan":"antigravity","tierId":"antigravity-starter-quota","tierName":"Antigravity"}}`),
-		QuotaObservedAtMS: time.Now().UnixMilli(),
+		AuthID: "antigravity-standard", AuthProvider: "antigravity", AuthKind: "oauth",
+		StorageJSON: []byte(`{"access_token":"token"}`),
 		HTTPDo: func(_ context.Context, request HTTPRequest) (HTTPResponse, error) {
-			called = true
-			if request.URL != antigravityCodeAssistURL || request.Method != http.MethodPost || !request.BypassExecutor {
-				t.Fatalf("Antigravity request = %#v", request)
-			}
-			if request.Headers.Get("Authorization") != "Bearer token" || request.Headers.Get("Content-Type") != "application/json" || request.Headers.Get("User-Agent") != antigravityPlanUserAgent || request.Headers.Get("Accept") != "" {
+			if request.Headers.Get("Accept") != "*/*" || request.Headers.Get("User-Agent") == "" {
 				t.Fatalf("Antigravity headers = %#v", request.Headers)
 			}
-			if string(request.Body) != `{"metadata":{"ideType":"ANTIGRAVITY"}}` {
-				t.Fatalf("Antigravity body = %s", request.Body)
-			}
-			return HTTPResponse{StatusCode: 200, Body: []byte(`{"currentTier":{"id":"free-tier","name":"Free"},"paidTier":{"id":"g1-pro-tier","name":"Google AI Pro"}}`)}, nil
+			return HTTPResponse{StatusCode: 200, Body: []byte(`{"currentTier":{"id":"standard-tier","name":"Standard"}}`)}, nil
 		},
 	})
-	if !called || !result.Handled || result.Annotations["plan_key"] != "pro" || result.Annotations["matched_rule"] != "pro" || result.Annotations["plan_source"] != "provider-api" {
+	if !result.Handled || result.Annotations["plan_key"] != "unknown" || result.Annotations["matched_rule"] != "_unknown" {
 		t.Fatalf("Filter() = %#v", result)
 	}
 }
