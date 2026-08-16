@@ -20,6 +20,10 @@ REALTIME_PREFERENCES_PATH = (
     Path(__file__).resolve().parents[1]
     / 'overlay/src/pro/modules/monitoring/features/realtimeLogPreferences.ts'
 )
+WEBDAV_DIALOG_PATH = (
+    Path(__file__).resolve().parents[1]
+    / 'overlay/src/pro/modules/monitoring/features/components/WebDAVRestoreDialog.tsx'
+)
 ACCOUNT_PLAN_PATH = (
     Path(__file__).resolve().parents[1]
     / 'overlay/src/pro/modules/quota/accountPlan.ts'
@@ -32,6 +36,26 @@ def read_monitoring_styles() -> str:
 
 
 class MonitoringToolbarCustomizationTest(unittest.TestCase):
+    def test_import_actions_share_one_dropdown_entry(self) -> None:
+        source = PAGE_PATH.read_text()
+
+        self.assertIn('aria-haspopup="menu"', source)
+        self.assertIn("usage_stats.import_from_file", source)
+        self.assertIn("usage_stats.import_from_webdav", source)
+        self.assertIn('onClick={handleImportFromFileClick}', source)
+        self.assertNotIn("t('usage_stats.webdav_restore_action')", source)
+
+    def test_webdav_restore_uses_compact_global_pro_copy(self) -> None:
+        source = PAGE_PATH.read_text()
+        dialog = WEBDAV_DIALOG_PATH.read_text()
+        styles = read_monitoring_styles()
+
+        self.assertIn('className={styles.webdavRestoreSurface}', dialog)
+        self.assertIn('width: min(720px, calc(100vw - 32px)) !important;', styles)
+        self.assertIn("usage_stats.import_restore_scope", source)
+        self.assertIn("usage_stats.import_restore_scope", dialog)
+        self.assertIn("usage_stats.import_restore_boundary", dialog)
+
     def test_simplified_chinese_inspection_duration_uses_concise_minute_unit(self) -> None:
         locales = json.loads(LOCALES_PATH.read_text())
         self.assertEqual(

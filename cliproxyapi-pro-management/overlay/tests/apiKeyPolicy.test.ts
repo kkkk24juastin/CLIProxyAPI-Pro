@@ -47,7 +47,8 @@ describe('usage policy backup preview contract', () => {
     expect(page).toContain("'/usage/webdav/restore'");
     expect(page).toContain('buildPolicyBackupSummary(preview.policyBackup ?? {}, t)');
     expect(page).toContain('onConfirm: () => executeWebDAVRestore(backup, allowLegacy)');
-    expect(dialog).toContain('import_policy_no_api_keys');
+    expect(dialog).toContain('import_restore_scope');
+    expect(dialog).toContain('import_restore_boundary');
     expect(dialog).toContain('backup.fileName');
   });
 });

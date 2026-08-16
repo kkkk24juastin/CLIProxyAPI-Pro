@@ -318,6 +318,44 @@ const buildPolicyBackupSummary = (
   })}`;
 };
 
+const buildImportResultSummary = (
+  result: UsageImportResult,
+  t: (key: string, options?: Record<string, unknown>) => string,
+) => {
+  const importedExtras = [
+    (result.modelPriceRecords ?? 0) > 0 ? t('usage_stats.import_model_prices_restored', { count: Math.max(result.modelPrices ?? 0, result.modelPriceRules ?? 0) }) : '',
+    (result.quotaCacheRecords ?? 0) > 0 ? t('usage_stats.import_quota_cache_restored', { count: result.quotaCache ?? 0 }) : '',
+    (result.routingCursorRecords ?? 0) > 0 ? t('usage_stats.import_routing_cursors_restored', { count: result.routingCursors ?? 0 }) : '',
+    (result.authRuntimeStatsRecords ?? 0) > 0 ? t('usage_stats.import_auth_runtime_stats_restored', { count: result.authRuntimeStats ?? 0 }) : '',
+    (result.proSettingsRecords ?? 0) > 0 ? t('usage_stats.import_pro_settings_restored', { count: result.proSettings ?? 0 }) : '',
+    result.accountInspectionSchedule ? t('usage_stats.import_account_inspection_schedule_restored') : '',
+    result.accountInspectionSnapshot ? t('usage_stats.import_account_inspection_snapshot_restored') : '',
+    result.monitoringSettings ? t('usage_stats.import_monitoring_settings_restored') : '',
+    result.policyBackup?.hasPolicies
+      ? t('usage_stats.import_policy_restored', {
+        policies: result.policyBackup.targetPolicies ?? 0,
+        profiles: result.policyBackup.targetProfiles ?? 0,
+        associated: result.policyBackup.associatedPolicies ?? 0,
+        orphaned: result.policyBackup.orphanedPolicies ?? 0,
+      })
+      : result.policyBackup?.preservePolicies
+        ? t('usage_stats.import_policy_preserved', {
+          policies: result.policyBackup.preservePolicies ?? 0,
+          profiles: result.policyBackup.preserveProfiles ?? 0,
+        })
+        : '',
+  ].filter(Boolean);
+  return [
+    t('usage_stats.import_success', {
+      added: result.added ?? 0,
+      skipped: result.skipped ?? 0,
+      total: result.total ?? 0,
+      failed: result.failed ?? 0,
+    }),
+    ...importedExtras,
+  ].join(' · ');
+};
+
 export function MonitoringCenterPage() {
   const { t, i18n } = useTranslation();
   const location = useLocation();
@@ -386,12 +424,14 @@ export function MonitoringCenterPage() {
   const [isImportingUsage, setIsImportingUsage] = useState(false);
   const [webDAVBackups, setWebDAVBackups] = useState<WebDAVBackup[]>([]);
   const [isWebDAVBackupsLoading, setIsWebDAVBackupsLoading] = useState(false);
+  const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
   const monitoringSettingsRequestRef = useRef<Promise<void> | null>(null);
   const priceManagementRequestRef = useRef<Promise<void> | null>(null);
   const profileCatalogRequestRef = useRef<Promise<void> | null>(null);
   const profileCatalogFetchedAtRef = useRef(0);
   const profileCatalogGenerationRef = useRef<number | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const importMenuRef = useRef<HTMLDivElement | null>(null);
   const [isUsageTrendHidden, setIsUsageTrendHidden] = useState(false);
   const [modelRankingMetric, setModelRankingMetric] = useState<RankingMetric>('requests');
   const [apiKeyRankingMetric, setApiKeyRankingMetric] = useState<RankingMetric>('requests');
@@ -732,7 +772,8 @@ export function MonitoringCenterPage() {
     }
   }, [connectionStatus, showNotification, t]);
 
-  const handleImportUsageClick = useCallback(() => {
+  const handleImportFromFileClick = useCallback(() => {
+    setIsImportMenuOpen(false);
     if (connectionStatus !== 'connected') {
       showNotification(t('notification.connection_required'), 'warning');
       return;
@@ -747,39 +788,8 @@ export function MonitoringCenterPage() {
         headers: { 'Content-Type': 'application/x-ndjson' },
         params: allowLegacy ? { allow_legacy: 1 } : undefined,
       });
-      const importedExtras = [
-        (result.modelPriceRecords ?? 0) > 0 ? t('usage_stats.import_model_prices_restored', { count: Math.max(result.modelPrices ?? 0, result.modelPriceRules ?? 0) }) : '',
-        (result.quotaCacheRecords ?? 0) > 0 ? t('usage_stats.import_quota_cache_restored', { count: result.quotaCache ?? 0 }) : '',
-        (result.routingCursorRecords ?? 0) > 0 ? t('usage_stats.import_routing_cursors_restored', { count: result.routingCursors ?? 0 }) : '',
-        (result.authRuntimeStatsRecords ?? 0) > 0 ? t('usage_stats.import_auth_runtime_stats_restored', { count: result.authRuntimeStats ?? 0 }) : '',
-        (result.proSettingsRecords ?? 0) > 0 ? t('usage_stats.import_pro_settings_restored', { count: result.proSettings ?? 0 }) : '',
-        result.accountInspectionSchedule ? t('usage_stats.import_account_inspection_schedule_restored') : '',
-        result.accountInspectionSnapshot ? t('usage_stats.import_account_inspection_snapshot_restored') : '',
-        result.monitoringSettings ? t('usage_stats.import_monitoring_settings_restored') : '',
-        result.policyBackup?.hasPolicies
-          ? t('usage_stats.import_policy_restored', {
-            policies: result.policyBackup.targetPolicies ?? 0,
-            profiles: result.policyBackup.targetProfiles ?? 0,
-            associated: result.policyBackup.associatedPolicies ?? 0,
-            orphaned: result.policyBackup.orphanedPolicies ?? 0,
-          })
-          : result.policyBackup?.preservePolicies
-            ? t('usage_stats.import_policy_preserved', {
-              policies: result.policyBackup.preservePolicies ?? 0,
-              profiles: result.policyBackup.preserveProfiles ?? 0,
-            })
-            : '',
-      ].filter(Boolean).join(' · ');
       showNotification(
-        [
-          t('usage_stats.import_success', {
-            added: result.added ?? 0,
-            skipped: result.skipped ?? 0,
-            total: result.total ?? 0,
-            failed: result.failed ?? 0,
-          }),
-          importedExtras,
-        ].filter(Boolean).join(' · '),
+        buildImportResultSummary(result, t),
         (result.failed ?? 0) > 0 ? 'warning' : 'success'
       );
       quotaPersistenceMiddleware.markStale();
@@ -815,6 +825,7 @@ export function MonitoringCenterPage() {
           title: t(allowLegacy ? 'usage_stats.import_legacy_confirm_title' : 'usage_stats.import_preview_title'),
           message: (
             <div>
+              <p>{t('usage_stats.import_restore_scope')}</p>
               <p>{policySummary}</p>
               <p>{t('usage_stats.import_policy_no_api_keys')}</p>
               {allowLegacy ? <p>{t('usage_stats.import_legacy_confirm_message')}</p> : null}
@@ -833,6 +844,7 @@ export function MonitoringCenterPage() {
   );
 
   const loadWebDAVBackups = useCallback(async () => {
+    setIsImportMenuOpen(false);
     if (connectionStatus !== 'connected') {
       showNotification(t('notification.connection_required'), 'warning');
       return;
@@ -856,12 +868,10 @@ export function MonitoringCenterPage() {
         params: allowLegacy ? { allow_legacy: 1 } : undefined,
       });
       closeSurface();
-      showNotification(t('usage_stats.webdav_restore_success', {
-        name: backup.fileName,
-        added: result.added ?? 0,
-        policies: result.policyBackup?.targetPolicies ?? result.policyBackup?.preservePolicies ?? 0,
-        profiles: result.policyBackup?.targetProfiles ?? result.policyBackup?.preserveProfiles ?? 0,
-      }), 'success');
+      showNotification([
+        t('usage_stats.webdav_restore_success', { name: backup.fileName }),
+        buildImportResultSummary(result, t),
+      ].join(' · '), (result.failed ?? 0) > 0 ? 'warning' : 'success');
       quotaPersistenceMiddleware.markStale();
       await quotaPersistenceMiddleware.ensureFresh();
       await refreshAll();
@@ -883,6 +893,7 @@ export function MonitoringCenterPage() {
         message: (
           <div>
             <p>{t('usage_stats.webdav_restore_confirm_file', { name: backup.fileName })}</p>
+            <p>{t('usage_stats.import_restore_scope')}</p>
             <p>{policySummary}</p>
             <p>{t('usage_stats.import_policy_no_api_keys')}</p>
             {allowLegacy ? <p>{t('usage_stats.import_legacy_confirm_message')}</p> : null}
@@ -1674,6 +1685,25 @@ export function MonitoringCenterPage() {
   }, [updateRealtimeLogColumns]);
 
   useEffect(() => {
+    if (!isImportMenuOpen) return undefined;
+
+    const closeImportMenu = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
+      if (event instanceof MouseEvent && event.target instanceof Node && importMenuRef.current?.contains(event.target)) {
+        return;
+      }
+      setIsImportMenuOpen(false);
+    };
+
+    document.addEventListener('mousedown', closeImportMenu);
+    document.addEventListener('keydown', closeImportMenu);
+    return () => {
+      document.removeEventListener('mousedown', closeImportMenu);
+      document.removeEventListener('keydown', closeImportMenu);
+    };
+  }, [isImportMenuOpen]);
+
+  useEffect(() => {
     if (!isRealtimeColumnsMenuOpen) return undefined;
 
     const handleDocumentMouseDown = (event: MouseEvent) => {
@@ -1905,22 +1935,30 @@ export function MonitoringCenterPage() {
               >
                 {t('usage_stats.export')}
               </button>
-              <button
-                type="button"
-                className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
-                onClick={handleImportUsageClick}
-                disabled={isImportingUsage}
-              >
-                {isImportingUsage ? t('common.loading') : t('usage_stats.import')}
-              </button>
-              <button
-                type="button"
-                className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
-                onClick={() => void loadWebDAVBackups()}
-                disabled={isImportingUsage || isWebDAVBackupsLoading}
-              >
-                {isWebDAVBackupsLoading ? t('common.loading') : t('usage_stats.webdav_restore_action')}
-              </button>
+              <div className={styles.importMenu} ref={importMenuRef}>
+                <button
+                  type="button"
+                  className={`${styles.quickLinkButton} ${styles.mastheadActionButton} ${styles.importMenuTrigger}`}
+                  onClick={() => setIsImportMenuOpen((open) => !open)}
+                  disabled={isImportingUsage || isWebDAVBackupsLoading}
+                  aria-haspopup="menu"
+                  aria-expanded={isImportMenuOpen}
+                  aria-controls="monitoring-import-menu"
+                >
+                  <span>{isImportingUsage || isWebDAVBackupsLoading ? t('common.loading') : t('usage_stats.import')}</span>
+                  <span className={styles.importMenuChevron} aria-hidden="true" />
+                </button>
+                {isImportMenuOpen ? (
+                  <div id="monitoring-import-menu" className={styles.importMenuDropdown} role="menu">
+                    <button type="button" role="menuitem" onClick={handleImportFromFileClick}>
+                      {t('usage_stats.import_from_file')}
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => void loadWebDAVBackups()}>
+                      {t('usage_stats.import_from_webdav')}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <button
                 type="button"
                 className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}

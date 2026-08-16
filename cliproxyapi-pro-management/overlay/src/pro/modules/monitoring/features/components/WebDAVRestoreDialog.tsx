@@ -34,6 +34,7 @@ export function WebDAVRestoreDialog({ open, loading, restoring, backups, onClose
       onClose={onClose}
       closeDisabled={loading || restoring}
       title={t('usage_stats.webdav_restore_title')}
+      className={styles.webdavRestoreSurface}
       footer={(
         <div className={styles.monitorModalActions}>
           <Button variant="secondary" size="sm" onClick={onRefresh} disabled={loading || restoring}>
@@ -47,7 +48,11 @@ export function WebDAVRestoreDialog({ open, loading, restoring, backups, onClose
     >
       <div className={styles.webdavRestoreDialog}>
         <p className={styles.settingsHint}>{t('usage_stats.webdav_restore_description')}</p>
-        <p className={styles.webdavRestoreWarning}>{t('usage_stats.import_policy_no_api_keys')}</p>
+        <div className={styles.webdavRestoreScope}>
+          <strong>{t('usage_stats.import_restore_scope_title')}</strong>
+          <span>{t('usage_stats.import_restore_scope')}</span>
+        </div>
+        <p className={styles.webdavRestoreWarning}>{t('usage_stats.import_restore_boundary')}</p>
         {loading ? (
           <div className={styles.surfaceLoadingStatus}>{t('common.loading')}</div>
         ) : backups.length === 0 ? (

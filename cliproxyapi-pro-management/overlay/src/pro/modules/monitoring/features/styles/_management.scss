@@ -246,6 +246,27 @@
   gap: 14px;
 }
 
+.webdavRestoreSurface {
+  width: min(720px, calc(100vw - 32px)) !important;
+}
+
+.webdavRestoreScope {
+  display: grid;
+  gap: 5px;
+  padding: 13px 14px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 12px;
+  background: var(--monitor-surface-muted);
+  color: var(--monitor-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.webdavRestoreScope strong {
+  color: var(--monitor-ink);
+  font-size: 13px;
+}
+
 .webdavRestoreWarning,
 .webdavRestoreEmpty {
   margin: 0;
@@ -298,6 +319,12 @@
 .webdavBackupRow > span:last-child {
   color: var(--monitor-muted);
   font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .webdavRestoreSurface {
+    width: 100vw !important;
+  }
 }
 
 .priceManager {
