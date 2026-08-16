@@ -54,7 +54,17 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
         self.assertIn('width: min(720px, calc(100vw - 32px)) !important;', styles)
         self.assertIn("usage_stats.import_restore_scope", source)
         self.assertIn("usage_stats.import_restore_scope", dialog)
-        self.assertIn("usage_stats.import_restore_boundary", dialog)
+        self.assertNotIn("webdavRestoreWarning", dialog)
+        self.assertIn(".webdavRestoreScope::after", styles)
+        self.assertIn("inset 4px 0 0 var(--monitor-accent-strong)", styles)
+
+    def test_realtime_duration_combines_ttft_and_total_latency(self) -> None:
+        source = PAGE_PATH.read_text()
+
+        self.assertNotIn("    ttft: {", source)
+        self.assertIn("t('monitoring.realtime_duration_ttft')", source)
+        self.assertIn("t('monitoring.realtime_duration_total')", source)
+        self.assertIn("className={styles.realtimeDurationCell}", source)
 
     def test_simplified_chinese_inspection_duration_uses_concise_minute_unit(self) -> None:
         locales = json.loads(LOCALES_PATH.read_text())

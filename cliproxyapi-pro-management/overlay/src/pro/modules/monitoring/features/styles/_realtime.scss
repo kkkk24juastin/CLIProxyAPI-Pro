@@ -423,6 +423,53 @@
   white-space: nowrap;
 }
 
+.realtimeLatencyCol {
+  min-width: 116px;
+}
+
+.realtimeDurationTableCell {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.realtimeDurationCell {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-height: 46px;
+  font-variant-numeric: tabular-nums;
+}
+
+.realtimeDurationCell > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.realtimeDurationCell small {
+  flex: 0 0 auto;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.realtimeDurationCell strong {
+  min-width: 0;
+  color: var(--monitor-ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.realtimeDurationCell strong.warnText {
+  color: var(--monitor-amber);
+}
+
+.realtimeDurationCell strong.badText {
+  color: var(--monitor-red);
+}
+
 .realtimeReasoningCol {
   min-width: 96px;
 }

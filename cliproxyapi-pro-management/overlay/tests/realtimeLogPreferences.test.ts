@@ -24,6 +24,20 @@ describe('realtime log column preferences', () => {
     expect(columns.at(-1)?.key).toBe('time');
   });
 
+  test('merges legacy TTFT and total-latency preferences into one duration column', () => {
+    const columns = normalizeRealtimeLogColumns([
+      { key: 'model', visible: true },
+      { key: 'ttft', visible: true, width: 92 },
+      { key: 'latency', visible: false, width: 148 },
+      { key: 'time', visible: true },
+    ]);
+    const durationColumns = columns.filter(({ key }) => key === 'latency');
+
+    expect(durationColumns).toHaveLength(1);
+    expect(durationColumns[0]).toMatchObject({ visible: true, width: 148 });
+    expect(createDefaultRealtimeLogColumns().map(({ key }) => key)).not.toContain('ttft');
+  });
+
   test('clamps persisted widths and restores defaults when every column is hidden', () => {
     expect(clampRealtimeLogColumnWidth('type', 999)).toBe(240);
     expect(clampRealtimeLogColumnWidth('model', 1)).toBe(132);

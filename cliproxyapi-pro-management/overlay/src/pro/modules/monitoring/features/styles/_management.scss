@@ -251,23 +251,52 @@
 }
 
 .webdavRestoreScope {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: grid;
-  gap: 5px;
-  padding: 13px 14px;
-  border: 1px solid var(--monitor-line);
-  border-radius: 12px;
-  background: var(--monitor-surface-muted);
+  gap: 7px;
+  padding: 16px 18px 16px 20px;
+  border: 1px solid color-mix(in srgb, var(--monitor-accent) 36%, var(--monitor-line));
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--monitor-accent) 14%, var(--monitor-surface)) 0%,
+      color-mix(in srgb, var(--monitor-cyan) 7%, var(--monitor-surface)) 100%);
+  box-shadow:
+    inset 4px 0 0 var(--monitor-accent-strong),
+    0 12px 28px -24px color-mix(in srgb, var(--monitor-accent) 75%, transparent);
   color: var(--monitor-muted);
   font-size: 13px;
   line-height: 1.55;
 }
 
-.webdavRestoreScope strong {
-  color: var(--monitor-ink);
-  font-size: 13px;
+.webdavRestoreScope::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: -56px;
+  right: -42px;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--monitor-accent) 14%, transparent);
+  filter: blur(2px);
+  pointer-events: none;
 }
 
-.webdavRestoreWarning,
+.webdavRestoreScope > * {
+  position: relative;
+  z-index: 1;
+}
+
+.webdavRestoreScope strong {
+  color: var(--monitor-accent-strong);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
 .webdavRestoreEmpty {
   margin: 0;
   padding: 12px 14px;

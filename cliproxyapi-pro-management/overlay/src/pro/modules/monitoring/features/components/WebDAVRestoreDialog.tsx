@@ -52,7 +52,6 @@ export function WebDAVRestoreDialog({ open, loading, restoring, backups, onClose
           <strong>{t('usage_stats.import_restore_scope_title')}</strong>
           <span>{t('usage_stats.import_restore_scope')}</span>
         </div>
-        <p className={styles.webdavRestoreWarning}>{t('usage_stats.import_restore_boundary')}</p>
         {loading ? (
           <div className={styles.surfaceLoadingStatus}>{t('common.loading')}</div>
         ) : backups.length === 0 ? (

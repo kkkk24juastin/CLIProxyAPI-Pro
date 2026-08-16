@@ -188,10 +188,11 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
       return [formatPercent(row.successRate)];
     case 'calls':
       return [formatCompactNumber(row.requestCount)];
-    case 'ttft':
-      return [formatDurationMs(row.ttftMs)];
     case 'latency':
-      return [formatDurationMs(row.latencyMs)];
+      return [
+        `First ${formatDurationMs(row.ttftMs)}`,
+        `Total ${formatDurationMs(row.latencyMs)}`,
+      ];
     case 'tokens':
       return [
         formatTokenCount(row.totalTokens),
@@ -1382,46 +1383,40 @@ export function MonitoringCenterPage() {
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.calls,
       render: (row) => formatCompactNumber(row.requestCount),
     },
-    ttft: {
-      key: 'ttft',
-      label: t('monitoring.column_ttft'),
-      colClassName: styles.realtimeTtftCol,
-      headerClassName: styles.realtimeMetricHeader,
-      cellClassName: () => styles.realtimeMetricCell,
-      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.ttft,
-      render: (row) => (
-        <span
-          className={
-            row.ttftMs !== null && row.ttftMs >= 15000
-              ? styles.badText
-              : row.ttftMs !== null && row.ttftMs >= 8000
-                ? styles.warnText
-                : undefined
-          }
-        >
-          {formatDurationMs(row.ttftMs, { locale: i18n.language })}
-        </span>
-      ),
-    },
     latency: {
       key: 'latency',
       label: t('monitoring.column_latency'),
       colClassName: styles.realtimeLatencyCol,
       headerClassName: styles.realtimeMetricHeader,
-      cellClassName: () => styles.realtimeMetricCell,
+      cellClassName: () => styles.realtimeDurationTableCell,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.latency,
       render: (row) => (
-        <span
-          className={
-            row.latencyMs !== null && row.latencyMs >= 30000
-              ? styles.badText
-              : row.latencyMs !== null && row.latencyMs >= 15000
-                ? styles.warnText
-                : undefined
-          }
-        >
-          {formatDurationMs(row.latencyMs, { locale: i18n.language })}
-        </span>
+        <div className={styles.realtimeDurationCell}>
+          <span>
+            <small>{t('monitoring.realtime_duration_ttft')}</small>
+            <strong className={
+              row.ttftMs !== null && row.ttftMs >= 15000
+                ? styles.badText
+                : row.ttftMs !== null && row.ttftMs >= 8000
+                  ? styles.warnText
+                  : undefined
+            }>
+              {formatDurationMs(row.ttftMs, { locale: i18n.language })}
+            </strong>
+          </span>
+          <span>
+            <small>{t('monitoring.realtime_duration_total')}</small>
+            <strong className={
+              row.latencyMs !== null && row.latencyMs >= 30000
+                ? styles.badText
+                : row.latencyMs !== null && row.latencyMs >= 15000
+                  ? styles.warnText
+                  : undefined
+            }>
+              {formatDurationMs(row.latencyMs, { locale: i18n.language })}
+            </strong>
+          </span>
+        </div>
       ),
     },
     tokens: {

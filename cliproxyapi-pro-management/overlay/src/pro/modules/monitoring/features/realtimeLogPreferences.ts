@@ -12,7 +12,6 @@ const REALTIME_LOG_COLUMN_KEYS = [
   'status',
   'successRate',
   'calls',
-  'ttft',
   'latency',
   'tokens',
   'cacheRead',
@@ -39,8 +38,7 @@ export const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, nu
   status: 180,
   successRate: 86,
   calls: 76,
-  ttft: 92,
-  latency: 96,
+  latency: 132,
   tokens: 196,
   cacheRead: 126,
   cost: 132,
@@ -58,8 +56,7 @@ const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   status: 120,
   successRate: 76,
   calls: 68,
-  ttft: 76,
-  latency: 76,
+  latency: 116,
   tokens: 164,
   cacheRead: 108,
   cost: 112,
@@ -111,6 +108,24 @@ export const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPr
           next.push({ key: replacementKey, visible });
           seen.add(replacementKey);
         });
+        return;
+      }
+      if (key === 'ttft' || key === 'latency') {
+        const visible = (item as { visible?: unknown }).visible !== false;
+        const width = key === 'latency'
+          ? normalizeRealtimeLogColumnWidth('latency', (item as { width?: unknown }).width)
+          : undefined;
+        const existingIndex = next.findIndex((column) => column.key === 'latency');
+        if (existingIndex >= 0) {
+          next[existingIndex] = {
+            ...next[existingIndex],
+            visible: next[existingIndex].visible || visible,
+            width: width ?? next[existingIndex].width,
+          };
+        } else {
+          next.push({ key: 'latency', visible, width });
+          seen.add('latency');
+        }
         return;
       }
       if (!isRealtimeLogColumnKey(key) || seen.has(key)) return;
