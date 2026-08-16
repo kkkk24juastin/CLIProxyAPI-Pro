@@ -578,7 +578,7 @@ export function OAuthPolicyPage() {
   return (
     <div className={`${styles.page} ${dirty ? styles.pageWithSave : ""}`}>
       <ProFeatureHeader
-        title={t("oauth_policy.title", { defaultValue: "OAuth Account Policy" })}
+        title={t("oauth_policy.title", { defaultValue: "Account Policy" })}
         subtitle={t("oauth_policy.subtitle", {
           defaultValue:
             "Apply model availability and routing attributes by provider and detected OAuth plan.",

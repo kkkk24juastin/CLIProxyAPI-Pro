@@ -129,9 +129,9 @@ Backend schedule/status/control routes expected by the page:
 
 Under the full management API prefix these are exposed by the backend as `/v0/management/account-inspection/...`.
 
-### Routing policy page
+### Scheduling policy page
 
-Adds a top-level routing-policy route:
+Adds a top-level scheduling-policy route:
 
 ```text
 /routing
@@ -172,7 +172,7 @@ Request Monitoring uses an initial snapshot plus SSE increments and cursor catch
 - `overlay/` — files copied directly into the upstream checkout.
 - `overlay/src/pro/modules/monitoring/` — request monitoring, usage analytics, and backup UI.
 - `overlay/src/pro/modules/inspection/` — account inspection page, state, and actions.
-- `overlay/src/pro/modules/routing/` — routing policy and request-state-protection UI.
+- `overlay/src/pro/modules/routing/` — scheduling policy and request-state-protection UI.
 - `overlay/src/pro/modules/proxyPool/` and `oauthPolicy/` — independent module pages and APIs.
 - `overlay/src/pro/modules/quota/` — SQLite quota persistence, sorting, and provider extensions.
 - `overlay/src/pro/modules/*/manifest.tsx` — each business module declares its route, navigation, and startup effects; `registry.tsx` keeps only the module list and derives host projections, while `ProBootstrap.tsx` mounts them after authentication.

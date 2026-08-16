@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
 import { monitoringModule } from '@/pro/modules/monitoring';
 import { inspectionModule } from '@/pro/modules/inspection';
+import { apiKeyPolicyModule } from '@/pro/modules/apiKeyPolicy';
+import { oauthPolicyModule } from '@/pro/modules/oauthPolicy';
 import { routingModule } from '@/pro/modules/routing';
 import { proxyPoolModule } from '@/pro/modules/proxyPool';
-import { oauthPolicyModule } from '@/pro/modules/oauthPolicy';
 import { quotaModule } from '@/pro/modules/quota';
-import { apiKeyPolicyModule } from '@/pro/modules/apiKeyPolicy';
 
 export interface ProRouteEntry {
   path: string;
@@ -30,9 +30,9 @@ export interface ProNavigationGroup {
 const proModules = [
   monitoringModule,
   inspectionModule,
-  routingModule,
-  oauthPolicyModule,
   apiKeyPolicyModule,
+  oauthPolicyModule,
+  routingModule,
   proxyPoolModule,
   quotaModule,
 ];

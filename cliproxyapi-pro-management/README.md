@@ -129,9 +129,9 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 
 在完整 management API 前缀下，后端暴露为 `/v0/management/account-inspection/...`。
 
-### 路由策略页面
+### 调度策略页面
 
-新增顶级路由策略页面：
+新增顶级调度策略页面：
 
 ```text
 /routing
@@ -172,7 +172,7 @@ UI 会在主布局中启动 `QuotaPersistenceBootstrap`，把已保存的配额�
 - `overlay/` — 直接复制到 upstream checkout 的新增/覆盖文件。
 - `overlay/src/pro/modules/monitoring/` — 请求监控、用量分析与备份 UI。
 - `overlay/src/pro/modules/inspection/` — 账号巡检页面、状态与操作逻辑。
-- `overlay/src/pro/modules/routing/` — 路由策略和请求状态保护 UI。
+- `overlay/src/pro/modules/routing/` — 调度策略和请求状态保护 UI。
 - `overlay/src/pro/modules/proxyPool/` 与 `oauthPolicy/` — 独立业务模块页面及 API。
 - `overlay/src/pro/modules/quota/` — SQLite 配额持久化、排序与 provider 扩展。
 - `overlay/src/pro/modules/*/manifest.tsx` — 各业务模块声明自己的路由、导航和启动副作用；`registry.tsx` 只维护模块清单并派生宿主投影，`ProBootstrap.tsx` 负责认证后挂载。

@@ -14,7 +14,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 账号巡检结果（配额和账号异常状态）支持持久化到配额管理和认证文件
 - 账号巡检支持自动化启用、禁用、删除、主动刷新令牌
 - 账号巡检针对 Antigravity 软封禁和 xAI 可用性异常提供可选深度检测
-- 路由策略页面统一管理 upstream 路由行为与按 provider 配置的请求状态保护
+- 调度策略页面统一管理 upstream 路由行为与按 provider 配置的请求状态保护
 - 二进制内建代理池，把多个 HTTP/SOCKS 节点汇聚为固定的本地 SOCKS5 地址，支持轮询、加权、健康隔离与故障转移
 - 二进制内建 OAuth 账号策略，可按多个提供商的账号套餐配置模型排除、前缀、优先级和调度权重，并同步约束模型列表和账号调度
 
@@ -63,7 +63,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 内建 OAuth 账号策略，可按 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi OAuth 套餐配置模型排除与账号路由属性。
 - 启动时在内存中强制必要 upstream 配置；仅修改 YAML 中已存在的键，禁止自动新增键。
 - 支持后端账号巡检调度器和执行器，巡检探测前可刷新 token。
-- 支持统一路由策略与请求状态保护 API。
+- 支持统一调度策略与请求状态保护 API。
 - 支持 Komari agent 可选启动。
 - 代理池与 OAuth 账号策略直接编译进所有 Pro 二进制，包括 `_no-plugin` 产物；其配置持久化在 usage SQLite，不写入 `config.yaml` 或认证文件。
 - 将 `/` 跳转到 `/management.html`。
@@ -82,7 +82,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 
 - 新增 `/monitoring` 请求监控页面。
 - 新增 `/account-inspection` 账号巡检页面。
-- 新增 `/routing` 路由策略页面。
+- 新增 `/routing` 调度策略页面。
 - 新增 `/proxy-pool` 代理池页面，负责节点配置、连通性测试、运行统计和全局代理接管/恢复。
 - 新增 `/oauth-policy` 可视化配置页，按提供商和 OAuth 套餐编辑模型排除、前缀、优先级、调度权重、自定义套餐和回退策略；旧 `/oauth-model-policy` 自动重定向。
 - 请求量、成功率、延迟、token 和成本统计。
@@ -152,7 +152,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 
 账号巡检只由后端执行。管理端负责配置调度、启动和控制巡检、轮询状态/进度/结果，通过 WebSocket/WSS 接收日志和实时状态，并确认手动操作。后端自动动作支持连续确认门槛，quota cache 会记录解析器版本和返回结构 hash，便于上游字段变化时排查。
 
-管理端新增一级“路由策略”页面，统一配置 upstream 路由、会话粘性、重试、账号切换、冷却和配额回退，并为 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi 提供按 HTTP 状态码触发的请求保护策略。提供商保护只显示当前已有 API 配置或凭据的提供商。保护功能默认关闭；可先使用 `observe` 模式观察命中情况，再切换到 `enforce` 自动禁用。自动解除只作用于本策略禁用的账号，不会覆盖用户手动禁用状态。
+管理端新增一级“调度策略”页面，统一配置 upstream 路由、会话粘性、重试、账号切换、冷却和配额回退，并为 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi 提供按 HTTP 状态码触发的请求保护策略。提供商保护只显示当前已有 API 配置或凭据的提供商。保护功能默认关闭；可先使用 `observe` 模式观察命中情况，再切换到 `enforce` 自动禁用。自动解除只作用于本策略禁用的账号，不会覆盖用户手动禁用状态。
 
 后端巡检时，如果认证记录本来已经进入正常刷新窗口，会在配额/账号探测前尝试刷新 token。巡检刷新路径会跳过 API key 账号、未到刷新窗口的账号，以及仍受 `NextRefreshAfter` 限制的账号；disabled 账号允许刷新。刷新成功后使用刷新后的 auth 继续探测；刷新失败时保留该账号，并跳过该账号本次探测。
 

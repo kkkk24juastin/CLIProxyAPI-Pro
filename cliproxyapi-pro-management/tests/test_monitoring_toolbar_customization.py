@@ -12,6 +12,7 @@ STYLE_PATH = (
     / 'overlay/src/pro/modules/monitoring/features/monitoring.module.scss'
 )
 STYLE_DIR = STYLE_PATH.parent / 'styles'
+BASE_STYLE_PATH = STYLE_DIR / '_base.scss'
 REALTIME_HOOK_PATH = (
     Path(__file__).resolve().parents[1]
     / 'overlay/src/pro/modules/monitoring/features/hooks/useRealtimeLogData.ts'
@@ -51,6 +52,7 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
         styles = read_monitoring_styles()
 
         self.assertIn('className={styles.webdavRestoreSurface}', dialog)
+        self.assertIn('.webdavRestoreSurface,', BASE_STYLE_PATH.read_text())
         self.assertIn('width: min(720px, calc(100vw - 32px)) !important;', styles)
         self.assertIn("usage_stats.import_restore_scope", source)
         self.assertIn("usage_stats.import_restore_scope", dialog)

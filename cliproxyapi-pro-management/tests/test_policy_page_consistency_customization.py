@@ -181,6 +181,20 @@ class PolicyPageConsistencyCustomizationTest(unittest.TestCase):
         self.assertIn("routing_policy.discard_changes", routing)
         self.assertIn("oauth_policy.discard_changes", account)
 
+    def test_policy_titles_match_the_product_navigation_names(self) -> None:
+        locales = json.loads(LOCALES.read_text())
+        expected = {
+            'en.json': ('Scheduling Policy', 'Account Policy'),
+            'ru.json': ('Политика планирования', 'Политика аккаунтов'),
+            'zh-CN.json': ('调度策略', '账号策略'),
+            'zh-TW.json': ('調度策略', '帳號策略'),
+        }
+
+        for locale, (scheduling_title, account_title) in expected.items():
+            self.assertEqual(scheduling_title, locales[locale]['nav']['routing_policy'])
+            self.assertEqual(scheduling_title, locales[locale]['routing_policy']['title'])
+            self.assertEqual(account_title, locales[locale]['oauth_policy']['title'])
+
 
 if __name__ == '__main__':
     unittest.main()
