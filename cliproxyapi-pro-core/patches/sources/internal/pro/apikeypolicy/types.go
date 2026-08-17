@@ -38,6 +38,20 @@ var (
 	ErrNotOrphaned             = errors.New("api key policy belongs to a configured upstream key")
 )
 
+type profileValidationContextKey struct{}
+
+// WithProviderModelLinkageValidation opts one Management write into the
+// provider/model relationship contract. Older Management clients omit this
+// signal and retain the pre-linkage write semantics.
+func WithProviderModelLinkageValidation(ctx context.Context) context.Context {
+	return context.WithValue(ctx, profileValidationContextKey{}, true)
+}
+
+func providerModelLinkageValidationEnabled(ctx context.Context) bool {
+	enabled, _ := ctx.Value(profileValidationContextKey{}).(bool)
+	return enabled
+}
+
 const PassthroughConfirmation = "RESTORE_UNRESTRICTED_PASSTHROUGH"
 
 // AuthenticatedAPIKeyIdentity can only be constructed from a successful
@@ -223,14 +237,26 @@ func (c ProfileCatalog) Validate(input ProfileInput) error {
 		if _, ok := models[model]; !ok {
 			return fmt.Errorf("unknown model %q", model)
 		}
-		if !c.modelMatchesProviders(model, input.Providers) {
-			return fmt.Errorf("model %q is not available from an allowed provider", model)
-		}
 	}
 	for _, mapping := range input.Mappings {
 		if _, ok := models[mapping.Target]; !ok {
 			return fmt.Errorf("unknown model %q", mapping.Target)
 		}
+	}
+	return nil
+}
+
+func (c ProfileCatalog) ValidateProviderModelLinkage(input ProfileInput) error {
+	input, err := normalizeProfileInput(input)
+	if err != nil {
+		return err
+	}
+	for _, model := range input.Models {
+		if !c.modelMatchesProviders(model, input.Providers) {
+			return fmt.Errorf("model %q is not available from an allowed provider", model)
+		}
+	}
+	for _, mapping := range input.Mappings {
 		if !c.modelMatchesProviders(mapping.Target, input.Providers) {
 			return fmt.Errorf("model mapping target %q is not available from an allowed provider", mapping.Target)
 		}

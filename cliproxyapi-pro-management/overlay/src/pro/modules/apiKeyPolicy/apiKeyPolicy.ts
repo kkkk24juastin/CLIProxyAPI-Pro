@@ -148,6 +148,7 @@ export const supportsAPIKeyPolicyUsageTarget = (
 ): boolean => capabilities.features?.includes('usage_key_target') === true;
 
 export const PASSTHROUGH_CONFIRMATION = 'RESTORE_UNRESTRICTED_PASSTHROUGH';
+const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage'] as const;
 
 const policyPath = (policyId: string) => `/api-key-policies/${encodeURIComponent(policyId)}`;
 const profilePath = (policyId: string, profileId: string) =>
@@ -162,6 +163,7 @@ export const buildAPIKeyPolicyWorkspaceUpdate = (
 ) => ({
   displayName,
   version,
+  clientFeatures: [...API_KEY_POLICY_WRITE_FEATURES],
   ...(profile ? {
     profileId: createProfile ? '' : profileId,
     profile,
@@ -270,6 +272,7 @@ export const apiKeyPolicyApi = {
       keyRef,
       displayName,
       initialProfile,
+      clientFeatures: [...API_KEY_POLICY_WRITE_FEATURES],
     }));
   },
 
@@ -295,7 +298,11 @@ export const apiKeyPolicyApi = {
   },
 
   createProfile(policyId: string, profile: APIKeyProfileInput, version: number): Promise<APIKeyPolicy> {
-    return apiClient.post<APIKeyPolicy>(`${policyPath(policyId)}/profiles`, { ...profile, version }).then(normalizePolicy);
+    return apiClient.post<APIKeyPolicy>(`${policyPath(policyId)}/profiles`, {
+      ...profile,
+      version,
+      clientFeatures: [...API_KEY_POLICY_WRITE_FEATURES],
+    }).then(normalizePolicy);
   },
 
   replaceProfile(
@@ -304,7 +311,11 @@ export const apiKeyPolicyApi = {
     profile: APIKeyProfileInput,
     version: number,
   ): Promise<APIKeyPolicy> {
-    return apiClient.put<APIKeyPolicy>(profilePath(policyId, profileId), { ...profile, version }).then(normalizePolicy);
+    return apiClient.put<APIKeyPolicy>(profilePath(policyId, profileId), {
+      ...profile,
+      version,
+      clientFeatures: [...API_KEY_POLICY_WRITE_FEATURES],
+    }).then(normalizePolicy);
   },
 
   async deleteProfile(policyId: string, profileId: string, version: number): Promise<void> {
@@ -354,6 +365,14 @@ export const cloneProfileInput = (profile: APIKeyProfileInput): APIKeyProfileInp
   providers: [...(profile.providers ?? [])],
   models: [...(profile.models ?? [])],
   mappings: (profile.mappings ?? []).map((mapping) => ({ ...mapping })),
+});
+
+export const updateProfileProviders = (
+  profile: APIKeyProfileInput,
+  providers: string[],
+): APIKeyProfileInput => ({
+  ...profile,
+  providers: [...providers],
 });
 
 export const resolveMappingTargetModels = (

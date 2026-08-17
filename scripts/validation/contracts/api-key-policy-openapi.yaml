@@ -117,6 +117,8 @@ paths:
                 createProfile:
                   type: boolean
                   default: false
+                clientFeatures:
+                  $ref: "#/components/schemas/WriteClientFeatures"
       responses:
         "200":
           description: Updated policy
@@ -290,6 +292,7 @@ components:
               - orphaned_purge_guard
               - takeover_control
               - usage_key_target
+              - provider_model_linkage
     PolicyState:
       type: string
       enum: [unconfigured, configured, orphaned, unavailable]
@@ -322,6 +325,8 @@ components:
           required: [version]
           properties:
             version: { type: integer, minimum: 1 }
+            clientFeatures:
+              $ref: "#/components/schemas/WriteClientFeatures"
     Profile:
       allOf:
         - $ref: "#/components/schemas/ProfileInput"
@@ -357,6 +362,15 @@ components:
         displayName: { type: string }
         initialProfile:
           $ref: "#/components/schemas/ProfileInput"
+        clientFeatures:
+          $ref: "#/components/schemas/WriteClientFeatures"
+    WriteClientFeatures:
+      type: array
+      description: Opt-in capabilities understood by the Management client; omitted by legacy clients
+      uniqueItems: true
+      items:
+        type: string
+        enum: [provider_model_linkage]
     UsageTargetRequest:
       type: object
       required: [keyRef]

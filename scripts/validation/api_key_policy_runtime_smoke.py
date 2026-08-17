@@ -79,6 +79,7 @@ def main() -> None:
         "keyRef": key_ref,
         "displayName": "Runtime smoke",
         "initialProfile": profile,
+        "clientFeatures": ["provider_model_linkage"],
     })
     assert status == 201, (status, policy)
     assert policy["state"] == "configured", policy

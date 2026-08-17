@@ -419,7 +419,7 @@ func (s *Service) Catalog() (ProfileCatalog, error) {
 	return NewProfileCatalog(catalog.Providers, catalog.Models, catalog.ModelProviders), nil
 }
 
-func (s *Service) normalizeProfileForWrite(input ProfileInput) (ProfileInput, error) {
+func (s *Service) normalizeProfileForWrite(ctx context.Context, input ProfileInput) (ProfileInput, error) {
 	normalized, err := normalizeProfileInput(input)
 	if err != nil {
 		return ProfileInput{}, err
@@ -436,6 +436,11 @@ func (s *Service) normalizeProfileForWrite(input ProfileInput) (ProfileInput, er
 	}
 	if err := catalog.Validate(normalized); err != nil {
 		return ProfileInput{}, err
+	}
+	if providerModelLinkageValidationEnabled(ctx) {
+		if err := catalog.ValidateProviderModelLinkage(normalized); err != nil {
+			return ProfileInput{}, err
+		}
 	}
 	return normalized, nil
 }
@@ -708,7 +713,7 @@ func (s *Service) Create(ctx context.Context, identity AuthenticatedAPIKeyIdenti
 	if !identity.Valid() {
 		return Policy{}, errors.New("authenticated api key identity is required")
 	}
-	input, err := s.normalizeProfileForWrite(initial)
+	input, err := s.normalizeProfileForWrite(ctx, initial)
 	if err != nil {
 		return Policy{}, err
 	}
@@ -766,7 +771,7 @@ func (s *Service) UpdateWorkspace(ctx context.Context, policyID string, version 
 	var input ProfileInput
 	var err error
 	if update.Profile != nil {
-		input, err = s.normalizeProfileForWrite(*update.Profile)
+		input, err = s.normalizeProfileForWrite(ctx, *update.Profile)
 		if err != nil {
 			return Policy{}, err
 		}
@@ -813,7 +818,7 @@ func (s *Service) UpdateWorkspace(ctx context.Context, policyID string, version 
 }
 
 func (s *Service) CreateProfile(ctx context.Context, policyID string, version int64, input ProfileInput) (Policy, error) {
-	input, err := s.normalizeProfileForWrite(input)
+	input, err := s.normalizeProfileForWrite(ctx, input)
 	if err != nil {
 		return Policy{}, err
 	}
@@ -841,7 +846,7 @@ func (s *Service) CreateProfile(ctx context.Context, policyID string, version in
 }
 
 func (s *Service) ReplaceProfile(ctx context.Context, policyID, profileID string, version int64, input ProfileInput) (Policy, error) {
-	input, err := s.normalizeProfileForWrite(input)
+	input, err := s.normalizeProfileForWrite(ctx, input)
 	if err != nil {
 		return Policy{}, err
 	}

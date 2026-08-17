@@ -193,6 +193,39 @@ func TestAPIKeyPolicyMaskMatchesManagementDisplayContract(t *testing.T) {
 	}
 }
 
+func TestAPIKeyPolicyProviderModelValidationIsClientNegotiated(t *testing.T) {
+	modelRegistry := registry.GetGlobalRegistry()
+	modelRegistry.RegisterClient("api-key-policy-linkage-codex", "codex", []*registry.ModelInfo{{ID: "gpt-5"}})
+	t.Cleanup(func() { modelRegistry.UnregisterClient("api-key-policy-linkage-codex") })
+	_, router := newAPIKeyPolicyManagementHarness(t, []string{"legacy-linkage-key", "linked-linkage-key"})
+	listed := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil)
+	bindings := bindingResponse(t, listed).Items
+	if len(bindings) != 2 {
+		t.Fatalf("binding count=%d body=%s", len(bindings), listed.Body.String())
+	}
+	mismatchedBody := func(keyRef string, features []string) map[string]any {
+		body := map[string]any{
+			"keyRef": keyRef, "displayName": "Compatibility",
+			"initialProfile": map[string]any{
+				"name": "Independent", "providers": []string{"claude"},
+				"models": []string{"gpt-5"}, "mappings": []any{},
+			},
+		}
+		if features != nil {
+			body["clientFeatures"] = features
+		}
+		return body
+	}
+	legacy := policyRequest(t, router, http.MethodPost, "/v0/management/api-key-policies", "session-a", mismatchedBody(bindings[0].KeyRef, nil))
+	if legacy.Code != http.StatusCreated {
+		t.Fatalf("legacy mismatch status=%d body=%s", legacy.Code, legacy.Body.String())
+	}
+	linked := policyRequest(t, router, http.MethodPost, "/v0/management/api-key-policies", "session-a", mismatchedBody(bindings[1].KeyRef, []string{"provider_model_linkage"}))
+	if linked.Code != http.StatusBadRequest || !strings.Contains(linked.Body.String(), "not available from an allowed provider") {
+		t.Fatalf("linked mismatch status=%d body=%s", linked.Code, linked.Body.String())
+	}
+}
+
 func TestAPIKeyPolicyBindingsAndKeyReferenceSecurity(t *testing.T) {
 	h, router := newAPIKeyPolicyManagementHarness(t, []string{"sk-sensitive-canary-123456789"})
 	listed := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil)
@@ -339,7 +372,7 @@ func TestAPIKeyPolicyRoutesRequireRealManagementMiddlewareAndBindSession(t *test
 		t.Fatalf("authenticated status=%d body=%s", listed.Code, listed.Body.String())
 	}
 	capabilities := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-capabilities", "management-policy-test-secret", nil)
-	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"apiVersion":2`) || !strings.Contains(capabilities.Body.String(), `"atomic_workspace_save"`) || !strings.Contains(capabilities.Body.String(), `"orphaned_purge_guard"`) || !strings.Contains(capabilities.Body.String(), `"takeover_control"`) || !strings.Contains(capabilities.Body.String(), `"usage_key_target"`) {
+	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"apiVersion":2`) || !strings.Contains(capabilities.Body.String(), `"atomic_workspace_save"`) || !strings.Contains(capabilities.Body.String(), `"orphaned_purge_guard"`) || !strings.Contains(capabilities.Body.String(), `"takeover_control"`) || !strings.Contains(capabilities.Body.String(), `"usage_key_target"`) || !strings.Contains(capabilities.Body.String(), `"provider_model_linkage"`) {
 		t.Fatalf("capabilities status=%d body=%s", capabilities.Code, capabilities.Body.String())
 	}
 	status := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-status", "management-policy-test-secret", nil)

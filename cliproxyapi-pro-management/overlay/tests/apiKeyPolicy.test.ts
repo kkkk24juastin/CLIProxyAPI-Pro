@@ -9,6 +9,7 @@ import {
   resolveMappingTargetModels,
   resolveModelsForProviders,
   supportsAPIKeyPolicyUsageTarget,
+  updateProfileProviders,
   validateAPIKeyPolicyCapabilities,
   validateProfileInput,
   type APIKeyPolicyCatalog,
@@ -151,10 +152,12 @@ describe('API Key Policy profile drafts', () => {
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false)).toEqual({
       displayName: 'Renamed',
       version: 2,
+      clientFeatures: ['provider_model_linkage'],
     });
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', validProfile(), false)).toEqual({
       displayName: 'Renamed',
       version: 2,
+      clientFeatures: ['provider_model_linkage'],
       profileId: 'profile-1',
       profile: validProfile(),
       createProfile: false,
@@ -210,8 +213,20 @@ describe('API Key Policy profile drafts', () => {
 		}, catalog)).toBe('mappings');
 		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
 		expect(page).toContain('values={availableModels}');
-		expect(page).toContain('const providerModels = resolveModelsForProviders(providers, snapshot.catalog)');
-		expect(page).toContain('mappings: current.profile.mappings.filter((mapping) => mappingTargets.includes(mapping.target))');
+		const changed = updateProfileProviders(validProfile(), ['claude']);
+		expect(changed.providers).toEqual(['claude']);
+		expect(changed.models).toEqual(['gpt-5']);
+		expect(changed.mappings).toEqual([{ source: 'smart', target: 'gpt-5' }]);
+		expect(validateProfileInput(changed, catalog)).toBe('models');
+		expect(page).toContain('profile: updateProfileProviders(current.profile, providers)');
+		expect(page).not.toContain('const models = current.profile.models.filter((model) => providerModels.includes(model))');
+		expect(page).not.toContain('mappings: current.profile.mappings.filter((mapping) => mappingTargets.includes(mapping.target))');
+	});
+
+	test('negotiates provider-model write validation without breaking older Core or Management clients', () => {
+		const client = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/apiKeyPolicy.ts'), 'utf8');
+		expect(client).toContain("const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage'] as const;");
+		expect(client).toContain('clientFeatures: [...API_KEY_POLICY_WRITE_FEATURES]');
 	});
 
 	test('validates the live catalog only when the saved profile changes', () => {

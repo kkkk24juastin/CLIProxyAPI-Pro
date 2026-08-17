@@ -10,6 +10,7 @@ export {
   resolveMappingTargetModels,
   resolveModelsForProviders,
   supportsAPIKeyPolicyUsageTarget,
+  updateProfileProviders,
   validateAPIKeyPolicyCapabilities,
   validateProfileInput,
 } from './apiKeyPolicy';

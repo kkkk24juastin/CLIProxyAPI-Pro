@@ -660,11 +660,16 @@ func TestProfileCatalogRejectsUnknownProviderAndModel(t *testing.T) {
 	if _, err := service.Create(context.Background(), identity, "", ProfileInput{Name: "bad-model", Providers: []string{"codex"}, Models: []string{"gpt-unknown"}}); err == nil || !strings.Contains(err.Error(), "unknown model") {
 		t.Fatalf("unknown model error = %v", err)
 	}
-	if _, err := service.Create(context.Background(), identity, "", ProfileInput{Name: "wrong-provider", Providers: []string{"home"}, Models: []string{"gpt-5"}}); err == nil || !strings.Contains(err.Error(), "not available from an allowed provider") {
+	linkedContext := WithProviderModelLinkageValidation(context.Background())
+	if _, err := service.Create(linkedContext, identity, "", ProfileInput{Name: "wrong-provider", Providers: []string{"home"}, Models: []string{"gpt-5"}}); err == nil || !strings.Contains(err.Error(), "not available from an allowed provider") {
 		t.Fatalf("provider/model mismatch error = %v", err)
 	}
-	if _, err := service.Create(context.Background(), identity, "", ProfileInput{Name: "wrong-mapping-provider", Providers: []string{"home"}, Mappings: []ModelMapping{{Source: "alias", Target: "gpt-5"}}}); err == nil || !strings.Contains(err.Error(), "not available from an allowed provider") {
+	if _, err := service.Create(linkedContext, identity, "", ProfileInput{Name: "wrong-mapping-provider", Providers: []string{"home"}, Mappings: []ModelMapping{{Source: "alias", Target: "gpt-5"}}}); err == nil || !strings.Contains(err.Error(), "not available from an allowed provider") {
 		t.Fatalf("provider/mapping mismatch error = %v", err)
+	}
+	legacyIdentity := testIdentity(t, "legacy-catalog-key")
+	if _, err := service.Create(context.Background(), legacyIdentity, "", ProfileInput{Name: "legacy-independent-fields", Providers: []string{"home"}, Models: []string{"gpt-5"}}); err != nil {
+		t.Fatalf("legacy client mismatch must remain accepted: %v", err)
 	}
 	if _, err := service.Create(context.Background(), identity, "", ProfileInput{Name: "valid", Providers: []string{"Codex"}, Models: []string{"gpt-5"}}); err != nil {
 		t.Fatal(err)

@@ -1,6 +1,7 @@
 package management
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -103,6 +104,7 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 			"orphaned_purge_guard",
 			"takeover_control",
 			"usage_key_target",
+			"provider_model_linkage",
 		},
 	})
 }
@@ -430,6 +432,16 @@ type createAPIKeyPolicyRequest struct {
 	KeyRef         string                    `json:"keyRef" binding:"required"`
 	DisplayName    string                    `json:"displayName"`
 	InitialProfile apikeypolicy.ProfileInput `json:"initialProfile" binding:"required"`
+	ClientFeatures []string                  `json:"clientFeatures"`
+}
+
+func apiKeyPolicyWriteContext(c *gin.Context, clientFeatures []string) context.Context {
+	for _, feature := range clientFeatures {
+		if feature == "provider_model_linkage" {
+			return apikeypolicy.WithProviderModelLinkageValidation(c.Request.Context())
+		}
+	}
+	return c.Request.Context()
 }
 
 func (h *Handler) CreateAPIKeyPolicy(c *gin.Context) {
@@ -457,7 +469,7 @@ func (h *Handler) CreateAPIKeyPolicy(c *gin.Context) {
 		writeAPIKeyPolicyHTTPError(c, http.StatusNotFound, "upstream_api_key_not_found", "upstream API key no longer exists")
 		return
 	}
-	policy, err := service.Create(c.Request.Context(), identity, request.DisplayName, request.InitialProfile)
+	policy, err := service.Create(apiKeyPolicyWriteContext(c, request.ClientFeatures), identity, request.DisplayName, request.InitialProfile)
 	if err != nil {
 		writeAPIKeyPolicyError(c, err)
 		return
@@ -517,17 +529,18 @@ func (h *Handler) UpdateAPIKeyPolicy(c *gin.Context) {
 		return
 	}
 	var request struct {
-		DisplayName   string                     `json:"displayName"`
-		Version       int64                      `json:"version" binding:"required"`
-		ProfileID     string                     `json:"profileId"`
-		Profile       *apikeypolicy.ProfileInput `json:"profile"`
-		CreateProfile bool                       `json:"createProfile"`
+		DisplayName    string                     `json:"displayName"`
+		Version        int64                      `json:"version" binding:"required"`
+		ProfileID      string                     `json:"profileId"`
+		Profile        *apikeypolicy.ProfileInput `json:"profile"`
+		CreateProfile  bool                       `json:"createProfile"`
+		ClientFeatures []string                   `json:"clientFeatures"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		writeAPIKeyPolicyHTTPError(c, 400, "invalid_api_key_profile", "invalid request body")
 		return
 	}
-	policy, err := service.UpdateWorkspace(c.Request.Context(), c.Param("policyId"), request.Version, apikeypolicy.WorkspaceUpdate{
+	policy, err := service.UpdateWorkspace(apiKeyPolicyWriteContext(c, request.ClientFeatures), c.Param("policyId"), request.Version, apikeypolicy.WorkspaceUpdate{
 		DisplayName: request.DisplayName, ProfileID: request.ProfileID,
 		Profile: request.Profile, CreateProfile: request.CreateProfile,
 	})
@@ -541,13 +554,14 @@ func (h *Handler) CreateAPIKeyProfile(c *gin.Context) {
 	}
 	var request struct {
 		apikeypolicy.ProfileInput
-		Version int64 `json:"version" binding:"required"`
+		Version        int64    `json:"version" binding:"required"`
+		ClientFeatures []string `json:"clientFeatures"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		writeAPIKeyPolicyHTTPError(c, 400, "invalid_api_key_profile", "invalid request body")
 		return
 	}
-	policy, err := service.CreateProfile(c.Request.Context(), c.Param("policyId"), request.Version, request.ProfileInput)
+	policy, err := service.CreateProfile(apiKeyPolicyWriteContext(c, request.ClientFeatures), c.Param("policyId"), request.Version, request.ProfileInput)
 	h.writeAPIKeyPolicyResult(c, policy, err, http.StatusCreated)
 }
 
@@ -558,13 +572,14 @@ func (h *Handler) ReplaceAPIKeyProfile(c *gin.Context) {
 	}
 	var request struct {
 		apikeypolicy.ProfileInput
-		Version int64 `json:"version" binding:"required"`
+		Version        int64    `json:"version" binding:"required"`
+		ClientFeatures []string `json:"clientFeatures"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		writeAPIKeyPolicyHTTPError(c, 400, "invalid_api_key_profile", "invalid request body")
 		return
 	}
-	policy, err := service.ReplaceProfile(c.Request.Context(), c.Param("policyId"), c.Param("profileId"), request.Version, request.ProfileInput)
+	policy, err := service.ReplaceProfile(apiKeyPolicyWriteContext(c, request.ClientFeatures), c.Param("policyId"), c.Param("profileId"), request.Version, request.ProfileInput)
 	h.writeAPIKeyPolicyResult(c, policy, err, http.StatusOK)
 }
 

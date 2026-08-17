@@ -33,6 +33,7 @@ import {
   resolveMappingTargetModels,
   resolveModelsForProviders,
   supportsAPIKeyPolicyUsageTarget,
+  updateProfileProviders,
   validateProfileInput,
   type APIKeyPolicy,
   type APIKeyPolicyBinding,
@@ -879,7 +880,7 @@ export function APIKeyPolicyPage() {
             </section>
 
             <div className={styles.policyGrid}>
-              <ChoiceList title={t('api_key_policy.allowed_providers')} values={snapshot.catalog.providers} selected={draft.profile.providers} onChange={(providers) => updateDraft((current) => { const providerModels = resolveModelsForProviders(providers, snapshot.catalog); const models = current.profile.models.filter((model) => providerModels.includes(model)); const mappingTargets = models.length === 0 ? providerModels : models; return { ...current, profile: { ...current.profile, providers, models, mappings: current.profile.mappings.filter((mapping) => mappingTargets.includes(mapping.target)) } }; })} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_providers')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_providers_when_empty')} unavailableLabel={t('api_key_policy.unavailable_selections')} removeUnavailableLabel={(value) => t('api_key_policy.remove_unavailable_selection', { value })} />
+              <ChoiceList title={t('api_key_policy.allowed_providers')} values={snapshot.catalog.providers} selected={draft.profile.providers} onChange={(providers) => updateDraft((current) => ({ ...current, profile: updateProfileProviders(current.profile, providers) }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_providers')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_providers_when_empty')} unavailableLabel={t('api_key_policy.unavailable_selections')} removeUnavailableLabel={(value) => t('api_key_policy.remove_unavailable_selection', { value })} />
               <ChoiceList title={t('api_key_policy.allowed_models')} values={availableModels} selected={draft.profile.models} onChange={(models) => updateDraft((current) => ({ ...current, profile: { ...current.profile, models, mappings: models.length === 0 ? current.profile.mappings : current.profile.mappings.filter((mapping) => models.includes(mapping.target)) } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_models')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_models_when_empty')} unavailableLabel={t('api_key_policy.unavailable_selections')} removeUnavailableLabel={(value) => t('api_key_policy.remove_unavailable_selection', { value })} />
             </div>
 
