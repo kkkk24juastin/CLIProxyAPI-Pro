@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { normalizeDataDomainInventory, normalizeDataManagementOverview } from '../src/pro/modules/dataManagement/dataManagement';
 
 describe('data-management destructive-operation fencing', () => {
   test('executes cleanup against the previewed domains, cutoff, and record counts', () => {
@@ -32,5 +33,58 @@ describe('data-management destructive-operation fencing', () => {
 
     expect(page).toContain("apiClient.post<Blob>('/data/backups/export', { passphrase }");
     expect(page).not.toContain("'X-CLIProxy-Backup-Passphrase': passphrase");
+  });
+
+  test('normalizes nullable arrays returned by older data-management cores', () => {
+    const domain = normalizeDataDomainInventory({
+      id: 'routing-runtime',
+      owner: 'scheduler',
+      schemaVersion: 1,
+      records: 1,
+      updatedAtMs: 1,
+      backupIncluded: true,
+      restoreMode: 'replace',
+      cleanupSupported: false,
+      sensitivity: 'internal',
+      secretClasses: null as unknown as string[],
+      available: true,
+    });
+    expect(domain.secretClasses).toEqual([]);
+
+    const overview = normalizeDataManagementOverview({
+      service: 'ready',
+      dbPath: '/tmp/usage.sqlite',
+      dbSizeBytes: 1,
+      walSizeBytes: 0,
+      events: 0,
+      deadLetters: 0,
+      latestId: 0,
+      latestTimestampMs: 0,
+      generation: 1,
+      resetAtMs: 0,
+      webdavEnabled: false,
+      webdavConfigured: false,
+      domains: null as unknown as [],
+      secretClasses: null as unknown as string[],
+      updatedAtMs: 1,
+    });
+    expect(overview.domains).toEqual([]);
+    expect(overview.secretClasses).toEqual([]);
+  });
+
+  test('keeps header action button content aligned', () => {
+    const styles = readFileSync(resolve(import.meta.dir, '../src/pro/modules/dataManagement/DataManagementPage.module.scss'), 'utf8');
+
+    expect(styles).toContain('.headerActions :global(.btn) > span');
+    expect(styles).toContain('gap: 6px; white-space: nowrap;');
+  });
+
+  test('provides enabled and disabled common labels in every locale', () => {
+    const locales = JSON.parse(readFileSync(resolve(import.meta.dir, '../src/pro/locales.generated.json'), 'utf8')) as Record<string, { common?: Record<string, string> }>;
+
+    for (const locale of ['en', 'ru', 'zh-CN', 'zh-TW']) {
+      expect(locales[locale]?.common?.enabled).toBeTruthy();
+      expect(locales[locale]?.common?.disabled).toBeTruthy();
+    }
   });
 });

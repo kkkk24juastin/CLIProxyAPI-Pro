@@ -127,15 +127,50 @@ export interface DataStatisticsResetResult {
   resetAtMs: number;
 }
 
+const normalizeStringArray = (value: unknown): string[] => (
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+);
+
+const normalizeOperation = (operation: DataOperation): DataOperation => ({
+  ...operation,
+  secretClasses: normalizeStringArray(operation.secretClasses),
+  metadata: operation.metadata && typeof operation.metadata === 'object' ? operation.metadata : {},
+});
+
+export const normalizeDataDomainInventory = (domain: DataDomainInventory): DataDomainInventory => ({
+  ...domain,
+  secretClasses: normalizeStringArray(domain.secretClasses),
+});
+
+export const normalizeDataManagementOverview = (overview: DataManagementOverview): DataManagementOverview => ({
+  ...overview,
+  domains: Array.isArray(overview.domains) ? overview.domains.map(normalizeDataDomainInventory) : [],
+  secretClasses: normalizeStringArray(overview.secretClasses),
+  lastBackup: overview.lastBackup ? normalizeOperation(overview.lastBackup) : undefined,
+});
+
+const normalizeRestorePreview = (preview: DataRestorePreview): DataRestorePreview => ({
+  ...preview,
+  domains: Array.isArray(preview.domains)
+    ? preview.domains.map((domain) => ({ ...domain, secretClasses: normalizeStringArray(domain.secretClasses) }))
+    : [],
+  secretClasses: normalizeStringArray(preview.secretClasses),
+});
+
 export const dataManagementApi = {
-  overview(): Promise<DataManagementOverview> {
-    return apiClient.get<DataManagementOverview>('/data/overview');
+  async overview(): Promise<DataManagementOverview> {
+    return normalizeDataManagementOverview(await apiClient.get<DataManagementOverview>('/data/overview'));
   },
-  backups(): Promise<DataBackupHistory> {
-    return apiClient.get<DataBackupHistory>('/data/backups');
+  async backups(): Promise<DataBackupHistory> {
+    const history = await apiClient.get<DataBackupHistory>('/data/backups');
+    return {
+      backups: Array.isArray(history.backups) ? history.backups : [],
+      operations: Array.isArray(history.operations) ? history.operations.map(normalizeOperation) : [],
+    };
   },
-  operations(): Promise<{ operations: DataOperation[] }> {
-    return apiClient.get<{ operations: DataOperation[] }>('/data/operations');
+  async operations(): Promise<{ operations: DataOperation[] }> {
+    const result = await apiClient.get<{ operations: DataOperation[] }>('/data/operations');
+    return { operations: Array.isArray(result.operations) ? result.operations.map(normalizeOperation) : [] };
   },
   settings(): Promise<{ settings: DataManagementSettings }> {
     return apiClient.get<{ settings: DataManagementSettings }>('/data/settings');
@@ -153,14 +188,15 @@ export const dataManagementApi = {
   testWebDAV(): Promise<WebDAVConnectionTestResult> {
     return apiClient.post<WebDAVConnectionTestResult>('/data/backups/test', {});
   },
-  previewRestore(data: ArrayBuffer, passphrase: string, allowLegacy: boolean): Promise<DataRestorePreview> {
-    return apiClient.post<DataRestorePreview>('/data/backups/preview', data, {
+  async previewRestore(data: ArrayBuffer, passphrase: string, allowLegacy: boolean): Promise<DataRestorePreview> {
+    const preview = await apiClient.post<DataRestorePreview>('/data/backups/preview', data, {
       headers: {
         'Content-Type': 'application/octet-stream',
         ...(passphrase ? { 'X-CLIProxy-Backup-Passphrase': passphrase } : {}),
       },
       params: allowLegacy ? { allow_legacy: 1 } : undefined,
     });
+    return normalizeRestorePreview(preview);
   },
   restore(data: ArrayBuffer, passphrase: string, allowLegacy: boolean): Promise<Record<string, unknown>> {
     return apiClient.post<Record<string, unknown>>('/data/backups/restore', data, {

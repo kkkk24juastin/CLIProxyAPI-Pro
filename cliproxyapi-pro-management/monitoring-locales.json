@@ -15,6 +15,10 @@
       "start_takeover": "Start takeover",
       "stop_takeover": "Stop takeover"
     },
+    "common": {
+      "enabled": "Enabled",
+      "disabled": "Disabled"
+    },
     "proxy_pool": {
       "title": "Proxy Management",
       "subtitle": "Aggregate multiple upstream proxies behind one local SOCKS5 endpoint with rotation, health isolation, and failover.",
@@ -1545,6 +1549,10 @@
       "start_takeover": "Включить перехват",
       "stop_takeover": "Остановить перехват"
     },
+    "common": {
+      "enabled": "Включено",
+      "disabled": "Отключено"
+    },
     "proxy_pool": {
       "start_takeover": "Включить перехват",
       "stop_takeover": "Остановить перехват",
@@ -2741,6 +2749,10 @@
       "inactive": "尚未接管",
       "start_takeover": "开始接管",
       "stop_takeover": "停止接管"
+    },
+    "common": {
+      "enabled": "已启用",
+      "disabled": "未启用"
     },
     "data_management": {
       "title": "数据管理",
@@ -4412,6 +4424,10 @@
       "inactive": "尚未接管",
       "start_takeover": "開始接管",
       "stop_takeover": "停止接管"
+    },
+    "common": {
+      "enabled": "已啟用",
+      "disabled": "未啟用"
     },
     "proxy_pool": {
       "title": "代理管理",

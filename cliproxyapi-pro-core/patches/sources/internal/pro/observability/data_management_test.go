@@ -136,6 +136,27 @@ func TestDataDomainContributorRegistrationKeepsNewestOwner(t *testing.T) {
 	}
 }
 
+func TestDataDomainInventorySerializesEmptySecretClassesAsArray(t *testing.T) {
+	domains, err := (&Store{}).listDataDomains(context.Background(), map[string]DataDomainContributor{
+		"internal-domain": DataDomainContributorFunc(func(context.Context, *Store) DataDomainInventory {
+			return DataDomainInventory{Owner: "test", Available: true}
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(domains) != 1 || domains[0].SecretClasses == nil {
+		t.Fatalf("domains = %+v, want a non-nil empty secretClasses array", domains)
+	}
+	encoded, err := json.Marshal(domains[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"secretClasses":[]`)) {
+		t.Fatalf("domain JSON = %s, want empty secretClasses array", encoded)
+	}
+}
+
 func TestDataDomainContributionCountsClaimedBackupRecord(t *testing.T) {
 	const (
 		id         = "test-declarative-backup-domain"

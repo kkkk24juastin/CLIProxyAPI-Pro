@@ -39,7 +39,8 @@
 .headerTitleLine { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .header h1 { margin: 0; color: var(--text-primary); font-size: clamp(23px, 2vw, 30px); line-height: 1.15; }
 .header p { margin: 7px 0 0; max-width: 720px; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
-.headerActions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.headerActions { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 auto; gap: 8px; flex-wrap: wrap; }
+.headerActions :global(.btn) > span { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
 
 .serviceState, .goodBadge, .neutralBadge, .sensitivityBadge {
   display: inline-flex;

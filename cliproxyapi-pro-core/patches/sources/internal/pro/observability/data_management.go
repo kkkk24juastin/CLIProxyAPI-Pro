@@ -594,6 +594,9 @@ func (s *Store) listDataDomains(ctx context.Context, contributors map[string]Dat
 			domain.SchemaVersion = 1
 		}
 		domain.CleanupSupported = contributors[id].SupportsCleanup()
+		if domain.SecretClasses == nil {
+			domain.SecretClasses = []string{}
+		}
 		domains = append(domains, domain)
 	}
 	return domains, nil
