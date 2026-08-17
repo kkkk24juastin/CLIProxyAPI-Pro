@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -222,6 +223,8 @@ type MonitoringSettings struct {
 	ModelPriceSync ModelPriceSyncConfig         `json:"modelPriceSync"`
 }
 
+var ErrMonitoringSettingsConflict = errors.New("monitoring settings changed since they were loaded")
+
 type ModelPriceSyncConfig struct {
 	Enabled         bool `json:"enabled"`
 	IntervalMinutes int  `json:"intervalMinutes"`
@@ -364,6 +367,7 @@ type Store struct {
 	priceCatalog          map[string]modelsDevProvider
 	priceCatalogETag      string
 	priceCatalogExpiresAt time.Time
+	monitoringSettingsMu  sync.Mutex
 }
 
 func transactionContext(ctx context.Context) *storeTransactionContext {
@@ -662,6 +666,22 @@ func (s *Store) init() error {
 			settings_json text not null,
 			updated_at_ms integer not null
 		)`,
+		`create table if not exists data_operations (
+			id integer primary key autoincrement,
+			kind text not null,
+			status text not null,
+			target text not null default '',
+			file_name text not null default '',
+			started_at_ms integer not null,
+			finished_at_ms integer not null default 0,
+			size_bytes integer not null default 0,
+			affected_records integer not null default 0,
+			secret_classes_json text not null default '[]',
+			message text not null default '',
+			metadata_json text not null default '{}'
+		)`,
+		`create index if not exists idx_data_operations_started_at on data_operations(started_at_ms desc, id desc)`,
+		`create index if not exists idx_data_operations_kind_status on data_operations(kind, status, started_at_ms desc)`,
 	}
 	if err := prostorage.ApplySchema(context.Background(), s.db, prostorage.Schema{Create: statements}); err != nil {
 		return err
@@ -2164,6 +2184,12 @@ func getMonitoringSettingsFrom(ctx context.Context, queryer sqlQueryer) (Monitor
 }
 
 func (s *Store) SetMonitoringSettings(ctx context.Context, settings MonitoringSettings) error {
+	s.monitoringSettingsMu.Lock()
+	defer s.monitoringSettingsMu.Unlock()
+	return s.setMonitoringSettings(ctx, settings)
+}
+
+func (s *Store) setMonitoringSettings(ctx context.Context, settings MonitoringSettings) error {
 	settings = normalizeMonitoringSettings(settings)
 	raw, err := json.Marshal(settings)
 	if err != nil {
@@ -2174,12 +2200,65 @@ func (s *Store) SetMonitoringSettings(ctx context.Context, settings MonitoringSe
 	return err
 }
 
+func (s *Store) UpdateMonitoringSettings(ctx context.Context, patch MonitoringSettings, expected *MonitoringSettings, sections []string) (MonitoringSettings, error) {
+	s.monitoringSettingsMu.Lock()
+	defer s.monitoringSettingsMu.Unlock()
+	current, err := getMonitoringSettingsFrom(ctx, s.executor(ctx))
+	if err != nil {
+		return MonitoringSettings{}, err
+	}
+	patch = normalizeMonitoringSettings(patch)
+	if len(sections) == 0 {
+		if expected != nil && normalizeMonitoringSettings(*expected) != current {
+			return MonitoringSettings{}, ErrMonitoringSettingsConflict
+		}
+		if err := s.setMonitoringSettings(ctx, patch); err != nil {
+			return MonitoringSettings{}, err
+		}
+		return patch, nil
+	}
+	seen := make(map[string]struct{}, len(sections))
+	for _, section := range sections {
+		section = strings.TrimSpace(section)
+		if _, exists := seen[section]; exists {
+			continue
+		}
+		seen[section] = struct{}{}
+		switch section {
+		case "retention":
+			if expected != nil && current.RetentionDays != normalizeMonitoringSettings(*expected).RetentionDays {
+				return MonitoringSettings{}, ErrMonitoringSettingsConflict
+			}
+			current.RetentionDays = patch.RetentionDays
+		case "webdav":
+			if expected != nil && current.WebDAV != normalizeMonitoringSettings(*expected).WebDAV {
+				return MonitoringSettings{}, ErrMonitoringSettingsConflict
+			}
+			current.WebDAV = patch.WebDAV
+		case "modelPriceSync":
+			if expected != nil && current.ModelPriceSync != normalizeMonitoringSettings(*expected).ModelPriceSync {
+				return MonitoringSettings{}, ErrMonitoringSettingsConflict
+			}
+			current.ModelPriceSync = patch.ModelPriceSync
+		default:
+			return MonitoringSettings{}, fmt.Errorf("unknown monitoring settings section %q", section)
+		}
+	}
+	current = normalizeMonitoringSettings(current)
+	if err := s.setMonitoringSettings(ctx, current); err != nil {
+		return MonitoringSettings{}, err
+	}
+	return current, nil
+}
+
 func (s *Store) DeleteEventsBefore(ctx context.Context, beforeMs int64) (int64, error) {
 	if beforeMs <= 0 {
 		return 0, nil
 	}
-	s.usageWriteMu.Lock()
-	defer s.usageWriteMu.Unlock()
+	if transactionContext(ctx) == nil {
+		s.usageWriteMu.Lock()
+		defer s.usageWriteMu.Unlock()
+	}
 	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -2234,8 +2313,10 @@ func (s *Store) DeleteEventsBefore(ctx context.Context, beforeMs int64) (int64, 
 		if err := tx.Commit(); err != nil {
 			return 0, err
 		}
-		s.invalidateUsageSummaryCache()
-		s.notifyEventsChanged()
+		runAfterCommit(ctx, func() {
+			s.invalidateUsageSummaryCache()
+			s.notifyEventsChanged()
+		})
 	}
 	return affected, nil
 }
@@ -2629,7 +2710,15 @@ func (s *Store) ImportRoutingCursorStates(ctx context.Context, items []RoutingCu
 }
 
 func (s *Store) ImportRuntimeState(ctx context.Context, cursors []RoutingCursorState, stats []AuthRuntimeStats) (int, int, error) {
-	if len(cursors) == 0 && len(stats) == 0 {
+	return s.importRuntimeState(ctx, cursors, stats, false, false)
+}
+
+func (s *Store) ReplaceRuntimeState(ctx context.Context, cursors []RoutingCursorState, stats []AuthRuntimeStats, replaceCursors, replaceStats bool) (int, int, error) {
+	return s.importRuntimeState(ctx, cursors, stats, replaceCursors, replaceStats)
+}
+
+func (s *Store) importRuntimeState(ctx context.Context, cursors []RoutingCursorState, stats []AuthRuntimeStats, replaceCursors, replaceStats bool) (int, int, error) {
+	if len(cursors) == 0 && len(stats) == 0 && !replaceCursors && !replaceStats {
 		return 0, 0, nil
 	}
 	tx, err := s.beginTx(ctx, nil)
@@ -2637,6 +2726,11 @@ func (s *Store) ImportRuntimeState(ctx context.Context, cursors []RoutingCursorS
 		return 0, 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if replaceCursors {
+		if _, err := tx.ExecContext(ctx, `delete from routing_cursor_state`); err != nil {
+			return 0, 0, err
+		}
+	}
 	importedCursors := 0
 	for _, item := range cursors {
 		item.CursorKey = strings.TrimSpace(item.CursorKey)
@@ -2657,8 +2751,13 @@ func (s *Store) ImportRuntimeState(ctx context.Context, cursors []RoutingCursorS
 			importedCursors++
 		}
 	}
-	if importedCursors > 0 {
+	if importedCursors > 0 || replaceCursors {
 		if err := bumpRuntimeGenerationTx(ctx, tx, "routing_cursor_state", time.Now().UnixMilli()); err != nil {
+			return 0, 0, err
+		}
+	}
+	if replaceStats {
+		if _, err := tx.ExecContext(ctx, `delete from auth_runtime_stats`); err != nil {
 			return 0, 0, err
 		}
 	}
@@ -2672,7 +2771,7 @@ func (s *Store) ImportRuntimeState(ctx context.Context, cursors []RoutingCursorS
 			importedStats++
 		}
 	}
-	if importedStats > 0 {
+	if importedStats > 0 || replaceStats {
 		if err := bumpRuntimeGenerationTx(ctx, tx, "auth_runtime_stats", time.Now().UnixMilli()); err != nil {
 			return 0, 0, err
 		}

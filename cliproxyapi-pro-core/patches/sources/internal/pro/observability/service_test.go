@@ -75,6 +75,29 @@ func TestWebDAVBackupHonorsHTTPClientTimeout(t *testing.T) {
 	}
 }
 
+func TestLastWebDAVBackupIsRefreshedAndScopedToTarget(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	current := MonitoringWebDAVBackupConfig{URL: "https://webdav.example/current"}
+	other := MonitoringWebDAVBackupConfig{URL: "https://webdav.example/other"}
+	finishedAt := time.Now().Add(-time.Minute).UnixMilli()
+	if _, err := store.StartDataOperation(ctx, DataOperation{
+		Kind: "backup", Status: dataOperationSuccess, FinishedAtMS: finishedAt,
+		Metadata: map[string]any{"trigger": "manual", "targetKey": webDAVTargetKey(current)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{store: store}
+	got, err := service.lastWebDAVBackupForTarget(ctx, current)
+	if err != nil || got.UnixMilli() != finishedAt {
+		t.Fatalf("current target last backup=%v err=%v", got, err)
+	}
+	got, err = service.lastWebDAVBackupForTarget(ctx, other)
+	if err != nil || !got.IsZero() {
+		t.Fatalf("other target inherited last backup=%v err=%v", got, err)
+	}
+}
+
 func TestCollectorRetriesPoppedBatchAfterSQLiteFailure(t *testing.T) {
 	store := openTestStore(t)
 	ctx, cancel := context.WithCancel(context.Background())

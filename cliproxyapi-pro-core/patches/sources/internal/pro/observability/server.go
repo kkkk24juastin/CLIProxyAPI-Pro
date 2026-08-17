@@ -26,6 +26,14 @@ import (
 const accountInspectionScheduleExportRecordType = "account_inspection_schedule"
 const accountInspectionSnapshotExportRecordType = "account_inspection_snapshot"
 const backupManifestRecordType = "backup_manifest"
+
+type stagedDataDomainBackupRecord struct {
+	domainID   string
+	recordType string
+	raw        []byte
+	importer   DataDomainBackupImporter
+}
+
 const usageHistoryStartCursorValue = int64(1<<63 - 1)
 
 type usageStreamEvent = internalusage.Payload
@@ -233,7 +241,7 @@ func (s *Server) handleWebDAVBackups(c *gin.Context) {
 
 func (s *Server) fetchWebDAVBackup(ctx context.Context, fileName string) ([]byte, error) {
 	fileName = strings.TrimSpace(fileName)
-	if fileName == "" || path.Base(fileName) != fileName || !strings.HasPrefix(fileName, "usage-export-") || !strings.HasSuffix(fileName, ".jsonl") {
+	if fileName == "" || path.Base(fileName) != fileName || !isKnownWebDAVBackupFileName(fileName) {
 		return nil, fmt.Errorf("invalid WebDAV backup file name")
 	}
 	settings, err := s.store.GetMonitoringSettings(ctx)
@@ -322,38 +330,12 @@ func (s *Server) handleUsageImportPreview(c *gin.Context) {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "backup exceeds 64 MiB preview limit"})
 		return
 	}
-	payload, hasPolicies, err := probackup.ExtractAPIKeyPoliciesRecord(data, allowLegacyUsageImport(c))
+	preview, err := s.previewBackupData(c.Request.Context(), data, allowLegacyUsageImport(c), false, nil)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if !hasPolicies {
-		current, ok, err := probackup.Default.ExportAPIKeyPolicies()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		preview := probackup.PolicyBackupPreview{}
-		if ok {
-			currentPreview, err := probackup.Default.PreviewAPIKeyPolicies(c.Request.Context(), current)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			preview.PreservePolicies = currentPreview.TargetPolicies
-			preview.PreserveProfiles = currentPreview.TargetProfiles
-			preview.CurrentTakeoverEnabled = currentPreview.CurrentTakeoverEnabled
-			preview.TargetTakeoverEnabled = currentPreview.CurrentTakeoverEnabled
-		}
-		c.JSON(http.StatusOK, gin.H{"policyBackup": preview, "legacyBackup": true, "restoresAPIKeys": false})
-		return
-	}
-	preview, err := probackup.Default.PreviewAPIKeyPolicies(c.Request.Context(), payload)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"policyBackup": preview, "legacyBackup": false, "restoresAPIKeys": false})
+	c.JSON(http.StatusOK, preview)
 }
 
 func withBackupWriteBarrier(handler gin.HandlerFunc) gin.HandlerFunc {
@@ -950,6 +932,8 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 	accountInspectionSnapshotRecords := 0
 	var monitoringSettings *MonitoringSettings
 	monitoringSettingsRecords := 0
+	contributors := allDataDomainContributors()
+	var pluginBackupRecords []stagedDataDomainBackupRecord
 	failed := 0
 	var manifest *backupManifestRecord
 	hashedRecords := 0
@@ -1080,7 +1064,14 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			continue
 		}
 		if recordType != "" {
-			failed++
+			domainID, importer, importerErr := backupRecordImporterFor(c.Request.Context(), s.store, contributors, recordType, raw)
+			if importerErr != nil {
+				failed++
+				continue
+			}
+			pluginBackupRecords = append(pluginBackupRecords, stagedDataDomainBackupRecord{
+				domainID: domainID, recordType: recordType, raw: append([]byte(nil), raw...), importer: importer,
+			})
 			continue
 		}
 		if _, err := internalusage.NormalizeRaw(raw); err != nil {
@@ -1193,14 +1184,19 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			if errPrevious != nil {
 				return errPrevious
 			}
-			previousProSettings = proSettingRollbackSnapshot(previousProSettings, proSettings)
+			proSettingsToApply := proSettings
+			proSettingsToRollback := proSettingRollbackSnapshot(previousProSettings, proSettings)
+			if proSettingsRecords > 0 {
+				proSettingsToApply = proSettingReplacementTransition(previousProSettings, proSettings)
+				proSettingsToRollback = proSettingReplacementTransition(proSettings, previousProSettings)
+			}
 			configurationApplied := false
 			rollbackConfiguration := func() error {
 				if !configurationApplied {
 					return nil
 				}
 				configurationApplied = false
-				return ApplyImportedProSettings(context.WithoutCancel(ctx), previousProSettings)
+				return ApplyImportedProSettings(context.WithoutCancel(ctx), proSettingsToRollback)
 			}
 			errImport := s.store.RunImportTransaction(ctx, func(ctx context.Context) error {
 				if apiKeyPoliciesRecords == 1 {
@@ -1266,7 +1262,9 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 				if err != nil {
 					return err
 				}
-				importedRoutingCursors, importedAuthRuntimeStats, err = s.store.ImportRuntimeState(ctx, routingCursors, authRuntimeStats)
+				importedRoutingCursors, importedAuthRuntimeStats, err = s.store.ReplaceRuntimeState(
+					ctx, routingCursors, authRuntimeStats, routingCursorRecords > 0, authRuntimeStatsRecords > 0,
+				)
 				if err != nil {
 					return err
 				}
@@ -1275,12 +1273,21 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 						return err
 					}
 				}
-				importedProSettings, err = s.store.ImportProSettings(ctx, proSettings)
+				if proSettingsRecords > 0 {
+					importedProSettings, err = s.store.ReplaceProSettings(ctx, proSettings)
+				} else {
+					importedProSettings, err = s.store.ImportProSettings(ctx, proSettings)
+				}
 				if err != nil {
 					return err
 				}
-				configurationApplied = true
-				if err := ApplyImportedProSettings(ctx, proSettings); err != nil {
+				for _, record := range pluginBackupRecords {
+					if err := record.importer.ImportBackupRecord(ctx, s.store, record.recordType, record.raw); err != nil {
+						return fmt.Errorf("restore data domain %q: %w", record.domainID, err)
+					}
+				}
+				configurationApplied = len(proSettingsToApply) > 0
+				if err := ApplyImportedProSettings(ctx, proSettingsToApply); err != nil {
 					if rollbackErr := rollbackConfiguration(); rollbackErr != nil {
 						return fmt.Errorf("apply imported Pro settings: %w (rollback failed: %v)", err, rollbackErr)
 					}
@@ -1289,7 +1296,7 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 				// All fallible runtime and inspection work happens before the one
 				// SQLite commit. A failure rolls the database transaction back and
 				// the coordinator restores the captured external snapshots.
-				if probackup.Default.HasRuntimeStateImporter() && (importedRoutingCursors > 0 || importedAuthRuntimeStats > 0) {
+				if probackup.Default.HasRuntimeStateImporter() && (routingCursorRecords > 0 || authRuntimeStatsRecords > 0) {
 					currentRoutingCursors, err := s.store.ListRoutingCursorStates(ctx)
 					if err != nil {
 						return err
@@ -1380,6 +1387,7 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		"accountInspectionSnapshotRecords": accountInspectionSnapshotRecords,
 		"monitoringSettings":               monitoringSettings != nil,
 		"monitoringSettingsRecords":        monitoringSettingsRecords,
+		"pluginDataRecords":                len(pluginBackupRecords),
 		"legacyBackup":                     manifest == nil,
 	})
 }
@@ -1442,6 +1450,24 @@ func proSettingRollbackSnapshot(previous, imported []ProSetting) []ProSetting {
 		})
 	}
 	return rollback
+}
+
+func proSettingReplacementTransition(previous, target []ProSetting) []ProSetting {
+	target = normalizeOAuthPolicySettings(target)
+	targetNamespaces := make(map[string]struct{}, len(target))
+	transition := append([]ProSetting(nil), target...)
+	for _, item := range target {
+		targetNamespaces[item.Namespace] = struct{}{}
+	}
+	for _, item := range normalizeOAuthPolicySettings(previous) {
+		if _, exists := targetNamespaces[item.Namespace]; exists {
+			continue
+		}
+		transition = append(transition, ProSetting{
+			Namespace: item.Namespace, SchemaVersion: item.SchemaVersion, Settings: json.RawMessage(`{}`),
+		})
+	}
+	return transition
 }
 
 func readImportRecordType(raw []byte) (string, error) {
@@ -1845,24 +1871,38 @@ func (s *Server) handleMonitoringSettingsGet(c *gin.Context) {
 
 func (s *Server) handleMonitoringSettingsPut(c *gin.Context) {
 	var payload struct {
-		Settings MonitoringSettings `json:"settings"`
+		Settings         MonitoringSettings  `json:"settings"`
+		ExpectedSettings *MonitoringSettings `json:"expectedSettings,omitempty"`
+		Sections         []string            `json:"sections,omitempty"`
 	}
 	if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	settings := normalizeMonitoringSettings(payload.Settings)
-	if settings.WebDAV.Enabled && strings.TrimSpace(settings.WebDAV.URL) == "" {
+	updatesWebDAV := len(payload.Sections) == 0
+	for _, section := range payload.Sections {
+		if strings.TrimSpace(section) == "webdav" {
+			updatesWebDAV = true
+			break
+		}
+	}
+	if updatesWebDAV && settings.WebDAV.Enabled && strings.TrimSpace(settings.WebDAV.URL) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "webdav url is required"})
 		return
 	}
-	if err := s.store.SetMonitoringSettings(c.Request.Context(), settings); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	updated, err := s.store.UpdateMonitoringSettings(c.Request.Context(), settings, payload.ExpectedSettings, payload.Sections)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrMonitoringSettingsConflict) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	if _, err := s.store.ApplyRetention(c.Request.Context(), time.Now()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"settings": settings})
+	c.JSON(http.StatusOK, gin.H{"settings": updated})
 }

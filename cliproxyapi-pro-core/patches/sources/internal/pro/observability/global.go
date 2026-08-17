@@ -16,6 +16,9 @@ var proSettingConsumerGeneration uint64
 var globalStateMu sync.RWMutex
 var proSettingApplyMu sync.Mutex
 var globalStateWriter *prostate.Writer
+var legacyInspectionDomainMu sync.Mutex
+var legacyInspectionScheduleDomainUnregister func()
+var legacyInspectionSnapshotDomainUnregister func()
 
 func SetDefaultService(service *Service) {
 	globalStateMu.Lock()
@@ -62,18 +65,84 @@ func flushRuntimeStateWrites(ctx context.Context, store *Store) error {
 
 func SetAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
 	probackup.Default.SetInspectionSchedule(exporter, importer)
+	legacyInspectionDomainMu.Lock()
+	defer legacyInspectionDomainMu.Unlock()
+	if legacyInspectionScheduleDomainUnregister != nil {
+		legacyInspectionScheduleDomainUnregister()
+		legacyInspectionScheduleDomainUnregister = nil
+	}
+	if exporter != nil {
+		legacyInspectionScheduleDomainUnregister = RegisterDataDomainContributor("account-inspection-schedule", accountInspectionScheduleDataDomain(exporter))
+	}
 }
 
 func RegisterAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) func() {
-	return probackup.Default.RegisterInspectionSchedule(exporter, importer)
+	backupUnregister := probackup.Default.RegisterInspectionSchedule(exporter, importer)
+	domainUnregister := RegisterDataDomainContributor("account-inspection-schedule", accountInspectionScheduleDataDomain(exporter))
+	return func() {
+		domainUnregister()
+		backupUnregister()
+	}
+}
+
+func accountInspectionScheduleDataDomain(exporter func() ([]byte, bool, error)) DataDomainContribution {
+	return DataDomainContribution{
+		InventoryFunc: func(_ context.Context, _ *Store) DataDomainInventory {
+			domain := DataDomainInventory{Owner: "inspection", SchemaVersion: 1, BackupIncluded: true, RestoreMode: "replace", Sensitivity: "internal", Available: true}
+			if exporter == nil {
+				domain.Available, domain.Error = false, "schedule contributor is unavailable"
+				return domain
+			}
+			if raw, ok, err := exporter(); err != nil {
+				domain.Available, domain.Error = false, err.Error()
+			} else if ok && len(raw) > 0 {
+				domain.Records = 1
+			}
+			return domain
+		},
+		BackupRecordTypes: []string{accountInspectionScheduleExportRecordType},
+	}
 }
 
 func SetAccountInspectionSnapshotHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
 	probackup.Default.SetInspectionSnapshot(exporter, importer)
+	legacyInspectionDomainMu.Lock()
+	defer legacyInspectionDomainMu.Unlock()
+	if legacyInspectionSnapshotDomainUnregister != nil {
+		legacyInspectionSnapshotDomainUnregister()
+		legacyInspectionSnapshotDomainUnregister = nil
+	}
+	if exporter != nil {
+		legacyInspectionSnapshotDomainUnregister = RegisterDataDomainContributor("account-inspection-snapshot", accountInspectionSnapshotDataDomain(exporter))
+	}
 }
 
 func RegisterAccountInspectionSnapshotHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) func() {
-	return probackup.Default.RegisterInspectionSnapshot(exporter, importer)
+	backupUnregister := probackup.Default.RegisterInspectionSnapshot(exporter, importer)
+	domainUnregister := RegisterDataDomainContributor("account-inspection-snapshot", accountInspectionSnapshotDataDomain(exporter))
+	return func() {
+		domainUnregister()
+		backupUnregister()
+	}
+}
+
+func accountInspectionSnapshotDataDomain(exporter func() ([]byte, bool, error)) DataDomainContribution {
+	return DataDomainContribution{
+		InventoryFunc: func(_ context.Context, _ *Store) DataDomainInventory {
+			domain := DataDomainInventory{Owner: "inspection", SchemaVersion: 1, BackupIncluded: true, RestoreMode: "replace", Sensitivity: "sensitive", SecretClasses: []string{"account_metadata"}, Available: true}
+			if exporter == nil {
+				domain.Available, domain.Error = false, "snapshot contributor is unavailable"
+				return domain
+			}
+			if raw, ok, err := exporter(); err != nil {
+				domain.Available, domain.Error = false, err.Error()
+			} else if ok && len(raw) > 0 && string(raw) != "null" {
+				domain.Records = 1
+			}
+			return domain
+		},
+		BackupRecordTypes: []string{accountInspectionSnapshotExportRecordType},
+	}
 }
 
 func SetAuthRuntimeStateImportHandler(importer func([]RoutingCursorState, []AuthRuntimeStats) error) {

@@ -1,8 +1,8 @@
 package observability
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -230,17 +230,16 @@ func nextMonitoringRetentionRun(now time.Time) time.Time {
 }
 
 func (s *Service) runWebDAVBackups(ctx context.Context) {
-	var lastBackup time.Time
 	for {
 		if err := s.module.Run(ctx, func() error {
 			settings, err := s.store.GetMonitoringSettings(ctx)
 			if err != nil {
 				log.WithError(err).Warn("failed to load monitoring settings")
+			} else if lastBackup, historyErr := s.lastWebDAVBackupForTarget(ctx, settings.WebDAV); historyErr != nil {
+				log.WithError(historyErr).Warn("failed to load persisted WebDAV backup history")
 			} else if shouldRunWebDAVBackup(settings, lastBackup) {
 				if err := s.backupToWebDAV(ctx, settings.WebDAV); err != nil {
 					log.WithError(err).Warn("failed to backup embedded usage to WebDAV")
-				} else {
-					lastBackup = time.Now()
 				}
 			}
 			return nil
@@ -256,6 +255,27 @@ func (s *Service) runWebDAVBackups(ctx context.Context) {
 	}
 }
 
+func webDAVTargetKey(cfg MonitoringWebDAVBackupConfig) string {
+	normalizedURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
+	if normalizedURL == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(normalizedURL))
+	return fmt.Sprintf("%x", digest[:])
+}
+
+func (s *Service) lastWebDAVBackupForTarget(ctx context.Context, cfg MonitoringWebDAVBackupConfig) (time.Time, error) {
+	operation, err := s.store.LastSuccessfulDataOperation(ctx, "backup")
+	if err != nil || operation == nil || operation.FinishedAtMS <= 0 {
+		return time.Time{}, err
+	}
+	targetKey, _ := operation.Metadata["targetKey"].(string)
+	if targetKey == "" || targetKey != webDAVTargetKey(cfg) {
+		return time.Time{}, nil
+	}
+	return time.UnixMilli(operation.FinishedAtMS), nil
+}
+
 func shouldRunWebDAVBackup(settings MonitoringSettings, lastBackup time.Time) bool {
 	webdav := normalizeMonitoringSettings(settings).WebDAV
 	if !webdav.Enabled || webdav.URL == "" {
@@ -268,42 +288,18 @@ func shouldRunWebDAVBackup(settings MonitoringSettings, lastBackup time.Time) bo
 }
 
 func (s *Service) backupToWebDAV(ctx context.Context, cfg MonitoringWebDAVBackupConfig) error {
-	ctx, cancel := webDAVContext(ctx)
-	defer cancel()
 	cfg = normalizeMonitoringSettings(MonitoringSettings{WebDAV: cfg}).WebDAV
 	if !cfg.Enabled || cfg.URL == "" {
 		return nil
 	}
-	data, err := s.server.exportJSONL(ctx)
-	if err != nil {
-		return err
+	if s.server == nil {
+		return fmt.Errorf("data management server is not available")
 	}
-	baseURL := strings.TrimRight(cfg.URL, "/")
-	url := baseURL + fmt.Sprintf("/usage-export-%s.jsonl", time.Now().UTC().Format("20060102_150405"))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
-	if err != nil {
-		return err
+	backup, err := s.server.backupToWebDAVWithConfigTrackedClient(ctx, cfg, "scheduled", s.webDAVHTTPClient())
+	if err == nil {
+		log.Infof("Pro data backup uploaded to WebDAV: %s", backup.FileName)
 	}
-	req.Header.Set("Content-Type", "application/x-ndjson")
-	setWebDAVAuth(req, cfg)
-	client := s.webDAVHTTPClient()
-	response, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("webdav upload failed with status %d", response.StatusCode)
-	}
-	log.Infof("embedded usage backup uploaded to WebDAV: %s", url)
-	if cfg.RetentionDays > 0 {
-		if deleted, err := pruneWebDAVBackups(ctx, client, baseURL, cfg, time.Now().UTC()); err != nil {
-			log.WithError(err).Warn("failed to prune embedded usage WebDAV backups")
-		} else if deleted > 0 {
-			log.Infof("embedded usage WebDAV retention deleted %d backups", deleted)
-		}
-	}
-	return nil
+	return err
 }
 
 func newWebDAVHTTPClient() *http.Client {
@@ -383,7 +379,7 @@ func listWebDAVBackups(ctx context.Context, client *http.Client, baseURL string,
 	backups := make([]WebDAVBackup, 0, len(listing.Responses))
 	for _, item := range listing.Responses {
 		fileName := path.Base(strings.TrimRight(item.Href, "/"))
-		if !strings.HasPrefix(fileName, "usage-export-") || !strings.HasSuffix(fileName, ".jsonl") || path.Base(fileName) != fileName {
+		if !isKnownWebDAVBackupFileName(fileName) || path.Base(fileName) != fileName {
 			continue
 		}
 		backup := WebDAVBackup{FileName: fileName, SizeBytes: item.Propstat.Prop.ContentLength, LastModified: strings.TrimSpace(item.Propstat.Prop.LastModified)}
@@ -428,7 +424,7 @@ func pruneWebDAVBackups(ctx context.Context, client *http.Client, baseURL string
 	deleted := 0
 	for _, item := range listing.Responses {
 		fileName := path.Base(strings.TrimRight(item.Href, "/"))
-		if !strings.HasPrefix(fileName, "usage-export-") || !strings.HasSuffix(fileName, ".jsonl") {
+		if !isKnownWebDAVBackupFileName(fileName) {
 			continue
 		}
 		modifiedAt, err := http.ParseTime(strings.TrimSpace(item.Propstat.Prop.LastModified))
@@ -451,4 +447,11 @@ func pruneWebDAVBackups(ctx context.Context, client *http.Client, baseURL string
 		deleted++
 	}
 	return deleted, nil
+}
+
+func isKnownWebDAVBackupFileName(fileName string) bool {
+	if !strings.HasSuffix(fileName, ".jsonl") {
+		return false
+	}
+	return strings.HasPrefix(fileName, "usage-export-") || strings.HasPrefix(fileName, "cliproxy-pro-backup-")
 }

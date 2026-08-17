@@ -156,8 +156,16 @@ func normalizeOAuthPolicySettings(items []ProSetting) []ProSetting {
 }
 
 func (s *Store) ImportProSettings(ctx context.Context, items []ProSetting) (int, error) {
+	return s.importProSettings(ctx, items, false)
+}
+
+func (s *Store) ReplaceProSettings(ctx context.Context, items []ProSetting) (int, error) {
+	return s.importProSettings(ctx, items, true)
+}
+
+func (s *Store) importProSettings(ctx context.Context, items []ProSetting, replace bool) (int, error) {
 	items = normalizeOAuthPolicySettings(items)
-	if len(items) == 0 {
+	if len(items) == 0 && !replace {
 		return 0, nil
 	}
 	normalized := make([]ProSetting, 0, len(items))
@@ -178,6 +186,11 @@ func (s *Store) ImportProSettings(ctx context.Context, items []ProSetting) (int,
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if replace {
+		if _, err := tx.ExecContext(ctx, `delete from pro_settings`); err != nil {
+			return 0, err
+		}
+	}
 	for _, item := range normalized {
 		if err := setProSettingWith(ctx, tx, item); err != nil {
 			return 0, err

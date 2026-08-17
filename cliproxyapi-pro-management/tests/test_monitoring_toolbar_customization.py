@@ -7,6 +7,10 @@ PAGE_PATH = (
     Path(__file__).resolve().parents[1]
     / 'overlay/src/pro/modules/monitoring/MonitoringCenterPage.tsx'
 )
+DATA_PAGE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / 'overlay/src/pro/modules/dataManagement/DataManagementPage.tsx'
+)
 STYLE_PATH = (
     Path(__file__).resolve().parents[1]
     / 'overlay/src/pro/modules/monitoring/features/monitoring.module.scss'
@@ -37,28 +41,23 @@ def read_monitoring_styles() -> str:
 
 
 class MonitoringToolbarCustomizationTest(unittest.TestCase):
-    def test_import_actions_share_one_dropdown_entry(self) -> None:
+    def test_backup_and_restore_actions_move_to_data_management(self) -> None:
         source = PAGE_PATH.read_text()
+        data_page = DATA_PAGE_PATH.read_text()
 
-        self.assertIn('aria-haspopup="menu"', source)
-        self.assertIn("usage_stats.import_from_file", source)
-        self.assertIn("usage_stats.import_from_webdav", source)
-        self.assertIn('onClick={handleImportFromFileClick}', source)
-        self.assertNotIn("t('usage_stats.webdav_restore_action')", source)
+        self.assertNotIn('aria-controls="monitoring-import-menu"', source)
+        self.assertNotIn('onClick={handleImportFromFileClick}', source)
+        self.assertIn("navigate('/data-management')", source)
+        self.assertIn('dataManagementApi.previewRestore', data_page)
+        self.assertIn('dataManagementApi.restore', data_page)
 
-    def test_webdav_restore_uses_compact_global_pro_copy(self) -> None:
-        source = PAGE_PATH.read_text()
-        dialog = WEBDAV_DIALOG_PATH.read_text()
-        styles = read_monitoring_styles()
+    def test_restore_preview_is_a_data_management_workspace(self) -> None:
+        data_page = DATA_PAGE_PATH.read_text()
 
-        self.assertIn('className={styles.webdavRestoreSurface}', dialog)
-        self.assertIn('.webdavRestoreSurface,', BASE_STYLE_PATH.read_text())
-        self.assertIn('width: min(720px, calc(100vw - 32px)) !important;', styles)
-        self.assertIn("usage_stats.import_restore_scope", source)
-        self.assertIn("usage_stats.import_restore_scope", dialog)
-        self.assertNotIn("webdavRestoreWarning", dialog)
-        self.assertIn(".webdavRestoreScope::after", styles)
-        self.assertIn("inset 4px 0 0 var(--monitor-accent-strong)", styles)
+        self.assertIn('<ProWorkspaceSheet', data_page)
+        self.assertIn('restorePreview?.domains.map', data_page)
+        self.assertIn('data_management.restore_no_api_keys', data_page)
+        self.assertIn('data_management.integrity_verified', data_page)
 
     def test_realtime_duration_combines_ttft_and_total_latency(self) -> None:
         source = PAGE_PATH.read_text()
@@ -75,27 +74,31 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
             locales['zh-CN.json']['monitoring']['account_inspection_duration_minute'],
         )
 
-    def test_monitoring_settings_button_keeps_a_stable_label_while_loading(self) -> None:
+    def test_monitoring_uses_a_stable_data_management_navigation_label(self) -> None:
         source = PAGE_PATH.read_text()
-        handler = 'onClick={() => void loadMonitoringSettings()}'
+        handler = "onClick={() => navigate('/data-management')}"
         start = source.index(handler)
         end = source.index('</button>', start)
         button = source[start:end]
 
-        self.assertIn('disabled={isMonitoringSettingsLoading}', button)
-        self.assertIn('aria-busy={isMonitoringSettingsLoading}', button)
-        self.assertIn("{t('usage_stats.monitoring_settings')}", button)
-        self.assertNotIn("isMonitoringSettingsLoading ? t('common.loading')", button)
+        self.assertIn("t('nav.data_management'", button)
+        self.assertNotIn("t('common.loading')", button)
 
     def test_async_surface_openers_use_synchronous_promise_guards(self) -> None:
         source = PAGE_PATH.read_text()
-        self.assertIn('monitoringSettingsRequestRef.current', source)
         self.assertIn('priceManagementRequestRef.current', source)
-        self.assertIn('if (monitoringSettingsRequestRef.current) return', source)
         self.assertIn('if (priceManagementRequestRef.current) return', source)
         self.assertIn('disabled={isPriceLoading}', source)
-        self.assertIn("openSurface('monitoring-settings')", source)
         self.assertIn("openSurface('price-management')", source)
+
+    def test_data_management_discards_stale_settings_and_restore_responses(self) -> None:
+        source = DATA_PAGE_PATH.read_text()
+
+        self.assertIn('settingsDraftRevisionRef.current += 1;', source)
+        self.assertIn('draftRevision === settingsDraftRevisionRef.current', source)
+        self.assertIn('submittedRevision === settingsDraftRevisionRef.current', source)
+        self.assertIn('const fileSequence = ++restoreFileSequenceRef.current;', source)
+        self.assertIn('if (sequence !== restorePreviewSequenceRef.current) return;', source)
 
     def test_realtime_logs_pause_auto_refresh_during_browsing(self) -> None:
         source = PAGE_PATH.read_text()

@@ -1392,6 +1392,19 @@ def patch_icons(target: Path) -> None:
         "  );\n"
         "}\n\n"
     )
+    data_management_icon = (
+        "export function IconSidebarDataManagement({ size = 20, ...props }: IconProps) {\n"
+        "  return (\n"
+        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
+        "      <ellipse cx=\"12\" cy=\"5\" rx=\"8\" ry=\"3\" />\n"
+        "      <path d=\"M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5\" />\n"
+        "      <path d=\"M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6\" />\n"
+        "      <path d=\"M8 9.5h.01\" />\n"
+        "      <path d=\"M8 15.5h.01\" />\n"
+        "    </svg>\n"
+        "  );\n"
+        "}\n\n"
+    )
     icons_to_insert = ""
     for icon_name, icon_source in (
         ('IconSidebarMonitor', monitor_icon),
@@ -1400,6 +1413,7 @@ def patch_icons(target: Path) -> None:
         ('IconSidebarAccountPolicy', account_policy_icon),
         ('IconSidebarAPIKeyPolicy', api_key_policy_icon),
         ('IconSidebarProxyPool', proxy_pool_icon),
+        ('IconSidebarDataManagement', data_management_icon),
     ):
         marker = f'export function {icon_name}'
         if marker not in text:
@@ -2251,6 +2265,10 @@ def patch_locales(target: Path) -> None:
             OAUTH_POLICY_NAV_LOCALE_KEYS['en.json'],
         )
         data.setdefault('nav', {})['oauth_policy'] = oauth_policy_nav['label']
+        data.setdefault('nav_meta', {}).setdefault(
+            'data_management',
+            'Pro data storage, backup, restore, retention, and maintenance',
+        )
         data.setdefault('nav_groups', {})['pro'] = 'PRO'
         nav_additions = additions.get('nav', {})
         data.setdefault('nav_meta', {}).update(

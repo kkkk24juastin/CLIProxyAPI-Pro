@@ -16,6 +16,38 @@ import (
 
 var errTestParse = errors.New("parse failed")
 
+func TestUpdateMonitoringSettingsMergesSectionsAndDetectsConflicts(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	base := normalizeMonitoringSettings(MonitoringSettings{
+		RetentionDays:  30,
+		WebDAV:         MonitoringWebDAVBackupConfig{URL: "https://example.test/old", IntervalMinutes: 60},
+		ModelPriceSync: ModelPriceSyncConfig{Enabled: false, IntervalMinutes: 1440},
+	})
+	if err := store.SetMonitoringSettings(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+	webDAVPatch := base
+	webDAVPatch.WebDAV.URL = "https://example.test/new"
+	if _, err := store.UpdateMonitoringSettings(ctx, webDAVPatch, &base, []string{"webdav"}); err != nil {
+		t.Fatal(err)
+	}
+	pricePatch := base
+	pricePatch.ModelPriceSync.Enabled = true
+	merged, err := store.UpdateMonitoringSettings(ctx, pricePatch, &base, []string{"modelPriceSync"})
+	if err != nil {
+		t.Fatalf("disjoint stale section update failed: %v", err)
+	}
+	if merged.WebDAV.URL != webDAVPatch.WebDAV.URL || !merged.ModelPriceSync.Enabled {
+		t.Fatalf("merged settings = %+v", merged)
+	}
+	conflicting := base
+	conflicting.WebDAV.Username = "stale-writer"
+	if _, err := store.UpdateMonitoringSettings(ctx, conflicting, &base, []string{"webdav"}); !errors.Is(err, ErrMonitoringSettingsConflict) {
+		t.Fatalf("same-section conflict error = %v", err)
+	}
+}
+
 func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Event {
 	timestamp := time.Unix(1_700_000_000+int64(index), 0).UTC()
 	latency := int64(100 + index)

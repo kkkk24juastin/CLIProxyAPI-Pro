@@ -1,6 +1,6 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -25,8 +25,6 @@ import {
   resolveUsageProfileSnapshot,
 } from '@/pro/modules/monitoring/features/profileUsage';
 import { ModelPriceManagerModal } from '@/pro/modules/monitoring/features/components/ModelPriceManagerModal';
-import { MonitoringSettingsModal } from '@/pro/modules/monitoring/features/components/MonitoringSettingsModal';
-import { WebDAVRestoreDialog, type WebDAVBackup } from '@/pro/modules/monitoring/features/components/WebDAVRestoreDialog';
 import {
   RealtimeRequestDetailsPanel,
   RecentPattern,
@@ -46,7 +44,6 @@ import {
 } from '@/pro/modules/monitoring/features/components/UsageAnalyticsPanels';
 import { buildAggregateSummary } from '@/pro/modules/monitoring/features/monitoringAggregates';
 import {
-  quotaPersistenceMiddleware,
   resolveAccountPlanLabel,
   type AccountPlanQuotaStore,
 } from '@/pro/modules/quota';
@@ -105,7 +102,6 @@ import {
   translateRealtimeErrorText,
   type RealtimeLogRow,
 } from '@/pro/modules/monitoring/features/realtimeLogPresentation';
-import { hasUsageBackupManifest } from '@/pro/modules/monitoring/features/usageBackup';
 import { apiKeyPolicyApi } from '@/pro/modules/apiKeyPolicy';
 import { readMonitoringUsageLocationState } from '@/pro/shared/monitoringNavigation';
 import {
@@ -235,135 +231,13 @@ const estimateRealtimeLogHeaderWidth = (key: RealtimeLogColumnKey, label: string
   return clampRealtimeLogColumnWidth(key, textWidth + 42);
 };
 
-type UsageImportResult = {
-  added?: number;
-  skipped?: number;
-  total?: number;
-  failed?: number;
-  modelPrices?: number;
-  modelPriceRecords?: number;
-  modelPriceRules?: number;
-  quotaCache?: number;
-  quotaCacheRecords?: number;
-  routingCursors?: number;
-  routingCursorRecords?: number;
-  authRuntimeStats?: number;
-  authRuntimeStatsRecords?: number;
-  proSettings?: number;
-  proSettingsRecords?: number;
-  accountInspectionSchedule?: boolean;
-  accountInspectionScheduleRecords?: number;
-  accountInspectionSnapshot?: boolean;
-  accountInspectionSnapshotRecords?: number;
-  monitoringSettings?: boolean;
-  monitoringSettingsRecords?: number;
-  legacyBackup?: boolean;
-  policyBackup?: PolicyBackupPreview;
-};
-
-type PolicyBackupPreview = {
-  hasPolicies?: boolean;
-  replacePolicies?: number;
-  preservePolicies?: number;
-  replaceProfiles?: number;
-  preserveProfiles?: number;
-  targetPolicies?: number;
-  targetProfiles?: number;
-  associatedPolicies?: number;
-  orphanedPolicies?: number;
-	currentTakeoverEnabled?: boolean;
-	targetTakeoverEnabled?: boolean;
-};
-
-type UsageImportPreview = {
-  policyBackup: PolicyBackupPreview;
-  legacyBackup: boolean;
-  restoresAPIKeys: false;
-};
-
-type UsageResetResult = {
-  deletedEvents: number;
-  deletedAuthRuntimeStats: number;
-  generation: number;
-  resetAtMs: number;
-};
-
-const buildPolicyBackupSummary = (
-  policy: PolicyBackupPreview,
-  t: (key: string, options?: Record<string, unknown>) => string,
-) => {
-  const summary = policy.hasPolicies
-    ? t('usage_stats.import_policy_preview_replace', {
-      replacePolicies: policy.replacePolicies ?? 0,
-      replaceProfiles: policy.replaceProfiles ?? 0,
-      targetPolicies: policy.targetPolicies ?? 0,
-      targetProfiles: policy.targetProfiles ?? 0,
-      associated: policy.associatedPolicies ?? 0,
-      orphaned: policy.orphanedPolicies ?? 0,
-    })
-    : t('usage_stats.import_policy_preview_preserve', {
-      policies: policy.preservePolicies ?? 0,
-      profiles: policy.preserveProfiles ?? 0,
-    });
-  if (
-    !policy.hasPolicies
-    || policy.currentTakeoverEnabled === policy.targetTakeoverEnabled
-  ) return summary;
-  return `${summary} ${t('usage_stats.import_policy_preview_takeover_change', {
-    current: t(policy.currentTakeoverEnabled
-      ? 'usage_stats.import_policy_takeover_on'
-      : 'usage_stats.import_policy_takeover_off'),
-    target: t(policy.targetTakeoverEnabled
-      ? 'usage_stats.import_policy_takeover_on'
-      : 'usage_stats.import_policy_takeover_off'),
-  })}`;
-};
-
-const buildImportResultSummary = (
-  result: UsageImportResult,
-  t: (key: string, options?: Record<string, unknown>) => string,
-) => {
-  const importedExtras = [
-    (result.modelPriceRecords ?? 0) > 0 ? t('usage_stats.import_model_prices_restored', { count: Math.max(result.modelPrices ?? 0, result.modelPriceRules ?? 0) }) : '',
-    (result.quotaCacheRecords ?? 0) > 0 ? t('usage_stats.import_quota_cache_restored', { count: result.quotaCache ?? 0 }) : '',
-    (result.routingCursorRecords ?? 0) > 0 ? t('usage_stats.import_routing_cursors_restored', { count: result.routingCursors ?? 0 }) : '',
-    (result.authRuntimeStatsRecords ?? 0) > 0 ? t('usage_stats.import_auth_runtime_stats_restored', { count: result.authRuntimeStats ?? 0 }) : '',
-    (result.proSettingsRecords ?? 0) > 0 ? t('usage_stats.import_pro_settings_restored', { count: result.proSettings ?? 0 }) : '',
-    result.accountInspectionSchedule ? t('usage_stats.import_account_inspection_schedule_restored') : '',
-    result.accountInspectionSnapshot ? t('usage_stats.import_account_inspection_snapshot_restored') : '',
-    result.monitoringSettings ? t('usage_stats.import_monitoring_settings_restored') : '',
-    result.policyBackup?.hasPolicies
-      ? t('usage_stats.import_policy_restored', {
-        policies: result.policyBackup.targetPolicies ?? 0,
-        profiles: result.policyBackup.targetProfiles ?? 0,
-        associated: result.policyBackup.associatedPolicies ?? 0,
-        orphaned: result.policyBackup.orphanedPolicies ?? 0,
-      })
-      : result.policyBackup?.preservePolicies
-        ? t('usage_stats.import_policy_preserved', {
-          policies: result.policyBackup.preservePolicies ?? 0,
-          profiles: result.policyBackup.preserveProfiles ?? 0,
-        })
-        : '',
-  ].filter(Boolean);
-  return [
-    t('usage_stats.import_success', {
-      added: result.added ?? 0,
-      skipped: result.skipped ?? 0,
-      total: result.total ?? 0,
-      failed: result.failed ?? 0,
-    }),
-    ...importedExtras,
-  ].join(' · ');
-};
-
 export function MonitoringCenterPage() {
   const { t, i18n } = useTranslation();
   const location = useLocation();
+  const navigate = useNavigate();
   const config = useConfigStore((state) => state.config);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
-  const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
   const claudeQuota = useQuotaStore((state) => state.claudeQuota);
   const codexQuota = useQuotaStore((state) => state.codexQuota);
@@ -385,7 +259,7 @@ export function MonitoringCenterPage() {
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
   const [linkedRequestLogScope, setLinkedRequestLogScope] = useState<LinkedRequestLogScope | null>(null);
   const [selectedRealtimeErrorRow, setSelectedRealtimeErrorRowState] = useState<RealtimeLogRow | null>(null);
-  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'realtime-detail' | 'monitoring-settings' | 'price-management' | 'webdav-restore'>();
+  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'realtime-detail' | 'price-management'>();
   const setSelectedRealtimeErrorRow = useCallback((row: RealtimeLogRow | null) => {
     if (row) {
       setSelectedRealtimeErrorRowState(row);
@@ -399,14 +273,8 @@ export function MonitoringCenterPage() {
     if (open) openSurface('price-management');
     else if (activeSurface === 'price-management') closeSurface();
   }, [activeSurface, closeSurface, openSurface]);
-  const isMonitoringSettingsOpen = activeSurface === 'monitoring-settings';
-  const setIsMonitoringSettingsOpen = useCallback((open: boolean) => {
-    if (open) openSurface('monitoring-settings');
-    else if (activeSurface === 'monitoring-settings') closeSurface();
-  }, [activeSurface, closeSurface, openSurface]);
   const [isMonitoringSettingsLoading, setIsMonitoringSettingsLoading] = useState(false);
   const [isMonitoringSettingsSaving, setIsMonitoringSettingsSaving] = useState(false);
-  const [isMonitoringStatisticsResetting, setIsMonitoringStatisticsResetting] = useState(false);
   const [monitoringSettingsDraft, setMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
   const [savedMonitoringSettingsDraft, setSavedMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
   const [priceManagementView, setPriceManagementView] = useState<PriceManagementView>('rules');
@@ -422,17 +290,10 @@ export function MonitoringCenterPage() {
   const [isPriceLoading, setIsPriceLoading] = useState(false);
   const [isPriceSaving, setIsPriceSaving] = useState(false);
   const [isPriceSyncing, setIsPriceSyncing] = useState(false);
-  const [isImportingUsage, setIsImportingUsage] = useState(false);
-  const [webDAVBackups, setWebDAVBackups] = useState<WebDAVBackup[]>([]);
-  const [isWebDAVBackupsLoading, setIsWebDAVBackupsLoading] = useState(false);
-  const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
-  const monitoringSettingsRequestRef = useRef<Promise<void> | null>(null);
   const priceManagementRequestRef = useRef<Promise<void> | null>(null);
   const profileCatalogRequestRef = useRef<Promise<void> | null>(null);
   const profileCatalogFetchedAtRef = useRef(0);
   const profileCatalogGenerationRef = useRef<number | null>(null);
-  const importInputRef = useRef<HTMLInputElement | null>(null);
-  const importMenuRef = useRef<HTMLDivElement | null>(null);
   const [isUsageTrendHidden, setIsUsageTrendHidden] = useState(false);
   const [modelRankingMetric, setModelRankingMetric] = useState<RankingMetric>('requests');
   const [apiKeyRankingMetric, setApiKeyRankingMetric] = useState<RankingMetric>('requests');
@@ -644,40 +505,19 @@ export function MonitoringCenterPage() {
     return response.settings;
   }, []);
 
-  const loadMonitoringSettings = useCallback(() => {
-    if (connectionStatus !== 'connected') {
-      showNotification(t('notification.connection_required'), 'warning');
-      return Promise.resolve();
-    }
-    setIsMonitoringSettingsOpen(true);
-    if (monitoringSettingsRequestRef.current) return monitoringSettingsRequestRef.current;
-    setIsMonitoringSettingsLoading(true);
-    const request = fetchMonitoringSettings()
-      .then(() => undefined)
-      .catch((error) => {
-        showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-      })
-      .finally(() => {
-        monitoringSettingsRequestRef.current = null;
-        setIsMonitoringSettingsLoading(false);
-      });
-    monitoringSettingsRequestRef.current = request;
-    return request;
-  }, [connectionStatus, fetchMonitoringSettings, setIsMonitoringSettingsOpen, showNotification, t]);
-
-  const handleSaveMonitoringSettings = useCallback(async (closeModal = true) => {
+  const handleSaveMonitoringSettings = useCallback(async () => {
     const settings = buildMonitoringSettingsFromDraft(monitoringSettingsDraft);
-    if (settings.webdav.enabled && !settings.webdav.url) {
-      showNotification(t('usage_stats.monitoring_settings_webdav_url_required'), 'warning');
-      return;
-    }
+    const expectedSettings = buildMonitoringSettingsFromDraft(savedMonitoringSettingsDraft);
     setIsMonitoringSettingsSaving(true);
     try {
-      const response = await apiClient.put<{ settings: MonitoringSettings }>('/usage/settings', { settings });
+      const response = await apiClient.put<{ settings: MonitoringSettings }>('/usage/settings', {
+        settings,
+        expectedSettings,
+        sections: ['modelPriceSync'],
+      });
       const nextDraft = createMonitoringSettingsDraft(response.settings);
       setMonitoringSettingsDraft(nextDraft);
       setSavedMonitoringSettingsDraft(nextDraft);
-      if (closeModal) setIsMonitoringSettingsOpen(false);
       showNotification(t('usage_stats.monitoring_settings_saved'), 'success');
       await refreshAll();
     } catch (error) {
@@ -685,230 +525,7 @@ export function MonitoringCenterPage() {
     } finally {
       setIsMonitoringSettingsSaving(false);
     }
-  }, [monitoringSettingsDraft, refreshAll, setIsMonitoringSettingsOpen, showNotification, t]);
-
-  const monitoringSettingsDirty = useMemo(
-    () => JSON.stringify(monitoringSettingsDraft) !== JSON.stringify(savedMonitoringSettingsDraft),
-    [monitoringSettingsDraft, savedMonitoringSettingsDraft]
-  );
-
-  const confirmMonitoringSettingsClose = useCallback((): Promise<boolean> => {
-    if (!monitoringSettingsDirty) return Promise.resolve(true);
-    return new Promise<boolean>((resolve) => {
-      const accepted = showConfirmation({
-        dedupeKey: 'monitoring-settings:close-workspace',
-        title: t('common.unsaved_changes_title'),
-        message: t('common.unsaved_changes_message'),
-        confirmText: t('monitoring.account_inspection_settings_discard'),
-        cancelText: t('common.stay'),
-        variant: 'danger',
-        onConfirm: () => resolve(true),
-        onCancel: () => resolve(false),
-      });
-      if (!accepted) resolve(false);
-    });
-  }, [monitoringSettingsDirty, showConfirmation, t]);
-  const discardMonitoringSettingsDraft = useCallback(() => {
-    setMonitoringSettingsDraft(savedMonitoringSettingsDraft);
-  }, [savedMonitoringSettingsDraft]);
-  const closeMonitoringSettings = useCallback(() => {
-    setIsMonitoringSettingsOpen(false);
-  }, [setIsMonitoringSettingsOpen]);
-
-  const executeMonitoringStatisticsReset = useCallback(async () => {
-    setIsMonitoringStatisticsResetting(true);
-    try {
-      const result = await apiClient.post<UsageResetResult>('/usage/reset', { confirm: true });
-      setSelectedRealtimeErrorRow(null);
-      resetRealtimeLogs();
-      await Promise.all([refreshUsage(), refreshRealtimeLogs(), refreshAggregates()]);
-      showNotification(t('usage_stats.monitoring_settings_reset_success', {
-        count: result.deletedEvents,
-        accounts: result.deletedAuthRuntimeStats,
-      }), 'success');
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    } finally {
-      setIsMonitoringStatisticsResetting(false);
-    }
-  }, [refreshAggregates, refreshRealtimeLogs, refreshUsage, resetRealtimeLogs, setSelectedRealtimeErrorRow, showNotification, t]);
-
-  const handleMonitoringStatisticsReset = useCallback(() => {
-    if (connectionStatus !== 'connected') {
-      showNotification(t('notification.connection_required'), 'warning');
-      return;
-    }
-    showConfirmation({
-      title: t('usage_stats.monitoring_settings_reset_confirm_title'),
-      message: t('usage_stats.monitoring_settings_reset_confirm_message', {
-        count: Number(usage?.total_requests) || 0,
-      }),
-      confirmText: t('usage_stats.monitoring_settings_reset_confirm_button'),
-      cancelText: t('common.cancel'),
-      variant: 'danger',
-      onConfirm: executeMonitoringStatisticsReset,
-    });
-  }, [connectionStatus, executeMonitoringStatisticsReset, showConfirmation, showNotification, t, usage?.total_requests]);
-  const handleExportUsage = useCallback(async () => {
-    if (connectionStatus !== 'connected') {
-      showNotification(t('notification.connection_required'), 'warning');
-      return;
-    }
-
-    try {
-      const response = await apiClient.getRaw('/usage/export', { responseType: 'blob' });
-      const blob = response.data instanceof Blob ? response.data : new Blob([response.data], { type: 'application/x-ndjson' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      link.href = url;
-      link.download = `usage-export-${timestamp}.jsonl`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      showNotification(t('usage_stats.export_success'), 'success');
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    }
-  }, [connectionStatus, showNotification, t]);
-
-  const handleImportFromFileClick = useCallback(() => {
-    setIsImportMenuOpen(false);
-    if (connectionStatus !== 'connected') {
-      showNotification(t('notification.connection_required'), 'warning');
-      return;
-    }
-    importInputRef.current?.click();
-  }, [connectionStatus, showNotification, t]);
-
-  const executeUsageImport = useCallback(async (content: string, allowLegacy: boolean) => {
-    setIsImportingUsage(true);
-    try {
-      const result = await apiClient.post<UsageImportResult>('/usage/import', content, {
-        headers: { 'Content-Type': 'application/x-ndjson' },
-        params: allowLegacy ? { allow_legacy: 1 } : undefined,
-      });
-      showNotification(
-        buildImportResultSummary(result, t),
-        (result.failed ?? 0) > 0 ? 'warning' : 'success'
-      );
-      quotaPersistenceMiddleware.markStale();
-      await quotaPersistenceMiddleware.ensureFresh();
-      await refreshAll();
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    } finally {
-      setIsImportingUsage(false);
-    }
-  }, [refreshAll, showNotification, t]);
-
-  const handleImportUsageFile = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      event.target.value = '';
-      if (!file) return;
-
-      try {
-        const content = await file.text();
-        if (!content.trim()) {
-          showNotification(t('usage_stats.import_invalid'), 'error');
-          return;
-        }
-        const allowLegacy = !hasUsageBackupManifest(content);
-        const preview = await apiClient.post<UsageImportPreview>('/usage/import/preview', content, {
-          headers: { 'Content-Type': 'application/x-ndjson' },
-          params: allowLegacy ? { allow_legacy: 1 } : undefined,
-        });
-        const policySummary = buildPolicyBackupSummary(preview.policyBackup ?? {}, t);
-        showConfirmation({
-          dedupeKey: `usage-import:${file.name}:${file.size}:${file.lastModified}`,
-          title: t(allowLegacy ? 'usage_stats.import_legacy_confirm_title' : 'usage_stats.import_preview_title'),
-          message: (
-            <div>
-              <p>{t('usage_stats.import_restore_scope')}</p>
-              <p>{policySummary}</p>
-              <p>{t('usage_stats.import_policy_no_api_keys')}</p>
-              {allowLegacy ? <p>{t('usage_stats.import_legacy_confirm_message')}</p> : null}
-            </div>
-          ),
-          confirmText: t(allowLegacy ? 'usage_stats.import_legacy_confirm_button' : 'usage_stats.import_preview_confirm_button'),
-          cancelText: t('common.cancel'),
-          variant: allowLegacy ? 'danger' : 'primary',
-          onConfirm: () => executeUsageImport(content, allowLegacy),
-        });
-      } catch (error) {
-        showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-      }
-    },
-    [executeUsageImport, showConfirmation, showNotification, t]
-  );
-
-  const loadWebDAVBackups = useCallback(async () => {
-    setIsImportMenuOpen(false);
-    if (connectionStatus !== 'connected') {
-      showNotification(t('notification.connection_required'), 'warning');
-      return;
-    }
-    setIsWebDAVBackupsLoading(true);
-    try {
-      const result = await apiClient.get<{ backups?: WebDAVBackup[] }>('/usage/webdav/backups');
-      setWebDAVBackups(Array.isArray(result.backups) ? result.backups : []);
-      openSurface('webdav-restore');
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    } finally {
-      setIsWebDAVBackupsLoading(false);
-    }
-  }, [connectionStatus, openSurface, showNotification, t]);
-
-  const executeWebDAVRestore = useCallback(async (backup: WebDAVBackup, allowLegacy: boolean) => {
-    setIsImportingUsage(true);
-    try {
-      const result = await apiClient.post<UsageImportResult>('/usage/webdav/restore', { fileName: backup.fileName }, {
-        params: allowLegacy ? { allow_legacy: 1 } : undefined,
-      });
-      closeSurface();
-      showNotification([
-        t('usage_stats.webdav_restore_success', { name: backup.fileName }),
-        buildImportResultSummary(result, t),
-      ].join(' · '), (result.failed ?? 0) > 0 ? 'warning' : 'success');
-      quotaPersistenceMiddleware.markStale();
-      await quotaPersistenceMiddleware.ensureFresh();
-      await refreshAll();
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    } finally {
-      setIsImportingUsage(false);
-    }
-  }, [closeSurface, refreshAll, showNotification, t]);
-
-  const previewWebDAVRestore = useCallback(async (backup: WebDAVBackup) => {
-    try {
-      const preview = await apiClient.post<UsageImportPreview>('/usage/webdav/preview', { fileName: backup.fileName });
-      const allowLegacy = preview.legacyBackup;
-      const policySummary = buildPolicyBackupSummary(preview.policyBackup ?? {}, t);
-      showConfirmation({
-        dedupeKey: `usage-webdav-restore:${backup.fileName}`,
-        title: t('usage_stats.webdav_restore_confirm_title'),
-        message: (
-          <div>
-            <p>{t('usage_stats.webdav_restore_confirm_file', { name: backup.fileName })}</p>
-            <p>{t('usage_stats.import_restore_scope')}</p>
-            <p>{policySummary}</p>
-            <p>{t('usage_stats.import_policy_no_api_keys')}</p>
-            {allowLegacy ? <p>{t('usage_stats.import_legacy_confirm_message')}</p> : null}
-          </div>
-        ),
-        confirmText: t('usage_stats.webdav_restore_confirm_button'),
-        cancelText: t('common.cancel'),
-        variant: allowLegacy ? 'danger' : 'primary',
-        onConfirm: () => executeWebDAVRestore(backup, allowLegacy),
-      });
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    }
-  }, [executeWebDAVRestore, showConfirmation, showNotification, t]);
+  }, [monitoringSettingsDraft, refreshAll, savedMonitoringSettingsDraft, showNotification, t]);
 
   const handleCopyRealtimeDiagnostic = useCallback((row: RealtimeLogRow) => {
     const text = buildRealtimeDiagnosticClipboardText(row, t, i18n.language);
@@ -1680,25 +1297,6 @@ export function MonitoringCenterPage() {
   }, [updateRealtimeLogColumns]);
 
   useEffect(() => {
-    if (!isImportMenuOpen) return undefined;
-
-    const closeImportMenu = (event: MouseEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
-      if (event instanceof MouseEvent && event.target instanceof Node && importMenuRef.current?.contains(event.target)) {
-        return;
-      }
-      setIsImportMenuOpen(false);
-    };
-
-    document.addEventListener('mousedown', closeImportMenu);
-    document.addEventListener('keydown', closeImportMenu);
-    return () => {
-      document.removeEventListener('mousedown', closeImportMenu);
-      document.removeEventListener('keydown', closeImportMenu);
-    };
-  }, [isImportMenuOpen]);
-
-  useEffect(() => {
     if (!isRealtimeColumnsMenuOpen) return undefined;
 
     const handleDocumentMouseDown = (event: MouseEvent) => {
@@ -1926,59 +1524,19 @@ export function MonitoringCenterPage() {
               <button
                 type="button"
                 className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
-                onClick={() => void handleExportUsage()}
-              >
-                {t('usage_stats.export')}
-              </button>
-              <div className={styles.importMenu} ref={importMenuRef}>
-                <button
-                  type="button"
-                  className={`${styles.quickLinkButton} ${styles.mastheadActionButton} ${styles.importMenuTrigger}`}
-                  onClick={() => setIsImportMenuOpen((open) => !open)}
-                  disabled={isImportingUsage || isWebDAVBackupsLoading}
-                  aria-haspopup="menu"
-                  aria-expanded={isImportMenuOpen}
-                  aria-controls="monitoring-import-menu"
-                >
-                  <span>{isImportingUsage || isWebDAVBackupsLoading ? t('common.loading') : t('usage_stats.import')}</span>
-                  <span className={styles.importMenuChevron} aria-hidden="true" />
-                </button>
-                {isImportMenuOpen ? (
-                  <div id="monitoring-import-menu" className={styles.importMenuDropdown} role="menu">
-                    <button type="button" role="menuitem" onClick={handleImportFromFileClick}>
-                      {t('usage_stats.import_from_file')}
-                    </button>
-                    <button type="button" role="menuitem" onClick={() => void loadWebDAVBackups()}>
-                      {t('usage_stats.import_from_webdav')}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
-				onClick={() => void openPriceManagement()}
-				disabled={isPriceLoading}
-				aria-busy={isPriceLoading}
+                onClick={() => void openPriceManagement()}
+                disabled={isPriceLoading}
+                aria-busy={isPriceLoading}
               >
                 {t('usage_stats.model_price_settings')}
               </button>
               <button
                 type="button"
                 className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
-                onClick={() => void loadMonitoringSettings()}
-                disabled={isMonitoringSettingsLoading}
-                aria-busy={isMonitoringSettingsLoading}
+                onClick={() => navigate('/data-management')}
               >
-                {t('usage_stats.monitoring_settings')}
+                {t('nav.data_management', { defaultValue: 'Data Management' })}
               </button>
-              <input
-                ref={importInputRef}
-                type="file"
-                accept=".jsonl,.ndjson,.json,application/x-ndjson,application/json"
-                className={styles.hiddenFileInput}
-                onChange={handleImportUsageFile}
-              />
             </div>
           </div>
           <p className={styles.subtitle}>{t('monitoring.console_subtitle')}</p>
@@ -2380,34 +1938,6 @@ export function MonitoringCenterPage() {
           <RealtimeRequestDetailsPanel row={selectedRealtimeErrorRow} t={t} language={i18n.language} />
         ) : null}
       </ProDetailDialog>
-
-      <MonitoringSettingsModal
-        isMonitoringSettingsOpen={isMonitoringSettingsOpen}
-        closeMonitoringSettings={closeMonitoringSettings}
-        confirmMonitoringSettingsClose={confirmMonitoringSettingsClose}
-        discardMonitoringSettingsDraft={discardMonitoringSettingsDraft}
-        monitoringSettingsDirty={monitoringSettingsDirty}
-        monitoringSettingsDraft={monitoringSettingsDraft}
-        setMonitoringSettingsDraft={setMonitoringSettingsDraft}
-        usageTotalRequests={Number(usage?.total_requests) || 0}
-        isMonitoringSettingsLoading={isMonitoringSettingsLoading}
-        isMonitoringStatisticsResetting={isMonitoringStatisticsResetting}
-        isMonitoringSettingsSaving={isMonitoringSettingsSaving}
-        handleMonitoringStatisticsReset={handleMonitoringStatisticsReset}
-        handleSaveMonitoringSettings={handleSaveMonitoringSettings}
-        t={t}
-      />
-
-      <WebDAVRestoreDialog
-        open={activeSurface === 'webdav-restore'}
-        loading={isWebDAVBackupsLoading}
-        restoring={isImportingUsage}
-        backups={webDAVBackups}
-        onClose={closeSurface}
-        onRefresh={() => void loadWebDAVBackups()}
-        onSelect={(backup) => void previewWebDAVRestore(backup)}
-        t={t}
-      />
 
       <ModelPriceManagerModal
         isPriceModalOpen={isPriceModalOpen}

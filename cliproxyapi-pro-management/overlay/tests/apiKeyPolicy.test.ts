@@ -28,28 +28,28 @@ const validProfile = (): APIKeyProfileInput => ({
 
 describe('usage policy backup preview contract', () => {
   test('previews replacement, orphaned state, and config key boundary before importing', () => {
-    const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/MonitoringCenterPage.tsx'), 'utf8');
-    expect(page).toContain("'/usage/import/preview'");
-    expect(page).toContain('import_policy_preview_replace');
-    expect(page).toContain('import_policy_preview_preserve');
-		expect(page).toContain('currentTakeoverEnabled?: boolean');
-		expect(page).toContain('targetTakeoverEnabled?: boolean');
-		expect(page).toContain('import_policy_preview_takeover_change');
-    expect(page).toContain('import_policy_no_api_keys');
-    expect(page).toContain('onConfirm: () => executeUsageImport(content, allowLegacy)');
+    const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/dataManagement/DataManagementPage.tsx'), 'utf8');
+    const service = readFileSync(resolve(import.meta.dir, '../src/pro/modules/dataManagement/dataManagement.ts'), 'utf8');
+    expect(service).toContain("'/data/backups/preview'");
+    expect(service).toContain('orphanedPolicies: number');
+		expect(service).toContain('currentTakeoverEnabled: boolean');
+		expect(service).toContain('targetTakeoverEnabled: boolean');
+    expect(page).toContain('policy_restore_replace');
+    expect(page).toContain('policy_restore_preserve');
+    expect(page).toContain('policy_takeover_change');
+    expect(page).toContain('restore_no_api_keys');
+    expect(page).toContain('await dataManagementApi.restore(');
   });
 
-  test('lists WebDAV backups and reuses the preview and restore endpoints', () => {
-    const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/MonitoringCenterPage.tsx'), 'utf8');
-    const dialog = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/features/components/WebDAVRestoreDialog.tsx'), 'utf8');
-    expect(page).toContain("'/usage/webdav/backups'");
-    expect(page).toContain("'/usage/webdav/preview'");
-    expect(page).toContain("'/usage/webdav/restore'");
-    expect(page).toContain('buildPolicyBackupSummary(preview.policyBackup ?? {}, t)');
-    expect(page).toContain('onConfirm: () => executeWebDAVRestore(backup, allowLegacy)');
-    expect(dialog).toContain('import_restore_scope');
-    expect(dialog).not.toContain('webdavRestoreWarning');
-    expect(dialog).toContain('backup.fileName');
+  test('lists WebDAV backups and uses the data-management preview and restore endpoints', () => {
+    const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/dataManagement/DataManagementPage.tsx'), 'utf8');
+    const service = readFileSync(resolve(import.meta.dir, '../src/pro/modules/dataManagement/dataManagement.ts'), 'utf8');
+    expect(service).toContain("'/data/backups'");
+    expect(service).toContain("'/data/backups/preview'");
+    expect(service).toContain("'/data/backups/restore'");
+    expect(page).toContain('history.backups.slice(0, 10)');
+    expect(page).toContain('restorePreview?.domains.map');
+    expect(page).toContain('restoreFileName');
   });
 });
 

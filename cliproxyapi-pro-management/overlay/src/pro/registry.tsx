@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { monitoringModule } from '@/pro/modules/monitoring';
+import { dataManagementModule } from '@/pro/modules/dataManagement';
 import { inspectionModule } from '@/pro/modules/inspection';
 import { apiKeyPolicyModule } from '@/pro/modules/apiKeyPolicy';
 import { oauthPolicyModule } from '@/pro/modules/oauthPolicy';
@@ -34,6 +35,7 @@ const proModules = [
   oauthPolicyModule,
   routingModule,
   proxyPoolModule,
+  dataManagementModule,
   quotaModule,
 ];
 

@@ -5455,6 +5455,7 @@ replace_once(
 ''',
     '''\t{
 \t\tembeddedusage.RegisterGinRoutes(mgmt.Group("/usage"))
+\t\tembeddedusage.RegisterDataManagementGinRoutes(mgmt.Group("/data"))
 
 \t\tmgmt.GET("/config", s.mgmt.GetConfig)
 ''',
@@ -6593,8 +6594,11 @@ format_go_writes([
     'internal/pro/inspection/selection_test.go',
     'internal/pro/observability/module.go',
     'internal/pro/observability/module_test.go',
+	'internal/pro/observability/backup_crypto.go',
     'internal/pro/observability/config.go',
 	'internal/pro/observability/config_test.go',
+	'internal/pro/observability/data_management.go',
+	'internal/pro/observability/data_management_test.go',
     'internal/pro/observability/global.go',
     'internal/pro/observability/pricing.go',
     'internal/pro/observability/pricing_sync.go',

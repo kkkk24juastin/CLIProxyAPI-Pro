@@ -27,10 +27,52 @@ func (failingImportReader) Read([]byte) (int, error) {
 	return 0, errors.New("forced import read failure")
 }
 
+func registerTestAPIKeyPolicyDataDomain(t *testing.T) {
+	t.Helper()
+	unregister := RegisterDataDomainContributor("api-key-policy", DataDomainContribution{
+		InventoryFunc: func(context.Context, *Store) DataDomainInventory {
+			return DataDomainInventory{Owner: "api-key-policy", BackupIncluded: true, RestoreMode: "replace", Available: true}
+		},
+		BackupRecordTypes: []string{"api_key_policies"},
+	})
+	t.Cleanup(unregister)
+}
+
+func TestUsageImportDispatchesPluginDataDomainRecords(t *testing.T) {
+	const recordType = "test_plugin_restore_record"
+	called := false
+	unregister := RegisterDataDomainContributor("test-plugin-restore", DataDomainContribution{
+		BackupRecordTypes: []string{recordType},
+		BackupImporter: func(_ context.Context, _ *Store, gotType string, raw []byte) error {
+			called = gotType == recordType && bytes.Contains(raw, []byte(`"value":1`))
+			return nil
+		},
+	})
+	t.Cleanup(unregister)
+	record := []byte(`{"record_type":"test_plugin_restore_record","version":1,"value":1}`)
+	digest := sha256.Sum256(append(append([]byte(nil), record...), '\n'))
+	manifest, err := json.Marshal(map[string]any{
+		"record_type": "backup_manifest", "version": 1, "records": 1, "sha256": fmt.Sprintf("%x", digest),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup := append(append(append([]byte(nil), manifest...), '\n'), append(record, '\n')...)
+	server := NewServer(Config{Enabled: true, BatchSize: 100}, openTestStore(t))
+	router := gin.New()
+	router.POST("/import", server.handleUsageImport)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/import", bytes.NewReader(backup)))
+	if recorder.Code != http.StatusOK || !called {
+		t.Fatalf("plugin restore status=%d called=%v body=%s", recorder.Code, called, recorder.Body.String())
+	}
+}
+
 func TestUsageImportPreviewReportsPolicyReplacementAssociationAndLegacyPreservation(t *testing.T) {
 	defer func(previous *probackup.Coordinator) { probackup.Default = previous }(probackup.Default)
 	coordinator := probackup.NewCoordinator()
 	probackup.Default = coordinator
+	registerTestAPIKeyPolicyDataDomain(t)
 	current := []byte(`{"schema_version":2,"policies":[{"id":"current"}],"audits":[]}`)
 	target := []byte(`{"schema_version":2,"policies":[{"id":"target-a"},{"id":"target-b"}],"audits":[]}`)
 	coordinator.RegisterAPIKeyPolicies(
@@ -74,6 +116,7 @@ func TestWebDAVPolicyBackupUsesSharedPreviewAndImportPipeline(t *testing.T) {
 	defer func(previous *probackup.Coordinator) { probackup.Default = previous }(probackup.Default)
 	coordinator := probackup.NewCoordinator()
 	probackup.Default = coordinator
+	registerTestAPIKeyPolicyDataDomain(t)
 	policyPayload := []byte(`{"schema_version":2,"policies":[],"audits":[]}`)
 	imported := false
 	coordinator.RegisterAPIKeyPolicies(
@@ -98,7 +141,7 @@ func TestWebDAVPolicyBackupUsesSharedPreviewAndImportPipeline(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &http.Client{Transport: webDAVRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
-		if request.Method != http.MethodGet || request.URL.String() != "https://dav.example/backups/usage-export-20260814_120000.jsonl" {
+		if request.Method != http.MethodGet || request.URL.String() != "https://dav.example/backups/cliproxy-pro-backup-20260814_120000_000.jsonl" {
 			t.Fatalf("WebDAV request = %s %s", request.Method, request.URL)
 		}
 		user, password, ok := request.BasicAuth()
@@ -111,7 +154,7 @@ func TestWebDAVPolicyBackupUsesSharedPreviewAndImportPipeline(t *testing.T) {
 	server.webDAVClient = client
 	router := gin.New()
 	server.RegisterGinRoutes(router.Group("/usage"))
-	body := `{"fileName":"usage-export-20260814_120000.jsonl"}`
+	body := `{"fileName":"cliproxy-pro-backup-20260814_120000_000.jsonl"}`
 
 	previewRecorder := httptest.NewRecorder()
 	previewRequest := httptest.NewRequest(http.MethodPost, "/usage/webdav/preview", strings.NewReader(body))

@@ -102,7 +102,6 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
 
     def test_settings_sheets_use_native_confirm_close_contract(self) -> None:
         surface = SURFACE.read_text()
-        monitoring = (PRO_ROOT / 'modules/monitoring/MonitoringCenterPage.tsx').read_text()
         monitoring_settings = (PRO_ROOT / 'modules/monitoring/features/components/MonitoringSettingsModal.tsx').read_text()
         prices = (PRO_ROOT / 'modules/monitoring/features/components/ModelPriceManagerModal.tsx').read_text()
         inspection = (PRO_ROOT / 'modules/inspection/AccountInspectionPage.tsx').read_text()
@@ -112,8 +111,6 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('closeDisabled={busy || props.closeDisabled}', surface)
         self.assertIn('confirmClose={confirmMonitoringSettingsClose}', monitoring_settings)
         self.assertIn('onDiscard={discardMonitoringSettingsDraft}', monitoring_settings)
-        self.assertIn('onCancel: () => resolve(false)', monitoring)
-        self.assertIn('if (!accepted) resolve(false)', monitoring)
         self.assertIn('confirmClose={confirmPriceWorkspaceClose}', prices)
         self.assertIn('onDiscard={discardPriceWorkspaceDraft}', prices)
         self.assertIn('confirmClose={confirmSettingsModalClose}', inspection)
@@ -279,20 +276,17 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('overscroll-behavior: contain;', results)
         self.assertIn('scrollbar-gutter: stable;', results)
 
-    def test_loading_requests_reopen_the_surface_before_reusing_inflight_work(self) -> None:
+    def test_price_loading_reopens_the_surface_before_reusing_inflight_work(self) -> None:
         monitoring = (PRO_ROOT / 'modules/monitoring/MonitoringCenterPage.tsx').read_text()
-        monitoring_open = monitoring.index('setIsMonitoringSettingsOpen(true);')
-        monitoring_reuse = monitoring.index('if (monitoringSettingsRequestRef.current)')
         price_open = monitoring.index('setIsPriceModalOpen(true);')
         price_reuse = monitoring.index('if (priceManagementRequestRef.current)')
-        self.assertLess(monitoring_open, monitoring_reuse)
         self.assertLess(price_open, price_reuse)
 
     def test_pages_coordinate_one_primary_surface(self) -> None:
         monitoring = (PRO_ROOT / 'modules/monitoring/MonitoringCenterPage.tsx').read_text()
         inspection = (PRO_ROOT / 'modules/inspection/AccountInspectionPage.tsx').read_text()
         proxy_pool = (PRO_ROOT / 'modules/proxyPool/ProxyPoolPage.tsx').read_text()
-        self.assertIn("useProSurfaceState<'realtime-detail' | 'monitoring-settings' | 'price-management' | 'webdav-restore'>", monitoring)
+        self.assertIn("useProSurfaceState<'realtime-detail' | 'price-management'>", monitoring)
         self.assertIn("useProSurfaceState<'settings' | 'detail'>", inspection)
         self.assertIn("useProSurfaceState<'node' | 'import' | 'takeover'>", proxy_pool)
 
