@@ -993,9 +993,16 @@ jobs:
             local name="$1"
             local api_url="$2"
             local management_password="$3"
+            local webdav_url="$4"
+            local webdav_username="$5"
+            local webdav_password="$6"
             local response_file
             local http_status
             local backup_name
+            local legacy_file
+            local legacy_remote_name
+            local upload_status
+            local old_files
             response_file="$(mktemp)"
 
             if [ -z "$api_url" ] || [ -z "$management_password" ]; then
@@ -1010,12 +1017,50 @@ jobs:
               -H "Authorization: Bearer $management_password" \
               -H "Content-Type: application/json" \
               --data '{}' \
-              "${api_url%/}/v0/management/usage/data/backups/now" || true)"
+              "${api_url%/}/v0/management/data/backups/now" || true)"
             http_status="${http_status:-000}"
 
             if [ "$http_status" -ge 200 ] && [ "$http_status" -lt 300 ]; then
               backup_name="$(jq -r '.backup.fileName // "unknown"' "$response_file" 2>/dev/null || echo "unknown")"
               echo "✅ Pro data backup uploaded successfully for $name: $backup_name"
+            elif [ "$http_status" = "404" ]; then
+              echo "⚠️ Pro data backup endpoint is not available for $name; trying the legacy usage-export compatibility path."
+              if [ -z "$webdav_url" ] || [ -z "$webdav_username" ] || [ -z "$webdav_password" ]; then
+                echo "⚠️ Legacy backup fallback for $name requires webdav_url, webdav_username, and webdav_password."
+                rm -f "$response_file"
+                return 0
+              fi
+              legacy_file="$(mktemp)"
+              legacy_remote_name="usage-export-$(date -u +"%Y%m%d_%H%M%S").jsonl"
+              if ! curl -sfS \
+                -H "Authorization: Bearer $management_password" \
+                "${api_url%/}/v0/management/usage/export" \
+                -o "$legacy_file"; then
+                echo "⚠️ Failed to export legacy usage statistics for $name."
+                rm -f "$legacy_file" "$response_file"
+                return 0
+              fi
+
+              upload_status="$(curl -sS -o /dev/null -w "%{http_code}" \
+                -T "$legacy_file" \
+                -u "$webdav_username:$webdav_password" \
+                "${webdav_url%/}/$legacy_remote_name" || true)"
+              upload_status="${upload_status:-000}"
+              if [ "$upload_status" -ge 200 ] && [ "$upload_status" -lt 300 ]; then
+                echo "✅ Legacy usage backup uploaded successfully for $name: $legacy_remote_name"
+                old_files="$(curl -sS -X PROPFIND \
+                  -u "$webdav_username:$webdav_password" \
+                  "${webdav_url%/}/" \
+                  -H "Depth: 1" | grep -oE 'usage-export-[0-9_]+\.(jsonl|json)' | sort -r | tail -n +8 || true)"
+                for old_file in $old_files; do
+                  curl -sS -X DELETE \
+                    -u "$webdav_username:$webdav_password" \
+                    "${webdav_url%/}/$old_file" >/dev/null || true
+                done
+              else
+                echo "⚠️ Failed to upload legacy usage backup for $name. HTTP Status: $upload_status"
+              fi
+              rm -f "$legacy_file"
             else
               echo "⚠️ Failed to create Pro data backup for $name. HTTP Status: $http_status"
               cat "$response_file"
@@ -1032,7 +1077,10 @@ jobs:
             backup_target \
               "$(echo "$target" | jq -r 'if type == "object" then (.name // "default") else "default" end')" \
               "$(echo "$target" | jq -r 'if type == "object" then (.api_url // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.management_password // empty) else empty end')"
+              "$(echo "$target" | jq -r 'if type == "object" then (.management_password // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_url // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_username // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_password // empty) else empty end')"
           done
 
           echo "✅ Pro data backup requests completed."

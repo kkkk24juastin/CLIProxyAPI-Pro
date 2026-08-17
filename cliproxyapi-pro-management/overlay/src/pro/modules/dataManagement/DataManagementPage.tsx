@@ -394,7 +394,11 @@ export function DataManagementPage() {
     setRestoreBusy(true);
     try {
       if (restoreWebDAVFileName) {
-        await dataManagementApi.restoreWebDAV(restoreWebDAVFileName, restoreAllowLegacy);
+        await dataManagementApi.restoreWebDAV(
+          restoreWebDAVFileName,
+          restoreAllowLegacy,
+          restorePreview?.backupSha256 ?? ''
+        );
       } else if (restoreBuffer) {
         await dataManagementApi.restore(restoreBuffer, restoreEncrypted ? restorePassphrase : '', restoreAllowLegacy);
       }
@@ -411,7 +415,7 @@ export function DataManagementPage() {
     } finally {
       setRestoreBusy(false);
     }
-  }, [loadBackupHistory, loadCore, restoreAllowLegacy, restoreBuffer, restoreEncrypted, restorePassphrase, restoreWebDAVFileName, showNotification, t]);
+  }, [loadBackupHistory, loadCore, restoreAllowLegacy, restoreBuffer, restoreEncrypted, restorePassphrase, restorePreview, restoreWebDAVFileName, showNotification, t]);
 
   const previewCleanup = useCallback(async () => {
     setCleanupBusy(true);

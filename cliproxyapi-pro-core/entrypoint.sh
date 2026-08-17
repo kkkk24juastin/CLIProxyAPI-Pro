@@ -80,7 +80,7 @@ if [ -n "$BACKUP_WEBDAV_URL" ] && [ -n "$BACKUP_WEBDAV_USERNAME" ] && [ -n "$BAC
     RETRIES=0
     while [ $RETRIES -lt 30 ]; do
         if curl -sf -H "Authorization: Bearer $MANAGEMENT_PASSWORD" \
-            http://127.0.0.1:8317/v0/management/usage/data/overview > /dev/null 2>&1; then
+            http://127.0.0.1:8317/v0/management/data/overview > /dev/null 2>&1; then
             log "UsageRestore" "INFO" "Main app is ready."
             break
         fi
@@ -96,7 +96,7 @@ if [ -n "$BACKUP_WEBDAV_URL" ] && [ -n "$BACKUP_WEBDAV_USERNAME" ] && [ -n "$BAC
             -H "Depth: 1")
         LATEST_FILE=$(printf '%s' "$WEBDAV_LISTING" | grep -oE 'cliproxy-pro-backup-[0-9_]+\.jsonl' | sort | tail -n 1)
         if [ -z "$LATEST_FILE" ]; then
-            LATEST_FILE=$(printf '%s' "$WEBDAV_LISTING" | grep -oE 'usage-export-[0-9_]+\.jsonl' | sort | tail -n 1)
+            LATEST_FILE=$(printf '%s' "$WEBDAV_LISTING" | grep -oE 'usage-export-[0-9_]+\.(jsonl|json)' | sort | tail -n 1)
         fi
 
         if [ -n "$LATEST_FILE" ]; then
@@ -105,7 +105,7 @@ if [ -n "$BACKUP_WEBDAV_URL" ] && [ -n "$BACKUP_WEBDAV_USERNAME" ] && [ -n "$BAC
                 "$BACKUP_WEBDAV_URL/$LATEST_FILE" -o /tmp/cliproxy-pro-restore.jsonl
 
             if [ -f /tmp/cliproxy-pro-restore.jsonl ]; then
-                RESTORE_URL="http://127.0.0.1:8317/v0/management/usage/data/backups/restore"
+                RESTORE_URL="http://127.0.0.1:8317/v0/management/data/backups/restore"
                 if ! awk 'NF { print; exit }' /tmp/cliproxy-pro-restore.jsonl | \
                     grep -Eq '"record_type"[[:space:]]*:[[:space:]]*"backup_manifest"'; then
                     log "UsageRestore" "WARN" "Importing manifest-free legacy backup without integrity verification during the compatibility transition."

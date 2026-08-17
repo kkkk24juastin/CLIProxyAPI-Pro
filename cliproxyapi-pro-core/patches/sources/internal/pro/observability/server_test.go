@@ -136,6 +136,7 @@ func TestWebDAVPolicyBackupUsesSharedPreviewAndImportPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	webDAVBackup := backup
 	store := openTestStore(t)
 	if err := store.SetMonitoringSettings(context.Background(), MonitoringSettings{WebDAV: MonitoringWebDAVBackupConfig{URL: "https://dav.example/backups", Username: "operator", Password: "secret"}}); err != nil {
 		t.Fatal(err)
@@ -148,13 +149,13 @@ func TestWebDAVPolicyBackupUsesSharedPreviewAndImportPipeline(t *testing.T) {
 		if !ok || user != "operator" || password != "secret" {
 			t.Fatalf("WebDAV auth = %q, %q, %v", user, password, ok)
 		}
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(backup)), Header: make(http.Header)}, nil
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(webDAVBackup)), Header: make(http.Header)}, nil
 	})}
 	server := NewServer(Config{Enabled: true, QueryLimit: 50000, BatchSize: 100}, store)
 	server.webDAVClient = client
 	router := gin.New()
 	server.RegisterGinRoutes(router.Group("/usage"))
-	server.RegisterDataManagementGinRoutes(router.Group("/usage/data"))
+	server.RegisterDataManagementGinRoutes(router.Group("/data"))
 	body := `{"fileName":"cliproxy-pro-backup-20260814_120000_000.jsonl"}`
 
 	previewRecorder := httptest.NewRecorder()
@@ -175,15 +176,33 @@ func TestWebDAVPolicyBackupUsesSharedPreviewAndImportPipeline(t *testing.T) {
 
 	imported = false
 	dataPreviewRecorder := httptest.NewRecorder()
-	dataPreviewRequest := httptest.NewRequest(http.MethodPost, "/usage/data/backups/webdav/preview", strings.NewReader(body))
+	dataPreviewRequest := httptest.NewRequest(http.MethodPost, "/data/backups/webdav/preview", strings.NewReader(body))
 	dataPreviewRequest.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(dataPreviewRecorder, dataPreviewRequest)
 	if dataPreviewRecorder.Code != http.StatusOK || !strings.Contains(dataPreviewRecorder.Body.String(), `"targetPolicies":2`) || imported {
 		t.Fatalf("data-management WebDAV preview = %d %s imported=%v", dataPreviewRecorder.Code, dataPreviewRecorder.Body.String(), imported)
 	}
+	var dataPreview DataRestorePreview
+	if err := json.Unmarshal(dataPreviewRecorder.Body.Bytes(), &dataPreview); err != nil {
+		t.Fatal(err)
+	}
+	expectedSHA256 := fmt.Sprintf("%x", sha256.Sum256(backup))
+	if dataPreview.BackupSHA256 != expectedSHA256 {
+		t.Fatalf("data-management WebDAV preview SHA-256 = %q, want %q", dataPreview.BackupSHA256, expectedSHA256)
+	}
 
+	webDAVBackup = append(append([]byte(nil), backup...), '\n')
+	changedRestoreRecorder := httptest.NewRecorder()
+	changedRestoreRequest := httptest.NewRequest(http.MethodPost, "/data/backups/webdav/restore", strings.NewReader(fmt.Sprintf(`{"fileName":"cliproxy-pro-backup-20260814_120000_000.jsonl","allowLegacy":false,"expectedSha256":"%s"}`, expectedSHA256)))
+	changedRestoreRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(changedRestoreRecorder, changedRestoreRequest)
+	if changedRestoreRecorder.Code != http.StatusConflict || imported || !strings.Contains(changedRestoreRecorder.Body.String(), "changed after preview") {
+		t.Fatalf("changed data-management WebDAV restore = %d %s imported=%v", changedRestoreRecorder.Code, changedRestoreRecorder.Body.String(), imported)
+	}
+
+	webDAVBackup = backup
 	dataRestoreRecorder := httptest.NewRecorder()
-	dataRestoreRequest := httptest.NewRequest(http.MethodPost, "/usage/data/backups/webdav/restore", strings.NewReader(`{"fileName":"cliproxy-pro-backup-20260814_120000_000.jsonl","allowLegacy":false}`))
+	dataRestoreRequest := httptest.NewRequest(http.MethodPost, "/data/backups/webdav/restore", strings.NewReader(fmt.Sprintf(`{"fileName":"cliproxy-pro-backup-20260814_120000_000.jsonl","allowLegacy":false,"expectedSha256":"%s"}`, expectedSHA256)))
 	dataRestoreRequest.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(dataRestoreRecorder, dataRestoreRequest)
 	if dataRestoreRecorder.Code != http.StatusOK || !imported || !strings.Contains(dataRestoreRecorder.Body.String(), `"apiKeyPolicies":1`) {

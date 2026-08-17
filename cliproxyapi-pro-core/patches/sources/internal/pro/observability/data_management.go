@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -288,6 +289,7 @@ type DataRestoreDomainPreview struct {
 
 type DataRestorePreview struct {
 	PolicyBackup       probackup.PolicyBackupPreview `json:"policyBackup"`
+	BackupSHA256       string                        `json:"backupSha256"`
 	LegacyBackup       bool                          `json:"legacyBackup"`
 	IntegrityProtected bool                          `json:"integrityProtected"`
 	Encrypted          bool                          `json:"encrypted"`
@@ -924,7 +926,8 @@ func (s *Server) previewBackupData(ctx context.Context, data []byte, allowLegacy
 		sort.Strings(secretClasses)
 	}
 	return DataRestorePreview{
-		PolicyBackup: policyPreview, LegacyBackup: legacyPolicy || !integrityProtected,
+		PolicyBackup: policyPreview, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256(data)),
+		LegacyBackup:       legacyPolicy || !integrityProtected,
 		IntegrityProtected: integrityProtected, Encrypted: encrypted, RestoresAPIKeys: false,
 		Domains: domains, SecretClasses: secretClasses,
 	}, nil
@@ -1158,8 +1161,9 @@ func (s *Server) restoreDataManagementBackup(c *gin.Context, data []byte, encryp
 }
 
 type dataManagementWebDAVRestoreRequest struct {
-	FileName    string `json:"fileName"`
-	AllowLegacy bool   `json:"allowLegacy"`
+	FileName       string `json:"fileName"`
+	AllowLegacy    bool   `json:"allowLegacy"`
+	ExpectedSHA256 string `json:"expectedSha256"`
 }
 
 func dataManagementWebDAVRestoreRequestFrom(c *gin.Context) (dataManagementWebDAVRestoreRequest, error) {
@@ -1199,9 +1203,23 @@ func (s *Server) handleDataManagementWebDAVBackupRestore(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	expectedSHA256 := strings.ToLower(strings.TrimSpace(request.ExpectedSHA256))
+	if len(expectedSHA256) != sha256.Size*2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "WebDAV restore preview SHA-256 is required"})
+		return
+	}
+	if _, err = hex.DecodeString(expectedSHA256); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid WebDAV restore preview SHA-256"})
+		return
+	}
 	data, err := s.fetchWebDAVBackup(c.Request.Context(), request.FileName)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	actualSHA256 := fmt.Sprintf("%x", sha256.Sum256(data))
+	if actualSHA256 != expectedSHA256 {
+		c.JSON(http.StatusConflict, gin.H{"error": "WebDAV backup changed after preview; preview it again before restoring"})
 		return
 	}
 	s.restoreDataManagementBackup(c, data, false, nil, "webdav", request.FileName, request.AllowLegacy)

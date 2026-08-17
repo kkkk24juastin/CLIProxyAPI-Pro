@@ -91,6 +91,7 @@ export interface PolicyBackupPreview {
 }
 
 export interface DataRestorePreview {
+  backupSha256: string;
   legacyBackup: boolean;
   integrityProtected: boolean;
   encrypted: boolean;
@@ -211,8 +212,8 @@ export const dataManagementApi = {
       params: allowLegacy ? { allow_legacy: 1 } : undefined,
     });
   },
-  restoreWebDAV(fileName: string, allowLegacy: boolean): Promise<Record<string, unknown>> {
-    return apiClient.post<Record<string, unknown>>('/data/backups/webdav/restore', { fileName, allowLegacy });
+  restoreWebDAV(fileName: string, allowLegacy: boolean, expectedSha256: string): Promise<Record<string, unknown>> {
+    return apiClient.post<Record<string, unknown>>('/data/backups/webdav/restore', { fileName, allowLegacy, expectedSha256 });
   },
   previewCleanup(request: DataCleanupRequest): Promise<DataCleanupPreview> {
     return apiClient.post<DataCleanupPreview>('/data/maintenance/preview', request);

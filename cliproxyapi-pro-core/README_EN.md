@@ -382,7 +382,7 @@ The workflow:
 5. Applies the management customization layer and builds `management.html`.
 6. Creates or updates the current repository GitHub Release, then uploads binary assets, `checksums.txt`, and `management.html`.
 7. Writes core upstream and management upstream version mappings plus release notes into the GitHub Release notes.
-8. Exports usage statistics from one or more running CPA instances to WebDAV.
+8. Requests complete Pro WebDAV backups through the data-management pipeline on one or more running CPA instances, with a legacy usage-export fallback for old Cores returning 404.
 9. Triggers one or more Render deployments.
 10. Sends a Telegram notification.
 11. Deletes old workflow runs.
@@ -392,9 +392,9 @@ The workflow:
 - `DOCKER_USERNAME`
 - `DOCKER_PASSWORD`
 
-### Multi-instance usage backup
+### Multi-instance Pro data backup
 
-The workflow uses one optional JSON secret for all WebDAV backup targets:
+The workflow uses one optional JSON secret for all backup targets. The primary path on a current Core requires only `api_url` and `management_password`; the `webdav_*` fields in the example are used only for the 404 fallback when an old Core does not expose the data-management backup endpoint:
 
 ```text
 CLIPROXY_USAGE_BACKUP_TARGETS
@@ -415,13 +415,13 @@ Example:
 ]
 ```
 
-Each target is exported from its own CPA API and uploaded to its own WebDAV directory as:
+Each target first calls `/v0/management/data/backups/now`. The CPA instance's data-management settings own the WebDAV URL, credentials, file naming, retention, and operation record. Complete backups are named:
 
 ```text
-usage-export-YYYYMMDD_HHMMSS.jsonl
+cliproxy-pro-backup-YYYYMMDD_HHMMSS_000.jsonl
 ```
 
-The workflow keeps the latest 7 backups per WebDAV directory and cleans both `.jsonl` and legacy `.json` files. If the secret is missing, invalid, or a target fails, the workflow logs a warning and continues.
+Only when the target returns 404 does the workflow use the target's `webdav_*` fields to fall back to `/v0/management/usage/export`, producing `usage-export-YYYYMMDD_HHMMSS.jsonl` and retaining the latest 7 legacy backups. If the secret is missing or invalid, an old Core lacks fallback fields, or a target fails, the workflow logs a warning and continues.
 
 ### Multi-target Render deploy hooks
 

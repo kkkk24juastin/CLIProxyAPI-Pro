@@ -381,7 +381,7 @@ Workflow：
 5. 应用 management 定制层并构建 `management.html`。
 6. 创建或更新当前仓库 GitHub Release，上传二进制资产、`checksums.txt` 和 `management.html`。
 7. Release notes 写入 core upstream 与 management upstream 的版本映射和 release notes。
-8. 从一个或多个正在运行的 CPA 实例导出 usage statistics 到 WebDAV。
+8. 请求一个或多个正在运行的 CPA 实例通过数据管理管线创建完整 Pro WebDAV 备份；旧 Core 404 时回退 usage 导出。
 9. 触发一个或多个 Render 部署。
 10. 发送 Telegram 通知。
 11. 清理旧 workflow runs。
@@ -391,9 +391,9 @@ Workflow：
 - `DOCKER_USERNAME`
 - `DOCKER_PASSWORD`
 
-### 多实例 usage 备份
+### 多实例 Pro 数据备份
 
-workflow 使用一个可选 JSON secret 配置全部 WebDAV 备份目标：
+workflow 使用一个可选 JSON secret 配置全部备份目标。新 Core 主路径只需要 `api_url` 和 `management_password`；示例中的 `webdav_*` 字段仅供尚未提供数据管理备份端点的旧 Core 404 回退使用：
 
 ```text
 CLIPROXY_USAGE_BACKUP_TARGETS
@@ -414,13 +414,13 @@ CLIPROXY_USAGE_BACKUP_TARGETS
 ]
 ```
 
-每个目标会从自己的 CPA API 导出 usage，并上传到自己的 WebDAV 目录，文件名为：
+每个目标优先调用 `/v0/management/data/backups/now`。WebDAV 地址、凭证、文件命名、保留期和操作记录均由该 CPA 实例的数据管理设置负责，完整备份文件名为：
 
 ```text
-usage-export-YYYYMMDD_HHMMSS.jsonl
+cliproxy-pro-backup-YYYYMMDD_HHMMSS_000.jsonl
 ```
 
-workflow 会在每个 WebDAV 目录内保留最近 7 个备份，并同时清理 `.jsonl` 和历史 `.json` 文件。如果 secret 未配置、格式无效或某个目标失败，workflow 会记录警告并继续执行。
+仅当目标返回 404 时，workflow 才使用目标中的 `webdav_*` 字段回退到旧 `/v0/management/usage/export` 流程，生成 `usage-export-YYYYMMDD_HHMMSS.jsonl` 并保留最近 7 个旧备份。如果 secret 未配置、格式无效、旧 Core 缺少回退字段或某个目标失败，workflow 会记录警告并继续执行。
 
 ### 多 Render 部署 hook
 

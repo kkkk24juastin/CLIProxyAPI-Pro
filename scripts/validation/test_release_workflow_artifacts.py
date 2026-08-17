@@ -87,17 +87,27 @@ class ReleaseWorkflowArtifactTests(unittest.TestCase):
 
     def test_release_backup_uses_the_tracked_data_management_endpoint(self) -> None:
         workflow = (WORKFLOWS / "release-core.yml").read_text()
+        core_patcher = (
+            ROOT / "cliproxyapi-pro-core" / "patches" / "apply_upstream_patches.py"
+        ).read_text()
         backup_job_start = workflow.index("  backup-pro-data:\n")
         backup_job_end = workflow.index("  trigger-render-deployment:\n")
         backup_job = workflow[backup_job_start:backup_job_end]
 
         self.assertIn(
-            "/v0/management/usage/data/backups/now", backup_job
+            "/v0/management/data/backups/now", backup_job
         )
-        self.assertNotIn("/v0/management/usage/export", backup_job)
-        self.assertNotIn("PROPFIND", backup_job)
-        self.assertNotIn("webdav_url", backup_job)
-        self.assertNotIn("webdav_password", backup_job)
+        self.assertIn(
+            'embeddedusage.RegisterDataManagementGinRoutes(mgmt.Group("/data"))',
+            core_patcher,
+        )
+        self.assertNotIn("/v0/management/usage/data/", backup_job)
+        self.assertIn('elif [ "$http_status" = "404" ]; then', backup_job)
+        self.assertIn("/v0/management/usage/export", backup_job)
+        self.assertIn("Legacy backup fallback", backup_job)
+        self.assertIn("PROPFIND", backup_job)
+        self.assertIn("webdav_url", backup_job)
+        self.assertIn("webdav_password", backup_job)
 
 
 if __name__ == "__main__":

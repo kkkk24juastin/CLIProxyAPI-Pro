@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import tempfile
@@ -75,10 +76,30 @@ class EntrypointLifecycleTests(unittest.TestCase):
         entrypoint = ENTRYPOINT.read_text()
 
         self.assertIn(
-            "/v0/management/usage/data/backups/restore", entrypoint
+            "/v0/management/data/backups/restore", entrypoint
         )
+        self.assertIn("/v0/management/data/overview", entrypoint)
+        self.assertNotIn("/v0/management/usage/data/", entrypoint)
         self.assertIn("cliproxy-pro-backup-[0-9_]+", entrypoint)
         self.assertIn("usage-export-[0-9_]+", entrypoint)
+        legacy_pattern = next(
+            pattern
+            for pattern in re.findall(r"grep -oE '([^']+)'", entrypoint)
+            if pattern.startswith("usage-export-")
+        )
+        for file_name in (
+            "usage-export-20260813_120000.jsonl",
+            "usage-export-20260813_120000.json",
+        ):
+            result = subprocess.run(
+                ["grep", "-oE", legacy_pattern],
+                input=f"<d:href>/backups/{file_name}</d:href>",
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), file_name)
         self.assertNotIn("/v0/management/usage/import", entrypoint)
         self.assertIn("CLIPROXY_BACKUP_WEBDAV_URL", entrypoint)
 

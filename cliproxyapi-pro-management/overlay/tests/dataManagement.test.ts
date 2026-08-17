@@ -90,8 +90,9 @@ describe('data-management destructive-operation fencing', () => {
 
     expect(api).toContain("'/data/backups/webdav/preview'");
     expect(api).toContain("'/data/backups/webdav/restore'");
+    expect(api).toContain('expectedSha256');
     expect(page).toContain('dataManagementApi.previewWebDAVRestore(backup.fileName)');
-    expect(page).toContain('dataManagementApi.restoreWebDAV(restoreWebDAVFileName, restoreAllowLegacy)');
+    expect(page).toContain('restorePreview?.backupSha256');
     expect(page).toContain('onClick={() => void previewWebDAVRestore(backup)}');
   });
 
