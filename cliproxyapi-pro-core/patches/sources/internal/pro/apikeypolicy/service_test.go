@@ -647,7 +647,11 @@ func TestWorkspaceUpdateIsAtomicAndIncrementsVersionOnce(t *testing.T) {
 func TestProfileCatalogRejectsUnknownProviderAndModel(t *testing.T) {
 	service := newTestService(t)
 	service.SetCatalogProvider(func() (ProfileCatalog, error) {
-		return NewProfileCatalog([]string{"codex", "home"}, []string{"gpt-5"}), nil
+		return NewProfileCatalog(
+			[]string{"codex", "home"},
+			[]string{"gpt-5", "home-model"},
+			map[string][]string{"gpt-5": {"codex"}, "home-model": {"home"}},
+		), nil
 	})
 	identity := testIdentity(t, "catalog-key")
 	if _, err := service.Create(context.Background(), identity, "", ProfileInput{Name: "bad-provider", Providers: []string{"claude"}, Models: []string{"gpt-5"}}); err == nil || !strings.Contains(err.Error(), "unknown provider") {
@@ -655,6 +659,12 @@ func TestProfileCatalogRejectsUnknownProviderAndModel(t *testing.T) {
 	}
 	if _, err := service.Create(context.Background(), identity, "", ProfileInput{Name: "bad-model", Providers: []string{"codex"}, Models: []string{"gpt-unknown"}}); err == nil || !strings.Contains(err.Error(), "unknown model") {
 		t.Fatalf("unknown model error = %v", err)
+	}
+	if _, err := service.Create(context.Background(), identity, "", ProfileInput{Name: "wrong-provider", Providers: []string{"home"}, Models: []string{"gpt-5"}}); err == nil || !strings.Contains(err.Error(), "not available from an allowed provider") {
+		t.Fatalf("provider/model mismatch error = %v", err)
+	}
+	if _, err := service.Create(context.Background(), identity, "", ProfileInput{Name: "wrong-mapping-provider", Providers: []string{"home"}, Mappings: []ModelMapping{{Source: "alias", Target: "gpt-5"}}}); err == nil || !strings.Contains(err.Error(), "not available from an allowed provider") {
+		t.Fatalf("provider/mapping mismatch error = %v", err)
 	}
 	if _, err := service.Create(context.Background(), identity, "", ProfileInput{Name: "valid", Providers: []string{"Codex"}, Models: []string{"gpt-5"}}); err != nil {
 		t.Fatal(err)

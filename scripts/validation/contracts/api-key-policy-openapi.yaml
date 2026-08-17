@@ -25,6 +25,18 @@ paths:
                 $ref: "#/components/schemas/BindingPage"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/PolicyUnavailable" }
+  /v0/management/api-key-policy-catalog:
+    get:
+      operationId: getApiKeyPolicyCatalog
+      description: Current provider, effective-model, and provider-to-model relationships accepted by Profile writes
+      responses:
+        "200":
+          description: Runtime catalog used to link allowed providers with allowed effective models
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyCatalog" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/PolicyUnavailable" }
   /v0/management/api-key-policy-profile-catalog:
     get:
       operationId: listApiKeyPolicyProfileCatalog
@@ -239,6 +251,26 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    PolicyCatalog:
+      type: object
+      additionalProperties: false
+      required: [providers, models, modelProviders]
+      properties:
+        providers:
+          type: array
+          items: { type: string }
+          uniqueItems: true
+        models:
+          type: array
+          items: { type: string }
+          uniqueItems: true
+        modelProviders:
+          type: object
+          description: Effective model ID to the currently available provider IDs that can serve it
+          additionalProperties:
+            type: array
+            items: { type: string }
+            uniqueItems: true
     Capabilities:
       type: object
       required: [apiVersion, features]

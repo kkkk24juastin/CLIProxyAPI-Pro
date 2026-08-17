@@ -119,16 +119,19 @@ func apiKeyPolicyCatalogFromAvailableModels(
 ) apikeypolicy.ProfileCatalog {
 	modelIDs := make([]string, 0, len(models))
 	providers := make([]string, 0, len(models))
+	modelProviders := make(map[string][]string, len(models))
 	for _, model := range models {
 		if model == nil || model.ID == "" {
 			continue
 		}
 		modelIDs = append(modelIDs, model.ID)
 		if providersForModel != nil {
-			providers = append(providers, providersForModel(model.ID)...)
+			availableProviders := providersForModel(model.ID)
+			providers = append(providers, availableProviders...)
+			modelProviders[model.ID] = availableProviders
 		}
 	}
-	return apikeypolicy.NewProfileCatalog(providers, modelIDs)
+	return apikeypolicy.NewProfileCatalog(providers, modelIDs, modelProviders)
 }
 
 func (a *App) Close() {

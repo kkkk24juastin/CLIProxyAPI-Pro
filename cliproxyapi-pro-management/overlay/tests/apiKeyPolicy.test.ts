@@ -7,6 +7,7 @@ import {
   cloneProfileInput,
   apiKeyPolicyErrorTranslationKey,
   resolveMappingTargetModels,
+  resolveModelsForProviders,
   supportsAPIKeyPolicyUsageTarget,
   validateAPIKeyPolicyCapabilities,
   validateProfileInput,
@@ -17,6 +18,10 @@ import {
 const catalog: APIKeyPolicyCatalog = {
   providers: ['openai', 'claude', 'home'],
   models: ['gpt-5', 'claude-sonnet-4'],
+  modelProviders: {
+    'gpt-5': ['openai', 'home'],
+    'claude-sonnet-4': ['claude'],
+  },
 };
 
 const validProfile = (): APIKeyProfileInput => ({
@@ -191,6 +196,24 @@ describe('API Key Policy profile drafts', () => {
 		expect(page).toContain("t('api_key_policy.unavailable_selections')");
 	});
 
+	test('links effective models and mapping targets to the selected providers', () => {
+		expect(resolveModelsForProviders([], catalog)).toEqual(catalog.models);
+		expect(resolveModelsForProviders(['openai'], catalog)).toEqual(['gpt-5']);
+		expect(resolveModelsForProviders(['claude'], catalog)).toEqual(['claude-sonnet-4']);
+		expect(resolveModelsForProviders(['home', 'claude'], catalog)).toEqual(catalog.models);
+		expect(validateProfileInput({ ...validProfile(), providers: ['claude'] }, catalog)).toBe('models');
+		expect(validateProfileInput({
+			...validProfile(),
+			providers: ['claude'],
+			models: [],
+			mappings: [{ source: 'smart', target: 'gpt-5' }],
+		}, catalog)).toBe('mappings');
+		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+		expect(page).toContain('values={availableModels}');
+		expect(page).toContain('const providerModels = resolveModelsForProviders(providers, snapshot.catalog)');
+		expect(page).toContain('mappings: current.profile.mappings.filter((mapping) => mappingTargets.includes(mapping.target))');
+	});
+
 	test('validates the live catalog only when the saved profile changes', () => {
 		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
 		const validate = page.slice(page.indexOf('const validateDraft'), page.indexOf('const saveWorkspace'));
@@ -315,7 +338,7 @@ describe('API Key Policy profile drafts', () => {
 		expect(page).toContain("all_providers_when_empty");
 		expect(page).toContain("all_models_when_empty");
 		expect(page).toContain("models.length === 0 ? current.profile.mappings");
-		expect(page).toContain("snapshot?.catalog.models ?? []");
+		expect(page).toContain("const availableModels = resolveModelsForProviders(");
 	});
 
   test('rejects duplicate or partial mapping sources', () => {

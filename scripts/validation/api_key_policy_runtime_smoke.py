@@ -63,10 +63,16 @@ def main() -> None:
 
     status, catalog = request(base, args.management_key, "GET", "/v0/management/api-key-policy-catalog")
     assert status == 200 and catalog["providers"] and catalog["models"], (status, catalog)
+    linked_pair = next((
+        (model, providers[0])
+        for model, providers in catalog.get("modelProviders", {}).items()
+        if providers
+    ), None)
+    selected_model, selected_provider = linked_pair or (catalog["models"][0], catalog["providers"][0])
     profile = {
         "name": "Smoke",
-        "providers": [catalog["providers"][0], catalog["providers"][0]],
-        "models": [catalog["models"][0]],
+        "providers": [selected_provider, selected_provider],
+        "models": [selected_model],
         "mappings": [],
     }
     status, policy = request(base, args.management_key, "POST", "/v0/management/api-key-policies", {
@@ -76,7 +82,7 @@ def main() -> None:
     })
     assert status == 201, (status, policy)
     assert policy["state"] == "configured", policy
-    assert policy["profiles"][0]["providers"] == [catalog["providers"][0]], policy
+    assert policy["profiles"][0]["providers"] == [selected_provider], policy
 
     status, profile_catalog = request(base, args.management_key, "GET", "/v0/management/api-key-policy-profile-catalog")
     assert status == 200, (status, profile_catalog)

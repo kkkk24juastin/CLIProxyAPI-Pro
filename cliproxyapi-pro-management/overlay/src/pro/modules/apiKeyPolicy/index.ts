@@ -8,6 +8,7 @@ export {
   cloneProfileInput,
   isAPIKeyPolicyUnsupported,
   resolveMappingTargetModels,
+  resolveModelsForProviders,
   supportsAPIKeyPolicyUsageTarget,
   validateAPIKeyPolicyCapabilities,
   validateProfileInput,

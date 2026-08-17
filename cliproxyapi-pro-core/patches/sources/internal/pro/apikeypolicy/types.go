@@ -181,14 +181,23 @@ type WorkspaceUpdate struct {
 // accepted by new Profile writes. The runtime registry may change between
 // calls, so callers obtain a fresh catalog for every write.
 type ProfileCatalog struct {
-	Providers []string `json:"providers"`
-	Models    []string `json:"models"`
+	Providers      []string            `json:"providers"`
+	Models         []string            `json:"models"`
+	ModelProviders map[string][]string `json:"modelProviders"`
 }
 
-func NewProfileCatalog(providers, models []string) ProfileCatalog {
+func NewProfileCatalog(providers, models []string, modelProviders ...map[string][]string) ProfileCatalog {
+	normalizedModels := normalizeUnique(models, normalizeModel)
+	normalizedModelProviders := make(map[string][]string, len(normalizedModels))
+	if len(modelProviders) > 0 {
+		for _, model := range normalizedModels {
+			normalizedModelProviders[model] = normalizeUnique(modelProviders[0][model], normalizeProvider)
+		}
+	}
 	return ProfileCatalog{
-		Providers: normalizeUnique(providers, normalizeProvider),
-		Models:    normalizeUnique(models, normalizeModel),
+		Providers:      normalizeUnique(providers, normalizeProvider),
+		Models:         normalizedModels,
+		ModelProviders: normalizedModelProviders,
 	}
 }
 
@@ -214,13 +223,35 @@ func (c ProfileCatalog) Validate(input ProfileInput) error {
 		if _, ok := models[model]; !ok {
 			return fmt.Errorf("unknown model %q", model)
 		}
+		if !c.modelMatchesProviders(model, input.Providers) {
+			return fmt.Errorf("model %q is not available from an allowed provider", model)
+		}
 	}
 	for _, mapping := range input.Mappings {
 		if _, ok := models[mapping.Target]; !ok {
 			return fmt.Errorf("unknown model %q", mapping.Target)
 		}
+		if !c.modelMatchesProviders(mapping.Target, input.Providers) {
+			return fmt.Errorf("model mapping target %q is not available from an allowed provider", mapping.Target)
+		}
 	}
 	return nil
+}
+
+func (c ProfileCatalog) modelMatchesProviders(model string, allowedProviders []string) bool {
+	if len(allowedProviders) == 0 || len(c.ModelProviders) == 0 {
+		return true
+	}
+	allowed := make(map[string]struct{}, len(allowedProviders))
+	for _, provider := range allowedProviders {
+		allowed[normalizeProvider(provider)] = struct{}{}
+	}
+	for _, provider := range c.ModelProviders[normalizeModel(model)] {
+		if _, ok := allowed[normalizeProvider(provider)]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 type RequestPolicySnapshot struct {

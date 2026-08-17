@@ -25,6 +25,14 @@ CORE_PATCHER = (
 
 
 class APIKeyPolicyContractTest(unittest.TestCase):
+    def test_policy_catalog_exposes_provider_model_relationships(self) -> None:
+        self.assertIn("/v0/management/api-key-policy-catalog:", OPENAPI)
+        self.assertRegex(
+            OPENAPI,
+            r"PolicyCatalog:\n(?:.|\n)*?required: \[providers, models, modelProviders\]",
+        )
+        self.assertIn("ModelProviders map[string][]string `json:\"modelProviders\"`", GO_TYPES)
+
     def test_runtime_smoke_helpers_are_syntax_valid(self) -> None:
         for relative in (
             "scripts/validation/api_key_policy_runtime_smoke.py",

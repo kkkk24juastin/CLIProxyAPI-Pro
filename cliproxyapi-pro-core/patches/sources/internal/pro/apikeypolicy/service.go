@@ -416,7 +416,7 @@ func (s *Service) Catalog() (ProfileCatalog, error) {
 	if err != nil {
 		return ProfileCatalog{}, err
 	}
-	return NewProfileCatalog(catalog.Providers, catalog.Models), nil
+	return NewProfileCatalog(catalog.Providers, catalog.Models, catalog.ModelProviders), nil
 }
 
 func (s *Service) normalizeProfileForWrite(input ProfileInput) (ProfileInput, error) {

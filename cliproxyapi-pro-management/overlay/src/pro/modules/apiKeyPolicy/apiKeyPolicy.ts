@@ -51,6 +51,7 @@ export interface APIKeyPolicyBindingPage {
 export interface APIKeyPolicyCatalog {
   providers: string[];
   models: string[];
+  modelProviders?: Record<string, string[]>;
 }
 
 export interface APIKeyPolicyCapabilities {
@@ -364,6 +365,23 @@ export const resolveMappingTargetModels = (
   return selectedModels.filter((model) => available.has(model));
 };
 
+export const resolveModelsForProviders = (
+  selectedProviders: string[],
+  catalog: APIKeyPolicyCatalog,
+): string[] => {
+  if (
+    selectedProviders.length === 0 ||
+    !catalog.modelProviders ||
+    Object.keys(catalog.modelProviders).length === 0
+  ) return [...catalog.models];
+  const providers = new Set(selectedProviders.map((provider) => provider.toLowerCase()));
+  return catalog.models.filter((model) =>
+    (catalog.modelProviders?.[model] ?? []).some((provider) =>
+      providers.has(provider.toLowerCase()),
+    ),
+  );
+};
+
 export const validateProfileInput = (
   profile: APIKeyProfileInput,
   catalog: APIKeyPolicyCatalog,
@@ -371,14 +389,15 @@ export const validateProfileInput = (
   if (!profile.name.trim()) return 'name';
   const providers = new Set(catalog.providers);
   const models = new Set(catalog.models);
+  const providerModels = new Set(resolveModelsForProviders(profile.providers, catalog));
   if (profile.providers.some((provider) => !providers.has(provider))) return 'providers';
-  if (profile.models.some((model) => !models.has(model))) return 'models';
+  if (profile.models.some((model) => !models.has(model) || !providerModels.has(model))) return 'models';
   const sources = new Set<string>();
   for (const mapping of profile.mappings) {
     const source = mapping.source.trim();
     const target = mapping.target.trim();
     const targetAllowed = profile.models.length === 0
-      ? models.has(target)
+      ? models.has(target) && providerModels.has(target)
       : profile.models.includes(target);
     if (!source || !target || sources.has(source) || !targetAllowed) return 'mappings';
     sources.add(source);

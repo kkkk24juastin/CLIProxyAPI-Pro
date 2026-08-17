@@ -39,6 +39,12 @@ func TestAPIKeyPolicyCatalogContainsOnlyAvailableRuntimeEntries(t *testing.T) {
 	if !reflect.DeepEqual(catalog.Providers, []string{"claude", "codex"}) {
 		t.Fatalf("catalog providers = %#v", catalog.Providers)
 	}
+	if !reflect.DeepEqual(catalog.ModelProviders, map[string][]string{
+		"runtime-a": {"claude", "codex"},
+		"runtime-z": {"codex"},
+	}) {
+		t.Fatalf("catalog model providers = %#v", catalog.ModelProviders)
+	}
 }
 
 func TestAppModulesPersistSettingsOnlyToSQLite(t *testing.T) {
