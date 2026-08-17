@@ -97,6 +97,8 @@
 .domainSnapshot span, .backupList span { display: grid; gap: 3px; min-width: 0; }
 .domainSnapshot strong, .backupList strong { overflow: hidden; color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .domainSnapshot small, .backupList small { color: var(--text-secondary); font-size: 10px; }
+.backupList .backupListActions { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 auto; gap: 10px; }
+.backupListActions :global(.btn) > span { display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
 
 .securityNotice, .boundaryNotice, .integrityGood, .integrityWarning {
   display: flex;
@@ -227,4 +229,6 @@
   .operationList article > span:last-child { grid-column: 2; text-align: left; }
   .restoreDomainList > div { align-items: flex-start; flex-direction: column; }
   .restoreDomainList > div > span:last-child { text-align: left; }
+  .backupList > div { align-items: flex-start; }
+  .backupList .backupListActions { align-items: flex-end; flex-direction: column; }
 }

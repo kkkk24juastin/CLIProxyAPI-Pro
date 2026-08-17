@@ -198,6 +198,10 @@ export const dataManagementApi = {
     });
     return normalizeRestorePreview(preview);
   },
+  async previewWebDAVRestore(fileName: string): Promise<DataRestorePreview> {
+    const preview = await apiClient.post<DataRestorePreview>('/data/backups/webdav/preview', { fileName });
+    return normalizeRestorePreview(preview);
+  },
   restore(data: ArrayBuffer, passphrase: string, allowLegacy: boolean): Promise<Record<string, unknown>> {
     return apiClient.post<Record<string, unknown>>('/data/backups/restore', data, {
       headers: {
@@ -206,6 +210,9 @@ export const dataManagementApi = {
       },
       params: allowLegacy ? { allow_legacy: 1 } : undefined,
     });
+  },
+  restoreWebDAV(fileName: string, allowLegacy: boolean): Promise<Record<string, unknown>> {
+    return apiClient.post<Record<string, unknown>>('/data/backups/webdav/restore', { fileName, allowLegacy });
   },
   previewCleanup(request: DataCleanupRequest): Promise<DataCleanupPreview> {
     return apiClient.post<DataCleanupPreview>('/data/maintenance/preview', request);

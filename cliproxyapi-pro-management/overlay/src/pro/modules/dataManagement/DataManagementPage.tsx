@@ -41,6 +41,7 @@ import {
   type DataManagementOverview,
   type DataOperation,
   type DataRestorePreview,
+  type WebDAVBackup,
 } from './dataManagement';
 import {
   buildDataManagementSettingsFromDraft,
@@ -128,6 +129,7 @@ export function DataManagementPage() {
   const [restorePassphrase, setRestorePassphrase] = useState('');
   const [restoreFileName, setRestoreFileName] = useState('');
   const [restoreBuffer, setRestoreBuffer] = useState<ArrayBuffer | null>(null);
+  const [restoreWebDAVFileName, setRestoreWebDAVFileName] = useState('');
   const [restoreEncrypted, setRestoreEncrypted] = useState(false);
   const [restoreAllowLegacy, setRestoreAllowLegacy] = useState(false);
   const [restorePreview, setRestorePreview] = useState<DataRestorePreview | null>(null);
@@ -346,6 +348,7 @@ export function DataManagementPage() {
     if (fileSequence !== restoreFileSequenceRef.current) return;
     setRestoreFileName(file.name);
     setRestoreBuffer(buffer);
+    setRestoreWebDAVFileName('');
     setRestoreEncrypted(encrypted);
     if (encrypted) {
       setRestorePassphrase('');
@@ -357,6 +360,28 @@ export function DataManagementPage() {
     await previewRestoreBuffer(buffer, '', allowLegacy);
   }, [previewRestoreBuffer]);
 
+  const previewWebDAVRestore = useCallback(async (backup: WebDAVBackup) => {
+    restoreFileSequenceRef.current += 1;
+    const sequence = ++restorePreviewSequenceRef.current;
+    setRestoreBusy(true);
+    setRestoreBuffer(null);
+    setRestoreWebDAVFileName(backup.fileName);
+    setRestoreFileName(backup.fileName);
+    setRestoreEncrypted(false);
+    setRestorePassphrase('');
+    try {
+      const preview = await dataManagementApi.previewWebDAVRestore(backup.fileName);
+      if (sequence !== restorePreviewSequenceRef.current) return;
+      setRestoreAllowLegacy(preview.legacyBackup);
+      setRestorePreview(preview);
+      setRestorePreviewOpen(true);
+    } catch (error) {
+      showNotification(error instanceof Error ? error.message : String(error), 'error');
+    } finally {
+      if (sequence === restorePreviewSequenceRef.current) setRestoreBusy(false);
+    }
+  }, [showNotification]);
+
   const previewEncryptedRestore = useCallback(async () => {
     if (!restoreBuffer) return;
     setRestorePassphraseDialogOpen(false);
@@ -365,13 +390,18 @@ export function DataManagementPage() {
   }, [previewRestoreBuffer, restoreBuffer, restorePassphrase]);
 
   const executeRestore = useCallback(async () => {
-    if (!restoreBuffer) return;
+    if (!restoreBuffer && !restoreWebDAVFileName) return;
     setRestoreBusy(true);
     try {
-      await dataManagementApi.restore(restoreBuffer, restoreEncrypted ? restorePassphrase : '', restoreAllowLegacy);
+      if (restoreWebDAVFileName) {
+        await dataManagementApi.restoreWebDAV(restoreWebDAVFileName, restoreAllowLegacy);
+      } else if (restoreBuffer) {
+        await dataManagementApi.restore(restoreBuffer, restoreEncrypted ? restorePassphrase : '', restoreAllowLegacy);
+      }
       setRestorePreviewOpen(false);
       setRestorePreview(null);
       setRestoreBuffer(null);
+      setRestoreWebDAVFileName('');
       setRestoreFileName('');
       setRestorePassphrase('');
       showNotification(t('data_management.restore_success', { defaultValue: 'Pro backup restored' }), 'success');
@@ -381,7 +411,7 @@ export function DataManagementPage() {
     } finally {
       setRestoreBusy(false);
     }
-  }, [loadBackupHistory, loadCore, restoreAllowLegacy, restoreBuffer, restoreEncrypted, restorePassphrase, showNotification, t]);
+  }, [loadBackupHistory, loadCore, restoreAllowLegacy, restoreBuffer, restoreEncrypted, restorePassphrase, restoreWebDAVFileName, showNotification, t]);
 
   const previewCleanup = useCallback(async () => {
     setCleanupBusy(true);
@@ -503,13 +533,9 @@ export function DataManagementPage() {
             <IconRefreshCw size={16} />
             {t('common.refresh')}
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => void exportBackup()} disabled={backupBusy || loading}>
-            <IconDownload size={16} />
-            {t('data_management.download_backup', { defaultValue: 'Download backup' })}
-          </Button>
-          <Button variant="primary" size="sm" onClick={() => void backupNow()} disabled={backupBusy || loading}>
-            <IconRefreshCw size={16} />
-            {t('data_management.backup_now', { defaultValue: 'Back up now' })}
+          <Button variant="primary" size="sm" onClick={() => setActiveView('backups')} disabled={loading}>
+            <IconShield size={16} />
+            {t('data_management.tab_backups', { defaultValue: 'Backup & restore' })}
           </Button>
         </div>
       </header>
@@ -629,7 +655,7 @@ export function DataManagementPage() {
             <article className={styles.panel}>
               <div className={styles.panelHeading}><div><h2>{t('data_management.backup_history', { defaultValue: 'Backup history' })}</h2><p>{t('data_management.backup_history_desc', { defaultValue: 'Backups currently visible on the configured WebDAV target.' })}</p></div><Button variant="ghost" size="sm" onClick={() => void loadBackupHistory()} disabled={backupHistoryLoading}><IconRefreshCw size={15} /></Button></div>
               {backupHistoryLoading ? <div className={styles.inlineLoading}><LoadingSpinner size={16} />{t('common.loading')}</div> : history.backups.length ? (
-                <div className={styles.backupList}>{history.backups.slice(0, 10).map((backup) => <div key={backup.fileName}><span><strong>{backup.fileName}</strong><small>{formatDateTime(backup.lastModifiedMs)}</small></span><b>{formatBytes(backup.sizeBytes)}</b></div>)}</div>
+                <div className={styles.backupList}>{history.backups.slice(0, 10).map((backup) => <div key={backup.fileName}><span><strong>{backup.fileName}</strong><small>{formatDateTime(backup.lastModifiedMs)}</small></span><span className={styles.backupListActions}><b>{formatBytes(backup.sizeBytes)}</b><Button variant="secondary" size="sm" onClick={() => void previewWebDAVRestore(backup)} disabled={restoreBusy}><IconRefreshCw size={14} />{t('data_management.restore_from_webdav', { defaultValue: 'Restore' })}</Button></span></div>)}</div>
               ) : <div className={styles.emptyState}><IconInfo size={18} />{t('data_management.no_backups', { defaultValue: 'No remote backups found.' })}</div>}
             </article>
           </section>

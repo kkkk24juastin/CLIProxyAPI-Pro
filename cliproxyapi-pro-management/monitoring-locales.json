@@ -19,6 +19,9 @@
       "enabled": "Enabled",
       "disabled": "Disabled"
     },
+    "data_management": {
+      "restore_from_webdav": "Restore"
+    },
     "proxy_pool": {
       "title": "Proxy Management",
       "subtitle": "Aggregate multiple upstream proxies behind one local SOCKS5 endpoint with rotation, health isolation, and failover.",
@@ -1553,6 +1556,9 @@
       "enabled": "Включено",
       "disabled": "Отключено"
     },
+    "data_management": {
+      "restore_from_webdav": "Восстановить"
+    },
     "proxy_pool": {
       "start_takeover": "Включить перехват",
       "stop_takeover": "Остановить перехват",
@@ -2798,6 +2804,7 @@
       "encrypted_backup_desc": "使用 AES-256-GCM 和口令保护完整备份。",
       "restore_backup": "恢复备份",
       "restore_backup_desc": "写入任何数据之前，先按数据域完整预检。",
+      "restore_from_webdav": "恢复",
       "export_success": "Pro 备份已下载",
       "webdav_title": "WebDAV 备份目标",
       "webdav_desc": "配置异地定时备份，并验证目标是否具备创建和删除文件的权限。",
@@ -4428,6 +4435,9 @@
     "common": {
       "enabled": "已啟用",
       "disabled": "未啟用"
+    },
+    "data_management": {
+      "restore_from_webdav": "還原"
     },
     "proxy_pool": {
       "title": "代理管理",

@@ -957,7 +957,7 @@ func registerDataManagementUnavailableRoutes(group *gin.RouterGroup) {
 	for _, route := range []string{"/overview", "/domains", "/operations", "/backups", "/backups/export", "/settings"} {
 		group.GET(route, unavailable)
 	}
-	for _, route := range []string{"/backups/export", "/backups/preview", "/backups/restore", "/backups/now", "/backups/test", "/maintenance/preview", "/maintenance/execute", "/statistics/reset"} {
+	for _, route := range []string{"/backups/export", "/backups/preview", "/backups/restore", "/backups/webdav/preview", "/backups/webdav/restore", "/backups/now", "/backups/test", "/maintenance/preview", "/maintenance/execute", "/statistics/reset"} {
 		group.POST(route, unavailable)
 	}
 	group.PUT("/settings", unavailable)
@@ -976,6 +976,8 @@ func (s *Server) RegisterDataManagementGinRoutes(group *gin.RouterGroup) {
 	group.POST("/backups/export", s.handleDataManagementEncryptedBackupExport)
 	group.POST("/backups/preview", s.handleDataManagementBackupPreview)
 	group.POST("/backups/restore", s.handleDataManagementBackupRestore)
+	group.POST("/backups/webdav/preview", s.handleDataManagementWebDAVBackupPreview)
+	group.POST("/backups/webdav/restore", s.handleDataManagementWebDAVBackupRestore)
 	group.POST("/backups/now", s.handleDataManagementBackupNow)
 	group.POST("/backups/test", s.handleDataManagementWebDAVTest)
 	group.POST("/maintenance/preview", s.handleDataManagementCleanupPreview)
@@ -1120,6 +1122,10 @@ func (s *Server) handleDataManagementBackupRestore(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	s.restoreDataManagementBackup(c, data, encrypted, encryptedSecrets, "upload", "", allowLegacyUsageImport(c))
+}
+
+func (s *Server) restoreDataManagementBackup(c *gin.Context, data []byte, encrypted bool, encryptedSecrets []string, target, fileName string, allowLegacy bool) {
 	secretClasses := append([]string(nil), encryptedSecrets...)
 	if len(secretClasses) == 0 {
 		if domains, listErr := s.store.ListDataDomains(c.Request.Context()); listErr == nil {
@@ -1127,12 +1133,19 @@ func (s *Server) handleDataManagementBackupRestore(c *gin.Context) {
 		}
 	}
 	operation := DataOperation{
-		Kind: "restore", Status: dataOperationRunning, Target: "upload",
+		Kind: "restore", Status: dataOperationRunning, Target: target, FileName: fileName,
 		StartedAtMS: time.Now().UnixMilli(), SizeBytes: int64(len(data)),
 		SecretClasses: secretClasses, Metadata: map[string]any{"encrypted": encrypted},
 	}
 	operation.ID, _ = s.store.StartDataOperation(c.Request.Context(), operation)
 	c.Request.Body = io.NopCloser(bytes.NewReader(data))
+	query := c.Request.URL.Query()
+	if allowLegacy {
+		query.Set("allow_legacy", "1")
+	} else {
+		query.Del("allow_legacy")
+	}
+	c.Request.URL.RawQuery = query.Encode()
 	s.handleUsageImport(c)
 	operation.FinishedAtMS = time.Now().UnixMilli()
 	if c.Writer.Status() >= 200 && c.Writer.Status() < 300 {
@@ -1142,6 +1155,56 @@ func (s *Server) handleDataManagementBackupRestore(c *gin.Context) {
 		operation.Message = fmt.Sprintf("restore request failed with status %d", c.Writer.Status())
 	}
 	_ = s.store.FinishDataOperation(context.WithoutCancel(c.Request.Context()), operation)
+}
+
+type dataManagementWebDAVRestoreRequest struct {
+	FileName    string `json:"fileName"`
+	AllowLegacy bool   `json:"allowLegacy"`
+}
+
+func dataManagementWebDAVRestoreRequestFrom(c *gin.Context) (dataManagementWebDAVRestoreRequest, error) {
+	var request dataManagementWebDAVRestoreRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		return request, fmt.Errorf("invalid WebDAV restore request")
+	}
+	request.FileName = strings.TrimSpace(request.FileName)
+	if request.FileName == "" {
+		return request, fmt.Errorf("WebDAV backup file name is required")
+	}
+	return request, nil
+}
+
+func (s *Server) handleDataManagementWebDAVBackupPreview(c *gin.Context) {
+	request, err := dataManagementWebDAVRestoreRequestFrom(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	data, err := s.fetchWebDAVBackup(c.Request.Context(), request.FileName)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	preview, err := s.previewBackupData(c.Request.Context(), data, true, false, nil)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, preview)
+}
+
+func (s *Server) handleDataManagementWebDAVBackupRestore(c *gin.Context) {
+	request, err := dataManagementWebDAVRestoreRequestFrom(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	data, err := s.fetchWebDAVBackup(c.Request.Context(), request.FileName)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	s.restoreDataManagementBackup(c, data, false, nil, "webdav", request.FileName, request.AllowLegacy)
 }
 
 func (s *Server) handleDataManagementBackupNow(c *gin.Context) {

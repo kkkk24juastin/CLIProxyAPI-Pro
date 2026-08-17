@@ -73,18 +73,35 @@ describe('data-management destructive-operation fencing', () => {
   });
 
   test('keeps header action button content aligned', () => {
+    const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/dataManagement/DataManagementPage.tsx'), 'utf8');
     const styles = readFileSync(resolve(import.meta.dir, '../src/pro/modules/dataManagement/DataManagementPage.module.scss'), 'utf8');
+    const header = page.slice(page.indexOf('<header className={styles.header}>'), page.indexOf('</header>'));
 
     expect(styles).toContain('.headerActions :global(.btn) > span');
     expect(styles).toContain('gap: 6px; white-space: nowrap;');
+    expect(header).toContain("onClick={() => setActiveView('backups')}");
+    expect(header).not.toContain('exportBackup()');
+    expect(header).not.toContain('backupNow()');
+  });
+
+  test('restores a listed WebDAV backup through the data-management preview pipeline', () => {
+    const api = readFileSync(resolve(import.meta.dir, '../src/pro/modules/dataManagement/dataManagement.ts'), 'utf8');
+    const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/dataManagement/DataManagementPage.tsx'), 'utf8');
+
+    expect(api).toContain("'/data/backups/webdav/preview'");
+    expect(api).toContain("'/data/backups/webdav/restore'");
+    expect(page).toContain('dataManagementApi.previewWebDAVRestore(backup.fileName)');
+    expect(page).toContain('dataManagementApi.restoreWebDAV(restoreWebDAVFileName, restoreAllowLegacy)');
+    expect(page).toContain('onClick={() => void previewWebDAVRestore(backup)}');
   });
 
   test('provides enabled and disabled common labels in every locale', () => {
-    const locales = JSON.parse(readFileSync(resolve(import.meta.dir, '../src/pro/locales.generated.json'), 'utf8')) as Record<string, { common?: Record<string, string> }>;
+    const locales = JSON.parse(readFileSync(resolve(import.meta.dir, '../src/pro/locales.generated.json'), 'utf8')) as Record<string, { common?: Record<string, string>; data_management?: Record<string, string> }>;
 
     for (const locale of ['en', 'ru', 'zh-CN', 'zh-TW']) {
       expect(locales[locale]?.common?.enabled).toBeTruthy();
       expect(locales[locale]?.common?.disabled).toBeTruthy();
+      expect(locales[locale]?.data_management?.restore_from_webdav).toBeTruthy();
     }
   });
 });

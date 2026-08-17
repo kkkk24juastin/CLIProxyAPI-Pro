@@ -39,6 +39,9 @@ class EntrypointLifecycleTests(unittest.TestCase):
                 "WEBDAV_URL",
                 "WEBDAV_USERNAME",
                 "WEBDAV_PASSWORD",
+                "CLIPROXY_BACKUP_WEBDAV_URL",
+                "CLIPROXY_BACKUP_WEBDAV_USERNAME",
+                "CLIPROXY_BACKUP_WEBDAV_PASSWORD",
                 "MANAGEMENT_PASSWORD",
             ):
                 environment.pop(name, None)
@@ -67,6 +70,28 @@ class EntrypointLifecycleTests(unittest.TestCase):
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=5)
+
+    def test_docker_restore_uses_the_data_management_pipeline(self) -> None:
+        entrypoint = ENTRYPOINT.read_text()
+
+        self.assertIn(
+            "/v0/management/usage/data/backups/restore", entrypoint
+        )
+        self.assertIn("cliproxy-pro-backup-[0-9_]+", entrypoint)
+        self.assertIn("usage-export-[0-9_]+", entrypoint)
+        self.assertNotIn("/v0/management/usage/import", entrypoint)
+        self.assertIn("CLIPROXY_BACKUP_WEBDAV_URL", entrypoint)
+
+        for dockerfile_name in ("Dockerfile", "Dockerfile.runtime"):
+            dockerfile = (
+                REPO_ROOT / "cliproxyapi-pro-core" / dockerfile_name
+            ).read_text()
+            self.assertIn(
+                "COPY cliproxyapi-pro-core/entrypoint.sh /CLIProxyAPI/entrypoint.sh"
+                if dockerfile_name == "Dockerfile"
+                else "COPY entrypoint.sh /CLIProxyAPI/entrypoint.sh",
+                dockerfile,
+            )
 
 
 if __name__ == "__main__":

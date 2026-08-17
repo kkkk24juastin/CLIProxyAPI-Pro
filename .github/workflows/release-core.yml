@@ -966,7 +966,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --clobber
 
-  backup-usage-statistics:
+  backup-pro-data:
     needs:
       - check-version
       - publish-release
@@ -977,17 +977,15 @@ jobs:
       contents: read
 
     steps:
-      - name: Backup usage statistics to WebDAV
+      - name: Create tracked Pro data backups
         continue-on-error: true
         env:
           USAGE_BACKUP_TARGETS: ${{ secrets.CLIPROXY_USAGE_BACKUP_TARGETS }}
         run: |
           set -euo pipefail
 
-          TIMESTAMP=$(date -u +"%Y%m%d_%H%M%S")
-
           if [ -z "$USAGE_BACKUP_TARGETS" ]; then
-            echo "⚠️ CLIPROXY_USAGE_BACKUP_TARGETS is not configured. Skipping usage backup."
+            echo "⚠️ CLIPROXY_USAGE_BACKUP_TARGETS is not configured. Skipping Pro data backup."
             exit 0
           fi
 
@@ -995,53 +993,34 @@ jobs:
             local name="$1"
             local api_url="$2"
             local management_password="$3"
-            local webdav_url="$4"
-            local webdav_username="$5"
-            local webdav_password="$6"
-            local filename="usage-export-${TIMESTAMP}.jsonl"
+            local response_file
+            local http_status
+            local backup_name
+            response_file="$(mktemp)"
 
-            if [ -z "$api_url" ] || [ -z "$management_password" ] || [ -z "$webdav_url" ] || [ -z "$webdav_username" ] || [ -z "$webdav_password" ]; then
-              echo "⚠️ Usage backup target '$name' is missing required configuration. Skipping."
+            if [ -z "$api_url" ] || [ -z "$management_password" ]; then
+              echo "⚠️ Pro data backup target '$name' is missing api_url or management_password. Skipping."
+              rm -f "$response_file"
               return 0
             fi
 
-            echo "Exporting usage statistics for $name..."
-            if ! curl -sf -H "Authorization: Bearer $management_password" \
-              "$api_url/v0/management/usage/export" \
-              -o "$filename"; then
-              echo "⚠️ Failed to export usage statistics for $name. Skipping."
-              rm -f "$filename"
-              return 0
-            fi
+            echo "Creating a tracked Pro data backup for $name..."
+            http_status="$(curl -sS -o "$response_file" -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer $management_password" \
+              -H "Content-Type: application/json" \
+              --data '{}' \
+              "${api_url%/}/v0/management/usage/data/backups/now" || true)"
+            http_status="${http_status:-000}"
 
-            echo "Uploading $filename to WebDAV for $name..."
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -T "$filename" \
-              -u "$webdav_username:$webdav_password" \
-              "$webdav_url/$filename" || echo "000")
-
-            if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-              echo "✅ Usage backup uploaded successfully for $name."
+            if [ "$http_status" -ge 200 ] && [ "$http_status" -lt 300 ]; then
+              backup_name="$(jq -r '.backup.fileName // "unknown"' "$response_file" 2>/dev/null || echo "unknown")"
+              echo "✅ Pro data backup uploaded successfully for $name: $backup_name"
             else
-              echo "⚠️ Failed to upload usage backup for $name. HTTP Status: $HTTP_STATUS. Skipping cleanup."
-              rm -f "$filename"
-              return 0
+              echo "⚠️ Failed to create Pro data backup for $name. HTTP Status: $http_status"
+              cat "$response_file"
             fi
-
-            echo "Cleaning up old backups for $name (keeping last 7)..."
-            OLD_FILES=$(curl -s -X PROPFIND \
-              -u "$webdav_username:$webdav_password" \
-              "$webdav_url/" \
-              -H "Depth: 1" | grep -oP 'usage-export-[0-9_]+\.(jsonl|json)' | sort -r | tail -n +8 || true)
-
-            for OLD_FILE in $OLD_FILES; do
-              echo "Deleting $OLD_FILE for $name..."
-              curl -s -X DELETE \
-                -u "$webdav_username:$webdav_password" \
-                "$webdav_url/$OLD_FILE" >/dev/null || true
-            done
-
-            rm -f "$filename"
-            echo "✅ Cleanup completed for $name."
+            rm -f "$response_file"
           }
 
           if ! echo "$USAGE_BACKUP_TARGETS" | jq -e 'type == "array"' >/dev/null; then
@@ -1053,19 +1032,16 @@ jobs:
             backup_target \
               "$(echo "$target" | jq -r 'if type == "object" then (.name // "default") else "default" end')" \
               "$(echo "$target" | jq -r 'if type == "object" then (.api_url // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.management_password // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_url // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_username // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_password // empty) else empty end')"
+              "$(echo "$target" | jq -r 'if type == "object" then (.management_password // empty) else empty end')"
           done
 
-          echo "✅ Usage backup completed."
+          echo "✅ Pro data backup requests completed."
 
   trigger-render-deployment:
     needs:
       - check-version
       - publish-release
-      - backup-usage-statistics
+      - backup-pro-data
     if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
     runs-on: ubuntu-latest
 
@@ -1191,7 +1167,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - publish-release
-      - backup-usage-statistics
+      - backup-pro-data
       - trigger-render-deployment
       - send-telegram-notification
     if: always() && needs.publish-release.result == 'success'

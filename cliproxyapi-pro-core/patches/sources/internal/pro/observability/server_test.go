@@ -154,6 +154,7 @@ func TestWebDAVPolicyBackupUsesSharedPreviewAndImportPipeline(t *testing.T) {
 	server.webDAVClient = client
 	router := gin.New()
 	server.RegisterGinRoutes(router.Group("/usage"))
+	server.RegisterDataManagementGinRoutes(router.Group("/usage/data"))
 	body := `{"fileName":"cliproxy-pro-backup-20260814_120000_000.jsonl"}`
 
 	previewRecorder := httptest.NewRecorder()
@@ -170,6 +171,27 @@ func TestWebDAVPolicyBackupUsesSharedPreviewAndImportPipeline(t *testing.T) {
 	router.ServeHTTP(restoreRecorder, restoreRequest)
 	if restoreRecorder.Code != http.StatusOK || !imported || !strings.Contains(restoreRecorder.Body.String(), `"apiKeyPolicies":1`) {
 		t.Fatalf("WebDAV restore = %d %s imported=%v", restoreRecorder.Code, restoreRecorder.Body.String(), imported)
+	}
+
+	imported = false
+	dataPreviewRecorder := httptest.NewRecorder()
+	dataPreviewRequest := httptest.NewRequest(http.MethodPost, "/usage/data/backups/webdav/preview", strings.NewReader(body))
+	dataPreviewRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(dataPreviewRecorder, dataPreviewRequest)
+	if dataPreviewRecorder.Code != http.StatusOK || !strings.Contains(dataPreviewRecorder.Body.String(), `"targetPolicies":2`) || imported {
+		t.Fatalf("data-management WebDAV preview = %d %s imported=%v", dataPreviewRecorder.Code, dataPreviewRecorder.Body.String(), imported)
+	}
+
+	dataRestoreRecorder := httptest.NewRecorder()
+	dataRestoreRequest := httptest.NewRequest(http.MethodPost, "/usage/data/backups/webdav/restore", strings.NewReader(`{"fileName":"cliproxy-pro-backup-20260814_120000_000.jsonl","allowLegacy":false}`))
+	dataRestoreRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(dataRestoreRecorder, dataRestoreRequest)
+	if dataRestoreRecorder.Code != http.StatusOK || !imported || !strings.Contains(dataRestoreRecorder.Body.String(), `"apiKeyPolicies":1`) {
+		t.Fatalf("data-management WebDAV restore = %d %s imported=%v", dataRestoreRecorder.Code, dataRestoreRecorder.Body.String(), imported)
+	}
+	operations, err := store.ListDataOperations(context.Background(), 10)
+	if err != nil || len(operations) != 1 || operations[0].Target != "webdav" || operations[0].FileName != "cliproxy-pro-backup-20260814_120000_000.jsonl" || operations[0].Status != dataOperationSuccess {
+		t.Fatalf("data-management WebDAV operations = %+v err=%v", operations, err)
 	}
 }
 

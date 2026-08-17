@@ -85,6 +85,20 @@ class ReleaseWorkflowArtifactTests(unittest.TestCase):
         )
         self.assertEqual(2, workflow.count("name: management-release-asset"))
 
+    def test_release_backup_uses_the_tracked_data_management_endpoint(self) -> None:
+        workflow = (WORKFLOWS / "release-core.yml").read_text()
+        backup_job_start = workflow.index("  backup-pro-data:\n")
+        backup_job_end = workflow.index("  trigger-render-deployment:\n")
+        backup_job = workflow[backup_job_start:backup_job_end]
+
+        self.assertIn(
+            "/v0/management/usage/data/backups/now", backup_job
+        )
+        self.assertNotIn("/v0/management/usage/export", backup_job)
+        self.assertNotIn("PROPFIND", backup_job)
+        self.assertNotIn("webdav_url", backup_job)
+        self.assertNotIn("webdav_password", backup_job)
+
 
 if __name__ == "__main__":
     unittest.main()
