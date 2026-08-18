@@ -9,6 +9,7 @@ export {
   isAPIKeyPolicyUnsupported,
   resolveMappingTargetModels,
   resolveModelsForProviders,
+  supportsAPIKeyQuota,
   supportsAPIKeyPolicyUsageTarget,
   updateProfileProviders,
   validateAPIKeyPolicyCapabilities,
@@ -25,6 +26,8 @@ export type {
   APIKeyPolicyProfileCatalogItem,
   APIKeyPolicySnapshot,
   APIKeyPolicyState,
+  APIKeyQuota,
+  APIKeyQuotaInput,
   APIKeyProfile,
   APIKeyProfileInput,
 } from './apiKeyPolicy';

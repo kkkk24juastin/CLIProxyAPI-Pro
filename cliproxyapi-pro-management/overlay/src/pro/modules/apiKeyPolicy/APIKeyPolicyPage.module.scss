@@ -187,14 +187,23 @@
 .profileRail small { padding: 2px 5px; border-radius: 999px; color: var(--success-color); background: color-mix(in srgb, var(--success-color) 12%, transparent); font-size: 9px; font-weight: 700; }
 .profileHeading { justify-content: space-between; align-items: flex-start; gap: 16px; }
 .profileHeading h3,
-.mappingHeader h3 { margin: 0; font-size: 16px; }
+.mappingHeader h3,
+.quotaHeader h3 { margin: 0; font-size: 16px; }
 .profileHeading p,
-.mappingHeader p { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; }
+.mappingHeader p,
+.quotaHeader p { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; }
 .profileActions { gap: 7px; }
 
 .policyGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .choiceSection,
-.mappingSection { min-width: 0; padding: 14px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
+.mappingSection,
+.quotaSection { min-width: 0; padding: 14px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
+.quotaSection { display: grid; gap: 14px; }
+.quotaHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.quotaToggle { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
+.quotaGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.quotaUsage { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding-top: 12px; border-top: 1px solid var(--border-color); color: var(--text-secondary); font-size: 11px; }
+.quotaUsage :global(.btn) { margin-left: auto; }
 .choiceHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; font-size: 12px; }
 .choiceHeader span { color: var(--text-secondary); }
 .choiceHint { min-height: 34px; margin: -2px 0 9px; color: var(--text-secondary); font-size: 10px; line-height: 1.55; }
@@ -239,7 +248,8 @@
   .headerActions { width: 100%; }
   .headerActions :global(.btn) { flex: 1; }
   .toolbar,
-  .policyGrid { grid-template-columns: 1fr; }
+  .policyGrid,
+  .quotaGrid { grid-template-columns: 1fr; }
   .cards { grid-template-columns: 1fr; }
   .profileHeading,
   .conflict { align-items: stretch; flex-direction: column; }

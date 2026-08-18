@@ -1592,13 +1592,18 @@ replace_once(
 \tstatus := http.StatusServiceUnavailable
 \tcode := "api_key_policy_unavailable"
 \tmessage := "API key policy is unavailable"
+\tif quotaErr, ok := err.(*apikeypolicy.QuotaExceededError); ok {
+\t\tstatus = http.StatusTooManyRequests
+\t\tcode = "api_key_quota_exceeded"
+\t\tmessage = quotaErr.Error()
+\t}
 \tif policyErr, ok := err.(*apikeypolicy.PolicyError); ok {
 \t\tstatus = http.StatusForbidden
 \t\tcode = policyErr.Code
 \t\tmessage = policyErr.Message
 \t}
 \terrorType := "server_error"
-\tif status == http.StatusForbidden {
+\tif status == http.StatusForbidden || status == http.StatusTooManyRequests {
 \t\terrorType = "permission_error"
 \t}
 \tif realtimeError {
@@ -1611,13 +1616,15 @@ replace_once(
 \t\t\tstatusName := "UNAVAILABLE"
 \t\t\tif status == http.StatusForbidden {
 \t\t\t\tstatusName = "PERMISSION_DENIED"
+\t\t\t} else if status == http.StatusTooManyRequests {
+\t\t\t\tstatusName = "RESOURCE_EXHAUSTED"
 \t\t\t}
 \t\t\tc.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": status, "message": message, "status": statusName, "reason": code}})
 \t\t\treturn
 \t\t}
 \t\tif c.GetHeader("Anthropic-Version") != "" || strings.HasPrefix(c.GetHeader("User-Agent"), "claude-cli") || strings.HasPrefix(path, "/v1/messages") {
 \t\t\tclaudeType := "api_error"
-\t\t\tif status == http.StatusForbidden {
+\t\t\tif status == http.StatusForbidden || status == http.StatusTooManyRequests {
 \t\t\t\tclaudeType = "permission_error"
 \t\t\t}
 \t\t\tc.AbortWithStatusJSON(status, gin.H{"type": "error", "error": gin.H{"type": claudeType, "message": message + " (" + code + ")"}})
@@ -1659,6 +1666,255 @@ routes_text = routes_text.replace('AuthMiddleware(s.accessManager)', 'AuthMiddle
 routes_text = routes_text.replace('realtimeAuthMiddleware(s.accessManager, s.codexLiveHandler)', 'realtimeAuthMiddleware(s.accessManager, s.apiKeyPolicy, s.codexLiveHandler)')
 routes_text = routes_text.replace('realtimeStandardAuthMiddleware(s.accessManager)', 'realtimeStandardAuthMiddleware(s.accessManager, s.apiKeyPolicy)')
 write(server_routes_source, routes_text)
+
+insert_before(
+    server_middleware_source,
+    '// corsMiddleware returns a Gin middleware handler',
+    '''func apiKeyQuotaMiddleware(policy *apikeypolicy.Service) gin.HandlerFunc {
+\treturn func(c *gin.Context) {
+\t\tif policy == nil || c == nil || c.Request == nil {
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+\t\tpath := c.Request.URL.Path
+\t\tgeminiModelPath := strings.TrimPrefix(path, "/v1beta/models/")
+\t\tgeminiModelDiscovery := geminiModelPath != path && geminiModelPath != "" && !strings.Contains(geminiModelPath, ":")
+\t\tif c.Request.Method == http.MethodGet && (path == "/v1/models" || path == "/v1beta/models" || geminiModelDiscovery || strings.HasPrefix(path, "/v1/live/") || (path == "/v1/realtime" && strings.TrimSpace(c.Query("call_id")) != "")) {
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+\t\tdecision, ok := apikeypolicy.DecisionFromContext(c.Request.Context())
+\t\tif !ok {
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+\t\tupgrade := strings.EqualFold(strings.TrimSpace(c.GetHeader("Upgrade")), "websocket")
+\t\tif upgrade && (path == "/v1/responses" || path == "/v1/realtime") {
+\t\t\trequestCtx := apikeypolicy.WithQuotaAdmission(c.Request.Context(), policy.AdmitDecision)
+\t\t\tc.Request = c.Request.WithContext(requestCtx)
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+\t\tadmitted, err := policy.AdmitDecision(c.Request.Context(), decision)
+\t\tif err != nil {
+\t\t\twriteAPIKeyPolicyMiddlewareError(c, strings.HasPrefix(c.Request.URL.Path, "/v1/realtime"), err)
+\t\t\treturn
+\t\t}
+\t\tc.Request = c.Request.WithContext(apikeypolicy.WithDecision(c.Request.Context(), admitted))
+\t\tc.Next()
+\t}
+}
+
+''',
+    'func apiKeyQuotaMiddleware(policy *apikeypolicy.Service)',
+)
+
+routes_text = read(server_routes_source)
+for auth_line in (
+    'v1.Use(AuthMiddleware(s.accessManager, s.apiKeyPolicy))',
+    'openaiV1.Use(AuthMiddleware(s.accessManager, s.apiKeyPolicy))',
+    'codexDirect.Use(AuthMiddleware(s.accessManager, s.apiKeyPolicy))',
+    'v1beta.Use(AuthMiddleware(s.accessManager, s.apiKeyPolicy))',
+):
+    if routes_text.count(auth_line) != 1:
+        raise SystemExit(f'expected one quota group anchor: {auth_line}')
+    group_name = auth_line.split('.')[0]
+    routes_text = routes_text.replace(auth_line, auth_line + '\n\t' + group_name + '.Use(apiKeyQuotaMiddleware(s.apiKeyPolicy))', 1)
+for route in (
+    's.engine.GET("/v1/realtime", realtimeAuth, s.codexLiveHandler.HandleRealtimeWebsocket)',
+    's.engine.POST("/v1/realtime", realtimeAuth, s.codexLiveHandler.Handle)',
+    's.engine.POST("/v1/realtime/calls", realtimeAuth, s.codexLiveHandler.Handle)',
+    's.engine.GET("/v1/realtime/translations", realtimeAuth, s.codexLiveHandler.HandleTranslation)',
+    's.engine.POST("/v1/realtime/translations", realtimeAuth, s.codexLiveHandler.HandleTranslation)',
+):
+    if routes_text.count(route) != 1:
+        raise SystemExit(f'expected one realtime quota route anchor: {route}')
+    routes_text = routes_text.replace(route, route.replace(', realtimeAuth,', ', realtimeAuth, apiKeyQuotaMiddleware(s.apiKeyPolicy),'), 1)
+write(server_routes_source, routes_text)
+
+responses_websocket_source = ROOT / 'sdk/api/handlers/openai/openai_responses_websocket.go'
+add_go_import(
+    responses_websocket_source,
+    f'\t"{MODULE_PATH}/internal/interfaces"\n',
+    f'\tapikeypolicy "{MODULE_PATH}/internal/pro/apikeypolicy"\n',
+)
+replace_once(
+    responses_websocket_source,
+    '''\t\t\tcontinue
+\t\t}
+
+\t\tvar toolCacheTurn *responsesWebsocketToolCacheTurn
+''',
+    '''\t\t\tcontinue
+\t\t}
+
+\t\texecutionParent, errAdmission := apikeypolicy.AdmitQuotaTurn(executionParent)
+\t\tif errAdmission != nil {
+\t\t\terrMsg := handlers.ExecutionErrorMessage(errAdmission)
+\t\t\tif errors.Is(errAdmission, apikeypolicy.ErrQuotaUnavailable) {
+\t\t\t\terrMsg.StatusCode = http.StatusServiceUnavailable
+\t\t\t}
+\t\t\th.LoggingAPIResponseError(context.WithValue(context.Background(), "gin", c), errMsg)
+\t\t\tmarkAPIResponseTimestamp(c)
+\t\t\tif _, errWrite := writeResponsesWebsocketError(writer, wsTimelineLog, errMsg); errWrite != nil {
+\t\t\t\twsTerminateErr = errWrite
+\t\t\t\treturn
+\t\t\t}
+\t\t\tcontinue
+\t\t}
+
+\t\tvar toolCacheTurn *responsesWebsocketToolCacheTurn
+''',
+    'apikeypolicy.AdmitQuotaTurn(executionParent)',
+)
+
+realtime_websocket_source = ROOT / 'internal/client/codex/live/websocket.go'
+add_go_import(realtime_websocket_source, '\t"encoding/json"\n', '\t"errors"\n')
+add_go_import(realtime_websocket_source, '\t"errors"\n', '\t"fmt"\n')
+add_go_import(realtime_websocket_source, '\t"strings"\n', '\t"sync"\n')
+add_go_import(realtime_websocket_source, '\t"sync"\n', '\t"time"\n')
+add_go_import(
+    realtime_websocket_source,
+    f'\t"{MODULE_PATH}/internal/logging"\n',
+    f'\tapikeypolicy "{MODULE_PATH}/internal/pro/apikeypolicy"\n',
+)
+replace_once(
+    realtime_websocket_source,
+    '\tif errRelay := relayWebsockets(downstream, upstream); errRelay != nil && !isNormalWebsocketClose(errRelay) {\n',
+    '\tif errRelay := relayRealtimeWebsockets(ctx, downstream, upstream); errRelay != nil && !isNormalWebsocketClose(errRelay) {\n',
+    'relayRealtimeWebsockets(ctx, downstream, upstream)',
+)
+insert_before(
+    realtime_websocket_source,
+    'func realtimeSessionUpdate(session json.RawMessage) (json.RawMessage, error) {',
+    r'''type realtimeQuotaTurn struct {
+	ctx     context.Context
+	eventID string
+}
+
+type realtimeQuotaState struct {
+	mu     sync.Mutex
+	active *realtimeQuotaTurn
+}
+
+func relayRealtimeWebsockets(ctx context.Context, downstream, upstream *websocket.Conn) error {
+	state := &realtimeQuotaState{}
+	downstreamWriteMu := &sync.Mutex{}
+	results := make(chan error, 2)
+	go func() { results <- copyRealtimeDownstream(ctx, downstream, upstream, state, downstreamWriteMu) }()
+	go func() { results <- copyRealtimeUpstream(ctx, downstream, upstream, state, downstreamWriteMu) }()
+
+	firstErr := <-results
+	closeCode, closeReason := websocketCloseDetails(firstErr)
+	payload := websocket.FormatCloseMessage(closeCode, closeReason)
+	downstreamWriteMu.Lock()
+	_ = downstream.WriteControl(websocket.CloseMessage, payload, time.Time{})
+	downstreamWriteMu.Unlock()
+	_ = upstream.WriteControl(websocket.CloseMessage, payload, time.Time{})
+	_ = downstream.Close()
+	_ = upstream.Close()
+	<-results
+	return firstErr
+}
+
+func copyRealtimeDownstream(ctx context.Context, downstream, upstream *websocket.Conn, state *realtimeQuotaState, downstreamWriteMu *sync.Mutex) error {
+	for {
+		messageType, payload, errRead := downstream.ReadMessage()
+		if errRead != nil {
+			return errRead
+		}
+		if messageType == websocket.TextMessage || messageType == websocket.BinaryMessage {
+			var event struct{ Type string `json:"type"` }
+			if json.Unmarshal(payload, &event) == nil && strings.TrimSpace(event.Type) == "response.create" {
+				state.mu.Lock()
+				busy := state.active != nil
+				state.mu.Unlock()
+				if busy {
+					writeRealtimeQuotaError(downstream, downstreamWriteMu, errors.New("a realtime response is already active"), "realtime_response_in_progress")
+					continue
+				}
+				turnCtx, errAdmission := apikeypolicy.AdmitQuotaTurn(ctx)
+				if errAdmission != nil {
+					writeRealtimeQuotaError(downstream, downstreamWriteMu, errAdmission, "api_key_quota_exceeded")
+					continue
+				}
+				if decision, ok := apikeypolicy.DecisionFromContext(turnCtx); ok {
+					if _, charged := decision.QuotaAttribution(); charged {
+						state.mu.Lock()
+						state.active = &realtimeQuotaTurn{ctx: turnCtx, eventID: fmt.Sprintf("realtime:%d", time.Now().UnixNano())}
+						state.mu.Unlock()
+					}
+				}
+			}
+		}
+		if errWrite := upstream.WriteMessage(messageType, payload); errWrite != nil {
+			return errWrite
+		}
+	}
+}
+
+func copyRealtimeUpstream(ctx context.Context, downstream, upstream *websocket.Conn, state *realtimeQuotaState, downstreamWriteMu *sync.Mutex) error {
+	for {
+		messageType, payload, errRead := upstream.ReadMessage()
+		if errRead != nil {
+			return errRead
+		}
+		if messageType == websocket.TextMessage || messageType == websocket.BinaryMessage {
+			var event struct {
+				Type     string `json:"type"`
+				Response struct{ ID string `json:"id"` } `json:"response"`
+			}
+			if json.Unmarshal(payload, &event) == nil && (event.Type == "response.done" || event.Type == "response.completed") {
+				state.mu.Lock()
+				turn := state.active
+				state.active = nil
+				state.mu.Unlock()
+				if turn != nil {
+					detail, ok := helps.ParseCodexUsage(payload)
+					if !ok {
+						detail = helps.ParseOpenAIUsage(payload)
+					}
+					totalTokens := detail.TokenBreakdown.TotalTokens
+					if totalTokens == 0 {
+						totalTokens = detail.TotalTokens
+					}
+					eventID := turn.eventID
+					if responseID := strings.TrimSpace(event.Response.ID); responseID != "" {
+						eventID += ":response=" + responseID
+					}
+					if errSettle := apikeypolicy.SettleQuotaTokens(turn.ctx, eventID, totalTokens); errSettle != nil {
+						log.WithError(errSettle).Error("failed to settle realtime API key quota tokens")
+					}
+				}
+			}
+		}
+		downstreamWriteMu.Lock()
+		errWrite := downstream.WriteMessage(messageType, payload)
+		downstreamWriteMu.Unlock()
+		if errWrite != nil {
+			return errWrite
+		}
+	}
+}
+
+func writeRealtimeQuotaError(downstream *websocket.Conn, writeMu *sync.Mutex, err error, code string) {
+	errorType := "rate_limit_error"
+	if errors.Is(err, apikeypolicy.ErrQuotaUnavailable) {
+		errorType = "server_error"
+		code = "api_key_quota_unavailable"
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"type": "error",
+		"error": map[string]any{"type": errorType, "code": code, "message": err.Error(), "param": nil},
+	})
+	writeMu.Lock()
+	_ = downstream.WriteMessage(websocket.TextMessage, payload)
+	writeMu.Unlock()
+}
+
+''',
+    'func relayRealtimeWebsockets(',
+)
 
 client_secret_source = ROOT / 'internal/client/codex/live/client_secret.go'
 add_go_import(client_secret_source, '"github.com/gin-gonic/gin"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
@@ -3154,6 +3410,10 @@ replace_once(
 )
 
 usage_helpers = ROOT / 'internal/runtime/executor/helps/usage_helpers.go'
+usage_helpers_test = ROOT / 'internal/runtime/executor/helps/usage_helpers_test.go'
+add_go_import(usage_helpers, '"github.com/gin-gonic/gin"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+add_go_import(usage_helpers, '"github.com/tidwall/gjson"\n', '\tlog "github.com/sirupsen/logrus"\n')
+add_go_import(usage_helpers_test, '"github.com/router-for-me/CLIProxyAPI/v7/internal/clienterror"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
 replace_once(
     usage_helpers,
     '''\treasoning       string
@@ -3864,6 +4124,63 @@ replace_once(
 ''',
     'record.AttemptIndex = &attemptIndex',
 )
+replace_once(
+    usage_helpers,
+    '''\trecord.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
+\tif attemptIndex, ok := usage.AttemptIndexFromContext(ctx); ok {
+\t\trecord.AttemptIndex = &attemptIndex
+\t}
+\tusage.PublishRecord(ctx, record)
+''',
+    '''\trecord.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
+\tif attemptIndex, ok := usage.AttemptIndexFromContext(ctx); ok {
+\t\trecord.AttemptIndex = &attemptIndex
+\t}
+\ttotalTokens := usage.EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType).TokenBreakdown.TotalTokens
+\tif totalTokens == 0 {
+\t\ttotalTokens = record.Detail.TotalTokens
+\t}
+\tattemptIndex := int64(-1)
+\tif record.AttemptIndex != nil {
+\t\tattemptIndex = *record.AttemptIndex
+\t}
+\teventID := fmt.Sprintf("usage:%d:provider=%q:executor=%q:model=%q:alias=%q:attempt=%d", record.RequestedAt.UnixNano(), record.Provider, record.ExecutorType, record.Model, record.Alias, attemptIndex)
+\tif err := apikeypolicy.SettleQuotaTokens(ctx, eventID, totalTokens); err != nil {
+\t\tlog.WithError(err).Error("failed to settle API key quota tokens")
+\t}
+\tusage.PublishRecord(ctx, record)
+''',
+    'failed to settle API key quota tokens',
+)
+
+if 'func TestUsageReporterSettlesQuotaSynchronouslyWithDistinctRecordIDs' not in read(usage_helpers_test):
+    write(usage_helpers_test, read(usage_helpers_test).rstrip() + '''
+
+func TestUsageReporterSettlesQuotaSynchronouslyWithDistinctRecordIDs(t *testing.T) {
+\ttype settlement struct {
+\t\teventID string
+\t\ttokens  int64
+\t}
+\tsettlements := make([]settlement, 0, 2)
+\tctx := apikeypolicy.WithQuotaSettlement(context.Background(), func(_ context.Context, eventID string, totalTokens int64) error {
+\t\tsettlements = append(settlements, settlement{eventID: eventID, tokens: totalTokens})
+\t\treturn nil
+\t})
+\treporter := NewUsageReporter(ctx, "codex", "gpt-5", nil)
+\treporter.Publish(ctx, usage.Detail{TotalTokens: 3})
+\treporter.PublishAdditionalModel(ctx, "gpt-image-1", usage.Detail{TotalTokens: 4})
+
+\tif len(settlements) != 2 {
+\t\tt.Fatalf("synchronous quota settlements = %#v, want two before Publish returns", settlements)
+\t}
+\tif settlements[0].tokens != 3 || settlements[1].tokens != 4 {
+\t\tt.Fatalf("quota settlement tokens = %#v", settlements)
+\t}
+\tif settlements[0].eventID == "" || settlements[0].eventID == settlements[1].eventID {
+\t\tt.Fatalf("quota settlement event IDs = %#v, want distinct stable record identities", settlements)
+\t}
+}
+''')
 
 if 'func TestAttemptTrackingAllocatesZeroBasedIndexes' not in read(usage_manager_test):
     write(usage_manager_test, read(usage_manager_test).rstrip() + '''
@@ -4331,6 +4648,11 @@ add_go_import(
     f'\t"{MODULE_PATH}/internal/logging"\n',
     f'\t"{MODULE_PATH}/internal/runtime/executor/helps"\n',
 )
+add_go_import(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    f'\tcoreexecutor "{MODULE_PATH}/sdk/cliproxy/executor"\n',
+    f'\tcoreusage "{MODULE_PATH}/sdk/cliproxy/usage"\n',
+)
 
 replace_once(
     ROOT / 'internal/pluginhost/adapters_executors.go',
@@ -4400,10 +4722,12 @@ replace_once(
 \t\tMetadata: cloneAnyMap(pluginResp.Metadata),
 \t\tHeaders:  cloneHeader(pluginResp.Headers),
 \t}
-\treporter.EnsurePublished(ctx)
+\tif !publishPluginExecutorUsage(ctx, reporter, pluginExecutorUsageFormat(prepared), resp.Payload, false) {
+\t\treporter.EnsurePublished(ctx)
+\t}
 \treturn resp, nil
 ''',
-    'reporter.EnsurePublished(ctx)',
+    'publishPluginExecutorUsage(ctx, reporter, pluginExecutorUsageFormat(prepared), resp.Payload, false)',
 )
 
 replace_once(
@@ -4436,6 +4760,7 @@ replace_once(
 \t\t\tctx,
 \t\t\tmapExecutorStreamChunks(ctx, a.translateExecutorStreamChunks(ctx, prepared, pluginResp.Chunks)),
 \t\t\treporter,
+\t\t\tpluginExecutorUsageFormat(prepared),
 \t\t),
 \t}, nil
 ''',
@@ -4456,7 +4781,7 @@ replace_once(
 \treturn ctx
 }
 
-func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.StreamChunk, reporter *helps.UsageReporter) <-chan coreexecutor.StreamChunk {
+func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.StreamChunk, reporter *helps.UsageReporter, format sdktranslator.Format) <-chan coreexecutor.StreamChunk {
 \tif ctx == nil {
 \t\tctx = context.Background()
 \t}
@@ -4464,18 +4789,25 @@ func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.
 \tgo func() {
 \t\tdefer close(out)
 \t\tsawPayload := false
+\t\tvar usageBuffer helps.StreamUsageBuffer
 	\tvar terminalErr error
 \t\tfor {
 \t\t\tselect {
 \t\t\tcase <-ctx.Done():
-\t\t\t\treporter.PublishFailure(ctx, ctx.Err())
+\t\t\t\tif !usageBuffer.PublishFailure(ctx, reporter, ctx.Err()) {
+\t\t\t\t\treporter.PublishFailure(ctx, ctx.Err())
+\t\t\t\t}
 \t\t\t\treturn
 \t\t\tcase chunk, ok := <-in:
 \t\t\t\tif !ok {
 \t\t\t\t\tif terminalErr != nil {
-\t\t\t\t\t\treporter.PublishFailure(ctx, terminalErr)
+\t\t\t\t\t\tif !usageBuffer.PublishFailure(ctx, reporter, terminalErr) {
+\t\t\t\t\t\t\treporter.PublishFailure(ctx, terminalErr)
+\t\t\t\t\t\t}
 \t\t\t\t\t} else if sawPayload {
-\t\t\t\t\t\treporter.EnsurePublished(ctx)
+\t\t\t\t\t\tif !usageBuffer.Publish(ctx, reporter) {
+\t\t\t\t\t\t\treporter.EnsurePublished(ctx)
+\t\t\t\t\t\t}
 \t\t\t\t\t} else {
 \t\t\t\t\t\treporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})
 \t\t\t\t\t}
@@ -4485,10 +4817,13 @@ func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.
 \t\t\t\t\tterminalErr = chunk.Err
 \t\t\t\t} else if len(chunk.Payload) > 0 {
 \t\t\t\t\tsawPayload = true
+\t\t\t\t\tobservePluginExecutorUsage(&usageBuffer, format, chunk.Payload, true)
 \t\t\t\t}
 \t\t\t\tselect {
 \t\t\t\tcase <-ctx.Done():
-\t\t\t\t\treporter.PublishFailure(ctx, ctx.Err())
+\t\t\t\t\tif !usageBuffer.PublishFailure(ctx, reporter, ctx.Err()) {
+\t\t\t\t\t\treporter.PublishFailure(ctx, ctx.Err())
+\t\t\t\t\t}
 \t\t\t\t\treturn
 \t\t\t\tcase out <- chunk:
 \t\t\t\t}
@@ -4496,6 +4831,84 @@ func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.
 \t\t}
 \t}()
 \treturn out
+}
+
+func publishPluginExecutorUsage(ctx context.Context, reporter *helps.UsageReporter, format sdktranslator.Format, payload []byte, stream bool) bool {
+\tvar buffer helps.StreamUsageBuffer
+\tobservePluginExecutorUsage(&buffer, format, payload, stream)
+\treturn buffer.Publish(ctx, reporter)
+}
+
+func pluginExecutorUsageFormat(prepared preparedExecutorCall) sdktranslator.Format {
+\tif prepared.requestedFormat != "" {
+\t\treturn prepared.requestedFormat
+\t}
+\treturn prepared.outputFormat
+}
+
+func observePluginExecutorUsage(buffer *helps.StreamUsageBuffer, format sdktranslator.Format, payload []byte, stream bool) {
+\tif buffer == nil || len(payload) == 0 {
+\t\treturn
+\t}
+\tpayload = pluginExecutorJSONPayload(payload)
+\tif len(payload) == 0 {
+\t\treturn
+\t}
+\tvar detail coreusage.Detail
+\tvar ok bool
+\tswitch format {
+\tcase sdktranslator.FormatCodex, sdktranslator.FormatOpenAIResponse:
+\t\tdetail, ok = helps.ParseCodexUsage(payload)
+\tcase sdktranslator.FormatClaude:
+\t\tif stream {
+\t\t\tdetail, ok = helps.ParseClaudeStreamUsage(payload)
+\t\t\tbuffer.ObserveClaude(detail, ok)
+\t\t\treturn
+\t\t}
+\t\tdetail = helps.ParseClaudeUsage(payload)
+\t\tok = pluginExecutorUsageDetailPresent(detail)
+\tcase sdktranslator.FormatGemini, sdktranslator.FormatAntigravity:
+\t\tif stream {
+\t\t\tdetail, ok = helps.ParseGeminiStreamUsage(payload)
+\t\t} else {
+\t\t\tdetail = helps.ParseGeminiUsage(payload)
+\t\t\tok = pluginExecutorUsageDetailPresent(detail)
+\t\t}
+\tcase sdktranslator.FormatInteractions:
+\t\tif stream {
+\t\t\tdetail, ok = helps.ParseInteractionsStreamUsage(payload)
+\t\t} else {
+\t\t\tdetail = helps.ParseInteractionsUsage(payload)
+\t\t\tok = pluginExecutorUsageDetailPresent(detail)
+\t\t}
+\tdefault:
+\t\tif stream {
+\t\t\tdetail, ok = helps.ParseOpenAIStreamUsage(payload)
+\t\t} else {
+\t\t\tdetail = helps.ParseOpenAIUsage(payload)
+\t\t\tok = pluginExecutorUsageDetailPresent(detail)
+\t\t}
+\t}
+\tbuffer.Observe(detail, ok)
+}
+
+func pluginExecutorJSONPayload(payload []byte) []byte {
+\tif parsed := helps.JSONPayload(payload); len(parsed) > 0 {
+\t\treturn parsed
+\t}
+\tfor _, line := range bytes.Split(payload, []byte("\\n")) {
+\t\tif parsed := helps.JSONPayload(line); len(parsed) > 0 {
+\t\t\treturn parsed
+\t\t}
+\t}
+\treturn nil
+}
+
+func pluginExecutorUsageDetailPresent(detail coreusage.Detail) bool {
+\treturn detail.InputTokens != 0 || detail.OutputTokens != 0 || detail.ReasoningTokens != 0 ||
+\t\tdetail.CachedTokens != 0 || detail.CacheReadTokens != 0 || detail.CacheCreationTokens != 0 ||
+\t\tdetail.TotalTokens != 0 || detail.TokenBreakdown.TotalTokens != 0 ||
+\t\tstrings.TrimSpace(detail.ResponseServiceTier) != "" || strings.TrimSpace(detail.ResponseSpeed) != ""
 }
 
 type pluginExecutorEmptyStreamError struct{}
@@ -4513,6 +4926,8 @@ queue_go_source('internal/pluginhost/gemini_cli_storage_compat.go')
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat_test.go')
 
 queue_go_source('internal/pluginhost/plugin_executor_usage_test.go')
+
+queue_go_source('internal/client/codex/live/api_key_quota_relay_test.go')
 
 server = ROOT / 'internal/api/server.go'
 server_routes = ROOT / 'internal/api/server_routes.go'
@@ -6482,6 +6897,8 @@ format_go_writes([
     'internal/managementasset/gitstore_token_test.go',
     'internal/client/codex/live/client_secret.go',
     'internal/client/codex/live/client_secret_test.go',
+    'internal/client/codex/live/websocket.go',
+    'internal/client/codex/live/api_key_quota_relay_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
     'internal/api/handlers/management/pro_auth_mutation.go',
@@ -6506,6 +6923,8 @@ format_go_writes([
     'internal/pluginhost/rpc_schema.go',
     'internal/pluginhost/snapshot.go',
     'internal/pluginhost/executor_route.go',
+    'internal/pluginhost/adapters_executors.go',
+    'internal/pluginhost/plugin_executor_usage_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
     'internal/pluginstore/auth.go',
@@ -6522,6 +6941,7 @@ format_go_writes([
     'internal/runtime/executor/helps/logging_helpers.go',
     'internal/runtime/executor/helps/response_observer_test.go',
     'internal/runtime/executor/helps/usage_helpers.go',
+    'internal/runtime/executor/helps/usage_helpers_test.go',
     'internal/runtime/executor/helps/usage_speed_test.go',
     'internal/runtime/executor/claude_usage_speed_test.go',
     'internal/runtime/executor/claude_executor_execute.go',

@@ -8,6 +8,7 @@ import {
   apiKeyPolicyErrorTranslationKey,
   resolveMappingTargetModels,
   resolveModelsForProviders,
+  supportsAPIKeyQuota,
   supportsAPIKeyPolicyUsageTarget,
   updateProfileProviders,
   validateAPIKeyPolicyCapabilities,
@@ -104,6 +105,22 @@ describe('API Key Policy profile drafts', () => {
     })).toBe(true);
   });
 
+  test('gates quota independently without raising the minimum compatible Core contract', () => {
+    const legacyCapabilities = validateAPIKeyPolicyCapabilities({
+      apiVersion: 2,
+      features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
+    });
+    expect(supportsAPIKeyQuota(legacyCapabilities)).toBe(false);
+    expect(supportsAPIKeyQuota({
+      ...legacyCapabilities,
+      features: [...legacyCapabilities.features, 'key_quota_requests_tokens'],
+    })).toBe(false);
+    expect(supportsAPIKeyQuota({
+      ...legacyCapabilities,
+      features: [...legacyCapabilities.features, 'key_quota_requests_tokens', 'key_quota_explicit_reset'],
+    })).toBe(true);
+  });
+
   test('localizes API errors and keeps orphan purge bound to version and config generation', () => {
     const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
     const client = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/apiKeyPolicy.ts'), 'utf8');
@@ -162,6 +179,15 @@ describe('API Key Policy profile drafts', () => {
       profile: validProfile(),
       createProfile: false,
     });
+    expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, undefined)).not.toHaveProperty('quota');
+    expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, null)).toMatchObject({ quota: null });
+    expect(page).toContain('quotaSupported ? draft.quota : undefined');
+    expect(page).toContain('{quotaSupported ? <section className={styles.quotaSection}>');
+    expect(page).toContain('const quotaRevisionRef = useRef(0);');
+    expect(page).toContain('const quotaBusyRef = useRef(false);');
+    expect(page).toContain('if (revision !== quotaRevisionRef.current) return;');
+    expect(page).toContain('current.policy.id !== policyId');
+    expect(page).toContain('submittedDraftRevision === draftRevisionRef.current');
   });
 
 	test('uses the standard 720px Workspace Sheet with fixed save and cancel actions', () => {

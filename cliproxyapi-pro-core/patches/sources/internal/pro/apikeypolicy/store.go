@@ -90,9 +90,47 @@ func (s *Store) init(ctx context.Context) error {
 			id integer primary key check(id = 1),
 			takeover_enabled integer not null default 0 check(takeover_enabled in (0, 1))
 		)`,
+		`create table if not exists api_key_quota_generations (
+			policy_id text primary key,
+			generation integer not null check(generation > 0),
+			foreign key(policy_id) references api_key_policies(id) on delete cascade
+		)`,
+		`create table if not exists api_key_policy_quotas (
+			policy_id text primary key,
+			enabled integer not null default 0 check(enabled in (0, 1)),
+			request_limit integer check(request_limit is null or request_limit > 0),
+			token_limit integer check(token_limit is null or token_limit > 0),
+			epoch integer not null default 1 check(epoch > 0),
+			started_at_ms integer not null,
+			requests_used integer not null default 0 check(requests_used >= 0),
+			total_tokens_used integer not null default 0 check(total_tokens_used >= 0),
+			updated_at_ms integer not null,
+			foreign key(policy_id) references api_key_policies(id) on delete cascade
+		)`,
+		`create table if not exists api_key_quota_admissions (
+			admission_id text primary key,
+			policy_id text not null,
+			profile_id text not null,
+			epoch integer not null,
+			admitted_at_ms integer not null,
+			foreign key(policy_id) references api_key_policies(id) on delete cascade
+		)`,
+		`create table if not exists api_key_quota_token_events (
+			event_id text primary key,
+			admission_id text not null,
+			policy_id text not null,
+			profile_id text not null,
+			epoch integer not null,
+			total_tokens integer not null check(total_tokens >= 0),
+			occurred_at_ms integer not null,
+			foreign key(admission_id) references api_key_quota_admissions(admission_id) on delete cascade,
+			foreign key(policy_id) references api_key_policies(id) on delete cascade
+		)`,
 		`insert into api_key_policy_settings(id, takeover_enabled) values(1, 0) on conflict(id) do nothing`,
 		`create index if not exists idx_api_key_profiles_policy on api_key_profiles(policy_id, created_at_ms, id)`,
 		`create index if not exists idx_api_key_policy_audit_policy on api_key_policy_audit(policy_id, created_at_ms)`,
+		`create index if not exists idx_api_key_quota_admissions_policy on api_key_quota_admissions(policy_id, epoch)`,
+		`create index if not exists idx_api_key_quota_tokens_policy on api_key_quota_token_events(policy_id, epoch)`,
 	}})
 }
 
@@ -218,6 +256,11 @@ func queryPolicies(ctx context.Context, queryer sqlQueryer, query string, args .
 			return nil, err
 		}
 		policies[i].Profiles = profiles
+		quota, err := getPolicyQuota(ctx, queryer, policies[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		policies[i].Quota = quota
 	}
 	return policies, nil
 }
@@ -233,7 +276,60 @@ func (s *Store) Get(ctx context.Context, policyID string) (Policy, error) {
 		return Policy{}, err
 	}
 	policy.Profiles, err = listProfiles(ctx, s.db, policy.ID)
+	if err != nil {
+		return Policy{}, err
+	}
+	policy.Quota, err = getPolicyQuota(ctx, s.db, policy.ID)
 	return policy, err
+}
+
+func getPolicyQuota(ctx context.Context, queryer sqlQueryer, policyID string) (*Quota, error) {
+	var quota Quota
+	var requestLimit, tokenLimit sql.NullInt64
+	err := queryer.QueryRowContext(ctx, `select enabled, request_limit, token_limit, epoch, started_at_ms, requests_used, total_tokens_used, updated_at_ms from api_key_policy_quotas where policy_id = ?`, policyID).
+		Scan(&quota.Enabled, &requestLimit, &tokenLimit, &quota.Epoch, &quota.StartedAtMS, &quota.Usage.RequestsUsed, &quota.Usage.TotalTokensUsed, &quota.UpdatedAtMS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if requestLimit.Valid {
+		value := requestLimit.Int64
+		quota.Requests = &value
+	}
+	if tokenLimit.Valid {
+		value := tokenLimit.Int64
+		quota.TotalTokens = &value
+	}
+	quota.Usage = quotaUsage(quota)
+	return &quota, nil
+}
+
+func quotaUsage(quota Quota) QuotaUsage {
+	usage := quota.Usage
+	usage.Exhausted = make([]string, 0, 2)
+	if quota.Requests != nil {
+		remaining := *quota.Requests - usage.RequestsUsed
+		if remaining < 0 {
+			remaining = 0
+		}
+		usage.RequestsRemaining = &remaining
+		if usage.RequestsUsed >= *quota.Requests {
+			usage.Exhausted = append(usage.Exhausted, "requests")
+		}
+	}
+	if quota.TotalTokens != nil {
+		remaining := *quota.TotalTokens - usage.TotalTokensUsed
+		if remaining < 0 {
+			remaining = 0
+		}
+		usage.TokensRemaining = &remaining
+		if usage.TotalTokensUsed >= *quota.TotalTokens {
+			usage.Exhausted = append(usage.Exhausted, "total_tokens")
+		}
+	}
+	return usage
 }
 
 func listProfiles(ctx context.Context, queryer sqlQueryer, policyID string) ([]Profile, error) {

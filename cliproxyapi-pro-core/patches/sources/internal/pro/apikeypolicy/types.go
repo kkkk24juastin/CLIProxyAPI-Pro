@@ -36,7 +36,13 @@ var (
 	ErrPassthroughConfirmation = errors.New("policy deletion requires unrestricted passthrough confirmation")
 	ErrOrphaned                = errors.New("api key policy is orphaned")
 	ErrNotOrphaned             = errors.New("api key policy belongs to a configured upstream key")
+	ErrQuotaUnavailable        = errors.New("api key quota unavailable")
+	ErrQuotaSettlementStale    = errors.New("api key quota settlement is stale")
+	ErrQuotaNotConfigured      = errors.New("api key quota is not configured")
+	ErrQuotaResetConfirmation  = errors.New("api key quota reset requires confirmation")
 )
+
+const QuotaResetConfirmation = "RESET_API_KEY_QUOTA"
 
 type profileValidationContextKey struct{}
 
@@ -73,6 +79,10 @@ func (i AuthenticatedAPIKeyIdentity) Valid() bool  { return len(i.hash) == sha25
 
 type identityContextKey struct{}
 type decisionContextKey struct{}
+type quotaSettlementContextKey struct{}
+type quotaAdmissionContextKey struct{}
+
+type quotaAdmissionFunc func(context.Context, RequestPolicyDecision) (RequestPolicyDecision, error)
 
 func WithIdentity(ctx context.Context, identity AuthenticatedAPIKeyIdentity) context.Context {
 	if ctx == nil {
@@ -101,17 +111,63 @@ func InheritContext(destination, source context.Context) context.Context {
 	if identity, ok := IdentityFromContext(source); ok {
 		destination = WithIdentity(destination, identity)
 	}
-	if decision, ok := DecisionFromContext(source); ok {
-		destination = WithDecision(destination, decision)
+	_, destinationHasDecision := DecisionFromContext(destination)
+	if !destinationHasDecision {
+		if decision, ok := DecisionFromContext(source); ok {
+			destination = WithDecision(destination, decision)
+		}
+	}
+	if admit, ok := source.Value(quotaAdmissionContextKey{}).(quotaAdmissionFunc); ok && admit != nil {
+		destination = WithQuotaAdmission(destination, admit)
+	}
+	if !destinationHasDecision {
+		if settle, ok := source.Value(quotaSettlementContextKey{}).(func(context.Context, string, int64) error); ok && settle != nil {
+			destination = WithQuotaSettlement(destination, settle)
+		}
 	}
 	return destination
+}
+
+// WithQuotaAdmission installs a server-owned admission callback for protocols
+// that multiplex multiple chargeable turns over one authenticated connection.
+func WithQuotaAdmission(ctx context.Context, admit func(context.Context, RequestPolicyDecision) (RequestPolicyDecision, error)) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if admit == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, quotaAdmissionContextKey{}, quotaAdmissionFunc(admit))
+}
+
+// AdmitQuotaTurn reserves one request unit and returns a context containing a
+// fresh admission/settlement pair. Control frames can skip this call.
+func AdmitQuotaTurn(ctx context.Context) (context.Context, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	admit, _ := ctx.Value(quotaAdmissionContextKey{}).(quotaAdmissionFunc)
+	decision, ok := DecisionFromContext(ctx)
+	if admit == nil || !ok {
+		return ctx, nil
+	}
+	admitted, err := admit(ctx, decision)
+	if err != nil {
+		return ctx, err
+	}
+	return WithDecision(ctx, admitted), nil
 }
 
 func WithDecision(ctx context.Context, decision RequestPolicyDecision) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return context.WithValue(ctx, decisionContextKey{}, decision.Clone())
+	var settle func(context.Context, string, int64) error
+	if decision.Snapshot != nil {
+		settle = decision.Snapshot.QuotaSettlement
+	}
+	ctx = context.WithValue(ctx, decisionContextKey{}, decision.Clone())
+	return WithQuotaSettlement(ctx, settle)
 }
 
 func DecisionFromContext(ctx context.Context) (RequestPolicyDecision, bool) {
@@ -120,6 +176,29 @@ func DecisionFromContext(ctx context.Context) (RequestPolicyDecision, bool) {
 	}
 	decision, ok := ctx.Value(decisionContextKey{}).(RequestPolicyDecision)
 	return decision.Clone(), ok
+}
+
+// WithQuotaSettlement installs synchronous token accounting before a usage
+// record enters the asynchronous monitoring bus.
+func WithQuotaSettlement(ctx context.Context, settle func(context.Context, string, int64) error) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if settle == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, quotaSettlementContextKey{}, settle)
+}
+
+func SettleQuotaTokens(ctx context.Context, eventID string, totalTokens int64) error {
+	if ctx == nil || totalTokens <= 0 {
+		return nil
+	}
+	settle, _ := ctx.Value(quotaSettlementContextKey{}).(func(context.Context, string, int64) error)
+	if settle == nil {
+		return nil
+	}
+	return settle(ctx, eventID, totalTokens)
 }
 
 type ModelMapping struct {
@@ -160,8 +239,56 @@ type Policy struct {
 	CreatedAtMS     int64     `json:"createdAtMs"`
 	UpdatedAtMS     int64     `json:"updatedAtMs"`
 	Profiles        []Profile `json:"profiles"`
+	Quota           *Quota    `json:"quota,omitempty"`
 	State           string    `json:"state,omitempty"`
 }
+
+// Quota is the API-key-wide budget. Profile IDs remain usage attribution only:
+// switching, renaming or recreating a Profile never creates another key budget.
+type Quota struct {
+	Enabled     bool       `json:"enabled"`
+	Requests    *int64     `json:"requests,omitempty"`
+	TotalTokens *int64     `json:"totalTokens,omitempty"`
+	Epoch       int64      `json:"epoch"`
+	StartedAtMS int64      `json:"startedAtMs"`
+	UpdatedAtMS int64      `json:"updatedAtMs"`
+	Usage       QuotaUsage `json:"usage"`
+}
+
+type QuotaInput struct {
+	Enabled     bool   `json:"enabled"`
+	Requests    *int64 `json:"requests,omitempty"`
+	TotalTokens *int64 `json:"totalTokens,omitempty"`
+}
+
+type QuotaUpdate struct {
+	Present bool
+	Value   *QuotaInput
+}
+
+type QuotaUsage struct {
+	RequestsUsed      int64    `json:"requestsUsed"`
+	TotalTokensUsed   int64    `json:"totalTokensUsed"`
+	RequestsRemaining *int64   `json:"requestsRemaining,omitempty"`
+	TokensRemaining   *int64   `json:"totalTokensRemaining,omitempty"`
+	Exhausted         []string `json:"exhausted"`
+}
+
+type QuotaExceededError struct {
+	Metric    string
+	Used      int64
+	Limit     int64
+	ResetAtMS int64
+}
+
+func (e *QuotaExceededError) Error() string {
+	if e == nil {
+		return "api key quota exceeded"
+	}
+	return fmt.Sprintf("api key %s quota exceeded: %d/%d", e.Metric, e.Used, e.Limit)
+}
+
+func (e *QuotaExceededError) StatusCode() int { return 429 }
 
 // AuditRecord is retained across policy backups. Fingerprints and raw keys are
 // intentionally absent; policy_id may refer to a policy that was deleted by
@@ -189,6 +316,7 @@ type WorkspaceUpdate struct {
 	ProfileID     string
 	Profile       *ProfileInput
 	CreateProfile bool
+	Quota         QuotaUpdate
 }
 
 // ProfileCatalog is the server-authoritative set of provider and model IDs
@@ -291,13 +419,34 @@ type RequestPolicySnapshot struct {
 	AllowedProviders map[string]struct{}
 	RequestedModel   string
 	EffectiveModel   string
+	Quota            *Quota
+	QuotaAdmissionID string
+	QuotaSettlement  func(context.Context, string, int64) error
 }
 
 func (s RequestPolicySnapshot) Clone() RequestPolicySnapshot {
 	s.ModelMappings = cloneStringMap(s.ModelMappings)
 	s.AllowedModels = cloneStringSet(s.AllowedModels)
 	s.AllowedProviders = cloneStringSet(s.AllowedProviders)
+	s.Quota = cloneQuota(s.Quota)
+	s.QuotaSettlement = nil
 	return s
+}
+
+func cloneQuota(quota *Quota) *Quota {
+	if quota == nil {
+		return nil
+	}
+	cloned := *quota
+	if quota.Requests != nil {
+		value := *quota.Requests
+		cloned.Requests = &value
+	}
+	if quota.TotalTokens != nil {
+		value := *quota.TotalTokens
+		cloned.TotalTokens = &value
+	}
+	return &cloned
 }
 
 func (s RequestPolicySnapshot) allowsModel(model string) bool {
@@ -330,6 +479,33 @@ type UsageAttribution struct {
 	ProfileName    string
 	RequestedModel string
 	EffectiveModel string
+}
+
+type QuotaAttribution struct {
+	PolicyID    string
+	ProfileID   string
+	Epoch       int64
+	AdmissionID string
+}
+
+func QuotaUsageEventID(attribution QuotaAttribution, attemptIndex *int64) string {
+	if attribution.AdmissionID == "" {
+		return ""
+	}
+	if attemptIndex == nil {
+		return attribution.AdmissionID + ":attempt:unknown"
+	}
+	return fmt.Sprintf("%s:attempt:%d", attribution.AdmissionID, *attemptIndex)
+}
+
+func (d RequestPolicyDecision) QuotaAttribution() (QuotaAttribution, bool) {
+	if d.Mode != ModeProfile || d.Snapshot == nil || d.Snapshot.Quota == nil || !d.Snapshot.Quota.Enabled || d.Snapshot.QuotaAdmissionID == "" {
+		return QuotaAttribution{}, false
+	}
+	return QuotaAttribution{
+		PolicyID: d.Snapshot.PolicyID, ProfileID: d.Snapshot.ProfileID,
+		Epoch: d.Snapshot.Quota.Epoch, AdmissionID: d.Snapshot.QuotaAdmissionID,
+	}, true
 }
 
 func (d RequestPolicyDecision) UsageAttribution() UsageAttribution {

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -83,6 +84,7 @@ func (h *Handler) RegisterAPIKeyPolicyRoutes(group *gin.RouterGroup) {
 	group.PUT("/api-key-policies/:policyId/profiles/:profileId", h.ReplaceAPIKeyProfile)
 	group.DELETE("/api-key-policies/:policyId/profiles/:profileId", h.DeleteAPIKeyProfile)
 	group.PUT("/api-key-policies/:policyId/active-profile", h.ActivateAPIKeyProfile)
+	group.POST("/api-key-policies/:policyId/quota/reset", h.ResetAPIKeyQuota)
 	group.DELETE("/orphaned-api-key-policies/:policyId", h.PurgeOrphanedAPIKeyPolicy)
 }
 
@@ -103,6 +105,8 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 			"policy_delete_preview",
 			"orphaned_purge_guard",
 			"takeover_control",
+			"key_quota_requests_tokens",
+			"key_quota_explicit_reset",
 			"usage_key_target",
 			"provider_model_linkage",
 		},
@@ -432,6 +436,7 @@ type createAPIKeyPolicyRequest struct {
 	KeyRef         string                    `json:"keyRef" binding:"required"`
 	DisplayName    string                    `json:"displayName"`
 	InitialProfile apikeypolicy.ProfileInput `json:"initialProfile" binding:"required"`
+	Quota          *apikeypolicy.QuotaInput  `json:"quota"`
 	ClientFeatures []string                  `json:"clientFeatures"`
 }
 
@@ -469,7 +474,7 @@ func (h *Handler) CreateAPIKeyPolicy(c *gin.Context) {
 		writeAPIKeyPolicyHTTPError(c, http.StatusNotFound, "upstream_api_key_not_found", "upstream API key no longer exists")
 		return
 	}
-	policy, err := service.Create(apiKeyPolicyWriteContext(c, request.ClientFeatures), identity, request.DisplayName, request.InitialProfile)
+	policy, err := service.Create(apiKeyPolicyWriteContext(c, request.ClientFeatures), identity, request.DisplayName, request.InitialProfile, request.Quota)
 	if err != nil {
 		writeAPIKeyPolicyError(c, err)
 		return
@@ -534,16 +539,39 @@ func (h *Handler) UpdateAPIKeyPolicy(c *gin.Context) {
 		ProfileID      string                     `json:"profileId"`
 		Profile        *apikeypolicy.ProfileInput `json:"profile"`
 		CreateProfile  bool                       `json:"createProfile"`
+		Quota          *apikeypolicy.QuotaInput   `json:"quota"`
+		QuotaPresent   bool                       `json:"-"`
 		ClientFeatures []string                   `json:"clientFeatures"`
 	}
-	if err := c.ShouldBindJSON(&request); err != nil {
+	var raw map[string]json.RawMessage
+	body, errRead := io.ReadAll(c.Request.Body)
+	if errRead != nil || json.Unmarshal(body, &raw) != nil || json.Unmarshal(body, &request) != nil {
 		writeAPIKeyPolicyHTTPError(c, 400, "invalid_api_key_profile", "invalid request body")
 		return
 	}
+	_, request.QuotaPresent = raw["quota"]
 	policy, err := service.UpdateWorkspace(apiKeyPolicyWriteContext(c, request.ClientFeatures), c.Param("policyId"), request.Version, apikeypolicy.WorkspaceUpdate{
 		DisplayName: request.DisplayName, ProfileID: request.ProfileID,
 		Profile: request.Profile, CreateProfile: request.CreateProfile,
+		Quota: apikeypolicy.QuotaUpdate{Present: request.QuotaPresent, Value: request.Quota},
 	})
+	h.writeAPIKeyPolicyResult(c, policy, err, http.StatusOK)
+}
+
+func (h *Handler) ResetAPIKeyQuota(c *gin.Context) {
+	service, _, ok := h.requireConfiguredPolicy(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Version int64  `json:"version" binding:"required"`
+		Confirm string `json:"confirmReset" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeAPIKeyPolicyHTTPError(c, http.StatusBadRequest, "invalid_api_key_quota", "invalid request body")
+		return
+	}
+	policy, err := service.ResetQuota(c.Request.Context(), c.Param("policyId"), request.Version, request.Confirm)
 	h.writeAPIKeyPolicyResult(c, policy, err, http.StatusOK)
 }
 
@@ -758,6 +786,10 @@ func writeAPIKeyPolicyError(c *gin.Context, err error) {
 		status, code = 409, "api_key_policy_orphaned"
 	case errors.Is(err, apikeypolicy.ErrNotOrphaned):
 		status, code, message = 409, "api_key_policy_not_orphaned", "policy still belongs to an upstream API key"
+	case errors.Is(err, apikeypolicy.ErrQuotaNotConfigured):
+		status, code = 409, "api_key_quota_not_configured"
+	case errors.Is(err, apikeypolicy.ErrQuotaResetConfirmation):
+		status, code = 409, "api_key_quota_reset_confirmation_required"
 	}
 	writeAPIKeyPolicyHTTPError(c, status, code, message)
 }

@@ -136,6 +136,92 @@ func TestAuthMiddlewareFailsClosedWhenPolicyIndexUnavailable(t *testing.T) {
 	}
 }
 
+func TestAPIKeyQuotaMiddlewareExemptsDiscoveryAndChargesConsumerRoutesKeyWide(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	manager := sdkaccess.NewManager()
+	manager.SetProviders([]sdkaccess.Provider{apiKeyPolicyAccessProvider{provider: sdkaccess.DefaultAccessProviderName, principal: "quota-route-key"}})
+	service := newAPIKeyPolicyMiddlewareService(t)
+	identity, err := apikeypolicy.NewAuthenticatedAPIKeyIdentity("quota-route-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestLimit := int64(1)
+	if _, err = service.Create(context.Background(), identity, "Route quota", apikeypolicy.ProfileInput{Name: "default"}, &apikeypolicy.QuotaInput{Enabled: true, Requests: &requestLimit}); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.Use(AuthMiddleware(manager, service), apiKeyQuotaMiddleware(service))
+	for _, route := range []string{"/v1/models", "/v1beta/models", "/v1beta/models/gemini-3-flash", "/v1/live/call-1", "/v1/realtime"} {
+		router.GET(route, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	}
+	router.POST("/v1/videos", func(c *gin.Context) {
+		decision, ok := apikeypolicy.DecisionFromContext(c.Request.Context())
+		if !ok {
+			t.Fatal("consumer route has no quota decision")
+		}
+		if _, ok = decision.QuotaAttribution(); !ok {
+			t.Fatal("consumer route has no quota admission")
+		}
+		c.Status(http.StatusNoContent)
+	})
+	router.POST("/backend-api/codex/responses", func(c *gin.Context) {
+		t.Fatal("second consumer route executed after request quota exhaustion")
+	})
+
+	request := func(method, path string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(method, path, nil))
+		return recorder
+	}
+	for _, route := range []string{"/v1/models", "/v1beta/models", "/v1beta/models/gemini-3-flash", "/v1/live/call-1", "/v1/realtime?call_id=call-1"} {
+		if recorder := request(http.MethodGet, route); recorder.Code != http.StatusNoContent {
+			t.Fatalf("exempt route %s status=%d body=%s", route, recorder.Code, recorder.Body.String())
+		}
+	}
+	if recorder := request(http.MethodPost, "/v1/videos"); recorder.Code != http.StatusNoContent {
+		t.Fatalf("first consumer status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if recorder := request(http.MethodPost, "/backend-api/codex/responses"); recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), `"code":"api_key_quota_exceeded"`) {
+		t.Fatalf("second consumer status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAPIKeyQuotaMiddlewareDefersWebsocketChargeToEachTurn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	manager := sdkaccess.NewManager()
+	manager.SetProviders([]sdkaccess.Provider{apiKeyPolicyAccessProvider{provider: sdkaccess.DefaultAccessProviderName, principal: "websocket-quota-key"}})
+	service := newAPIKeyPolicyMiddlewareService(t)
+	identity, _ := apikeypolicy.NewAuthenticatedAPIKeyIdentity("websocket-quota-key")
+	requestLimit := int64(1)
+	if _, err := service.Create(context.Background(), identity, "WebSocket", apikeypolicy.ProfileInput{Name: "default"}, &apikeypolicy.QuotaInput{Enabled: true, Requests: &requestLimit}); err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	router.Use(AuthMiddleware(manager, service), apiKeyQuotaMiddleware(service))
+	router.GET("/v1/responses", func(c *gin.Context) {
+		decision, _ := apikeypolicy.DecisionFromContext(c.Request.Context())
+		if _, charged := decision.QuotaAttribution(); charged {
+			t.Fatal("websocket handshake consumed a request unit")
+		}
+		if _, err := apikeypolicy.AdmitQuotaTurn(c.Request.Context()); err != nil {
+			t.Fatalf("first websocket turn admission: %v", err)
+		}
+		if _, err := apikeypolicy.AdmitQuotaTurn(c.Request.Context()); err == nil {
+			t.Fatal("second websocket turn bypassed request quota")
+		}
+		c.Status(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestRealtimeClientSecretReDecidesAtEveryConnectionAndFreezesConnectedSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service := newAPIKeyPolicyMiddlewareService(t)

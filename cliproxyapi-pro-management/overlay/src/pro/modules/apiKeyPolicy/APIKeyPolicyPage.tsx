@@ -32,6 +32,7 @@ import {
   isAPIKeyPolicyUnsupported,
   resolveMappingTargetModels,
   resolveModelsForProviders,
+  supportsAPIKeyQuota,
   supportsAPIKeyPolicyUsageTarget,
   updateProfileProviders,
   validateProfileInput,
@@ -39,7 +40,8 @@ import {
   type APIKeyPolicyBinding,
   type APIKeyPolicyDeletePreview,
   type APIKeyPolicySnapshot,
-	type APIKeyPolicyStatus,
+  type APIKeyPolicyStatus,
+  type APIKeyQuotaInput,
   type APIKeyProfileInput,
 } from './apiKeyPolicy';
 import styles from './APIKeyPolicyPage.module.scss';
@@ -55,6 +57,7 @@ interface WorkspaceDraft {
   profileId: string;
   profile: APIKeyProfileInput;
   isNewProfile: boolean;
+  quota: APIKeyQuotaInput | null;
 }
 
 const emptyProfile = (): APIKeyProfileInput => ({
@@ -69,7 +72,7 @@ const workspaceDraftFromTarget = (
   profileId?: string,
 ): WorkspaceDraft => {
   if (target.kind === 'create') {
-    return { displayName: '', profileId: '', profile: emptyProfile(), isNewProfile: false };
+    return { displayName: '', profileId: '', profile: emptyProfile(), isNewProfile: false, quota: null };
   }
   const selected =
     target.policy.profiles.find((profile) => profile.id === profileId) ??
@@ -80,6 +83,11 @@ const workspaceDraftFromTarget = (
     profileId: selected?.id ?? '',
     profile: selected ? cloneProfileInput(selected) : emptyProfile(),
     isNewProfile: false,
+    quota: target.policy.quota ? {
+      enabled: target.policy.quota.enabled,
+      ...(target.policy.quota.requests !== undefined ? { requests: target.policy.quota.requests } : {}),
+      ...(target.policy.quota.totalTokens !== undefined ? { totalTokens: target.policy.quota.totalTokens } : {}),
+    } : null,
   };
 };
 
@@ -105,7 +113,7 @@ const workspaceIsDirty = (
         draft.profile.name.trim() ||
         draft.profile.providers.length ||
         draft.profile.models.length ||
-        draft.profile.mappings.length,
+        draft.profile.mappings.length || draft.quota !== null,
     );
   }
   if (draft.isNewProfile) return true;
@@ -114,6 +122,11 @@ const workspaceIsDirty = (
     draft.displayName !== target.policy.displayName ||
     !persisted ||
     profileSignature(draft.profile) !== profileSignature(persisted)
+    || JSON.stringify(draft.quota) !== JSON.stringify(target.policy.quota ? {
+      enabled: target.policy.quota.enabled,
+      ...(target.policy.quota.requests !== undefined ? { requests: target.policy.quota.requests } : {}),
+      ...(target.policy.quota.totalTokens !== undefined ? { totalTokens: target.policy.quota.totalTokens } : {}),
+    } : null)
   );
 };
 
@@ -236,13 +249,17 @@ export function APIKeyPolicyPage() {
   const [dangerKind, setDangerKind] = useState<'policy' | 'profile' | 'orphaned' | null>(null);
   const [dangerBusy, setDangerBusy] = useState(false);
   const [deletePreview, setDeletePreview] = useState<APIKeyPolicyDeletePreview | null>(null);
+  const [quotaBusy, setQuotaBusy] = useState(false);
   const requestRevisionRef = useRef(0);
   const saveRevisionRef = useRef(0);
   const draftRevisionRef = useRef(0);
   const savingRef = useRef(false);
   const dangerRevisionRef = useRef(0);
   const dangerBusyRef = useRef(false);
+  const quotaRevisionRef = useRef(0);
+  const quotaBusyRef = useRef(false);
   const dirty = workspaceIsDirty(workspaceTarget, draft);
+  const quotaSupported = Boolean(snapshot && supportsAPIKeyQuota(snapshot.capabilities));
 
   const errorMessage = useCallback((error: unknown): string => {
     const key = apiKeyPolicyErrorTranslationKey(error);
@@ -319,14 +336,19 @@ export function APIKeyPolicyPage() {
       requestRevisionRef.current += 1;
       saveRevisionRef.current += 1;
       dangerRevisionRef.current += 1;
+      quotaRevisionRef.current += 1;
       savingRef.current = false;
       dangerBusyRef.current = false;
+      quotaBusyRef.current = false;
     };
   }, [load]);
 
   const openWorkspace = useCallback(
     (target: WorkspaceTarget, profileId?: string) => {
       if (!snapshot) return;
+      quotaRevisionRef.current += 1;
+      quotaBusyRef.current = false;
+      setQuotaBusy(false);
       setWorkspaceTarget(target);
       draftRevisionRef.current += 1;
       setDraft(workspaceDraftFromTarget(target, profileId));
@@ -359,11 +381,14 @@ export function APIKeyPolicyPage() {
   const closeWorkspace = useCallback(() => {
     saveRevisionRef.current += 1;
     draftRevisionRef.current += 1;
+    quotaRevisionRef.current += 1;
     savingRef.current = false;
     dangerRevisionRef.current += 1;
     dangerBusyRef.current = false;
+    quotaBusyRef.current = false;
     setSaving(false);
     setDangerBusy(false);
+    setQuotaBusy(false);
     setDeletePreview(null);
     setWorkspaceTarget(null);
     setDraft(null);
@@ -459,8 +484,17 @@ export function APIKeyPolicyPage() {
         return false;
       }
     }
+		if (quotaSupported && draft.quota?.enabled && draft.quota.requests === undefined && draft.quota.totalTokens === undefined) {
+			showNotification(t('api_key_policy.validation.quota'), 'warning');
+			return false;
+		}
+		if (quotaSupported && ((draft.quota?.requests !== undefined && draft.quota.requests <= 0) ||
+			(draft.quota?.totalTokens !== undefined && draft.quota.totalTokens <= 0))) {
+			showNotification(t('api_key_policy.validation.quota'), 'warning');
+			return false;
+		}
     return true;
-  }, [draft, showNotification, snapshot, t]);
+  }, [draft, quotaSupported, showNotification, snapshot, t]);
 
   const saveWorkspace = useCallback(async () => {
     if (!workspaceTarget || !draft || savingRef.current) return;
@@ -482,6 +516,7 @@ export function APIKeyPolicyPage() {
           workspaceTarget.binding.keyRef,
           draft.displayName.trim(),
           draft.profile,
+          quotaSupported ? draft.quota : undefined,
         );
       } else {
         policy = await apiKeyPolicyApi.updateWorkspace(
@@ -491,6 +526,7 @@ export function APIKeyPolicyPage() {
           draft.profileId,
           changedProfile ? draft.profile : undefined,
           draft.isNewProfile,
+          quotaSupported ? draft.quota : undefined,
         );
       }
       if (revision !== saveRevisionRef.current) return;
@@ -526,7 +562,41 @@ export function APIKeyPolicyPage() {
         setSaving(false);
       }
     }
-  }, [closeWorkspace, draft, errorMessage, load, replacePolicyInSnapshot, showNotification, t, validateDraft, workspaceTarget]);
+  }, [closeWorkspace, draft, errorMessage, load, quotaSupported, replacePolicyInSnapshot, showNotification, t, validateDraft, workspaceTarget]);
+
+  const resetQuota = useCallback(async () => {
+    if (!quotaSupported || !workspaceTarget || workspaceTarget.kind !== 'policy' || quotaBusyRef.current || !workspaceTarget.policy.quota) return;
+    if (!window.confirm(t('api_key_policy.quota_reset_confirm'))) return;
+    const revision = ++quotaRevisionRef.current;
+    const policyId = workspaceTarget.policy.id;
+    const selectedProfileId = draft?.profileId;
+    const submittedDraftRevision = draftRevisionRef.current;
+    quotaBusyRef.current = true;
+    setQuotaBusy(true);
+    try {
+      const policy = await apiKeyPolicyApi.resetQuota(policyId, workspaceTarget.policy.version);
+      if (revision !== quotaRevisionRef.current) return;
+      replacePolicyInSnapshot(policy);
+      setWorkspaceTarget((current) => {
+        if (!current || current.kind !== 'policy' || current.policy.id !== policyId) return current;
+        return { ...current, policy };
+      });
+      if (submittedDraftRevision === draftRevisionRef.current) {
+        const target = { kind: 'policy' as const, policy, readOnly: false };
+        draftRevisionRef.current += 1;
+        setDraft(workspaceDraftFromTarget(target, selectedProfileId));
+      }
+      showNotification(t('api_key_policy.quota_reset_done'), 'success');
+    } catch (error) {
+      if (revision !== quotaRevisionRef.current) return;
+      showNotification(errorMessage(error), 'error');
+    } finally {
+      if (revision === quotaRevisionRef.current) {
+        quotaBusyRef.current = false;
+        setQuotaBusy(false);
+      }
+    }
+  }, [draft?.profileId, errorMessage, quotaSupported, replacePolicyInSnapshot, showNotification, t, workspaceTarget]);
 
   const activateProfile = useCallback(async () => {
     if (!workspaceTarget || workspaceTarget.kind !== 'policy' || !draft || dirty || savingRef.current) return;
@@ -846,7 +916,7 @@ export function APIKeyPolicyPage() {
                     {profile.id === currentPolicy.activeProfileId ? <small>{t('api_key_policy.active')}</small> : null}
                   </button>
                 ))}
-                {!readOnly ? <button className={draft.isNewProfile ? styles.profileActive : ''} onClick={() => updateDraft((current) => ({ displayName: current.displayName, profileId: '', profile: emptyProfile(), isNewProfile: true }))} disabled={saving || dirty}><IconPlus size={14} /> {t('api_key_policy.new_profile')}</button> : null}
+                {!readOnly ? <button className={draft.isNewProfile ? styles.profileActive : ''} onClick={() => updateDraft((current) => ({ ...current, profileId: '', profile: emptyProfile(), isNewProfile: true }))} disabled={saving || dirty}><IconPlus size={14} /> {t('api_key_policy.new_profile')}</button> : null}
               </div>
             ) : null}
 
@@ -866,6 +936,59 @@ export function APIKeyPolicyPage() {
               onChange={(event) => updateDraft((current) => ({ ...current, profile: { ...current.profile, name: event.target.value } }))}
               disabled={readOnly || saving}
             />
+
+            {quotaSupported ? <section className={styles.quotaSection}>
+              <div className={styles.quotaHeader}>
+                <div><h3>{t('api_key_policy.quota_title')}</h3><p>{t('api_key_policy.quota_hint')}</p></div>
+                <label className={styles.quotaToggle}>
+                  <input
+                    type="checkbox"
+                    checked={draft.quota?.enabled === true}
+                    disabled={readOnly || saving}
+                    onChange={(event) => updateDraft((current) => ({
+                      ...current,
+                      quota: event.target.checked
+                        ? { enabled: true, requests: current.quota?.requests, totalTokens: current.quota?.totalTokens }
+                        : current.quota ? { ...current.quota, enabled: false } : null,
+                    }))}
+                  />
+                  <span>{t('api_key_policy.quota_enabled')}</span>
+                </label>
+              </div>
+              <div className={styles.quotaGrid}>
+                <Input
+                  label={t('api_key_policy.quota_requests')}
+                  type="number"
+                  min={1}
+                  value={draft.quota?.requests ?? ''}
+                  disabled={readOnly || saving}
+                  onChange={(event) => updateDraft((current) => ({ ...current, quota: {
+                    enabled: current.quota?.enabled ?? false,
+                    ...(event.target.value ? { requests: Number(event.target.value) } : {}),
+                    ...(current.quota?.totalTokens !== undefined ? { totalTokens: current.quota.totalTokens } : {}),
+                  } }))}
+                />
+                <Input
+                  label={t('api_key_policy.quota_tokens')}
+                  type="number"
+                  min={1}
+                  value={draft.quota?.totalTokens ?? ''}
+                  disabled={readOnly || saving}
+                  onChange={(event) => updateDraft((current) => ({ ...current, quota: {
+                    enabled: current.quota?.enabled ?? false,
+                    ...(current.quota?.requests !== undefined ? { requests: current.quota.requests } : {}),
+                    ...(event.target.value ? { totalTokens: Number(event.target.value) } : {}),
+                  } }))}
+                />
+              </div>
+              {currentPolicy?.quota ? (
+                <div className={styles.quotaUsage}>
+                  <span>{t('api_key_policy.quota_requests_usage', { used: currentPolicy.quota.usage.requestsUsed, limit: currentPolicy.quota.requests ?? '∞' })}</span>
+                  <span>{t('api_key_policy.quota_tokens_usage', { used: currentPolicy.quota.usage.totalTokensUsed, limit: currentPolicy.quota.totalTokens ?? '∞' })}</span>
+                  {!readOnly ? <Button variant="danger" size="sm" onClick={() => void resetQuota()} loading={quotaBusy} disabled={saving || dirty}>{t('api_key_policy.quota_reset')}</Button> : null}
+                </div>
+              ) : null}
+            </section> : null}
 
             <section className={styles.mappingSection}>
               <div className={styles.mappingHeader}><div><h3>{t('api_key_policy.mappings')}</h3><p>{t('api_key_policy.mappings_hint')}</p></div>{!readOnly ? <Button variant="secondary" size="sm" onClick={() => updateDraft((current) => ({ ...current, profile: { ...current.profile, mappings: [...current.profile.mappings, { source: '', target: mappingTargetModels[0] ?? '' }] } }))} disabled={saving || mappingTargetModels.length === 0}><IconPlus size={14} /> {t('common.add')}</Button> : null}</div>

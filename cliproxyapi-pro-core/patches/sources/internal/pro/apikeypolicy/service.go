@@ -32,6 +32,7 @@ type backupPolicy struct {
 	CreatedAtMS     int64     `json:"created_at_ms"`
 	UpdatedAtMS     int64     `json:"updated_at_ms"`
 	Profiles        []Profile `json:"profiles"`
+	Quota           *Quota    `json:"quota,omitempty"`
 }
 
 type backupDocument struct {
@@ -48,7 +49,7 @@ func policiesToBackup(policies []Policy) []backupPolicy {
 			ID: policy.ID, APIKeyHash: policy.APIKeyHash, DisplayName: policy.DisplayName,
 			ActiveProfileID: policy.ActiveProfileID, Version: policy.Version,
 			CreatedAtMS: policy.CreatedAtMS, UpdatedAtMS: policy.UpdatedAtMS,
-			Profiles: policy.Profiles,
+			Profiles: policy.Profiles, Quota: cloneQuota(policy.Quota),
 		})
 	}
 	return out
@@ -61,7 +62,7 @@ func backupToPolicies(items []backupPolicy) []Policy {
 			ID: item.ID, APIKeyHash: item.APIKeyHash, DisplayName: item.DisplayName,
 			ActiveProfileID: item.ActiveProfileID, Version: item.Version,
 			CreatedAtMS: item.CreatedAtMS, UpdatedAtMS: item.UpdatedAtMS,
-			Profiles: item.Profiles,
+			Profiles: item.Profiles, Quota: cloneQuota(item.Quota),
 		})
 	}
 	return out
@@ -71,6 +72,8 @@ func (s *Service) ExportBackup(ctx context.Context) ([]byte, error) {
 	if s == nil || s.store == nil {
 		return nil, ErrUnavailable
 	}
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	policies, err := s.store.List(ctx)
@@ -85,13 +88,13 @@ func (s *Service) ExportBackup(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(backupDocument{SchemaVersion: 3, TakeoverEnabled: takeoverEnabled, Policies: policiesToBackup(policies), Audits: audits})
+	return json.Marshal(backupDocument{SchemaVersion: 4, TakeoverEnabled: takeoverEnabled, Policies: policiesToBackup(policies), Audits: audits})
 }
 
 func decodeBackup(payload []byte) ([]Policy, []AuditRecord, bool, error) {
 	var document backupDocument
 	if err := json.Unmarshal(payload, &document); err == nil && document.SchemaVersion != 0 {
-		if document.SchemaVersion != 2 && document.SchemaVersion != 3 {
+		if document.SchemaVersion != 2 && document.SchemaVersion != 3 && document.SchemaVersion != 4 {
 			return nil, nil, false, fmt.Errorf("unsupported API key policy backup schema %d", document.SchemaVersion)
 		}
 		return backupToPolicies(document.Policies), document.Audits, document.SchemaVersion >= 3 && document.TakeoverEnabled, nil
@@ -179,6 +182,8 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 	if err != nil {
 		return err
 	}
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	tx := probackup.Transaction(ctx)
@@ -218,6 +223,14 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 		if _, err := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = ? where id = ?`, policy.ActiveProfileID, policy.ID); err != nil {
 			return err
 		}
+		if policy.Quota != nil {
+			if _, err := tx.ExecContext(ctx, `insert into api_key_policy_quotas(policy_id, enabled, request_limit, token_limit, epoch, started_at_ms, requests_used, total_tokens_used, updated_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?, ?)`, policy.ID, policy.Quota.Enabled, policy.Quota.Requests, policy.Quota.TotalTokens, policy.Quota.Epoch, policy.Quota.StartedAtMS, policy.Quota.Usage.RequestsUsed, policy.Quota.Usage.TotalTokensUsed, policy.Quota.UpdatedAtMS); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `insert into api_key_quota_generations(policy_id, generation) values(?, ?)`, policy.ID, policy.Quota.Epoch); err != nil {
+				return err
+			}
+		}
 	}
 	for _, audit := range audits {
 		if _, err := tx.ExecContext(ctx, `insert into api_key_policy_audit(id, policy_id, event_type, details_json, created_at_ms) values(?, ?, ?, ?, ?)`, audit.ID, audit.PolicyID, audit.EventType, string(audit.Details), audit.CreatedAtMS); err != nil {
@@ -235,12 +248,18 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 		if err := tx.Commit(); err != nil {
 			return err
 		}
+		next, err = buildRuntimeIndex(loaded, takeoverEnabled)
+		if err != nil {
+			return err
+		}
 		s.publishNextLocked(next)
 	} else {
 		probackup.AfterCommit(ctx, func() {
 			s.writeMu.Lock()
 			defer s.writeMu.Unlock()
-			s.publishNextLocked(next)
+			if errReload := s.reloadLocked(context.Background()); errReload != nil {
+				s.MarkUnavailable()
+			}
 		})
 	}
 	return nil
@@ -320,6 +339,12 @@ func (s *Service) normalizeBackupPolicies(policies []Policy) ([]Policy, error) {
 		if len(policy.Profiles) == 0 || activeCount != 1 {
 			return nil, fmt.Errorf("policy %q must have exactly one active profile", policy.ID)
 		}
+		if policy.Quota != nil {
+			if err := validatePersistedQuota(*policy.Quota); err != nil {
+				return nil, fmt.Errorf("policy %q quota: %w", policy.ID, err)
+			}
+			policy.Quota.Usage = quotaUsage(*policy.Quota)
+		}
 	}
 	return canonical, nil
 }
@@ -327,12 +352,19 @@ func (s *Service) normalizeBackupPolicies(policies []Policy) ([]Policy, error) {
 type Service struct {
 	store                *Store
 	writeMu              sync.Mutex
+	quotaMu              sync.Mutex
 	catalogMu            sync.RWMutex
 	catalogProvider      func() (ProfileCatalog, error)
 	configuredMu         sync.RWMutex
 	configuredHashes     atomic.Value
 	configuredGeneration atomic.Uint64
 	index                atomic.Pointer[runtimeIndex]
+	retryCtx             context.Context
+	retryCancel          context.CancelFunc
+	retryWG              sync.WaitGroup
+	pendingMu            sync.Mutex
+	pendingSettlements   map[string]struct{}
+	pendingCount         atomic.Int64
 }
 
 func (s *Service) SetConfiguredAPIKeys(keys []string) {
@@ -449,7 +481,8 @@ func NewService(store *Store) (*Service, error) {
 	if store == nil || store.db == nil {
 		return nil, errors.New("api key policy store is required")
 	}
-	service := &Service{store: store}
+	retryCtx, retryCancel := context.WithCancel(context.Background())
+	service := &Service{store: store, retryCtx: retryCtx, retryCancel: retryCancel, pendingSettlements: make(map[string]struct{})}
 	service.index.Store(&runtimeIndex{healthy: false})
 	if err := service.Reload(context.Background()); err != nil {
 		return nil, err
@@ -461,6 +494,10 @@ func (s *Service) Close() error {
 	if s == nil || s.store == nil {
 		return nil
 	}
+	if s.retryCancel != nil {
+		s.retryCancel()
+	}
+	s.retryWG.Wait()
 	return s.store.Close()
 }
 
@@ -554,6 +591,7 @@ func buildRuntimeIndex(policies []Policy, takeoverEnabled bool) (*runtimeIndex, 
 			ModelMappings:    make(map[string]string, len(input.Mappings)),
 			AllowedModels:    make(map[string]struct{}, len(input.Models)),
 			AllowedProviders: make(map[string]struct{}, len(input.Providers)),
+			Quota:            cloneQuota(policy.Quota),
 		}
 		for _, mapping := range input.Mappings {
 			snapshot.ModelMappings[mapping.Source] = mapping.Target
@@ -586,6 +624,192 @@ func (s *Service) Decide(identity AuthenticatedAPIKeyIdentity) (RequestPolicyDec
 	}
 	cloned := snapshot.Clone()
 	return RequestPolicyDecision{Mode: ModeProfile, Snapshot: &cloned}, nil
+}
+
+// AdmitDecision reserves one Key-wide request unit immediately before a
+// chargeable proxy request enters execution. Discovery and credential-issuing
+// routes can keep the same policy decision without consuming the budget.
+func (s *Service) AdmitDecision(ctx context.Context, decision RequestPolicyDecision) (RequestPolicyDecision, error) {
+	decision = decision.Clone()
+	if decision.Mode != ModeProfile || decision.Snapshot == nil || decision.Snapshot.Quota == nil || !decision.Snapshot.Quota.Enabled {
+		return decision, nil
+	}
+	index := s.index.Load()
+	if index == nil || !index.healthy || s.pendingCount.Load() > 0 {
+		return RequestPolicyDecision{}, ErrQuotaUnavailable
+	}
+	admissionID, err := s.admitQuota(ctx, *decision.Snapshot)
+	if err != nil {
+		return RequestPolicyDecision{}, err
+	}
+	decision.Snapshot.QuotaAdmissionID = admissionID
+	attribution, _ := decision.QuotaAttribution()
+	decision.Snapshot.QuotaSettlement = func(settleCtx context.Context, eventID string, totalTokens int64) error {
+		if settleCtx == nil {
+			settleCtx = context.Background()
+		}
+		settlementID := attribution.AdmissionID + ":" + eventID
+		err := s.RecordQuotaTokens(context.WithoutCancel(settleCtx), attribution, settlementID, totalTokens)
+		if errors.Is(err, ErrQuotaSettlementStale) {
+			return nil
+		}
+		if err != nil {
+			s.MarkUnavailable()
+			s.retryQuotaSettlement(attribution, settlementID, totalTokens)
+		}
+		return err
+	}
+	return decision, nil
+}
+
+func validateQuotaInput(input *QuotaInput) error {
+	if input == nil {
+		return nil
+	}
+	if input.Requests != nil && *input.Requests <= 0 {
+		return errors.New("request quota must be greater than zero")
+	}
+	if input.TotalTokens != nil && *input.TotalTokens <= 0 {
+		return errors.New("token quota must be greater than zero")
+	}
+	if input.Enabled && input.Requests == nil && input.TotalTokens == nil {
+		return errors.New("enabled quota requires a request or token limit")
+	}
+	return nil
+}
+
+func validatePersistedQuota(quota Quota) error {
+	if quota.Epoch <= 0 || quota.StartedAtMS <= 0 || quota.UpdatedAtMS <= 0 || quota.Usage.RequestsUsed < 0 || quota.Usage.TotalTokensUsed < 0 {
+		return errors.New("invalid persisted quota state")
+	}
+	return validateQuotaInput(&QuotaInput{Enabled: quota.Enabled, Requests: quota.Requests, TotalTokens: quota.TotalTokens})
+}
+
+func (s *Service) admitQuota(ctx context.Context, snapshot RequestPolicySnapshot) (string, error) {
+	if s == nil || s.store == nil || snapshot.Quota == nil || !snapshot.Quota.Enabled {
+		return "", nil
+	}
+	admissionID, err := randomID("quota_request_")
+	if err != nil {
+		return "", err
+	}
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	tx, err := s.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", ErrQuotaUnavailable
+	}
+	defer tx.Rollback()
+	quota, err := getPolicyQuota(ctx, tx, snapshot.PolicyID)
+	if err != nil || quota == nil || quota.Epoch != snapshot.Quota.Epoch || !quota.Enabled {
+		return "", ErrQuotaUnavailable
+	}
+	if quota.Requests != nil && quota.Usage.RequestsUsed >= *quota.Requests {
+		return "", &QuotaExceededError{Metric: "requests", Used: quota.Usage.RequestsUsed, Limit: *quota.Requests}
+	}
+	if quota.TotalTokens != nil && quota.Usage.TotalTokensUsed >= *quota.TotalTokens {
+		return "", &QuotaExceededError{Metric: "total_tokens", Used: quota.Usage.TotalTokensUsed, Limit: *quota.TotalTokens}
+	}
+	now := time.Now().UnixMilli()
+	if _, err = tx.ExecContext(ctx, `update api_key_policy_quotas set requests_used = requests_used + 1, updated_at_ms = ? where policy_id = ? and epoch = ?`, now, snapshot.PolicyID, quota.Epoch); err != nil {
+		return "", ErrQuotaUnavailable
+	}
+	if _, err = tx.ExecContext(ctx, `insert into api_key_quota_admissions(admission_id, policy_id, profile_id, epoch, admitted_at_ms) values(?, ?, ?, ?, ?)`, admissionID, snapshot.PolicyID, snapshot.ProfileID, quota.Epoch, now); err != nil {
+		return "", ErrQuotaUnavailable
+	}
+	if err = tx.Commit(); err != nil {
+		return "", ErrQuotaUnavailable
+	}
+	return admissionID, nil
+}
+
+// RecordQuotaTokens settles one upstream attempt against the Key-wide budget.
+// eventID must identify the terminal usage record so retries count once each and
+// repeated delivery of the same record remains idempotent.
+func (s *Service) RecordQuotaTokens(ctx context.Context, attribution QuotaAttribution, eventID string, totalTokens int64) error {
+	if s == nil || s.store == nil || attribution.PolicyID == "" || attribution.AdmissionID == "" || strings.TrimSpace(eventID) == "" || totalTokens < 0 {
+		return ErrQuotaUnavailable
+	}
+	if totalTokens == 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	tx, err := s.store.db.BeginTx(dbCtx, nil)
+	if err != nil {
+		return ErrQuotaUnavailable
+	}
+	defer tx.Rollback()
+	var policyID, profileID string
+	var epoch int64
+	if err = tx.QueryRowContext(dbCtx, `select policy_id, profile_id, epoch from api_key_quota_admissions where admission_id = ?`, attribution.AdmissionID).Scan(&policyID, &profileID, &epoch); errors.Is(err, sql.ErrNoRows) || err == nil && (policyID != attribution.PolicyID || profileID != attribution.ProfileID || epoch != attribution.Epoch) {
+		return fmt.Errorf("%w: %w", ErrQuotaUnavailable, ErrQuotaSettlementStale)
+	}
+	if err != nil {
+		return ErrQuotaUnavailable
+	}
+	now := time.Now().UnixMilli()
+	result, err := tx.ExecContext(dbCtx, `insert into api_key_quota_token_events(event_id, admission_id, policy_id, profile_id, epoch, total_tokens, occurred_at_ms) values(?, ?, ?, ?, ?, ?, ?) on conflict(event_id) do nothing`, strings.TrimSpace(eventID), attribution.AdmissionID, attribution.PolicyID, attribution.ProfileID, attribution.Epoch, totalTokens, now)
+	if err != nil {
+		return ErrQuotaUnavailable
+	}
+	if inserted, _ := result.RowsAffected(); inserted == 0 {
+		return nil
+	}
+	updated, err := tx.ExecContext(dbCtx, `update api_key_policy_quotas set total_tokens_used = total_tokens_used + ?, updated_at_ms = ? where policy_id = ? and epoch = ?`, totalTokens, now, attribution.PolicyID, attribution.Epoch)
+	if err != nil {
+		return ErrQuotaUnavailable
+	}
+	if affected, _ := updated.RowsAffected(); affected != 1 {
+		return fmt.Errorf("%w: %w", ErrQuotaUnavailable, ErrQuotaSettlementStale)
+	}
+	if err = tx.Commit(); err != nil {
+		return ErrQuotaUnavailable
+	}
+	return nil
+}
+
+func (s *Service) retryQuotaSettlement(attribution QuotaAttribution, eventID string, totalTokens int64) {
+	if s == nil || s.retryCtx == nil || totalTokens <= 0 {
+		return
+	}
+	s.pendingMu.Lock()
+	if _, exists := s.pendingSettlements[eventID]; exists {
+		s.pendingMu.Unlock()
+		return
+	}
+	s.pendingSettlements[eventID] = struct{}{}
+	s.pendingCount.Add(1)
+	s.pendingMu.Unlock()
+	s.retryWG.Add(1)
+	go func() {
+		defer s.retryWG.Done()
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.retryCtx.Done():
+				return
+			case <-ticker.C:
+				if err := s.RecordQuotaTokens(s.retryCtx, attribution, eventID, totalTokens); err != nil && !errors.Is(err, ErrQuotaSettlementStale) {
+					continue
+				}
+				s.pendingMu.Lock()
+				delete(s.pendingSettlements, eventID)
+				remaining := s.pendingCount.Add(-1)
+				s.pendingMu.Unlock()
+				if remaining == 0 {
+					_ = s.Reload(context.Background())
+				}
+				return
+			}
+		}
+	}()
 }
 
 func (s *Service) TakeoverEnabled() bool {
@@ -709,7 +933,7 @@ func (s *Service) Get(ctx context.Context, policyID string) (Policy, error) {
 	return s.store.Get(ctx, policyID)
 }
 
-func (s *Service) Create(ctx context.Context, identity AuthenticatedAPIKeyIdentity, displayName string, initial ProfileInput) (Policy, error) {
+func (s *Service) Create(ctx context.Context, identity AuthenticatedAPIKeyIdentity, displayName string, initial ProfileInput, quota ...*QuotaInput) (Policy, error) {
 	if !identity.Valid() {
 		return Policy{}, errors.New("authenticated api key identity is required")
 	}
@@ -727,6 +951,13 @@ func (s *Service) Create(ctx context.Context, identity AuthenticatedAPIKeyIdenti
 		return Policy{}, err
 	}
 	now := time.Now().UnixMilli()
+	var initialQuota *QuotaInput
+	if len(quota) > 0 {
+		initialQuota = quota[0]
+		if err := validateQuotaInput(initialQuota); err != nil {
+			return Policy{}, err
+		}
+	}
 	policies, err := s.write(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `insert into api_key_policies(id, api_key_hash, display_name, active_profile_id, version, created_at_ms, updated_at_ms) values(?, ?, ?, null, 1, ?, ?)`, policyID, identity.Hash(), displayName, now, now); err != nil {
 			return sqliteConstraint(err)
@@ -736,6 +967,11 @@ func (s *Service) Create(ctx context.Context, identity AuthenticatedAPIKeyIdenti
 		}
 		if _, err := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = ? where id = ?`, profileID, policyID); err != nil {
 			return err
+		}
+		if initialQuota != nil {
+			if err := replaceQuota(ctx, tx, policyID, initialQuota, now); err != nil {
+				return err
+			}
 		}
 		if err := insertAudit(ctx, tx, policyID, "policy_created", map[string]any{"activeProfileId": profileID}, now); err != nil {
 			return err
@@ -767,6 +1003,11 @@ func (s *Service) UpdateWorkspace(ctx context.Context, policyID string, version 
 	}
 	if update.Profile != nil && !update.CreateProfile && update.ProfileID == "" {
 		return Policy{}, errors.New("existing profile ID is required")
+	}
+	if update.Quota.Present {
+		if err := validateQuotaInput(update.Quota.Value); err != nil {
+			return Policy{}, err
+		}
 	}
 	var input ProfileInput
 	var err error
@@ -806,10 +1047,104 @@ func (s *Service) UpdateWorkspace(ctx context.Context, policyID string, version 
 				}
 			}
 		}
+		if update.Quota.Present {
+			if err := replaceQuota(ctx, tx, policyID, update.Quota.Value, now); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `update api_key_policies set display_name = ?, version = version + 1, updated_at_ms = ? where id = ?`, update.DisplayName, now, policyID); err != nil {
 			return err
 		}
 		return nil
+	})
+	if err != nil {
+		return Policy{}, err
+	}
+	return findPolicy(policies, policyID)
+}
+
+func replaceQuota(ctx context.Context, tx *sql.Tx, policyID string, input *QuotaInput, now int64) error {
+	if input == nil {
+		var existing int
+		if err := tx.QueryRowContext(ctx, `select count(*) from api_key_policy_quotas where policy_id = ?`, policyID).Scan(&existing); err != nil || existing == 0 {
+			return err
+		}
+		if _, err := advanceQuotaGeneration(ctx, tx, policyID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `delete from api_key_quota_admissions where policy_id = ?`, policyID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `delete from api_key_policy_quotas where policy_id = ?`, policyID)
+		return err
+	}
+	var existing int
+	if err := tx.QueryRowContext(ctx, `select count(*) from api_key_policy_quotas where policy_id = ?`, policyID).Scan(&existing); err != nil {
+		return err
+	}
+	if existing == 0 {
+		epoch, err := advanceQuotaGeneration(ctx, tx, policyID)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `insert into api_key_policy_quotas(policy_id, enabled, request_limit, token_limit, epoch, started_at_ms, requests_used, total_tokens_used, updated_at_ms) values(?, ?, ?, ?, ?, ?, 0, 0, ?)`, policyID, input.Enabled, input.Requests, input.TotalTokens, epoch, now, now)
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `update api_key_policy_quotas set enabled = ?, request_limit = ?, token_limit = ?, updated_at_ms = ? where policy_id = ?`, input.Enabled, input.Requests, input.TotalTokens, now, policyID)
+	return err
+}
+
+// advanceQuotaGeneration keeps the monotonic budget identity outside the
+// optional quota row. This lets quota deletion clean all historical request
+// rows without allowing a later recreation to reuse an old in-flight epoch.
+func advanceQuotaGeneration(ctx context.Context, tx *sql.Tx, policyID string) (int64, error) {
+	var generation int64
+	if err := tx.QueryRowContext(ctx, `insert into api_key_quota_generations(policy_id, generation)
+		select ?, max(generation) + 1 from (
+			select 0 as generation
+			union all select epoch from api_key_policy_quotas where policy_id = ?
+			union all select epoch from api_key_quota_admissions where policy_id = ?
+		) where true on conflict(policy_id) do update set generation = max(api_key_quota_generations.generation + 1, excluded.generation)
+		returning generation`, policyID, policyID, policyID).Scan(&generation); err != nil {
+		return 0, err
+	}
+	return generation, nil
+}
+
+func (s *Service) ResetQuota(ctx context.Context, policyID string, version int64, confirmation string) (Policy, error) {
+	if confirmation != QuotaResetConfirmation {
+		return Policy{}, ErrQuotaResetConfirmation
+	}
+	now := time.Now().UnixMilli()
+	policies, err := s.write(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if err := requireVersion(ctx, tx, policyID, version); err != nil {
+			return err
+		}
+		quota, err := getPolicyQuota(ctx, tx, policyID)
+		if err != nil {
+			return err
+		}
+		if quota == nil {
+			return ErrQuotaNotConfigured
+		}
+		nextEpoch, err := advanceQuotaGeneration(ctx, tx, policyID)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `delete from api_key_quota_admissions where policy_id = ?`, policyID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `update api_key_policy_quotas set epoch = ?, started_at_ms = ?, requests_used = 0, total_tokens_used = 0, updated_at_ms = ? where policy_id = ?`, nextEpoch, now, now, policyID); err != nil {
+			return err
+		}
+		if err := insertAudit(ctx, tx, policyID, "api_key_quota_reset", map[string]any{
+			"previousEpoch": quota.Epoch, "previousRequestsUsed": quota.Usage.RequestsUsed,
+			"previousTotalTokensUsed": quota.Usage.TotalTokensUsed, "confirmation": confirmation,
+		}, now); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `update api_key_policies set version = version + 1, updated_at_ms = ? where id = ?`, now, policyID)
+		return err
 	})
 	if err != nil {
 		return Policy{}, err
@@ -1003,6 +1338,8 @@ func (s *Service) write(ctx context.Context, operation func(context.Context, *sq
 	}
 	var published []Policy
 	err := probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		s.quotaMu.Lock()
+		defer s.quotaMu.Unlock()
 		s.writeMu.Lock()
 		defer s.writeMu.Unlock()
 		tx, err := s.store.db.BeginTx(ctx, nil)

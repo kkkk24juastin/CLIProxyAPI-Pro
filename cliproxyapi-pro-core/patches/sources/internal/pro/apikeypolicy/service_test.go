@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func newTestService(t *testing.T) *Service {
@@ -691,13 +692,196 @@ func TestUsageAttributionDoesNotInventPassthroughProfile(t *testing.T) {
 	}
 }
 
+func TestQuotaIsKeyWideAcrossProfilesAndResetIsAudited(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	identity, _ := NewAuthenticatedAPIKeyIdentity("quota-key")
+	requestLimit, tokenLimit := int64(2), int64(10)
+	policy, err := service.Create(ctx, identity, "Quota", ProfileInput{Name: "first"}, &QuotaInput{Enabled: true, Requests: &requestLimit, TotalTokens: &tokenLimit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.SetTakeover(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.AdmitDecision(ctx, decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attribution, ok := first.QuotaAttribution()
+	if !ok {
+		t.Fatal("quota attribution missing")
+	}
+	attempt := int64(0)
+	if err = service.RecordQuotaTokens(ctx, attribution, QuotaUsageEventID(attribution, &attempt), 6); err != nil {
+		t.Fatal(err)
+	}
+	settledCtx, cancelSettlement := context.WithCancel(WithDecision(ctx, first))
+	cancelSettlement()
+	if err = SettleQuotaTokens(settledCtx, "attempt:1", 1); err != nil {
+		t.Fatalf("settlement after request cancellation: %v", err)
+	}
+	if err = service.RecordQuotaTokens(ctx, attribution, QuotaUsageEventID(attribution, &attempt), 6); err != nil {
+		t.Fatal(err)
+	}
+	policy, err = service.CreateProfile(ctx, policy.ID, policy.Version, ProfileInput{Name: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondID := policy.Profiles[len(policy.Profiles)-1].ID
+	policy, err = service.ActivateProfile(ctx, policy.ID, secondID, policy.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err = service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.AdmitDecision(ctx, decision); err != nil {
+		t.Fatal(err)
+	}
+	decision, err = service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.AdmitDecision(ctx, decision); err == nil {
+		t.Fatal("profile switch bypassed request quota")
+	}
+	loaded, err := service.Get(ctx, policy.ID)
+	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.RequestsUsed != 2 || loaded.Quota.Usage.TotalTokensUsed != 7 {
+		t.Fatalf("quota usage = %#v error=%v", loaded.Quota, err)
+	}
+	if _, err = service.ResetQuota(ctx, policy.ID, loaded.Version, "wrong"); !errors.Is(err, ErrQuotaResetConfirmation) {
+		t.Fatalf("reset confirmation error = %v", err)
+	}
+	reset, err := service.ResetQuota(ctx, policy.ID, loaded.Version, QuotaResetConfirmation)
+	if err != nil || reset.Quota == nil || reset.Quota.Usage.RequestsUsed != 0 || reset.Quota.Usage.TotalTokensUsed != 0 || reset.Quota.Epoch <= loaded.Quota.Epoch {
+		t.Fatalf("reset quota = %#v error=%v", reset.Quota, err)
+	}
+	if err = service.RecordQuotaTokens(ctx, attribution, "late-after-reset", 2); !errors.Is(err, ErrQuotaUnavailable) {
+		t.Fatalf("stale pre-reset settlement error = %v", err)
+	}
+	var admissions, events int
+	if err = service.store.db.QueryRowContext(ctx, `select count(*) from api_key_quota_admissions where policy_id = ?`, policy.ID).Scan(&admissions); err != nil || admissions != 0 {
+		t.Fatalf("reset admissions = %d error=%v", admissions, err)
+	}
+	if err = service.store.db.QueryRowContext(ctx, `select count(*) from api_key_quota_token_events where policy_id = ?`, policy.ID).Scan(&events); err != nil || events != 0 {
+		t.Fatalf("reset token events = %d error=%v", events, err)
+	}
+	postResetDecision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postResetAdmission, err := service.AdmitDecision(ctx, postResetDecision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postResetAttribution, ok := postResetAdmission.QuotaAttribution()
+	if !ok {
+		t.Fatal("post-reset quota attribution missing")
+	}
+	removed, err := service.UpdateWorkspace(ctx, policy.ID, reset.Version, WorkspaceUpdate{DisplayName: "Quota", Quota: QuotaUpdate{Present: true}})
+	if err != nil || removed.Quota != nil {
+		t.Fatalf("removed quota = %#v error=%v", removed.Quota, err)
+	}
+	recreated, err := service.UpdateWorkspace(ctx, policy.ID, removed.Version, WorkspaceUpdate{DisplayName: "Quota", Quota: QuotaUpdate{Present: true, Value: &QuotaInput{Enabled: true, Requests: &requestLimit, TotalTokens: &tokenLimit}}})
+	if err != nil || recreated.Quota == nil || recreated.Quota.Epoch <= reset.Quota.Epoch {
+		t.Fatalf("recreated quota = %#v error=%v", recreated.Quota, err)
+	}
+	if err = service.RecordQuotaTokens(ctx, postResetAttribution, "late-after-recreate", 2); !errors.Is(err, ErrQuotaUnavailable) {
+		t.Fatalf("stale pre-recreate settlement error = %v", err)
+	}
+	audits, err := service.store.ListAudits(ctx)
+	if err != nil || audits[len(audits)-1].EventType != "api_key_quota_reset" {
+		t.Fatalf("reset audit = %#v error=%v", audits, err)
+	}
+}
+
+func TestAdmitQuotaTurnCreatesFreshPerTurnAdmission(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "websocket-turn-key")
+	requestLimit := int64(1)
+	if _, err := service.Create(context.Background(), identity, "WebSocket", ProfileInput{Name: "turns"}, &QuotaInput{Enabled: true, Requests: &requestLimit}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := WithQuotaAdmission(WithDecision(context.Background(), decision), service.AdmitDecision)
+	first, err := AdmitQuotaTurn(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDecision, ok := DecisionFromContext(first)
+	if !ok || firstDecision.Snapshot == nil || firstDecision.Snapshot.QuotaAdmissionID == "" {
+		t.Fatalf("first turn decision = %#v", firstDecision)
+	}
+	inherited := InheritContext(first, base)
+	inheritedDecision, _ := DecisionFromContext(inherited)
+	if inheritedDecision.Snapshot == nil || inheritedDecision.Snapshot.QuotaAdmissionID != firstDecision.Snapshot.QuotaAdmissionID {
+		t.Fatalf("request context overwrote per-turn admission: %#v", inheritedDecision)
+	}
+	if _, err = AdmitQuotaTurn(base); err == nil {
+		t.Fatal("second websocket turn bypassed request quota")
+	}
+}
+
+func TestQuotaSettlementWaitsForSerializationBeforeDatabaseTimeout(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "settlement-lock-key")
+	tokenLimit := int64(100)
+	created, err := service.Create(context.Background(), identity, "Settlement", ProfileInput{Name: "lock"}, &QuotaInput{Enabled: true, TotalTokens: &tokenLimit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.quotaMu.Lock()
+	settled := make(chan error, 1)
+	go func() {
+		settled <- SettleQuotaTokens(WithDecision(context.Background(), admitted), "serialized", 3)
+	}()
+	select {
+	case err = <-settled:
+		service.quotaMu.Unlock()
+		t.Fatalf("settlement returned while quota serialization was held: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	service.quotaMu.Unlock()
+	if err = <-settled; err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := service.Get(context.Background(), created.ID)
+	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.TotalTokensUsed != 3 {
+		t.Fatalf("settled quota = %#v error=%v", loaded.Quota, err)
+	}
+}
+
 func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	service := newTestService(t)
 	service.SetCatalogProvider(func() (ProfileCatalog, error) {
 		return NewProfileCatalog([]string{"codex"}, []string{"gpt-5"}), nil
 	})
 	identity := testIdentity(t, "backup-key")
-	created, err := service.Create(context.Background(), identity, "Backup key", ProfileInput{Name: "Production", Providers: []string{"codex"}, Models: []string{"gpt-5"}})
+	requestLimit := int64(25)
+	created, err := service.Create(context.Background(), identity, "Backup key", ProfileInput{Name: "Production", Providers: []string{"codex"}, Models: []string{"gpt-5"}}, &QuotaInput{Enabled: true, Requests: &requestLimit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -708,7 +892,7 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	if strings.Contains(string(payload), "backup-key") || !strings.Contains(string(payload), identity.Hash()) {
 		t.Fatalf("backup secret/hash boundary = %s", payload)
 	}
-	if !strings.Contains(string(payload), `"schema_version":3`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) {
+	if !strings.Contains(string(payload), `"schema_version":4`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) || !strings.Contains(string(payload), `"requests":25`) {
 		t.Fatalf("backup schema/audit record = %s", payload)
 	}
 	if err := service.DeletePolicy(context.Background(), created.ID, created.Version, PassthroughConfirmation); err != nil {
@@ -722,7 +906,7 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 		t.Fatalf("restore backup without a live catalog: %v", err)
 	}
 	decision, err := service.Decide(identity)
-	if err != nil || decision.Mode != ModeProfile || decision.Snapshot == nil || decision.Snapshot.ProfileName != "Production" {
+	if err != nil || decision.Mode != ModeProfile || decision.Snapshot == nil || decision.Snapshot.ProfileName != "Production" || decision.Snapshot.Quota == nil || decision.Snapshot.Quota.Requests == nil || *decision.Snapshot.Quota.Requests != requestLimit {
 		t.Fatalf("restored decision = %#v, %v", decision, err)
 	}
 	audits, err := service.store.ListAudits(context.Background())

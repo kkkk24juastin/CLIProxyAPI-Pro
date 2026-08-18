@@ -94,6 +94,69 @@ func TestPluginExecutorPublishesNonStreamUsage(t *testing.T) {
 	assertNoPluginExecutorUsage(t, recorder.records)
 }
 
+func TestPluginExecutorPublishesParsedNonStreamTokens(t *testing.T) {
+	recorder := &pluginExecutorUsageRecorder{records: make(chan coreusage.Record, 2)}
+	coreusage.RegisterNamedPlugin("plugin-executor-token-usage-test", recorder)
+	defer coreusage.UnregisterNamedPlugin("plugin-executor-token-usage-test", recorder)
+	host := newHostWithRecords(normalizeTestCapabilityRecord(capabilityRecord{id: "token-usage-executor"}))
+	adapter := newCurrentExecutorAdapterForTest(
+		host,
+		"token-usage-executor",
+		&fakeExecutor{
+			identifier: "plugin-provider",
+			execute: func(context.Context, pluginapi.ExecutorRequest) (pluginapi.ExecutorResponse, error) {
+				return pluginapi.ExecutorResponse{Payload: []byte(`{"usage":{"prompt_tokens":5,"completion_tokens":7,"total_tokens":12}}`)}, nil
+			},
+		},
+		[]sdktranslator.Format{sdktranslator.FormatOpenAI},
+		[]sdktranslator.Format{sdktranslator.FormatOpenAI},
+	)
+	_, err := adapter.Execute(context.Background(), &coreauth.Auth{ID: "token-auth"}, coreexecutor.Request{
+		Model: "plugin-model", Format: sdktranslator.FormatOpenAI,
+	}, coreexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, ResponseFormat: sdktranslator.FormatOpenAI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := waitForPluginExecutorUsage(t, recorder.records)
+	if record.Detail.InputTokens != 5 || record.Detail.OutputTokens != 7 || record.Detail.TotalTokens != 12 {
+		t.Fatalf("parsed usage = %#v", record.Detail)
+	}
+}
+
+func TestPluginExecutorPublishesParsedStreamTokens(t *testing.T) {
+	recorder := &pluginExecutorUsageRecorder{records: make(chan coreusage.Record, 2)}
+	coreusage.RegisterNamedPlugin("plugin-executor-stream-token-usage-test", recorder)
+	defer coreusage.UnregisterNamedPlugin("plugin-executor-stream-token-usage-test", recorder)
+	chunks := make(chan pluginapi.ExecutorStreamChunk, 1)
+	chunks <- pluginapi.ExecutorStreamChunk{Payload: []byte("event: response.completed\n" + `data: {"usage":{"prompt_tokens":4,"completion_tokens":6,"total_tokens":10}}`)}
+	close(chunks)
+	host := newHostWithRecords(normalizeTestCapabilityRecord(capabilityRecord{id: "stream-token-usage-executor"}))
+	adapter := newCurrentExecutorAdapterForTest(
+		host,
+		"stream-token-usage-executor",
+		&fakeExecutor{
+			identifier: "plugin-provider",
+			executeStream: func(context.Context, pluginapi.ExecutorRequest) (pluginapi.ExecutorStreamResponse, error) {
+				return pluginapi.ExecutorStreamResponse{Chunks: chunks}, nil
+			},
+		},
+		[]sdktranslator.Format{sdktranslator.FormatOpenAI},
+		[]sdktranslator.Format{sdktranslator.FormatOpenAI},
+	)
+	result, err := adapter.ExecuteStream(context.Background(), &coreauth.Auth{ID: "stream-token-auth"}, coreexecutor.Request{
+		Model: "plugin-model", Format: sdktranslator.FormatOpenAI,
+	}, coreexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, ResponseFormat: sdktranslator.FormatOpenAI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range result.Chunks {
+	}
+	record := waitForPluginExecutorUsage(t, recorder.records)
+	if record.Detail.InputTokens != 4 || record.Detail.OutputTokens != 6 || record.Detail.TotalTokens != 10 {
+		t.Fatalf("parsed stream usage = %#v", record.Detail)
+	}
+}
+
 func TestPluginExecutorTranslationPanicPublishesFailure(t *testing.T) {
 	recorder := &pluginExecutorPolicyUsageRecorder{records: make(chan pluginExecutorPolicyUsage, 2)}
 	coreusage.RegisterNamedPlugin("plugin-executor-translation-panic-test", recorder)

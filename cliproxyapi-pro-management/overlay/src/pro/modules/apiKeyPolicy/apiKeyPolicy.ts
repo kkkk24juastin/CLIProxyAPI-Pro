@@ -22,12 +22,35 @@ export interface APIKeyProfile extends APIKeyProfileInput {
   updatedAtMs: number;
 }
 
+export interface APIKeyQuota {
+  enabled: boolean;
+  requests?: number;
+  totalTokens?: number;
+  epoch: number;
+  startedAtMs: number;
+  updatedAtMs: number;
+  usage: {
+    requestsUsed: number;
+    totalTokensUsed: number;
+    requestsRemaining?: number;
+    totalTokensRemaining?: number;
+    exhausted: string[];
+  };
+}
+
+export interface APIKeyQuotaInput {
+  enabled: boolean;
+  requests?: number;
+  totalTokens?: number;
+}
+
 export interface APIKeyPolicy {
   id: string;
   displayName: string;
   state: APIKeyPolicyState;
   activeProfileId: string;
   profiles: APIKeyProfile[];
+  quota?: APIKeyQuota;
   version: number;
   createdAtMs: number;
   updatedAtMs: number;
@@ -147,6 +170,18 @@ export const supportsAPIKeyPolicyUsageTarget = (
   capabilities: APIKeyPolicyCapabilities,
 ): boolean => capabilities.features?.includes('usage_key_target') === true;
 
+const REQUIRED_API_KEY_QUOTA_FEATURES = [
+  'key_quota_requests_tokens',
+  'key_quota_explicit_reset',
+] as const;
+
+export const supportsAPIKeyQuota = (
+  capabilities: APIKeyPolicyCapabilities,
+): boolean => {
+  const features = new Set(Array.isArray(capabilities.features) ? capabilities.features : []);
+  return REQUIRED_API_KEY_QUOTA_FEATURES.every((feature) => features.has(feature));
+};
+
 export const PASSTHROUGH_CONFIRMATION = 'RESTORE_UNRESTRICTED_PASSTHROUGH';
 const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage'] as const;
 
@@ -160,6 +195,7 @@ export const buildAPIKeyPolicyWorkspaceUpdate = (
   profileId: string,
   profile: APIKeyProfileInput | undefined,
   createProfile: boolean,
+  quota?: APIKeyQuotaInput | null,
 ) => ({
   displayName,
   version,
@@ -169,6 +205,7 @@ export const buildAPIKeyPolicyWorkspaceUpdate = (
     profile,
     createProfile,
   } : {}),
+  ...(quota !== undefined ? { quota } : {}),
 });
 
 const normalizePolicy = (policy: APIKeyPolicy): APIKeyPolicy => ({
@@ -267,12 +304,13 @@ export const apiKeyPolicyApi = {
     return normalizePolicy(await apiClient.get<APIKeyPolicy>(policyPath(policyId)));
   },
 
-  async create(keyRef: string, displayName: string, initialProfile: APIKeyProfileInput): Promise<APIKeyPolicy> {
+  async create(keyRef: string, displayName: string, initialProfile: APIKeyProfileInput, quota?: APIKeyQuotaInput | null): Promise<APIKeyPolicy> {
     return normalizePolicy(await apiClient.post<APIKeyPolicy>('/api-key-policies', {
       keyRef,
       displayName,
       initialProfile,
       clientFeatures: [...API_KEY_POLICY_WRITE_FEATURES],
+      ...(quota !== undefined ? { quota } : {}),
     }));
   },
 
@@ -287,6 +325,7 @@ export const apiKeyPolicyApi = {
     profileId: string,
     profile: APIKeyProfileInput | undefined,
     createProfile: boolean,
+    quota?: APIKeyQuotaInput | null,
   ): Promise<APIKeyPolicy> {
     return apiClient.patch<APIKeyPolicy>(policyPath(policyId), buildAPIKeyPolicyWorkspaceUpdate(
       displayName,
@@ -294,6 +333,7 @@ export const apiKeyPolicyApi = {
       profileId,
       profile,
       createProfile,
+      quota,
     )).then(normalizePolicy);
   },
 
@@ -343,6 +383,13 @@ export const apiKeyPolicyApi = {
     await apiClient.delete(`/orphaned-api-key-policies/${encodeURIComponent(policyId)}`, {
       data: { version, configGeneration },
     });
+  },
+
+  resetQuota(policyId: string, version: number): Promise<APIKeyPolicy> {
+    return apiClient.post<APIKeyPolicy>(`${policyPath(policyId)}/quota/reset`, {
+      version,
+      confirmReset: 'RESET_API_KEY_QUOTA',
+    }).then(normalizePolicy);
   },
 };
 
