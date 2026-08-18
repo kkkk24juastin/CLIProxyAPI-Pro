@@ -3957,10 +3957,13 @@ replace_once(
 ''',
     'usageBuffer.Publish(ctx, reporter)\n\t}()',
 )
-replace_once(
-    claude_stream,
-    '''\t\temitCancellation := func(cause error) bool {
-\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, oauthToken, cause)
+stream_text = read(claude_stream)
+if 'newClaudeOAuthCancellationError(ctx, fp.OAuthCancellation, cause)' in stream_text:
+    claude_cancellation_arg = 'fp.OAuthCancellation'
+else:
+    claude_cancellation_arg = 'oauthToken'
+claude_failure_helpers_old = '''\t\temitCancellation := func(cause error) bool {
+\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, CLAUDE_CANCELLATION_ARG, cause)
 \t\t\tif cancelErr == nil {
 \t\t\t\treturn false
 \t\t\t}
@@ -3981,14 +3984,14 @@ replace_once(
 \t\t\tcase <-ctx.Done():
 \t\t\t}
 \t\t}
-''',
-    '''\t\tpublishStreamFailure := func(usageBuffer *helps.StreamUsageBuffer, errResponse error) {
+'''.replace('CLAUDE_CANCELLATION_ARG', claude_cancellation_arg)
+claude_failure_helpers_new = '''\t\tpublishStreamFailure := func(usageBuffer *helps.StreamUsageBuffer, errResponse error) {
 \t\t\tif usageBuffer == nil || !usageBuffer.PublishFailure(ctx, reporter, errResponse) {
 \t\t\t\treporter.PublishFailure(ctx, errResponse)
 \t\t\t}
 \t\t}
 \t\temitCancellation := func(usageBuffer *helps.StreamUsageBuffer, cause error) bool {
-\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, oauthToken, cause)
+\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, CLAUDE_CANCELLATION_ARG, cause)
 \t\t\tif cancelErr == nil {
 \t\t\t\treturn false
 \t\t\t}
@@ -4009,7 +4012,11 @@ replace_once(
 \t\t\tcase <-ctx.Done():
 \t\t\t}
 \t\t}
-''',
+'''.replace('CLAUDE_CANCELLATION_ARG', claude_cancellation_arg)
+replace_once(
+    claude_stream,
+    claude_failure_helpers_old,
+    claude_failure_helpers_new,
     'publishStreamFailure := func(usageBuffer *helps.StreamUsageBuffer',
 )
 
