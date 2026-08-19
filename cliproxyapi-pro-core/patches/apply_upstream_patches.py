@@ -1790,6 +1790,7 @@ insert_before(
     r'''type realtimeQuotaTurn struct {
 	ctx     context.Context
 	eventID string
+	model   string
 }
 
 type realtimeQuotaState struct {
@@ -1841,7 +1842,14 @@ func copyRealtimeDownstream(ctx context.Context, downstream, upstream *websocket
 				if decision, ok := apikeypolicy.DecisionFromContext(turnCtx); ok {
 					if _, charged := decision.QuotaAttribution(); charged {
 						state.mu.Lock()
-						state.active = &realtimeQuotaTurn{ctx: turnCtx, eventID: fmt.Sprintf("realtime:%d", time.Now().UnixNano())}
+						model := ""
+						if decision.Snapshot != nil {
+							model = decision.Snapshot.EffectiveModel
+							if model == "" {
+								model = decision.Snapshot.RequestedModel
+							}
+						}
+						state.active = &realtimeQuotaTurn{ctx: turnCtx, eventID: fmt.Sprintf("realtime:%d", time.Now().UnixNano()), model: model}
 						state.mu.Unlock()
 					}
 				}
@@ -1882,8 +1890,14 @@ func copyRealtimeUpstream(ctx context.Context, downstream, upstream *websocket.C
 					if responseID := strings.TrimSpace(event.Response.ID); responseID != "" {
 						eventID += ":response=" + responseID
 					}
-					if errSettle := apikeypolicy.SettleQuotaTokens(turn.ctx, eventID, totalTokens); errSettle != nil {
-						log.WithError(errSettle).Error("failed to settle realtime API key quota tokens")
+					if errSettle := apikeypolicy.SettleQuotaUsage(turn.ctx, eventID, apikeypolicy.QuotaUsageDelta{
+						Provider: "codex", Model: turn.model, InputTokens: detail.InputTokens,
+						OutputTokens: detail.OutputTokens, ReasoningTokens: detail.ReasoningTokens,
+						CachedTokens: detail.CachedTokens, CacheReadTokens: detail.CacheReadTokens,
+						CacheWriteTokens: detail.CacheCreationTokens, TotalTokens: totalTokens,
+						EffectiveServiceTier: detail.ResponseServiceTier, EffectiveSpeed: detail.ResponseSpeed,
+					}); errSettle != nil {
+						log.WithError(errSettle).Error("failed to settle realtime API key quota usage")
 					}
 				}
 			}
@@ -4143,21 +4157,30 @@ replace_once(
 \tif attemptIndex, ok := usage.AttemptIndexFromContext(ctx); ok {
 \t\trecord.AttemptIndex = &attemptIndex
 \t}
-\ttotalTokens := usage.EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType).TokenBreakdown.TotalTokens
+\tquotaDetail := usage.EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
+\ttotalTokens := quotaDetail.TokenBreakdown.TotalTokens
 \tif totalTokens == 0 {
-\t\ttotalTokens = record.Detail.TotalTokens
+\t\ttotalTokens = quotaDetail.TotalTokens
 \t}
 \tattemptIndex := int64(-1)
 \tif record.AttemptIndex != nil {
 \t\tattemptIndex = *record.AttemptIndex
 \t}
 \teventID := fmt.Sprintf("usage:%d:provider=%q:executor=%q:model=%q:alias=%q:attempt=%d", record.RequestedAt.UnixNano(), record.Provider, record.ExecutorType, record.Model, record.Alias, attemptIndex)
-\tif err := apikeypolicy.SettleQuotaTokens(ctx, eventID, totalTokens); err != nil {
-\t\tlog.WithError(err).Error("failed to settle API key quota tokens")
+\tif err := apikeypolicy.SettleQuotaUsage(ctx, eventID, apikeypolicy.QuotaUsageDelta{
+\t\tProvider: record.Provider, Model: record.Model,
+\t\tInputTokens: quotaDetail.InputTokens, OutputTokens: quotaDetail.OutputTokens,
+\t\tReasoningTokens: quotaDetail.ReasoningTokens, CachedTokens: quotaDetail.CachedTokens,
+\t\tCacheReadTokens: quotaDetail.CacheReadTokens, CacheWriteTokens: quotaDetail.CacheCreationTokens,
+\t\tTotalTokens: totalTokens, ServiceTier: record.ServiceTier,
+\t\tEffectiveServiceTier: record.ResponseServiceTier, Speed: record.Speed,
+\t\tEffectiveSpeed: record.ResponseSpeed,
+\t}); err != nil {
+\t\tlog.WithError(err).Error("failed to settle API key quota usage")
 \t}
 \tusage.PublishRecord(ctx, record)
 ''',
-    'failed to settle API key quota tokens',
+    'failed to settle API key quota usage',
 )
 
 if 'func TestUsageReporterSettlesQuotaSynchronouslyWithDistinctRecordIDs' not in read(usage_helpers_test):

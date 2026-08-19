@@ -33,6 +33,19 @@ func SetDefaultService(service *Service) {
 	globalStateMu.Unlock()
 }
 
+// EstimateUsageCostMicros prices one terminal usage record against the active
+// model-price snapshot. A missing service or rule is an error so cost quotas
+// fail closed instead of silently treating unknown usage as free.
+func EstimateUsageCostMicros(ctx context.Context, input UsageCostInput) (int64, error) {
+	globalStateMu.RLock()
+	service := globalService
+	globalStateMu.RUnlock()
+	if service == nil || service.store == nil {
+		return 0, fmt.Errorf("model price service is unavailable")
+	}
+	return service.store.EstimateUsageCostMicros(ctx, input)
+}
+
 func stopRuntimeStateWriter(service *Service) {
 	globalStateMu.Lock()
 	if globalService != service {

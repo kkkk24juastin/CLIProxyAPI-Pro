@@ -28,6 +28,7 @@ export type {
   APIKeyPolicyState,
   APIKeyQuota,
   APIKeyQuotaInput,
+  APIKeyQuotaPeriod,
   APIKeyProfile,
   APIKeyProfileInput,
 } from './apiKeyPolicy';

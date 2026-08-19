@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -834,6 +835,160 @@ func TestAdmitQuotaTurnCreatesFreshPerTurnAdmission(t *testing.T) {
 	}
 }
 
+func TestCostQuotaUsesServerPricingAndFailsClosedAfterExhaustion(t *testing.T) {
+	service := newTestService(t)
+	service.SetCostEstimator(func(_ context.Context, usage QuotaUsageDelta) (int64, error) {
+		if usage.Provider != "codex" || usage.Model != "gpt-5" || usage.InputTokens != 8 || usage.OutputTokens != 2 {
+			t.Fatalf("cost usage input = %#v", usage)
+		}
+		return 1_250_000, nil
+	})
+	identity := testIdentity(t, "cost-quota-key")
+	costLimit := 1.0
+	created, err := service.Create(context.Background(), identity, "Cost", ProfileInput{Name: "priced"}, &QuotaInput{
+		Enabled: true, Cost: &costLimit, Period: QuotaPeriod{Type: QuotaPeriodAllTime},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = SettleQuotaUsage(WithDecision(context.Background(), admitted), "priced-attempt", QuotaUsageDelta{
+		Provider: "codex", Model: "gpt-5", InputTokens: 8, OutputTokens: 2, TotalTokens: 10,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := service.Get(context.Background(), created.ID)
+	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.CostUsed != 1.25 || loaded.Quota.Usage.TotalTokensUsed != 10 || len(loaded.Quota.Usage.Exhausted) != 1 || loaded.Quota.Usage.Exhausted[0] != "cost" {
+		t.Fatalf("settled cost quota = %#v error=%v", loaded.Quota, err)
+	}
+	decision, err = service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.AdmitDecision(context.Background(), decision); err == nil {
+		t.Fatal("exhausted cost quota admitted another request")
+	} else if exceeded := new(QuotaExceededError); !errors.As(err, &exceeded) || exceeded.Metric != "cost" {
+		t.Fatalf("cost exhaustion error = %v", err)
+	}
+}
+
+func TestQuotaSettlementRetryKeepsFirstSuccessfulPriceQuote(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "stable-cost-quote-key")
+	costLimit := 10.0
+	created, err := service.Create(context.Background(), identity, "Stable quote", ProfileInput{Name: "priced"}, &QuotaInput{
+		Enabled: true, Cost: &costLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attribution, ok := admitted.QuotaAttribution()
+	if !ok {
+		t.Fatal("quota attribution missing")
+	}
+	var pricingCalls atomic.Int64
+	service.SetCostEstimator(func(context.Context, QuotaUsageDelta) (int64, error) {
+		pricingCalls.Add(1)
+		return 9_000_000, nil
+	})
+	service.retryQuotaSettlement(attribution, attribution.AdmissionID+":stable-price", QuotaUsageDelta{TotalTokens: 2}, true, 1_250_000, true)
+	deadline := time.Now().Add(2 * time.Second)
+	for service.pendingCount.Load() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if service.pendingCount.Load() != 0 {
+		t.Fatal("quota settlement retry did not complete")
+	}
+	if pricingCalls.Load() != 0 {
+		t.Fatalf("retry re-ran pricing %d times", pricingCalls.Load())
+	}
+	loaded, err := service.Get(context.Background(), created.ID)
+	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.CostUsed != 1.25 || loaded.Quota.Usage.TotalTokensUsed != 2 {
+		t.Fatalf("retried fixed quote = %#v error=%v", loaded.Quota, err)
+	}
+}
+
+func TestRollingQuotaAggregatesOnlyCurrentWindowAndPeriodChangeResetsEpoch(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "rolling-quota-key")
+	requestLimit := int64(2)
+	periodValue := int64(1)
+	created, err := service.Create(context.Background(), identity, "Rolling", ProfileInput{Name: "window"}, &QuotaInput{
+		Enabled: true, Requests: &requestLimit,
+		Period: QuotaPeriod{Type: QuotaPeriodPastDuration, Value: &periodValue, Unit: "minute"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAttribution, _ := first.QuotaAttribution()
+	if _, err = service.store.db.Exec(`update api_key_quota_admissions set admitted_at_ms = ? where admission_id = ?`, time.Now().Add(-2*time.Minute).UnixMilli(), firstAttribution.AdmissionID); err != nil {
+		t.Fatal(err)
+	}
+	decision, err = service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.AdmitDecision(context.Background(), decision); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := service.Get(context.Background(), created.ID)
+	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.RequestsUsed != 1 || loaded.Quota.Usage.WindowStartedAtMS <= 0 || loaded.Quota.Usage.WindowEndsAtMS <= loaded.Quota.Usage.WindowStartedAtMS {
+		t.Fatalf("rolling usage = %#v error=%v", loaded.Quota, err)
+	}
+	previousEpoch := loaded.Quota.Epoch
+	updated, err := service.UpdateWorkspace(context.Background(), created.ID, loaded.Version, WorkspaceUpdate{
+		DisplayName: loaded.DisplayName,
+		Quota: QuotaUpdate{Present: true, Value: &QuotaInput{
+			Enabled: true, Requests: &requestLimit,
+			Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day"},
+		}},
+	})
+	if err != nil || updated.Quota == nil || updated.Quota.Epoch <= previousEpoch || updated.Quota.Usage.RequestsUsed != 0 {
+		t.Fatalf("period reset = %#v error=%v", updated.Quota, err)
+	}
+}
+
+func TestQuotaCalendarPeriodBoundsUseUTC(t *testing.T) {
+	now := time.Date(2026, time.August, 19, 12, 34, 56, 0, time.FixedZone("local", 8*60*60)).UnixMilli()
+	dayStart, dayEnd := quotaPeriodBounds(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day"}, 1, now)
+	if got := time.UnixMilli(dayStart).UTC(); got.Hour() != 0 || got.Day() != 19 || dayEnd-dayStart != int64(24*time.Hour/time.Millisecond) {
+		t.Fatalf("UTC day bounds = %s .. %s", time.UnixMilli(dayStart).UTC(), time.UnixMilli(dayEnd).UTC())
+	}
+	monthStart, monthEnd := quotaPeriodBounds(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "month"}, 1, now)
+	if got := time.UnixMilli(monthStart).UTC(); got.Day() != 1 || got.Month() != time.August || time.UnixMilli(monthEnd).UTC().Month() != time.September {
+		t.Fatalf("UTC month bounds = %s .. %s", time.UnixMilli(monthStart).UTC(), time.UnixMilli(monthEnd).UTC())
+	}
+}
+
 func TestQuotaSettlementWaitsForSerializationBeforeDatabaseTimeout(t *testing.T) {
 	service := newTestService(t)
 	identity := testIdentity(t, "settlement-lock-key")
@@ -892,7 +1047,7 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	if strings.Contains(string(payload), "backup-key") || !strings.Contains(string(payload), identity.Hash()) {
 		t.Fatalf("backup secret/hash boundary = %s", payload)
 	}
-	if !strings.Contains(string(payload), `"schema_version":4`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) || !strings.Contains(string(payload), `"requests":25`) {
+	if !strings.Contains(string(payload), `"schema_version":5`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) || !strings.Contains(string(payload), `"requests":25`) {
 		t.Fatalf("backup schema/audit record = %s", payload)
 	}
 	if err := service.DeletePolicy(context.Background(), created.ID, created.Version, PassthroughConfirmation); err != nil {
@@ -928,6 +1083,61 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	decision, err = service.Decide(identity)
 	if err != nil || decision.Mode != ModeProfile || decision.Snapshot.ProfileName != "Production" {
 		t.Fatalf("failed import changed live snapshot = %#v, %v", decision, err)
+	}
+}
+
+func TestPolicyBackupRetainsUsageAttributedToDeletedProfile(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "deleted-profile-history-key")
+	requestLimit, tokenLimit := int64(10), int64(100)
+	created, err := service.Create(context.Background(), identity, "History", ProfileInput{Name: "old"}, &QuotaInput{
+		Enabled: true, Requests: &requestLimit, TotalTokens: &tokenLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldProfileID := created.ActiveProfileID
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attribution, ok := admitted.QuotaAttribution()
+	if !ok {
+		t.Fatal("quota attribution missing")
+	}
+	if err = service.RecordQuotaTokens(context.Background(), attribution, "old-profile-usage", 7); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.CreateProfile(context.Background(), created.ID, created.Version, ProfileInput{Name: "current"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentProfileID := updated.Profiles[len(updated.Profiles)-1].ID
+	updated, err = service.ActivateProfile(context.Background(), updated.ID, currentProfileID, updated.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err = service.DeleteProfile(context.Background(), updated.ID, oldProfileID, updated.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := service.ExportBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"profile_id":"`+oldProfileID+`"`) {
+		t.Fatalf("backup lost historical profile attribution: %s", payload)
+	}
+	if err = service.ImportBackup(context.Background(), payload); err != nil {
+		t.Fatalf("restore rejected deleted-profile attribution: %v", err)
+	}
+	restored, err := service.Get(context.Background(), created.ID)
+	if err != nil || restored.ActiveProfileID != currentProfileID || len(restored.Profiles) != 1 || restored.Quota == nil || restored.Quota.Usage.RequestsUsed != 1 || restored.Quota.Usage.TotalTokensUsed != 7 {
+		t.Fatalf("restored historical usage = %#v error=%v", restored, err)
 	}
 }
 

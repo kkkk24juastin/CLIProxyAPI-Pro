@@ -201,7 +201,10 @@
 .quotaSection { display: grid; gap: 14px; }
 .quotaHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .quotaToggle { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
-.quotaGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.quotaGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.quotaPeriodGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 12px; }
+.quotaSelectField { display: grid; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: 12px; }
+.quotaPeriodHint { margin: -6px 0 0; color: var(--text-secondary); font-size: 11px; }
 .quotaUsage { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding-top: 12px; border-top: 1px solid var(--border-color); color: var(--text-secondary); font-size: 11px; }
 .quotaUsage :global(.btn) { margin-left: auto; }
 .choiceHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; font-size: 12px; }
@@ -250,6 +253,7 @@
   .toolbar,
   .policyGrid,
   .quotaGrid { grid-template-columns: 1fr; }
+  .quotaPeriodGrid { grid-template-columns: 1fr; }
   .cards { grid-template-columns: 1fr; }
   .profileHeading,
   .conflict { align-items: stretch; flex-direction: column; }

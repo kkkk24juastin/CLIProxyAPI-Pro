@@ -117,6 +117,10 @@ paths:
                 createProfile:
                   type: boolean
                   default: false
+                quota:
+                  oneOf:
+                    - $ref: "#/components/schemas/QuotaInput"
+                    - type: "null"
                 clientFeatures:
                   $ref: "#/components/schemas/WriteClientFeatures"
       responses:
@@ -222,6 +226,30 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Policy" }
+  /v0/management/api-key-policies/{policyId}/quota/reset:
+    parameters:
+      - $ref: "#/components/parameters/PolicyId"
+    post:
+      operationId: resetApiKeyQuota
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, confirmReset]
+              properties:
+                version: { type: integer, minimum: 1 }
+                confirmReset: { const: RESET_API_KEY_QUOTA }
+      responses:
+        "200":
+          description: Key-wide quota usage reset
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+        "400": { $ref: "#/components/responses/InvalidQuota" }
+        "404": { $ref: "#/components/responses/PolicyNotFound" }
+        "409": { $ref: "#/components/responses/QuotaResetConflict" }
   /v0/management/orphaned-api-key-policies/{policyId}:
     parameters:
       - $ref: "#/components/parameters/PolicyId"
@@ -291,6 +319,9 @@ components:
               - policy_delete_preview
               - orphaned_purge_guard
               - takeover_control
+              - key_quota_requests_tokens
+              - key_quota_cost_period
+              - key_quota_explicit_reset
               - usage_key_target
               - provider_model_linkage
     PolicyState:
@@ -349,6 +380,7 @@ components:
           type: array
           minItems: 1
           items: { $ref: "#/components/schemas/Profile" }
+        quota: { $ref: "#/components/schemas/Quota" }
         version: { type: integer, minimum: 1 }
         createdAtMs: { type: integer }
         updatedAtMs: { type: integer }
@@ -362,6 +394,10 @@ components:
         displayName: { type: string }
         initialProfile:
           $ref: "#/components/schemas/ProfileInput"
+        quota:
+          oneOf:
+            - $ref: "#/components/schemas/QuotaInput"
+            - type: "null"
         clientFeatures:
           $ref: "#/components/schemas/WriteClientFeatures"
     WriteClientFeatures:
@@ -370,7 +406,63 @@ components:
       uniqueItems: true
       items:
         type: string
-        enum: [provider_model_linkage]
+        enum: [provider_model_linkage, key_quota_cost_period]
+    QuotaPeriod:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [type]
+          properties:
+            type: { const: all_time }
+        - type: object
+          additionalProperties: false
+          required: [type, value, unit]
+          properties:
+            type: { const: past_duration }
+            value: { type: integer, minimum: 1 }
+            unit: { enum: [minute, hour, day] }
+        - type: object
+          additionalProperties: false
+          required: [type, unit]
+          properties:
+            type: { const: calendar_duration }
+            unit: { enum: [day, month] }
+    QuotaInput:
+      type: object
+      additionalProperties: false
+      required: [enabled, period]
+      properties:
+        enabled: { type: boolean }
+        requests: { type: integer, minimum: 1 }
+        totalTokens: { type: integer, minimum: 1 }
+        cost: { type: number, exclusiveMinimum: 0 }
+        period: { $ref: "#/components/schemas/QuotaPeriod" }
+    QuotaUsage:
+      type: object
+      required: [requestsUsed, totalTokensUsed, costUsed, windowStartedAtMs, exhausted]
+      properties:
+        requestsUsed: { type: integer, minimum: 0 }
+        totalTokensUsed: { type: integer, minimum: 0 }
+        costUsed: { type: number, minimum: 0 }
+        requestsRemaining: { type: integer, minimum: 0 }
+        totalTokensRemaining: { type: integer, minimum: 0 }
+        costRemaining: { type: number, minimum: 0 }
+        windowStartedAtMs: { type: integer }
+        windowEndsAtMs: { type: integer }
+        exhausted:
+          type: array
+          uniqueItems: true
+          items: { enum: [requests, total_tokens, cost] }
+    Quota:
+      allOf:
+        - $ref: "#/components/schemas/QuotaInput"
+        - type: object
+          required: [epoch, startedAtMs, updatedAtMs, usage]
+          properties:
+            epoch: { type: integer, minimum: 1 }
+            startedAtMs: { type: integer }
+            updatedAtMs: { type: integer }
+            usage: { $ref: "#/components/schemas/QuotaUsage" }
     UsageTargetRequest:
       type: object
       required: [keyRef]
@@ -470,6 +562,9 @@ components:
     InvalidProfile:
       description: invalid_api_key_profile
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    InvalidQuota:
+      description: invalid_api_key_quota
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     UpstreamKeyNotFound:
       description: upstream_api_key_not_found
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
@@ -478,6 +573,9 @@ components:
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     VersionConflict:
       description: config_version_conflict
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    QuotaResetConflict:
+      description: config_version_conflict, api_key_quota_not_configured, or api_key_quota_reset_confirmation_required
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     ActiveProfileDeleteForbidden:
       description: active_profile_delete_forbidden

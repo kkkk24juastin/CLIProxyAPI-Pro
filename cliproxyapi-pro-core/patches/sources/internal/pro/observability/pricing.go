@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -102,6 +103,54 @@ type ObservedModel struct {
 	Alias      string `json:"alias,omitempty"`
 	Requests   int64  `json:"requests"`
 	LastSeenAt int64  `json:"lastSeenAtMs"`
+}
+
+// UsageCostInput is the stable pricing boundary used by synchronous quota
+// settlement. It intentionally mirrors only fields that affect model pricing.
+type UsageCostInput struct {
+	Provider             string
+	Model                string
+	InputTokens          int64
+	OutputTokens         int64
+	ReasoningTokens      int64
+	CachedTokens         int64
+	CacheTokens          int64
+	CacheReadTokens      int64
+	CacheWriteTokens     int64
+	UncachedInputTokens  int64
+	AccountingQuality    string
+	ServiceTier          string
+	EffectiveServiceTier string
+	Speed                string
+	EffectiveSpeed       string
+}
+
+func (s *Store) EstimateUsageCostMicros(ctx context.Context, input UsageCostInput) (int64, error) {
+	if s == nil || strings.TrimSpace(input.Model) == "" {
+		return 0, fmt.Errorf("model price is unavailable")
+	}
+	rules, err := s.activeModelPriceRuleMap(ctx)
+	if err != nil {
+		return 0, err
+	}
+	rule, ok := findModelPriceRule(rules, input.Provider, input.Model)
+	if !ok {
+		return 0, fmt.Errorf("model price is unavailable for %q", strings.TrimSpace(input.Model))
+	}
+	cost, _ := evaluateEventCost(internalusage.Event{
+		Provider: input.Provider, Model: input.Model,
+		InputTokens: input.InputTokens, OutputTokens: input.OutputTokens,
+		ReasoningTokens: input.ReasoningTokens, CachedTokens: input.CachedTokens,
+		CacheTokens: input.CacheTokens, CacheReadTokens: input.CacheReadTokens,
+		CacheWriteTokens: input.CacheWriteTokens, UncachedInputTokens: input.UncachedInputTokens,
+		AccountingQuality: input.AccountingQuality, ServiceTier: input.ServiceTier,
+		EffectiveServiceTier: input.EffectiveServiceTier, Speed: input.Speed,
+		EffectiveSpeed: input.EffectiveSpeed,
+	}, rule)
+	if math.IsNaN(cost) || math.IsInf(cost, 0) || cost < 0 || cost > float64(math.MaxInt64)/1_000_000 {
+		return 0, fmt.Errorf("estimated model cost is outside the supported range")
+	}
+	return int64(math.Round(cost * 1_000_000)), nil
 }
 
 func normalizePriceProvider(value string) string {

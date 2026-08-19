@@ -26,14 +26,20 @@ export interface APIKeyQuota {
   enabled: boolean;
   requests?: number;
   totalTokens?: number;
+  cost?: number;
+  period: APIKeyQuotaPeriod;
   epoch: number;
   startedAtMs: number;
   updatedAtMs: number;
   usage: {
     requestsUsed: number;
     totalTokensUsed: number;
+    costUsed: number;
     requestsRemaining?: number;
     totalTokensRemaining?: number;
+    costRemaining?: number;
+    windowStartedAtMs: number;
+    windowEndsAtMs?: number;
     exhausted: string[];
   };
 }
@@ -42,7 +48,14 @@ export interface APIKeyQuotaInput {
   enabled: boolean;
   requests?: number;
   totalTokens?: number;
+  cost?: number;
+  period: APIKeyQuotaPeriod;
 }
+
+export type APIKeyQuotaPeriod =
+  | { type: 'all_time' }
+  | { type: 'past_duration'; value: number; unit: 'minute' | 'hour' | 'day' }
+  | { type: 'calendar_duration'; unit: 'day' | 'month' };
 
 export interface APIKeyPolicy {
   id: string;
@@ -173,6 +186,7 @@ export const supportsAPIKeyPolicyUsageTarget = (
 const REQUIRED_API_KEY_QUOTA_FEATURES = [
   'key_quota_requests_tokens',
   'key_quota_explicit_reset',
+  'key_quota_cost_period',
 ] as const;
 
 export const supportsAPIKeyQuota = (
@@ -183,7 +197,7 @@ export const supportsAPIKeyQuota = (
 };
 
 export const PASSTHROUGH_CONFIRMATION = 'RESTORE_UNRESTRICTED_PASSTHROUGH';
-const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage'] as const;
+const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage', 'key_quota_cost_period'] as const;
 
 const policyPath = (policyId: string) => `/api-key-policies/${encodeURIComponent(policyId)}`;
 const profilePath = (policyId: string, profileId: string) =>
@@ -210,6 +224,13 @@ export const buildAPIKeyPolicyWorkspaceUpdate = (
 
 const normalizePolicy = (policy: APIKeyPolicy): APIKeyPolicy => ({
   ...policy,
+  ...(policy.quota ? {
+    quota: {
+      ...policy.quota,
+      period: policy.quota.period ?? { type: 'all_time' },
+      usage: { ...policy.quota.usage },
+    },
+  } : {}),
   profiles: (policy.profiles ?? []).map((profile) => ({
     ...profile,
     providers: [...(profile.providers ?? [])],

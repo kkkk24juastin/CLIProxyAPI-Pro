@@ -95,7 +95,7 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"apiVersion": 2,
+		"apiVersion": 3,
 		"features": []string{
 			"policy_crud",
 			"profile_crud",
@@ -106,6 +106,7 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 			"orphaned_purge_guard",
 			"takeover_control",
 			"key_quota_requests_tokens",
+			"key_quota_cost_period",
 			"key_quota_explicit_reset",
 			"usage_key_target",
 			"provider_model_linkage",

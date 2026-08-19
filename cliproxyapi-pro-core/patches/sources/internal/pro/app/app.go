@@ -61,6 +61,18 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 			modelRegistry.GetModelProviders,
 		), nil
 	})
+	apiKeyPolicy.SetCostEstimator(func(ctx context.Context, usage apikeypolicy.QuotaUsageDelta) (int64, error) {
+		return observability.EstimateUsageCostMicros(ctx, observability.UsageCostInput{
+			Provider: usage.Provider, Model: usage.Model,
+			InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
+			ReasoningTokens: usage.ReasoningTokens, CachedTokens: usage.CachedTokens,
+			CacheTokens: usage.CacheTokens, CacheReadTokens: usage.CacheReadTokens,
+			CacheWriteTokens: usage.CacheWriteTokens, UncachedInputTokens: usage.UncachedInputTokens,
+			AccountingQuality: usage.AccountingQuality, ServiceTier: usage.ServiceTier,
+			EffectiveServiceTier: usage.EffectiveServiceTier, Speed: usage.Speed,
+			EffectiveSpeed: usage.EffectiveSpeed,
+		})
+	})
 	policyBackupUnregister := probackup.Default.RegisterAPIKeyPolicies(
 		func() ([]byte, bool, error) {
 			payload, err := apiKeyPolicy.ExportBackup(context.Background())

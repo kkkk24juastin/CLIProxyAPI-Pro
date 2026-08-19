@@ -134,6 +134,25 @@ func TestEvaluateEventCostUsesContextTierPerRequest(t *testing.T) {
 	}
 }
 
+func TestEstimateUsageCostMicrosUsesActivePriceRuleAndRejectsUnknownModel(t *testing.T) {
+	store := openTestStore(t)
+	rule := testGPT56PriceRule()
+	rule.ID = 0
+	rule.Version = 0
+	if _, _, err := store.UpsertModelPriceRule(context.Background(), rule, true); err != nil {
+		t.Fatal(err)
+	}
+	micros, err := store.EstimateUsageCostMicros(context.Background(), UsageCostInput{
+		Provider: "codex", Model: rule.Model, InputTokens: 10, OutputTokens: 2,
+	})
+	if err != nil || micros != 110 {
+		t.Fatalf("estimated cost micros = %d, %v; want 110", micros, err)
+	}
+	if _, err := store.EstimateUsageCostMicros(context.Background(), UsageCostInput{Model: "unknown", InputTokens: 1}); err == nil {
+		t.Fatal("unknown model unexpectedly received a zero price")
+	}
+}
+
 func TestEvaluateEventCostUsesServiceTierOverride(t *testing.T) {
 	rule := testGPT56PriceRule()
 	event := internalusage.Event{InputTokens: 100000, OutputTokens: 1000, ServiceTier: "priority"}

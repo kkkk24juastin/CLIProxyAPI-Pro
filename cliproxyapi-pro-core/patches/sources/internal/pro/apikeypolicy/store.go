@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	prostorage "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/storage"
 )
@@ -100,10 +102,15 @@ func (s *Store) init(ctx context.Context) error {
 			enabled integer not null default 0 check(enabled in (0, 1)),
 			request_limit integer check(request_limit is null or request_limit > 0),
 			token_limit integer check(token_limit is null or token_limit > 0),
+			cost_limit_micros integer check(cost_limit_micros is null or cost_limit_micros > 0),
+			period_type text not null default 'all_time',
+			period_value integer check(period_value is null or period_value > 0),
+			period_unit text not null default '',
 			epoch integer not null default 1 check(epoch > 0),
 			started_at_ms integer not null,
 			requests_used integer not null default 0 check(requests_used >= 0),
 			total_tokens_used integer not null default 0 check(total_tokens_used >= 0),
+			cost_used_micros integer not null default 0 check(cost_used_micros >= 0),
 			updated_at_ms integer not null,
 			foreign key(policy_id) references api_key_policies(id) on delete cascade
 		)`,
@@ -122,6 +129,7 @@ func (s *Store) init(ctx context.Context) error {
 			profile_id text not null,
 			epoch integer not null,
 			total_tokens integer not null check(total_tokens >= 0),
+			cost_micros integer not null default 0 check(cost_micros >= 0),
 			occurred_at_ms integer not null,
 			foreign key(admission_id) references api_key_quota_admissions(admission_id) on delete cascade,
 			foreign key(policy_id) references api_key_policies(id) on delete cascade
@@ -131,6 +139,13 @@ func (s *Store) init(ctx context.Context) error {
 		`create index if not exists idx_api_key_policy_audit_policy on api_key_policy_audit(policy_id, created_at_ms)`,
 		`create index if not exists idx_api_key_quota_admissions_policy on api_key_quota_admissions(policy_id, epoch)`,
 		`create index if not exists idx_api_key_quota_tokens_policy on api_key_quota_token_events(policy_id, epoch)`,
+	}, Alter: []string{
+		`alter table api_key_policy_quotas add column cost_limit_micros integer check(cost_limit_micros is null or cost_limit_micros > 0)`,
+		`alter table api_key_policy_quotas add column period_type text not null default 'all_time'`,
+		`alter table api_key_policy_quotas add column period_value integer check(period_value is null or period_value > 0)`,
+		`alter table api_key_policy_quotas add column period_unit text not null default ''`,
+		`alter table api_key_policy_quotas add column cost_used_micros integer not null default 0 check(cost_used_micros >= 0)`,
+		`alter table api_key_quota_token_events add column cost_micros integer not null default 0 check(cost_micros >= 0)`,
 	}})
 }
 
@@ -284,10 +299,15 @@ func (s *Store) Get(ctx context.Context, policyID string) (Policy, error) {
 }
 
 func getPolicyQuota(ctx context.Context, queryer sqlQueryer, policyID string) (*Quota, error) {
+	return getPolicyQuotaAt(ctx, queryer, policyID, time.Now().UnixMilli())
+}
+
+func getPolicyQuotaAt(ctx context.Context, queryer sqlQueryer, policyID string, nowMS int64) (*Quota, error) {
 	var quota Quota
-	var requestLimit, tokenLimit sql.NullInt64
-	err := queryer.QueryRowContext(ctx, `select enabled, request_limit, token_limit, epoch, started_at_ms, requests_used, total_tokens_used, updated_at_ms from api_key_policy_quotas where policy_id = ?`, policyID).
-		Scan(&quota.Enabled, &requestLimit, &tokenLimit, &quota.Epoch, &quota.StartedAtMS, &quota.Usage.RequestsUsed, &quota.Usage.TotalTokensUsed, &quota.UpdatedAtMS)
+	var requestLimit, tokenLimit, costLimitMicros, periodValue sql.NullInt64
+	var costUsedMicros int64
+	err := queryer.QueryRowContext(ctx, `select enabled, request_limit, token_limit, cost_limit_micros, period_type, period_value, period_unit, epoch, started_at_ms, requests_used, total_tokens_used, cost_used_micros, updated_at_ms from api_key_policy_quotas where policy_id = ?`, policyID).
+		Scan(&quota.Enabled, &requestLimit, &tokenLimit, &costLimitMicros, &quota.Period.Type, &periodValue, &quota.Period.Unit, &quota.Epoch, &quota.StartedAtMS, &quota.Usage.RequestsUsed, &quota.Usage.TotalTokensUsed, &costUsedMicros, &quota.UpdatedAtMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -302,13 +322,40 @@ func getPolicyQuota(ctx context.Context, queryer sqlQueryer, policyID string) (*
 		value := tokenLimit.Int64
 		quota.TotalTokens = &value
 	}
+	if costLimitMicros.Valid {
+		value := microsToUSD(costLimitMicros.Int64)
+		quota.Cost = &value
+	}
+	if periodValue.Valid {
+		value := periodValue.Int64
+		quota.Period.Value = &value
+	}
+	quota.Period = normalizeQuotaPeriod(quota.Period)
+	startMS, endMS := quotaPeriodBounds(quota.Period, quota.StartedAtMS, nowMS)
+	quota.Usage.WindowStartedAtMS = startMS
+	quota.Usage.WindowEndsAtMS = endMS
+	if quota.Period.Type != QuotaPeriodAllTime {
+		queryEndMS := endMS
+		if quota.Period.Type == QuotaPeriodPastDuration && queryEndMS < math.MaxInt64 {
+			// Include an admission or settlement written in the exact millisecond
+			// used to evaluate a rolling window. Calendar bounds remain half-open.
+			queryEndMS++
+		}
+		if err := queryer.QueryRowContext(ctx, `select count(*) from api_key_quota_admissions where policy_id = ? and epoch = ? and admitted_at_ms >= ? and (? = 0 or admitted_at_ms < ?)`, policyID, quota.Epoch, startMS, queryEndMS, queryEndMS).Scan(&quota.Usage.RequestsUsed); err != nil {
+			return nil, err
+		}
+		if err := queryer.QueryRowContext(ctx, `select coalesce(sum(total_tokens), 0), coalesce(sum(cost_micros), 0) from api_key_quota_token_events where policy_id = ? and epoch = ? and occurred_at_ms >= ? and (? = 0 or occurred_at_ms < ?)`, policyID, quota.Epoch, startMS, queryEndMS, queryEndMS).Scan(&quota.Usage.TotalTokensUsed, &costUsedMicros); err != nil {
+			return nil, err
+		}
+	}
+	quota.Usage.CostUsed = microsToUSD(costUsedMicros)
 	quota.Usage = quotaUsage(quota)
 	return &quota, nil
 }
 
 func quotaUsage(quota Quota) QuotaUsage {
 	usage := quota.Usage
-	usage.Exhausted = make([]string, 0, 2)
+	usage.Exhausted = make([]string, 0, 3)
 	if quota.Requests != nil {
 		remaining := *quota.Requests - usage.RequestsUsed
 		if remaining < 0 {
@@ -327,6 +374,16 @@ func quotaUsage(quota Quota) QuotaUsage {
 		usage.TokensRemaining = &remaining
 		if usage.TotalTokensUsed >= *quota.TotalTokens {
 			usage.Exhausted = append(usage.Exhausted, "total_tokens")
+		}
+	}
+	if quota.Cost != nil {
+		remaining := *quota.Cost - usage.CostUsed
+		if remaining < 0 {
+			remaining = 0
+		}
+		usage.CostRemaining = &remaining
+		if usage.CostUsed >= *quota.Cost {
+			usage.Exhausted = append(usage.Exhausted, "cost")
 		}
 	}
 	return usage

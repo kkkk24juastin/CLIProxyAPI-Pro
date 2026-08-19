@@ -42,6 +42,7 @@ import {
   type APIKeyPolicySnapshot,
   type APIKeyPolicyStatus,
   type APIKeyQuotaInput,
+  type APIKeyQuotaPeriod,
   type APIKeyProfileInput,
 } from './apiKeyPolicy';
 import styles from './APIKeyPolicyPage.module.scss';
@@ -67,6 +68,34 @@ const emptyProfile = (): APIKeyProfileInput => ({
   mappings: [],
 });
 
+const defaultQuotaPeriod = (): APIKeyQuotaPeriod => ({ type: 'all_time' });
+
+const invalidPositiveInteger = (value: number | undefined): boolean =>
+  value !== undefined && (!Number.isSafeInteger(value) || value <= 0);
+
+const formatQuotaCost = (value: number): string => value.toFixed(6).replace(/\.?0+$/, '');
+
+const updateQuotaLimit = (
+  quota: APIKeyQuotaInput | null,
+  field: 'requests' | 'totalTokens' | 'cost',
+  value: number | undefined,
+): APIKeyQuotaInput => {
+  const next: APIKeyQuotaInput = quota
+    ? { ...quota }
+    : { enabled: true, period: defaultQuotaPeriod() };
+  if (value === undefined) delete next[field];
+  else next[field] = value;
+  return next;
+};
+
+const quotaInputFromPolicy = (policy: APIKeyPolicy): APIKeyQuotaInput | null => policy.quota ? {
+  enabled: policy.quota.enabled,
+  ...(policy.quota.requests !== undefined ? { requests: policy.quota.requests } : {}),
+  ...(policy.quota.totalTokens !== undefined ? { totalTokens: policy.quota.totalTokens } : {}),
+  ...(policy.quota.cost !== undefined ? { cost: policy.quota.cost } : {}),
+  period: policy.quota.period ?? defaultQuotaPeriod(),
+} : null;
+
 const workspaceDraftFromTarget = (
   target: WorkspaceTarget,
   profileId?: string,
@@ -83,11 +112,7 @@ const workspaceDraftFromTarget = (
     profileId: selected?.id ?? '',
     profile: selected ? cloneProfileInput(selected) : emptyProfile(),
     isNewProfile: false,
-    quota: target.policy.quota ? {
-      enabled: target.policy.quota.enabled,
-      ...(target.policy.quota.requests !== undefined ? { requests: target.policy.quota.requests } : {}),
-      ...(target.policy.quota.totalTokens !== undefined ? { totalTokens: target.policy.quota.totalTokens } : {}),
-    } : null,
+    quota: quotaInputFromPolicy(target.policy),
   };
 };
 
@@ -122,11 +147,7 @@ const workspaceIsDirty = (
     draft.displayName !== target.policy.displayName ||
     !persisted ||
     profileSignature(draft.profile) !== profileSignature(persisted)
-    || JSON.stringify(draft.quota) !== JSON.stringify(target.policy.quota ? {
-      enabled: target.policy.quota.enabled,
-      ...(target.policy.quota.requests !== undefined ? { requests: target.policy.quota.requests } : {}),
-      ...(target.policy.quota.totalTokens !== undefined ? { totalTokens: target.policy.quota.totalTokens } : {}),
-    } : null)
+    || JSON.stringify(draft.quota) !== JSON.stringify(quotaInputFromPolicy(target.policy))
   );
 };
 
@@ -484,12 +505,14 @@ export function APIKeyPolicyPage() {
         return false;
       }
     }
-		if (quotaSupported && draft.quota?.enabled && draft.quota.requests === undefined && draft.quota.totalTokens === undefined) {
+		if (quotaSupported && draft.quota?.enabled && draft.quota.requests === undefined && draft.quota.totalTokens === undefined && draft.quota.cost === undefined) {
 			showNotification(t('api_key_policy.validation.quota'), 'warning');
 			return false;
 		}
-		if (quotaSupported && ((draft.quota?.requests !== undefined && draft.quota.requests <= 0) ||
-			(draft.quota?.totalTokens !== undefined && draft.quota.totalTokens <= 0))) {
+		if (quotaSupported && (invalidPositiveInteger(draft.quota?.requests) ||
+			invalidPositiveInteger(draft.quota?.totalTokens) ||
+			(draft.quota?.cost !== undefined && (!Number.isFinite(draft.quota.cost) || draft.quota.cost <= 0)) ||
+			(draft.quota?.period.type === 'past_duration' && invalidPositiveInteger(draft.quota.period.value)))) {
 			showNotification(t('api_key_policy.validation.quota'), 'warning');
 			return false;
 		}
@@ -903,6 +926,126 @@ export function APIKeyPolicyPage() {
               hint={t('api_key_policy.display_name_hint')}
             />
 
+            {quotaSupported ? <section className={styles.quotaSection}>
+              <div className={styles.quotaHeader}>
+                <div><h3>{t('api_key_policy.quota_title')}</h3><p>{t('api_key_policy.quota_hint')}</p></div>
+                <label className={styles.quotaToggle}>
+                  <input
+                    type="checkbox"
+                    checked={draft.quota?.enabled === true}
+                    disabled={readOnly || saving}
+                    onChange={(event) => updateDraft((current) => ({
+                      ...current,
+                      quota: event.target.checked
+                        ? { ...(current.quota ?? {}), enabled: true, period: current.quota?.period ?? defaultQuotaPeriod() }
+                        : currentPolicy?.quota ? { ...(current.quota ?? quotaInputFromPolicy(currentPolicy)!), enabled: false } : null,
+                    }))}
+                  />
+                  <span>{t('api_key_policy.quota_enabled')}</span>
+                </label>
+              </div>
+
+              {draft.quota?.enabled ? <>
+                <div className={styles.quotaGrid}>
+                  <Input
+                    label={t('api_key_policy.quota_requests')}
+                    type="number"
+                    min={1}
+                    step={1}
+                    placeholder={t('api_key_policy.quota_requests_example')}
+                    value={draft.quota.requests ?? ''}
+                    disabled={readOnly || saving}
+                    onChange={(event) => updateDraft((current) => ({ ...current, quota: updateQuotaLimit(current.quota, 'requests', event.target.value ? Number(event.target.value) : undefined) }))}
+                  />
+                  <Input
+                    label={t('api_key_policy.quota_tokens')}
+                    type="number"
+                    min={1}
+                    step={1}
+                    placeholder={t('api_key_policy.quota_tokens_example')}
+                    value={draft.quota.totalTokens ?? ''}
+                    disabled={readOnly || saving}
+                    onChange={(event) => updateDraft((current) => ({ ...current, quota: updateQuotaLimit(current.quota, 'totalTokens', event.target.value ? Number(event.target.value) : undefined) }))}
+                  />
+                  <Input
+                    label={t('api_key_policy.quota_cost')}
+                    type="number"
+                    min={0.000001}
+                    step={0.000001}
+                    placeholder={t('api_key_policy.quota_cost_example')}
+                    value={draft.quota.cost ?? ''}
+                    disabled={readOnly || saving}
+                    onChange={(event) => updateDraft((current) => ({ ...current, quota: updateQuotaLimit(current.quota, 'cost', event.target.value ? Number(event.target.value) : undefined) }))}
+                  />
+                </div>
+
+                <div className={styles.quotaPeriodGrid}>
+                  <label className={styles.quotaSelectField}>
+                    <span>{t('api_key_policy.quota_period_label')}</span>
+                    <Select
+                      value={draft.quota.period.type}
+                      options={(['all_time', 'past_duration', 'calendar_duration'] as const).map((value) => ({ value, label: t(`api_key_policy.quota_period.${value}`) }))}
+                      onChange={(value) => updateDraft((current) => ({
+                        ...current,
+                        quota: current.quota ? {
+                          ...current.quota,
+                          period: value === 'past_duration'
+                            ? (current.quota.period.type === 'past_duration' ? current.quota.period : { type: 'past_duration', value: 1, unit: 'day' })
+                            : value === 'calendar_duration'
+                              ? (current.quota.period.type === 'calendar_duration' ? current.quota.period : { type: 'calendar_duration', unit: 'day' })
+                              : { type: 'all_time' },
+                        } : current.quota,
+                      }))}
+                      disabled={Boolean(readOnly || saving)}
+                      ariaLabel={t('api_key_policy.quota_period_label')}
+                    />
+                  </label>
+                  {draft.quota.period.type === 'past_duration' ? <>
+                    <Input
+                      label={t('api_key_policy.quota_period_value')}
+                      type="number"
+                      min={1}
+                      step={1}
+                      placeholder={t('api_key_policy.quota_period_value_example')}
+                      value={draft.quota.period.value || ''}
+                      disabled={readOnly || saving}
+                      onChange={(event) => updateDraft((current) => current.quota?.period.type === 'past_duration' ? ({ ...current, quota: { ...current.quota, period: { ...current.quota.period, value: Number(event.target.value) } } }) : current)}
+                    />
+                    <label className={styles.quotaSelectField}>
+                      <span>{t('api_key_policy.quota_period_unit')}</span>
+                      <Select
+                        value={draft.quota.period.unit}
+                        options={(['minute', 'hour', 'day'] as const).map((value) => ({ value, label: t(`api_key_policy.quota_unit.${value}`) }))}
+                        onChange={(unit) => updateDraft((current) => current.quota?.period.type === 'past_duration' ? ({ ...current, quota: { ...current.quota, period: { ...current.quota.period, unit: unit as 'minute' | 'hour' | 'day' } } }) : current)}
+                        disabled={Boolean(readOnly || saving)}
+                        ariaLabel={t('api_key_policy.quota_period_unit')}
+                      />
+                    </label>
+                  </> : null}
+                  {draft.quota.period.type === 'calendar_duration' ? <label className={styles.quotaSelectField}>
+                    <span>{t('api_key_policy.quota_period_unit')}</span>
+                    <Select
+                      value={draft.quota.period.unit}
+                      options={(['day', 'month'] as const).map((value) => ({ value, label: t(`api_key_policy.quota_calendar_unit.${value}`) }))}
+                      onChange={(unit) => updateDraft((current) => current.quota?.period.type === 'calendar_duration' ? ({ ...current, quota: { ...current.quota, period: { type: 'calendar_duration', unit: unit as 'day' | 'month' } } }) : current)}
+                      disabled={Boolean(readOnly || saving)}
+                      ariaLabel={t('api_key_policy.quota_period_unit')}
+                    />
+                  </label> : null}
+                </div>
+                <p className={styles.quotaPeriodHint}>{t('api_key_policy.quota_period_hint')}</p>
+
+                {currentPolicy?.quota ? (
+                  <div className={styles.quotaUsage}>
+                    <span>{t('api_key_policy.quota_requests_usage', { used: currentPolicy.quota.usage.requestsUsed, limit: currentPolicy.quota.requests ?? '∞' })}</span>
+                    <span>{t('api_key_policy.quota_tokens_usage', { used: currentPolicy.quota.usage.totalTokensUsed, limit: currentPolicy.quota.totalTokens ?? '∞' })}</span>
+                    <span>{t('api_key_policy.quota_cost_usage', { used: formatQuotaCost(currentPolicy.quota.usage.costUsed), limit: currentPolicy.quota.cost === undefined ? '∞' : formatQuotaCost(currentPolicy.quota.cost) })}</span>
+                    {!readOnly ? <Button variant="danger" size="sm" onClick={() => void resetQuota()} loading={quotaBusy} disabled={saving || dirty}>{t('api_key_policy.quota_reset')}</Button> : null}
+                  </div>
+                ) : null}
+              </> : null}
+            </section> : null}
+
             {currentPolicy ? (
               <div className={styles.profileRail}>
                 {currentPolicy.profiles.map((profile) => (
@@ -936,59 +1079,6 @@ export function APIKeyPolicyPage() {
               onChange={(event) => updateDraft((current) => ({ ...current, profile: { ...current.profile, name: event.target.value } }))}
               disabled={readOnly || saving}
             />
-
-            {quotaSupported ? <section className={styles.quotaSection}>
-              <div className={styles.quotaHeader}>
-                <div><h3>{t('api_key_policy.quota_title')}</h3><p>{t('api_key_policy.quota_hint')}</p></div>
-                <label className={styles.quotaToggle}>
-                  <input
-                    type="checkbox"
-                    checked={draft.quota?.enabled === true}
-                    disabled={readOnly || saving}
-                    onChange={(event) => updateDraft((current) => ({
-                      ...current,
-                      quota: event.target.checked
-                        ? { enabled: true, requests: current.quota?.requests, totalTokens: current.quota?.totalTokens }
-                        : current.quota ? { ...current.quota, enabled: false } : null,
-                    }))}
-                  />
-                  <span>{t('api_key_policy.quota_enabled')}</span>
-                </label>
-              </div>
-              <div className={styles.quotaGrid}>
-                <Input
-                  label={t('api_key_policy.quota_requests')}
-                  type="number"
-                  min={1}
-                  value={draft.quota?.requests ?? ''}
-                  disabled={readOnly || saving}
-                  onChange={(event) => updateDraft((current) => ({ ...current, quota: {
-                    enabled: current.quota?.enabled ?? false,
-                    ...(event.target.value ? { requests: Number(event.target.value) } : {}),
-                    ...(current.quota?.totalTokens !== undefined ? { totalTokens: current.quota.totalTokens } : {}),
-                  } }))}
-                />
-                <Input
-                  label={t('api_key_policy.quota_tokens')}
-                  type="number"
-                  min={1}
-                  value={draft.quota?.totalTokens ?? ''}
-                  disabled={readOnly || saving}
-                  onChange={(event) => updateDraft((current) => ({ ...current, quota: {
-                    enabled: current.quota?.enabled ?? false,
-                    ...(current.quota?.requests !== undefined ? { requests: current.quota.requests } : {}),
-                    ...(event.target.value ? { totalTokens: Number(event.target.value) } : {}),
-                  } }))}
-                />
-              </div>
-              {currentPolicy?.quota ? (
-                <div className={styles.quotaUsage}>
-                  <span>{t('api_key_policy.quota_requests_usage', { used: currentPolicy.quota.usage.requestsUsed, limit: currentPolicy.quota.requests ?? '∞' })}</span>
-                  <span>{t('api_key_policy.quota_tokens_usage', { used: currentPolicy.quota.usage.totalTokensUsed, limit: currentPolicy.quota.totalTokens ?? '∞' })}</span>
-                  {!readOnly ? <Button variant="danger" size="sm" onClick={() => void resetQuota()} loading={quotaBusy} disabled={saving || dirty}>{t('api_key_policy.quota_reset')}</Button> : null}
-                </div>
-              ) : null}
-            </section> : null}
 
             <section className={styles.mappingSection}>
               <div className={styles.mappingHeader}><div><h3>{t('api_key_policy.mappings')}</h3><p>{t('api_key_policy.mappings_hint')}</p></div>{!readOnly ? <Button variant="secondary" size="sm" onClick={() => updateDraft((current) => ({ ...current, profile: { ...current.profile, mappings: [...current.profile.mappings, { source: '', target: mappingTargetModels[0] ?? '' }] } }))} disabled={saving || mappingTargetModels.length === 0}><IconPlus size={14} /> {t('common.add')}</Button> : null}</div>

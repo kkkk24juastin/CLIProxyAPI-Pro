@@ -118,6 +118,10 @@ describe('API Key Policy profile drafts', () => {
     expect(supportsAPIKeyQuota({
       ...legacyCapabilities,
       features: [...legacyCapabilities.features, 'key_quota_requests_tokens', 'key_quota_explicit_reset'],
+    })).toBe(false);
+    expect(supportsAPIKeyQuota({
+      ...legacyCapabilities,
+      features: [...legacyCapabilities.features, 'key_quota_requests_tokens', 'key_quota_explicit_reset', 'key_quota_cost_period'],
     })).toBe(true);
   });
 
@@ -169,12 +173,12 @@ describe('API Key Policy profile drafts', () => {
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false)).toEqual({
       displayName: 'Renamed',
       version: 2,
-      clientFeatures: ['provider_model_linkage'],
+      clientFeatures: ['provider_model_linkage', 'key_quota_cost_period'],
     });
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', validProfile(), false)).toEqual({
       displayName: 'Renamed',
       version: 2,
-      clientFeatures: ['provider_model_linkage'],
+      clientFeatures: ['provider_model_linkage', 'key_quota_cost_period'],
       profileId: 'profile-1',
       profile: validProfile(),
       createProfile: false,
@@ -183,6 +187,10 @@ describe('API Key Policy profile drafts', () => {
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, null)).toMatchObject({ quota: null });
     expect(page).toContain('quotaSupported ? draft.quota : undefined');
     expect(page).toContain('{quotaSupported ? <section className={styles.quotaSection}>');
+    expect(page.indexOf('className={styles.quotaSection}')).toBeLessThan(page.indexOf('className={styles.profileRail}'));
+    expect(page).toContain('{draft.quota?.enabled ? <>');
+    expect(page).toContain("placeholder={t('api_key_policy.quota_cost_example')}");
+    expect(page).toContain("(['all_time', 'past_duration', 'calendar_duration'] as const)");
     expect(page).toContain('const quotaRevisionRef = useRef(0);');
     expect(page).toContain('const quotaBusyRef = useRef(false);');
     expect(page).toContain('if (revision !== quotaRevisionRef.current) return;');
@@ -251,7 +259,7 @@ describe('API Key Policy profile drafts', () => {
 
 	test('negotiates provider-model write validation without breaking older Core or Management clients', () => {
 		const client = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/apiKeyPolicy.ts'), 'utf8');
-		expect(client).toContain("const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage'] as const;");
+		expect(client).toContain("const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage', 'key_quota_cost_period'] as const;");
 		expect(client).toContain('clientFeatures: [...API_KEY_POLICY_WRITE_FEATURES]');
 	});
 

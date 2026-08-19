@@ -83,6 +83,7 @@ type quotaSettlementContextKey struct{}
 type quotaAdmissionContextKey struct{}
 
 type quotaAdmissionFunc func(context.Context, RequestPolicyDecision) (RequestPolicyDecision, error)
+type quotaUsageSettlementFunc func(context.Context, string, QuotaUsageDelta) error
 
 func WithIdentity(ctx context.Context, identity AuthenticatedAPIKeyIdentity) context.Context {
 	if ctx == nil {
@@ -121,6 +122,9 @@ func InheritContext(destination, source context.Context) context.Context {
 		destination = WithQuotaAdmission(destination, admit)
 	}
 	if !destinationHasDecision {
+		if settle, ok := source.Value(quotaSettlementContextKey{}).(quotaUsageSettlementFunc); ok && settle != nil {
+			destination = WithQuotaUsageSettlement(destination, settle)
+		}
 		if settle, ok := source.Value(quotaSettlementContextKey{}).(func(context.Context, string, int64) error); ok && settle != nil {
 			destination = WithQuotaSettlement(destination, settle)
 		}
@@ -162,12 +166,17 @@ func WithDecision(ctx context.Context, decision RequestPolicyDecision) context.C
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var settle func(context.Context, string, int64) error
+	var settle quotaUsageSettlementFunc
+	var legacySettle func(context.Context, string, int64) error
 	if decision.Snapshot != nil {
-		settle = decision.Snapshot.QuotaSettlement
+		settle = decision.Snapshot.QuotaUsageSettlement
+		legacySettle = decision.Snapshot.QuotaSettlement
 	}
 	ctx = context.WithValue(ctx, decisionContextKey{}, decision.Clone())
-	return WithQuotaSettlement(ctx, settle)
+	if settle == nil {
+		return WithQuotaSettlement(ctx, legacySettle)
+	}
+	return WithQuotaUsageSettlement(ctx, settle)
 }
 
 func DecisionFromContext(ctx context.Context) (RequestPolicyDecision, bool) {
@@ -194,11 +203,40 @@ func SettleQuotaTokens(ctx context.Context, eventID string, totalTokens int64) e
 	if ctx == nil || totalTokens <= 0 {
 		return nil
 	}
+	if settle, ok := ctx.Value(quotaSettlementContextKey{}).(quotaUsageSettlementFunc); ok && settle != nil {
+		return settle(ctx, eventID, QuotaUsageDelta{TotalTokens: totalTokens})
+	}
 	settle, _ := ctx.Value(quotaSettlementContextKey{}).(func(context.Context, string, int64) error)
+	if settle != nil {
+		return settle(ctx, eventID, totalTokens)
+	}
+	return nil
+}
+
+// WithQuotaUsageSettlement installs synchronous token and cost accounting.
+func WithQuotaUsageSettlement(ctx context.Context, settle func(context.Context, string, QuotaUsageDelta) error) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if settle == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, quotaSettlementContextKey{}, quotaUsageSettlementFunc(settle))
+}
+
+// SettleQuotaUsage settles the complete usage shape required by token and cost
+// quotas. The legacy token-only callback remains supported for older callers.
+func SettleQuotaUsage(ctx context.Context, eventID string, usage QuotaUsageDelta) error {
+	if ctx == nil || usage.empty() {
 		return nil
 	}
-	return settle(ctx, eventID, totalTokens)
+	if settle, ok := ctx.Value(quotaSettlementContextKey{}).(quotaUsageSettlementFunc); ok && settle != nil {
+		return settle(ctx, eventID, usage)
+	}
+	if settle, ok := ctx.Value(quotaSettlementContextKey{}).(func(context.Context, string, int64) error); ok && settle != nil {
+		return settle(ctx, eventID, usage.TotalTokens)
+	}
+	return nil
 }
 
 type ModelMapping struct {
@@ -246,19 +284,35 @@ type Policy struct {
 // Quota is the API-key-wide budget. Profile IDs remain usage attribution only:
 // switching, renaming or recreating a Profile never creates another key budget.
 type Quota struct {
-	Enabled     bool       `json:"enabled"`
-	Requests    *int64     `json:"requests,omitempty"`
-	TotalTokens *int64     `json:"totalTokens,omitempty"`
-	Epoch       int64      `json:"epoch"`
-	StartedAtMS int64      `json:"startedAtMs"`
-	UpdatedAtMS int64      `json:"updatedAtMs"`
-	Usage       QuotaUsage `json:"usage"`
+	Enabled     bool        `json:"enabled"`
+	Requests    *int64      `json:"requests,omitempty"`
+	TotalTokens *int64      `json:"totalTokens,omitempty"`
+	Cost        *float64    `json:"cost,omitempty"`
+	Period      QuotaPeriod `json:"period"`
+	Epoch       int64       `json:"epoch"`
+	StartedAtMS int64       `json:"startedAtMs"`
+	UpdatedAtMS int64       `json:"updatedAtMs"`
+	Usage       QuotaUsage  `json:"usage"`
 }
 
 type QuotaInput struct {
-	Enabled     bool   `json:"enabled"`
-	Requests    *int64 `json:"requests,omitempty"`
-	TotalTokens *int64 `json:"totalTokens,omitempty"`
+	Enabled     bool        `json:"enabled"`
+	Requests    *int64      `json:"requests,omitempty"`
+	TotalTokens *int64      `json:"totalTokens,omitempty"`
+	Cost        *float64    `json:"cost,omitempty"`
+	Period      QuotaPeriod `json:"period"`
+}
+
+const (
+	QuotaPeriodAllTime          = "all_time"
+	QuotaPeriodPastDuration     = "past_duration"
+	QuotaPeriodCalendarDuration = "calendar_duration"
+)
+
+type QuotaPeriod struct {
+	Type  string `json:"type"`
+	Value *int64 `json:"value,omitempty"`
+	Unit  string `json:"unit,omitempty"`
 }
 
 type QuotaUpdate struct {
@@ -269,9 +323,39 @@ type QuotaUpdate struct {
 type QuotaUsage struct {
 	RequestsUsed      int64    `json:"requestsUsed"`
 	TotalTokensUsed   int64    `json:"totalTokensUsed"`
+	CostUsed          float64  `json:"costUsed"`
 	RequestsRemaining *int64   `json:"requestsRemaining,omitempty"`
 	TokensRemaining   *int64   `json:"totalTokensRemaining,omitempty"`
+	CostRemaining     *float64 `json:"costRemaining,omitempty"`
+	WindowStartedAtMS int64    `json:"windowStartedAtMs"`
+	WindowEndsAtMS    int64    `json:"windowEndsAtMs,omitempty"`
 	Exhausted         []string `json:"exhausted"`
+}
+
+// QuotaUsageDelta is the provider usage required to settle both token and
+// price quotas. Cost is evaluated server-side from the active model-price rule.
+type QuotaUsageDelta struct {
+	Provider             string
+	Model                string
+	InputTokens          int64
+	OutputTokens         int64
+	ReasoningTokens      int64
+	CachedTokens         int64
+	CacheTokens          int64
+	CacheReadTokens      int64
+	CacheWriteTokens     int64
+	UncachedInputTokens  int64
+	AccountingQuality    string
+	TotalTokens          int64
+	ServiceTier          string
+	EffectiveServiceTier string
+	Speed                string
+	EffectiveSpeed       string
+}
+
+func (u QuotaUsageDelta) empty() bool {
+	return u.TotalTokens <= 0 && u.InputTokens <= 0 && u.OutputTokens <= 0 && u.ReasoningTokens <= 0 &&
+		u.CachedTokens <= 0 && u.CacheTokens <= 0 && u.CacheReadTokens <= 0 && u.CacheWriteTokens <= 0 && u.UncachedInputTokens <= 0
 }
 
 type QuotaExceededError struct {
@@ -284,6 +368,9 @@ type QuotaExceededError struct {
 func (e *QuotaExceededError) Error() string {
 	if e == nil {
 		return "api key quota exceeded"
+	}
+	if e.Metric == "cost" {
+		return fmt.Sprintf("api key cost quota exceeded: $%.6f/$%.6f", microsToUSD(e.Used), microsToUSD(e.Limit))
 	}
 	return fmt.Sprintf("api key %s quota exceeded: %d/%d", e.Metric, e.Used, e.Limit)
 }
@@ -409,19 +496,20 @@ func (c ProfileCatalog) modelMatchesProviders(model string, allowedProviders []s
 }
 
 type RequestPolicySnapshot struct {
-	PolicyID         string
-	APIKeyHash       string
-	ProfileID        string
-	ProfileName      string
-	Version          int64
-	ModelMappings    map[string]string
-	AllowedModels    map[string]struct{}
-	AllowedProviders map[string]struct{}
-	RequestedModel   string
-	EffectiveModel   string
-	Quota            *Quota
-	QuotaAdmissionID string
-	QuotaSettlement  func(context.Context, string, int64) error
+	PolicyID             string
+	APIKeyHash           string
+	ProfileID            string
+	ProfileName          string
+	Version              int64
+	ModelMappings        map[string]string
+	AllowedModels        map[string]struct{}
+	AllowedProviders     map[string]struct{}
+	RequestedModel       string
+	EffectiveModel       string
+	Quota                *Quota
+	QuotaAdmissionID     string
+	QuotaSettlement      func(context.Context, string, int64) error
+	QuotaUsageSettlement quotaUsageSettlementFunc
 }
 
 func (s RequestPolicySnapshot) Clone() RequestPolicySnapshot {
@@ -430,6 +518,7 @@ func (s RequestPolicySnapshot) Clone() RequestPolicySnapshot {
 	s.AllowedProviders = cloneStringSet(s.AllowedProviders)
 	s.Quota = cloneQuota(s.Quota)
 	s.QuotaSettlement = nil
+	s.QuotaUsageSettlement = nil
 	return s
 }
 
@@ -445,6 +534,14 @@ func cloneQuota(quota *Quota) *Quota {
 	if quota.TotalTokens != nil {
 		value := *quota.TotalTokens
 		cloned.TotalTokens = &value
+	}
+	if quota.Cost != nil {
+		value := *quota.Cost
+		cloned.Cost = &value
+	}
+	if quota.Period.Value != nil {
+		value := *quota.Period.Value
+		cloned.Period.Value = &value
 	}
 	return &cloned
 }
