@@ -99,6 +99,44 @@ func TestQuotaSummariesUseCalendarBoundaryAndNeverExposeKeyHash(t *testing.T) {
 	}
 }
 
+func TestQuotaSummariesBatchRollingWindowsPreserveUsageAndRecovery(t *testing.T) {
+	service := newTestService(t)
+	requestLimit := int64(2)
+	tokenLimit := int64(100)
+	periodValue := int64(1)
+	policy, err := service.Create(context.Background(), testIdentity(t, "batch-summary-key"), "Batch", ProfileInput{Name: "default"}, &QuotaInput{
+		Enabled: true, Requests: &requestLimit, TotalTokens: &tokenLimit,
+		Period: QuotaPeriod{Type: QuotaPeriodPastDuration, Value: &periodValue, Unit: "hour"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nowMS := time.Now().UnixMilli()
+	if _, err = service.store.db.Exec(`insert into api_key_quota_admissions(admission_id, policy_id, profile_id, epoch, admitted_at_ms) values(?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+		"batch-admission-old", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, nowMS-int64(2*time.Hour/time.Millisecond),
+		"batch-admission-current", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, nowMS-int64(10*time.Minute/time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.store.db.Exec(`insert into api_key_quota_token_events(event_id, admission_id, policy_id, profile_id, epoch, total_tokens, cost_micros, occurred_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?)`,
+		"batch-event-current", "batch-admission-current", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, 40, 0, nowMS-int64(10*time.Minute/time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := service.ListQuotaSummaries(context.Background(), nowMS)
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("summaries = %+v err=%v", summaries, err)
+	}
+	quota := summaries[0].Quota
+	if quota == nil || quota.Usage.RequestsUsed != 1 || quota.Usage.TotalTokensUsed != 40 || quota.Usage.CostUsed != 0 {
+		t.Fatalf("batched usage = %+v", quota)
+	}
+	if quota.Usage.Exhausted != nil && len(quota.Usage.Exhausted) != 0 {
+		t.Fatalf("unexpected exhausted metrics = %+v", quota.Usage.Exhausted)
+	}
+	if summaries[0].NextRecoverAtMS != 0 {
+		t.Fatalf("unexpected recovery = %d", summaries[0].NextRecoverAtMS)
+	}
+}
+
 func TestQuotaNextRecoverAtIgnoresMalformedRollingPeriod(t *testing.T) {
 	got, err := quotaNextRecoverAt(context.Background(), nil, "policy", Quota{
 		Period: QuotaPeriod{Type: QuotaPeriodPastDuration, Unit: "hour"},

@@ -149,9 +149,12 @@ describe('API Key Policy profile drafts', () => {
     expect(supportsAPIKeyQuotaOverview({ ...legacyCapabilities, features: [...legacyCapabilities.features, 'key_quota_overview'] })).toBe(true);
     expect(client).toContain("'/api-key-policy-quota-summaries'");
     expect(page).toContain("type PageView = 'policies' | 'quotas'");
+    expect(page).toContain("type QuotaVisualState = 'inactive' | 'disabled' | 'available' | 'warning' | 'exhausted' | 'blocked' | 'unknown'");
     expect(page).toContain("window.setInterval(() => void loadQuotaSummaries(true), 15_000)");
+    expect(page).toContain('if (quiet && quotaManualInFlightRef.current) return;');
+    expect(page).toContain("setPageView('policies');");
     expect(page).toContain('quotaSummaryRevisionRef.current += 1;');
-    expect(page).toContain('quotaVisualState(summary, takeoverActive)');
+    expect(page).toContain('quotaVisualState(summary, takeoverActive, policy.quota?.enabled === true)');
     expect(page).toContain('apiKeyPolicyApi.resetQuota(policy.id, policy.version)');
     expect(page).toContain('await loadQuotaSummaries(true);');
     expect(page).toContain('await Promise.all([load(), loadQuotaSummaries(true)]);');

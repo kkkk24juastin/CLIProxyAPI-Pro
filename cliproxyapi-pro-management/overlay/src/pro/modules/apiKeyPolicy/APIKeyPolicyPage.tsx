@@ -52,6 +52,7 @@ import styles from './APIKeyPolicyPage.module.scss';
 type BindingFilter = 'all' | 'unconfigured' | 'configured' | 'orphaned';
 type PageView = 'policies' | 'quotas';
 type QuotaFilter = 'all' | 'attention' | 'exhausted' | 'blocked' | 'disabled';
+type QuotaVisualState = 'inactive' | 'disabled' | 'available' | 'warning' | 'exhausted' | 'blocked' | 'unknown';
 type CapabilityState = 'checking' | 'ready' | 'unsupported' | 'error';
 type WorkspaceTarget =
   | { kind: 'create'; binding: APIKeyPolicyBinding }
@@ -95,8 +96,12 @@ const quotaMaximumRatio = (summary: APIKeyQuotaSummary | undefined): number => {
 const quotaVisualState = (
   summary: APIKeyQuotaSummary | undefined,
   takeoverActive: boolean,
-): 'inactive' | 'disabled' | 'available' | 'warning' | 'exhausted' | 'blocked' => {
-  if (!summary?.quota?.enabled || summary.admissionState === 'disabled') return 'disabled';
+  quotaConfigured = false,
+): QuotaVisualState => {
+  // Missing summaries mean that no successful snapshot exists for this policy;
+  // do not present that failure as a real disabled quota with zero usage.
+  if (!summary) return quotaConfigured ? 'unknown' : 'disabled';
+  if (!summary.quota?.enabled || summary.admissionState === 'disabled') return 'disabled';
   if (!takeoverActive) return 'inactive';
   if (summary.admissionState === 'blocked') return 'blocked';
   if (summary.admissionState === 'exhausted') return 'exhausted';
@@ -287,19 +292,20 @@ function QuotaMetric({
   cost = false,
 }: {
   label: string;
-  used: number;
+  used?: number;
   limit?: number;
   cost?: boolean;
 }) {
-  const ratio = quotaRatio(used, limit);
+  const unavailable = used === undefined;
+  const ratio = unavailable ? null : quotaRatio(used, limit);
   const format = cost ? (value: number) => `$${formatQuotaCost(value)}` : formatQuotaNumber;
   return (
     <div className={styles.quotaMetric}>
-      <div><span>{label}</span><strong>{format(used)} / {limit === undefined ? '∞' : format(limit)}</strong></div>
+      <div><span>{label}</span><strong>{unavailable ? '—' : `${format(used)} / ${limit === undefined ? '∞' : format(limit)}`}</strong></div>
       <div className={styles.quotaProgress} aria-hidden="true">
-        <span style={{ width: `${Math.min((ratio ?? 0) * 100, 100)}%` }} />
+        {!unavailable ? <span style={{ width: `${Math.min((ratio ?? 0) * 100, 100)}%` }} /> : null}
       </div>
-      <small>{limit === undefined ? '-' : format(Math.max(limit - used, 0))}</small>
+      <small>{unavailable ? '—' : limit === undefined ? '-' : format(Math.max(limit - used, 0))}</small>
     </div>
   );
 }
@@ -343,6 +349,8 @@ export function APIKeyPolicyPage() {
   const quotaRevisionRef = useRef(0);
   const quotaBusyRef = useRef(false);
   const quotaSummaryRevisionRef = useRef(0);
+  const quotaManualRevisionRef = useRef(0);
+  const quotaManualInFlightRef = useRef(false);
   const dirty = workspaceIsDirty(workspaceTarget, draft);
   const quotaSupported = Boolean(snapshot && supportsAPIKeyQuota(snapshot.capabilities));
   const quotaOverviewSupported = Boolean(snapshot && supportsAPIKeyQuotaOverview(snapshot.capabilities));
@@ -427,13 +435,29 @@ export function APIKeyPolicyPage() {
       savingRef.current = false;
       dangerBusyRef.current = false;
       quotaBusyRef.current = false;
+      quotaManualRevisionRef.current += 1;
+      quotaManualInFlightRef.current = false;
     };
   }, [load]);
 
   const loadQuotaSummaries = useCallback(async (quiet = false) => {
-    if (!quotaOverviewSupported || connectionStatus !== 'connected') return;
+    if (!quotaOverviewSupported || connectionStatus !== 'connected') {
+      if (!quiet) {
+        quotaManualRevisionRef.current += 1;
+        quotaManualInFlightRef.current = false;
+        setQuotaLoading(false);
+      }
+      return;
+    }
+    // A background poll must not supersede a user-triggered refresh. The
+    // manual response owns the loading state until it settles.
+    if (quiet && quotaManualInFlightRef.current) return;
     const revision = ++quotaSummaryRevisionRef.current;
-    if (!quiet) setQuotaLoading(true);
+    const manualRevision = quiet ? 0 : ++quotaManualRevisionRef.current;
+    if (!quiet) {
+      quotaManualInFlightRef.current = true;
+      setQuotaLoading(true);
+    }
     try {
       const response = await apiKeyPolicyApi.quotaSummaries();
       if (revision !== quotaSummaryRevisionRef.current) return;
@@ -444,20 +468,27 @@ export function APIKeyPolicyPage() {
       if (revision !== quotaSummaryRevisionRef.current) return;
       setQuotaError(errorMessage(error));
     } finally {
-      if (revision === quotaSummaryRevisionRef.current && !quiet) setQuotaLoading(false);
+      if (!quiet && manualRevision === quotaManualRevisionRef.current) {
+        quotaManualInFlightRef.current = false;
+        setQuotaLoading(false);
+      }
     }
   }, [connectionStatus, errorMessage, quotaOverviewSupported]);
 
   useEffect(() => {
-    if (!quotaOverviewSupported) {
+    if (!quotaOverviewSupported || connectionStatus !== 'connected') {
       quotaSummaryRevisionRef.current += 1;
+      quotaManualRevisionRef.current += 1;
+      quotaManualInFlightRef.current = false;
       setQuotaSummaries([]);
       setQuotaSnapshotAt(0);
       setQuotaError('');
+      setQuotaLoading(false);
+      setPageView('policies');
       return;
     }
     void loadQuotaSummaries();
-  }, [loadQuotaSummaries, quotaOverviewSupported]);
+  }, [connectionStatus, loadQuotaSummaries, quotaOverviewSupported]);
 
   useEffect(() => {
     if (pageView !== 'quotas' || !quotaOverviewSupported) return;
@@ -860,8 +891,8 @@ export function APIKeyPolicyPage() {
       const policy = binding.policy;
       if (!policy) return [];
       const summary = quotaSummaryByPolicy.get(policy.id);
-      const visualState = quotaVisualState(summary, takeoverActive);
-      if (quotaFilter === 'attention' && !['warning', 'exhausted', 'blocked'].includes(visualState)) return [];
+      const visualState = quotaVisualState(summary, takeoverActive, policy.quota?.enabled === true);
+      if (quotaFilter === 'attention' && !['unknown', 'warning', 'exhausted', 'blocked'].includes(visualState)) return [];
       if (quotaFilter === 'exhausted' && visualState !== 'exhausted') return [];
       if (quotaFilter === 'blocked' && visualState !== 'blocked') return [];
       if (quotaFilter === 'disabled' && visualState !== 'disabled') return [];
@@ -869,20 +900,20 @@ export function APIKeyPolicyPage() {
       if (query && !text.includes(query)) return [];
       return [{ binding, policy, summary, visualState }];
     });
-    const rank = { blocked: 0, exhausted: 1, warning: 2, available: 3, inactive: 4, disabled: 5 } as const;
+    const rank = { unknown: 0, blocked: 1, exhausted: 2, warning: 3, available: 4, inactive: 5, disabled: 6 } as const;
     return rows.sort((left, right) => rank[left.visualState] - rank[right.visualState]
       || quotaMaximumRatio(right.summary) - quotaMaximumRatio(left.summary)
       || left.policy.displayName.localeCompare(right.policy.displayName));
   }, [quotaFilter, quotaSummaryByPolicy, search, snapshot, takeoverActive]);
 
   const quotaCounts = useMemo(() => {
-    const counts = { enabled: 0, available: 0, warning: 0, exhausted: 0, blocked: 0 };
+    const counts = { enabled: 0, available: 0, warning: 0, exhausted: 0, blocked: 0, unknown: 0 };
     (snapshot?.bindings.items ?? []).forEach((binding) => {
       if (!binding.policy) return;
       const summary = quotaSummaryByPolicy.get(binding.policy.id);
-      if (!summary?.quota?.enabled) return;
+      if (!binding.policy.quota?.enabled) return;
       counts.enabled += 1;
-      const state = quotaVisualState(summary, takeoverActive);
+      const state = quotaVisualState(summary, takeoverActive, binding.policy.quota?.enabled === true);
       if (state in counts) counts[state as keyof typeof counts] += 1;
     });
     return counts;
@@ -1021,7 +1052,7 @@ export function APIKeyPolicyPage() {
                   {binding.weakKey ? <div className={styles.weakKey}><IconAlertTriangle size={15} /> {t('api_key_policy.weak_key')}</div> : null}
                   {policy && quotaOverviewSupported ? (() => {
                     const summary = quotaSummaryByPolicy.get(policy.id);
-                    const visualState = quotaVisualState(summary, takeoverActive);
+                    const visualState = quotaVisualState(summary, takeoverActive, policy.quota?.enabled === true);
                     const percent = Math.min(Math.round(quotaMaximumRatio(summary) * 100), 100);
                     return <div className={`${styles.cardQuota} ${styles[`cardQuota_${visualState}`] ?? ''}`}><span>{t(`api_key_policy.quota_state.${visualState}`)}</span><strong>{summary?.quota?.enabled ? `${percent}%` : '-'}</strong></div>;
                   })() : null}
@@ -1076,7 +1107,7 @@ export function APIKeyPolicyPage() {
                   <small>{t('api_key_policy.quota_overview.attention')}</small><strong>{quotaCounts.warning}</strong>
                 </div>
                 <div>
-                  <small>{t('api_key_policy.quota_overview.unavailable')}</small><strong>{quotaCounts.exhausted + quotaCounts.blocked}</strong>
+                  <small>{t('api_key_policy.quota_overview.unavailable')}</small><strong>{quotaCounts.exhausted + quotaCounts.blocked + quotaCounts.unknown}</strong>
                 </div>
               </div>
               <div className={styles.quotaToolbar}>
@@ -1091,18 +1122,20 @@ export function APIKeyPolicyPage() {
                 </div>
                 {quotaRows.map(({ binding, policy, summary, visualState }) => {
                   const quota = summary?.quota;
-                  const periodLabel = quota?.period.type === 'past_duration'
-                    ? t('api_key_policy.quota_overview.rolling_period', { value: quota.period.value, unit: t(`api_key_policy.quota_unit.${quota.period.unit}`) })
-                    : quota?.period.type === 'calendar_duration'
-                      ? t(`api_key_policy.quota_calendar_unit.${quota.period.unit}`)
-                      : t('api_key_policy.quota_period.all_time');
+                  const periodLabel = !summary
+                    ? t('api_key_policy.quota_overview.snapshot_unavailable')
+                    : quota?.period.type === 'past_duration'
+                      ? t('api_key_policy.quota_overview.rolling_period', { value: quota.period.value, unit: t(`api_key_policy.quota_unit.${quota.period.unit}`) })
+                      : quota?.period.type === 'calendar_duration'
+                        ? t(`api_key_policy.quota_calendar_unit.${quota.period.unit}`)
+                        : t('api_key_policy.quota_period.all_time');
                   return (
                     <div className={styles.quotaTableRow} role="row" key={policy.id}>
                       <div className={styles.quotaKeyCell}><strong>{policy.displayName}</strong><code>{binding.maskedKey}</code></div>
-                      <div className={styles.quotaPeriodCell}><strong>{periodLabel}</strong>{summary?.nextRecoverAtMs ? <small>{t('api_key_policy.quota_overview.recovers_at', { time: formatUpdatedAt(summary.nextRecoverAtMs, i18n.resolvedLanguage ?? i18n.language) })}</small> : <small>{quota?.period.type === 'all_time' ? t('api_key_policy.quota_overview.manual_reset') : t('api_key_policy.quota_overview.active_window')}</small>}</div>
-                      <QuotaMetric label={t('api_key_policy.quota_requests')} used={quota?.usage.requestsUsed ?? 0} limit={quota?.requests} />
-                      <QuotaMetric label={t('api_key_policy.quota_tokens')} used={quota?.usage.totalTokensUsed ?? 0} limit={quota?.totalTokens} />
-                      <QuotaMetric label={t('api_key_policy.quota_cost')} used={quota?.usage.costUsed ?? 0} limit={quota?.cost} cost />
+                      <div className={styles.quotaPeriodCell}><strong>{periodLabel}</strong>{summary?.nextRecoverAtMs ? <small>{t('api_key_policy.quota_overview.recovers_at', { time: formatUpdatedAt(summary.nextRecoverAtMs, i18n.resolvedLanguage ?? i18n.language) })}</small> : <small>{!summary ? t('api_key_policy.quota_overview.snapshot_unavailable') : quota?.period.type === 'all_time' ? t('api_key_policy.quota_overview.manual_reset') : t('api_key_policy.quota_overview.active_window')}</small>}</div>
+                      <QuotaMetric label={t('api_key_policy.quota_requests')} used={quota ? quota.usage.requestsUsed : undefined} limit={quota?.requests} />
+                      <QuotaMetric label={t('api_key_policy.quota_tokens')} used={quota ? quota.usage.totalTokensUsed : undefined} limit={quota?.totalTokens} />
+                      <QuotaMetric label={t('api_key_policy.quota_cost')} used={quota ? quota.usage.costUsed : undefined} limit={quota?.cost} cost />
                       <div className={styles.quotaStateCell}><PolicyBadge state={`quota_${visualState}`}>{t(`api_key_policy.quota_state.${visualState}`)}</PolicyBadge>{summary?.blockedReason ? <small>{t(`api_key_policy.quota_block.${summary.blockedReason}`)}</small> : null}</div>
                       <div className={styles.quotaRowActions}><Button variant="secondary" size="sm" onClick={() => openWorkspace({ kind: 'policy', policy, readOnly: false })}>{t('api_key_policy.quota_overview.edit')}</Button>{quota?.enabled ? <Button variant="danger" size="sm" onClick={() => void resetQuotaFromOverview(policy)} disabled={quotaBusy}>{t('api_key_policy.quota_reset')}</Button> : null}{usageTargetSupported ? <Button variant="ghost" size="sm" onClick={() => void openUsage(binding)}>{t('api_key_policy.view_usage')}</Button> : null}</div>
                     </div>

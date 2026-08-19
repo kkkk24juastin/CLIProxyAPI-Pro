@@ -18,6 +18,26 @@ type Store struct {
 	db       *sql.DB
 }
 
+type quotaSummaryKey struct {
+	policyID string
+	epoch    int64
+}
+
+type quotaSummaryWindow struct {
+	index      int
+	key        quotaSummaryKey
+	startMS    int64
+	queryEndMS int64
+}
+
+type quotaSummaryAdmission struct{ occurredAt int64 }
+
+type quotaSummaryEvent struct {
+	totalTokens int64
+	costMicros  int64
+	occurredAt  int64
+}
+
 func OpenStore(path string) (*Store, error) {
 	database, err := prostorage.OpenSQLite(path)
 	if err != nil {
@@ -301,16 +321,90 @@ func (s *Store) Get(ctx context.Context, policyID string) (Policy, error) {
 }
 
 func (s *Store) ListQuotaSummaries(ctx context.Context, nowMS int64) ([]QuotaSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `select id, version from api_key_policies order by created_at_ms, id`)
+	rows, err := s.db.QueryContext(ctx, `select p.id, p.version,
+		q.policy_id, q.enabled, q.request_limit, q.token_limit, q.cost_limit_micros,
+		q.period_type, q.period_value, q.period_unit, q.epoch, q.started_at_ms,
+		q.requests_used, q.total_tokens_used, q.cost_used_micros, q.updated_at_ms
+		from api_key_policies p
+		left join api_key_policy_quotas q on q.policy_id = p.id
+		order by p.created_at_ms, p.id`)
 	if err != nil {
 		return nil, err
 	}
 	summaries := make([]QuotaSummary, 0)
+	windows := make([]quotaSummaryWindow, 0)
+	windowByKey := make(map[quotaSummaryKey]int)
+	minWindowStartMS := int64(math.MaxInt64)
 	for rows.Next() {
 		var summary QuotaSummary
-		if err = rows.Scan(&summary.PolicyID, &summary.PolicyVersion); err != nil {
+		var quotaID, periodType, periodUnit sql.NullString
+		var enabled, requestLimit, tokenLimit, costLimitMicros, periodValue, epoch, startedAtMS, requestsUsed, totalTokensUsed, costUsedMicros, updatedAtMS sql.NullInt64
+		if err = rows.Scan(
+			&summary.PolicyID, &summary.PolicyVersion,
+			&quotaID, &enabled, &requestLimit, &tokenLimit, &costLimitMicros,
+			&periodType, &periodValue, &periodUnit, &epoch, &startedAtMS,
+			&requestsUsed, &totalTokensUsed, &costUsedMicros, &updatedAtMS,
+		); err != nil {
 			_ = rows.Close()
 			return nil, err
+		}
+		summary.AdmissionState = QuotaAdmissionDisabled
+		if quotaID.Valid {
+			quota := &Quota{
+				Enabled: enabled.Valid && enabled.Int64 != 0,
+				Period:  QuotaPeriod{Type: periodType.String, Unit: periodUnit.String},
+				Usage: QuotaUsage{
+					RequestsUsed:    requestsUsed.Int64,
+					TotalTokensUsed: totalTokensUsed.Int64,
+					CostUsed:        microsToUSD(costUsedMicros.Int64),
+				},
+			}
+			if requestLimit.Valid {
+				value := requestLimit.Int64
+				quota.Requests = &value
+			}
+			if tokenLimit.Valid {
+				value := tokenLimit.Int64
+				quota.TotalTokens = &value
+			}
+			if costLimitMicros.Valid {
+				value := microsToUSD(costLimitMicros.Int64)
+				quota.Cost = &value
+			}
+			if periodValue.Valid {
+				value := periodValue.Int64
+				quota.Period.Value = &value
+			}
+			if epoch.Valid {
+				quota.Epoch = epoch.Int64
+			}
+			if startedAtMS.Valid {
+				quota.StartedAtMS = startedAtMS.Int64
+			}
+			if updatedAtMS.Valid {
+				quota.UpdatedAtMS = updatedAtMS.Int64
+			}
+			quota.Period = normalizeQuotaPeriod(quota.Period)
+			startMS, endMS := quotaPeriodBounds(quota.Period, quota.StartedAtMS, nowMS)
+			quota.Usage.WindowStartedAtMS = startMS
+			quota.Usage.WindowEndsAtMS = endMS
+			summary.Quota = quota
+			if quota.Period.Type != QuotaPeriodAllTime {
+				queryEndMS := endMS
+				if quota.Period.Type == QuotaPeriodPastDuration && queryEndMS < math.MaxInt64 {
+					queryEndMS++
+				}
+				key := quotaSummaryKey{policyID: summary.PolicyID, epoch: quota.Epoch}
+				windowByKey[key] = len(windows)
+				windows = append(windows, quotaSummaryWindow{index: len(summaries), key: key, startMS: startMS, queryEndMS: queryEndMS})
+				if startMS < minWindowStartMS {
+					minWindowStartMS = startMS
+				}
+				// Rolling/calendar usage is recomputed from the event tables below.
+				quota.Usage.RequestsUsed = 0
+				quota.Usage.TotalTokensUsed = 0
+				quota.Usage.CostUsed = 0
+			}
 		}
 		summaries = append(summaries, summary)
 	}
@@ -321,20 +415,165 @@ func (s *Store) ListQuotaSummaries(ctx context.Context, nowMS int64) ([]QuotaSum
 	if err = rows.Close(); err != nil {
 		return nil, err
 	}
-	for index := range summaries {
-		summary := &summaries[index]
-		summary.Quota, err = getPolicyQuotaAt(ctx, s.db, summary.PolicyID, nowMS)
-		if err != nil {
+	admissionsByKey := make(map[quotaSummaryKey][]quotaSummaryAdmission, len(windows))
+	if len(windows) == 0 {
+		for index := range summaries {
+			if summaries[index].Quota != nil {
+				summaries[index].Quota.Usage = quotaUsage(*summaries[index].Quota)
+			}
+		}
+		return summaries, nil
+	}
+	admissionRows, err := s.db.QueryContext(ctx, `select a.policy_id, a.epoch, a.admitted_at_ms
+		from api_key_quota_admissions a
+		join api_key_policy_quotas q on q.policy_id = a.policy_id and q.epoch = a.epoch
+		where q.period_type <> ? and a.admitted_at_ms >= ?
+		order by a.policy_id, a.epoch, a.admitted_at_ms, a.admission_id`, QuotaPeriodAllTime, minWindowStartMS)
+	if err != nil {
+		return nil, err
+	}
+	for admissionRows.Next() {
+		var key quotaSummaryKey
+		var occurredAt int64
+		if err = admissionRows.Scan(&key.policyID, &key.epoch, &occurredAt); err != nil {
+			_ = admissionRows.Close()
 			return nil, err
 		}
-		if summary.Quota != nil && summary.Quota.Enabled {
-			summary.NextRecoverAtMS, err = quotaNextRecoverAt(ctx, s.db, summary.PolicyID, *summary.Quota)
-			if err != nil {
-				return nil, err
+		if windowIndex, ok := windowByKey[key]; ok {
+			window := windows[windowIndex]
+			if occurredAt < window.startMS {
+				continue
+			}
+			admissionsByKey[key] = append(admissionsByKey[key], quotaSummaryAdmission{occurredAt: occurredAt})
+			if occurredAt >= window.startMS && (window.queryEndMS == 0 || occurredAt < window.queryEndMS) {
+				summaries[window.index].Quota.Usage.RequestsUsed++
 			}
 		}
 	}
+	if err = admissionRows.Err(); err != nil {
+		_ = admissionRows.Close()
+		return nil, err
+	}
+	if err = admissionRows.Close(); err != nil {
+		return nil, err
+	}
+
+	eventsByKey := make(map[quotaSummaryKey][]quotaSummaryEvent, len(windows))
+	eventRows, err := s.db.QueryContext(ctx, `select e.policy_id, e.epoch, e.total_tokens, e.cost_micros, e.occurred_at_ms
+		from api_key_quota_token_events e
+		join api_key_policy_quotas q on q.policy_id = e.policy_id and q.epoch = e.epoch
+		where q.period_type <> ? and e.occurred_at_ms >= ?
+		order by e.policy_id, e.epoch, e.occurred_at_ms, e.event_id`, QuotaPeriodAllTime, minWindowStartMS)
+	if err != nil {
+		return nil, err
+	}
+	for eventRows.Next() {
+		var key quotaSummaryKey
+		var row quotaSummaryEvent
+		if err = eventRows.Scan(&key.policyID, &key.epoch, &row.totalTokens, &row.costMicros, &row.occurredAt); err != nil {
+			_ = eventRows.Close()
+			return nil, err
+		}
+		if windowIndex, ok := windowByKey[key]; ok {
+			window := windows[windowIndex]
+			if row.occurredAt < window.startMS {
+				continue
+			}
+			eventsByKey[key] = append(eventsByKey[key], row)
+			if row.occurredAt >= window.startMS && (window.queryEndMS == 0 || row.occurredAt < window.queryEndMS) {
+				summaries[window.index].Quota.Usage.TotalTokensUsed += row.totalTokens
+			}
+		}
+	}
+	if err = eventRows.Err(); err != nil {
+		_ = eventRows.Close()
+		return nil, err
+	}
+	if err = eventRows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range summaries {
+		if summaries[index].Quota != nil {
+			summaries[index].Quota.Usage = quotaUsage(*summaries[index].Quota)
+		}
+	}
+	for index := range windows {
+		window := windows[index]
+		quota := summaries[window.index].Quota
+		if quota == nil {
+			continue
+		}
+		// Re-sum cost in integer micros to avoid accumulating float conversion
+		// error across a large event stream.
+		costMicros := int64(0)
+		for _, event := range eventsByKey[window.key] {
+			if event.occurredAt >= window.startMS && (window.queryEndMS == 0 || event.occurredAt < window.queryEndMS) {
+				costMicros += event.costMicros
+			}
+		}
+		quota.Usage.CostUsed = microsToUSD(costMicros)
+		quota.Usage = quotaUsage(*quota)
+		if quota.Enabled {
+			admissions := admissionsByKey[window.key]
+			events := eventsByKey[window.key]
+			summaries[window.index].NextRecoverAtMS = quotaNextRecoverAtFromRows(*quota, admissions, events)
+		}
+	}
 	return summaries, nil
+}
+
+func quotaNextRecoverAtFromRows(quota Quota, admissions []quotaSummaryAdmission, events []quotaSummaryEvent) int64 {
+	if len(quota.Usage.Exhausted) == 0 || quota.Period.Type == QuotaPeriodAllTime {
+		return 0
+	}
+	if quota.Period.Type == QuotaPeriodCalendarDuration {
+		return quota.Usage.WindowEndsAtMS
+	}
+	if quota.Period.Type != QuotaPeriodPastDuration || quota.Period.Value == nil {
+		return 0
+	}
+	duration, ok := quotaPastDuration(*quota.Period.Value, quota.Period.Unit)
+	if !ok {
+		return 0
+	}
+	recoverAt := int64(0)
+	if quota.Requests != nil && quota.Usage.RequestsUsed >= *quota.Requests {
+		offset := quota.Usage.RequestsUsed - *quota.Requests
+		if offset >= 0 && offset < int64(len(admissions)) {
+			recoverAt = admissions[offset].occurredAt + duration.Milliseconds()
+		}
+	}
+	if (quota.TotalTokens != nil && quota.Usage.TotalTokensUsed >= *quota.TotalTokens) ||
+		(quota.Cost != nil && quota.Usage.CostUsed >= *quota.Cost) {
+		remainingTokens := quota.Usage.TotalTokensUsed
+		remainingCostMicros := int64(math.Round(quota.Usage.CostUsed * 1_000_000))
+		tokenRecovered := quota.TotalTokens == nil || remainingTokens < *quota.TotalTokens
+		costLimitMicros := int64(0)
+		if quota.Cost != nil {
+			costLimitMicros = int64(math.Round(*quota.Cost * 1_000_000))
+		}
+		costRecovered := quota.Cost == nil || remainingCostMicros < costLimitMicros
+		for _, event := range events {
+			remainingTokens -= event.totalTokens
+			remainingCostMicros -= event.costMicros
+			if !tokenRecovered && quota.TotalTokens != nil && remainingTokens < *quota.TotalTokens {
+				tokenRecovered = true
+				if candidate := event.occurredAt + duration.Milliseconds(); candidate > recoverAt {
+					recoverAt = candidate
+				}
+			}
+			if !costRecovered && quota.Cost != nil && remainingCostMicros < costLimitMicros {
+				costRecovered = true
+				if candidate := event.occurredAt + duration.Milliseconds(); candidate > recoverAt {
+					recoverAt = candidate
+				}
+			}
+			if tokenRecovered && costRecovered {
+				break
+			}
+		}
+	}
+	return recoverAt
 }
 
 func quotaNextRecoverAt(ctx context.Context, queryer sqlQueryer, policyID string, quota Quota) (int64, error) {
