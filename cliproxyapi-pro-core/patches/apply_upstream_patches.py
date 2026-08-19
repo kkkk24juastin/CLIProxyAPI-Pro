@@ -3810,17 +3810,34 @@ func (b *StreamUsageBuffer) ObserveClaude(detail usage.Detail, ok bool) {
 \t)
 }
 
-// PublishFailure emits one failed record with the latest observed usage.
-func (b *StreamUsageBuffer) PublishFailure(ctx context.Context, reporter *UsageReporter, errs ...error) bool {
+''',
+    'func (b *StreamUsageBuffer) ObserveClaude(detail usage.Detail, ok bool)',
+)
+
+stream_usage_failure_signature = 'func (b *StreamUsageBuffer) PublishFailure(ctx context.Context, reporter *UsageReporter, errs ...error) bool'
+stream_usage_failure_function = '''func (b *StreamUsageBuffer) PublishFailure(ctx context.Context, reporter *UsageReporter, errs ...error) bool {
 \tif b == nil || !b.ok || reporter == nil {
 \t\treturn false
 \t}
 \treporter.PublishFailureWithDetail(ctx, b.detail, errs...)
 \treturn true
 }
-''',
-    'func (b *StreamUsageBuffer) ObserveClaude(detail usage.Detail, ok bool)',
-)
+'''
+if stream_usage_failure_signature in read(usage_helpers):
+    replace_go_function(
+        usage_helpers,
+        stream_usage_failure_signature,
+        stream_usage_failure_function,
+        stream_usage_failure_signature + ' {\n\tif b == nil || !b.ok || reporter == nil {',
+    )
+else:
+    insert_before(
+        usage_helpers,
+        '// Detail returns the latest observed usage detail.\n',
+        '''// PublishFailure emits one failed record with the latest observed usage.
+''' + stream_usage_failure_function + '\n',
+        stream_usage_failure_signature,
+    )
 
 claude_execute = ROOT / 'internal/runtime/executor/claude_executor_execute.go'
 replace_once(
