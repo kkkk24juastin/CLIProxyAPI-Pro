@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"testing"
 
@@ -148,8 +149,12 @@ func TestEstimateUsageCostMicrosUsesActivePriceRuleAndRejectsUnknownModel(t *tes
 	if err != nil || micros != 110 {
 		t.Fatalf("estimated cost micros = %d, %v; want 110", micros, err)
 	}
-	if _, err := store.EstimateUsageCostMicros(context.Background(), UsageCostInput{Model: "unknown", InputTokens: 1}); err == nil {
-		t.Fatal("unknown model unexpectedly received a zero price")
+	if _, err := store.EstimateUsageCostMicros(context.Background(), UsageCostInput{Model: "unknown", InputTokens: 1}); !errors.Is(err, ErrModelPriceUnavailable) {
+		t.Fatalf("unknown model error = %v, want ErrModelPriceUnavailable", err)
+	}
+	var unavailable *Store
+	if _, err := unavailable.EstimateUsageCostMicros(context.Background(), UsageCostInput{Model: rule.Model}); err == nil || errors.Is(err, ErrModelPriceUnavailable) {
+		t.Fatalf("unavailable price store error = %v, want storage failure", err)
 	}
 }
 

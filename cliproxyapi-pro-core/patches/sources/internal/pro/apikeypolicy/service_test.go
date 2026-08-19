@@ -882,13 +882,51 @@ func TestCostQuotaUsesServerPricingAndFailsClosedAfterExhaustion(t *testing.T) {
 	}
 }
 
-func TestUnavailableCostPricingBlocksOnlyAffectedPolicyAndRecovers(t *testing.T) {
+func TestMissingCostPriceSettlesTokensAtZeroCostWithoutBlocking(t *testing.T) {
+	service := newTestService(t)
+	service.SetCostEstimator(func(context.Context, QuotaUsageDelta) (int64, error) {
+		return 0, ErrQuotaPriceMissing
+	})
+	costLimit := 10.0
+	identity := testIdentity(t, "missing-price-key")
+	created, err := service.Create(context.Background(), identity, "Missing price", ProfileInput{Name: "missing"}, &QuotaInput{
+		Enabled: true, Cost: &costLimit, Period: QuotaPeriod{Type: QuotaPeriodAllTime},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = SettleQuotaUsage(WithDecision(context.Background(), admitted), "missing-price", QuotaUsageDelta{
+		Provider: "codex", Model: "missing-price", InputTokens: 3, TotalTokens: 3,
+	}); err != nil {
+		t.Fatalf("missing price settlement failed: %v", err)
+	}
+	loaded, err := service.Get(context.Background(), created.ID)
+	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.TotalTokensUsed != 3 || loaded.Quota.Usage.CostUsed != 0 {
+		t.Fatalf("missing-price usage = %#v error=%v", loaded.Quota, err)
+	}
+	if _, err = service.AdmitDecision(context.Background(), decision); err != nil {
+		t.Fatalf("missing price blocked the key: %v", err)
+	}
+}
+
+func TestPricingStoreFailureBlocksOnlyAffectedPolicyAndRecovers(t *testing.T) {
 	service := newTestService(t)
 	var missingPrice atomic.Bool
 	missingPrice.Store(true)
 	service.SetCostEstimator(func(_ context.Context, usage QuotaUsageDelta) (int64, error) {
-		if usage.Model == "missing-price" && missingPrice.Load() {
-			return 0, errors.New("price rule is unavailable")
+		if usage.Model == "storage-failure" && missingPrice.Load() {
+			return 0, errors.New("price database is unavailable")
 		}
 		return 250_000, nil
 	})
@@ -918,8 +956,8 @@ func TestUnavailableCostPricingBlocksOnlyAffectedPolicyAndRecovers(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = SettleQuotaUsage(WithDecision(context.Background(), blockedAdmission), "missing-price", QuotaUsageDelta{
-		Provider: "codex", Model: "missing-price", InputTokens: 1, TotalTokens: 1,
+	if err = SettleQuotaUsage(WithDecision(context.Background(), blockedAdmission), "storage-failure", QuotaUsageDelta{
+		Provider: "codex", Model: "storage-failure", InputTokens: 1, TotalTokens: 1,
 	}); !errors.Is(err, errQuotaPricingUnavailable) {
 		t.Fatalf("pricing error = %v", err)
 	}

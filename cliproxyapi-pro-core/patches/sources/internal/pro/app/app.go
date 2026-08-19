@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -62,7 +63,7 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 		), nil
 	})
 	apiKeyPolicy.SetCostEstimator(func(ctx context.Context, usage apikeypolicy.QuotaUsageDelta) (int64, error) {
-		return observability.EstimateUsageCostMicros(ctx, observability.UsageCostInput{
+		cost, err := observability.EstimateUsageCostMicros(ctx, observability.UsageCostInput{
 			Provider: usage.Provider, Model: usage.Model,
 			InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
 			ReasoningTokens: usage.ReasoningTokens, CachedTokens: usage.CachedTokens,
@@ -72,6 +73,10 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 			EffectiveServiceTier: usage.EffectiveServiceTier, Speed: usage.Speed,
 			EffectiveSpeed: usage.EffectiveSpeed,
 		})
+		if errors.Is(err, observability.ErrModelPriceUnavailable) {
+			return 0, apikeypolicy.ErrQuotaPriceMissing
+		}
+		return cost, err
 	})
 	policyBackupUnregister := probackup.Default.RegisterAPIKeyPolicies(
 		func() ([]byte, bool, error) {

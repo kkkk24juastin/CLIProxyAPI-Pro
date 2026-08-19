@@ -481,12 +481,15 @@ type Service struct {
 	index                atomic.Pointer[runtimeIndex]
 	retryCtx             context.Context
 	retryCancel          context.CancelFunc
+	retryMu              sync.Mutex
+	retryClosed          bool
 	retryWG              sync.WaitGroup
 	pendingMu            sync.Mutex
 	pendingSettlements   map[string]struct{}
 	pendingCount         atomic.Int64
 	pricingPending       map[string]struct{}
 	pricingBlocked       map[quotaPricingBlockKey]int
+	settlementBlocked    map[quotaPricingBlockKey]int
 	costEstimatorMu      sync.RWMutex
 	costEstimator        func(context.Context, QuotaUsageDelta) (int64, error)
 }
@@ -497,6 +500,10 @@ type quotaPricingBlockKey struct {
 }
 
 var errQuotaPricingUnavailable = errors.New("api key quota pricing is unavailable")
+
+// ErrQuotaPriceMissing means the requested model has no active price rule.
+// Token usage is still persisted and the event receives a zero-cost quote.
+var ErrQuotaPriceMissing = errors.New("api key quota price is missing")
 
 func (s *Service) SetCostEstimator(estimator func(context.Context, QuotaUsageDelta) (int64, error)) {
 	if s == nil {
@@ -625,7 +632,7 @@ func NewService(store *Store) (*Service, error) {
 	service := &Service{
 		store: store, retryCtx: retryCtx, retryCancel: retryCancel,
 		pendingSettlements: make(map[string]struct{}), pricingPending: make(map[string]struct{}),
-		pricingBlocked: make(map[quotaPricingBlockKey]int),
+		pricingBlocked: make(map[quotaPricingBlockKey]int), settlementBlocked: make(map[quotaPricingBlockKey]int),
 	}
 	service.index.Store(&runtimeIndex{healthy: false})
 	if err := service.Reload(context.Background()); err != nil {
@@ -639,7 +646,10 @@ func (s *Service) Close() error {
 		return nil
 	}
 	if s.retryCancel != nil {
+		s.retryMu.Lock()
+		s.retryClosed = true
 		s.retryCancel()
+		s.retryMu.Unlock()
 	}
 	s.retryWG.Wait()
 	return s.store.Close()
@@ -779,10 +789,10 @@ func (s *Service) AdmitDecision(ctx context.Context, decision RequestPolicyDecis
 		return decision, nil
 	}
 	index := s.index.Load()
-	if index == nil || !index.healthy || s.pendingCount.Load() > 0 {
+	if index == nil || !index.healthy {
 		return RequestPolicyDecision{}, ErrQuotaUnavailable
 	}
-	if s.quotaPricingIsBlocked(decision.Snapshot.PolicyID, decision.Snapshot.Quota.Epoch) {
+	if s.quotaPricingIsBlocked(decision.Snapshot.PolicyID, decision.Snapshot.Quota.Epoch) || s.quotaSettlementIsBlocked(decision.Snapshot.PolicyID, decision.Snapshot.Quota.Epoch) {
 		return RequestPolicyDecision{}, ErrQuotaUnavailable
 	}
 	admissionID, err := s.admitQuota(ctx, *decision.Snapshot)
@@ -806,7 +816,6 @@ func (s *Service) AdmitDecision(ctx context.Context, decision RequestPolicyDecis
 			return err
 		}
 		if err != nil {
-			s.MarkUnavailable()
 			s.retryQuotaSettlement(attribution, settlementID, usage, requireCost, costMicros, quoted)
 		}
 		return err
@@ -1012,6 +1021,10 @@ func (s *Service) recordQuotaUsage(ctx context.Context, attribution QuotaAttribu
 			return 0, false, errQuotaPricingUnavailable
 		}
 		costMicros, err = estimator(ctx, usage)
+		if errors.Is(err, ErrQuotaPriceMissing) {
+			quoted = true
+			return 0, true, s.persistQuotaUsage(ctx, attribution, eventID, totalTokens, 0)
+		}
 		if err != nil || costMicros < 0 {
 			if err == nil {
 				err = errors.New("negative cost estimate")
@@ -1080,10 +1093,17 @@ func (s *Service) retryQuotaSettlement(attribution QuotaAttribution, eventID str
 	}
 	s.pendingSettlements[eventID] = struct{}{}
 	s.pendingCount.Add(1)
+	s.markQuotaSettlementBlockedLocked(attribution.PolicyID, attribution.Epoch)
 	s.pendingMu.Unlock()
-	s.retryWG.Add(1)
-	go func() {
+	if !s.startQuotaRetry(func() {
 		defer s.retryWG.Done()
+		defer func() {
+			s.pendingMu.Lock()
+			delete(s.pendingSettlements, eventID)
+			s.pendingCount.Add(-1)
+			s.clearQuotaSettlementBlockedLocked(attribution.PolicyID, attribution.Epoch)
+			s.pendingMu.Unlock()
+		}()
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -1100,17 +1120,30 @@ func (s *Service) retryQuotaSettlement(attribution QuotaAttribution, eventID str
 				if err != nil && !errors.Is(err, ErrQuotaSettlementStale) {
 					continue
 				}
-				s.pendingMu.Lock()
-				delete(s.pendingSettlements, eventID)
-				remaining := s.pendingCount.Add(-1)
-				s.pendingMu.Unlock()
-				if remaining == 0 {
-					_ = s.Reload(context.Background())
-				}
 				return
 			}
 		}
-	}()
+	}) {
+		s.pendingMu.Lock()
+		delete(s.pendingSettlements, eventID)
+		s.pendingCount.Add(-1)
+		s.clearQuotaSettlementBlockedLocked(attribution.PolicyID, attribution.Epoch)
+		s.pendingMu.Unlock()
+	}
+}
+
+func (s *Service) startQuotaRetry(retry func()) bool {
+	if s == nil || retry == nil {
+		return false
+	}
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+	if s.retryClosed {
+		return false
+	}
+	s.retryWG.Add(1)
+	go retry()
+	return true
 }
 
 func (s *Service) quotaPricingIsBlocked(policyID string, epoch int64) bool {
@@ -1121,6 +1154,31 @@ func (s *Service) quotaPricingIsBlocked(policyID string, epoch int64) bool {
 	blocked := s.pricingBlocked[quotaPricingBlockKey{policyID: policyID, epoch: epoch}] > 0
 	s.pendingMu.Unlock()
 	return blocked
+}
+
+func (s *Service) quotaSettlementIsBlocked(policyID string, epoch int64) bool {
+	if s == nil || policyID == "" || epoch <= 0 {
+		return false
+	}
+	s.pendingMu.Lock()
+	blocked := s.settlementBlocked[quotaPricingBlockKey{policyID: policyID, epoch: epoch}] > 0
+	s.pendingMu.Unlock()
+	return blocked
+}
+
+func (s *Service) markQuotaSettlementBlockedLocked(policyID string, epoch int64) {
+	if policyID != "" && epoch > 0 {
+		s.settlementBlocked[quotaPricingBlockKey{policyID: policyID, epoch: epoch}]++
+	}
+}
+
+func (s *Service) clearQuotaSettlementBlockedLocked(policyID string, epoch int64) {
+	key := quotaPricingBlockKey{policyID: policyID, epoch: epoch}
+	if remaining := s.settlementBlocked[key] - 1; remaining > 0 {
+		s.settlementBlocked[key] = remaining
+	} else {
+		delete(s.settlementBlocked, key)
+	}
 }
 
 func (s *Service) retryQuotaPricing(attribution QuotaAttribution, eventID string, usage QuotaUsageDelta) {
@@ -1136,8 +1194,7 @@ func (s *Service) retryQuotaPricing(attribution QuotaAttribution, eventID string
 	s.pricingPending[eventID] = struct{}{}
 	s.pricingBlocked[blockKey]++
 	s.pendingMu.Unlock()
-	s.retryWG.Add(1)
-	go func() {
+	if !s.startQuotaRetry(func() {
 		defer s.retryWG.Done()
 		defer func() {
 			s.pendingMu.Lock()
@@ -1169,13 +1226,21 @@ func (s *Service) retryQuotaPricing(attribution QuotaAttribution, eventID string
 					continue
 				}
 				if err != nil && !errors.Is(err, ErrQuotaSettlementStale) {
-					s.MarkUnavailable()
 					s.retryQuotaSettlement(attribution, eventID, usage, true, costMicros, quoted)
 				}
 				return
 			}
 		}
-	}()
+	}) {
+		s.pendingMu.Lock()
+		delete(s.pricingPending, eventID)
+		if remaining := s.pricingBlocked[blockKey] - 1; remaining > 0 {
+			s.pricingBlocked[blockKey] = remaining
+		} else {
+			delete(s.pricingBlocked, blockKey)
+		}
+		s.pendingMu.Unlock()
+	}
 }
 
 func (s *Service) TakeoverEnabled() bool {

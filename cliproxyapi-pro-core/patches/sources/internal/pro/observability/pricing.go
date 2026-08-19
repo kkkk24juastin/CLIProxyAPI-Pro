@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -12,6 +13,10 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/pro/observability/internalusage"
 )
+
+// ErrModelPriceUnavailable identifies a model for which no active price rule
+// exists. Callers may safely account its token usage with zero cost.
+var ErrModelPriceUnavailable = errors.New("model price is unavailable")
 
 const modelPriceSourceManual = "manual"
 const modelPriceSourceModelsDev = "models.dev"
@@ -126,8 +131,11 @@ type UsageCostInput struct {
 }
 
 func (s *Store) EstimateUsageCostMicros(ctx context.Context, input UsageCostInput) (int64, error) {
-	if s == nil || strings.TrimSpace(input.Model) == "" {
-		return 0, fmt.Errorf("model price is unavailable")
+	if s == nil {
+		return 0, errors.New("model price store is unavailable")
+	}
+	if strings.TrimSpace(input.Model) == "" {
+		return 0, fmt.Errorf("%w: empty model", ErrModelPriceUnavailable)
 	}
 	rules, err := s.activeModelPriceRuleMap(ctx)
 	if err != nil {
@@ -135,7 +143,7 @@ func (s *Store) EstimateUsageCostMicros(ctx context.Context, input UsageCostInpu
 	}
 	rule, ok := findModelPriceRule(rules, input.Provider, input.Model)
 	if !ok {
-		return 0, fmt.Errorf("model price is unavailable for %q", strings.TrimSpace(input.Model))
+		return 0, fmt.Errorf("%w for %q", ErrModelPriceUnavailable, strings.TrimSpace(input.Model))
 	}
 	cost, _ := evaluateEventCost(internalusage.Event{
 		Provider: input.Provider, Model: input.Model,

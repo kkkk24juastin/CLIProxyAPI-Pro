@@ -1689,7 +1689,8 @@ insert_before(
 \t\t\treturn
 \t\t}
 \t\tupgrade := strings.EqualFold(strings.TrimSpace(c.GetHeader("Upgrade")), "websocket")
-\t\tif upgrade && (path == "/v1/responses" || path == "/v1/realtime") {
+\t\tdeferredRealtime := c.Request.Method == http.MethodPost && (path == "/v1/realtime" || path == "/v1/realtime/calls")
+\t\tif upgrade && (path == "/v1/responses" || path == "/v1/realtime") || deferredRealtime {
 \t\t\trequestCtx := apikeypolicy.WithQuotaAdmission(c.Request.Context(), policy.AdmitDecision)
 \t\t\tc.Request = c.Request.WithContext(requestCtx)
 \t\t\tc.Next()
@@ -1777,6 +1778,84 @@ add_go_import(
     realtime_websocket_source,
     f'\t"{MODULE_PATH}/internal/logging"\n',
     f'\tapikeypolicy "{MODULE_PATH}/internal/pro/apikeypolicy"\n',
+)
+replace_once(
+    realtime_websocket_source,
+	'''\tif len(tokenSession) > 0 {
+\t\ttokenModel := codexRealtimeModel(modelFromJSON(tokenSession))
+\t\tif selectionModel != tokenModel {
+\t\t\twriteRealtimeError(c, http.StatusForbidden, "Realtime client secret is not valid for the requested model", "invalid_request_error", "realtime_client_secret_scope_mismatch")
+\t\t\treturn
+\t\t}
+\t}
+\tctx := context.WithValue(c.Request.Context(), "gin", c)
+''',
+	'''\tpolicyCtx, effectiveModel, errPolicy := applyRealtimeAPIKeyPolicy(c.Request.Context(), requestedModel)
+\tif errPolicy != nil {
+\t\twriteRealtimeAPIKeyPolicyError(c, errPolicy)
+\t\treturn
+\t}
+\trequestedModel = effectiveModel
+\tselectionModel = codexRealtimeModel(requestedModel)
+\tif len(tokenSession) > 0 {
+\t\ttokenModel := codexRealtimeModel(modelFromJSON(tokenSession))
+\t\tif selectionModel != tokenModel {
+\t\t\twriteRealtimeError(c, http.StatusForbidden, "Realtime client secret is not valid for the requested model", "invalid_request_error", "realtime_client_secret_scope_mismatch")
+\t\t\treturn
+\t\t}
+\t}
+\tctx := context.WithValue(policyCtx, "gin", c)
+''',
+	'policyCtx, effectiveModel, errPolicy := applyRealtimeAPIKeyPolicy',
+)
+insert_before(
+    realtime_websocket_source,
+    'func realtimeSessionUpdate(session json.RawMessage) (json.RawMessage, error) {',
+    r'''func applyRealtimeAPIKeyPolicy(ctx context.Context, requestedModel string) (context.Context, string, error) {
+	decision, configured := apikeypolicy.DecisionFromContext(ctx)
+	if !configured {
+		return ctx, requestedModel, nil
+	}
+	effectiveModel, err := decision.ApplyModel(requestedModel)
+	if err != nil {
+		return ctx, "", err
+	}
+	if err = decision.AllowsProvider("codex"); err != nil {
+		return ctx, "", err
+	}
+	settle := apikeypolicy.QuotaUsageSettlementFromContext(ctx)
+	policyCtx := apikeypolicy.WithDecision(ctx, decision.WithModels(requestedModel, effectiveModel))
+	return apikeypolicy.WithQuotaUsageSettlement(policyCtx, settle), effectiveModel, nil
+}
+
+func writeRealtimeAPIKeyPolicyError(c *gin.Context, err error) {
+	status := http.StatusServiceUnavailable
+	code := "api_key_policy_unavailable"
+	message := "API key policy is unavailable"
+	errorType := "server_error"
+	if policyErr, ok := err.(*apikeypolicy.PolicyError); ok {
+		status = http.StatusForbidden
+		code = policyErr.Code
+		message = policyErr.Message
+		errorType = "permission_error"
+	}
+	writeRealtimeError(c, status, message, errorType, code)
+}
+
+func writeRealtimeQuotaAdmissionError(c *gin.Context, err error) {
+	status := http.StatusServiceUnavailable
+	code := "api_key_quota_unavailable"
+	errorType := "server_error"
+	if _, ok := err.(*apikeypolicy.QuotaExceededError); ok {
+		status = http.StatusTooManyRequests
+		code = "api_key_quota_exceeded"
+		errorType = "rate_limit_error"
+	}
+	writeRealtimeError(c, status, err.Error(), errorType, code)
+}
+
+''',
+    'func applyRealtimeAPIKeyPolicy(',
 )
 replace_once(
     realtime_websocket_source,
@@ -1921,6 +2000,144 @@ func writeRealtimeQuotaError(downstream *websocket.Conn, writeMu *sync.Mutex, er
 
 ''',
     'func relayRealtimeWebsockets(',
+)
+
+realtime_live_source = ROOT / 'internal/client/codex/live/live.go'
+add_go_import(
+    realtime_live_source,
+    f'\t"{MODULE_PATH}/internal/logging"\n',
+    f'\tapikeypolicy "{MODULE_PATH}/internal/pro/apikeypolicy"\n',
+)
+replace_once(
+    realtime_live_source,
+    '''\tif errPayload == nil {
+\t\tupstreamBody, model, errPayload = rewriteCallRequestModel(upstreamBody, upstreamContentType, model)
+\t}
+''',
+    '''\tif errPayload == nil {
+\t\tpolicyCtx, effectiveModel, errPolicy := applyRealtimeAPIKeyPolicy(c.Request.Context(), model)
+\t\tif errPolicy != nil {
+\t\t\twriteRealtimeAPIKeyPolicyError(c, errPolicy)
+\t\t\treturn
+\t\t}
+\t\tmodel = effectiveModel
+\t\tadmittedCtx, errAdmission := apikeypolicy.AdmitQuotaTurn(policyCtx)
+\t\tif errAdmission != nil {
+\t\t\twriteRealtimeQuotaAdmissionError(c, errAdmission)
+\t\t\treturn
+\t\t}
+\t\tc.Request = c.Request.WithContext(admittedCtx)
+\t}
+\tquotaModel := model
+\tif errPayload == nil {
+\t\tupstreamBody, model, errPayload = rewriteCallRequestModel(upstreamBody, upstreamContentType, model)
+\t}
+''',
+    'quotaModel := model',
+)
+replace_once(
+    realtime_live_source,
+    '''\t\t\tsession := liveSession{authID: selected.ID, model: model, media: mediaSession}
+''',
+    '''\t\t\tsession := liveSession{
+\t\t\t\tauthID: selected.ID, model: model, media: mediaSession,
+\t\t\t\tquotaModel: quotaModel, quotaSettlement: apikeypolicy.QuotaUsageSettlementFromContext(c.Request.Context()),
+\t\t\t}
+''',
+    'quotaSettlement: apikeypolicy.QuotaUsageSettlementFromContext',
+)
+
+realtime_sideband_source = ROOT / 'internal/client/codex/live/sideband.go'
+add_go_import(realtime_sideband_source, '\t"context"\n', '\t"encoding/json"\n')
+add_go_import(realtime_sideband_source, '\t"context"\n', '\t"crypto/sha256"\n')
+add_go_import(realtime_sideband_source, '\t"errors"\n', '\t"fmt"\n')
+add_go_import(
+    realtime_sideband_source,
+    f'\t"{MODULE_PATH}/internal/logging"\n',
+    f'\tapikeypolicy "{MODULE_PATH}/internal/pro/apikeypolicy"\n',
+)
+replace_once(
+    realtime_sideband_source,
+    '''\tclientSecretPrincipal string
+\thomeSelection         *auth.HomeDispatchSelection
+''',
+    '''\tclientSecretPrincipal string
+\tquotaModel           string
+\tquotaSettlement      func(context.Context, string, apikeypolicy.QuotaUsageDelta) error
+\thomeSelection         *auth.HomeDispatchSelection
+''',
+    'quotaSettlement func(context.Context, string, apikeypolicy.QuotaUsageDelta) error',
+)
+replace_once(
+    realtime_sideband_source,
+    '''\tif errRelay := relayWebsockets(downstream, upstream); errRelay != nil && !isNormalWebsocketClose(errRelay) {
+''',
+    '''\tif errRelay := relaySidebandQuotaWebsockets(ctx, downstream, upstream, session); errRelay != nil && !isNormalWebsocketClose(errRelay) {
+''',
+    'relaySidebandQuotaWebsockets(ctx, downstream, upstream, session)',
+)
+insert_before(
+    realtime_sideband_source,
+    'func sidebandTarget(c *gin.Context) (sidebandStyle, string, bool) {',
+    r'''func relaySidebandQuotaWebsockets(ctx context.Context, downstream, upstream *websocket.Conn, session liveSession) error {
+	if session.quotaSettlement == nil {
+		return relayWebsockets(downstream, upstream)
+	}
+	results := make(chan error, 2)
+	go func() { results <- copyWebsocket(upstream, downstream) }()
+	go func() {
+		for {
+			messageType, payload, errRead := upstream.ReadMessage()
+			if errRead != nil {
+				results <- errRead
+				return
+			}
+			var event struct {
+				Type string `json:"type"`
+				Response struct{ ID string `json:"id"` } `json:"response"`
+			}
+			if json.Unmarshal(payload, &event) == nil && (event.Type == "response.done" || event.Type == "response.completed") {
+				detail, ok := helps.ParseCodexUsage(payload)
+				if !ok {
+					detail = helps.ParseOpenAIUsage(payload)
+				}
+				totalTokens := detail.TokenBreakdown.TotalTokens
+				if totalTokens == 0 {
+					totalTokens = detail.TotalTokens
+				}
+				eventID := "webrtc:" + session.callID + ":response=" + strings.TrimSpace(event.Response.ID)
+				if strings.TrimSpace(event.Response.ID) == "" {
+					eventID = fmt.Sprintf("webrtc:%s:payload=%x", session.callID, sha256.Sum256(payload))
+				}
+				if errSettle := session.quotaSettlement(context.WithoutCancel(ctx), eventID, apikeypolicy.QuotaUsageDelta{
+					Provider: "codex", Model: session.quotaModel, InputTokens: detail.InputTokens,
+					OutputTokens: detail.OutputTokens, ReasoningTokens: detail.ReasoningTokens,
+					CachedTokens: detail.CachedTokens, CacheReadTokens: detail.CacheReadTokens,
+					CacheWriteTokens: detail.CacheCreationTokens, TotalTokens: totalTokens,
+					EffectiveServiceTier: detail.ResponseServiceTier, EffectiveSpeed: detail.ResponseSpeed,
+				}); errSettle != nil {
+					log.WithError(errSettle).Error("failed to settle WebRTC API key quota usage")
+				}
+			}
+			if errWrite := downstream.WriteMessage(messageType, payload); errWrite != nil {
+				results <- errWrite
+				return
+			}
+		}
+	}()
+	firstErr := <-results
+	closeCode, closeReason := websocketCloseDetails(firstErr)
+	payload := websocket.FormatCloseMessage(closeCode, closeReason)
+	_ = downstream.WriteControl(websocket.CloseMessage, payload, time.Time{})
+	_ = upstream.WriteControl(websocket.CloseMessage, payload, time.Time{})
+	_ = downstream.Close()
+	_ = upstream.Close()
+	<-results
+	return firstErr
+}
+
+''',
+    'func relaySidebandQuotaWebsockets(',
 )
 
 client_secret_source = ROOT / 'internal/client/codex/live/client_secret.go'
@@ -6920,6 +7137,8 @@ format_go_writes([
     'internal/managementasset/gitstore_token_test.go',
     'internal/client/codex/live/client_secret.go',
     'internal/client/codex/live/client_secret_test.go',
+	'internal/client/codex/live/live.go',
+	'internal/client/codex/live/sideband.go',
     'internal/client/codex/live/websocket.go',
     'internal/client/codex/live/api_key_quota_relay_test.go',
     'internal/api/handlers/management/plugin_quota.go',

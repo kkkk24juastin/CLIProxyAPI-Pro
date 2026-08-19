@@ -239,6 +239,25 @@ func SettleQuotaUsage(ctx context.Context, eventID string, usage QuotaUsageDelta
 	return nil
 }
 
+// QuotaUsageSettlementFromContext freezes only the server-owned settlement
+// capability needed by a protocol session that outlives its bootstrap request.
+func QuotaUsageSettlementFromContext(ctx context.Context) func(context.Context, string, QuotaUsageDelta) error {
+	if ctx == nil {
+		return nil
+	}
+	if settle, ok := ctx.Value(quotaSettlementContextKey{}).(quotaUsageSettlementFunc); ok && settle != nil {
+		return func(settleCtx context.Context, eventID string, usage QuotaUsageDelta) error {
+			return settle(settleCtx, eventID, usage)
+		}
+	}
+	if settle, ok := ctx.Value(quotaSettlementContextKey{}).(func(context.Context, string, int64) error); ok && settle != nil {
+		return func(settleCtx context.Context, eventID string, usage QuotaUsageDelta) error {
+			return settle(settleCtx, eventID, usage.TotalTokens)
+		}
+	}
+	return nil
+}
+
 type ModelMapping struct {
 	Source string `json:"source"`
 	Target string `json:"target"`

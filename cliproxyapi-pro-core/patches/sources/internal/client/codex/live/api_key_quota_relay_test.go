@@ -131,3 +131,81 @@ func TestRealtimeRelayAdmitsAndSettlesEveryResponseTurn(t *testing.T) {
 		t.Fatalf("admissions=%d", admissions.Load())
 	}
 }
+
+func TestApplyRealtimeAPIKeyPolicyMapsModelAndEnforcesProvider(t *testing.T) {
+	decision := apikeypolicy.RequestPolicyDecision{Mode: apikeypolicy.ModeProfile, Snapshot: &apikeypolicy.RequestPolicySnapshot{
+		ModelMappings:    map[string]string{"voice": "gpt-realtime"},
+		AllowedModels:    map[string]struct{}{"gpt-realtime": {}},
+		AllowedProviders: map[string]struct{}{"codex": {}},
+	}}
+	ctx, model, err := applyRealtimeAPIKeyPolicy(apikeypolicy.WithDecision(context.Background(), decision), "voice")
+	if err != nil || model != "gpt-realtime" {
+		t.Fatalf("mapped model=%q error=%v", model, err)
+	}
+	mapped, ok := apikeypolicy.DecisionFromContext(ctx)
+	if !ok || mapped.UsageAttribution().RequestedModel != "voice" || mapped.UsageAttribution().EffectiveModel != "gpt-realtime" {
+		t.Fatalf("mapped decision=%#v", mapped)
+	}
+	if _, _, err = applyRealtimeAPIKeyPolicy(apikeypolicy.WithDecision(context.Background(), decision), "forbidden"); err == nil {
+		t.Fatal("forbidden realtime model was accepted")
+	}
+	decision.Snapshot.AllowedProviders = map[string]struct{}{"claude": {}}
+	if _, _, err = applyRealtimeAPIKeyPolicy(apikeypolicy.WithDecision(context.Background(), decision), "voice"); err == nil {
+		t.Fatal("forbidden Codex provider was accepted")
+	}
+}
+
+func TestSidebandQuotaRelaySettlesFrozenBootstrapAdmission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _, _ = conn.ReadMessage()
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.done","response":{"id":"rtc_resp","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`))
+	}))
+	defer upstreamServer.Close()
+	settled := make(chan apikeypolicy.QuotaUsageDelta, 1)
+	router := gin.New()
+	router.GET("/sideband", func(c *gin.Context) {
+		upstream, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(upstreamServer.URL, "http"), nil)
+		if err != nil {
+			return
+		}
+		upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+		downstream, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+		if err != nil {
+			_ = upstream.Close()
+			return
+		}
+		session := liveSession{callID: "rtc_call", quotaModel: "gpt-realtime", quotaSettlement: func(_ context.Context, _ string, usage apikeypolicy.QuotaUsageDelta) error {
+			settled <- usage
+			return nil
+		}}
+		_ = relaySidebandQuotaWebsockets(context.Background(), downstream, upstream, session)
+	})
+	downstreamServer := httptest.NewServer(router)
+	defer downstreamServer.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(downstreamServer.URL, "http")+"/sideband", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"session.update"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = conn.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case usage := <-settled:
+		if usage.Provider != "codex" || usage.Model != "gpt-realtime" || usage.TotalTokens != 5 || usage.InputTokens != 2 || usage.OutputTokens != 3 {
+			t.Fatalf("settled usage=%#v", usage)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("sideband usage was not settled")
+	}
+}

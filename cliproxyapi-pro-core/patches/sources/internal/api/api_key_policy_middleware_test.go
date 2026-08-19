@@ -222,6 +222,35 @@ func TestAPIKeyQuotaMiddlewareDefersWebsocketChargeToEachTurn(t *testing.T) {
 	}
 }
 
+func TestAPIKeyQuotaMiddlewareDefersWebRTCBootstrapUntilModelValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	manager := sdkaccess.NewManager()
+	manager.SetProviders([]sdkaccess.Provider{apiKeyPolicyAccessProvider{provider: sdkaccess.DefaultAccessProviderName, principal: "webrtc-quota-key"}})
+	service := newAPIKeyPolicyMiddlewareService(t)
+	identity, _ := apikeypolicy.NewAuthenticatedAPIKeyIdentity("webrtc-quota-key")
+	requestLimit := int64(1)
+	if _, err := service.Create(context.Background(), identity, "WebRTC", apikeypolicy.ProfileInput{Name: "default"}, &apikeypolicy.QuotaInput{Enabled: true, Requests: &requestLimit}); err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	router.Use(AuthMiddleware(manager, service), apiKeyQuotaMiddleware(service))
+	router.POST("/v1/realtime/calls", func(c *gin.Context) {
+		decision, _ := apikeypolicy.DecisionFromContext(c.Request.Context())
+		if _, charged := decision.QuotaAttribution(); charged {
+			t.Fatal("middleware charged WebRTC before model validation")
+		}
+		if _, err := apikeypolicy.AdmitQuotaTurn(c.Request.Context()); err != nil {
+			t.Fatalf("deferred WebRTC admission: %v", err)
+		}
+		c.Status(http.StatusNoContent)
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/realtime/calls", nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestRealtimeClientSecretReDecidesAtEveryConnectionAndFreezesConnectedSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service := newAPIKeyPolicyMiddlewareService(t)
