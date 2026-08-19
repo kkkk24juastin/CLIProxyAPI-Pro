@@ -139,6 +139,8 @@ func (s *Store) init(ctx context.Context) error {
 		`create index if not exists idx_api_key_policy_audit_policy on api_key_policy_audit(policy_id, created_at_ms)`,
 		`create index if not exists idx_api_key_quota_admissions_policy on api_key_quota_admissions(policy_id, epoch)`,
 		`create index if not exists idx_api_key_quota_tokens_policy on api_key_quota_token_events(policy_id, epoch)`,
+		`create index if not exists idx_api_key_quota_admissions_window on api_key_quota_admissions(policy_id, epoch, admitted_at_ms)`,
+		`create index if not exists idx_api_key_quota_tokens_window on api_key_quota_token_events(policy_id, epoch, occurred_at_ms)`,
 	}, Alter: []string{
 		`alter table api_key_policy_quotas add column cost_limit_micros integer check(cost_limit_micros is null or cost_limit_micros > 0)`,
 		`alter table api_key_policy_quotas add column period_type text not null default 'all_time'`,

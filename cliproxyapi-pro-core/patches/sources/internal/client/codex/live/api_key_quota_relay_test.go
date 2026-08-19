@@ -38,7 +38,7 @@ func TestRealtimeRelayAdmitsAndSettlesEveryResponseTurn(t *testing.T) {
 	defer upstreamServer.Close()
 
 	var admissions atomic.Int64
-	settled := make(chan int64, 1)
+	settled := make(chan apikeypolicy.QuotaUsageDelta, 1)
 	baseDecision := apikeypolicy.RequestPolicyDecision{Mode: apikeypolicy.ModeProfile, Snapshot: &apikeypolicy.RequestPolicySnapshot{
 		PolicyID: "policy", ProfileID: "profile", Quota: &apikeypolicy.Quota{Enabled: true, Epoch: 1},
 	}}
@@ -49,8 +49,8 @@ func TestRealtimeRelayAdmitsAndSettlesEveryResponseTurn(t *testing.T) {
 			return apikeypolicy.RequestPolicyDecision{}, &apikeypolicy.QuotaExceededError{Metric: "requests", Used: 1, Limit: 1}
 		}
 		decision.Snapshot.QuotaAdmissionID = "admission-1"
-		decision.Snapshot.QuotaSettlement = func(_ context.Context, _ string, tokens int64) error {
-			settled <- tokens
+		decision.Snapshot.QuotaUsageSettlement = func(_ context.Context, _ string, usage apikeypolicy.QuotaUsageDelta) error {
+			settled <- usage
 			return nil
 		}
 		return decision, nil
@@ -69,7 +69,7 @@ func TestRealtimeRelayAdmitsAndSettlesEveryResponseTurn(t *testing.T) {
 			upstream.Close()
 			return
 		}
-		_ = relayRealtimeWebsockets(baseCtx, downstream, upstream)
+		_ = relayRealtimeWebsockets(baseCtx, downstream, upstream, "gpt-realtime")
 	})
 	downstreamServer := httptest.NewServer(router)
 	defer downstreamServer.Close()
@@ -106,9 +106,9 @@ func TestRealtimeRelayAdmitsAndSettlesEveryResponseTurn(t *testing.T) {
 		t.Fatalf("done=%s error=%v", done, err)
 	}
 	select {
-	case tokens := <-settled:
-		if tokens != 9 {
-			t.Fatalf("settled tokens=%d", tokens)
+	case usage := <-settled:
+		if usage.Provider != "codex" || usage.Model != "gpt-realtime" || usage.TotalTokens != 9 || usage.InputTokens != 4 || usage.OutputTokens != 5 {
+			t.Fatalf("settled usage=%#v", usage)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("realtime usage was not settled")

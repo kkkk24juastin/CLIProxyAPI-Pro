@@ -202,8 +202,10 @@
 .quotaHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .quotaToggle { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
 .quotaGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.quotaPeriodGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 12px; }
-.quotaSelectField { display: grid; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: 12px; }
+.quotaPeriodGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 12px; }
+.quotaPeriodGrid :global(.form-group) { margin-bottom: 0; }
+.quotaSelectField { display: grid; gap: 4px; min-width: 0; color: var(--text-primary); font-size: 16px; font-weight: 600; }
+.quotaSelectTrigger { height: 46px; background: var(--bg-secondary); box-shadow: none; font-size: 16px; font-weight: 400; }
 .quotaPeriodHint { margin: -6px 0 0; color: var(--text-secondary); font-size: 11px; }
 .quotaUsage { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding-top: 12px; border-top: 1px solid var(--border-color); color: var(--text-secondary); font-size: 11px; }
 .quotaUsage :global(.btn) { margin-left: auto; }

@@ -882,6 +882,81 @@ func TestCostQuotaUsesServerPricingAndFailsClosedAfterExhaustion(t *testing.T) {
 	}
 }
 
+func TestUnavailableCostPricingBlocksOnlyAffectedPolicyAndRecovers(t *testing.T) {
+	service := newTestService(t)
+	var missingPrice atomic.Bool
+	missingPrice.Store(true)
+	service.SetCostEstimator(func(_ context.Context, usage QuotaUsageDelta) (int64, error) {
+		if usage.Model == "missing-price" && missingPrice.Load() {
+			return 0, errors.New("price rule is unavailable")
+		}
+		return 250_000, nil
+	})
+	costLimit := 10.0
+	blockedIdentity := testIdentity(t, "blocked-pricing-key")
+	blockedPolicy, err := service.Create(context.Background(), blockedIdentity, "Blocked", ProfileInput{Name: "blocked"}, &QuotaInput{
+		Enabled: true, Cost: &costLimit, Period: QuotaPeriod{Type: QuotaPeriodAllTime},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthyIdentity := testIdentity(t, "healthy-pricing-key")
+	_, err = service.Create(context.Background(), healthyIdentity, "Healthy", ProfileInput{Name: "healthy"}, &QuotaInput{
+		Enabled: true, Cost: &costLimit, Period: QuotaPeriod{Type: QuotaPeriodAllTime},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	blockedDecision, err := service.Decide(blockedIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedAdmission, err := service.AdmitDecision(context.Background(), blockedDecision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = SettleQuotaUsage(WithDecision(context.Background(), blockedAdmission), "missing-price", QuotaUsageDelta{
+		Provider: "codex", Model: "missing-price", InputTokens: 1, TotalTokens: 1,
+	}); !errors.Is(err, errQuotaPricingUnavailable) {
+		t.Fatalf("pricing error = %v", err)
+	}
+	if !service.Healthy() || service.pendingCount.Load() != 0 {
+		t.Fatalf("pricing miss poisoned global service: healthy=%v pending=%d", service.Healthy(), service.pendingCount.Load())
+	}
+	if _, err = service.AdmitDecision(context.Background(), blockedDecision); !errors.Is(err, ErrQuotaUnavailable) {
+		t.Fatalf("affected policy admission error = %v", err)
+	}
+	healthyDecision, err := service.Decide(healthyIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.AdmitDecision(context.Background(), healthyDecision); err != nil {
+		t.Fatalf("unrelated policy was blocked: %v", err)
+	}
+
+	missingPrice.Store(false)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		blockedDecision, err = service.Decide(blockedIdentity)
+		if err == nil {
+			if _, err = service.AdmitDecision(context.Background(), blockedDecision); err == nil {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("affected policy did not recover: %v", err)
+	}
+	loaded, err := service.Get(context.Background(), blockedPolicy.ID)
+	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.CostUsed != 0.25 {
+		t.Fatalf("recovered cost usage = %#v error=%v", loaded.Quota, err)
+	}
+}
+
 func TestQuotaSettlementRetryKeepsFirstSuccessfulPriceQuote(t *testing.T) {
 	service := newTestService(t)
 	identity := testIdentity(t, "stable-cost-quote-key")
@@ -986,6 +1061,22 @@ func TestQuotaCalendarPeriodBoundsUseUTC(t *testing.T) {
 	monthStart, monthEnd := quotaPeriodBounds(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "month"}, 1, now)
 	if got := time.UnixMilli(monthStart).UTC(); got.Day() != 1 || got.Month() != time.August || time.UnixMilli(monthEnd).UTC().Month() != time.September {
 		t.Fatalf("UTC month bounds = %s .. %s", time.UnixMilli(monthStart).UTC(), time.UnixMilli(monthEnd).UTC())
+	}
+}
+
+func TestQuotaPeriodIndexesIncludeWindowTimestamps(t *testing.T) {
+	service := newTestService(t)
+	for name, columns := range map[string]string{
+		"idx_api_key_quota_admissions_window": "(policy_id, epoch, admitted_at_ms)",
+		"idx_api_key_quota_tokens_window":     "(policy_id, epoch, occurred_at_ms)",
+	} {
+		var definition string
+		if err := service.store.db.QueryRow(`select sql from sqlite_master where type = 'index' and name = ?`, name).Scan(&definition); err != nil {
+			t.Fatalf("load index %s: %v", name, err)
+		}
+		if !strings.Contains(definition, columns) {
+			t.Fatalf("index %s definition = %q, want columns %s", name, definition, columns)
+		}
 	}
 }
 

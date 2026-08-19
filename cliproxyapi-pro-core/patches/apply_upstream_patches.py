@@ -1781,8 +1781,8 @@ add_go_import(
 replace_once(
     realtime_websocket_source,
     '\tif errRelay := relayWebsockets(downstream, upstream); errRelay != nil && !isNormalWebsocketClose(errRelay) {\n',
-    '\tif errRelay := relayRealtimeWebsockets(ctx, downstream, upstream); errRelay != nil && !isNormalWebsocketClose(errRelay) {\n',
-    'relayRealtimeWebsockets(ctx, downstream, upstream)',
+    '\tif errRelay := relayRealtimeWebsockets(ctx, downstream, upstream, requestedModel); errRelay != nil && !isNormalWebsocketClose(errRelay) {\n',
+    'relayRealtimeWebsockets(ctx, downstream, upstream, requestedModel)',
 )
 insert_before(
     realtime_websocket_source,
@@ -1798,11 +1798,11 @@ type realtimeQuotaState struct {
 	active *realtimeQuotaTurn
 }
 
-func relayRealtimeWebsockets(ctx context.Context, downstream, upstream *websocket.Conn) error {
+func relayRealtimeWebsockets(ctx context.Context, downstream, upstream *websocket.Conn, billingModel string) error {
 	state := &realtimeQuotaState{}
 	downstreamWriteMu := &sync.Mutex{}
 	results := make(chan error, 2)
-	go func() { results <- copyRealtimeDownstream(ctx, downstream, upstream, state, downstreamWriteMu) }()
+	go func() { results <- copyRealtimeDownstream(ctx, downstream, upstream, state, downstreamWriteMu, billingModel) }()
 	go func() { results <- copyRealtimeUpstream(ctx, downstream, upstream, state, downstreamWriteMu) }()
 
 	firstErr := <-results
@@ -1818,7 +1818,7 @@ func relayRealtimeWebsockets(ctx context.Context, downstream, upstream *websocke
 	return firstErr
 }
 
-func copyRealtimeDownstream(ctx context.Context, downstream, upstream *websocket.Conn, state *realtimeQuotaState, downstreamWriteMu *sync.Mutex) error {
+func copyRealtimeDownstream(ctx context.Context, downstream, upstream *websocket.Conn, state *realtimeQuotaState, downstreamWriteMu *sync.Mutex, billingModel string) error {
 	for {
 		messageType, payload, errRead := downstream.ReadMessage()
 		if errRead != nil {
@@ -1842,14 +1842,7 @@ func copyRealtimeDownstream(ctx context.Context, downstream, upstream *websocket
 				if decision, ok := apikeypolicy.DecisionFromContext(turnCtx); ok {
 					if _, charged := decision.QuotaAttribution(); charged {
 						state.mu.Lock()
-						model := ""
-						if decision.Snapshot != nil {
-							model = decision.Snapshot.EffectiveModel
-							if model == "" {
-								model = decision.Snapshot.RequestedModel
-							}
-						}
-						state.active = &realtimeQuotaTurn{ctx: turnCtx, eventID: fmt.Sprintf("realtime:%d", time.Now().UnixNano()), model: model}
+						state.active = &realtimeQuotaTurn{ctx: turnCtx, eventID: fmt.Sprintf("realtime:%d", time.Now().UnixNano()), model: strings.TrimSpace(billingModel)}
 						state.mu.Unlock()
 					}
 				}

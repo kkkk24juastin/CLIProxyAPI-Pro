@@ -984,6 +984,7 @@ export function APIKeyPolicyPage() {
                     <span>{t('api_key_policy.quota_period_label')}</span>
                     <Select
                       value={draft.quota.period.type}
+                      triggerClassName={styles.quotaSelectTrigger}
                       options={(['all_time', 'past_duration', 'calendar_duration'] as const).map((value) => ({ value, label: t(`api_key_policy.quota_period.${value}`) }))}
                       onChange={(value) => updateDraft((current) => ({
                         ...current,
@@ -1015,6 +1016,7 @@ export function APIKeyPolicyPage() {
                       <span>{t('api_key_policy.quota_period_unit')}</span>
                       <Select
                         value={draft.quota.period.unit}
+                        triggerClassName={styles.quotaSelectTrigger}
                         options={(['minute', 'hour', 'day'] as const).map((value) => ({ value, label: t(`api_key_policy.quota_unit.${value}`) }))}
                         onChange={(unit) => updateDraft((current) => current.quota?.period.type === 'past_duration' ? ({ ...current, quota: { ...current.quota, period: { ...current.quota.period, unit: unit as 'minute' | 'hour' | 'day' } } }) : current)}
                         disabled={Boolean(readOnly || saving)}
@@ -1026,6 +1028,7 @@ export function APIKeyPolicyPage() {
                     <span>{t('api_key_policy.quota_period_unit')}</span>
                     <Select
                       value={draft.quota.period.unit}
+                      triggerClassName={styles.quotaSelectTrigger}
                       options={(['day', 'month'] as const).map((value) => ({ value, label: t(`api_key_policy.quota_calendar_unit.${value}`) }))}
                       onChange={(unit) => updateDraft((current) => current.quota?.period.type === 'calendar_duration' ? ({ ...current, quota: { ...current.quota, period: { type: 'calendar_duration', unit: unit as 'day' | 'month' } } }) : current)}
                       disabled={Boolean(readOnly || saving)}

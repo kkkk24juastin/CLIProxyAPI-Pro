@@ -162,6 +162,7 @@ describe('API Key Policy profile drafts', () => {
 
   test('uses one atomic workspace request and synchronous duplicate-save guard', () => {
     const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+    const styles = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.module.scss'), 'utf8');
     const client = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/apiKeyPolicy.ts'), 'utf8');
     expect(page).toContain('apiKeyPolicyApi.updateWorkspace(');
     expect(page).not.toContain('policy = await apiKeyPolicyApi.rename');
@@ -191,6 +192,10 @@ describe('API Key Policy profile drafts', () => {
     expect(page).toContain('{draft.quota?.enabled ? <>');
     expect(page).toContain("placeholder={t('api_key_policy.quota_cost_example')}");
     expect(page).toContain("(['all_time', 'past_duration', 'calendar_duration'] as const)");
+    expect(styles).toContain('.quotaPeriodGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start;');
+    expect(styles).toContain('.quotaPeriodGrid :global(.form-group) { margin-bottom: 0; }');
+    expect(styles).toContain('.quotaSelectTrigger { height: 46px;');
+    expect(page.match(/triggerClassName=\{styles\.quotaSelectTrigger\}/g)).toHaveLength(3);
     expect(page).toContain('const quotaRevisionRef = useRef(0);');
     expect(page).toContain('const quotaBusyRef = useRef(false);');
     expect(page).toContain('if (revision !== quotaRevisionRef.current) return;');
