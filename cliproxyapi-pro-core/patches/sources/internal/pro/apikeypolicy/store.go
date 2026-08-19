@@ -300,6 +300,118 @@ func (s *Store) Get(ctx context.Context, policyID string) (Policy, error) {
 	return policy, err
 }
 
+func (s *Store) ListQuotaSummaries(ctx context.Context, nowMS int64) ([]QuotaSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `select id, version from api_key_policies order by created_at_ms, id`)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]QuotaSummary, 0)
+	for rows.Next() {
+		var summary QuotaSummary
+		if err = rows.Scan(&summary.PolicyID, &summary.PolicyVersion); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		summaries = append(summaries, summary)
+	}
+	if err = rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range summaries {
+		summary := &summaries[index]
+		summary.Quota, err = getPolicyQuotaAt(ctx, s.db, summary.PolicyID, nowMS)
+		if err != nil {
+			return nil, err
+		}
+		if summary.Quota != nil && summary.Quota.Enabled {
+			summary.NextRecoverAtMS, err = quotaNextRecoverAt(ctx, s.db, summary.PolicyID, *summary.Quota)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return summaries, nil
+}
+
+func quotaNextRecoverAt(ctx context.Context, queryer sqlQueryer, policyID string, quota Quota) (int64, error) {
+	if len(quota.Usage.Exhausted) == 0 || quota.Period.Type == QuotaPeriodAllTime {
+		return 0, nil
+	}
+	if quota.Period.Type == QuotaPeriodCalendarDuration {
+		return quota.Usage.WindowEndsAtMS, nil
+	}
+	if quota.Period.Type != QuotaPeriodPastDuration || quota.Period.Value == nil {
+		return 0, nil
+	}
+	duration, ok := quotaPastDuration(*quota.Period.Value, quota.Period.Unit)
+	if !ok {
+		return 0, nil
+	}
+	recoverAt := int64(0)
+	if quota.Requests != nil && quota.Usage.RequestsUsed >= *quota.Requests {
+		offset := quota.Usage.RequestsUsed - *quota.Requests
+		var occurredAt int64
+		err := queryer.QueryRowContext(ctx, `select admitted_at_ms from api_key_quota_admissions where policy_id = ? and epoch = ? and admitted_at_ms >= ? order by admitted_at_ms, admission_id limit 1 offset ?`, policyID, quota.Epoch, quota.Usage.WindowStartedAtMS, offset).Scan(&occurredAt)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+		if err == nil {
+			recoverAt = occurredAt + duration.Milliseconds()
+		}
+	}
+	if (quota.TotalTokens != nil && quota.Usage.TotalTokensUsed >= *quota.TotalTokens) ||
+		(quota.Cost != nil && quota.Usage.CostUsed >= *quota.Cost) {
+		rows, err := queryer.QueryContext(ctx, `select total_tokens, cost_micros, occurred_at_ms from api_key_quota_token_events where policy_id = ? and epoch = ? and occurred_at_ms >= ? order by occurred_at_ms, event_id`, policyID, quota.Epoch, quota.Usage.WindowStartedAtMS)
+		if err != nil {
+			return 0, err
+		}
+		remainingTokens := quota.Usage.TotalTokensUsed
+		remainingCostMicros := int64(math.Round(quota.Usage.CostUsed * 1_000_000))
+		tokenRecovered := quota.TotalTokens == nil || remainingTokens < *quota.TotalTokens
+		costLimitMicros := int64(0)
+		if quota.Cost != nil {
+			costLimitMicros = int64(math.Round(*quota.Cost * 1_000_000))
+		}
+		costRecovered := quota.Cost == nil || remainingCostMicros < costLimitMicros
+		for rows.Next() {
+			var tokens, costMicros, occurredAt int64
+			if err = rows.Scan(&tokens, &costMicros, &occurredAt); err != nil {
+				_ = rows.Close()
+				return 0, err
+			}
+			remainingTokens -= tokens
+			remainingCostMicros -= costMicros
+			if !tokenRecovered && quota.TotalTokens != nil && remainingTokens < *quota.TotalTokens {
+				tokenRecovered = true
+				if candidate := occurredAt + duration.Milliseconds(); candidate > recoverAt {
+					recoverAt = candidate
+				}
+			}
+			if !costRecovered && quota.Cost != nil && remainingCostMicros < costLimitMicros {
+				costRecovered = true
+				if candidate := occurredAt + duration.Milliseconds(); candidate > recoverAt {
+					recoverAt = candidate
+				}
+			}
+			if tokenRecovered && costRecovered {
+				break
+			}
+		}
+		if err = rows.Err(); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		if err = rows.Close(); err != nil {
+			return 0, err
+		}
+	}
+	return recoverAt, nil
+}
+
 func getPolicyQuota(ctx context.Context, queryer sqlQueryer, policyID string) (*Quota, error) {
 	return getPolicyQuotaAt(ctx, queryer, policyID, time.Now().UnixMilli())
 }

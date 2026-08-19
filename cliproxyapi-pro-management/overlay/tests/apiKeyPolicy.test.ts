@@ -9,6 +9,7 @@ import {
   resolveMappingTargetModels,
   resolveModelsForProviders,
   supportsAPIKeyQuota,
+  supportsAPIKeyQuotaOverview,
   supportsAPIKeyPolicyUsageTarget,
   updateProfileProviders,
   validateAPIKeyPolicyCapabilities,
@@ -136,6 +137,26 @@ describe('API Key Policy profile drafts', () => {
     expect(client).toContain("'usage_key_target'");
     expect(client).toContain("'/api-key-policy-usage-target'");
     expect(page).toContain('usageTargetSupported ?');
+  });
+
+  test('negotiates and renders the lightweight API Key quota overview', () => {
+    const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+    const client = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/apiKeyPolicy.ts'), 'utf8');
+    const legacyCapabilities = validateAPIKeyPolicyCapabilities({
+      apiVersion: 1,
+      features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
+    });
+    expect(supportsAPIKeyQuotaOverview({ ...legacyCapabilities, features: [...legacyCapabilities.features, 'key_quota_overview'] })).toBe(true);
+    expect(client).toContain("'/api-key-policy-quota-summaries'");
+    expect(page).toContain("type PageView = 'policies' | 'quotas'");
+    expect(page).toContain("window.setInterval(() => void loadQuotaSummaries(true), 15_000)");
+    expect(page).toContain('quotaSummaryRevisionRef.current += 1;');
+    expect(page).toContain('quotaVisualState(summary, takeoverActive)');
+    expect(page).toContain('apiKeyPolicyApi.resetQuota(policy.id, policy.version)');
+    expect(page).toContain('await loadQuotaSummaries(true);');
+    expect(page).toContain('await Promise.all([load(), loadQuotaSummaries(true)]);');
+    expect(page).toContain('key={binding.keyRef}');
+    expect(page).toContain("t(`api_key_policy.quota_block.${summary.blockedReason}`)");
   });
 
   test('has complete distinct translations for every supported language', async () => {

@@ -351,6 +351,27 @@ type QuotaUsage struct {
 	Exhausted         []string `json:"exhausted"`
 }
 
+const (
+	QuotaAdmissionAvailable = "available"
+	QuotaAdmissionDisabled  = "disabled"
+	QuotaAdmissionExhausted = "exhausted"
+	QuotaAdmissionBlocked   = "blocked"
+
+	QuotaBlockPricingStore    = "pricing_store_unavailable"
+	QuotaBlockSettlementStore = "settlement_store_unavailable"
+)
+
+// QuotaSummary is the lightweight Management view of one Key-wide budget.
+// It intentionally excludes API-key fingerprints and Profile rules.
+type QuotaSummary struct {
+	PolicyID        string `json:"policyId"`
+	PolicyVersion   int64  `json:"policyVersion"`
+	Quota           *Quota `json:"quota,omitempty"`
+	AdmissionState  string `json:"admissionState"`
+	BlockedReason   string `json:"blockedReason,omitempty"`
+	NextRecoverAtMS int64  `json:"nextRecoverAtMs,omitempty"`
+}
+
 // QuotaUsageDelta is the provider usage required to settle both token and
 // price quotas. Cost is evaluated server-side from the active model-price rule.
 type QuotaUsageDelta struct {

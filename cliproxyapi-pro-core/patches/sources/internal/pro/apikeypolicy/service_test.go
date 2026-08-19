@@ -29,6 +29,86 @@ func newTestService(t *testing.T) *Service {
 	return service
 }
 
+func TestQuotaSummariesExposeRollingRecoveryAndIsolatedBlockState(t *testing.T) {
+	service := newTestService(t)
+	requestLimit := int64(2)
+	periodValue := int64(1)
+	create := func(raw, name string) Policy {
+		policy, err := service.Create(context.Background(), testIdentity(t, raw), name, ProfileInput{Name: "default"}, &QuotaInput{
+			Enabled: true, Requests: &requestLimit, Period: QuotaPeriod{Type: QuotaPeriodPastDuration, Value: &periodValue, Unit: "hour"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return policy
+	}
+	blocked := create("summary-blocked", "Blocked")
+	healthy := create("summary-healthy", "Healthy")
+	nowMS := time.Now().UnixMilli()
+	firstAt := nowMS - int64(30*time.Minute/time.Millisecond)
+	if _, err := service.store.db.Exec(`insert into api_key_quota_admissions(admission_id, policy_id, profile_id, epoch, admitted_at_ms) values(?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+		"summary-admission-1", blocked.ID, blocked.ActiveProfileID, blocked.Quota.Epoch, firstAt,
+		"summary-admission-2", blocked.ID, blocked.ActiveProfileID, blocked.Quota.Epoch, nowMS-int64(5*time.Minute/time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	service.pendingMu.Lock()
+	service.pricingBlocked[quotaPricingBlockKey{policyID: blocked.ID, epoch: blocked.Quota.Epoch}] = 1
+	service.pendingMu.Unlock()
+	summaries, err := service.ListQuotaSummaries(context.Background(), nowMS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[string]QuotaSummary, len(summaries))
+	for _, summary := range summaries {
+		byID[summary.PolicyID] = summary
+	}
+	if got := byID[blocked.ID]; got.AdmissionState != QuotaAdmissionBlocked || got.BlockedReason != QuotaBlockPricingStore || got.NextRecoverAtMS != firstAt+int64(time.Hour/time.Millisecond) {
+		t.Fatalf("blocked summary = %+v", got)
+	}
+	if got := byID[healthy.ID]; got.AdmissionState != QuotaAdmissionAvailable || got.BlockedReason != "" || got.NextRecoverAtMS != 0 {
+		t.Fatalf("healthy summary = %+v", got)
+	}
+}
+
+func TestQuotaSummariesUseCalendarBoundaryAndNeverExposeKeyHash(t *testing.T) {
+	service := newTestService(t)
+	requestLimit := int64(1)
+	policy, err := service.Create(context.Background(), testIdentity(t, "calendar-summary-key"), "Calendar", ProfileInput{Name: "default"}, &QuotaInput{
+		Enabled: true, Requests: &requestLimit, Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.August, 19, 12, 0, 0, 0, time.UTC)
+	if _, err = service.store.db.Exec(`insert into api_key_quota_admissions(admission_id, policy_id, profile_id, epoch, admitted_at_ms) values(?, ?, ?, ?, ?)`, "calendar-admission", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, now.Add(-time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := service.ListQuotaSummaries(context.Background(), now.UnixMilli())
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("summaries = %+v err=%v", summaries, err)
+	}
+	if summaries[0].AdmissionState != QuotaAdmissionExhausted || summaries[0].NextRecoverAtMS != time.Date(2026, time.August, 20, 0, 0, 0, 0, time.UTC).UnixMilli() {
+		t.Fatalf("calendar summary = %+v", summaries[0])
+	}
+	raw, err := json.Marshal(summaries[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), policy.APIKeyHash) || strings.Contains(string(raw), "apiKeyHash") {
+		t.Fatalf("summary exposed API key identity: %s", raw)
+	}
+}
+
+func TestQuotaNextRecoverAtIgnoresMalformedRollingPeriod(t *testing.T) {
+	got, err := quotaNextRecoverAt(context.Background(), nil, "policy", Quota{
+		Period: QuotaPeriod{Type: QuotaPeriodPastDuration, Unit: "hour"},
+		Usage:  QuotaUsage{Exhausted: []string{"requests"}},
+	})
+	if err != nil || got != 0 {
+		t.Fatalf("recovery = %d, err=%v", got, err)
+	}
+}
+
 func TestTakeoverControlsNewRequestDecisionsAndPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "takeover.sqlite")
 	store, err := OpenStore(path)

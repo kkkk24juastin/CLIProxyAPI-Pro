@@ -82,6 +82,22 @@ func newAuthenticatedAPIKeyPolicyManagementHarness(t *testing.T, keys []string) 
 	return h, router
 }
 
+func TestAPIKeyQuotaSummaryEndpointIsProtectedAndAdvertised(t *testing.T) {
+	_, router := newAuthenticatedAPIKeyPolicyManagementHarness(t, []string{"quota-summary-key"})
+	unauthorized := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-quota-summaries", "", nil)
+	if unauthorized.Code == http.StatusOK {
+		t.Fatal("quota summary endpoint bypassed management authentication")
+	}
+	capabilities := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-capabilities", "management-policy-test-secret", nil)
+	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"key_quota_overview"`) {
+		t.Fatalf("capabilities = %d %s", capabilities.Code, capabilities.Body.String())
+	}
+	summary := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-quota-summaries", "management-policy-test-secret", nil)
+	if summary.Code != http.StatusOK || !strings.Contains(summary.Body.String(), `"items":[]`) || !strings.Contains(summary.Body.String(), `"snapshotAtMs"`) {
+		t.Fatalf("summary = %d %s", summary.Code, summary.Body.String())
+	}
+}
+
 func authenticatedPolicyRequest(t *testing.T, router *gin.Engine, method, path, password string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var reader *bytes.Reader

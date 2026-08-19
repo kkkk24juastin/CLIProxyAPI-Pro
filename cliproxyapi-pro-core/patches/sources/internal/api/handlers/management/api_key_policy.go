@@ -70,6 +70,7 @@ func (h *Handler) RegisterAPIKeyPolicyRoutes(group *gin.RouterGroup) {
 	}
 	group.GET("/api-key-policy-bindings", h.ListAPIKeyPolicyBindings)
 	group.GET("/api-key-policy-profile-catalog", h.GetAPIKeyPolicyProfileCatalog)
+	group.GET("/api-key-policy-quota-summaries", h.ListAPIKeyPolicyQuotaSummaries)
 	group.POST("/api-key-policy-usage-target", h.ResolveAPIKeyPolicyUsageTarget)
 	group.GET("/api-key-policy-capabilities", h.GetAPIKeyPolicyCapabilities)
 	group.GET("/api-key-policy-status", h.GetAPIKeyPolicyStatus)
@@ -108,10 +109,26 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 			"key_quota_requests_tokens",
 			"key_quota_cost_period",
 			"key_quota_explicit_reset",
+			"key_quota_overview",
 			"usage_key_target",
 			"provider_model_linkage",
 		},
 	})
+}
+
+func (h *Handler) ListAPIKeyPolicyQuotaSummaries(c *gin.Context) {
+	service := h.apiKeyPolicyService()
+	if service == nil || !service.Healthy() {
+		writeAPIKeyPolicyError(c, apikeypolicy.ErrUnavailable)
+		return
+	}
+	nowMS := time.Now().UnixMilli()
+	items, err := service.ListQuotaSummaries(c.Request.Context(), nowMS)
+	if err != nil {
+		writeAPIKeyPolicyError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "snapshotAtMs": nowMS})
 }
 
 func (h *Handler) GetAPIKeyPolicyStatus(c *gin.Context) {

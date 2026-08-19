@@ -1360,6 +1360,40 @@ func (s *Service) ListOrphanedPage(ctx context.Context, configuredHashes []strin
 	}
 	return s.store.ListExcludingHashes(ctx, configuredHashes, afterCreatedAtMS, afterID, limit)
 }
+func (s *Service) ListQuotaSummaries(ctx context.Context, nowMS int64) ([]QuotaSummary, error) {
+	if s == nil || s.store == nil {
+		return nil, ErrUnavailable
+	}
+	if nowMS <= 0 {
+		nowMS = time.Now().UnixMilli()
+	}
+	summaries, err := s.store.ListQuotaSummaries(ctx, nowMS)
+	if err != nil {
+		return nil, err
+	}
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	for index := range summaries {
+		summary := &summaries[index]
+		summary.AdmissionState = QuotaAdmissionDisabled
+		if summary.Quota == nil || !summary.Quota.Enabled {
+			continue
+		}
+		key := quotaPricingBlockKey{policyID: summary.PolicyID, epoch: summary.Quota.Epoch}
+		if s.pricingBlocked[key] > 0 {
+			summary.AdmissionState = QuotaAdmissionBlocked
+			summary.BlockedReason = QuotaBlockPricingStore
+		} else if s.settlementBlocked[key] > 0 {
+			summary.AdmissionState = QuotaAdmissionBlocked
+			summary.BlockedReason = QuotaBlockSettlementStore
+		} else if len(summary.Quota.Usage.Exhausted) > 0 {
+			summary.AdmissionState = QuotaAdmissionExhausted
+		} else {
+			summary.AdmissionState = QuotaAdmissionAvailable
+		}
+	}
+	return summaries, nil
+}
 func (s *Service) Get(ctx context.Context, policyID string) (Policy, error) {
 	return s.store.Get(ctx, policyID)
 }

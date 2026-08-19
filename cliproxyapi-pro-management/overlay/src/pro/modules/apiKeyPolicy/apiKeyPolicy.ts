@@ -44,6 +44,22 @@ export interface APIKeyQuota {
   };
 }
 
+export type APIKeyQuotaAdmissionState = 'available' | 'disabled' | 'exhausted' | 'blocked';
+
+export interface APIKeyQuotaSummary {
+  policyId: string;
+  policyVersion: number;
+  quota?: APIKeyQuota;
+  admissionState: APIKeyQuotaAdmissionState;
+  blockedReason?: 'pricing_store_unavailable' | 'settlement_store_unavailable';
+  nextRecoverAtMs?: number;
+}
+
+export interface APIKeyQuotaSummaryResponse {
+  items: APIKeyQuotaSummary[];
+  snapshotAtMs: number;
+}
+
 export interface APIKeyQuotaInput {
   enabled: boolean;
   requests?: number;
@@ -196,6 +212,10 @@ export const supportsAPIKeyQuota = (
   return REQUIRED_API_KEY_QUOTA_FEATURES.every((feature) => features.has(feature));
 };
 
+export const supportsAPIKeyQuotaOverview = (
+  capabilities: APIKeyPolicyCapabilities,
+): boolean => capabilities.features?.includes('key_quota_overview') === true;
+
 export const PASSTHROUGH_CONFIRMATION = 'RESTORE_UNRESTRICTED_PASSTHROUGH';
 const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage', 'key_quota_cost_period'] as const;
 
@@ -290,6 +310,10 @@ export const apiKeyPolicyApi = {
 
   usageTarget(keyRef: string): Promise<APIKeyPolicyUsageTarget> {
     return apiClient.post<APIKeyPolicyUsageTarget>('/api-key-policy-usage-target', { keyRef });
+  },
+
+  quotaSummaries(): Promise<APIKeyQuotaSummaryResponse> {
+    return apiClient.get<APIKeyQuotaSummaryResponse>('/api-key-policy-quota-summaries');
   },
 
   profileCatalog(): Promise<APIKeyPolicyProfileCatalog> {
