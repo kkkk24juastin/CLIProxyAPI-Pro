@@ -114,6 +114,7 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 			"usage_key_target",
 			"provider_model_linkage",
 			"optional_profile",
+			"profile_enforcement_toggle",
 		},
 	})
 }
@@ -468,6 +469,8 @@ func apiKeyPolicyWriteContext(c *gin.Context, clientFeatures []string) context.C
 			ctx = apikeypolicy.WithProviderModelLinkageValidation(ctx)
 		case "key_quota_calendar_timezone":
 			ctx = apikeypolicy.WithQuotaTimezoneAwareness(ctx)
+		case "profile_enforcement_toggle":
+			ctx = apikeypolicy.WithProfileEnforcementToggle(ctx)
 		}
 	}
 	return ctx
@@ -558,14 +561,16 @@ func (h *Handler) UpdateAPIKeyPolicy(c *gin.Context) {
 		return
 	}
 	var request struct {
-		DisplayName    string                     `json:"displayName"`
-		Version        int64                      `json:"version" binding:"required"`
-		ProfileID      string                     `json:"profileId"`
-		Profile        *apikeypolicy.ProfileInput `json:"profile"`
-		CreateProfile  bool                       `json:"createProfile"`
-		Quota          *apikeypolicy.QuotaInput   `json:"quota"`
-		QuotaPresent   bool                       `json:"-"`
-		ClientFeatures []string                   `json:"clientFeatures"`
+		DisplayName     string                     `json:"displayName"`
+		Version         int64                      `json:"version" binding:"required"`
+		ProfileID       string                     `json:"profileId"`
+		Profile         *apikeypolicy.ProfileInput `json:"profile"`
+		CreateProfile   bool                       `json:"createProfile"`
+		ProfileEnabled  *bool                      `json:"profileEnabled"`
+		ActiveProfileID string                     `json:"activeProfileId"`
+		Quota           *apikeypolicy.QuotaInput   `json:"quota"`
+		QuotaPresent    bool                       `json:"-"`
+		ClientFeatures  []string                   `json:"clientFeatures"`
 	}
 	var raw map[string]json.RawMessage
 	body, errRead := io.ReadAll(c.Request.Body)
@@ -577,6 +582,7 @@ func (h *Handler) UpdateAPIKeyPolicy(c *gin.Context) {
 	policy, err := service.UpdateWorkspace(apiKeyPolicyWriteContext(c, request.ClientFeatures), c.Param("policyId"), request.Version, apikeypolicy.WorkspaceUpdate{
 		DisplayName: request.DisplayName, ProfileID: request.ProfileID,
 		Profile: request.Profile, CreateProfile: request.CreateProfile,
+		ProfileEnabled: request.ProfileEnabled, ActiveProfileID: request.ActiveProfileID,
 		Quota: apikeypolicy.QuotaUpdate{Present: request.QuotaPresent, Value: request.Quota},
 	})
 	h.writeAPIKeyPolicyResult(c, policy, err, http.StatusOK)

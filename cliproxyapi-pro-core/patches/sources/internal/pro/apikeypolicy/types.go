@@ -50,6 +50,7 @@ const (
 
 type profileValidationContextKey struct{}
 type quotaTimezoneAwarenessContextKey struct{}
+type profileEnforcementToggleContextKey struct{}
 
 // WithProviderModelLinkageValidation opts one Management write into the
 // provider/model relationship contract. Older Management clients omit this
@@ -72,6 +73,18 @@ func WithQuotaTimezoneAwareness(ctx context.Context) context.Context {
 
 func quotaTimezoneAwarenessEnabled(ctx context.Context) bool {
 	enabled, _ := ctx.Value(quotaTimezoneAwarenessContextKey{}).(bool)
+	return enabled
+}
+
+// WithProfileEnforcementToggle opts one Management workspace write into the
+// explicit Profile-enforcement contract. Older clients cannot pause or resume
+// enforcement accidentally through omitted fields.
+func WithProfileEnforcementToggle(ctx context.Context) context.Context {
+	return context.WithValue(ctx, profileEnforcementToggleContextKey{}, true)
+}
+
+func profileEnforcementToggleEnabled(ctx context.Context) bool {
+	enabled, _ := ctx.Value(profileEnforcementToggleContextKey{}).(bool)
 	return enabled
 }
 
@@ -455,14 +468,18 @@ type ProfileInput struct {
 
 // WorkspaceUpdate is the atomic Management write unit for one open policy
 // workspace. ProfileID selects an existing profile; CreateProfile requests a
-// new profile. The first Profile on a quota-only policy becomes active. A nil
-// Profile updates only the display name and quota.
+// new profile. ProfileEnabled, when present, atomically pauses or resumes
+// enforcement without deleting saved Profiles. ActiveProfileID selects the
+// Profile to enforce when resuming. A nil Profile otherwise updates only the
+// display name and quota.
 type WorkspaceUpdate struct {
-	DisplayName   string
-	ProfileID     string
-	Profile       *ProfileInput
-	CreateProfile bool
-	Quota         QuotaUpdate
+	DisplayName     string
+	ProfileID       string
+	Profile         *ProfileInput
+	CreateProfile   bool
+	ProfileEnabled  *bool
+	ActiveProfileID string
+	Quota           QuotaUpdate
 }
 
 // ProfileCatalog is the server-authoritative set of provider and model IDs

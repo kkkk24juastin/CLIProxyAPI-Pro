@@ -504,6 +504,143 @@ func TestQuotaOnlyPolicyFirstProfileAndLastProfileConfirmation(t *testing.T) {
 	}
 }
 
+func TestWorkspaceUpdatePausesAndResumesProfileEnforcementWithoutDeletingProfiles(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "atomic-profile-disable-key")
+	requestLimit := int64(5)
+	created, err := service.Create(context.Background(), identity, "Restricted", ProfileInput{
+		Name: "Primary", Providers: []string{"codex"},
+	}, &QuotaInput{Enabled: true, Requests: &requestLimit, Period: QuotaPeriod{Type: QuotaPeriodAllTime}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err = service.CreateProfile(context.Background(), created.ID, created.Version, ProfileInput{
+		Name: "Secondary", Providers: []string{"claude"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restrictedDecision := decision
+	if _, err = service.AdmitDecision(context.Background(), decision); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := service.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profilesBefore, err := json.Marshal(loaded.Profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	update := WorkspaceUpdate{
+		DisplayName: "Unrestricted", ProfileEnabled: &disabled,
+	}
+	if _, err = service.UpdateWorkspace(context.Background(), loaded.ID, loaded.Version, update); err == nil || !strings.Contains(err.Error(), "profile_enforcement_toggle") {
+		t.Fatalf("unnegotiated Profile disable error = %v", err)
+	}
+	invalidDisable := update
+	invalidDisable.ActiveProfileID = loaded.ActiveProfileID
+	if _, err = service.UpdateWorkspace(WithProfileEnforcementToggle(context.Background()), loaded.ID, loaded.Version, invalidDisable); err == nil || !strings.Contains(err.Error(), "must not include an active Profile ID") {
+		t.Fatalf("invalid Profile disable error = %v", err)
+	}
+	updated, err := service.UpdateWorkspace(WithProfileEnforcementToggle(context.Background()), loaded.ID, loaded.Version, update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profilesAfter, err := json.Marshal(updated.Profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.DisplayName != "Unrestricted" || updated.ActiveProfileID != "" || len(updated.Profiles) != 2 || string(profilesAfter) != string(profilesBefore) || updated.Version != loaded.Version+1 {
+		t.Fatalf("disabled Profile workspace = %#v", updated)
+	}
+	if updated.Quota == nil || updated.Quota.Usage.RequestsUsed != 1 || updated.Quota.Epoch != loaded.Quota.Epoch {
+		t.Fatalf("Profile disable changed Key quota = before %#v after %#v", loaded.Quota, updated.Quota)
+	}
+	if restrictedDecision.Snapshot == nil || restrictedDecision.Snapshot.allowsProvider("unrestricted-provider") {
+		t.Fatalf("in-flight decision widened after Profile disable: %#v", restrictedDecision)
+	}
+	audits, err := service.store.ListAudits(context.Background())
+	if err != nil || len(audits) == 0 {
+		t.Fatalf("Profile disable audits = %#v error=%v", audits, err)
+	}
+	last := audits[len(audits)-1]
+	var details map[string]any
+	if err = json.Unmarshal(last.Details, &details); err != nil {
+		t.Fatal(err)
+	}
+	if last.EventType != "profile_enforcement_disabled" || details["profileId"] != loaded.ActiveProfileID {
+		t.Fatalf("Profile disable audit = %#v details=%#v", last, details)
+	}
+	decision, err = service.Decide(identity)
+	if err != nil || decision.Snapshot == nil || !decision.Snapshot.allowsProvider("unrestricted-provider") {
+		t.Fatalf("disabled Profile decision = %#v error=%v", decision, err)
+	}
+	secondaryProfileID := ""
+	for _, profile := range updated.Profiles {
+		if profile.ID != loaded.ActiveProfileID {
+			secondaryProfileID = profile.ID
+		}
+	}
+	if secondaryProfileID == "" {
+		t.Fatalf("secondary Profile missing after pause: %#v", updated.Profiles)
+	}
+	enabled := true
+	reenabled, err := service.UpdateWorkspace(WithProfileEnforcementToggle(context.Background()), updated.ID, updated.Version, WorkspaceUpdate{
+		DisplayName: updated.DisplayName, ProfileEnabled: &enabled, ActiveProfileID: secondaryProfileID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reenabledProfiles, err := json.Marshal(reenabled.Profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reenabled.ActiveProfileID != secondaryProfileID || string(reenabledProfiles) != string(profilesBefore) || reenabled.Quota == nil || reenabled.Quota.Epoch != loaded.Quota.Epoch || reenabled.Quota.Usage.RequestsUsed != 1 {
+		t.Fatalf("re-enabled Profile workspace = %#v", reenabled)
+	}
+	decision, err = service.Decide(identity)
+	if err != nil || decision.Snapshot == nil || !decision.Snapshot.allowsProvider("claude") || decision.Snapshot.allowsProvider("codex") {
+		t.Fatalf("re-enabled Profile decision = %#v error=%v", decision, err)
+	}
+}
+
+func TestPolicyBackupRoundTripsPausedProfileEnforcement(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "paused-profile-backup-key")
+	created, err := service.Create(context.Background(), identity, "Paused", ProfileInput{Name: "Saved", Providers: []string{"codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	paused, err := service.UpdateWorkspace(WithProfileEnforcementToggle(context.Background()), created.ID, created.Version, WorkspaceUpdate{
+		DisplayName: created.DisplayName, ProfileEnabled: &disabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := service.ExportBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.ImportBackup(context.Background(), payload); err != nil {
+		t.Fatalf("restore paused Profile enforcement: %v", err)
+	}
+	restored, err := service.Get(context.Background(), paused.ID)
+	if err != nil || restored.ActiveProfileID != "" || len(restored.Profiles) != 1 || restored.Profiles[0].Name != "Saved" {
+		t.Fatalf("restored paused policy = %#v error=%v", restored, err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil || decision.Snapshot == nil || !decision.Snapshot.allowsProvider("unrestricted-provider") {
+		t.Fatalf("restored paused decision = %#v error=%v", decision, err)
+	}
+}
+
 func TestPolicyJSONUsesEmptyCollectionsInsteadOfNull(t *testing.T) {
 	service := newTestService(t)
 	policy, err := service.Create(context.Background(), testIdentity(t, "empty-mappings-key"), "Empty mappings", ProfileInput{

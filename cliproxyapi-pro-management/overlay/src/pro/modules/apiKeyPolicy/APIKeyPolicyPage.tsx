@@ -28,11 +28,13 @@ import {
   apiKeyPolicyApi,
   apiKeyPolicyErrorCode,
   apiKeyPolicyErrorTranslationKey,
+  buildAPIKeyQuotaTimezoneOptions,
   cloneProfileInput,
   formatAPIKeyPolicyTimestamp,
   isAPIKeyPolicyUnsupported,
   resolveMappingTargetModels,
   resolveModelsForProviders,
+  supportsAPIKeyProfileEnforcementToggle,
   supportsAPIKeyQuota,
   supportsAPIKeyQuotaOverview,
   supportsAPIKeyQuotaTimezone,
@@ -171,7 +173,7 @@ const workspaceDraftFromTarget = (
     target.policy.profiles[0];
   return {
     displayName: target.policy.displayName,
-    profileEnabled: Boolean(selected),
+    profileEnabled: target.policy.activeProfileId !== '',
     profileId: selected?.id ?? '',
     profile: selected ? cloneProfileInput(selected) : emptyProfile(),
     isNewProfile: false,
@@ -210,6 +212,7 @@ const workspaceIsDirty = (
   const persisted = target.policy.profiles.find((profile) => profile.id === draft.profileId);
   return (
     draft.displayName !== target.policy.displayName ||
+    draft.profileEnabled !== (target.policy.activeProfileId !== '') ||
     (draft.profileEnabled && (!persisted ||
       profileSignature(draft.profile) !== profileSignature(persisted)))
     || JSON.stringify(draft.quota) !== JSON.stringify(quotaInputFromPolicy(target.policy))
@@ -381,6 +384,9 @@ export function APIKeyPolicyPage() {
   const quotaTimezoneSupported = Boolean(snapshot && supportsAPIKeyQuotaTimezone(snapshot.capabilities));
   const optionalProfileSupported = Boolean(
     snapshot && supportsOptionalAPIKeyProfile(snapshot.capabilities),
+  );
+  const profileEnforcementToggleSupported = Boolean(
+    snapshot && supportsAPIKeyProfileEnforcementToggle(snapshot.capabilities),
   );
   const quotaWorkspaceOpen = workspaceTarget?.kind === 'policy' && Boolean(workspaceTarget.policy.quota);
 
@@ -708,6 +714,8 @@ export function APIKeyPolicyPage() {
     const persisted = workspaceTarget.kind === 'policy'
       ? workspaceTarget.policy.profiles.find((item) => item.id === draft.profileId)
       : undefined;
+    const profileEnabledChanged = workspaceTarget.kind === 'policy' &&
+      draft.profileEnabled !== (workspaceTarget.policy.activeProfileId !== '');
     const changedProfile = draft.profileEnabled && (
       workspaceTarget.kind === 'create' || draft.isNewProfile || !persisted ||
       profileSignature(persisted) !== profileSignature(draft.profile)
@@ -742,6 +750,8 @@ export function APIKeyPolicyPage() {
           draft.profileEnabled && changedProfile ? draft.profile : undefined,
           draft.isNewProfile,
           quotaSupported ? draft.quota : undefined,
+          profileEnabledChanged ? draft.profileEnabled : undefined,
+          profileEnabledChanged && draft.profileEnabled ? draft.profileId : undefined,
         );
       }
       if (revision !== saveRevisionRef.current) return;
@@ -1393,19 +1403,17 @@ export function APIKeyPolicyPage() {
                       />
                     </label>
                     {quotaTimezoneSupported ? <>
-                      <Input
-                        label={t('api_key_policy.quota_timezone')}
-                        list="api-key-quota-timezones"
-                        placeholder={t('api_key_policy.quota_timezone_example')}
-                        value={draft.quota.period.timezone ?? 'UTC'}
-                        disabled={readOnly || saving}
-                        autoCapitalize="none"
-                        spellCheck={false}
-                        onChange={(event) => updateDraft((current) => current.quota?.period.type === 'calendar_duration' ? ({ ...current, quota: { ...current.quota, period: { ...current.quota.period, timezone: event.target.value } } }) : current)}
-                      />
-                      <datalist id="api-key-quota-timezones">
-                        {['UTC', 'Asia/Shanghai', 'Asia/Tokyo', 'Europe/London', 'America/New_York', 'America/Los_Angeles'].map((timezone) => <option value={timezone} key={timezone} />)}
-                      </datalist>
+                      <label className={styles.quotaSelectField}>
+                        <span>{t('api_key_policy.quota_timezone')}</span>
+                        <Select
+                          value={draft.quota.period.timezone ?? 'UTC'}
+                          triggerClassName={styles.quotaSelectTrigger}
+                          options={buildAPIKeyQuotaTimezoneOptions(draft.quota.period.timezone)}
+                          onChange={(timezone) => updateDraft((current) => current.quota?.period.type === 'calendar_duration' ? ({ ...current, quota: { ...current.quota, period: { ...current.quota.period, timezone } } }) : current)}
+                          disabled={Boolean(readOnly || saving)}
+                          ariaLabel={t('api_key_policy.quota_timezone')}
+                        />
+                      </label>
                     </> : null}
                   </> : null}
                 </div>
@@ -1433,15 +1441,24 @@ export function APIKeyPolicyPage() {
                   checked={draft.profileEnabled}
                   disabled={Boolean(
                     readOnly || saving || !optionalProfileSupported ||
-                    (currentPolicy && currentPolicy.profiles.length > 0)
+                    (currentPolicy && currentPolicy.profiles.length > 0 && !profileEnforcementToggleSupported)
                   )}
-                  onChange={(event) => updateDraft((current) => ({
-                    ...current,
-                    profileEnabled: event.target.checked,
-                    profileId: '',
-                    profile: emptyProfile(),
-                    isNewProfile: event.target.checked && workspaceTarget?.kind === 'policy',
-                  }))}
+                  onChange={(event) => {
+                    const enabled = event.target.checked;
+                    updateDraft((current) => {
+                      if (!enabled) return { ...current, profileEnabled: false };
+                      if (workspaceTarget?.kind === 'policy' && workspaceTarget.policy.profiles.length > 0) {
+                        return { ...current, profileEnabled: true };
+                      }
+                      return {
+                        ...current,
+                        profileEnabled: true,
+                        profileId: '',
+                        profile: emptyProfile(),
+                        isNewProfile: workspaceTarget?.kind === 'policy',
+                      };
+                    });
+                  }}
                 />
                 <span>{t('api_key_policy.profile_enabled')}</span>
               </label>

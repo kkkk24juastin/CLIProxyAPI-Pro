@@ -296,6 +296,45 @@ func TestAPIKeyPolicyWriteFeaturesAreComposedForCalendarTimezone(t *testing.T) {
 	}
 }
 
+func TestAPIKeyPolicyWorkspaceCanPauseAndResumeProfileEnforcement(t *testing.T) {
+	_, router := newAPIKeyPolicyManagementHarness(t, []string{"atomic-profile-disable-handler-key"})
+	listed := bindingResponse(t, policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil))
+	createdRecorder := policyRequest(t, router, http.MethodPost, "/v0/management/api-key-policies", "session-a", createPolicyBody(listed.Items[0].KeyRef))
+	if createdRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", createdRecorder.Code, createdRecorder.Body.String())
+	}
+	var created apikeypolicy.Policy
+	if err := json.Unmarshal(createdRecorder.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{
+		"displayName": "No Profile", "version": created.Version,
+		"profileEnabled": false,
+	}
+	unnegotiated := policyRequest(t, router, http.MethodPatch, "/v0/management/api-key-policies/"+created.ID, "session-a", body)
+	if unnegotiated.Code != http.StatusBadRequest || !strings.Contains(unnegotiated.Body.String(), "profile_enforcement_toggle") {
+		t.Fatalf("unnegotiated disable status=%d body=%s", unnegotiated.Code, unnegotiated.Body.String())
+	}
+	body["clientFeatures"] = []string{"provider_model_linkage", "profile_enforcement_toggle"}
+	disabled := policyRequest(t, router, http.MethodPatch, "/v0/management/api-key-policies/"+created.ID, "session-a", body)
+	if disabled.Code != http.StatusOK || !strings.Contains(disabled.Body.String(), `"displayName":"No Profile"`) || !strings.Contains(disabled.Body.String(), `"activeProfileId":""`) || !strings.Contains(disabled.Body.String(), `"profiles":[{`) {
+		t.Fatalf("disable status=%d body=%s", disabled.Code, disabled.Body.String())
+	}
+	var paused apikeypolicy.Policy
+	if err := json.Unmarshal(disabled.Body.Bytes(), &paused); err != nil {
+		t.Fatal(err)
+	}
+	body = map[string]any{
+		"displayName": paused.DisplayName, "version": paused.Version,
+		"profileEnabled": true, "activeProfileId": paused.Profiles[0].ID,
+		"clientFeatures": []string{"provider_model_linkage", "profile_enforcement_toggle"},
+	}
+	reenabled := policyRequest(t, router, http.MethodPatch, "/v0/management/api-key-policies/"+created.ID, "session-a", body)
+	if reenabled.Code != http.StatusOK || !strings.Contains(reenabled.Body.String(), `"activeProfileId":"`+paused.Profiles[0].ID+`"`) || !strings.Contains(reenabled.Body.String(), `"profiles":[{`) {
+		t.Fatalf("re-enable status=%d body=%s", reenabled.Code, reenabled.Body.String())
+	}
+}
+
 func TestAPIKeyPolicyBindingsAndKeyReferenceSecurity(t *testing.T) {
 	h, router := newAPIKeyPolicyManagementHarness(t, []string{"sk-sensitive-canary-123456789"})
 	listed := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil)
@@ -442,7 +481,7 @@ func TestAPIKeyPolicyRoutesRequireRealManagementMiddlewareAndBindSession(t *test
 		t.Fatalf("authenticated status=%d body=%s", listed.Code, listed.Body.String())
 	}
 	capabilities := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-capabilities", "management-policy-test-secret", nil)
-	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"apiVersion":3`) || !strings.Contains(capabilities.Body.String(), `"atomic_workspace_save"`) || !strings.Contains(capabilities.Body.String(), `"orphaned_purge_guard"`) || !strings.Contains(capabilities.Body.String(), `"takeover_control"`) || !strings.Contains(capabilities.Body.String(), `"key_quota_cost_period"`) || !strings.Contains(capabilities.Body.String(), `"key_quota_calendar_timezone"`) || !strings.Contains(capabilities.Body.String(), `"usage_key_target"`) || !strings.Contains(capabilities.Body.String(), `"provider_model_linkage"`) || !strings.Contains(capabilities.Body.String(), `"optional_profile"`) {
+	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"apiVersion":3`) || !strings.Contains(capabilities.Body.String(), `"atomic_workspace_save"`) || !strings.Contains(capabilities.Body.String(), `"orphaned_purge_guard"`) || !strings.Contains(capabilities.Body.String(), `"takeover_control"`) || !strings.Contains(capabilities.Body.String(), `"key_quota_cost_period"`) || !strings.Contains(capabilities.Body.String(), `"key_quota_calendar_timezone"`) || !strings.Contains(capabilities.Body.String(), `"usage_key_target"`) || !strings.Contains(capabilities.Body.String(), `"provider_model_linkage"`) || !strings.Contains(capabilities.Body.String(), `"optional_profile"`) || !strings.Contains(capabilities.Body.String(), `"profile_enforcement_toggle"`) {
 		t.Fatalf("capabilities status=%d body=%s", capabilities.Code, capabilities.Body.String())
 	}
 	status := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-status", "management-policy-test-secret", nil)

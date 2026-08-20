@@ -550,7 +550,11 @@ func (s *Service) normalizeBackupPolicies(policies []Policy) ([]Policy, error) {
 			if policy.ActiveProfileID != "" || activeCount != 0 {
 				return nil, fmt.Errorf("policy %q without profiles must not have an active profile", policy.ID)
 			}
-		} else if policy.ActiveProfileID == "" || activeCount != 1 {
+		} else if policy.ActiveProfileID == "" {
+			if activeCount != 0 {
+				return nil, fmt.Errorf("policy %q with paused Profile enforcement must not have an active profile", policy.ID)
+			}
+		} else if activeCount != 1 {
 			return nil, fmt.Errorf("policy %q must have exactly one active profile", policy.ID)
 		}
 		if policy.Quota != nil {
@@ -1020,9 +1024,6 @@ func buildRuntimeIndex(policies []Policy, takeoverEnabled bool) (*runtimeIndex, 
 			AllowedProviders: make(map[string]struct{}), Quota: cloneQuota(policy.Quota),
 		}
 		if policy.ActiveProfileID == "" {
-			if len(policy.Profiles) != 0 {
-				return nil, fmt.Errorf("policy %q has profiles but no active profile", policy.ID)
-			}
 			index.items[policy.APIKeyHash] = snapshot
 			continue
 		}
@@ -2064,6 +2065,21 @@ func (s *Service) UpdateDisplayName(ctx context.Context, policyID, displayName s
 func (s *Service) UpdateWorkspace(ctx context.Context, policyID string, version int64, update WorkspaceUpdate) (Policy, error) {
 	update.DisplayName = strings.TrimSpace(update.DisplayName)
 	update.ProfileID = strings.TrimSpace(update.ProfileID)
+	update.ActiveProfileID = strings.TrimSpace(update.ActiveProfileID)
+	if update.ProfileEnabled != nil {
+		if !profileEnforcementToggleEnabled(ctx) {
+			return Policy{}, errors.New("changing Profile enforcement requires profile_enforcement_toggle client support")
+		}
+		if !*update.ProfileEnabled && update.ActiveProfileID != "" {
+			return Policy{}, errors.New("paused Profile enforcement must not include an active Profile ID")
+		}
+		if *update.ProfileEnabled && update.ActiveProfileID == "" && !(update.CreateProfile && update.Profile != nil) {
+			return Policy{}, errors.New("enabled Profile enforcement requires an active Profile ID")
+		}
+		if update.CreateProfile && update.ActiveProfileID != "" {
+			return Policy{}, errors.New("new Profile activation must not include an active Profile ID")
+		}
+	}
 	if update.Profile == nil && (update.CreateProfile || update.ProfileID != "") {
 		return Policy{}, errors.New("profile payload is required")
 	}
@@ -2129,6 +2145,15 @@ func (s *Service) UpdateWorkspace(ctx context.Context, policyID string, version 
 				}
 			}
 		}
+		if update.ProfileEnabled != nil {
+			desiredProfileID := update.ActiveProfileID
+			if *update.ProfileEnabled && update.CreateProfile {
+				desiredProfileID = profileID
+			}
+			if err := setProfileEnforcement(ctx, tx, policyID, *update.ProfileEnabled, desiredProfileID, now); err != nil {
+				return err
+			}
+		}
 		if update.Quota.Present {
 			if err := replaceQuota(ctx, tx, policyID, update.Quota.Value, now); err != nil {
 				return err
@@ -2143,6 +2168,40 @@ func (s *Service) UpdateWorkspace(ctx context.Context, policyID string, version 
 		return Policy{}, err
 	}
 	return findPolicy(policies, policyID)
+}
+
+func setProfileEnforcement(ctx context.Context, tx *sql.Tx, policyID string, enabled bool, profileID string, now int64) error {
+	var currentProfileID string
+	if err := tx.QueryRowContext(ctx, `select coalesce(active_profile_id, '') from api_key_policies where id = ?`, policyID).Scan(&currentProfileID); err != nil {
+		return err
+	}
+	if !enabled {
+		if currentProfileID == "" {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = null where id = ?`, policyID); err != nil {
+			return err
+		}
+		return insertAudit(ctx, tx, policyID, "profile_enforcement_disabled", map[string]any{
+			"profileId": currentProfileID,
+		}, now)
+	}
+	var exists int
+	if err := tx.QueryRowContext(ctx, `select count(*) from api_key_profiles where id = ? and policy_id = ?`, profileID, policyID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists != 1 {
+		return ErrProfileNotFound
+	}
+	if currentProfileID == profileID {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = ? where id = ?`, profileID, policyID); err != nil {
+		return err
+	}
+	return insertAudit(ctx, tx, policyID, "profile_enforcement_enabled", map[string]any{
+		"profileId": profileID,
+	}, now)
 }
 
 func replaceQuota(ctx context.Context, tx *sql.Tx, policyID string, input *QuotaInput, now int64) error {

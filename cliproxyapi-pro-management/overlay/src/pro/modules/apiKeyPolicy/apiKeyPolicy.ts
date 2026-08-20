@@ -203,6 +203,10 @@ export const supportsOptionalAPIKeyProfile = (
   capabilities: APIKeyPolicyCapabilities,
 ): boolean => capabilities.features?.includes('optional_profile') === true;
 
+export const supportsAPIKeyProfileEnforcementToggle = (
+  capabilities: APIKeyPolicyCapabilities,
+): boolean => capabilities.features?.includes('profile_enforcement_toggle') === true;
+
 const REQUIRED_API_KEY_QUOTA_FEATURES = [
   'key_quota_requests_tokens',
   'key_quota_explicit_reset',
@@ -224,14 +228,41 @@ export const supportsAPIKeyQuotaTimezone = (
   capabilities: APIKeyPolicyCapabilities,
 ): boolean => capabilities.features?.includes('key_quota_calendar_timezone') === true;
 
+export const API_KEY_QUOTA_TIMEZONES = [
+  'UTC',
+  'Asia/Shanghai',
+  'Asia/Hong_Kong',
+  'Asia/Tokyo',
+  'Asia/Singapore',
+  'Europe/London',
+  'Europe/Berlin',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'Australia/Sydney',
+] as const;
+
+export const buildAPIKeyQuotaTimezoneOptions = (current?: string) => {
+  const selected = current?.trim() || 'UTC';
+  const values = API_KEY_QUOTA_TIMEZONES.includes(selected as typeof API_KEY_QUOTA_TIMEZONES[number])
+    ? [...API_KEY_QUOTA_TIMEZONES]
+    : [selected, ...API_KEY_QUOTA_TIMEZONES];
+  return values.map((timezone) => ({ value: timezone, label: timezone }));
+};
+
 export const PASSTHROUGH_CONFIRMATION = 'RESTORE_UNRESTRICTED_PASSTHROUGH';
 export const NO_PROFILE_CONFIRMATION = 'REMOVE_ACTIVE_PROFILE_RESTRICTIONS';
 const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage', 'key_quota_cost_period'] as const;
-const apiKeyPolicyWriteFeatures = (quota?: APIKeyQuotaInput | null): string[] => [
+const apiKeyPolicyWriteFeatures = (
+  quota?: APIKeyQuotaInput | null,
+  profileEnabled?: boolean,
+): string[] => [
   ...API_KEY_POLICY_WRITE_FEATURES,
   ...(quota?.period.type === 'calendar_duration' && quota.period.timezone !== undefined
     ? ['key_quota_calendar_timezone']
     : []),
+  ...(profileEnabled !== undefined ? ['profile_enforcement_toggle'] : []),
 ];
 
 export const formatAPIKeyPolicyTimestamp = (
@@ -267,16 +298,22 @@ export const buildAPIKeyPolicyWorkspaceUpdate = (
   profile: APIKeyProfileInput | undefined,
   createProfile: boolean,
   quota?: APIKeyQuotaInput | null,
+  profileEnabled?: boolean,
+  activeProfileId?: string,
 ) => ({
   displayName,
   version,
-  clientFeatures: apiKeyPolicyWriteFeatures(quota),
+  clientFeatures: apiKeyPolicyWriteFeatures(quota, profileEnabled),
   ...(profile ? {
     profileId: createProfile ? '' : profileId,
     profile,
     createProfile,
   } : {}),
   ...(quota !== undefined ? { quota } : {}),
+  ...(profileEnabled !== undefined ? {
+    profileEnabled,
+    ...(profileEnabled && activeProfileId ? { activeProfileId } : {}),
+  } : {}),
 });
 
 const normalizePolicy = (policy: APIKeyPolicy): APIKeyPolicy => ({
@@ -408,6 +445,8 @@ export const apiKeyPolicyApi = {
     profile: APIKeyProfileInput | undefined,
     createProfile: boolean,
     quota?: APIKeyQuotaInput | null,
+    profileEnabled?: boolean,
+    activeProfileId?: string,
   ): Promise<APIKeyPolicy> {
     return apiClient.patch<APIKeyPolicy>(policyPath(policyId), buildAPIKeyPolicyWorkspaceUpdate(
       displayName,
@@ -416,6 +455,8 @@ export const apiKeyPolicyApi = {
       profile,
       createProfile,
       quota,
+      profileEnabled,
+      activeProfileId,
     )).then(normalizePolicy);
   },
 

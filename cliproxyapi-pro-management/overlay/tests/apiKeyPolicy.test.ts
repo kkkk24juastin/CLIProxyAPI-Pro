@@ -3,12 +3,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   APIKeyPolicyCapabilityError,
+  buildAPIKeyQuotaTimezoneOptions,
   buildAPIKeyPolicyWorkspaceUpdate,
   cloneProfileInput,
   apiKeyPolicyErrorTranslationKey,
   formatAPIKeyPolicyTimestamp,
   resolveMappingTargetModels,
   resolveModelsForProviders,
+  supportsAPIKeyProfileEnforcementToggle,
   supportsAPIKeyQuota,
   supportsAPIKeyQuotaOverview,
   supportsAPIKeyQuotaTimezone,
@@ -140,9 +142,14 @@ describe('API Key Policy profile drafts', () => {
       features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
     });
     expect(supportsOptionalAPIKeyProfile(legacyCapabilities)).toBe(false);
+    expect(supportsAPIKeyProfileEnforcementToggle(legacyCapabilities)).toBe(false);
     expect(supportsOptionalAPIKeyProfile({
       ...legacyCapabilities,
       features: [...legacyCapabilities.features, 'optional_profile'],
+    })).toBe(true);
+    expect(supportsAPIKeyProfileEnforcementToggle({
+      ...legacyCapabilities,
+      features: [...legacyCapabilities.features, 'profile_enforcement_toggle'],
     })).toBe(true);
   });
 
@@ -249,6 +256,19 @@ describe('API Key Policy profile drafts', () => {
     });
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, undefined)).not.toHaveProperty('quota');
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, null)).toMatchObject({ quota: null });
+    expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, undefined, true, 'profile-1')).toEqual({
+      displayName: 'Renamed',
+      version: 2,
+      clientFeatures: ['provider_model_linkage', 'key_quota_cost_period', 'profile_enforcement_toggle'],
+      profileEnabled: true,
+      activeProfileId: 'profile-1',
+    });
+    expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, undefined, false)).toEqual({
+      displayName: 'Renamed',
+      version: 2,
+      clientFeatures: ['provider_model_linkage', 'key_quota_cost_period', 'profile_enforcement_toggle'],
+      profileEnabled: false,
+    });
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, {
       enabled: true,
       requests: 100,
@@ -267,7 +287,16 @@ describe('API Key Policy profile drafts', () => {
     const timestamp = Date.UTC(2026, 7, 19, 12, 0, 0);
     expect(formatAPIKeyPolicyTimestamp(timestamp, 'en-US', 'Local'))
       .toBe(formatAPIKeyPolicyTimestamp(timestamp, 'en-US', 'UTC'));
+    expect(buildAPIKeyQuotaTimezoneOptions('Asia/Shanghai')[0]).toEqual({ value: 'UTC', label: 'UTC' });
+    expect(buildAPIKeyQuotaTimezoneOptions('Pacific/Auckland')[0]).toEqual({ value: 'Pacific/Auckland', label: 'Pacific/Auckland' });
+    expect(buildAPIKeyQuotaTimezoneOptions('Pacific/Auckland').filter((option) => option.value === 'Pacific/Auckland')).toHaveLength(1);
     expect(page).toContain('quotaSupported ? draft.quota : undefined');
+    expect(page).toContain("draft.profileEnabled !== (target.policy.activeProfileId !== '')");
+    expect(page).toContain("supportsAPIKeyProfileEnforcementToggle(snapshot.capabilities)");
+    expect(page).not.toContain("window.confirm(t('api_key_policy.profile_disable_confirm'))");
+    expect(page).toContain('profileEnabledChanged ? draft.profileEnabled : undefined');
+    expect(page).toContain('profileEnabledChanged && draft.profileEnabled ? draft.profileId : undefined');
+    expect(page).toContain('currentPolicy.profiles.length > 0 && !profileEnforcementToggleSupported');
     expect(page).toContain("window.confirm(t('api_key_policy.quota_period_change_confirm'))");
     expect(page).toContain('{quotaSupported ? <section className={styles.quotaSection}>');
     expect(page.indexOf('className={styles.quotaSection}')).toBeLessThan(page.indexOf('className={styles.profileRail}'));
@@ -275,7 +304,9 @@ describe('API Key Policy profile drafts', () => {
     expect(page).toContain("placeholder={t('api_key_policy.quota_cost_example')}");
     expect(page).toContain("(['all_time', 'past_duration', 'calendar_duration'] as const)");
     expect(page).toContain('supportsAPIKeyQuotaTimezone(snapshot.capabilities)');
-    expect(page).toContain("placeholder={t('api_key_policy.quota_timezone_example')}");
+    expect(page).toContain('options={buildAPIKeyQuotaTimezoneOptions(draft.quota.period.timezone)}');
+    expect(page).not.toContain('list="api-key-quota-timezones"');
+    expect(page).not.toContain("placeholder={t('api_key_policy.quota_timezone_example')}");
     expect(page).toContain("!validIanaTimezone(draft.quota.period.timezone)");
     expect(page).toContain("timezone: normalized.timezone?.trim() || 'UTC'");
     expect(page).toContain("timezone: quota.period.timezone ?? 'UTC'");
@@ -283,7 +314,7 @@ describe('API Key Policy profile drafts', () => {
     expect(styles).toContain('.quotaPeriodGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start;');
     expect(styles).toContain('.quotaPeriodGrid :global(.form-group) { margin-bottom: 0; }');
     expect(styles).toContain('.quotaSelectTrigger { height: 46px;');
-    expect(page.match(/triggerClassName=\{styles\.quotaSelectTrigger\}/g)).toHaveLength(3);
+    expect(page.match(/triggerClassName=\{styles\.quotaSelectTrigger\}/g)).toHaveLength(4);
     expect(page).toContain('const quotaRevisionRef = useRef(0);');
     expect(page).toContain('const quotaBusyRef = useRef(false);');
     expect(page).toContain('if (revision !== quotaRevisionRef.current) return;');
