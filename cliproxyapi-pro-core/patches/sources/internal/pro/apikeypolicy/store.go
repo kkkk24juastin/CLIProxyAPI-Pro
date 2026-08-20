@@ -126,6 +126,7 @@ func (s *Store) init(ctx context.Context) error {
 			period_type text not null default 'all_time',
 			period_value integer check(period_value is null or period_value > 0),
 			period_unit text not null default '',
+			period_timezone text not null default 'UTC',
 			epoch integer not null default 1 check(epoch > 0),
 			started_at_ms integer not null,
 			requests_used integer not null default 0 check(requests_used >= 0),
@@ -183,6 +184,7 @@ func (s *Store) init(ctx context.Context) error {
 		`alter table api_key_policy_quotas add column period_type text not null default 'all_time'`,
 		`alter table api_key_policy_quotas add column period_value integer check(period_value is null or period_value > 0)`,
 		`alter table api_key_policy_quotas add column period_unit text not null default ''`,
+		`alter table api_key_policy_quotas add column period_timezone text not null default 'UTC'`,
 		`alter table api_key_policy_quotas add column cost_used_micros integer not null default 0 check(cost_used_micros >= 0)`,
 		`alter table api_key_quota_token_events add column cost_micros integer not null default 0 check(cost_micros >= 0)`,
 	}})
@@ -340,7 +342,7 @@ func (s *Store) Get(ctx context.Context, policyID string) (Policy, error) {
 func (s *Store) ListQuotaSummaries(ctx context.Context, nowMS int64) ([]QuotaSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `select p.id, p.version,
 		q.policy_id, q.enabled, q.request_limit, q.token_limit, q.cost_limit_micros,
-		q.period_type, q.period_value, q.period_unit, q.epoch, q.started_at_ms,
+		q.period_type, q.period_value, q.period_unit, q.period_timezone, q.epoch, q.started_at_ms,
 		q.requests_used, q.total_tokens_used, q.cost_used_micros, q.updated_at_ms
 		from api_key_policies p
 		left join api_key_policy_quotas q on q.policy_id = p.id
@@ -354,12 +356,12 @@ func (s *Store) ListQuotaSummaries(ctx context.Context, nowMS int64) ([]QuotaSum
 	minWindowStartMS := int64(math.MaxInt64)
 	for rows.Next() {
 		var summary QuotaSummary
-		var quotaID, periodType, periodUnit sql.NullString
+		var quotaID, periodType, periodUnit, periodTimezone sql.NullString
 		var enabled, requestLimit, tokenLimit, costLimitMicros, periodValue, epoch, startedAtMS, requestsUsed, totalTokensUsed, costUsedMicros, updatedAtMS sql.NullInt64
 		if err = rows.Scan(
 			&summary.PolicyID, &summary.PolicyVersion,
 			&quotaID, &enabled, &requestLimit, &tokenLimit, &costLimitMicros,
-			&periodType, &periodValue, &periodUnit, &epoch, &startedAtMS,
+			&periodType, &periodValue, &periodUnit, &periodTimezone, &epoch, &startedAtMS,
 			&requestsUsed, &totalTokensUsed, &costUsedMicros, &updatedAtMS,
 		); err != nil {
 			_ = rows.Close()
@@ -369,7 +371,7 @@ func (s *Store) ListQuotaSummaries(ctx context.Context, nowMS int64) ([]QuotaSum
 		if quotaID.Valid {
 			quota := &Quota{
 				Enabled: enabled.Valid && enabled.Int64 != 0,
-				Period:  QuotaPeriod{Type: periodType.String, Unit: periodUnit.String},
+				Period:  QuotaPeriod{Type: periodType.String, Unit: periodUnit.String, Timezone: periodTimezone.String},
 				Usage: QuotaUsage{
 					RequestsUsed:    requestsUsed.Int64,
 					TotalTokensUsed: totalTokensUsed.Int64,
@@ -676,8 +678,8 @@ func getPolicyQuotaAt(ctx context.Context, queryer sqlQueryer, policyID string, 
 	var quota Quota
 	var requestLimit, tokenLimit, costLimitMicros, periodValue sql.NullInt64
 	var costUsedMicros int64
-	err := queryer.QueryRowContext(ctx, `select enabled, request_limit, token_limit, cost_limit_micros, period_type, period_value, period_unit, epoch, started_at_ms, requests_used, total_tokens_used, cost_used_micros, updated_at_ms from api_key_policy_quotas where policy_id = ?`, policyID).
-		Scan(&quota.Enabled, &requestLimit, &tokenLimit, &costLimitMicros, &quota.Period.Type, &periodValue, &quota.Period.Unit, &quota.Epoch, &quota.StartedAtMS, &quota.Usage.RequestsUsed, &quota.Usage.TotalTokensUsed, &costUsedMicros, &quota.UpdatedAtMS)
+	err := queryer.QueryRowContext(ctx, `select enabled, request_limit, token_limit, cost_limit_micros, period_type, period_value, period_unit, period_timezone, epoch, started_at_ms, requests_used, total_tokens_used, cost_used_micros, updated_at_ms from api_key_policy_quotas where policy_id = ?`, policyID).
+		Scan(&quota.Enabled, &requestLimit, &tokenLimit, &costLimitMicros, &quota.Period.Type, &periodValue, &quota.Period.Unit, &quota.Period.Timezone, &quota.Epoch, &quota.StartedAtMS, &quota.Usage.RequestsUsed, &quota.Usage.TotalTokensUsed, &costUsedMicros, &quota.UpdatedAtMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

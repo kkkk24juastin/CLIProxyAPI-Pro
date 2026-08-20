@@ -108,6 +108,7 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 			"takeover_control",
 			"key_quota_requests_tokens",
 			"key_quota_cost_period",
+			"key_quota_calendar_timezone",
 			"key_quota_explicit_reset",
 			"key_quota_overview",
 			"usage_key_target",

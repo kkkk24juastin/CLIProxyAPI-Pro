@@ -333,9 +333,10 @@ const (
 )
 
 type QuotaPeriod struct {
-	Type  string `json:"type"`
-	Value *int64 `json:"value,omitempty"`
-	Unit  string `json:"unit,omitempty"`
+	Type     string `json:"type"`
+	Value    *int64 `json:"value,omitempty"`
+	Unit     string `json:"unit,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
 }
 
 type QuotaUpdate struct {

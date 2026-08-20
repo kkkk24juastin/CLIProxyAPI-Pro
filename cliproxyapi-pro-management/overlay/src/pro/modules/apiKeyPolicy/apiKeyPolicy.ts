@@ -71,7 +71,7 @@ export interface APIKeyQuotaInput {
 export type APIKeyQuotaPeriod =
   | { type: 'all_time' }
   | { type: 'past_duration'; value: number; unit: 'minute' | 'hour' | 'day' }
-  | { type: 'calendar_duration'; unit: 'day' | 'month' };
+  | { type: 'calendar_duration'; unit: 'day' | 'month'; timezone?: string };
 
 export interface APIKeyPolicy {
   id: string;
@@ -220,9 +220,19 @@ export const supportsAPIKeyQuotaOverview = (
   capabilities: APIKeyPolicyCapabilities,
 ): boolean => capabilities.features?.includes('key_quota_overview') === true;
 
+export const supportsAPIKeyQuotaTimezone = (
+  capabilities: APIKeyPolicyCapabilities,
+): boolean => capabilities.features?.includes('key_quota_calendar_timezone') === true;
+
 export const PASSTHROUGH_CONFIRMATION = 'RESTORE_UNRESTRICTED_PASSTHROUGH';
 export const NO_PROFILE_CONFIRMATION = 'REMOVE_ACTIVE_PROFILE_RESTRICTIONS';
 const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage', 'key_quota_cost_period'] as const;
+const apiKeyPolicyWriteFeatures = (quota?: APIKeyQuotaInput | null): string[] => [
+  ...API_KEY_POLICY_WRITE_FEATURES,
+  ...(quota?.period.type === 'calendar_duration' && quota.period.timezone
+    ? ['key_quota_calendar_timezone']
+    : []),
+];
 
 const policyPath = (policyId: string) => `/api-key-policies/${encodeURIComponent(policyId)}`;
 const profilePath = (policyId: string, profileId: string) =>
@@ -238,7 +248,7 @@ export const buildAPIKeyPolicyWorkspaceUpdate = (
 ) => ({
   displayName,
   version,
-  clientFeatures: [...API_KEY_POLICY_WRITE_FEATURES],
+  clientFeatures: apiKeyPolicyWriteFeatures(quota),
   ...(profile ? {
     profileId: createProfile ? '' : profileId,
     profile,
@@ -359,7 +369,7 @@ export const apiKeyPolicyApi = {
       keyRef,
       displayName,
       ...(initialProfile ? { initialProfile } : {}),
-      clientFeatures: [...API_KEY_POLICY_WRITE_FEATURES],
+      clientFeatures: apiKeyPolicyWriteFeatures(quota),
       ...(quota !== undefined ? { quota } : {}),
     }));
   },

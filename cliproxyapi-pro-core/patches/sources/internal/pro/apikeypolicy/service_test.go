@@ -2,6 +2,7 @@ package apikeypolicy
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -74,7 +75,7 @@ func TestQuotaSummariesUseCalendarBoundaryAndNeverExposeKeyHash(t *testing.T) {
 	service := newTestService(t)
 	requestLimit := int64(1)
 	policy, err := service.Create(context.Background(), testIdentity(t, "calendar-summary-key"), "Calendar", ProfileInput{Name: "default"}, &QuotaInput{
-		Enabled: true, Requests: &requestLimit, Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day"},
+		Enabled: true, Requests: &requestLimit, Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day", Timezone: "Asia/Shanghai"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +88,7 @@ func TestQuotaSummariesUseCalendarBoundaryAndNeverExposeKeyHash(t *testing.T) {
 	if err != nil || len(summaries) != 1 {
 		t.Fatalf("summaries = %+v err=%v", summaries, err)
 	}
-	if summaries[0].AdmissionState != QuotaAdmissionExhausted || summaries[0].NextRecoverAtMS != time.Date(2026, time.August, 20, 0, 0, 0, 0, time.UTC).UnixMilli() {
+	if summaries[0].AdmissionState != QuotaAdmissionExhausted || summaries[0].NextRecoverAtMS != time.Date(2026, time.August, 19, 16, 0, 0, 0, time.UTC).UnixMilli() || summaries[0].Quota == nil || summaries[0].Quota.Period.Timezone != "Asia/Shanghai" {
 		t.Fatalf("calendar summary = %+v", summaries[0])
 	}
 	raw, err := json.Marshal(summaries[0])
@@ -1399,7 +1400,7 @@ func TestPolicyBackupRestoresPendingQuotaSettlementAndBlockedState(t *testing.T)
 	if err = json.Unmarshal(payload, &document); err != nil {
 		t.Fatal(err)
 	}
-	if document.SchemaVersion != 6 || len(document.PendingQuotaSettlements) != 1 || document.PendingQuotaSettlements[0].Usage.TotalTokens != 20 {
+	if document.SchemaVersion != 7 || len(document.PendingQuotaSettlements) != 1 || document.PendingQuotaSettlements[0].Usage.TotalTokens != 20 {
 		t.Fatalf("pending backup document = %#v", document)
 	}
 	invalid := document
@@ -1798,15 +1799,67 @@ func TestRollingQuotaPeriodChangeResetsEpochAndWritesAudit(t *testing.T) {
 	}
 }
 
-func TestQuotaCalendarPeriodBoundsUseUTC(t *testing.T) {
+func TestQuotaCalendarPeriodBoundsUseConfiguredTimezoneAndDST(t *testing.T) {
 	now := time.Date(2026, time.August, 19, 12, 34, 56, 0, time.FixedZone("local", 8*60*60)).UnixMilli()
 	dayStart, dayEnd := quotaPeriodBounds(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day"}, 1, now)
 	if got := time.UnixMilli(dayStart).UTC(); got.Hour() != 0 || got.Day() != 19 || dayEnd-dayStart != int64(24*time.Hour/time.Millisecond) {
 		t.Fatalf("UTC day bounds = %s .. %s", time.UnixMilli(dayStart).UTC(), time.UnixMilli(dayEnd).UTC())
 	}
-	monthStart, monthEnd := quotaPeriodBounds(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "month"}, 1, now)
-	if got := time.UnixMilli(monthStart).UTC(); got.Day() != 1 || got.Month() != time.August || time.UnixMilli(monthEnd).UTC().Month() != time.September {
-		t.Fatalf("UTC month bounds = %s .. %s", time.UnixMilli(monthStart).UTC(), time.UnixMilli(monthEnd).UTC())
+	monthStart, monthEnd := quotaPeriodBounds(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "month", Timezone: "Asia/Shanghai"}, 1, now)
+	if got, want := time.UnixMilli(monthStart).UTC(), time.Date(2026, time.July, 31, 16, 0, 0, 0, time.UTC); !got.Equal(want) || time.UnixMilli(monthEnd).UTC() != time.Date(2026, time.August, 31, 16, 0, 0, 0, time.UTC) {
+		t.Fatalf("Shanghai month bounds = %s .. %s", time.UnixMilli(monthStart).UTC(), time.UnixMilli(monthEnd).UTC())
+	}
+	springForward := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC).UnixMilli()
+	dstStart, dstEnd := quotaPeriodBounds(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day", Timezone: "America/New_York"}, 1, springForward)
+	if got, want := time.UnixMilli(dstStart).UTC(), time.Date(2026, time.March, 8, 5, 0, 0, 0, time.UTC); !got.Equal(want) || time.UnixMilli(dstEnd).UTC() != time.Date(2026, time.March, 9, 4, 0, 0, 0, time.UTC) || dstEnd-dstStart != int64(23*time.Hour/time.Millisecond) {
+		t.Fatalf("New York DST day bounds = %s .. %s", time.UnixMilli(dstStart).UTC(), time.UnixMilli(dstEnd).UTC())
+	}
+	if got := normalizeQuotaPeriod(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day"}).Timezone; got != "UTC" {
+		t.Fatalf("legacy calendar timezone = %q, want UTC", got)
+	}
+	if err := validateQuotaPeriod(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day", Timezone: "Mars/Olympus"}); err == nil {
+		t.Fatal("invalid IANA timezone accepted")
+	}
+}
+
+func TestQuotaTimezoneMigrationDefaultsExistingCalendarRowsToUTC(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`create table api_key_policies (
+		id text primary key, api_key_hash text not null unique, display_name text not null default '', active_profile_id text,
+		version integer not null default 1, created_at_ms integer not null, updated_at_ms integer not null
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`create table api_key_policy_quotas (
+		policy_id text primary key, enabled integer not null default 0, request_limit integer, token_limit integer,
+		cost_limit_micros integer, period_type text not null default 'all_time', period_value integer,
+		period_unit text not null default '', epoch integer not null default 1, started_at_ms integer not null,
+		requests_used integer not null default 0, total_tokens_used integer not null default 0,
+		cost_used_micros integer not null default 0, updated_at_ms integer not null
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`insert into api_key_policies(id, api_key_hash, display_name, version, created_at_ms, updated_at_ms) values('legacy-policy', 'legacy-hash', 'Legacy', 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`insert into api_key_policy_quotas(policy_id, enabled, request_limit, period_type, period_unit, epoch, started_at_ms, updated_at_ms) values('legacy-policy', 1, 10, 'calendar_duration', 'day', 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	quota, err := getPolicyQuotaAt(context.Background(), store.db, "legacy-policy", time.Date(2026, time.August, 19, 12, 0, 0, 0, time.UTC).UnixMilli())
+	if err != nil || quota == nil || quota.Period.Timezone != "UTC" {
+		t.Fatalf("migrated quota = %#v error=%v", quota, err)
 	}
 }
 
@@ -1873,7 +1926,10 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	})
 	identity := testIdentity(t, "backup-key")
 	requestLimit := int64(25)
-	created, err := service.Create(context.Background(), identity, "Backup key", ProfileInput{Name: "Production", Providers: []string{"codex"}, Models: []string{"gpt-5"}}, &QuotaInput{Enabled: true, Requests: &requestLimit})
+	created, err := service.Create(context.Background(), identity, "Backup key", ProfileInput{Name: "Production", Providers: []string{"codex"}, Models: []string{"gpt-5"}}, &QuotaInput{
+		Enabled: true, Requests: &requestLimit,
+		Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "month", Timezone: "Asia/Shanghai"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1884,7 +1940,7 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	if strings.Contains(string(payload), "backup-key") || !strings.Contains(string(payload), identity.Hash()) {
 		t.Fatalf("backup secret/hash boundary = %s", payload)
 	}
-	if !strings.Contains(string(payload), `"schema_version":6`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) || !strings.Contains(string(payload), `"requests":25`) {
+	if !strings.Contains(string(payload), `"schema_version":7`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) || !strings.Contains(string(payload), `"requests":25`) || !strings.Contains(string(payload), `"timezone":"Asia/Shanghai"`) {
 		t.Fatalf("backup schema/audit record = %s", payload)
 	}
 	if err := service.DeletePolicy(context.Background(), created.ID, created.Version, PassthroughConfirmation); err != nil {
@@ -1898,7 +1954,7 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 		t.Fatalf("restore backup without a live catalog: %v", err)
 	}
 	decision, err := service.Decide(identity)
-	if err != nil || decision.Mode != ModeProfile || decision.Snapshot == nil || decision.Snapshot.ProfileName != "Production" || decision.Snapshot.Quota == nil || decision.Snapshot.Quota.Requests == nil || *decision.Snapshot.Quota.Requests != requestLimit {
+	if err != nil || decision.Mode != ModeProfile || decision.Snapshot == nil || decision.Snapshot.ProfileName != "Production" || decision.Snapshot.Quota == nil || decision.Snapshot.Quota.Requests == nil || *decision.Snapshot.Quota.Requests != requestLimit || decision.Snapshot.Quota.Period.Timezone != "Asia/Shanghai" {
 		t.Fatalf("restored decision = %#v, %v", decision, err)
 	}
 	audits, err := service.store.ListAudits(context.Background())

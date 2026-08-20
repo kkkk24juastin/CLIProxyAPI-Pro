@@ -34,6 +34,7 @@ import {
   resolveModelsForProviders,
   supportsAPIKeyQuota,
   supportsAPIKeyQuotaOverview,
+  supportsAPIKeyQuotaTimezone,
   supportsOptionalAPIKeyProfile,
   supportsAPIKeyPolicyUsageTarget,
   updateProfileProviders,
@@ -77,10 +78,24 @@ const emptyProfile = (): APIKeyProfileInput => ({
 
 const defaultQuotaPeriod = (): APIKeyQuotaPeriod => ({ type: 'all_time' });
 
-const quotaPeriodSignature = (period: APIKeyQuotaPeriod | undefined): string => JSON.stringify(period ?? defaultQuotaPeriod());
+const quotaPeriodSignature = (period: APIKeyQuotaPeriod | undefined): string => {
+  const normalized = period ?? defaultQuotaPeriod();
+  return JSON.stringify(normalized.type === 'calendar_duration'
+    ? { ...normalized, timezone: normalized.timezone?.trim() || 'UTC' }
+    : normalized);
+};
 
 const invalidPositiveInteger = (value: number | undefined): boolean =>
   value !== undefined && (!Number.isSafeInteger(value) || value <= 0);
+
+const validIanaTimezone = (value: string | undefined): boolean => {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value?.trim() || 'UTC' }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const formatQuotaCost = (value: number): string => value.toFixed(6).replace(/\.?0+$/, '');
 
@@ -200,8 +215,12 @@ const workspaceIsDirty = (
   );
 };
 
-const formatUpdatedAt = (value: number, language: string): string =>
-  value > 0 ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(value) : '-';
+const formatUpdatedAt = (value: number, language: string, timeZone?: string): string =>
+  value > 0 ? new Intl.DateTimeFormat(language, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    ...(timeZone ? { timeZone } : {}),
+  }).format(value) : '-';
 
 function ChoiceList({
   title,
@@ -365,6 +384,7 @@ export function APIKeyPolicyPage() {
   const dirty = workspaceIsDirty(workspaceTarget, draft);
   const quotaSupported = Boolean(snapshot && supportsAPIKeyQuota(snapshot.capabilities));
   const quotaOverviewSupported = Boolean(snapshot && supportsAPIKeyQuotaOverview(snapshot.capabilities));
+  const quotaTimezoneSupported = Boolean(snapshot && supportsAPIKeyQuotaTimezone(snapshot.capabilities));
   const optionalProfileSupported = Boolean(
     snapshot && supportsOptionalAPIKeyProfile(snapshot.capabilities),
   );
@@ -682,8 +702,12 @@ export function APIKeyPolicyPage() {
 			showNotification(t('api_key_policy.validation.quota'), 'warning');
 			return false;
 		}
+		if (quotaSupported && quotaTimezoneSupported && draft.quota?.period.type === 'calendar_duration' && !validIanaTimezone(draft.quota.period.timezone)) {
+			showNotification(t('api_key_policy.validation.quota_timezone'), 'warning');
+			return false;
+		}
     return true;
-  }, [draft, quotaSupported, showNotification, snapshot, t]);
+  }, [draft, quotaSupported, quotaTimezoneSupported, showNotification, snapshot, t]);
 
   const saveWorkspace = useCallback(async () => {
     if (!workspaceTarget || !draft || savingRef.current) return;
@@ -1197,12 +1221,15 @@ export function APIKeyPolicyPage() {
                     : quota?.period.type === 'past_duration'
                       ? t('api_key_policy.quota_overview.rolling_period', { value: quota.period.value, unit: t(`api_key_policy.quota_unit.${quota.period.unit}`) })
                       : quota?.period.type === 'calendar_duration'
-                        ? t(`api_key_policy.quota_calendar_unit.${quota.period.unit}`)
+                        ? t('api_key_policy.quota_overview.calendar_period', {
+                          unit: t(`api_key_policy.quota_calendar_unit.${quota.period.unit}`),
+                          timezone: quota.period.timezone ?? 'UTC',
+                        })
                         : t('api_key_policy.quota_period.all_time');
                   return (
                     <div className={styles.quotaTableRow} role="row" key={policy.id}>
                       <div className={styles.quotaKeyCell}><strong>{policy.displayName}</strong><code>{binding.maskedKey}</code></div>
-                      <div className={styles.quotaPeriodCell}><strong>{periodLabel}</strong>{summary?.nextRecoverAtMs ? <small>{t('api_key_policy.quota_overview.recovers_at', { time: formatUpdatedAt(summary.nextRecoverAtMs, i18n.resolvedLanguage ?? i18n.language) })}</small> : <small>{!summary ? t('api_key_policy.quota_overview.snapshot_unavailable') : quota?.period.type === 'all_time' ? t('api_key_policy.quota_overview.manual_reset') : t('api_key_policy.quota_overview.active_window')}</small>}</div>
+                      <div className={styles.quotaPeriodCell}><strong>{periodLabel}</strong>{summary?.nextRecoverAtMs ? <small>{t('api_key_policy.quota_overview.recovers_at', { time: formatUpdatedAt(summary.nextRecoverAtMs, i18n.resolvedLanguage ?? i18n.language, quota?.period.type === 'calendar_duration' ? quota.period.timezone ?? 'UTC' : undefined) })}</small> : <small>{!summary ? t('api_key_policy.quota_overview.snapshot_unavailable') : quota?.period.type === 'all_time' ? t('api_key_policy.quota_overview.manual_reset') : t('api_key_policy.quota_overview.active_window')}</small>}</div>
                       <QuotaMetric label={t('api_key_policy.quota_requests')} used={quota ? quota.usage.requestsUsed : undefined} limit={quota?.requests} />
                       <QuotaMetric label={t('api_key_policy.quota_tokens')} used={quota ? quota.usage.totalTokensUsed : undefined} limit={quota?.totalTokens} />
                       <QuotaMetric label={t('api_key_policy.quota_cost')} used={quota ? quota.usage.costUsed : undefined} limit={quota?.cost} cost />
@@ -1325,7 +1352,10 @@ export function APIKeyPolicyPage() {
                           period: value === 'past_duration'
                             ? (current.quota.period.type === 'past_duration' ? current.quota.period : { type: 'past_duration', value: 1, unit: 'day' })
                             : value === 'calendar_duration'
-                              ? (current.quota.period.type === 'calendar_duration' ? current.quota.period : { type: 'calendar_duration', unit: 'day' })
+                              ? (current.quota.period.type === 'calendar_duration' ? current.quota.period : {
+                                type: 'calendar_duration', unit: 'day',
+                                ...(quotaTimezoneSupported ? { timezone: 'UTC' } : {}),
+                              })
                               : { type: 'all_time' },
                         } : current.quota,
                       }))}
@@ -1356,19 +1386,36 @@ export function APIKeyPolicyPage() {
                       />
                     </label>
                   </> : null}
-                  {draft.quota.period.type === 'calendar_duration' ? <label className={styles.quotaSelectField}>
-                    <span>{t('api_key_policy.quota_period_unit')}</span>
-                    <Select
-                      value={draft.quota.period.unit}
-                      triggerClassName={styles.quotaSelectTrigger}
-                      options={(['day', 'month'] as const).map((value) => ({ value, label: t(`api_key_policy.quota_calendar_unit.${value}`) }))}
-                      onChange={(unit) => updateDraft((current) => current.quota?.period.type === 'calendar_duration' ? ({ ...current, quota: { ...current.quota, period: { type: 'calendar_duration', unit: unit as 'day' | 'month' } } }) : current)}
-                      disabled={Boolean(readOnly || saving)}
-                      ariaLabel={t('api_key_policy.quota_period_unit')}
-                    />
-                  </label> : null}
+                  {draft.quota.period.type === 'calendar_duration' ? <>
+                    <label className={styles.quotaSelectField}>
+                      <span>{t('api_key_policy.quota_period_unit')}</span>
+                      <Select
+                        value={draft.quota.period.unit}
+                        triggerClassName={styles.quotaSelectTrigger}
+                        options={(['day', 'month'] as const).map((value) => ({ value, label: t(`api_key_policy.quota_calendar_unit.${value}`) }))}
+                        onChange={(unit) => updateDraft((current) => current.quota?.period.type === 'calendar_duration' ? ({ ...current, quota: { ...current.quota, period: { ...current.quota.period, unit: unit as 'day' | 'month' } } }) : current)}
+                        disabled={Boolean(readOnly || saving)}
+                        ariaLabel={t('api_key_policy.quota_period_unit')}
+                      />
+                    </label>
+                    {quotaTimezoneSupported ? <>
+                      <Input
+                        label={t('api_key_policy.quota_timezone')}
+                        list="api-key-quota-timezones"
+                        placeholder={t('api_key_policy.quota_timezone_example')}
+                        value={draft.quota.period.timezone ?? 'UTC'}
+                        disabled={readOnly || saving}
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        onChange={(event) => updateDraft((current) => current.quota?.period.type === 'calendar_duration' ? ({ ...current, quota: { ...current.quota, period: { ...current.quota.period, timezone: event.target.value } } }) : current)}
+                      />
+                      <datalist id="api-key-quota-timezones">
+                        {['UTC', 'Asia/Shanghai', 'Asia/Tokyo', 'Europe/London', 'America/New_York', 'America/Los_Angeles'].map((timezone) => <option value={timezone} key={timezone} />)}
+                      </datalist>
+                    </> : null}
+                  </> : null}
                 </div>
-                <p className={styles.quotaPeriodHint}>{t('api_key_policy.quota_period_hint')}</p>
+                <p className={styles.quotaPeriodHint}>{t(quotaTimezoneSupported ? 'api_key_policy.quota_period_hint' : 'api_key_policy.quota_period_hint_legacy')}</p>
 
                 {currentQuota ? (
                   <div className={styles.quotaUsage}>

@@ -11,6 +11,7 @@ export {
   resolveModelsForProviders,
   supportsAPIKeyQuota,
   supportsAPIKeyQuotaOverview,
+  supportsAPIKeyQuotaTimezone,
   supportsAPIKeyPolicyUsageTarget,
   supportsOptionalAPIKeyProfile,
   updateProfileProviders,

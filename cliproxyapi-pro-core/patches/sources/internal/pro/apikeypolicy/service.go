@@ -130,13 +130,13 @@ func (s *Service) ExportBackup(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(backupDocument{SchemaVersion: 6, TakeoverEnabled: takeoverEnabled, Policies: policiesToBackup(policies), Audits: audits, QuotaAdmissions: admissions, QuotaEvents: events, PendingQuotaSettlements: pending})
+	return json.Marshal(backupDocument{SchemaVersion: 7, TakeoverEnabled: takeoverEnabled, Policies: policiesToBackup(policies), Audits: audits, QuotaAdmissions: admissions, QuotaEvents: events, PendingQuotaSettlements: pending})
 }
 
 func decodeBackup(payload []byte) ([]Policy, []AuditRecord, []backupQuotaAdmission, []backupQuotaEvent, []backupPendingSettlement, bool, error) {
 	var document backupDocument
 	if err := json.Unmarshal(payload, &document); err == nil && document.SchemaVersion != 0 {
-		if document.SchemaVersion < 2 || document.SchemaVersion > 6 {
+		if document.SchemaVersion < 2 || document.SchemaVersion > 7 {
 			return nil, nil, nil, nil, nil, false, fmt.Errorf("unsupported API key policy backup schema %d", document.SchemaVersion)
 		}
 		return backupToPolicies(document.Policies), document.Audits, document.QuotaAdmissions, document.QuotaEvents, document.PendingQuotaSettlements, document.SchemaVersion >= 3 && document.TakeoverEnabled, nil
@@ -410,7 +410,7 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) (err error) 
 			}
 			costUsedMicros := int64(math.Round(policy.Quota.Usage.CostUsed * 1_000_000))
 			period := normalizeQuotaPeriod(policy.Quota.Period)
-			if _, err := tx.ExecContext(ctx, `insert into api_key_policy_quotas(policy_id, enabled, request_limit, token_limit, cost_limit_micros, period_type, period_value, period_unit, epoch, started_at_ms, requests_used, total_tokens_used, cost_used_micros, updated_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, policy.ID, policy.Quota.Enabled, policy.Quota.Requests, policy.Quota.TotalTokens, costLimitMicros, period.Type, period.Value, period.Unit, policy.Quota.Epoch, policy.Quota.StartedAtMS, policy.Quota.Usage.RequestsUsed, policy.Quota.Usage.TotalTokensUsed, costUsedMicros, policy.Quota.UpdatedAtMS); err != nil {
+			if _, err := tx.ExecContext(ctx, `insert into api_key_policy_quotas(policy_id, enabled, request_limit, token_limit, cost_limit_micros, period_type, period_value, period_unit, period_timezone, epoch, started_at_ms, requests_used, total_tokens_used, cost_used_micros, updated_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, policy.ID, policy.Quota.Enabled, policy.Quota.Requests, policy.Quota.TotalTokens, costLimitMicros, period.Type, period.Value, period.Unit, period.Timezone, policy.Quota.Epoch, policy.Quota.StartedAtMS, policy.Quota.Usage.RequestsUsed, policy.Quota.Usage.TotalTokensUsed, costUsedMicros, policy.Quota.UpdatedAtMS); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `insert into api_key_quota_generations(policy_id, generation) values(?, ?)`, policy.ID, policy.Quota.Epoch); err != nil {
@@ -1179,9 +1179,16 @@ func normalizeQuotaPeriod(period QuotaPeriod) QuotaPeriod {
 	if period.Type == QuotaPeriodAllTime {
 		period.Value = nil
 		period.Unit = ""
+		period.Timezone = ""
 	}
 	if period.Type == QuotaPeriodCalendarDuration {
 		period.Value = nil
+		period.Timezone = strings.TrimSpace(period.Timezone)
+		if period.Timezone == "" {
+			period.Timezone = "UTC"
+		}
+	} else if period.Type != QuotaPeriodAllTime {
+		period.Timezone = ""
 	}
 	return period
 }
@@ -1205,6 +1212,9 @@ func validateQuotaPeriod(period QuotaPeriod) error {
 	case QuotaPeriodCalendarDuration:
 		if period.Unit != "day" && period.Unit != "month" {
 			return errors.New("calendar quota period unit must be day or month")
+		}
+		if _, err := time.LoadLocation(period.Timezone); err != nil {
+			return errors.New("calendar quota timezone must be a valid IANA timezone")
 		}
 		return nil
 	default:
@@ -1239,12 +1249,16 @@ func quotaPeriodBounds(period QuotaPeriod, startedAtMS, nowMS int64) (int64, int
 			}
 		}
 	case QuotaPeriodCalendarDuration:
-		now := time.UnixMilli(nowMS).UTC()
+		location, err := time.LoadLocation(period.Timezone)
+		if err != nil {
+			location = time.UTC
+		}
+		now := time.UnixMilli(nowMS).In(location)
 		if period.Unit == "month" {
-			start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+			start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, location)
 			return start.UnixMilli(), start.AddDate(0, 1, 0).UnixMilli()
 		}
-		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
 		return start.UnixMilli(), start.AddDate(0, 0, 1).UnixMilli()
 	}
 	return startedAtMS, 0
@@ -1656,7 +1670,7 @@ func (s *Service) pruneQuotaHistory(ctx context.Context, nowMS int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `select policy_id, epoch, period_type, period_value, period_unit, started_at_ms from api_key_policy_quotas`)
+	rows, err := tx.QueryContext(ctx, `select policy_id, epoch, period_type, period_value, period_unit, period_timezone, started_at_ms from api_key_policy_quotas`)
 	if err != nil {
 		return err
 	}
@@ -1664,7 +1678,7 @@ func (s *Service) pruneQuotaHistory(ctx context.Context, nowMS int64) error {
 	for rows.Next() {
 		var item quotaRetention
 		var value sql.NullInt64
-		if err = rows.Scan(&item.policyID, &item.epoch, &item.period.Type, &value, &item.period.Unit, &item.startedAt); err != nil {
+		if err = rows.Scan(&item.policyID, &item.epoch, &item.period.Type, &value, &item.period.Unit, &item.period.Timezone, &item.startedAt); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -2137,7 +2151,7 @@ func replaceQuota(ctx context.Context, tx *sql.Tx, policyID string, input *Quota
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `insert into api_key_policy_quotas(policy_id, enabled, request_limit, token_limit, cost_limit_micros, period_type, period_value, period_unit, epoch, started_at_ms, requests_used, total_tokens_used, cost_used_micros, updated_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)`, policyID, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, epoch, now, now)
+		_, err = tx.ExecContext(ctx, `insert into api_key_policy_quotas(policy_id, enabled, request_limit, token_limit, cost_limit_micros, period_type, period_value, period_unit, period_timezone, epoch, started_at_ms, requests_used, total_tokens_used, cost_used_micros, updated_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)`, policyID, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, input.Period.Timezone, epoch, now, now)
 		return err
 	}
 	currentQuota, err := getPolicyQuota(ctx, tx, policyID)
@@ -2152,7 +2166,7 @@ func replaceQuota(ctx context.Context, tx *sql.Tx, policyID string, input *Quota
 		if _, err := tx.ExecContext(ctx, `delete from api_key_quota_admissions where policy_id = ?`, policyID); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `update api_key_policy_quotas set enabled = ?, request_limit = ?, token_limit = ?, cost_limit_micros = ?, period_type = ?, period_value = ?, period_unit = ?, epoch = ?, started_at_ms = ?, requests_used = 0, total_tokens_used = 0, cost_used_micros = 0, updated_at_ms = ? where policy_id = ?`, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, epoch, now, now, policyID); err != nil {
+		if _, err = tx.ExecContext(ctx, `update api_key_policy_quotas set enabled = ?, request_limit = ?, token_limit = ?, cost_limit_micros = ?, period_type = ?, period_value = ?, period_unit = ?, period_timezone = ?, epoch = ?, started_at_ms = ?, requests_used = 0, total_tokens_used = 0, cost_used_micros = 0, updated_at_ms = ? where policy_id = ?`, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, input.Period.Timezone, epoch, now, now, policyID); err != nil {
 			return err
 		}
 		return insertAudit(ctx, tx, policyID, "api_key_quota_period_reset", map[string]any{
@@ -2163,7 +2177,7 @@ func replaceQuota(ctx context.Context, tx *sql.Tx, policyID string, input *Quota
 	}
 	// Limit edits preserve the current generation and every accumulated metric.
 	// Explicit reset and period replacement are the only clearing operations.
-	_, err = tx.ExecContext(ctx, `update api_key_policy_quotas set enabled = ?, request_limit = ?, token_limit = ?, cost_limit_micros = ?, period_type = ?, period_value = ?, period_unit = ?, updated_at_ms = ? where policy_id = ?`, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, now, policyID)
+	_, err = tx.ExecContext(ctx, `update api_key_policy_quotas set enabled = ?, request_limit = ?, token_limit = ?, cost_limit_micros = ?, period_type = ?, period_value = ?, period_unit = ?, period_timezone = ?, updated_at_ms = ? where policy_id = ?`, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, input.Period.Timezone, now, policyID)
 	return err
 }
 
@@ -2176,7 +2190,7 @@ func quotaCostLimitMicros(cost *float64) (any, error) {
 
 func quotaPeriodsEqual(left, right QuotaPeriod) bool {
 	left, right = normalizeQuotaPeriod(left), normalizeQuotaPeriod(right)
-	if left.Type != right.Type || left.Unit != right.Unit {
+	if left.Type != right.Type || left.Unit != right.Unit || left.Timezone != right.Timezone {
 		return false
 	}
 	if left.Value == nil || right.Value == nil {

@@ -10,6 +10,7 @@ import {
   resolveModelsForProviders,
   supportsAPIKeyQuota,
   supportsAPIKeyQuotaOverview,
+  supportsAPIKeyQuotaTimezone,
   supportsAPIKeyPolicyUsageTarget,
   supportsOptionalAPIKeyProfile,
   updateProfileProviders,
@@ -124,6 +125,11 @@ describe('API Key Policy profile drafts', () => {
     expect(supportsAPIKeyQuota({
       ...legacyCapabilities,
       features: [...legacyCapabilities.features, 'key_quota_requests_tokens', 'key_quota_explicit_reset', 'key_quota_cost_period'],
+    })).toBe(true);
+    expect(supportsAPIKeyQuotaTimezone(legacyCapabilities)).toBe(false);
+    expect(supportsAPIKeyQuotaTimezone({
+      ...legacyCapabilities,
+      features: [...legacyCapabilities.features, 'key_quota_calendar_timezone'],
     })).toBe(true);
   });
 
@@ -242,6 +248,14 @@ describe('API Key Policy profile drafts', () => {
     });
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, undefined)).not.toHaveProperty('quota');
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, null)).toMatchObject({ quota: null });
+    expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, {
+      enabled: true,
+      requests: 100,
+      period: { type: 'calendar_duration', unit: 'day', timezone: 'Asia/Shanghai' },
+    })).toMatchObject({
+      clientFeatures: ['provider_model_linkage', 'key_quota_cost_period', 'key_quota_calendar_timezone'],
+      quota: { period: { timezone: 'Asia/Shanghai' } },
+    });
     expect(page).toContain('quotaSupported ? draft.quota : undefined');
     expect(page).toContain("window.confirm(t('api_key_policy.quota_period_change_confirm'))");
     expect(page).toContain('{quotaSupported ? <section className={styles.quotaSection}>');
@@ -249,6 +263,12 @@ describe('API Key Policy profile drafts', () => {
     expect(page).toContain('{draft.quota?.enabled ? <>');
     expect(page).toContain("placeholder={t('api_key_policy.quota_cost_example')}");
     expect(page).toContain("(['all_time', 'past_duration', 'calendar_duration'] as const)");
+    expect(page).toContain('supportsAPIKeyQuotaTimezone(snapshot.capabilities)');
+    expect(page).toContain("placeholder={t('api_key_policy.quota_timezone_example')}");
+    expect(page).toContain("!validIanaTimezone(draft.quota.period.timezone)");
+    expect(page).toContain("timezone: normalized.timezone?.trim() || 'UTC'");
+    expect(page).toContain("timezone: quota.period.timezone ?? 'UTC'");
+    expect(page).toContain("quota.period.timezone ?? 'UTC' : undefined");
     expect(styles).toContain('.quotaPeriodGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start;');
     expect(styles).toContain('.quotaPeriodGrid :global(.form-group) { margin-bottom: 0; }');
     expect(styles).toContain('.quotaSelectTrigger { height: 46px;');
