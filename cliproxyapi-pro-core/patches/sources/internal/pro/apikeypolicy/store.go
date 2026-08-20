@@ -154,6 +154,22 @@ func (s *Store) init(ctx context.Context) error {
 			foreign key(admission_id) references api_key_quota_admissions(admission_id) on delete cascade,
 			foreign key(policy_id) references api_key_policies(id) on delete cascade
 		)`,
+		`create table if not exists api_key_quota_pending_settlements (
+			event_id text primary key,
+			admission_id text not null,
+			policy_id text not null,
+			profile_id text not null,
+			epoch integer not null,
+			usage_json text not null,
+			require_cost integer not null check(require_cost in (0, 1)),
+			quoted integer not null default 0 check(quoted in (0, 1)),
+			cost_micros integer not null default 0 check(cost_micros >= 0),
+			block_reason text not null,
+			created_at_ms integer not null,
+			updated_at_ms integer not null,
+			foreign key(admission_id) references api_key_quota_admissions(admission_id) on delete cascade,
+			foreign key(policy_id) references api_key_policies(id) on delete cascade
+		)`,
 		`insert into api_key_policy_settings(id, takeover_enabled) values(1, 0) on conflict(id) do nothing`,
 		`create index if not exists idx_api_key_profiles_policy on api_key_profiles(policy_id, created_at_ms, id)`,
 		`create index if not exists idx_api_key_policy_audit_policy on api_key_policy_audit(policy_id, created_at_ms)`,
@@ -161,6 +177,7 @@ func (s *Store) init(ctx context.Context) error {
 		`create index if not exists idx_api_key_quota_tokens_policy on api_key_quota_token_events(policy_id, epoch)`,
 		`create index if not exists idx_api_key_quota_admissions_window on api_key_quota_admissions(policy_id, epoch, admitted_at_ms)`,
 		`create index if not exists idx_api_key_quota_tokens_window on api_key_quota_token_events(policy_id, epoch, occurred_at_ms)`,
+		`create index if not exists idx_api_key_quota_pending_policy on api_key_quota_pending_settlements(policy_id, epoch)`,
 	}, Alter: []string{
 		`alter table api_key_policy_quotas add column cost_limit_micros integer check(cost_limit_micros is null or cost_limit_micros > 0)`,
 		`alter table api_key_policy_quotas add column period_type text not null default 'all_time'`,

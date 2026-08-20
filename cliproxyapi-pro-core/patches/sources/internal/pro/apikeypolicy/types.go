@@ -375,22 +375,22 @@ type QuotaSummary struct {
 // QuotaUsageDelta is the provider usage required to settle both token and
 // price quotas. Cost is evaluated server-side from the active model-price rule.
 type QuotaUsageDelta struct {
-	Provider             string
-	Model                string
-	InputTokens          int64
-	OutputTokens         int64
-	ReasoningTokens      int64
-	CachedTokens         int64
-	CacheTokens          int64
-	CacheReadTokens      int64
-	CacheWriteTokens     int64
-	UncachedInputTokens  int64
-	AccountingQuality    string
-	TotalTokens          int64
-	ServiceTier          string
-	EffectiveServiceTier string
-	Speed                string
-	EffectiveSpeed       string
+	Provider             string `json:"provider,omitempty"`
+	Model                string `json:"model,omitempty"`
+	InputTokens          int64  `json:"inputTokens,omitempty"`
+	OutputTokens         int64  `json:"outputTokens,omitempty"`
+	ReasoningTokens      int64  `json:"reasoningTokens,omitempty"`
+	CachedTokens         int64  `json:"cachedTokens,omitempty"`
+	CacheTokens          int64  `json:"cacheTokens,omitempty"`
+	CacheReadTokens      int64  `json:"cacheReadTokens,omitempty"`
+	CacheWriteTokens     int64  `json:"cacheWriteTokens,omitempty"`
+	UncachedInputTokens  int64  `json:"uncachedInputTokens,omitempty"`
+	AccountingQuality    string `json:"accountingQuality,omitempty"`
+	TotalTokens          int64  `json:"totalTokens,omitempty"`
+	ServiceTier          string `json:"serviceTier,omitempty"`
+	EffectiveServiceTier string `json:"effectiveServiceTier,omitempty"`
+	Speed                string `json:"speed,omitempty"`
+	EffectiveSpeed       string `json:"effectiveSpeed,omitempty"`
 }
 
 func (u QuotaUsageDelta) empty() bool {

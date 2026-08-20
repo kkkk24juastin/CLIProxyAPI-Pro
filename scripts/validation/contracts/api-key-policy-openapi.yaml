@@ -49,6 +49,18 @@ paths:
               schema: { $ref: "#/components/schemas/ProfileCatalogSnapshot" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/PolicyUnavailable" }
+  /v0/management/api-key-policy-quota-summaries:
+    get:
+      operationId: listApiKeyPolicyQuotaSummaries
+      description: Lightweight Key-wide quota usage and admission state snapshot; never contains API-key fingerprints or Profile rules
+      responses:
+        "200":
+          description: Quota summaries captured at one server timestamp
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaSummaryResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/PolicyUnavailable" }
   /v0/management/api-key-policy-usage-target:
     post:
       operationId: resolveApiKeyPolicyUsageTarget
@@ -322,6 +334,7 @@ components:
               - key_quota_requests_tokens
               - key_quota_cost_period
               - key_quota_explicit_reset
+              - key_quota_overview
               - usage_key_target
               - provider_model_linkage
     PolicyState:
@@ -463,6 +476,32 @@ components:
             startedAtMs: { type: integer }
             updatedAtMs: { type: integer }
             usage: { $ref: "#/components/schemas/QuotaUsage" }
+    QuotaAdmissionState:
+      type: string
+      enum: [available, disabled, exhausted, blocked]
+    QuotaBlockReason:
+      type: string
+      enum: [pricing_store_unavailable, settlement_store_unavailable]
+    QuotaSummary:
+      type: object
+      additionalProperties: false
+      required: [policyId, policyVersion, admissionState]
+      properties:
+        policyId: { type: string }
+        policyVersion: { type: integer, minimum: 1 }
+        quota: { $ref: "#/components/schemas/Quota" }
+        admissionState: { $ref: "#/components/schemas/QuotaAdmissionState" }
+        blockedReason: { $ref: "#/components/schemas/QuotaBlockReason" }
+        nextRecoverAtMs: { type: integer }
+    QuotaSummaryResponse:
+      type: object
+      additionalProperties: false
+      required: [items, snapshotAtMs]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/QuotaSummary" }
+        snapshotAtMs: { type: integer }
     UsageTargetRequest:
       type: object
       required: [keyRef]

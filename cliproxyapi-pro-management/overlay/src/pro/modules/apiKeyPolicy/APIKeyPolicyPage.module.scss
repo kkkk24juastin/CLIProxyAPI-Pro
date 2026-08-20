@@ -164,7 +164,7 @@
 .cardQuota_unknown { color: var(--warning-text); border-color: var(--warning-border); background: var(--warning-bg); }
 
 .quotaOverview { display: grid; gap: 12px; min-width: 0; }
-.quotaStats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); }
+.quotaStats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); }
 .quotaStats > div { display: grid; gap: 3px; padding: 11px 14px; border-right: 1px solid var(--border-color); }
 .quotaStats > div:last-child { border-right: 0; }
 .quotaStats small { color: var(--text-secondary); font-size: 10px; }
@@ -323,8 +323,9 @@
   .cards { grid-template-columns: 1fr; }
   .viewTabs { width: 100%; }
   .quotaStats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .quotaStats > div:nth-child(2) { border-right: 0; }
-  .quotaStats > div:nth-child(-n + 2) { border-bottom: 1px solid var(--border-color); }
+  .quotaStats > div:nth-child(2n) { border-right: 0; }
+  .quotaStats > div:nth-child(-n + 4) { border-bottom: 1px solid var(--border-color); }
+  .quotaStats > div:last-child { grid-column: 1 / -1; }
   .quotaTableRow { grid-template-columns: 1fr; gap: 10px; }
   .quotaKeyCell,
   .quotaPeriodCell,

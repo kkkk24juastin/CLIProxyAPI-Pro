@@ -156,8 +156,13 @@ describe('API Key Policy profile drafts', () => {
     expect(page).toContain('quotaSummaryRevisionRef.current += 1;');
     expect(page).toContain('quotaVisualState(summary, takeoverActive, policy.quota?.enabled === true)');
     expect(page).toContain('apiKeyPolicyApi.resetQuota(policy.id, policy.version)');
-    expect(page).toContain('await loadQuotaSummaries(true);');
-    expect(page).toContain('await Promise.all([load(), loadQuotaSummaries(true)]);');
+    expect(page).toContain('const refreshQuotaAfterMutation = useCallback(async () => {');
+    expect(page).toContain('quotaManualRevisionRef.current += 1;');
+    expect(page).toContain('await Promise.all([load(), refreshQuotaAfterMutation()]);');
+    expect(page).toContain('onRefresh={() => void refreshPage()}');
+    expect(page).toContain("quotaFilter === 'inactive'");
+    expect(page).toContain("'blocked', 'inactive', 'disabled'");
+    expect(page).toContain("quota_overview.inactive");
     expect(page).toContain('key={binding.keyRef}');
     expect(page).toContain("t(`api_key_policy.quota_block.${summary.blockedReason}`)");
   });

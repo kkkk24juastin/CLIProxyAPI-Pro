@@ -499,6 +499,18 @@ type quotaPricingBlockKey struct {
 	epoch    int64
 }
 
+type pendingQuotaSettlement struct {
+	eventID     string
+	attribution QuotaAttribution
+	usage       QuotaUsageDelta
+	requireCost bool
+	quoted      bool
+	costMicros  int64
+	blockReason string
+}
+
+const quotaHistorySettlementGrace = 7 * 24 * time.Hour
+
 var errQuotaPricingUnavailable = errors.New("api key quota pricing is unavailable")
 
 // ErrQuotaPriceMissing means the requested model has no active price rule.
@@ -638,6 +650,17 @@ func NewService(store *Store) (*Service, error) {
 	if err := service.Reload(context.Background()); err != nil {
 		return nil, err
 	}
+	if err := service.pruneQuotaHistory(context.Background(), time.Now().UnixMilli()); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	if err := service.resumePendingQuotaSettlements(context.Background()); err != nil {
+		service.retryCancel()
+		service.retryWG.Wait()
+		_ = store.Close()
+		return nil, err
+	}
+	service.startQuotaHistoryMaintenance()
 	return service, nil
 }
 
@@ -800,6 +823,9 @@ func (s *Service) AdmitDecision(ctx context.Context, decision RequestPolicyDecis
 		return RequestPolicyDecision{}, err
 	}
 	decision.Snapshot.QuotaAdmissionID = admissionID
+	if decision.Snapshot.Quota.TotalTokens == nil && decision.Snapshot.Quota.Cost == nil {
+		return decision, nil
+	}
 	attribution, _ := decision.QuotaAttribution()
 	requireCost := decision.Snapshot.Quota.Cost != nil
 	decision.Snapshot.QuotaUsageSettlement = func(settleCtx context.Context, eventID string, usage QuotaUsageDelta) error {
@@ -1005,6 +1031,109 @@ func (s *Service) RecordQuotaTokens(ctx context.Context, attribution QuotaAttrib
 	return err
 }
 
+func (s *Service) stagePendingQuotaSettlement(ctx context.Context, attribution QuotaAttribution, eventID string, usage QuotaUsageDelta, requireCost bool) (completed bool, quoted bool, costMicros int64, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	payload, err := json.Marshal(usage)
+	if err != nil {
+		return false, false, 0, ErrQuotaUnavailable
+	}
+	now := time.Now().UnixMilli()
+	reason := QuotaBlockSettlementStore
+	if requireCost {
+		reason = QuotaBlockPricingStore
+	}
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	result, err := s.store.db.ExecContext(dbCtx, `insert into api_key_quota_pending_settlements(event_id, admission_id, policy_id, profile_id, epoch, usage_json, require_cost, quoted, cost_micros, block_reason, created_at_ms, updated_at_ms)
+		select ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?
+		where exists(select 1 from api_key_quota_admissions where admission_id = ? and policy_id = ? and profile_id = ? and epoch = ?)
+		and not exists(select 1 from api_key_quota_token_events where event_id = ?)
+		on conflict(event_id) do nothing`, strings.TrimSpace(eventID), attribution.AdmissionID, attribution.PolicyID, attribution.ProfileID, attribution.Epoch, string(payload), requireCost, reason, now, now,
+		attribution.AdmissionID, attribution.PolicyID, attribution.ProfileID, attribution.Epoch, strings.TrimSpace(eventID))
+	if err != nil {
+		return false, false, 0, ErrQuotaUnavailable
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		var completedCount int
+		if err = s.store.db.QueryRowContext(dbCtx, `select count(*) from api_key_quota_token_events where event_id = ?`, strings.TrimSpace(eventID)).Scan(&completedCount); err != nil {
+			return false, false, 0, ErrQuotaUnavailable
+		}
+		if completedCount != 0 {
+			return true, true, 0, nil
+		}
+		var stagedUsage string
+		var stagedRequireCost bool
+		if err = s.store.db.QueryRowContext(dbCtx, `select usage_json, require_cost, quoted, cost_micros from api_key_quota_pending_settlements where event_id = ?`, strings.TrimSpace(eventID)).Scan(&stagedUsage, &stagedRequireCost, &quoted, &costMicros); errors.Is(err, sql.ErrNoRows) {
+			return false, false, 0, fmt.Errorf("%w: %w", ErrQuotaUnavailable, ErrQuotaSettlementStale)
+		}
+		if err != nil {
+			return false, false, 0, ErrQuotaUnavailable
+		}
+		if stagedUsage != string(payload) || stagedRequireCost != requireCost {
+			return false, false, 0, ErrQuotaUnavailable
+		}
+	}
+	return false, quoted, costMicros, nil
+}
+
+func (s *Service) quotePendingQuotaSettlement(ctx context.Context, eventID string, costMicros int64) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	result, err := s.store.db.ExecContext(dbCtx, `update api_key_quota_pending_settlements set quoted = 1, cost_micros = ?, block_reason = ?, updated_at_ms = ? where event_id = ?`, costMicros, QuotaBlockSettlementStore, time.Now().UnixMilli(), strings.TrimSpace(eventID))
+	if err != nil {
+		return ErrQuotaUnavailable
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return fmt.Errorf("%w: %w", ErrQuotaUnavailable, ErrQuotaSettlementStale)
+	}
+	return nil
+}
+
+func (s *Service) listPendingQuotaSettlements(ctx context.Context) ([]pendingQuotaSettlement, error) {
+	rows, err := s.store.db.QueryContext(ctx, `select event_id, admission_id, policy_id, profile_id, epoch, usage_json, require_cost, quoted, cost_micros, block_reason from api_key_quota_pending_settlements order by created_at_ms, event_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]pendingQuotaSettlement, 0)
+	for rows.Next() {
+		var item pendingQuotaSettlement
+		var payload string
+		if err = rows.Scan(&item.eventID, &item.attribution.AdmissionID, &item.attribution.PolicyID, &item.attribution.ProfileID, &item.attribution.Epoch, &payload, &item.requireCost, &item.quoted, &item.costMicros, &item.blockReason); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal([]byte(payload), &item.usage); err != nil || item.eventID == "" || item.attribution.AdmissionID == "" || item.usage.empty() {
+			return nil, errors.New("invalid pending API key quota settlement")
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Service) resumePendingQuotaSettlements(ctx context.Context) error {
+	items, err := s.listPendingQuotaSettlements(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.blockReason == QuotaBlockPricingStore && item.requireCost && !item.quoted {
+			s.retryQuotaPricing(item.attribution, item.eventID, item.usage)
+			continue
+		}
+		s.retryQuotaSettlement(item.attribution, item.eventID, item.usage, item.requireCost, item.costMicros, item.quoted)
+	}
+	return nil
+}
+
 // recordQuotaUsage returns the server-side price quote even when persistence
 // fails. Retry callers can then keep the quote stable for this usage event
 // instead of re-pricing it against a rule that changed after the request.
@@ -1012,6 +1141,16 @@ func (s *Service) recordQuotaUsage(ctx context.Context, attribution QuotaAttribu
 	totalTokens := usage.TotalTokens
 	if s == nil || s.store == nil || attribution.PolicyID == "" || attribution.AdmissionID == "" || strings.TrimSpace(eventID) == "" || totalTokens < 0 {
 		return 0, false, ErrQuotaUnavailable
+	}
+	completed, stagedQuoted, stagedCostMicros, err := s.stagePendingQuotaSettlement(ctx, attribution, eventID, usage, requireCost)
+	if err != nil {
+		return 0, false, err
+	}
+	if completed {
+		return 0, true, nil
+	}
+	if stagedQuoted {
+		return stagedCostMicros, true, s.persistQuotaUsage(ctx, attribution, eventID, totalTokens, stagedCostMicros)
 	}
 	if requireCost {
 		s.costEstimatorMu.RLock()
@@ -1023,6 +1162,9 @@ func (s *Service) recordQuotaUsage(ctx context.Context, attribution QuotaAttribu
 		costMicros, err = estimator(ctx, usage)
 		if errors.Is(err, ErrQuotaPriceMissing) {
 			quoted = true
+			if err = s.quotePendingQuotaSettlement(ctx, eventID, 0); err != nil {
+				return 0, true, err
+			}
 			return 0, true, s.persistQuotaUsage(ctx, attribution, eventID, totalTokens, 0)
 		}
 		if err != nil || costMicros < 0 {
@@ -1031,6 +1173,10 @@ func (s *Service) recordQuotaUsage(ctx context.Context, attribution QuotaAttribu
 			}
 			return 0, false, fmt.Errorf("%w: %v", errQuotaPricingUnavailable, err)
 		}
+		quoted = true
+		if err = s.quotePendingQuotaSettlement(ctx, eventID, costMicros); err != nil {
+			return costMicros, true, err
+		}
 	}
 	quoted = true
 	err = s.persistQuotaUsage(ctx, attribution, eventID, totalTokens, costMicros)
@@ -1038,9 +1184,6 @@ func (s *Service) recordQuotaUsage(ctx context.Context, attribution QuotaAttribu
 }
 
 func (s *Service) persistQuotaUsage(ctx context.Context, attribution QuotaAttribution, eventID string, totalTokens, costMicros int64) error {
-	if totalTokens == 0 && costMicros == 0 {
-		return nil
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1056,25 +1199,35 @@ func (s *Service) persistQuotaUsage(ctx context.Context, attribution QuotaAttrib
 	var policyID, profileID string
 	var epoch int64
 	if err = tx.QueryRowContext(dbCtx, `select policy_id, profile_id, epoch from api_key_quota_admissions where admission_id = ?`, attribution.AdmissionID).Scan(&policyID, &profileID, &epoch); errors.Is(err, sql.ErrNoRows) || err == nil && (policyID != attribution.PolicyID || profileID != attribution.ProfileID || epoch != attribution.Epoch) {
+		if _, errDelete := tx.ExecContext(dbCtx, `delete from api_key_quota_pending_settlements where event_id = ?`, strings.TrimSpace(eventID)); errDelete != nil {
+			return ErrQuotaUnavailable
+		}
+		if errCommit := tx.Commit(); errCommit != nil {
+			return ErrQuotaUnavailable
+		}
 		return fmt.Errorf("%w: %w", ErrQuotaUnavailable, ErrQuotaSettlementStale)
 	}
 	if err != nil {
 		return ErrQuotaUnavailable
 	}
-	now := time.Now().UnixMilli()
-	result, err := tx.ExecContext(dbCtx, `insert into api_key_quota_token_events(event_id, admission_id, policy_id, profile_id, epoch, total_tokens, cost_micros, occurred_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?) on conflict(event_id) do nothing`, strings.TrimSpace(eventID), attribution.AdmissionID, attribution.PolicyID, attribution.ProfileID, attribution.Epoch, totalTokens, costMicros, now)
-	if err != nil {
+	if totalTokens != 0 || costMicros != 0 {
+		now := time.Now().UnixMilli()
+		result, err := tx.ExecContext(dbCtx, `insert into api_key_quota_token_events(event_id, admission_id, policy_id, profile_id, epoch, total_tokens, cost_micros, occurred_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?) on conflict(event_id) do nothing`, strings.TrimSpace(eventID), attribution.AdmissionID, attribution.PolicyID, attribution.ProfileID, attribution.Epoch, totalTokens, costMicros, now)
+		if err != nil {
+			return ErrQuotaUnavailable
+		}
+		if inserted, _ := result.RowsAffected(); inserted != 0 {
+			updated, err := tx.ExecContext(dbCtx, `update api_key_policy_quotas set total_tokens_used = total_tokens_used + ?, cost_used_micros = cost_used_micros + ?, updated_at_ms = ? where policy_id = ? and epoch = ?`, totalTokens, costMicros, now, attribution.PolicyID, attribution.Epoch)
+			if err != nil {
+				return ErrQuotaUnavailable
+			}
+			if affected, _ := updated.RowsAffected(); affected != 1 {
+				return fmt.Errorf("%w: %w", ErrQuotaUnavailable, ErrQuotaSettlementStale)
+			}
+		}
+	}
+	if _, err = tx.ExecContext(dbCtx, `delete from api_key_quota_pending_settlements where event_id = ?`, strings.TrimSpace(eventID)); err != nil {
 		return ErrQuotaUnavailable
-	}
-	if inserted, _ := result.RowsAffected(); inserted == 0 {
-		return nil
-	}
-	updated, err := tx.ExecContext(dbCtx, `update api_key_policy_quotas set total_tokens_used = total_tokens_used + ?, cost_used_micros = cost_used_micros + ?, updated_at_ms = ? where policy_id = ? and epoch = ?`, totalTokens, costMicros, now, attribution.PolicyID, attribution.Epoch)
-	if err != nil {
-		return ErrQuotaUnavailable
-	}
-	if affected, _ := updated.RowsAffected(); affected != 1 {
-		return fmt.Errorf("%w: %w", ErrQuotaUnavailable, ErrQuotaSettlementStale)
 	}
 	if err = tx.Commit(); err != nil {
 		return ErrQuotaUnavailable
@@ -1144,6 +1297,90 @@ func (s *Service) startQuotaRetry(retry func()) bool {
 	s.retryWG.Add(1)
 	go retry()
 	return true
+}
+
+func (s *Service) startQuotaHistoryMaintenance() {
+	if s == nil || s.retryCtx == nil {
+		return
+	}
+	s.retryMu.Lock()
+	if s.retryClosed {
+		s.retryMu.Unlock()
+		return
+	}
+	s.retryWG.Add(1)
+	s.retryMu.Unlock()
+	go func() {
+		defer s.retryWG.Done()
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.retryCtx.Done():
+				return
+			case now := <-ticker.C:
+				_ = s.pruneQuotaHistory(s.retryCtx, now.UnixMilli())
+			}
+		}
+	}()
+}
+
+func (s *Service) pruneQuotaHistory(ctx context.Context, nowMS int64) error {
+	if s == nil || s.store == nil || nowMS <= 0 {
+		return nil
+	}
+	type quotaRetention struct {
+		policyID  string
+		epoch     int64
+		period    QuotaPeriod
+		startedAt int64
+	}
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	tx, err := s.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `select policy_id, epoch, period_type, period_value, period_unit, started_at_ms from api_key_policy_quotas`)
+	if err != nil {
+		return err
+	}
+	items := make([]quotaRetention, 0)
+	for rows.Next() {
+		var item quotaRetention
+		var value sql.NullInt64
+		if err = rows.Scan(&item.policyID, &item.epoch, &item.period.Type, &value, &item.period.Unit, &item.startedAt); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if value.Valid {
+			periodValue := value.Int64
+			item.period.Value = &periodValue
+		}
+		items = append(items, item)
+	}
+	if err = rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	graceMS := quotaHistorySettlementGrace.Milliseconds()
+	for _, item := range items {
+		cutoff := nowMS - graceMS
+		if item.period.Type != QuotaPeriodAllTime {
+			windowStart, _ := quotaPeriodBounds(item.period, item.startedAt, nowMS)
+			cutoff = windowStart - graceMS
+		}
+		if _, err = tx.ExecContext(ctx, `delete from api_key_quota_admissions
+			where policy_id = ? and epoch = ? and admitted_at_ms < ?
+			and not exists(select 1 from api_key_quota_pending_settlements pending where pending.admission_id = api_key_quota_admissions.admission_id)`, item.policyID, item.epoch, cutoff); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Service) quotaPricingIsBlocked(policyID string, epoch int64) bool {

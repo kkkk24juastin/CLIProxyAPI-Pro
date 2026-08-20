@@ -1000,6 +1000,41 @@ func TestCostQuotaUsesServerPricingAndFailsClosedAfterExhaustion(t *testing.T) {
 	}
 }
 
+func TestCostQuotaSettlementIsIdempotentWithoutRepricing(t *testing.T) {
+	service := newTestService(t)
+	var pricingCalls atomic.Int64
+	service.SetCostEstimator(func(context.Context, QuotaUsageDelta) (int64, error) {
+		pricingCalls.Add(1)
+		return 500_000, nil
+	})
+	identity := testIdentity(t, "idempotent-cost-key")
+	costLimit := 10.0
+	created, err := service.Create(context.Background(), identity, "Idempotent", ProfileInput{Name: "priced"}, &QuotaInput{Enabled: true, Cost: &costLimit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settlementCtx := WithDecision(context.Background(), admitted)
+	usage := QuotaUsageDelta{Provider: "codex", Model: "gpt-5", TotalTokens: 5}
+	if err = SettleQuotaUsage(settlementCtx, "terminal", usage); err != nil {
+		t.Fatal(err)
+	}
+	if err = SettleQuotaUsage(settlementCtx, "terminal", usage); err != nil {
+		t.Fatalf("duplicate settlement = %v", err)
+	}
+	loaded, err := service.Get(context.Background(), created.ID)
+	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.TotalTokensUsed != 5 || loaded.Quota.Usage.CostUsed != 0.5 || pricingCalls.Load() != 1 {
+		t.Fatalf("idempotent cost usage = %#v pricingCalls=%d error=%v", loaded.Quota, pricingCalls.Load(), err)
+	}
+}
+
 func TestMissingCostPriceSettlesTokensAtZeroCostWithoutBlocking(t *testing.T) {
 	service := newTestService(t)
 	service.SetCostEstimator(func(context.Context, QuotaUsageDelta) (int64, error) {
@@ -1110,6 +1145,165 @@ func TestPricingStoreFailureBlocksOnlyAffectedPolicyAndRecovers(t *testing.T) {
 	loaded, err := service.Get(context.Background(), blockedPolicy.ID)
 	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.CostUsed != 0.25 {
 		t.Fatalf("recovered cost usage = %#v error=%v", loaded.Quota, err)
+	}
+}
+
+func TestPricingStoreFailurePersistsBlockedSettlementAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pro.sqlite")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := testIdentity(t, "restart-pricing-key")
+	tokenLimit := int64(100)
+	costLimit := 10.0
+	policy, err := service.Create(context.Background(), identity, "Restart", ProfileInput{Name: "default"}, &QuotaInput{
+		Enabled: true, TotalTokens: &tokenLimit, Cost: &costLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	service.SetCostEstimator(func(context.Context, QuotaUsageDelta) (int64, error) {
+		return 0, errors.New("pricing database is unavailable")
+	})
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = SettleQuotaUsage(WithDecision(context.Background(), admitted), "terminal", QuotaUsageDelta{
+		Provider: "codex", Model: "gpt-5", TotalTokens: 20,
+	}); !errors.Is(err, errQuotaPricingUnavailable) {
+		t.Fatalf("pricing failure = %v", err)
+	}
+	if err = service.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err = NewService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	summaries, err := service.ListQuotaSummaries(context.Background(), time.Now().UnixMilli())
+	if err != nil || len(summaries) != 1 || summaries[0].AdmissionState != QuotaAdmissionBlocked || summaries[0].BlockedReason != QuotaBlockPricingStore {
+		t.Fatalf("restored blocked settlement = %#v error=%v", summaries, err)
+	}
+	service.SetCostEstimator(func(_ context.Context, usage QuotaUsageDelta) (int64, error) {
+		if usage.Model != "gpt-5" || usage.TotalTokens != 20 {
+			t.Fatalf("restored usage = %#v", usage)
+		}
+		return 250_000, nil
+	})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		summaries, err = service.ListQuotaSummaries(context.Background(), time.Now().UnixMilli())
+		if err == nil && len(summaries) == 1 && summaries[0].AdmissionState == QuotaAdmissionAvailable && summaries[0].Quota != nil && summaries[0].Quota.Usage.TotalTokensUsed == 20 && summaries[0].Quota.Usage.CostUsed == 0.25 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil || len(summaries) != 1 || summaries[0].PolicyID != policy.ID || summaries[0].AdmissionState != QuotaAdmissionAvailable || summaries[0].Quota.Usage.TotalTokensUsed != 20 || summaries[0].Quota.Usage.CostUsed != 0.25 {
+		t.Fatalf("recovered settlement = %#v error=%v", summaries, err)
+	}
+	var pending int
+	if err = service.store.db.QueryRow(`select count(*) from api_key_quota_pending_settlements`).Scan(&pending); err != nil || pending != 0 {
+		t.Fatalf("pending settlements = %d error=%v", pending, err)
+	}
+}
+
+func TestQuotaHistoryPruningKeepsCurrentWindowAndPendingSettlements(t *testing.T) {
+	service := newTestService(t)
+	requestLimit := int64(100)
+	tokenLimit := int64(1_000)
+	periodValue := int64(1)
+	policy, err := service.Create(context.Background(), testIdentity(t, "quota-pruning-key"), "Pruning", ProfileInput{Name: "default"}, &QuotaInput{
+		Enabled: true, Requests: &requestLimit, TotalTokens: &tokenLimit,
+		Period: QuotaPeriod{Type: QuotaPeriodPastDuration, Value: &periodValue, Unit: "hour"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nowMS := time.Now().UnixMilli()
+	expiredAt := nowMS - int64(8*24*time.Hour/time.Millisecond)
+	currentAt := nowMS - int64(30*time.Minute/time.Millisecond)
+	if _, err = service.store.db.Exec(`insert into api_key_quota_admissions(admission_id, policy_id, profile_id, epoch, admitted_at_ms) values
+		(?, ?, ?, ?, ?), (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+		"expired", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, expiredAt,
+		"current", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, currentAt,
+		"pending", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, expiredAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.store.db.Exec(`insert into api_key_quota_token_events(event_id, admission_id, policy_id, profile_id, epoch, total_tokens, cost_micros, occurred_at_ms) values
+		(?, ?, ?, ?, ?, ?, 0, ?), (?, ?, ?, ?, ?, ?, 0, ?), (?, ?, ?, ?, ?, ?, 0, ?)`,
+		"expired:event", "expired", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, 1, expiredAt,
+		"current:event", "current", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, 2, currentAt,
+		"pending:event-old", "pending", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, 3, expiredAt); err != nil {
+		t.Fatal(err)
+	}
+	usageJSON, err := json.Marshal(QuotaUsageDelta{TotalTokens: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.store.db.Exec(`insert into api_key_quota_pending_settlements(event_id, admission_id, policy_id, profile_id, epoch, usage_json, require_cost, quoted, cost_micros, block_reason, created_at_ms, updated_at_ms) values(?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?)`,
+		"pending:event", "pending", policy.ID, policy.ActiveProfileID, policy.Quota.Epoch, string(usageJSON), QuotaBlockSettlementStore, expiredAt, expiredAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.pruneQuotaHistory(context.Background(), nowMS); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]int{"expired": 0, "current": 1, "pending": 1} {
+		var count int
+		if err = service.store.db.QueryRow(`select count(*) from api_key_quota_admissions where admission_id = ?`, id).Scan(&count); err != nil || count != want {
+			t.Fatalf("admission %s count = %d, want %d, error=%v", id, count, want, err)
+		}
+	}
+	var events int
+	if err = service.store.db.QueryRow(`select count(*) from api_key_quota_token_events`).Scan(&events); err != nil || events != 2 {
+		t.Fatalf("retained events = %d error=%v", events, err)
+	}
+}
+
+func TestRequestOnlyQuotaDoesNotInstallUsageSettlement(t *testing.T) {
+	service := newTestService(t)
+	requestLimit := int64(10)
+	identity := testIdentity(t, "request-only-quota-key")
+	if _, err := service.Create(context.Background(), identity, "Requests", ProfileInput{Name: "default"}, &QuotaInput{Enabled: true, Requests: &requestLimit}); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admitted.Snapshot == nil || admitted.Snapshot.QuotaAdmissionID == "" || admitted.Snapshot.QuotaUsageSettlement != nil {
+		t.Fatalf("request-only admission = %#v", admitted)
+	}
+	if err = SettleQuotaUsage(WithDecision(context.Background(), admitted), "unused", QuotaUsageDelta{TotalTokens: 99}); err != nil {
+		t.Fatal(err)
+	}
+	for table, want := range map[string]int{"api_key_quota_token_events": 0, "api_key_quota_pending_settlements": 0} {
+		var count int
+		if err = service.store.db.QueryRow(`select count(*) from ` + table).Scan(&count); err != nil || count != want {
+			t.Fatalf("%s count = %d, want %d, error=%v", table, count, want, err)
+		}
 	}
 }
 

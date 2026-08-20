@@ -97,6 +97,50 @@ class APIKeyPolicyContractTest(unittest.TestCase):
             r"ProfileCatalogItem:\n(?:.|\n)*?additionalProperties: false(?:.|\n)*?required: \[id, name, updatedAtMs\]",
         )
 
+    def test_quota_overview_endpoint_and_states_match_across_contracts(self) -> None:
+        for source in (GO_HANDLER, TS_CLIENT, OPENAPI):
+            self.assertIn("api-key-policy-quota-summaries", source)
+            self.assertIn("key_quota_overview", source)
+        self.assertIn("ListQuotaSummaries", GO_HANDLER)
+        self.assertIn("APIKeyQuotaSummaryResponse", TS_CLIENT)
+        self.assertRegex(
+            OPENAPI,
+            r"QuotaSummaryResponse:\n(?:.|\n)*?required: \[items, snapshotAtMs\]",
+        )
+        self.assertRegex(
+            OPENAPI,
+            r"QuotaSummary:\n(?:.|\n)*?required: \[policyId, policyVersion, admissionState\]",
+        )
+
+        expected_states = {"available", "disabled", "exhausted", "blocked"}
+        go_states = set(re.findall(r'QuotaAdmission\w+\s+=\s+"([^"]+)"', GO_TYPES))
+        ts_state = re.search(r"export type APIKeyQuotaAdmissionState = ([^;]+);", TS_CLIENT)
+        self.assertIsNotNone(ts_state)
+        ts_states = set(re.findall(r"'([^']+)'", ts_state.group(1)))
+        openapi_state = re.search(
+            r"QuotaAdmissionState:\n\s+type: string\n\s+enum: \[([^\]]+)\]",
+            OPENAPI,
+        )
+        self.assertIsNotNone(openapi_state)
+        openapi_states = {value.strip() for value in openapi_state.group(1).split(",")}
+        self.assertEqual(expected_states, go_states)
+        self.assertEqual(expected_states, ts_states)
+        self.assertEqual(expected_states, openapi_states)
+
+        expected_reasons = {"pricing_store_unavailable", "settlement_store_unavailable"}
+        go_reasons = set(re.findall(r'QuotaBlock\w+\s+=\s+"([^"]+)"', GO_TYPES))
+        ts_summary = TS_CLIENT.split("export interface APIKeyQuotaSummary", 1)[1].split("}", 1)[0]
+        ts_reasons = set(re.findall(r"'([^']+_store_unavailable)'", ts_summary))
+        openapi_reason = re.search(
+            r"QuotaBlockReason:\n\s+type: string\n\s+enum: \[([^\]]+)\]",
+            OPENAPI,
+        )
+        self.assertIsNotNone(openapi_reason)
+        openapi_reasons = {value.strip() for value in openapi_reason.group(1).split(",")}
+        self.assertEqual(expected_reasons, go_reasons)
+        self.assertEqual(expected_reasons, ts_reasons)
+        self.assertEqual(expected_reasons, openapi_reasons)
+
     def test_profile_response_does_not_inherit_write_version(self) -> None:
         profile_schema = OPENAPI.split("    Profile:\n", 1)[1].split(
             "    Policy:\n", 1

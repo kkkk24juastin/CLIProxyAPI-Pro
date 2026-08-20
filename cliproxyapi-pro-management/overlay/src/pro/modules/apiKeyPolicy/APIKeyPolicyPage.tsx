@@ -51,7 +51,7 @@ import styles from './APIKeyPolicyPage.module.scss';
 
 type BindingFilter = 'all' | 'unconfigured' | 'configured' | 'orphaned';
 type PageView = 'policies' | 'quotas';
-type QuotaFilter = 'all' | 'attention' | 'exhausted' | 'blocked' | 'disabled';
+type QuotaFilter = 'all' | 'attention' | 'exhausted' | 'blocked' | 'inactive' | 'disabled';
 type QuotaVisualState = 'inactive' | 'disabled' | 'available' | 'warning' | 'exhausted' | 'blocked' | 'unknown';
 type CapabilityState = 'checking' | 'ready' | 'unsupported' | 'error';
 type WorkspaceTarget =
@@ -475,6 +475,20 @@ export function APIKeyPolicyPage() {
     }
   }, [connectionStatus, errorMessage, quotaOverviewSupported]);
 
+  const refreshQuotaAfterMutation = useCallback(async () => {
+    // A successful mutation establishes a new server state. Invalidate any
+    // older manual response before fetching the corresponding quota snapshot.
+    quotaSummaryRevisionRef.current += 1;
+    quotaManualRevisionRef.current += 1;
+    quotaManualInFlightRef.current = false;
+    setQuotaLoading(false);
+    await loadQuotaSummaries(true);
+  }, [loadQuotaSummaries]);
+
+  const refreshPage = useCallback(async () => {
+    await Promise.all([load(), loadQuotaSummaries()]);
+  }, [load, loadQuotaSummaries]);
+
   useEffect(() => {
     if (!quotaOverviewSupported || connectionStatus !== 'connected') {
       quotaSummaryRevisionRef.current += 1;
@@ -699,7 +713,7 @@ export function APIKeyPolicyPage() {
         setDraft(workspaceDraftFromTarget(target, savedProfile?.id));
       }
       showNotification(t('api_key_policy.saved'), 'success');
-      await Promise.all([load(), loadQuotaSummaries(true)]);
+      await Promise.all([load(), refreshQuotaAfterMutation()]);
     } catch (error) {
       if (revision !== saveRevisionRef.current) return;
       if (apiKeyPolicyErrorCode(error) === 'config_version_conflict') {
@@ -717,7 +731,7 @@ export function APIKeyPolicyPage() {
         setSaving(false);
       }
     }
-  }, [closeWorkspace, draft, errorMessage, load, loadQuotaSummaries, quotaSupported, replacePolicyInSnapshot, showNotification, t, validateDraft, workspaceTarget]);
+  }, [closeWorkspace, draft, errorMessage, load, quotaSupported, refreshQuotaAfterMutation, replacePolicyInSnapshot, showNotification, t, validateDraft, workspaceTarget]);
 
   const resetQuota = useCallback(async () => {
     if (!quotaSupported || !workspaceTarget || workspaceTarget.kind !== 'policy' || quotaBusyRef.current || !workspaceTarget.policy.quota) return;
@@ -741,7 +755,7 @@ export function APIKeyPolicyPage() {
         draftRevisionRef.current += 1;
         setDraft(workspaceDraftFromTarget(target, selectedProfileId));
       }
-      await loadQuotaSummaries(true);
+      await refreshQuotaAfterMutation();
       showNotification(t('api_key_policy.quota_reset_done'), 'success');
     } catch (error) {
       if (revision !== quotaRevisionRef.current) return;
@@ -752,7 +766,7 @@ export function APIKeyPolicyPage() {
         setQuotaBusy(false);
       }
     }
-  }, [draft?.profileId, errorMessage, loadQuotaSummaries, quotaSupported, replacePolicyInSnapshot, showNotification, t, workspaceTarget]);
+  }, [draft?.profileId, errorMessage, quotaSupported, refreshQuotaAfterMutation, replacePolicyInSnapshot, showNotification, t, workspaceTarget]);
 
   const resetQuotaFromOverview = useCallback(async (policy: APIKeyPolicy) => {
     if (!quotaSupported || quotaBusyRef.current || !policy.quota) return;
@@ -764,7 +778,7 @@ export function APIKeyPolicyPage() {
       const updated = await apiKeyPolicyApi.resetQuota(policy.id, policy.version);
       if (revision !== quotaRevisionRef.current) return;
       replacePolicyInSnapshot(updated);
-      await loadQuotaSummaries(true);
+      await refreshQuotaAfterMutation();
       if (revision !== quotaRevisionRef.current) return;
       showNotification(t('api_key_policy.quota_reset_done'), 'success');
     } catch (error) {
@@ -776,7 +790,7 @@ export function APIKeyPolicyPage() {
         setQuotaBusy(false);
       }
     }
-  }, [errorMessage, loadQuotaSummaries, quotaSupported, replacePolicyInSnapshot, showNotification, t]);
+  }, [errorMessage, quotaSupported, refreshQuotaAfterMutation, replacePolicyInSnapshot, showNotification, t]);
 
   const activateProfile = useCallback(async () => {
     if (!workspaceTarget || workspaceTarget.kind !== 'policy' || !draft || dirty || savingRef.current) return;
@@ -895,6 +909,7 @@ export function APIKeyPolicyPage() {
       if (quotaFilter === 'attention' && !['unknown', 'warning', 'exhausted', 'blocked'].includes(visualState)) return [];
       if (quotaFilter === 'exhausted' && visualState !== 'exhausted') return [];
       if (quotaFilter === 'blocked' && visualState !== 'blocked') return [];
+      if (quotaFilter === 'inactive' && visualState !== 'inactive') return [];
       if (quotaFilter === 'disabled' && visualState !== 'disabled') return [];
       const text = `${policy.displayName} ${binding.maskedKey}`.toLowerCase();
       if (query && !text.includes(query)) return [];
@@ -907,7 +922,7 @@ export function APIKeyPolicyPage() {
   }, [quotaFilter, quotaSummaryByPolicy, search, snapshot, takeoverActive]);
 
   const quotaCounts = useMemo(() => {
-    const counts = { enabled: 0, available: 0, warning: 0, exhausted: 0, blocked: 0, unknown: 0 };
+    const counts = { enabled: 0, available: 0, warning: 0, exhausted: 0, blocked: 0, unknown: 0, inactive: 0 };
     (snapshot?.bindings.items ?? []).forEach((binding) => {
       if (!binding.policy) return;
       const summary = quotaSummaryByPolicy.get(binding.policy.id);
@@ -967,7 +982,7 @@ export function APIKeyPolicyPage() {
 			loading={loading}
 			actionBusy={takeoverBusy}
 			actionDisabled={takeoverActionDisabled}
-			onRefresh={() => void load()}
+			onRefresh={() => void refreshPage()}
 			onToggle={() => setTakeoverOpen(true)}
 		/>
 
@@ -1109,10 +1124,13 @@ export function APIKeyPolicyPage() {
                 <div>
                   <small>{t('api_key_policy.quota_overview.unavailable')}</small><strong>{quotaCounts.exhausted + quotaCounts.blocked + quotaCounts.unknown}</strong>
                 </div>
+                <div>
+                  <small>{t('api_key_policy.quota_overview.inactive')}</small><strong>{quotaCounts.inactive}</strong>
+                </div>
               </div>
               <div className={styles.quotaToolbar}>
                 <input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('api_key_policy.quota_overview.search')} />
-                <Select value={quotaFilter} onChange={(value) => setQuotaFilter(value as QuotaFilter)} options={(['all', 'attention', 'exhausted', 'blocked', 'disabled'] as const).map((value) => ({ value, label: t(`api_key_policy.quota_filter.${value}`) }))} ariaLabel={t('api_key_policy.quota_overview.filter')} />
+                <Select value={quotaFilter} onChange={(value) => setQuotaFilter(value as QuotaFilter)} options={(['all', 'attention', 'exhausted', 'blocked', 'inactive', 'disabled'] as const).map((value) => ({ value, label: t(`api_key_policy.quota_filter.${value}`) }))} ariaLabel={t('api_key_policy.quota_overview.filter')} />
                 <Button variant="secondary" size="sm" onClick={() => void loadQuotaSummaries()} loading={quotaLoading}>{t('common.refresh')}</Button>
               </div>
               {quotaError ? <div className={styles.quotaStale} role="alert"><IconAlertTriangle size={15} /><span>{t('api_key_policy.quota_overview.stale')}: {quotaError}</span></div> : null}
