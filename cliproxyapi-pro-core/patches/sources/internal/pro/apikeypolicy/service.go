@@ -1720,10 +1720,6 @@ func (s *Service) clearQuotaSettlementBlockedLocked(policyID string, epoch int64
 	}
 }
 
-func (s *Service) retryQuotaPricing(attribution QuotaAttribution, eventID string, usage QuotaUsageDelta) {
-	s.retryQuotaPricingAtGeneration(attribution, eventID, usage, s.quotaRuntimeGeneration.Load())
-}
-
 func (s *Service) retryQuotaPricingAtGeneration(attribution QuotaAttribution, eventID string, usage QuotaUsageDelta, runtimeGeneration uint64) {
 	if s == nil || s.retryCtx == nil || usage.empty() || attribution.PolicyID == "" || attribution.Epoch <= 0 {
 		return
