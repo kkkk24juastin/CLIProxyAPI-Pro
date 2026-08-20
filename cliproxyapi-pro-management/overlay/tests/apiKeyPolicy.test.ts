@@ -163,6 +163,9 @@ describe('API Key Policy profile drafts', () => {
     expect(page).toContain("quotaFilter === 'inactive'");
     expect(page).toContain("'blocked', 'inactive', 'disabled'");
     expect(page).toContain("quota_overview.inactive");
+    expect(page).toContain("if (quotaConfigured && !takeoverActive) return 'inactive';");
+    expect(page.indexOf("if (quotaConfigured && !takeoverActive) return 'inactive';"))
+      .toBeLessThan(page.indexOf("if (!summary) return quotaConfigured ? 'unknown' : 'disabled';"));
     expect(page).toContain('key={binding.keyRef}');
     expect(page).toContain("t(`api_key_policy.quota_block.${summary.blockedReason}`)");
   });

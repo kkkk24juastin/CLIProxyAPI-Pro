@@ -98,11 +98,11 @@ const quotaVisualState = (
   takeoverActive: boolean,
   quotaConfigured = false,
 ): QuotaVisualState => {
+  if (quotaConfigured && !takeoverActive) return 'inactive';
   // Missing summaries mean that no successful snapshot exists for this policy;
   // do not present that failure as a real disabled quota with zero usage.
   if (!summary) return quotaConfigured ? 'unknown' : 'disabled';
   if (!summary.quota?.enabled || summary.admissionState === 'disabled') return 'disabled';
-  if (!takeoverActive) return 'inactive';
   if (summary.admissionState === 'blocked') return 'blocked';
   if (summary.admissionState === 'exhausted') return 'exhausted';
   return quotaMaximumRatio(summary) >= 0.8 ? 'warning' : 'available';

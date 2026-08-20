@@ -1226,6 +1226,231 @@ func TestPricingStoreFailurePersistsBlockedSettlementAcrossRestart(t *testing.T)
 	}
 }
 
+func TestPolicyBackupRestoresPendingQuotaSettlementAndBlockedState(t *testing.T) {
+	sourceStore, err := OpenStore(filepath.Join(t.TempDir(), "source.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := NewService(sourceStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := testIdentity(t, "pending-backup-key")
+	tokenLimit := int64(100)
+	costLimit := 10.0
+	policy, err := source.Create(context.Background(), identity, "Pending backup", ProfileInput{Name: "default"}, &QuotaInput{
+		Enabled: true, TotalTokens: &tokenLimit, Cost: &costLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = source.SetTakeover(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	source.SetCostEstimator(func(context.Context, QuotaUsageDelta) (int64, error) {
+		return 0, errors.New("pricing database is unavailable")
+	})
+	decision, err := source.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := source.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = SettleQuotaUsage(WithDecision(context.Background(), admitted), "terminal", QuotaUsageDelta{Provider: "codex", Model: "gpt-5", TotalTokens: 20}); !errors.Is(err, errQuotaPricingUnavailable) {
+		t.Fatalf("pricing failure = %v", err)
+	}
+	payload, err := source.ExportBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document backupDocument
+	if err = json.Unmarshal(payload, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.SchemaVersion != 6 || len(document.PendingQuotaSettlements) != 1 || document.PendingQuotaSettlements[0].Usage.TotalTokens != 20 {
+		t.Fatalf("pending backup document = %#v", document)
+	}
+	invalid := document
+	invalid.PendingQuotaSettlements = append([]backupPendingSettlement(nil), document.PendingQuotaSettlements...)
+	invalid.PendingQuotaSettlements[0].BlockReason = "invalid"
+	invalidPayload, err := json.Marshal(invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = source.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	targetStore, err := OpenStore(filepath.Join(t.TempDir(), "target.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := NewService(targetStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	target.SetCostEstimator(func(context.Context, QuotaUsageDelta) (int64, error) {
+		return 0, errors.New("pricing database is unavailable")
+	})
+	if err = target.ImportBackup(context.Background(), invalidPayload); err == nil || !strings.Contains(err.Error(), "block reason") {
+		t.Fatalf("invalid pending settlement error = %v", err)
+	}
+	if err = target.ImportBackup(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := target.ListQuotaSummaries(context.Background(), time.Now().UnixMilli())
+	if err != nil || len(summaries) != 1 || summaries[0].AdmissionState != QuotaAdmissionBlocked || summaries[0].BlockedReason != QuotaBlockPricingStore {
+		t.Fatalf("restored pending summary = %#v error=%v", summaries, err)
+	}
+	target.SetCostEstimator(func(_ context.Context, usage QuotaUsageDelta) (int64, error) {
+		if usage.Model != "gpt-5" || usage.TotalTokens != 20 {
+			t.Fatalf("restored usage = %#v", usage)
+		}
+		return 250_000, nil
+	})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		summaries, err = target.ListQuotaSummaries(context.Background(), time.Now().UnixMilli())
+		if err == nil && len(summaries) == 1 && summaries[0].AdmissionState == QuotaAdmissionAvailable && summaries[0].Quota != nil && summaries[0].Quota.Usage.TotalTokensUsed == 20 && summaries[0].Quota.Usage.CostUsed == 0.25 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil || len(summaries) != 1 || summaries[0].PolicyID != policy.ID || summaries[0].Quota == nil || summaries[0].Quota.Usage.TotalTokensUsed != 20 || summaries[0].Quota.Usage.CostUsed != 0.25 {
+		t.Fatalf("restored pending settlement = %#v error=%v", summaries, err)
+	}
+}
+
+func TestPolicyRestoreFencesPreRestoreRetriesAndInFlightSettlement(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "restore-generation-key")
+	tokenLimit := int64(100)
+	costLimit := 10.0
+	policy, err := service.Create(context.Background(), identity, "Restore generation", ProfileInput{Name: "default"}, &QuotaInput{
+		Enabled: true, TotalTokens: &tokenLimit, Cost: &costLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := service.ExportBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetCostEstimator(func(context.Context, QuotaUsageDelta) (int64, error) {
+		return 0, errors.New("pricing database is unavailable")
+	})
+	if err = SettleQuotaUsage(WithDecision(context.Background(), admitted), "before-restore", QuotaUsageDelta{Provider: "codex", Model: "gpt-5", TotalTokens: 20}); !errors.Is(err, errQuotaPricingUnavailable) {
+		t.Fatalf("pricing failure = %v", err)
+	}
+	if !service.quotaPricingIsBlocked(policy.ID, policy.Quota.Epoch) {
+		t.Fatal("pre-restore retry did not block the policy")
+	}
+	if err = service.ImportBackup(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	service.SetCostEstimator(func(context.Context, QuotaUsageDelta) (int64, error) { return 250_000, nil })
+	if err = SettleQuotaUsage(WithDecision(context.Background(), admitted), "after-restore", QuotaUsageDelta{Provider: "codex", Model: "gpt-5", TotalTokens: 30}); err != nil {
+		t.Fatalf("stale in-flight settlement should be discarded: %v", err)
+	}
+	time.Sleep(400 * time.Millisecond)
+	summaries, err := service.ListQuotaSummaries(context.Background(), time.Now().UnixMilli())
+	if err != nil || len(summaries) != 1 || summaries[0].Quota == nil || summaries[0].AdmissionState != QuotaAdmissionAvailable || summaries[0].Quota.Usage.TotalTokensUsed != 0 || summaries[0].Quota.Usage.CostUsed != 0 {
+		t.Fatalf("pre-restore work mutated restored state = %#v error=%v", summaries, err)
+	}
+	var pending int
+	if err = service.store.db.QueryRow(`select count(*) from api_key_quota_pending_settlements`).Scan(&pending); err != nil || pending != 0 {
+		t.Fatalf("pending settlements after restore = %d error=%v", pending, err)
+	}
+}
+
+func TestPolicyRestoreFailureResumesQuotaRuntimeWithoutAdvancingGeneration(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "failed-restore-key")
+	requestLimit := int64(10)
+	if _, err := service.Create(context.Background(), identity, "Failed restore", ProfileInput{Name: "default"}, &QuotaInput{
+		Enabled: true, Requests: &requestLimit,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := service.ExportBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := service.quotaRuntimeGeneration.Load()
+	if _, err = service.store.db.Exec(`create trigger fail_api_key_policy_restore before insert on api_key_policies begin select raise(abort, 'restore failed'); end`); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.ImportBackup(context.Background(), payload); err == nil || !strings.Contains(err.Error(), "restore failed") {
+		t.Fatalf("restore failure = %v", err)
+	}
+	if service.quotaRuntimeIsPaused() {
+		t.Fatal("failed restore left quota runtime paused")
+	}
+	if got := service.quotaRuntimeGeneration.Load(); got != generation {
+		t.Fatalf("quota runtime generation = %d, want %d", got, generation)
+	}
+	if _, err = service.store.db.Exec(`drop trigger fail_api_key_policy_restore`); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.AdmitDecision(context.Background(), decision); err != nil {
+		t.Fatalf("quota admission after failed restore: %v", err)
+	}
+}
+
+func TestQuotaRuntimePauseWaitsForActiveOperation(t *testing.T) {
+	service := newTestService(t)
+	generation := service.quotaRuntimeGeneration.Load()
+	release, err := service.acquireQuotaRuntime(context.Background(), generation, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pauseDone := make(chan error, 1)
+	go func() {
+		pauseDone <- service.PauseQuotaRuntime(context.Background())
+	}()
+	deadline := time.Now().Add(time.Second)
+	for !service.quotaRuntimeIsPaused() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !service.quotaRuntimeIsPaused() {
+		release()
+		t.Fatal("quota runtime did not enter paused state")
+	}
+	select {
+	case err = <-pauseDone:
+		release()
+		t.Fatalf("pause returned before active quota operation completed: %v", err)
+	default:
+	}
+	release()
+	if err = <-pauseDone; err != nil {
+		t.Fatal(err)
+	}
+	if err = service.ResumeQuotaRuntime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	resumedRelease, err := service.acquireQuotaRuntime(context.Background(), generation, false)
+	if err != nil {
+		t.Fatalf("quota runtime did not resume: %v", err)
+	}
+	resumedRelease()
+}
+
 func TestQuotaHistoryPruningKeepsCurrentWindowAndPendingSettlements(t *testing.T) {
 	service := newTestService(t)
 	requestLimit := int64(100)
@@ -1488,7 +1713,7 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	if strings.Contains(string(payload), "backup-key") || !strings.Contains(string(payload), identity.Hash()) {
 		t.Fatalf("backup secret/hash boundary = %s", payload)
 	}
-	if !strings.Contains(string(payload), `"schema_version":5`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) || !strings.Contains(string(payload), `"requests":25`) {
+	if !strings.Contains(string(payload), `"schema_version":6`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) || !strings.Contains(string(payload), `"requests":25`) {
 		t.Fatalf("backup schema/audit record = %s", payload)
 	}
 	if err := service.DeletePolicy(context.Background(), created.ID, created.Version, PassthroughConfirmation); err != nil {

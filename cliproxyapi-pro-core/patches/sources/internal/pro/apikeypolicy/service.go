@@ -37,12 +37,13 @@ type backupPolicy struct {
 }
 
 type backupDocument struct {
-	SchemaVersion   int                    `json:"schema_version"`
-	TakeoverEnabled bool                   `json:"takeover_enabled"`
-	Policies        []backupPolicy         `json:"policies"`
-	Audits          []AuditRecord          `json:"audits"`
-	QuotaAdmissions []backupQuotaAdmission `json:"quota_admissions,omitempty"`
-	QuotaEvents     []backupQuotaEvent     `json:"quota_events,omitempty"`
+	SchemaVersion           int                       `json:"schema_version"`
+	TakeoverEnabled         bool                      `json:"takeover_enabled"`
+	Policies                []backupPolicy            `json:"policies"`
+	Audits                  []AuditRecord             `json:"audits"`
+	QuotaAdmissions         []backupQuotaAdmission    `json:"quota_admissions,omitempty"`
+	QuotaEvents             []backupQuotaEvent        `json:"quota_events,omitempty"`
+	PendingQuotaSettlements []backupPendingSettlement `json:"pending_quota_settlements,omitempty"`
 }
 
 type backupQuotaAdmission struct {
@@ -62,6 +63,21 @@ type backupQuotaEvent struct {
 	TotalTokens  int64  `json:"total_tokens"`
 	CostMicros   int64  `json:"cost_micros"`
 	OccurredAtMS int64  `json:"occurred_at_ms"`
+}
+
+type backupPendingSettlement struct {
+	EventID     string          `json:"event_id"`
+	AdmissionID string          `json:"admission_id"`
+	PolicyID    string          `json:"policy_id"`
+	ProfileID   string          `json:"profile_id"`
+	Epoch       int64           `json:"epoch"`
+	Usage       QuotaUsageDelta `json:"usage"`
+	RequireCost bool            `json:"require_cost"`
+	Quoted      bool            `json:"quoted"`
+	CostMicros  int64           `json:"cost_micros"`
+	BlockReason string          `json:"block_reason"`
+	CreatedAtMS int64           `json:"created_at_ms"`
+	UpdatedAtMS int64           `json:"updated_at_ms"`
 }
 
 func policiesToBackup(policies []Policy) []backupPolicy {
@@ -110,64 +126,98 @@ func (s *Service) ExportBackup(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	admissions, events, err := s.listQuotaBackupRecords(ctx)
+	admissions, events, pending, err := s.listQuotaBackupRecords(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(backupDocument{SchemaVersion: 5, TakeoverEnabled: takeoverEnabled, Policies: policiesToBackup(policies), Audits: audits, QuotaAdmissions: admissions, QuotaEvents: events})
+	return json.Marshal(backupDocument{SchemaVersion: 6, TakeoverEnabled: takeoverEnabled, Policies: policiesToBackup(policies), Audits: audits, QuotaAdmissions: admissions, QuotaEvents: events, PendingQuotaSettlements: pending})
 }
 
-func decodeBackup(payload []byte) ([]Policy, []AuditRecord, []backupQuotaAdmission, []backupQuotaEvent, bool, error) {
+func decodeBackup(payload []byte) ([]Policy, []AuditRecord, []backupQuotaAdmission, []backupQuotaEvent, []backupPendingSettlement, bool, error) {
 	var document backupDocument
 	if err := json.Unmarshal(payload, &document); err == nil && document.SchemaVersion != 0 {
-		if document.SchemaVersion != 2 && document.SchemaVersion != 3 && document.SchemaVersion != 4 && document.SchemaVersion != 5 {
-			return nil, nil, nil, nil, false, fmt.Errorf("unsupported API key policy backup schema %d", document.SchemaVersion)
+		if document.SchemaVersion < 2 || document.SchemaVersion > 6 {
+			return nil, nil, nil, nil, nil, false, fmt.Errorf("unsupported API key policy backup schema %d", document.SchemaVersion)
 		}
-		return backupToPolicies(document.Policies), document.Audits, document.QuotaAdmissions, document.QuotaEvents, document.SchemaVersion >= 3 && document.TakeoverEnabled, nil
+		return backupToPolicies(document.Policies), document.Audits, document.QuotaAdmissions, document.QuotaEvents, document.PendingQuotaSettlements, document.SchemaVersion >= 3 && document.TakeoverEnabled, nil
 	}
 	// Version 1 was a bare policy array. It remains importable and contains no
 	// audit history by definition.
 	var legacy []backupPolicy
 	if err := json.Unmarshal(payload, &legacy); err != nil {
-		return nil, nil, nil, nil, false, err
+		return nil, nil, nil, nil, nil, false, err
 	}
-	return backupToPolicies(legacy), nil, nil, nil, false, nil
+	return backupToPolicies(legacy), nil, nil, nil, nil, false, nil
 }
 
-func (s *Service) listQuotaBackupRecords(ctx context.Context) ([]backupQuotaAdmission, []backupQuotaEvent, error) {
+func (s *Service) listQuotaBackupRecords(ctx context.Context) ([]backupQuotaAdmission, []backupQuotaEvent, []backupPendingSettlement, error) {
 	admissionRows, err := s.store.db.QueryContext(ctx, `select admission_id, policy_id, profile_id, epoch, admitted_at_ms from api_key_quota_admissions order by admission_id`)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	admissions := make([]backupQuotaAdmission, 0)
 	for admissionRows.Next() {
 		var item backupQuotaAdmission
 		if err := admissionRows.Scan(&item.AdmissionID, &item.PolicyID, &item.ProfileID, &item.Epoch, &item.AdmittedAtMS); err != nil {
 			_ = admissionRows.Close()
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		admissions = append(admissions, item)
 	}
+	if err = admissionRows.Err(); err != nil {
+		_ = admissionRows.Close()
+		return nil, nil, nil, err
+	}
 	if err := admissionRows.Close(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	eventRows, err := s.store.db.QueryContext(ctx, `select event_id, admission_id, policy_id, profile_id, epoch, total_tokens, cost_micros, occurred_at_ms from api_key_quota_token_events order by event_id`)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	defer eventRows.Close()
 	events := make([]backupQuotaEvent, 0)
 	for eventRows.Next() {
 		var item backupQuotaEvent
 		if err := eventRows.Scan(&item.EventID, &item.AdmissionID, &item.PolicyID, &item.ProfileID, &item.Epoch, &item.TotalTokens, &item.CostMicros, &item.OccurredAtMS); err != nil {
-			return nil, nil, err
+			_ = eventRows.Close()
+			return nil, nil, nil, err
 		}
 		events = append(events, item)
 	}
-	return admissions, events, eventRows.Err()
+	if err = eventRows.Err(); err != nil {
+		_ = eventRows.Close()
+		return nil, nil, nil, err
+	}
+	if err = eventRows.Close(); err != nil {
+		return nil, nil, nil, err
+	}
+	pendingRows, err := s.store.db.QueryContext(ctx, `select event_id, admission_id, policy_id, profile_id, epoch, usage_json, require_cost, quoted, cost_micros, block_reason, created_at_ms, updated_at_ms from api_key_quota_pending_settlements order by event_id`)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer pendingRows.Close()
+	pending := make([]backupPendingSettlement, 0)
+	for pendingRows.Next() {
+		var item backupPendingSettlement
+		var usageJSON string
+		if err = pendingRows.Scan(&item.EventID, &item.AdmissionID, &item.PolicyID, &item.ProfileID, &item.Epoch, &usageJSON, &item.RequireCost, &item.Quoted, &item.CostMicros, &item.BlockReason, &item.CreatedAtMS, &item.UpdatedAtMS); err != nil {
+			return nil, nil, nil, err
+		}
+		if err = json.Unmarshal([]byte(usageJSON), &item.Usage); err != nil {
+			return nil, nil, nil, fmt.Errorf("decode pending API key quota settlement %q: %w", item.EventID, err)
+		}
+		pending = append(pending, item)
+	}
+	return admissions, events, pending, pendingRows.Err()
 }
 
-func validateQuotaBackupRecords(policies []Policy, admissions []backupQuotaAdmission, events []backupQuotaEvent) error {
+func validBackupQuotaUsage(usage QuotaUsageDelta) bool {
+	return usage.TotalTokens >= 0 && usage.InputTokens >= 0 && usage.OutputTokens >= 0 &&
+		usage.ReasoningTokens >= 0 && usage.CachedTokens >= 0 && usage.CacheTokens >= 0 &&
+		usage.CacheReadTokens >= 0 && usage.CacheWriteTokens >= 0 && usage.UncachedInputTokens >= 0
+}
+
+func validateQuotaBackupRecords(policies []Policy, admissions []backupQuotaAdmission, events []backupQuotaEvent, pending []backupPendingSettlement) error {
 	type owner struct {
 		policyID  string
 		profileID string
@@ -205,6 +255,26 @@ func validateQuotaBackupRecords(policies []Policy, admissions []backupQuotaAdmis
 		}
 		seenEvents[item.EventID] = struct{}{}
 	}
+	for _, item := range pending {
+		expected, ok := admissionOwners[item.AdmissionID]
+		if strings.TrimSpace(item.EventID) == "" || !ok || item.PolicyID != expected.policyID || item.ProfileID != expected.profileID || item.Epoch != expected.epoch ||
+			!validBackupQuotaUsage(item.Usage) || item.CostMicros < 0 || item.CreatedAtMS <= 0 || item.UpdatedAtMS < item.CreatedAtMS {
+			return errors.New("invalid pending API key quota settlement backup record")
+		}
+		if item.BlockReason != QuotaBlockPricingStore && item.BlockReason != QuotaBlockSettlementStore {
+			return errors.New("invalid pending API key quota settlement block reason")
+		}
+		if item.BlockReason == QuotaBlockPricingStore && (!item.RequireCost || item.Quoted) {
+			return errors.New("invalid pending API key quota pricing state")
+		}
+		if item.Quoted && item.BlockReason != QuotaBlockSettlementStore {
+			return errors.New("invalid quoted API key quota settlement state")
+		}
+		if _, duplicate := seenEvents[item.EventID]; duplicate {
+			return errors.New("duplicate pending API key quota settlement backup record")
+		}
+		seenEvents[item.EventID] = struct{}{}
+	}
 	return nil
 }
 
@@ -234,7 +304,7 @@ func profileCount(policies []Policy) int {
 // as import, then derives association counts from the committed config key
 // fingerprints supplied by the Management handler.
 func (s *Service) PreviewBackup(ctx context.Context, payload []byte, configuredHashes []string) (probackup.PolicyBackupPreview, error) {
-	policies, _, _, _, targetTakeoverEnabled, _, err := s.stageBackup(payload)
+	policies, _, _, _, _, targetTakeoverEnabled, _, err := s.stageBackup(payload)
 	if err != nil {
 		return probackup.PolicyBackupPreview{}, err
 	}
@@ -274,13 +344,23 @@ func (s *Service) PreviewBackup(ctx context.Context, payload []byte, configuredH
 // ImportBackup atomically replaces the policy domain after fully validating
 // staged records and building the immutable target index. It is called while
 // the backup coordinator owns the global write barrier.
-func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
+func (s *Service) ImportBackup(ctx context.Context, payload []byte) (err error) {
 	if s == nil || s.store == nil {
 		return ErrUnavailable
 	}
-	policies, audits, admissions, events, takeoverEnabled, next, err := s.stageBackup(payload)
+	policies, audits, admissions, events, pending, takeoverEnabled, next, err := s.stageBackup(payload)
 	if err != nil {
 		return err
+	}
+	if !s.quotaRuntimeIsPaused() {
+		if err = s.PauseQuotaRuntime(ctx); err != nil {
+			return err
+		}
+		defer func() {
+			if resumeErr := s.ResumeQuotaRuntime(context.WithoutCancel(ctx)); err == nil && resumeErr != nil {
+				err = resumeErr
+			}
+		}()
 	}
 	s.quotaMu.Lock()
 	defer s.quotaMu.Unlock()
@@ -353,6 +433,15 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 			return err
 		}
 	}
+	for _, item := range pending {
+		usageJSON, errMarshal := json.Marshal(item.Usage)
+		if errMarshal != nil {
+			return errMarshal
+		}
+		if _, err := tx.ExecContext(ctx, `insert into api_key_quota_pending_settlements(event_id, admission_id, policy_id, profile_id, epoch, usage_json, require_cost, quoted, cost_micros, block_reason, created_at_ms, updated_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.EventID, item.AdmissionID, item.PolicyID, item.ProfileID, item.Epoch, string(usageJSON), item.RequireCost, item.Quoted, item.CostMicros, item.BlockReason, item.CreatedAtMS, item.UpdatedAtMS); err != nil {
+			return err
+		}
+	}
 	loaded, err := listPolicies(ctx, tx)
 	if err != nil {
 		return err
@@ -369,8 +458,10 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 			return err
 		}
 		s.publishNextLocked(next)
+		s.quotaRuntimeGeneration.Add(1)
 	} else {
 		probackup.AfterCommit(ctx, func() {
+			s.quotaRuntimeGeneration.Add(1)
 			s.writeMu.Lock()
 			defer s.writeMu.Unlock()
 			if errReload := s.reloadLocked(context.Background()); errReload != nil {
@@ -384,26 +475,26 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) error {
 // stageBackup is the single canonical boundary shared by preview, runtime-index
 // construction and persistence. The returned policies contain exactly the
 // normalized values that a successful import will publish and store.
-func (s *Service) stageBackup(payload []byte) ([]Policy, []AuditRecord, []backupQuotaAdmission, []backupQuotaEvent, bool, *runtimeIndex, error) {
-	policies, audits, admissions, events, takeoverEnabled, err := decodeBackup(payload)
+func (s *Service) stageBackup(payload []byte) ([]Policy, []AuditRecord, []backupQuotaAdmission, []backupQuotaEvent, []backupPendingSettlement, bool, *runtimeIndex, error) {
+	policies, audits, admissions, events, pending, takeoverEnabled, err := decodeBackup(payload)
 	if err != nil {
-		return nil, nil, nil, nil, false, nil, err
+		return nil, nil, nil, nil, nil, false, nil, err
 	}
 	policies, err = s.normalizeBackupPolicies(policies)
 	if err != nil {
-		return nil, nil, nil, nil, false, nil, err
+		return nil, nil, nil, nil, nil, false, nil, err
 	}
 	if err = validateBackupAudits(audits); err != nil {
-		return nil, nil, nil, nil, false, nil, err
+		return nil, nil, nil, nil, nil, false, nil, err
 	}
-	if err = validateQuotaBackupRecords(policies, admissions, events); err != nil {
-		return nil, nil, nil, nil, false, nil, err
+	if err = validateQuotaBackupRecords(policies, admissions, events, pending); err != nil {
+		return nil, nil, nil, nil, nil, false, nil, err
 	}
 	next, err := buildRuntimeIndex(policies, takeoverEnabled)
 	if err != nil {
-		return nil, nil, nil, nil, false, nil, err
+		return nil, nil, nil, nil, nil, false, nil, err
 	}
-	return policies, audits, admissions, events, takeoverEnabled, next, nil
+	return policies, audits, admissions, events, pending, takeoverEnabled, next, nil
 }
 
 func (s *Service) normalizeBackupPolicies(policies []Policy) ([]Policy, error) {
@@ -470,28 +561,36 @@ func (s *Service) normalizeBackupPolicies(policies []Policy) ([]Policy, error) {
 }
 
 type Service struct {
-	store                *Store
-	writeMu              sync.Mutex
-	quotaMu              sync.Mutex
-	catalogMu            sync.RWMutex
-	catalogProvider      func() (ProfileCatalog, error)
-	configuredMu         sync.RWMutex
-	configuredHashes     atomic.Value
-	configuredGeneration atomic.Uint64
-	index                atomic.Pointer[runtimeIndex]
-	retryCtx             context.Context
-	retryCancel          context.CancelFunc
-	retryMu              sync.Mutex
-	retryClosed          bool
-	retryWG              sync.WaitGroup
-	pendingMu            sync.Mutex
-	pendingSettlements   map[string]struct{}
-	pendingCount         atomic.Int64
-	pricingPending       map[string]struct{}
-	pricingBlocked       map[quotaPricingBlockKey]int
-	settlementBlocked    map[quotaPricingBlockKey]int
-	costEstimatorMu      sync.RWMutex
-	costEstimator        func(context.Context, QuotaUsageDelta) (int64, error)
+	store                  *Store
+	writeMu                sync.Mutex
+	quotaMu                sync.Mutex
+	catalogMu              sync.RWMutex
+	catalogProvider        func() (ProfileCatalog, error)
+	configuredMu           sync.RWMutex
+	configuredHashes       atomic.Value
+	configuredGeneration   atomic.Uint64
+	index                  atomic.Pointer[runtimeIndex]
+	retryCtx               context.Context
+	retryCancel            context.CancelFunc
+	retryMu                sync.Mutex
+	retryClosed            bool
+	retryWG                sync.WaitGroup
+	pendingMu              sync.Mutex
+	pendingSettlements     map[string]struct{}
+	pendingCount           atomic.Int64
+	pricingPending         map[string]struct{}
+	pricingBlocked         map[quotaPricingBlockKey]int
+	settlementBlocked      map[quotaPricingBlockKey]int
+	costEstimatorMu        sync.RWMutex
+	costEstimator          func(context.Context, QuotaUsageDelta) (int64, error)
+	quotaLifecycleMu       sync.Mutex
+	quotaRuntimeMu         sync.Mutex
+	quotaRuntimePaused     bool
+	quotaRuntimeClosed     bool
+	quotaRuntimeActive     int
+	quotaRuntimeResumeCh   chan struct{}
+	quotaRuntimeIdleCh     chan struct{}
+	quotaRuntimeGeneration atomic.Uint64
 }
 
 type quotaPricingBlockKey struct {
@@ -645,7 +744,10 @@ func NewService(store *Store) (*Service, error) {
 		store: store, retryCtx: retryCtx, retryCancel: retryCancel,
 		pendingSettlements: make(map[string]struct{}), pricingPending: make(map[string]struct{}),
 		pricingBlocked: make(map[quotaPricingBlockKey]int), settlementBlocked: make(map[quotaPricingBlockKey]int),
+		quotaRuntimeResumeCh: make(chan struct{}), quotaRuntimeIdleCh: make(chan struct{}),
 	}
+	close(service.quotaRuntimeIdleCh)
+	service.quotaRuntimeGeneration.Store(1)
 	service.index.Store(&runtimeIndex{healthy: false})
 	if err := service.Reload(context.Background()); err != nil {
 		return nil, err
@@ -668,14 +770,175 @@ func (s *Service) Close() error {
 	if s == nil || s.store == nil {
 		return nil
 	}
-	if s.retryCancel != nil {
-		s.retryMu.Lock()
-		s.retryClosed = true
-		s.retryCancel()
-		s.retryMu.Unlock()
+	s.quotaLifecycleMu.Lock()
+	s.quotaRuntimeMu.Lock()
+	s.quotaRuntimeClosed = true
+	s.quotaRuntimePaused = true
+	resumeCh := s.quotaRuntimeResumeCh
+	idleCh := s.quotaRuntimeIdleCh
+	s.quotaRuntimeMu.Unlock()
+	select {
+	case <-resumeCh:
+	default:
+		close(resumeCh)
 	}
-	s.retryWG.Wait()
+	s.stopQuotaWorkers()
+	<-idleCh
+	s.quotaLifecycleMu.Unlock()
 	return s.store.Close()
+}
+
+func quotaSettlementStaleError() error {
+	return fmt.Errorf("%w: %w", ErrQuotaUnavailable, ErrQuotaSettlementStale)
+}
+
+func (s *Service) acquireQuotaRuntime(ctx context.Context, expectedGeneration uint64, waitForResume bool) (func(), error) {
+	if s == nil {
+		return nil, ErrQuotaUnavailable
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		s.quotaRuntimeMu.Lock()
+		if s.quotaRuntimeClosed {
+			s.quotaRuntimeMu.Unlock()
+			return nil, ErrQuotaUnavailable
+		}
+		if !s.quotaRuntimePaused {
+			if s.quotaRuntimeActive == 0 {
+				s.quotaRuntimeIdleCh = make(chan struct{})
+			}
+			s.quotaRuntimeActive++
+			generation := s.quotaRuntimeGeneration.Load()
+			s.quotaRuntimeMu.Unlock()
+			release := func() {
+				s.quotaRuntimeMu.Lock()
+				s.quotaRuntimeActive--
+				if s.quotaRuntimeActive == 0 {
+					close(s.quotaRuntimeIdleCh)
+				}
+				s.quotaRuntimeMu.Unlock()
+			}
+			if expectedGeneration != 0 && expectedGeneration != generation {
+				release()
+				return nil, quotaSettlementStaleError()
+			}
+			return release, nil
+		}
+		resumeCh := s.quotaRuntimeResumeCh
+		s.quotaRuntimeMu.Unlock()
+		if !waitForResume {
+			return nil, quotaSettlementStaleError()
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-resumeCh:
+		}
+	}
+}
+
+func (s *Service) quotaRuntimeIsPaused() bool {
+	if s == nil {
+		return false
+	}
+	s.quotaRuntimeMu.Lock()
+	paused := s.quotaRuntimePaused
+	s.quotaRuntimeMu.Unlock()
+	return paused
+}
+
+func (s *Service) stopQuotaWorkers() {
+	s.retryMu.Lock()
+	s.retryClosed = true
+	if s.retryCancel != nil {
+		s.retryCancel()
+	}
+	s.retryMu.Unlock()
+	s.retryWG.Wait()
+	s.pendingMu.Lock()
+	s.pendingSettlements = make(map[string]struct{})
+	s.pricingPending = make(map[string]struct{})
+	s.pricingBlocked = make(map[quotaPricingBlockKey]int)
+	s.settlementBlocked = make(map[quotaPricingBlockKey]int)
+	s.pendingCount.Store(0)
+	s.pendingMu.Unlock()
+}
+
+func (s *Service) startQuotaWorkers() {
+	s.retryMu.Lock()
+	s.retryCtx, s.retryCancel = context.WithCancel(context.Background())
+	s.retryClosed = false
+	s.retryMu.Unlock()
+}
+
+// PauseQuotaRuntime fences request admissions and terminal usage settlement
+// while a backup restore replaces the policy database. Existing retry workers
+// are drained before the import begins; ordinary in-flight calls finish first.
+func (s *Service) PauseQuotaRuntime(ctx context.Context) error {
+	if s == nil {
+		return ErrQuotaUnavailable
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.quotaLifecycleMu.Lock()
+	defer s.quotaLifecycleMu.Unlock()
+	s.quotaRuntimeMu.Lock()
+	if s.quotaRuntimeClosed {
+		s.quotaRuntimeMu.Unlock()
+		return ErrQuotaUnavailable
+	}
+	if s.quotaRuntimePaused {
+		s.quotaRuntimeMu.Unlock()
+		return nil
+	}
+	s.quotaRuntimePaused = true
+	s.quotaRuntimeResumeCh = make(chan struct{})
+	idleCh := s.quotaRuntimeIdleCh
+	s.quotaRuntimeMu.Unlock()
+	s.stopQuotaWorkers()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-idleCh:
+		return nil
+	}
+}
+
+// ResumeQuotaRuntime rebuilds only the retry jobs represented by committed
+// pending-settlement rows, then releases requests waiting on the restore.
+func (s *Service) ResumeQuotaRuntime(ctx context.Context) error {
+	if s == nil {
+		return ErrQuotaUnavailable
+	}
+	s.quotaLifecycleMu.Lock()
+	defer s.quotaLifecycleMu.Unlock()
+	s.quotaRuntimeMu.Lock()
+	if s.quotaRuntimeClosed {
+		s.quotaRuntimeMu.Unlock()
+		return ErrQuotaUnavailable
+	}
+	if !s.quotaRuntimePaused {
+		s.quotaRuntimeMu.Unlock()
+		return nil
+	}
+	resumeCh := s.quotaRuntimeResumeCh
+	s.quotaRuntimeMu.Unlock()
+	s.startQuotaWorkers()
+	err := s.resumePendingQuotaSettlements(ctx)
+	if err == nil {
+		s.startQuotaHistoryMaintenance()
+	} else {
+		s.stopQuotaWorkers()
+		s.MarkUnavailable()
+	}
+	s.quotaRuntimeMu.Lock()
+	s.quotaRuntimePaused = false
+	s.quotaRuntimeMu.Unlock()
+	close(resumeCh)
+	return err
 }
 
 func (s *Service) Healthy() bool {
@@ -800,6 +1063,7 @@ func (s *Service) Decide(identity AuthenticatedAPIKeyIdentity) (RequestPolicyDec
 		return PassthroughDecision(), nil
 	}
 	cloned := snapshot.Clone()
+	cloned.QuotaRuntimeGeneration = s.quotaRuntimeGeneration.Load()
 	return RequestPolicyDecision{Mode: ModeProfile, Snapshot: &cloned}, nil
 }
 
@@ -811,6 +1075,16 @@ func (s *Service) AdmitDecision(ctx context.Context, decision RequestPolicyDecis
 	if decision.Mode != ModeProfile || decision.Snapshot == nil || decision.Snapshot.Quota == nil || !decision.Snapshot.Quota.Enabled {
 		return decision, nil
 	}
+	runtimeGeneration := decision.Snapshot.QuotaRuntimeGeneration
+	if runtimeGeneration == 0 {
+		runtimeGeneration = s.quotaRuntimeGeneration.Load()
+		decision.Snapshot.QuotaRuntimeGeneration = runtimeGeneration
+	}
+	releaseRuntime, err := s.acquireQuotaRuntime(ctx, runtimeGeneration, true)
+	if err != nil {
+		return RequestPolicyDecision{}, ErrQuotaUnavailable
+	}
+	defer releaseRuntime()
 	index := s.index.Load()
 	if index == nil || !index.healthy {
 		return RequestPolicyDecision{}, ErrQuotaUnavailable
@@ -833,16 +1107,16 @@ func (s *Service) AdmitDecision(ctx context.Context, decision RequestPolicyDecis
 			settleCtx = context.Background()
 		}
 		settlementID := attribution.AdmissionID + ":" + eventID
-		costMicros, quoted, err := s.recordQuotaUsage(context.WithoutCancel(settleCtx), attribution, settlementID, usage, requireCost)
+		costMicros, quoted, err := s.recordQuotaUsageAtGeneration(context.WithoutCancel(settleCtx), attribution, settlementID, usage, requireCost, runtimeGeneration, true)
 		if errors.Is(err, ErrQuotaSettlementStale) {
 			return nil
 		}
 		if errors.Is(err, errQuotaPricingUnavailable) {
-			s.retryQuotaPricing(attribution, settlementID, usage)
+			s.retryQuotaPricingAtGeneration(attribution, settlementID, usage, runtimeGeneration)
 			return err
 		}
 		if err != nil {
-			s.retryQuotaSettlement(attribution, settlementID, usage, requireCost, costMicros, quoted)
+			s.retryQuotaSettlementAtGeneration(attribution, settlementID, usage, requireCost, costMicros, quoted, runtimeGeneration)
 		}
 		return err
 	}
@@ -1111,7 +1385,7 @@ func (s *Service) listPendingQuotaSettlements(ctx context.Context) ([]pendingQuo
 		if err = rows.Scan(&item.eventID, &item.attribution.AdmissionID, &item.attribution.PolicyID, &item.attribution.ProfileID, &item.attribution.Epoch, &payload, &item.requireCost, &item.quoted, &item.costMicros, &item.blockReason); err != nil {
 			return nil, err
 		}
-		if err = json.Unmarshal([]byte(payload), &item.usage); err != nil || item.eventID == "" || item.attribution.AdmissionID == "" || item.usage.empty() {
+		if err = json.Unmarshal([]byte(payload), &item.usage); err != nil || item.eventID == "" || item.attribution.AdmissionID == "" {
 			return nil, errors.New("invalid pending API key quota settlement")
 		}
 		items = append(items, item)
@@ -1125,11 +1399,18 @@ func (s *Service) resumePendingQuotaSettlements(ctx context.Context) error {
 		return err
 	}
 	for _, item := range items {
-		if item.blockReason == QuotaBlockPricingStore && item.requireCost && !item.quoted {
-			s.retryQuotaPricing(item.attribution, item.eventID, item.usage)
+		runtimeGeneration := s.quotaRuntimeGeneration.Load()
+		if item.usage.empty() {
+			if err = s.persistQuotaUsage(ctx, item.attribution, item.eventID, 0, 0); err != nil && !errors.Is(err, ErrQuotaSettlementStale) {
+				return err
+			}
 			continue
 		}
-		s.retryQuotaSettlement(item.attribution, item.eventID, item.usage, item.requireCost, item.costMicros, item.quoted)
+		if item.blockReason == QuotaBlockPricingStore && item.requireCost && !item.quoted {
+			s.retryQuotaPricingAtGeneration(item.attribution, item.eventID, item.usage, runtimeGeneration)
+			continue
+		}
+		s.retryQuotaSettlementAtGeneration(item.attribution, item.eventID, item.usage, item.requireCost, item.costMicros, item.quoted, runtimeGeneration)
 	}
 	return nil
 }
@@ -1138,10 +1419,22 @@ func (s *Service) resumePendingQuotaSettlements(ctx context.Context) error {
 // fails. Retry callers can then keep the quote stable for this usage event
 // instead of re-pricing it against a rule that changed after the request.
 func (s *Service) recordQuotaUsage(ctx context.Context, attribution QuotaAttribution, eventID string, usage QuotaUsageDelta, requireCost bool) (costMicros int64, quoted bool, err error) {
+	return s.recordQuotaUsageAtGeneration(ctx, attribution, eventID, usage, requireCost, s.quotaRuntimeGeneration.Load(), true)
+}
+
+func (s *Service) recordQuotaUsageAtGeneration(ctx context.Context, attribution QuotaAttribution, eventID string, usage QuotaUsageDelta, requireCost bool, runtimeGeneration uint64, waitForResume bool) (costMicros int64, quoted bool, err error) {
 	totalTokens := usage.TotalTokens
 	if s == nil || s.store == nil || attribution.PolicyID == "" || attribution.AdmissionID == "" || strings.TrimSpace(eventID) == "" || totalTokens < 0 {
 		return 0, false, ErrQuotaUnavailable
 	}
+	if usage.empty() {
+		return 0, true, nil
+	}
+	releaseRuntime, err := s.acquireQuotaRuntime(ctx, runtimeGeneration, waitForResume)
+	if err != nil {
+		return 0, false, err
+	}
+	defer releaseRuntime()
 	completed, stagedQuoted, stagedCostMicros, err := s.stagePendingQuotaSettlement(ctx, attribution, eventID, usage, requireCost)
 	if err != nil {
 		return 0, false, err
@@ -1236,6 +1529,10 @@ func (s *Service) persistQuotaUsage(ctx context.Context, attribution QuotaAttrib
 }
 
 func (s *Service) retryQuotaSettlement(attribution QuotaAttribution, eventID string, usage QuotaUsageDelta, requireCost bool, costMicros int64, quoted bool) {
+	s.retryQuotaSettlementAtGeneration(attribution, eventID, usage, requireCost, costMicros, quoted, s.quotaRuntimeGeneration.Load())
+}
+
+func (s *Service) retryQuotaSettlementAtGeneration(attribution QuotaAttribution, eventID string, usage QuotaUsageDelta, requireCost bool, costMicros int64, quoted bool, runtimeGeneration uint64) {
 	if s == nil || s.retryCtx == nil || usage.empty() {
 		return
 	}
@@ -1266,9 +1563,14 @@ func (s *Service) retryQuotaSettlement(attribution QuotaAttribution, eventID str
 			case <-ticker.C:
 				var err error
 				if quoted {
-					err = s.persistQuotaUsage(s.retryCtx, attribution, eventID, usage.TotalTokens, costMicros)
+					var releaseRuntime func()
+					releaseRuntime, err = s.acquireQuotaRuntime(s.retryCtx, runtimeGeneration, true)
+					if err == nil {
+						err = s.persistQuotaUsage(s.retryCtx, attribution, eventID, usage.TotalTokens, costMicros)
+						releaseRuntime()
+					}
 				} else {
-					costMicros, quoted, err = s.recordQuotaUsage(s.retryCtx, attribution, eventID, usage, requireCost)
+					costMicros, quoted, err = s.recordQuotaUsageAtGeneration(s.retryCtx, attribution, eventID, usage, requireCost, runtimeGeneration, true)
 				}
 				if err != nil && !errors.Is(err, ErrQuotaSettlementStale) {
 					continue
@@ -1419,6 +1721,10 @@ func (s *Service) clearQuotaSettlementBlockedLocked(policyID string, epoch int64
 }
 
 func (s *Service) retryQuotaPricing(attribution QuotaAttribution, eventID string, usage QuotaUsageDelta) {
+	s.retryQuotaPricingAtGeneration(attribution, eventID, usage, s.quotaRuntimeGeneration.Load())
+}
+
+func (s *Service) retryQuotaPricingAtGeneration(attribution QuotaAttribution, eventID string, usage QuotaUsageDelta, runtimeGeneration uint64) {
 	if s == nil || s.retryCtx == nil || usage.empty() || attribution.PolicyID == "" || attribution.Epoch <= 0 {
 		return
 	}
@@ -1451,7 +1757,7 @@ func (s *Service) retryQuotaPricing(attribution QuotaAttribution, eventID string
 			case <-s.retryCtx.Done():
 				return
 			case <-timer.C:
-				costMicros, quoted, err := s.recordQuotaUsage(s.retryCtx, attribution, eventID, usage, true)
+				costMicros, quoted, err := s.recordQuotaUsageAtGeneration(s.retryCtx, attribution, eventID, usage, true, runtimeGeneration, true)
 				if errors.Is(err, errQuotaPricingUnavailable) {
 					if delay < 30*time.Second {
 						delay *= 2
@@ -1463,7 +1769,7 @@ func (s *Service) retryQuotaPricing(attribution QuotaAttribution, eventID string
 					continue
 				}
 				if err != nil && !errors.Is(err, ErrQuotaSettlementStale) {
-					s.retryQuotaSettlement(attribution, eventID, usage, true, costMicros, quoted)
+					s.retryQuotaSettlementAtGeneration(attribution, eventID, usage, true, costMicros, quoted, runtimeGeneration)
 				}
 				return
 			}

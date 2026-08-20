@@ -536,20 +536,21 @@ func (c ProfileCatalog) modelMatchesProviders(model string, allowedProviders []s
 }
 
 type RequestPolicySnapshot struct {
-	PolicyID             string
-	APIKeyHash           string
-	ProfileID            string
-	ProfileName          string
-	Version              int64
-	ModelMappings        map[string]string
-	AllowedModels        map[string]struct{}
-	AllowedProviders     map[string]struct{}
-	RequestedModel       string
-	EffectiveModel       string
-	Quota                *Quota
-	QuotaAdmissionID     string
-	QuotaSettlement      func(context.Context, string, int64) error
-	QuotaUsageSettlement quotaUsageSettlementFunc
+	PolicyID               string
+	APIKeyHash             string
+	ProfileID              string
+	ProfileName            string
+	Version                int64
+	ModelMappings          map[string]string
+	AllowedModels          map[string]struct{}
+	AllowedProviders       map[string]struct{}
+	RequestedModel         string
+	EffectiveModel         string
+	Quota                  *Quota
+	QuotaRuntimeGeneration uint64
+	QuotaAdmissionID       string
+	QuotaSettlement        func(context.Context, string, int64) error
+	QuotaUsageSettlement   quotaUsageSettlementFunc
 }
 
 func (s RequestPolicySnapshot) Clone() RequestPolicySnapshot {

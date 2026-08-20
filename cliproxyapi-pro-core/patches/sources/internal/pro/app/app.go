@@ -26,12 +26,13 @@ import (
 // controllers keep their natural host lifecycles and register owner-safe ports
 // with the shared backup coordinator.
 type App struct {
-	proxyPool              *proxypool.Service
-	oauthPolicy            *oauthpolicy.Service
-	apiKeyPolicy           *apikeypolicy.Service
-	policyBackupUnregister func()
-	policyDomainUnregister func()
-	closeOnce              sync.Once
+	proxyPool                 *proxypool.Service
+	oauthPolicy               *oauthpolicy.Service
+	apiKeyPolicy              *apikeypolicy.Service
+	policyBackupUnregister    func()
+	policyLifecycleUnregister func()
+	policyDomainUnregister    func()
+	closeOnce                 sync.Once
 }
 
 func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error) {
@@ -90,6 +91,10 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 			return apiKeyPolicy.PreviewBackup(ctx, payload, apiKeyPolicy.ConfiguredHashes())
 		},
 	)
+	policyLifecycleUnregister := probackup.Default.RegisterLifecycle(probackup.Lifecycle{
+		Pause:  apiKeyPolicy.PauseQuotaRuntime,
+		Resume: apiKeyPolicy.ResumeQuotaRuntime,
+	})
 	policyDomainUnregister := observability.RegisterDataDomainContributor("api-key-policy", observability.DataDomainContribution{
 		InventoryFunc: func(ctx context.Context, _ *observability.Store) observability.DataDomainInventory {
 			domain := observability.DataDomainInventory{
@@ -115,6 +120,7 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 	proxyPool, err := proxypool.New(ctx, store, host.NewProxyOverride(), baseProxyURL)
 	if err != nil {
 		policyDomainUnregister()
+		policyLifecycleUnregister()
 		policyBackupUnregister()
 		_ = apiKeyPolicy.Close()
 		return nil, fmt.Errorf("initialize proxy pool module: %w", err)
@@ -123,11 +129,12 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 	if err != nil {
 		proxyPool.Close()
 		policyDomainUnregister()
+		policyLifecycleUnregister()
 		policyBackupUnregister()
 		_ = apiKeyPolicy.Close()
 		return nil, fmt.Errorf("initialize account policy module: %w", err)
 	}
-	return &App{proxyPool: proxyPool, oauthPolicy: oauthPolicy, apiKeyPolicy: apiKeyPolicy, policyBackupUnregister: policyBackupUnregister, policyDomainUnregister: policyDomainUnregister}, nil
+	return &App{proxyPool: proxyPool, oauthPolicy: oauthPolicy, apiKeyPolicy: apiKeyPolicy, policyBackupUnregister: policyBackupUnregister, policyLifecycleUnregister: policyLifecycleUnregister, policyDomainUnregister: policyDomainUnregister}, nil
 }
 
 func apiKeyPolicyCatalogFromAvailableModels(
@@ -161,6 +168,9 @@ func (a *App) Close() {
 		}
 		if a.policyBackupUnregister != nil {
 			a.policyBackupUnregister()
+		}
+		if a.policyLifecycleUnregister != nil {
+			a.policyLifecycleUnregister()
 		}
 		if a.apiKeyPolicy != nil {
 			_ = a.apiKeyPolicy.Close()
