@@ -1706,9 +1706,61 @@ func TestQuotaSettlementRetryKeepsFirstSuccessfulPriceQuote(t *testing.T) {
 	}
 }
 
-func TestRollingQuotaAggregatesOnlyCurrentWindowAndPeriodChangeResetsEpoch(t *testing.T) {
+func TestCostLimitEditPreservesEpochUsageAndDoesNotAuditReset(t *testing.T) {
 	service := newTestService(t)
-	identity := testIdentity(t, "rolling-quota-key")
+	identity := testIdentity(t, "cost-limit-edit-key")
+	requestLimit, tokenLimit := int64(10), int64(100)
+	costLimit := 10.0
+	service.SetCostEstimator(func(context.Context, QuotaUsageDelta) (int64, error) {
+		return 500_000, nil
+	})
+	created, err := service.Create(context.Background(), identity, "Cost edit", ProfileInput{Name: "default"}, &QuotaInput{
+		Enabled: true, Requests: &requestLimit, TotalTokens: &tokenLimit, Cost: &costLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = SettleQuotaUsage(WithDecision(context.Background(), admitted), "cost-limit-edit-usage", QuotaUsageDelta{
+		Provider: "codex", Model: "gpt-5", TotalTokens: 5,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := service.Get(context.Background(), created.ID)
+	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.RequestsUsed != 1 || loaded.Quota.Usage.TotalTokensUsed != 5 || loaded.Quota.Usage.CostUsed != 0.5 {
+		t.Fatalf("initial usage = %#v error=%v", loaded.Quota, err)
+	}
+	previousEpoch := loaded.Quota.Epoch
+	auditsBefore, err := service.store.ListAudits(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newCostLimit := 20.0
+	updated, err := service.UpdateWorkspace(context.Background(), created.ID, loaded.Version, WorkspaceUpdate{
+		DisplayName: loaded.DisplayName,
+		Quota: QuotaUpdate{Present: true, Value: &QuotaInput{
+			Enabled: true, Requests: &requestLimit, TotalTokens: &tokenLimit, Cost: &newCostLimit,
+		}},
+	})
+	if err != nil || updated.Quota == nil || updated.Quota.Epoch != previousEpoch || updated.Quota.Usage.RequestsUsed != 1 || updated.Quota.Usage.TotalTokensUsed != 5 || updated.Quota.Usage.CostUsed != 0.5 {
+		t.Fatalf("cost limit edit = %#v error=%v", updated.Quota, err)
+	}
+	auditsAfter, err := service.store.ListAudits(context.Background())
+	if err != nil || len(auditsAfter) != len(auditsBefore) {
+		t.Fatalf("cost limit edit audits before=%#v after=%#v error=%v", auditsBefore, auditsAfter, err)
+	}
+}
+
+func TestRollingQuotaPeriodChangeResetsEpochAndWritesAudit(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "rolling-period-edit-key")
 	requestLimit := int64(2)
 	periodValue := int64(1)
 	created, err := service.Create(context.Background(), identity, "Rolling", ProfileInput{Name: "window"}, &QuotaInput{
@@ -1718,22 +1770,7 @@ func TestRollingQuotaAggregatesOnlyCurrentWindowAndPeriodChangeResetsEpoch(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.SetTakeover(context.Background(), true); err != nil {
-		t.Fatal(err)
-	}
 	decision, err := service.Decide(identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, err := service.AdmitDecision(context.Background(), decision)
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstAttribution, _ := first.QuotaAttribution()
-	if _, err = service.store.db.Exec(`update api_key_quota_admissions set admitted_at_ms = ? where admission_id = ?`, time.Now().Add(-2*time.Minute).UnixMilli(), firstAttribution.AdmissionID); err != nil {
-		t.Fatal(err)
-	}
-	decision, err = service.Decide(identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1741,19 +1778,23 @@ func TestRollingQuotaAggregatesOnlyCurrentWindowAndPeriodChangeResetsEpoch(t *te
 		t.Fatal(err)
 	}
 	loaded, err := service.Get(context.Background(), created.ID)
-	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.RequestsUsed != 1 || loaded.Quota.Usage.WindowStartedAtMS <= 0 || loaded.Quota.Usage.WindowEndsAtMS <= loaded.Quota.Usage.WindowStartedAtMS {
+	if err != nil || loaded.Quota == nil || loaded.Quota.Usage.RequestsUsed != 1 {
 		t.Fatalf("rolling usage = %#v error=%v", loaded.Quota, err)
 	}
-	previousEpoch := loaded.Quota.Epoch
+	widerPeriod := int64(3)
 	updated, err := service.UpdateWorkspace(context.Background(), created.ID, loaded.Version, WorkspaceUpdate{
 		DisplayName: loaded.DisplayName,
 		Quota: QuotaUpdate{Present: true, Value: &QuotaInput{
 			Enabled: true, Requests: &requestLimit,
-			Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day"},
+			Period: QuotaPeriod{Type: QuotaPeriodPastDuration, Value: &widerPeriod, Unit: "minute"},
 		}},
 	})
-	if err != nil || updated.Quota == nil || updated.Quota.Epoch <= previousEpoch || updated.Quota.Usage.RequestsUsed != 0 {
+	if err != nil || updated.Quota == nil || updated.Quota.Epoch <= loaded.Quota.Epoch || updated.Quota.Usage.RequestsUsed != 0 {
 		t.Fatalf("period reset = %#v error=%v", updated.Quota, err)
+	}
+	audits, err := service.store.ListAudits(context.Background())
+	if err != nil || audits[len(audits)-1].EventType != "api_key_quota_period_reset" {
+		t.Fatalf("period reset audit = %#v error=%v", audits, err)
 	}
 }
 

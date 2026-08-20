@@ -207,6 +207,11 @@ func TestAPIKeyPolicyDiscoveryAndExecutionShareExactAliasPrefixAutoAndThinkingOr
 
 func TestAPIKeyPolicyHomeDiscoveryFiltersEveryNativeFormat(t *testing.T) {
 	server, service := newAPIKeyPolicyModelsServer(t)
+	payload := []byte(`{"home":[{"id":"shared-policy-model","display_name":"Shared Home Model","context_length":128000},{"id":"forbidden-home-model","display_name":"Forbidden Home Model"}]}`)
+	client, commands := newAPIKeyPolicyHomeModelsClient(t, payload)
+	previousHome := home.Current()
+	home.SetCurrent(client)
+	t.Cleanup(func() { home.SetCurrent(previousHome) })
 	policies, err := service.List(context.Background())
 	if err != nil || len(policies) != 1 {
 		t.Fatalf("policies=%#v error=%v", policies, err)
@@ -227,11 +232,6 @@ func TestAPIKeyPolicyHomeDiscoveryFiltersEveryNativeFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	payload := []byte(`{"home":[{"id":"shared-policy-model","display_name":"Shared Home Model","context_length":128000},{"id":"forbidden-home-model","display_name":"Forbidden Home Model"}]}`)
-	client, commands := newAPIKeyPolicyHomeModelsClient(t, payload)
-	previousHome := home.Current()
-	home.SetCurrent(client)
-	t.Cleanup(func() { home.SetCurrent(previousHome) })
 	server.cfg.Home = config.HomeConfig{Enabled: true}
 	invoke := func(path string, headers map[string]string, action string, handler func(*gin.Context)) *httptest.ResponseRecorder {
 		t.Helper()

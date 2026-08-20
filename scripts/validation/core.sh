@@ -116,6 +116,7 @@ fi
 go -C "${upstream_root}" test "${test_flags[@]}" ./internal/embeddedusage/...
 go -C "${upstream_root}" test "${test_flags[@]}" \
   ./internal/client/claude/models \
+  ./internal/api \
   ./internal/api/handlers/management \
   ./internal/managementasset \
   ./internal/pluginhost \

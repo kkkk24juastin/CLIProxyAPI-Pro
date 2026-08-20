@@ -164,6 +164,12 @@ describe('API Key Policy profile drafts', () => {
     expect(page).toContain("type PageView = 'policies' | 'quotas'");
     expect(page).toContain("type QuotaVisualState = 'inactive' | 'disabled' | 'available' | 'warning' | 'exhausted' | 'blocked' | 'unknown'");
     expect(page).toContain("window.setInterval(() => void loadQuotaSummaries(true), 15_000)");
+    expect(page).toContain("const quotaWorkspaceOpen = workspaceTarget?.kind === 'policy' && Boolean(workspaceTarget.policy.quota);");
+    expect(page).toContain("if ((pageView !== 'quotas' && !quotaWorkspaceOpen) || !quotaOverviewSupported) return;");
+    expect(page).toContain('const currentQuotaSummary = currentPolicy ? quotaSummaryByPolicy.get(currentPolicy.id) : undefined;');
+    expect(page).toContain('currentQuotaSummary && currentQuotaSummary.policyVersion === currentPolicy?.version');
+    expect(page).toContain('currentQuota.usage.requestsUsed');
+    expect(page).not.toContain('currentPolicy.quota.usage.requestsUsed');
     expect(page).toContain('if (quiet && quotaManualInFlightRef.current) return;');
     expect(page).toContain("setPageView('policies');");
     expect(page).toContain('quotaSummaryRevisionRef.current += 1;');
@@ -237,6 +243,7 @@ describe('API Key Policy profile drafts', () => {
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, undefined)).not.toHaveProperty('quota');
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, null)).toMatchObject({ quota: null });
     expect(page).toContain('quotaSupported ? draft.quota : undefined');
+    expect(page).toContain("window.confirm(t('api_key_policy.quota_period_change_confirm'))");
     expect(page).toContain('{quotaSupported ? <section className={styles.quotaSection}>');
     expect(page.indexOf('className={styles.quotaSection}')).toBeLessThan(page.indexOf('className={styles.profileRail}'));
     expect(page).toContain('{draft.quota?.enabled ? <>');

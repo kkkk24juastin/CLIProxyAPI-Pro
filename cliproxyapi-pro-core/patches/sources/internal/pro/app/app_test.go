@@ -32,6 +32,7 @@ func TestAPIKeyPolicyCatalogContainsOnlyAvailableRuntimeEntries(t *testing.T) {
 				return []string{"static-only"}
 			}
 		},
+		false,
 	)
 	if !reflect.DeepEqual(catalog.Models, []string{"runtime-a", "runtime-z"}) {
 		t.Fatalf("catalog models = %#v", catalog.Models)
@@ -44,6 +45,29 @@ func TestAPIKeyPolicyCatalogContainsOnlyAvailableRuntimeEntries(t *testing.T) {
 		"runtime-z": {"codex"},
 	}) {
 		t.Fatalf("catalog model providers = %#v", catalog.ModelProviders)
+	}
+}
+
+func TestAPIKeyPolicyCatalogIncludesSyntheticHomeProvider(t *testing.T) {
+	catalog := apiKeyPolicyCatalogFromAvailableModels(
+		[]*registry.ModelInfo{{ID: "shared-model"}},
+		func(string) []string { return []string{"codex"} },
+		true,
+	)
+	if !reflect.DeepEqual(catalog.Providers, []string{"codex", "home"}) {
+		t.Fatalf("catalog providers = %#v", catalog.Providers)
+	}
+	if !reflect.DeepEqual(catalog.ModelProviders, map[string][]string{"shared-model": {"codex", "home"}}) {
+		t.Fatalf("catalog model providers = %#v", catalog.ModelProviders)
+	}
+	homeOnly := apiKeyPolicyCatalogFromAvailableModels(
+		[]*registry.ModelInfo{{ID: "home-only-model"}},
+		nil,
+		true,
+	)
+	if !reflect.DeepEqual(homeOnly.Providers, []string{"home"}) ||
+		!reflect.DeepEqual(homeOnly.ModelProviders, map[string][]string{"home-only-model": {"home"}}) {
+		t.Fatalf("home-only catalog = %#v", homeOnly)
 	}
 }
 

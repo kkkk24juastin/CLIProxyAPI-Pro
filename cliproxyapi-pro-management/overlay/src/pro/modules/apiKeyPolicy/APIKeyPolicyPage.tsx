@@ -77,6 +77,8 @@ const emptyProfile = (): APIKeyProfileInput => ({
 
 const defaultQuotaPeriod = (): APIKeyQuotaPeriod => ({ type: 'all_time' });
 
+const quotaPeriodSignature = (period: APIKeyQuotaPeriod | undefined): string => JSON.stringify(period ?? defaultQuotaPeriod());
+
 const invalidPositiveInteger = (value: number | undefined): boolean =>
   value !== undefined && (!Number.isSafeInteger(value) || value <= 0);
 
@@ -366,6 +368,7 @@ export function APIKeyPolicyPage() {
   const optionalProfileSupported = Boolean(
     snapshot && supportsOptionalAPIKeyProfile(snapshot.capabilities),
   );
+  const quotaWorkspaceOpen = workspaceTarget?.kind === 'policy' && Boolean(workspaceTarget.policy.quota);
 
   const errorMessage = useCallback((error: unknown): string => {
     const key = apiKeyPolicyErrorTranslationKey(error);
@@ -517,10 +520,11 @@ export function APIKeyPolicyPage() {
   }, [connectionStatus, loadQuotaSummaries, quotaOverviewSupported]);
 
   useEffect(() => {
-    if (pageView !== 'quotas' || !quotaOverviewSupported) return;
+    if ((pageView !== 'quotas' && !quotaWorkspaceOpen) || !quotaOverviewSupported) return;
+    void loadQuotaSummaries(true);
     const timer = window.setInterval(() => void loadQuotaSummaries(true), 15_000);
     return () => window.clearInterval(timer);
-  }, [loadQuotaSummaries, pageView, quotaOverviewSupported]);
+  }, [loadQuotaSummaries, pageView, quotaOverviewSupported, quotaWorkspaceOpen]);
 
   const openWorkspace = useCallback(
     (target: WorkspaceTarget, profileId?: string) => {
@@ -691,6 +695,12 @@ export function APIKeyPolicyPage() {
       profileSignature(persisted) !== profileSignature(draft.profile)
     );
     if (!validateDraft(changedProfile)) return;
+    const persistedQuota = workspaceTarget.kind === 'policy' ? quotaInputFromPolicy(workspaceTarget.policy) : null;
+    const periodChanged = Boolean(
+      persistedQuota && draft.quota &&
+      quotaPeriodSignature(persistedQuota.period) !== quotaPeriodSignature(draft.quota.period),
+    );
+    if (periodChanged && !window.confirm(t('api_key_policy.quota_period_change_confirm'))) return;
     const revision = ++saveRevisionRef.current;
     const submittedDraftRevision = draftRevisionRef.current;
     savingRef.current = true;
@@ -972,6 +982,10 @@ export function APIKeyPolicyPage() {
 	);
 
   const currentPolicy = workspaceTarget?.kind === 'policy' ? workspaceTarget.policy : null;
+  const currentQuotaSummary = currentPolicy ? quotaSummaryByPolicy.get(currentPolicy.id) : undefined;
+  const currentQuota = currentQuotaSummary && currentQuotaSummary.policyVersion === currentPolicy?.version
+    ? currentQuotaSummary.quota
+    : currentPolicy?.quota;
   const currentBinding = currentPolicy
     ? snapshot?.bindings.items.find((binding) => binding.policy?.id === currentPolicy.id)
     : undefined;
@@ -1356,11 +1370,11 @@ export function APIKeyPolicyPage() {
                 </div>
                 <p className={styles.quotaPeriodHint}>{t('api_key_policy.quota_period_hint')}</p>
 
-                {currentPolicy?.quota ? (
+                {currentQuota ? (
                   <div className={styles.quotaUsage}>
-                    <span>{t('api_key_policy.quota_requests_usage', { used: currentPolicy.quota.usage.requestsUsed, limit: currentPolicy.quota.requests ?? '∞' })}</span>
-                    <span>{t('api_key_policy.quota_tokens_usage', { used: currentPolicy.quota.usage.totalTokensUsed, limit: currentPolicy.quota.totalTokens ?? '∞' })}</span>
-                    <span>{t('api_key_policy.quota_cost_usage', { used: formatQuotaCost(currentPolicy.quota.usage.costUsed), limit: currentPolicy.quota.cost === undefined ? '∞' : formatQuotaCost(currentPolicy.quota.cost) })}</span>
+                    <span>{t('api_key_policy.quota_requests_usage', { used: currentQuota.usage.requestsUsed, limit: currentQuota.requests ?? '∞' })}</span>
+                    <span>{t('api_key_policy.quota_tokens_usage', { used: currentQuota.usage.totalTokensUsed, limit: currentQuota.totalTokens ?? '∞' })}</span>
+                    <span>{t('api_key_policy.quota_cost_usage', { used: formatQuotaCost(currentQuota.usage.costUsed), limit: currentQuota.cost === undefined ? '∞' : formatQuotaCost(currentQuota.cost) })}</span>
                     {!readOnly ? <Button variant="danger" size="sm" onClick={() => void resetQuota()} loading={quotaBusy} disabled={saving || dirty}>{t('api_key_policy.quota_reset')}</Button> : null}
                   </div>
                 ) : null}

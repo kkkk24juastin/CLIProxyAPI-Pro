@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/apikeypolicy"
 	probackup "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/backup"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/host"
@@ -61,6 +62,7 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 		return apiKeyPolicyCatalogFromAvailableModels(
 			modelRegistry.GetAvailableModelInfos(),
 			modelRegistry.GetModelProviders,
+			home.Current() != nil,
 		), nil
 	})
 	apiKeyPolicy.SetCostEstimator(func(ctx context.Context, usage apikeypolicy.QuotaUsageDelta) (int64, error) {
@@ -140,17 +142,33 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 func apiKeyPolicyCatalogFromAvailableModels(
 	models []*registry.ModelInfo,
 	providersForModel func(string) []string,
+	includeHome bool,
 ) apikeypolicy.ProfileCatalog {
 	modelIDs := make([]string, 0, len(models))
 	providers := make([]string, 0, len(models))
 	modelProviders := make(map[string][]string, len(models))
+	if includeHome {
+		// Home is a synthetic request provider backed by the active control-plane
+		// client, not a registry client. Empty model selections still need to be
+		// able to express "allow every Home model".
+		providers = append(providers, "home")
+	}
 	for _, model := range models {
 		if model == nil || model.ID == "" {
 			continue
 		}
 		modelIDs = append(modelIDs, model.ID)
+		availableProviders := []string(nil)
 		if providersForModel != nil {
-			availableProviders := providersForModel(model.ID)
+			availableProviders = append(availableProviders, providersForModel(model.ID)...)
+		}
+		if includeHome {
+			// Home serves the same public model namespace dynamically. Linking the
+			// current registry catalog to Home lets strict clients save a Home-only
+			// Profile without weakening the runtime provider check.
+			availableProviders = append(availableProviders, "home")
+		}
+		if providersForModel != nil || includeHome {
 			providers = append(providers, availableProviders...)
 			modelProviders[model.ID] = availableProviders
 		}

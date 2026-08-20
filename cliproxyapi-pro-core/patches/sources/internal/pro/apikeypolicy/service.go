@@ -2140,13 +2140,11 @@ func replaceQuota(ctx context.Context, tx *sql.Tx, policyID string, input *Quota
 		_, err = tx.ExecContext(ctx, `insert into api_key_policy_quotas(policy_id, enabled, request_limit, token_limit, cost_limit_micros, period_type, period_value, period_unit, epoch, started_at_ms, requests_used, total_tokens_used, cost_used_micros, updated_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)`, policyID, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, epoch, now, now)
 		return err
 	}
-	var currentCost, currentPeriodValue sql.NullInt64
-	var currentPeriodType, currentPeriodUnit string
-	if err := tx.QueryRowContext(ctx, `select cost_limit_micros, period_type, period_value, period_unit from api_key_policy_quotas where policy_id = ?`, policyID).Scan(&currentCost, &currentPeriodType, &currentPeriodValue, &currentPeriodUnit); err != nil {
+	currentQuota, err := getPolicyQuota(ctx, tx, policyID)
+	if err != nil {
 		return err
 	}
-	resetUsage := !nullableInt64Equals(currentCost, costLimitMicros) || currentPeriodType != input.Period.Type || !nullableInt64Equals(currentPeriodValue, input.Period.Value) || currentPeriodUnit != input.Period.Unit
-	if resetUsage {
+	if currentQuota != nil && !quotaPeriodsEqual(currentQuota.Period, input.Period) {
 		epoch, err := advanceQuotaGeneration(ctx, tx, policyID)
 		if err != nil {
 			return err
@@ -2154,9 +2152,17 @@ func replaceQuota(ctx context.Context, tx *sql.Tx, policyID string, input *Quota
 		if _, err := tx.ExecContext(ctx, `delete from api_key_quota_admissions where policy_id = ?`, policyID); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `update api_key_policy_quotas set enabled = ?, request_limit = ?, token_limit = ?, cost_limit_micros = ?, period_type = ?, period_value = ?, period_unit = ?, epoch = ?, started_at_ms = ?, requests_used = 0, total_tokens_used = 0, cost_used_micros = 0, updated_at_ms = ? where policy_id = ?`, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, epoch, now, now, policyID)
-		return err
+		if _, err = tx.ExecContext(ctx, `update api_key_policy_quotas set enabled = ?, request_limit = ?, token_limit = ?, cost_limit_micros = ?, period_type = ?, period_value = ?, period_unit = ?, epoch = ?, started_at_ms = ?, requests_used = 0, total_tokens_used = 0, cost_used_micros = 0, updated_at_ms = ? where policy_id = ?`, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, epoch, now, now, policyID); err != nil {
+			return err
+		}
+		return insertAudit(ctx, tx, policyID, "api_key_quota_period_reset", map[string]any{
+			"previousEpoch": currentQuota.Epoch, "previousRequestsUsed": currentQuota.Usage.RequestsUsed,
+			"previousTotalTokensUsed": currentQuota.Usage.TotalTokensUsed, "previousCostUsed": currentQuota.Usage.CostUsed,
+			"previousPeriod": currentQuota.Period, "period": input.Period,
+		}, now)
 	}
+	// Limit edits preserve the current generation and every accumulated metric.
+	// Explicit reset and period replacement are the only clearing operations.
 	_, err = tx.ExecContext(ctx, `update api_key_policy_quotas set enabled = ?, request_limit = ?, token_limit = ?, cost_limit_micros = ?, period_type = ?, period_value = ?, period_unit = ?, updated_at_ms = ? where policy_id = ?`, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, now, policyID)
 	return err
 }
@@ -2168,18 +2174,15 @@ func quotaCostLimitMicros(cost *float64) (any, error) {
 	return usdToMicros(*cost)
 }
 
-func nullableInt64Equals(current sql.NullInt64, next any) bool {
-	if next == nil {
-		return !current.Valid
+func quotaPeriodsEqual(left, right QuotaPeriod) bool {
+	left, right = normalizeQuotaPeriod(left), normalizeQuotaPeriod(right)
+	if left.Type != right.Type || left.Unit != right.Unit {
+		return false
 	}
-	value, ok := next.(int64)
-	if pointer, pointerOK := next.(*int64); pointerOK {
-		if pointer == nil {
-			return !current.Valid
-		}
-		value, ok = *pointer, true
+	if left.Value == nil || right.Value == nil {
+		return left.Value == nil && right.Value == nil
 	}
-	return ok && current.Valid && current.Int64 == value
+	return *left.Value == *right.Value
 }
 
 // advanceQuotaGeneration keeps the monotonic budget identity outside the
