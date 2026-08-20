@@ -67,6 +67,7 @@ func (s *Store) init(ctx context.Context) error {
 			id text primary key,
 			api_key_hash text not null unique,
 			display_name text not null default '',
+			profile_enabled integer check(profile_enabled in (0, 1)),
 			active_profile_id text,
 			version integer not null default 1 check(version > 0),
 			created_at_ms integer not null,
@@ -187,6 +188,14 @@ func (s *Store) init(ctx context.Context) error {
 		`alter table api_key_policy_quotas add column period_timezone text not null default 'UTC'`,
 		`alter table api_key_policy_quotas add column cost_used_micros integer not null default 0 check(cost_used_micros >= 0)`,
 		`alter table api_key_quota_token_events add column cost_micros integer not null default 0 check(cost_micros >= 0)`,
+		`alter table api_key_policies add column profile_enabled integer check(profile_enabled in (0, 1))`,
+	}, Seed: []string{
+		`update api_key_policies set profile_enabled = case when active_profile_id is null then 0 else 1 end where profile_enabled is null`,
+		`update api_key_policies set active_profile_id = (
+			select id from api_key_profiles where policy_id = api_key_policies.id order by created_at_ms, id limit 1
+		) where profile_enabled = 0 and active_profile_id is null and exists (
+			select 1 from api_key_profiles where policy_id = api_key_policies.id
+		)`,
 	}})
 }
 
@@ -257,7 +266,7 @@ func (s *Store) ListMatchingHashes(ctx context.Context, hashes []string) ([]Poli
 	if err != nil {
 		return nil, err
 	}
-	return queryPolicies(ctx, s.db, `select id, api_key_hash, display_name, coalesce(active_profile_id, ''), version, created_at_ms, updated_at_ms from api_key_policies where api_key_hash in (select value from json_each(?)) order by created_at_ms, id`, string(hashesJSON))
+	return queryPolicies(ctx, s.db, `select id, api_key_hash, display_name, coalesce(profile_enabled, case when active_profile_id is null then 0 else 1 end), coalesce(active_profile_id, ''), version, created_at_ms, updated_at_ms from api_key_policies where api_key_hash in (select value from json_each(?)) order by created_at_ms, id`, string(hashesJSON))
 }
 
 // ListExcludingHashes returns one stable database page of policies whose API
@@ -266,7 +275,7 @@ func (s *Store) ListExcludingHashes(ctx context.Context, configuredHashes []stri
 	if limit < 1 || limit > 100 {
 		limit = 50
 	}
-	query := `select id, api_key_hash, display_name, coalesce(active_profile_id, ''), version, created_at_ms, updated_at_ms from api_key_policies where (created_at_ms > ? or (created_at_ms = ? and id > ?))`
+	query := `select id, api_key_hash, display_name, coalesce(profile_enabled, case when active_profile_id is null then 0 else 1 end), coalesce(active_profile_id, ''), version, created_at_ms, updated_at_ms from api_key_policies where (created_at_ms > ? or (created_at_ms = ? and id > ?))`
 	args := []any{afterCreatedAtMS, afterCreatedAtMS, strings.TrimSpace(afterID)}
 	if len(configuredHashes) > 0 {
 		hashesJSON, err := json.Marshal(configuredHashes)
@@ -282,7 +291,7 @@ func (s *Store) ListExcludingHashes(ctx context.Context, configuredHashes []stri
 }
 
 func listPolicies(ctx context.Context, queryer sqlQueryer) ([]Policy, error) {
-	return queryPolicies(ctx, queryer, `select id, api_key_hash, display_name, coalesce(active_profile_id, ''), version, created_at_ms, updated_at_ms from api_key_policies order by created_at_ms, id`)
+	return queryPolicies(ctx, queryer, `select id, api_key_hash, display_name, coalesce(profile_enabled, case when active_profile_id is null then 0 else 1 end), coalesce(active_profile_id, ''), version, created_at_ms, updated_at_ms from api_key_policies order by created_at_ms, id`)
 }
 
 func queryPolicies(ctx context.Context, queryer sqlQueryer, query string, args ...any) ([]Policy, error) {
@@ -293,7 +302,7 @@ func queryPolicies(ctx context.Context, queryer sqlQueryer, query string, args .
 	policies := make([]Policy, 0)
 	for rows.Next() {
 		var policy Policy
-		if err := rows.Scan(&policy.ID, &policy.APIKeyHash, &policy.DisplayName, &policy.ActiveProfileID, &policy.Version, &policy.CreatedAtMS, &policy.UpdatedAtMS); err != nil {
+		if err := rows.Scan(&policy.ID, &policy.APIKeyHash, &policy.DisplayName, &policy.ProfileEnabled, &policy.ActiveProfileID, &policy.Version, &policy.CreatedAtMS, &policy.UpdatedAtMS); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -323,8 +332,8 @@ func queryPolicies(ctx context.Context, queryer sqlQueryer, query string, args .
 
 func (s *Store) Get(ctx context.Context, policyID string) (Policy, error) {
 	var policy Policy
-	err := s.db.QueryRowContext(ctx, `select id, api_key_hash, display_name, coalesce(active_profile_id, ''), version, created_at_ms, updated_at_ms from api_key_policies where id = ?`, strings.TrimSpace(policyID)).
-		Scan(&policy.ID, &policy.APIKeyHash, &policy.DisplayName, &policy.ActiveProfileID, &policy.Version, &policy.CreatedAtMS, &policy.UpdatedAtMS)
+	err := s.db.QueryRowContext(ctx, `select id, api_key_hash, display_name, coalesce(profile_enabled, case when active_profile_id is null then 0 else 1 end), coalesce(active_profile_id, ''), version, created_at_ms, updated_at_ms from api_key_policies where id = ?`, strings.TrimSpace(policyID)).
+		Scan(&policy.ID, &policy.APIKeyHash, &policy.DisplayName, &policy.ProfileEnabled, &policy.ActiveProfileID, &policy.Version, &policy.CreatedAtMS, &policy.UpdatedAtMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Policy{}, ErrPolicyNotFound
 	}

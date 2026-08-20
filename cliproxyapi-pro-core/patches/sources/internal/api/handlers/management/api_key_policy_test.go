@@ -317,7 +317,7 @@ func TestAPIKeyPolicyWorkspaceCanPauseAndResumeProfileEnforcement(t *testing.T) 
 	}
 	body["clientFeatures"] = []string{"provider_model_linkage", "profile_enforcement_toggle"}
 	disabled := policyRequest(t, router, http.MethodPatch, "/v0/management/api-key-policies/"+created.ID, "session-a", body)
-	if disabled.Code != http.StatusOK || !strings.Contains(disabled.Body.String(), `"displayName":"No Profile"`) || !strings.Contains(disabled.Body.String(), `"activeProfileId":""`) || !strings.Contains(disabled.Body.String(), `"profiles":[{`) {
+	if disabled.Code != http.StatusOK || !strings.Contains(disabled.Body.String(), `"displayName":"No Profile"`) || !strings.Contains(disabled.Body.String(), `"profileEnabled":false`) || !strings.Contains(disabled.Body.String(), `"activeProfileId":"`+created.ActiveProfileID+`"`) || !strings.Contains(disabled.Body.String(), `"profiles":[{`) {
 		t.Fatalf("disable status=%d body=%s", disabled.Code, disabled.Body.String())
 	}
 	var paused apikeypolicy.Policy
@@ -326,11 +326,11 @@ func TestAPIKeyPolicyWorkspaceCanPauseAndResumeProfileEnforcement(t *testing.T) 
 	}
 	body = map[string]any{
 		"displayName": paused.DisplayName, "version": paused.Version,
-		"profileEnabled": true, "activeProfileId": paused.Profiles[0].ID,
+		"profileEnabled": true, "activeProfileId": paused.ActiveProfileID,
 		"clientFeatures": []string{"provider_model_linkage", "profile_enforcement_toggle"},
 	}
 	reenabled := policyRequest(t, router, http.MethodPatch, "/v0/management/api-key-policies/"+created.ID, "session-a", body)
-	if reenabled.Code != http.StatusOK || !strings.Contains(reenabled.Body.String(), `"activeProfileId":"`+paused.Profiles[0].ID+`"`) || !strings.Contains(reenabled.Body.String(), `"profiles":[{`) {
+	if reenabled.Code != http.StatusOK || !strings.Contains(reenabled.Body.String(), `"profileEnabled":true`) || !strings.Contains(reenabled.Body.String(), `"activeProfileId":"`+paused.ActiveProfileID+`"`) || !strings.Contains(reenabled.Body.String(), `"profiles":[{`) {
 		t.Fatalf("re-enable status=%d body=%s", reenabled.Code, reenabled.Body.String())
 	}
 }

@@ -461,7 +461,7 @@ func TestQuotaOnlyPolicyFirstProfileAndLastProfileConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(created.Profiles) != 1 || created.ActiveProfileID != created.Profiles[0].ID {
+	if len(created.Profiles) != 1 || !created.ProfileEnabled || created.ActiveProfileID != created.Profiles[0].ID {
 		t.Fatalf("first profile was not activated: %#v", created)
 	}
 	assertLastAudit("active_profile_changed", created.ActiveProfileID, map[string]any{"automatic": true})
@@ -472,7 +472,7 @@ func TestQuotaOnlyPolicyFirstProfileAndLastProfileConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed.ActiveProfileID != "" || len(removed.Profiles) != 0 {
+	if removed.ProfileEnabled || removed.ActiveProfileID != "" || len(removed.Profiles) != 0 {
 		t.Fatalf("policy did not return to quota-only mode: %#v", removed)
 	}
 	assertLastAudit("active_profile_removed", created.ActiveProfileID, map[string]any{"confirmation": NoProfileConfirmation})
@@ -487,7 +487,7 @@ func TestQuotaOnlyPolicyFirstProfileAndLastProfileConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recreated.Profiles) != 1 || recreated.ActiveProfileID != recreated.Profiles[0].ID {
+	if len(recreated.Profiles) != 1 || !recreated.ProfileEnabled || recreated.ActiveProfileID != recreated.Profiles[0].ID {
 		t.Fatalf("workspace-created first profile was not activated: %#v", recreated)
 	}
 	auditCount := assertLastAudit("active_profile_changed", recreated.ActiveProfileID, map[string]any{"automatic": true})
@@ -517,6 +517,19 @@ func TestWorkspaceUpdatePausesAndResumesProfileEnforcementWithoutDeletingProfile
 	created, err = service.CreateProfile(context.Background(), created.ID, created.Version, ProfileInput{
 		Name: "Secondary", Providers: []string{"claude"},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondaryProfileID := ""
+	for _, profile := range created.Profiles {
+		if profile.ID != created.ActiveProfileID {
+			secondaryProfileID = profile.ID
+		}
+	}
+	if secondaryProfileID == "" {
+		t.Fatalf("secondary Profile missing: %#v", created.Profiles)
+	}
+	created, err = service.ActivateProfile(context.Background(), created.ID, secondaryProfileID, created.Version)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +569,7 @@ func TestWorkspaceUpdatePausesAndResumesProfileEnforcementWithoutDeletingProfile
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.DisplayName != "Unrestricted" || updated.ActiveProfileID != "" || len(updated.Profiles) != 2 || string(profilesAfter) != string(profilesBefore) || updated.Version != loaded.Version+1 {
+	if updated.DisplayName != "Unrestricted" || updated.ProfileEnabled || updated.ActiveProfileID != loaded.ActiveProfileID || len(updated.Profiles) != 2 || string(profilesAfter) != string(profilesBefore) || updated.Version != loaded.Version+1 {
 		t.Fatalf("disabled Profile workspace = %#v", updated)
 	}
 	if updated.Quota == nil || updated.Quota.Usage.RequestsUsed != 1 || updated.Quota.Epoch != loaded.Quota.Epoch {
@@ -581,18 +594,9 @@ func TestWorkspaceUpdatePausesAndResumesProfileEnforcementWithoutDeletingProfile
 	if err != nil || decision.Snapshot == nil || !decision.Snapshot.allowsProvider("unrestricted-provider") {
 		t.Fatalf("disabled Profile decision = %#v error=%v", decision, err)
 	}
-	secondaryProfileID := ""
-	for _, profile := range updated.Profiles {
-		if profile.ID != loaded.ActiveProfileID {
-			secondaryProfileID = profile.ID
-		}
-	}
-	if secondaryProfileID == "" {
-		t.Fatalf("secondary Profile missing after pause: %#v", updated.Profiles)
-	}
 	enabled := true
 	reenabled, err := service.UpdateWorkspace(WithProfileEnforcementToggle(context.Background()), updated.ID, updated.Version, WorkspaceUpdate{
-		DisplayName: updated.DisplayName, ProfileEnabled: &enabled, ActiveProfileID: secondaryProfileID,
+		DisplayName: updated.DisplayName, ProfileEnabled: &enabled, ActiveProfileID: updated.ActiveProfileID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -601,12 +605,45 @@ func TestWorkspaceUpdatePausesAndResumesProfileEnforcementWithoutDeletingProfile
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reenabled.ActiveProfileID != secondaryProfileID || string(reenabledProfiles) != string(profilesBefore) || reenabled.Quota == nil || reenabled.Quota.Epoch != loaded.Quota.Epoch || reenabled.Quota.Usage.RequestsUsed != 1 {
+	if !reenabled.ProfileEnabled || reenabled.ActiveProfileID != secondaryProfileID || string(reenabledProfiles) != string(profilesBefore) || reenabled.Quota == nil || reenabled.Quota.Epoch != loaded.Quota.Epoch || reenabled.Quota.Usage.RequestsUsed != 1 {
 		t.Fatalf("re-enabled Profile workspace = %#v", reenabled)
 	}
 	decision, err = service.Decide(identity)
 	if err != nil || decision.Snapshot == nil || !decision.Snapshot.allowsProvider("claude") || decision.Snapshot.allowsProvider("codex") {
 		t.Fatalf("re-enabled Profile decision = %#v error=%v", decision, err)
+	}
+}
+
+func TestPausedProfileEnforcementSurvivesBothProfileCreationPaths(t *testing.T) {
+	service := newTestService(t)
+	created, err := service.Create(context.Background(), testIdentity(t, "paused-profile-create-key"), "Paused", ProfileInput{Name: "Primary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectedProfileID := created.ActiveProfileID
+	disabled := false
+	paused, err := service.UpdateWorkspace(WithProfileEnforcementToggle(context.Background()), created.ID, created.Version, WorkspaceUpdate{
+		DisplayName: created.DisplayName, ProfileEnabled: &disabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdByEndpoint, err := service.CreateProfile(context.Background(), paused.ID, paused.Version, ProfileInput{Name: "Endpoint"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdByEndpoint.ProfileEnabled || createdByEndpoint.ActiveProfileID != selectedProfileID || len(createdByEndpoint.Profiles) != 2 {
+		t.Fatalf("Profile endpoint resumed paused enforcement: %#v", createdByEndpoint)
+	}
+	workspaceProfile := ProfileInput{Name: "Workspace"}
+	createdByWorkspace, err := service.UpdateWorkspace(context.Background(), createdByEndpoint.ID, createdByEndpoint.Version, WorkspaceUpdate{
+		DisplayName: createdByEndpoint.DisplayName, Profile: &workspaceProfile, CreateProfile: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdByWorkspace.ProfileEnabled || createdByWorkspace.ActiveProfileID != selectedProfileID || len(createdByWorkspace.Profiles) != 3 {
+		t.Fatalf("workspace creation resumed paused enforcement: %#v", createdByWorkspace)
 	}
 }
 
@@ -632,12 +669,30 @@ func TestPolicyBackupRoundTripsPausedProfileEnforcement(t *testing.T) {
 		t.Fatalf("restore paused Profile enforcement: %v", err)
 	}
 	restored, err := service.Get(context.Background(), paused.ID)
-	if err != nil || restored.ActiveProfileID != "" || len(restored.Profiles) != 1 || restored.Profiles[0].Name != "Saved" {
+	if err != nil || restored.ProfileEnabled || restored.ActiveProfileID != created.ActiveProfileID || len(restored.Profiles) != 1 || restored.Profiles[0].Name != "Saved" {
 		t.Fatalf("restored paused policy = %#v error=%v", restored, err)
 	}
 	decision, err := service.Decide(identity)
 	if err != nil || decision.Snapshot == nil || !decision.Snapshot.allowsProvider("unrestricted-provider") {
 		t.Fatalf("restored paused decision = %#v error=%v", decision, err)
+	}
+	var legacy backupDocument
+	if err = json.Unmarshal(payload, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	legacy.SchemaVersion = 7
+	legacy.Policies[0].ProfileEnabled = false
+	legacy.Policies[0].ActiveProfileID = ""
+	legacyPayload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.ImportBackup(context.Background(), legacyPayload); err != nil {
+		t.Fatalf("restore legacy paused Profile enforcement: %v", err)
+	}
+	legacyRestored, err := service.Get(context.Background(), paused.ID)
+	if err != nil || legacyRestored.ProfileEnabled || legacyRestored.ActiveProfileID != legacyRestored.Profiles[0].ID {
+		t.Fatalf("legacy paused policy = %#v error=%v", legacyRestored, err)
 	}
 }
 
@@ -1537,7 +1592,7 @@ func TestPolicyBackupRestoresPendingQuotaSettlementAndBlockedState(t *testing.T)
 	if err = json.Unmarshal(payload, &document); err != nil {
 		t.Fatal(err)
 	}
-	if document.SchemaVersion != 7 || len(document.PendingQuotaSettlements) != 1 || document.PendingQuotaSettlements[0].Usage.TotalTokens != 20 {
+	if document.SchemaVersion != 8 || len(document.PendingQuotaSettlements) != 1 || document.PendingQuotaSettlements[0].Usage.TotalTokens != 20 {
 		t.Fatalf("pending backup document = %#v", document)
 	}
 	invalid := document
@@ -2077,6 +2132,52 @@ func TestQuotaTimezoneMigrationDefaultsExistingCalendarRowsToUTC(t *testing.T) {
 	}
 }
 
+func TestProfileEnforcementMigrationSeparatesPausedStateFromSelectedProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-profile.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`create table api_key_policies (
+		id text primary key, api_key_hash text not null unique, display_name text not null default '', active_profile_id text,
+		version integer not null default 1, created_at_ms integer not null, updated_at_ms integer not null
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`create table api_key_profiles (
+		id text primary key, policy_id text not null, name text not null, created_at_ms integer not null, updated_at_ms integer not null,
+		unique(policy_id, name)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`insert into api_key_policies(id, api_key_hash, display_name, active_profile_id, version, created_at_ms, updated_at_ms) values
+		('enabled-policy', 'enabled-hash', 'Enabled', 'enabled-profile', 1, 1, 1),
+		('paused-policy', 'paused-hash', 'Paused', null, 1, 2, 2)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`insert into api_key_profiles(id, policy_id, name, created_at_ms, updated_at_ms) values
+		('enabled-profile', 'enabled-policy', 'Enabled', 1, 1),
+		('paused-profile', 'paused-policy', 'Paused', 2, 2)`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	enabledPolicy, err := store.Get(context.Background(), "enabled-policy")
+	if err != nil || !enabledPolicy.ProfileEnabled || enabledPolicy.ActiveProfileID != "enabled-profile" {
+		t.Fatalf("migrated enabled policy = %#v error=%v", enabledPolicy, err)
+	}
+	pausedPolicy, err := store.Get(context.Background(), "paused-policy")
+	if err != nil || pausedPolicy.ProfileEnabled || pausedPolicy.ActiveProfileID != "paused-profile" {
+		t.Fatalf("migrated paused policy = %#v error=%v", pausedPolicy, err)
+	}
+}
+
 func TestQuotaPeriodIndexesIncludeWindowTimestamps(t *testing.T) {
 	service := newTestService(t)
 	for name, columns := range map[string]string{
@@ -2154,7 +2255,7 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	if strings.Contains(string(payload), "backup-key") || !strings.Contains(string(payload), identity.Hash()) {
 		t.Fatalf("backup secret/hash boundary = %s", payload)
 	}
-	if !strings.Contains(string(payload), `"schema_version":7`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) || !strings.Contains(string(payload), `"requests":25`) || !strings.Contains(string(payload), `"timezone":"Asia/Shanghai"`) {
+	if !strings.Contains(string(payload), `"schema_version":8`) || !strings.Contains(string(payload), `"profile_enabled":true`) || !strings.Contains(string(payload), `"takeover_enabled":true`) || !strings.Contains(string(payload), `"eventType":"policy_created"`) || !strings.Contains(string(payload), `"requests":25`) || !strings.Contains(string(payload), `"timezone":"Asia/Shanghai"`) {
 		t.Fatalf("backup schema/audit record = %s", payload)
 	}
 	if err := service.DeletePolicy(context.Background(), created.ID, created.Version, PassthroughConfirmation); err != nil {

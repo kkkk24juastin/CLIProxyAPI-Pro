@@ -321,6 +321,7 @@ type Policy struct {
 	ID              string    `json:"id"`
 	APIKeyHash      string    `json:"-"`
 	DisplayName     string    `json:"displayName"`
+	ProfileEnabled  bool      `json:"profileEnabled"`
 	ActiveProfileID string    `json:"activeProfileId"`
 	Version         int64     `json:"version"`
 	CreatedAtMS     int64     `json:"createdAtMs"`

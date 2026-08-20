@@ -288,10 +288,12 @@ describe('API Key Policy profile drafts', () => {
     expect(formatAPIKeyPolicyTimestamp(timestamp, 'en-US', 'Local'))
       .toBe(formatAPIKeyPolicyTimestamp(timestamp, 'en-US', 'UTC'));
     expect(buildAPIKeyQuotaTimezoneOptions('Asia/Shanghai')[0]).toEqual({ value: 'UTC', label: 'UTC' });
-    expect(buildAPIKeyQuotaTimezoneOptions('Pacific/Auckland')[0]).toEqual({ value: 'Pacific/Auckland', label: 'Pacific/Auckland' });
+    expect(buildAPIKeyQuotaTimezoneOptions().some((option) => option.value === 'Pacific/Auckland')).toBe(true);
+    expect(buildAPIKeyQuotaTimezoneOptions('Custom/Legacy')[0]).toEqual({ value: 'Custom/Legacy', label: 'Custom/Legacy' });
     expect(buildAPIKeyQuotaTimezoneOptions('Pacific/Auckland').filter((option) => option.value === 'Pacific/Auckland')).toHaveLength(1);
     expect(page).toContain('quotaSupported ? draft.quota : undefined');
-    expect(page).toContain("draft.profileEnabled !== (target.policy.activeProfileId !== '')");
+    expect(page).toContain('profileEnabled: target.policy.profileEnabled');
+    expect(page).toContain('draft.profileEnabled !== target.policy.profileEnabled');
     expect(page).toContain("supportsAPIKeyProfileEnforcementToggle(snapshot.capabilities)");
     expect(page).not.toContain("window.confirm(t('api_key_policy.profile_disable_confirm'))");
     expect(page).toContain('profileEnabledChanged ? draft.profileEnabled : undefined');
@@ -305,6 +307,8 @@ describe('API Key Policy profile drafts', () => {
     expect(page).toContain("(['all_time', 'past_duration', 'calendar_duration'] as const)");
     expect(page).toContain('supportsAPIKeyQuotaTimezone(snapshot.capabilities)');
     expect(page).toContain('options={buildAPIKeyQuotaTimezoneOptions(draft.quota.period.timezone)}');
+    expect(client).toContain("supportedValuesOf.call(Intl, 'timeZone')");
+    expect(client).toContain("profileEnabled: typeof policy.profileEnabled === 'boolean'");
     expect(page).not.toContain('list="api-key-quota-timezones"');
     expect(page).not.toContain("placeholder={t('api_key_policy.quota_timezone_example')}");
     expect(page).toContain("!validIanaTimezone(draft.quota.period.timezone)");

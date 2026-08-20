@@ -173,7 +173,7 @@ const workspaceDraftFromTarget = (
     target.policy.profiles[0];
   return {
     displayName: target.policy.displayName,
-    profileEnabled: target.policy.activeProfileId !== '',
+    profileEnabled: target.policy.profileEnabled,
     profileId: selected?.id ?? '',
     profile: selected ? cloneProfileInput(selected) : emptyProfile(),
     isNewProfile: false,
@@ -212,7 +212,7 @@ const workspaceIsDirty = (
   const persisted = target.policy.profiles.find((profile) => profile.id === draft.profileId);
   return (
     draft.displayName !== target.policy.displayName ||
-    draft.profileEnabled !== (target.policy.activeProfileId !== '') ||
+    draft.profileEnabled !== target.policy.profileEnabled ||
     (draft.profileEnabled && (!persisted ||
       profileSignature(draft.profile) !== profileSignature(persisted)))
     || JSON.stringify(draft.quota) !== JSON.stringify(quotaInputFromPolicy(target.policy))
@@ -715,7 +715,7 @@ export function APIKeyPolicyPage() {
       ? workspaceTarget.policy.profiles.find((item) => item.id === draft.profileId)
       : undefined;
     const profileEnabledChanged = workspaceTarget.kind === 'policy' &&
-      draft.profileEnabled !== (workspaceTarget.policy.activeProfileId !== '');
+      draft.profileEnabled !== workspaceTarget.policy.profileEnabled;
     const changedProfile = draft.profileEnabled && (
       workspaceTarget.kind === 'create' || draft.isNewProfile || !persisted ||
       profileSignature(persisted) !== profileSignature(draft.profile)

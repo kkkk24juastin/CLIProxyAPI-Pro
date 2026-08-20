@@ -77,6 +77,7 @@ export interface APIKeyPolicy {
   id: string;
   displayName: string;
   state: APIKeyPolicyState;
+  profileEnabled: boolean;
   activeProfileId: string;
   profiles: APIKeyProfile[];
   quota?: APIKeyQuota;
@@ -228,7 +229,7 @@ export const supportsAPIKeyQuotaTimezone = (
   capabilities: APIKeyPolicyCapabilities,
 ): boolean => capabilities.features?.includes('key_quota_calendar_timezone') === true;
 
-export const API_KEY_QUOTA_TIMEZONES = [
+const FALLBACK_API_KEY_QUOTA_TIMEZONES = [
   'UTC',
   'Asia/Shanghai',
   'Asia/Hong_Kong',
@@ -243,9 +244,26 @@ export const API_KEY_QUOTA_TIMEZONES = [
   'Australia/Sydney',
 ] as const;
 
+const supportedTimeZones = (): string[] => {
+  const supportedValuesOf = (Intl as typeof Intl & {
+    supportedValuesOf?: (key: 'timeZone') => string[];
+  }).supportedValuesOf;
+  if (typeof supportedValuesOf !== 'function') return [];
+  try {
+    return supportedValuesOf.call(Intl, 'timeZone');
+  } catch {
+    return [];
+  }
+};
+
+export const API_KEY_QUOTA_TIMEZONES = Array.from(new Set([
+  ...FALLBACK_API_KEY_QUOTA_TIMEZONES,
+  ...supportedTimeZones(),
+]));
+
 export const buildAPIKeyQuotaTimezoneOptions = (current?: string) => {
   const selected = current?.trim() || 'UTC';
-  const values = API_KEY_QUOTA_TIMEZONES.includes(selected as typeof API_KEY_QUOTA_TIMEZONES[number])
+  const values = API_KEY_QUOTA_TIMEZONES.includes(selected)
     ? [...API_KEY_QUOTA_TIMEZONES]
     : [selected, ...API_KEY_QUOTA_TIMEZONES];
   return values.map((timezone) => ({ value: timezone, label: timezone }));
@@ -318,6 +336,9 @@ export const buildAPIKeyPolicyWorkspaceUpdate = (
 
 const normalizePolicy = (policy: APIKeyPolicy): APIKeyPolicy => ({
   ...policy,
+  profileEnabled: typeof policy.profileEnabled === 'boolean'
+    ? policy.profileEnabled
+    : policy.activeProfileId !== '',
   ...(policy.quota ? {
     quota: {
       ...policy.quota,
