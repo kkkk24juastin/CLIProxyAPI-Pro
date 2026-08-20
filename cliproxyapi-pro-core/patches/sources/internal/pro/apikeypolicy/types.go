@@ -33,6 +33,7 @@ var (
 	ErrVersionConflict         = errors.New("api key policy version conflict")
 	ErrActiveProfileDelete     = errors.New("active api key profile cannot be deleted")
 	ErrLastProfileDelete       = errors.New("last api key profile cannot be deleted")
+	ErrNoProfileConfirmation   = errors.New("removing the active api key profile requires confirmation")
 	ErrPassthroughConfirmation = errors.New("policy deletion requires unrestricted passthrough confirmation")
 	ErrOrphaned                = errors.New("api key policy is orphaned")
 	ErrNotOrphaned             = errors.New("api key policy belongs to a configured upstream key")
@@ -42,7 +43,10 @@ var (
 	ErrQuotaResetConfirmation  = errors.New("api key quota reset requires confirmation")
 )
 
-const QuotaResetConfirmation = "RESET_API_KEY_QUOTA"
+const (
+	QuotaResetConfirmation = "RESET_API_KEY_QUOTA"
+	NoProfileConfirmation  = "REMOVE_ACTIVE_PROFILE_RESTRICTIONS"
+)
 
 type profileValidationContextKey struct{}
 
@@ -437,7 +441,8 @@ type ProfileInput struct {
 
 // WorkspaceUpdate is the atomic Management write unit for one open policy
 // workspace. ProfileID selects an existing profile; CreateProfile requests a
-// new inactive profile. A nil Profile updates only the display name.
+// new profile. The first Profile on a quota-only policy becomes active. A nil
+// Profile updates only the display name and quota.
 type WorkspaceUpdate struct {
 	DisplayName   string
 	ProfileID     string

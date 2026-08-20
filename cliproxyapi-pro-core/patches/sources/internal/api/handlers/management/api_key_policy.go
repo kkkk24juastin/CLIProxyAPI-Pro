@@ -112,6 +112,7 @@ func (h *Handler) GetAPIKeyPolicyCapabilities(c *gin.Context) {
 			"key_quota_overview",
 			"usage_key_target",
 			"provider_model_linkage",
+			"optional_profile",
 		},
 	})
 }
@@ -451,11 +452,11 @@ func (h *Handler) GetAPIKeyPolicyProfileCatalog(c *gin.Context) {
 }
 
 type createAPIKeyPolicyRequest struct {
-	KeyRef         string                    `json:"keyRef" binding:"required"`
-	DisplayName    string                    `json:"displayName"`
-	InitialProfile apikeypolicy.ProfileInput `json:"initialProfile" binding:"required"`
-	Quota          *apikeypolicy.QuotaInput  `json:"quota"`
-	ClientFeatures []string                  `json:"clientFeatures"`
+	KeyRef         string                     `json:"keyRef" binding:"required"`
+	DisplayName    string                     `json:"displayName"`
+	InitialProfile *apikeypolicy.ProfileInput `json:"initialProfile"`
+	Quota          *apikeypolicy.QuotaInput   `json:"quota"`
+	ClientFeatures []string                   `json:"clientFeatures"`
 }
 
 func apiKeyPolicyWriteContext(c *gin.Context, clientFeatures []string) context.Context {
@@ -492,7 +493,7 @@ func (h *Handler) CreateAPIKeyPolicy(c *gin.Context) {
 		writeAPIKeyPolicyHTTPError(c, http.StatusNotFound, "upstream_api_key_not_found", "upstream API key no longer exists")
 		return
 	}
-	policy, err := service.Create(apiKeyPolicyWriteContext(c, request.ClientFeatures), identity, request.DisplayName, request.InitialProfile, request.Quota)
+	policy, err := service.CreateOptionalProfile(apiKeyPolicyWriteContext(c, request.ClientFeatures), identity, request.DisplayName, request.InitialProfile, request.Quota)
 	if err != nil {
 		writeAPIKeyPolicyError(c, err)
 		return
@@ -635,13 +636,14 @@ func (h *Handler) DeleteAPIKeyProfile(c *gin.Context) {
 		return
 	}
 	var request struct {
-		Version int64 `json:"version" binding:"required"`
+		Version          int64  `json:"version" binding:"required"`
+		ConfirmNoProfile string `json:"confirmNoProfile"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		writeAPIKeyPolicyHTTPError(c, 400, "invalid_api_key_profile", "invalid request body")
 		return
 	}
-	policy, err := service.DeleteProfile(c.Request.Context(), c.Param("policyId"), c.Param("profileId"), request.Version)
+	policy, err := service.DeleteProfile(c.Request.Context(), c.Param("policyId"), c.Param("profileId"), request.Version, request.ConfirmNoProfile)
 	if err != nil {
 		writeAPIKeyPolicyError(c, err)
 		return
@@ -683,22 +685,21 @@ func (h *Handler) PreviewDeleteAPIKeyPolicy(c *gin.Context) {
 			break
 		}
 	}
-	if active == nil {
-		writeAPIKeyPolicyError(c, apikeypolicy.ErrUnavailable)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
+	preview := gin.H{
 		"policyId":               policy.ID,
 		"version":                policy.Version,
 		"change":                 "restricted_profile_to_unrestricted_passthrough",
 		"targetPolicyMode":       apikeypolicy.ModePassthrough,
 		"affectsNewRequestsOnly": true,
 		"requiresConfirmation":   apikeypolicy.PassthroughConfirmation,
-		"activeProfile": gin.H{
+	}
+	if active != nil {
+		preview["activeProfile"] = gin.H{
 			"id": active.ID, "name": active.Name,
 			"providers": active.Providers, "models": active.Models,
-		},
-	})
+		}
+	}
+	c.JSON(http.StatusOK, preview)
 }
 
 func (h *Handler) DeleteAPIKeyPolicy(c *gin.Context) {
@@ -798,6 +799,8 @@ func writeAPIKeyPolicyError(c *gin.Context, err error) {
 		status, code = 409, "active_profile_delete_forbidden"
 	case errors.Is(err, apikeypolicy.ErrLastProfileDelete):
 		status, code = 409, "last_profile_delete_forbidden"
+	case errors.Is(err, apikeypolicy.ErrNoProfileConfirmation):
+		status, code = 409, "profile_delete_requires_no_profile_confirmation"
 	case errors.Is(err, apikeypolicy.ErrPassthroughConfirmation):
 		status, code = 409, "policy_delete_requires_passthrough_confirmation"
 	case errors.Is(err, apikeypolicy.ErrOrphaned):

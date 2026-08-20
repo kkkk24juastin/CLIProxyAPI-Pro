@@ -11,6 +11,7 @@ import {
   supportsAPIKeyQuota,
   supportsAPIKeyQuotaOverview,
   supportsAPIKeyPolicyUsageTarget,
+  supportsOptionalAPIKeyProfile,
   updateProfileProviders,
   validateAPIKeyPolicyCapabilities,
   validateProfileInput,
@@ -126,6 +127,18 @@ describe('API Key Policy profile drafts', () => {
     })).toBe(true);
   });
 
+  test('gates optional Profile creation without breaking older compatible Core versions', () => {
+    const legacyCapabilities = validateAPIKeyPolicyCapabilities({
+      apiVersion: 2,
+      features: ['policy_crud', 'profile_crud', 'optimistic_concurrency', 'atomic_workspace_save', 'policy_backup_restore', 'policy_delete_preview', 'orphaned_purge_guard', 'takeover_control'],
+    });
+    expect(supportsOptionalAPIKeyProfile(legacyCapabilities)).toBe(false);
+    expect(supportsOptionalAPIKeyProfile({
+      ...legacyCapabilities,
+      features: [...legacyCapabilities.features, 'optional_profile'],
+    })).toBe(true);
+  });
+
   test('localizes API errors and keeps orphan purge bound to version and config generation', () => {
     const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
     const client = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/apiKeyPolicy.ts'), 'utf8');
@@ -201,6 +214,11 @@ describe('API Key Policy profile drafts', () => {
     expect(page).toContain('savingRef.current = true');
     expect(page).toContain('if (!workspaceTarget || !draft || savingRef.current) return;');
     expect(page).toContain('if (!validateDraft(changedProfile)) return;');
+    expect(page).toContain('draft.profileEnabled ? draft.profile : undefined');
+    expect(page).toContain("supportsOptionalAPIKeyProfile(snapshot.capabilities)");
+    expect(page).toContain("t('api_key_policy.no_profile_behavior')");
+    expect(client).toContain('...(initialProfile ? { initialProfile } : {})');
+    expect(client).toContain('confirmNoProfile: NO_PROFILE_CONFIRMATION');
     expect(client).toContain("'/api-key-policy-capabilities'");
     expect(client).toContain('buildAPIKeyPolicyWorkspaceUpdate(');
     expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false)).toEqual({
@@ -304,11 +322,11 @@ describe('API Key Policy profile drafts', () => {
 		const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
 		const validate = page.slice(page.indexOf('const validateDraft'), page.indexOf('const saveWorkspace'));
 		const save = page.slice(page.indexOf('const saveWorkspace'), page.indexOf('const activateProfile'));
-		expect(validate).toContain('if (validateProfile)');
+		expect(validate).toContain('if (validateProfile && draft.profileEnabled)');
 		expect(validate).toContain('validateProfileInput(draft.profile, snapshot.catalog)');
 		expect(save).toContain("const persisted = workspaceTarget.kind === 'policy'");
-		expect(save).toContain("const changedProfile = workspaceTarget.kind === 'create' || draft.isNewProfile || !persisted ||");
-		expect(save).toContain('profileSignature(persisted) !== profileSignature(draft.profile);');
+		expect(save).toContain('const changedProfile = draft.profileEnabled && (');
+		expect(save).toContain('profileSignature(persisted) !== profileSignature(draft.profile)');
 		expect(save).toContain('if (!validateDraft(changedProfile)) return;');
 	});
 
@@ -355,7 +373,13 @@ describe('API Key Policy profile drafts', () => {
     expect(danger).toContain('if (!dangerPolicy || !dangerKind || dangerBusyRef.current) return;');
     expect(danger).toContain('const revision = ++dangerRevisionRef.current;');
     expect(danger).toContain('if (revision !== dangerRevisionRef.current) return;');
+    expect(danger).toContain("dangerPolicy.activeProfileId === draft?.profileId");
+    expect(danger).toContain('!optionalProfileSupported');
     expect(page).toContain('setSaving(false);');
+    expect(page).toContain('optionalProfileSupported && removingOnlyActiveProfile');
+    expect(page).toContain(
+      'currentPolicy && draft?.profileId && draft.profileId === currentPolicy.activeProfileId',
+    );
   });
 
   test('reload invalidates an in-flight save without replacing edits made after submit', () => {

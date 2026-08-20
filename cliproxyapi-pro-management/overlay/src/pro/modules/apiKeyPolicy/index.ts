@@ -12,6 +12,7 @@ export {
   supportsAPIKeyQuota,
   supportsAPIKeyQuotaOverview,
   supportsAPIKeyPolicyUsageTarget,
+  supportsOptionalAPIKeyProfile,
   updateProfileProviders,
   validateAPIKeyPolicyCapabilities,
   validateProfileInput,

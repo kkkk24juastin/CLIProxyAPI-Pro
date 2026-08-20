@@ -373,6 +373,136 @@ func TestCreatePolicyPublishesImmutableActiveProfile(t *testing.T) {
 	}
 }
 
+func TestQuotaOnlyPolicyAllowsAllAndRoundTripsEmptyProfileAttribution(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "quota-only-key")
+	requestLimit := int64(1)
+	policy, err := service.CreateOptionalProfile(context.Background(), identity, "Quota only", nil, &QuotaInput{
+		Enabled: true, Requests: &requestLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.ActiveProfileID != "" || len(policy.Profiles) != 0 || policy.Quota == nil {
+		t.Fatalf("quota-only policy = %#v", policy)
+	}
+	decision, err := service.Decide(identity)
+	if err != nil || decision.Mode != ModeProfile || decision.Snapshot == nil || decision.Snapshot.ProfileID != "" || decision.Snapshot.ProfileName != "" {
+		t.Fatalf("quota-only decision = %#v, %v", decision, err)
+	}
+	if model, applyErr := decision.ApplyModel("custom-model"); applyErr != nil || model != "custom-model" {
+		t.Fatalf("quota-only model = %q, %v", model, applyErr)
+	}
+	providers, filterErr := decision.FilterProviders([]string{"codex", "claude"})
+	if filterErr != nil || len(providers) != 2 {
+		t.Fatalf("quota-only providers = %#v, %v", providers, filterErr)
+	}
+	admitted, err := service.AdmitDecision(context.Background(), decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attribution, ok := admitted.QuotaAttribution()
+	if !ok || attribution.ProfileID != "" {
+		t.Fatalf("quota-only attribution = %#v, %v", attribution, ok)
+	}
+	if _, err = service.AdmitDecision(context.Background(), decision); err == nil {
+		t.Fatal("quota-only policy did not enforce its Key-wide request limit")
+	}
+	payload, err := service.ExportBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := newTestService(t)
+	if err = target.ImportBackup(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := target.Get(context.Background(), policy.ID)
+	if err != nil || restored.ActiveProfileID != "" || len(restored.Profiles) != 0 || restored.Quota == nil || restored.Quota.Usage.RequestsUsed != 1 {
+		t.Fatalf("restored quota-only policy = %#v, %v", restored, err)
+	}
+}
+
+func TestQuotaOnlyPolicyFirstProfileAndLastProfileConfirmation(t *testing.T) {
+	service := newTestService(t)
+	identity := testIdentity(t, "optional-profile-lifecycle-key")
+	policy, err := service.CreateOptionalProfile(context.Background(), identity, "Optional profile", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLastAudit := func(eventType, profileID string, expectedDetails map[string]any) int {
+		t.Helper()
+		audits, err := service.store.ListAudits(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(audits) == 0 {
+			t.Fatalf("missing %s audit", eventType)
+		}
+		last := audits[len(audits)-1]
+		if last.EventType != eventType || last.PolicyID != policy.ID {
+			t.Fatalf("last audit = %#v, want %s", last, eventType)
+		}
+		var details map[string]any
+		if err := json.Unmarshal(last.Details, &details); err != nil {
+			t.Fatalf("decode %s audit details: %v", eventType, err)
+		}
+		if details["profileId"] != profileID {
+			t.Fatalf("%s audit profile = %#v, want %q", eventType, details["profileId"], profileID)
+		}
+		for key, want := range expectedDetails {
+			if details[key] != want {
+				t.Fatalf("%s audit %s = %#v, want %#v", eventType, key, details[key], want)
+			}
+		}
+		return len(audits)
+	}
+	created, err := service.CreateProfile(context.Background(), policy.ID, policy.Version, ProfileInput{Name: "Restricted", Providers: []string{"codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Profiles) != 1 || created.ActiveProfileID != created.Profiles[0].ID {
+		t.Fatalf("first profile was not activated: %#v", created)
+	}
+	assertLastAudit("active_profile_changed", created.ActiveProfileID, map[string]any{"automatic": true})
+	if _, err = service.DeleteProfile(context.Background(), created.ID, created.ActiveProfileID, created.Version); !errors.Is(err, ErrNoProfileConfirmation) {
+		t.Fatalf("delete last active profile error = %v", err)
+	}
+	removed, err := service.DeleteProfile(context.Background(), created.ID, created.ActiveProfileID, created.Version, NoProfileConfirmation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.ActiveProfileID != "" || len(removed.Profiles) != 0 {
+		t.Fatalf("policy did not return to quota-only mode: %#v", removed)
+	}
+	assertLastAudit("active_profile_removed", created.ActiveProfileID, map[string]any{"confirmation": NoProfileConfirmation})
+	decision, err := service.Decide(identity)
+	if err != nil || decision.Snapshot == nil || !decision.Snapshot.allowsProvider("claude") {
+		t.Fatalf("no-profile decision remained restricted: %#v, %v", decision, err)
+	}
+	workspaceProfile := ProfileInput{Name: "Workspace", Providers: []string{"claude"}}
+	recreated, err := service.UpdateWorkspace(context.Background(), removed.ID, removed.Version, WorkspaceUpdate{
+		DisplayName: removed.DisplayName, CreateProfile: true, Profile: &workspaceProfile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recreated.Profiles) != 1 || recreated.ActiveProfileID != recreated.Profiles[0].ID {
+		t.Fatalf("workspace-created first profile was not activated: %#v", recreated)
+	}
+	auditCount := assertLastAudit("active_profile_changed", recreated.ActiveProfileID, map[string]any{"automatic": true})
+	withSecond, err := service.CreateProfile(context.Background(), recreated.ID, recreated.Version, ProfileInput{Name: "Second", Providers: []string{"codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audits, err := service.store.ListAudits(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withSecond.Profiles) != 2 || len(audits) != auditCount {
+		t.Fatalf("inactive Profile creation wrote an automatic activation audit: profiles=%d audits=%#v", len(withSecond.Profiles), audits)
+	}
+}
+
 func TestPolicyJSONUsesEmptyCollectionsInsteadOfNull(t *testing.T) {
 	service := newTestService(t)
 	policy, err := service.Create(context.Background(), testIdentity(t, "empty-mappings-key"), "Empty mappings", ProfileInput{

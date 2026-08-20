@@ -141,7 +141,7 @@ export interface APIKeyPolicyDeletePreview {
   targetPolicyMode: 'passthrough';
   affectsNewRequestsOnly: boolean;
   requiresConfirmation: typeof PASSTHROUGH_CONFIRMATION;
-  activeProfile: {
+  activeProfile?: {
     id: string;
     name: string;
     providers: string[];
@@ -199,6 +199,10 @@ export const supportsAPIKeyPolicyUsageTarget = (
   capabilities: APIKeyPolicyCapabilities,
 ): boolean => capabilities.features?.includes('usage_key_target') === true;
 
+export const supportsOptionalAPIKeyProfile = (
+  capabilities: APIKeyPolicyCapabilities,
+): boolean => capabilities.features?.includes('optional_profile') === true;
+
 const REQUIRED_API_KEY_QUOTA_FEATURES = [
   'key_quota_requests_tokens',
   'key_quota_explicit_reset',
@@ -217,6 +221,7 @@ export const supportsAPIKeyQuotaOverview = (
 ): boolean => capabilities.features?.includes('key_quota_overview') === true;
 
 export const PASSTHROUGH_CONFIRMATION = 'RESTORE_UNRESTRICTED_PASSTHROUGH';
+export const NO_PROFILE_CONFIRMATION = 'REMOVE_ACTIVE_PROFILE_RESTRICTIONS';
 const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage', 'key_quota_cost_period'] as const;
 
 const policyPath = (policyId: string) => `/api-key-policies/${encodeURIComponent(policyId)}`;
@@ -349,11 +354,11 @@ export const apiKeyPolicyApi = {
     return normalizePolicy(await apiClient.get<APIKeyPolicy>(policyPath(policyId)));
   },
 
-  async create(keyRef: string, displayName: string, initialProfile: APIKeyProfileInput, quota?: APIKeyQuotaInput | null): Promise<APIKeyPolicy> {
+  async create(keyRef: string, displayName: string, initialProfile?: APIKeyProfileInput, quota?: APIKeyQuotaInput | null): Promise<APIKeyPolicy> {
     return normalizePolicy(await apiClient.post<APIKeyPolicy>('/api-key-policies', {
       keyRef,
       displayName,
-      initialProfile,
+      ...(initialProfile ? { initialProfile } : {}),
       clientFeatures: [...API_KEY_POLICY_WRITE_FEATURES],
       ...(quota !== undefined ? { quota } : {}),
     }));
@@ -403,8 +408,13 @@ export const apiKeyPolicyApi = {
     }).then(normalizePolicy);
   },
 
-  async deleteProfile(policyId: string, profileId: string, version: number): Promise<void> {
-    await apiClient.delete(profilePath(policyId, profileId), { data: { version } });
+  async deleteProfile(policyId: string, profileId: string, version: number, confirmNoProfile = false): Promise<void> {
+    await apiClient.delete(profilePath(policyId, profileId), {
+      data: {
+        version,
+        ...(confirmNoProfile ? { confirmNoProfile: NO_PROFILE_CONFIRMATION } : {}),
+      },
+    });
   },
 
   activate(policyId: string, profileId: string, version: number): Promise<APIKeyPolicy> {

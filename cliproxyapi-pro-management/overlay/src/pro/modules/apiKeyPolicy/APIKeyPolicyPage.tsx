@@ -34,6 +34,7 @@ import {
   resolveModelsForProviders,
   supportsAPIKeyQuota,
   supportsAPIKeyQuotaOverview,
+  supportsOptionalAPIKeyProfile,
   supportsAPIKeyPolicyUsageTarget,
   updateProfileProviders,
   validateProfileInput,
@@ -60,6 +61,7 @@ type WorkspaceTarget =
 
 interface WorkspaceDraft {
   displayName: string;
+  profileEnabled: boolean;
   profileId: string;
   profile: APIKeyProfileInput;
   isNewProfile: boolean;
@@ -137,9 +139,13 @@ const quotaInputFromPolicy = (policy: APIKeyPolicy): APIKeyQuotaInput | null => 
 const workspaceDraftFromTarget = (
   target: WorkspaceTarget,
   profileId?: string,
+  profileRequired = false,
 ): WorkspaceDraft => {
   if (target.kind === 'create') {
-    return { displayName: '', profileId: '', profile: emptyProfile(), isNewProfile: false, quota: null };
+    return {
+      displayName: '', profileEnabled: profileRequired, profileId: '',
+      profile: emptyProfile(), isNewProfile: profileRequired, quota: null,
+    };
   }
   const selected =
     target.policy.profiles.find((profile) => profile.id === profileId) ??
@@ -147,6 +153,7 @@ const workspaceDraftFromTarget = (
     target.policy.profiles[0];
   return {
     displayName: target.policy.displayName,
+    profileEnabled: Boolean(selected),
     profileId: selected?.id ?? '',
     profile: selected ? cloneProfileInput(selected) : emptyProfile(),
     isNewProfile: false,
@@ -173,18 +180,20 @@ const workspaceIsDirty = (
   if (target.kind === 'create') {
     return Boolean(
       draft.displayName.trim() ||
-        draft.profile.name.trim() ||
-        draft.profile.providers.length ||
-        draft.profile.models.length ||
-        draft.profile.mappings.length || draft.quota !== null,
+        (draft.profileEnabled && (
+          draft.profile.name.trim() ||
+          draft.profile.providers.length ||
+          draft.profile.models.length ||
+          draft.profile.mappings.length
+        )) || draft.quota !== null,
     );
   }
-  if (draft.isNewProfile) return true;
+  if (draft.profileEnabled && draft.isNewProfile) return true;
   const persisted = target.policy.profiles.find((profile) => profile.id === draft.profileId);
   return (
     draft.displayName !== target.policy.displayName ||
-    !persisted ||
-    profileSignature(draft.profile) !== profileSignature(persisted)
+    (draft.profileEnabled && (!persisted ||
+      profileSignature(draft.profile) !== profileSignature(persisted)))
     || JSON.stringify(draft.quota) !== JSON.stringify(quotaInputFromPolicy(target.policy))
   );
 };
@@ -354,6 +363,9 @@ export function APIKeyPolicyPage() {
   const dirty = workspaceIsDirty(workspaceTarget, draft);
   const quotaSupported = Boolean(snapshot && supportsAPIKeyQuota(snapshot.capabilities));
   const quotaOverviewSupported = Boolean(snapshot && supportsAPIKeyQuotaOverview(snapshot.capabilities));
+  const optionalProfileSupported = Boolean(
+    snapshot && supportsOptionalAPIKeyProfile(snapshot.capabilities),
+  );
 
   const errorMessage = useCallback((error: unknown): string => {
     const key = apiKeyPolicyErrorTranslationKey(error);
@@ -518,7 +530,11 @@ export function APIKeyPolicyPage() {
       setQuotaBusy(false);
       setWorkspaceTarget(target);
       draftRevisionRef.current += 1;
-      setDraft(workspaceDraftFromTarget(target, profileId));
+      setDraft(workspaceDraftFromTarget(
+        target,
+        profileId,
+        target.kind === 'create' && !supportsOptionalAPIKeyProfile(snapshot.capabilities),
+      ));
       setConflict(false);
     },
     [snapshot],
@@ -644,7 +660,7 @@ export function APIKeyPolicyPage() {
       showNotification(t('api_key_policy.validation.display_name'), 'warning');
       return false;
     }
-    if (validateProfile) {
+    if (validateProfile && draft.profileEnabled) {
       const problem = validateProfileInput(draft.profile, snapshot.catalog);
       if (problem) {
         showNotification(t(`api_key_policy.validation.${problem}`), 'warning');
@@ -670,8 +686,10 @@ export function APIKeyPolicyPage() {
     const persisted = workspaceTarget.kind === 'policy'
       ? workspaceTarget.policy.profiles.find((item) => item.id === draft.profileId)
       : undefined;
-    const changedProfile = workspaceTarget.kind === 'create' || draft.isNewProfile || !persisted ||
-      profileSignature(persisted) !== profileSignature(draft.profile);
+    const changedProfile = draft.profileEnabled && (
+      workspaceTarget.kind === 'create' || draft.isNewProfile || !persisted ||
+      profileSignature(persisted) !== profileSignature(draft.profile)
+    );
     if (!validateDraft(changedProfile)) return;
     const revision = ++saveRevisionRef.current;
     const submittedDraftRevision = draftRevisionRef.current;
@@ -684,7 +702,7 @@ export function APIKeyPolicyPage() {
         policy = await apiKeyPolicyApi.create(
           workspaceTarget.binding.keyRef,
           draft.displayName.trim(),
-          draft.profile,
+          draft.profileEnabled ? draft.profile : undefined,
           quotaSupported ? draft.quota : undefined,
         );
       } else {
@@ -693,7 +711,7 @@ export function APIKeyPolicyPage() {
           draft.displayName.trim(),
           workspaceTarget.policy.version,
           draft.profileId,
-          changedProfile ? draft.profile : undefined,
+          draft.profileEnabled && changedProfile ? draft.profile : undefined,
           draft.isNewProfile,
           quotaSupported ? draft.quota : undefined,
         );
@@ -705,7 +723,7 @@ export function APIKeyPolicyPage() {
       const priorProfileIDs = workspaceTarget.kind === 'policy'
         ? new Set(workspaceTarget.policy.profiles.map((item) => item.id))
         : new Set<string>();
-      const savedProfile = draft.isNewProfile
+      const savedProfile = draft.profileEnabled && draft.isNewProfile
         ? policy.profiles.find((item) => !priorProfileIDs.has(item.id))
         : policy.profiles.find((item) => item.id === draft.profileId);
       if (submittedDraftRevision === draftRevisionRef.current) {
@@ -827,6 +845,12 @@ export function APIKeyPolicyPage() {
 
   const runDangerAction = useCallback(async () => {
     if (!dangerPolicy || !dangerKind || dangerBusyRef.current) return;
+    if (
+      dangerKind === 'profile' &&
+      dangerPolicy.profiles.length === 1 &&
+      dangerPolicy.activeProfileId === draft?.profileId &&
+      !optionalProfileSupported
+    ) return;
     if (dangerKind === 'policy' && (
       !deletePreview || deletePreview.policyId !== dangerPolicy.id || deletePreview.version !== dangerPolicy.version
     )) return;
@@ -844,7 +868,14 @@ export function APIKeyPolicyPage() {
           snapshot.bindings.configGeneration,
         );
       } else if (workspaceTarget?.kind === 'policy' && draft) {
-        await apiKeyPolicyApi.deleteProfile(dangerPolicy.id, draft.profileId, dangerPolicy.version);
+        const removingOnlyActiveProfile = dangerPolicy.profiles.length === 1 &&
+          dangerPolicy.activeProfileId === draft.profileId;
+        await apiKeyPolicyApi.deleteProfile(
+          dangerPolicy.id,
+          draft.profileId,
+          dangerPolicy.version,
+          removingOnlyActiveProfile,
+        );
       }
       if (revision !== dangerRevisionRef.current) return;
       setDangerPolicy(null);
@@ -868,7 +899,7 @@ export function APIKeyPolicyPage() {
         setDangerBusy(false);
       }
     }
-  }, [closeWorkspace, dangerKind, dangerPolicy, deletePreview, draft, errorMessage, load, showNotification, snapshot, t, workspaceTarget]);
+  }, [closeWorkspace, dangerKind, dangerPolicy, deletePreview, draft, errorMessage, load, optionalProfileSupported, showNotification, snapshot, t, workspaceTarget]);
 
   const visibleItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -946,7 +977,12 @@ export function APIKeyPolicyPage() {
     : undefined;
   const readOnly = workspaceTarget?.kind === 'policy' && workspaceTarget.readOnly;
   const selectedProfile = currentPolicy?.profiles.find((profile) => profile.id === draft?.profileId);
-  const active = Boolean(currentPolicy && draft?.profileId === currentPolicy.activeProfileId);
+  const active = Boolean(
+    currentPolicy && draft?.profileId && draft.profileId === currentPolicy.activeProfileId,
+  );
+  const removingOnlyActiveProfile = Boolean(
+    currentPolicy && currentPolicy.profiles.length === 1 && active,
+  );
   const availableModels = resolveModelsForProviders(
     draft?.profile.providers ?? [],
     snapshot?.catalog ?? { providers: [], models: [] },
@@ -1061,7 +1097,9 @@ export function APIKeyPolicyPage() {
                   </div>
                   <p className={styles.cardSummary}>
                     {policy
-							? t(takeoverActive ? 'api_key_policy.configured_summary' : 'api_key_policy.configured_inactive_summary', { profile: activeProfile?.name ?? '-', count: policy.profiles.length })
+							? activeProfile
+							  ? t(takeoverActive ? 'api_key_policy.configured_summary' : 'api_key_policy.configured_inactive_summary', { profile: activeProfile.name, count: policy.profiles.length })
+							  : t(takeoverActive ? 'api_key_policy.configured_no_profile_summary' : 'api_key_policy.configured_no_profile_inactive_summary')
                       : t('api_key_policy.passthrough_summary')}
                   </p>
                   {binding.weakKey ? <div className={styles.weakKey}><IconAlertTriangle size={15} /> {t('api_key_policy.weak_key')}</div> : null}
@@ -1072,7 +1110,7 @@ export function APIKeyPolicyPage() {
                     return <div className={`${styles.cardQuota} ${styles[`cardQuota_${visualState}`] ?? ''}`}><span>{t(`api_key_policy.quota_state.${visualState}`)}</span><strong>{summary?.quota?.enabled ? `${percent}%` : '-'}</strong></div>;
                   })() : null}
                   <div className={styles.cardMeta}>
-                    <span>{t('api_key_policy.active_profile')}: <strong>{activeProfile?.name ?? '-'}</strong></span>
+                    <span>{t('api_key_policy.active_profile')}: <strong>{activeProfile?.name ?? t('api_key_policy.profile_not_configured')}</strong></span>
                     <span>{t('api_key_policy.updated')}: {policy ? formatUpdatedAt(policy.updatedAtMs, i18n.resolvedLanguage ?? i18n.language) : '-'}</span>
                   </div>
                   <div className={styles.cardActions}>
@@ -1329,7 +1367,38 @@ export function APIKeyPolicyPage() {
               </> : null}
             </section> : null}
 
-            {currentPolicy ? (
+            <section className={styles.profileToggleSection}>
+              <div>
+                <h3>{t('api_key_policy.profile_configuration')}</h3>
+                <p>{t('api_key_policy.profile_optional_hint')}</p>
+              </div>
+              <label className={styles.quotaToggle}>
+                <input
+                  type="checkbox"
+                  checked={draft.profileEnabled}
+                  disabled={Boolean(
+                    readOnly || saving || !optionalProfileSupported ||
+                    (currentPolicy && currentPolicy.profiles.length > 0)
+                  )}
+                  onChange={(event) => updateDraft((current) => ({
+                    ...current,
+                    profileEnabled: event.target.checked,
+                    profileId: '',
+                    profile: emptyProfile(),
+                    isNewProfile: event.target.checked && workspaceTarget?.kind === 'policy',
+                  }))}
+                />
+                <span>{t('api_key_policy.profile_enabled')}</span>
+              </label>
+            </section>
+
+            {!draft.profileEnabled ? (
+              <div className={styles.profileDisabledHint} role="note">
+                <IconInfo size={18} />
+                <span>{t('api_key_policy.no_profile_behavior')}</span>
+              </div>
+            ) : <>
+            {currentPolicy && currentPolicy.profiles.length > 0 ? (
               <div className={styles.profileRail}>
                 {currentPolicy.profiles.map((profile) => (
                   <button
@@ -1342,16 +1411,20 @@ export function APIKeyPolicyPage() {
                     {profile.id === currentPolicy.activeProfileId ? <small>{t('api_key_policy.active')}</small> : null}
                   </button>
                 ))}
-                {!readOnly ? <button className={draft.isNewProfile ? styles.profileActive : ''} onClick={() => updateDraft((current) => ({ ...current, profileId: '', profile: emptyProfile(), isNewProfile: true }))} disabled={saving || dirty}><IconPlus size={14} /> {t('api_key_policy.new_profile')}</button> : null}
+                {!readOnly ? <button className={draft.isNewProfile ? styles.profileActive : ''} onClick={() => updateDraft((current) => ({ ...current, profileEnabled: true, profileId: '', profile: emptyProfile(), isNewProfile: true }))} disabled={saving || dirty}><IconPlus size={14} /> {t('api_key_policy.new_profile')}</button> : null}
               </div>
             ) : null}
 
             <div className={styles.profileHeading}>
-              <div><h3>{draft.isNewProfile ? t('api_key_policy.new_profile') : draft.profile.name || t('api_key_policy.initial_profile')}</h3><p>{active ? t('api_key_policy.active_profile_hint') : t('api_key_policy.inactive_profile_hint')}</p></div>
+              <div><h3>{draft.isNewProfile ? t('api_key_policy.new_profile') : draft.profile.name || t('api_key_policy.initial_profile')}</h3><p>{active
+                ? t('api_key_policy.active_profile_hint')
+                : currentPolicy?.profiles.length === 0
+                  ? t('api_key_policy.first_profile_hint')
+                  : t('api_key_policy.inactive_profile_hint')}</p></div>
               {currentPolicy && !readOnly ? (
                 <div className={styles.profileActions}>
                   {!active && !draft.isNewProfile ? <Button size="sm" onClick={() => void activateProfile()} disabled={dirty || saving}>{t('api_key_policy.set_active')}</Button> : null}
-                  {!active && !draft.isNewProfile ? <Button variant="danger" size="sm" onClick={() => { setDangerPolicy(currentPolicy); setDangerKind('profile'); }} disabled={saving}><IconTrash2 size={14} /> {t('common.delete')}</Button> : null}
+                  {(!active || (optionalProfileSupported && removingOnlyActiveProfile)) && !draft.isNewProfile ? <Button variant="danger" size="sm" onClick={() => { setDangerPolicy(currentPolicy); setDangerKind('profile'); }} disabled={saving}><IconTrash2 size={14} /> {t('common.delete')}</Button> : null}
                 </div>
               ) : null}
             </div>
@@ -1379,6 +1452,7 @@ export function APIKeyPolicyPage() {
               <ChoiceList title={t('api_key_policy.allowed_providers')} values={snapshot.catalog.providers} selected={draft.profile.providers} onChange={(providers) => updateDraft((current) => ({ ...current, profile: updateProfileProviders(current.profile, providers) }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_providers')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_providers_when_empty')} unavailableLabel={t('api_key_policy.unavailable_selections')} removeUnavailableLabel={(value) => t('api_key_policy.remove_unavailable_selection', { value })} />
               <ChoiceList title={t('api_key_policy.allowed_models')} values={availableModels} selected={draft.profile.models} onChange={(models) => updateDraft((current) => ({ ...current, profile: { ...current.profile, models, mappings: models.length === 0 ? current.profile.mappings : current.profile.mappings.filter((mapping) => models.includes(mapping.target)) } }))} disabled={Boolean(readOnly || saving)} emptyLabel={t('api_key_policy.search_models')} allLabel={t('api_key_policy.all')} emptySelectionHint={t('api_key_policy.all_models_when_empty')} unavailableLabel={t('api_key_policy.unavailable_selections')} removeUnavailableLabel={(value) => t('api_key_policy.remove_unavailable_selection', { value })} />
             </div>
+            </>}
 
             {currentPolicy ? (
               <div className={styles.workspaceFooterActions}>
@@ -1418,15 +1492,30 @@ export function APIKeyPolicyPage() {
         open={Boolean(dangerPolicy && dangerKind)}
         onClose={() => { if (!dangerBusy) { setDangerPolicy(null); setDangerKind(null); setDeletePreview(null); } }}
         closeDisabled={dangerBusy}
-        title={dangerKind === 'policy' ? t('api_key_policy.delete_policy_title') : dangerKind === 'orphaned' ? t('api_key_policy.purge_title') : t('api_key_policy.delete_profile_title')}
+        title={dangerKind === 'policy'
+          ? t('api_key_policy.delete_policy_title')
+          : dangerKind === 'orphaned'
+            ? t('api_key_policy.purge_title')
+            : t(removingOnlyActiveProfile ? 'api_key_policy.delete_last_profile_title' : 'api_key_policy.delete_profile_title')}
         footer={<><Button variant="secondary" onClick={() => { setDangerPolicy(null); setDangerKind(null); setDeletePreview(null); }} disabled={dangerBusy}>{t('common.cancel')}</Button><Button variant="danger" onClick={() => void runDangerAction()} loading={dangerBusy} disabled={dangerKind === 'policy' && !deletePreview}>{dangerKind === 'policy' ? t('api_key_policy.confirm_passthrough') : t('common.delete')}</Button></>}
       >
         <div className={styles.dangerBody}>
           <span><IconAlertTriangle size={24} /></span>
           <div>
             <strong>{dangerPolicy?.displayName}</strong>
-            <p>{dangerKind === 'policy' ? t('api_key_policy.delete_policy_preview') : dangerKind === 'orphaned' ? t('api_key_policy.purge_preview') : t('api_key_policy.delete_profile_preview', { profile: selectedProfile?.name ?? '' })}</p>
-            {dangerKind === 'policy' && deletePreview ? <ul><li>{deletePreview.activeProfile.models.length ? t('api_key_policy.permission_change_models_count', { count: deletePreview.activeProfile.models.length }) : t('api_key_policy.permission_change_models_all')}</li><li>{deletePreview.activeProfile.providers.length ? t('api_key_policy.permission_change_providers_count', { count: deletePreview.activeProfile.providers.length }) : t('api_key_policy.permission_change_providers_all')}</li><li>{t('api_key_policy.permission_change_new_requests')}</li></ul> : null}
+            <p>{dangerKind === 'policy'
+              ? t('api_key_policy.delete_policy_preview')
+              : dangerKind === 'orphaned'
+                ? t('api_key_policy.purge_preview')
+                : t(removingOnlyActiveProfile ? 'api_key_policy.delete_last_profile_preview' : 'api_key_policy.delete_profile_preview', { profile: selectedProfile?.name ?? '' })}</p>
+            {dangerKind === 'policy' && deletePreview ? <ul>
+              {deletePreview.activeProfile ? <>
+                <li>{deletePreview.activeProfile.models.length ? t('api_key_policy.permission_change_models_count', { count: deletePreview.activeProfile.models.length }) : t('api_key_policy.permission_change_models_all')}</li>
+                <li>{deletePreview.activeProfile.providers.length ? t('api_key_policy.permission_change_providers_count', { count: deletePreview.activeProfile.providers.length }) : t('api_key_policy.permission_change_providers_all')}</li>
+              </> : <li>{t('api_key_policy.no_profile_policy_delete_effect')}</li>}
+              {dangerPolicy?.quota ? <li>{t('api_key_policy.policy_delete_quota_effect')}</li> : null}
+              <li>{t('api_key_policy.permission_change_new_requests')}</li>
+            </ul> : null}
           </div>
         </div>
       </ProTaskDialog>

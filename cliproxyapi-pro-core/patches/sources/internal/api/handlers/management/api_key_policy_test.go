@@ -242,6 +242,30 @@ func TestAPIKeyPolicyProviderModelValidationIsClientNegotiated(t *testing.T) {
 	}
 }
 
+func TestAPIKeyPolicyCanCreateQuotaOnlyPolicyWithoutInitialProfile(t *testing.T) {
+	_, router := newAPIKeyPolicyManagementHarness(t, []string{"quota-only-handler-key"})
+	listed := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil)
+	bindings := bindingResponse(t, listed).Items
+	if len(bindings) != 1 {
+		t.Fatalf("bindings=%d body=%s", len(bindings), listed.Body.String())
+	}
+	created := policyRequest(t, router, http.MethodPost, "/v0/management/api-key-policies", "session-a", map[string]any{
+		"keyRef": bindings[0].KeyRef, "displayName": "Quota only",
+		"quota": map[string]any{"enabled": true, "requests": 10, "period": map[string]any{"type": "all_time"}},
+	})
+	if created.Code != http.StatusCreated || !strings.Contains(created.Body.String(), `"activeProfileId":""`) || !strings.Contains(created.Body.String(), `"profiles":[]`) {
+		t.Fatalf("quota-only create status=%d body=%s", created.Code, created.Body.String())
+	}
+	var policy apikeypolicy.Policy
+	if err := json.Unmarshal(created.Body.Bytes(), &policy); err != nil {
+		t.Fatal(err)
+	}
+	preview := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policies/"+policy.ID+"/delete-preview", "session-a", nil)
+	if preview.Code != http.StatusOK || strings.Contains(preview.Body.String(), `"activeProfile"`) {
+		t.Fatalf("quota-only delete preview status=%d body=%s", preview.Code, preview.Body.String())
+	}
+}
+
 func TestAPIKeyPolicyBindingsAndKeyReferenceSecurity(t *testing.T) {
 	h, router := newAPIKeyPolicyManagementHarness(t, []string{"sk-sensitive-canary-123456789"})
 	listed := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil)
@@ -388,7 +412,7 @@ func TestAPIKeyPolicyRoutesRequireRealManagementMiddlewareAndBindSession(t *test
 		t.Fatalf("authenticated status=%d body=%s", listed.Code, listed.Body.String())
 	}
 	capabilities := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-capabilities", "management-policy-test-secret", nil)
-	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"apiVersion":3`) || !strings.Contains(capabilities.Body.String(), `"atomic_workspace_save"`) || !strings.Contains(capabilities.Body.String(), `"orphaned_purge_guard"`) || !strings.Contains(capabilities.Body.String(), `"takeover_control"`) || !strings.Contains(capabilities.Body.String(), `"key_quota_cost_period"`) || !strings.Contains(capabilities.Body.String(), `"usage_key_target"`) || !strings.Contains(capabilities.Body.String(), `"provider_model_linkage"`) {
+	if capabilities.Code != http.StatusOK || !strings.Contains(capabilities.Body.String(), `"apiVersion":3`) || !strings.Contains(capabilities.Body.String(), `"atomic_workspace_save"`) || !strings.Contains(capabilities.Body.String(), `"orphaned_purge_guard"`) || !strings.Contains(capabilities.Body.String(), `"takeover_control"`) || !strings.Contains(capabilities.Body.String(), `"key_quota_cost_period"`) || !strings.Contains(capabilities.Body.String(), `"usage_key_target"`) || !strings.Contains(capabilities.Body.String(), `"provider_model_linkage"`) || !strings.Contains(capabilities.Body.String(), `"optional_profile"`) {
 		t.Fatalf("capabilities status=%d body=%s", capabilities.Code, capabilities.Body.String())
 	}
 	status := authenticatedPolicyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-status", "management-policy-test-secret", nil)
@@ -653,8 +677,14 @@ func TestAPIKeyPolicyConfigAssociationMatrixAndNoYAMLWrites(t *testing.T) {
 	}
 
 	deletedProfile := policyRequest(t, router, http.MethodDelete, "/v0/management/api-key-policies/"+policy.ID+"/profiles/"+policy.ActiveProfileID, "session-a", map[string]any{"version": policy.Version})
-	if deletedProfile.Code != http.StatusConflict || !strings.Contains(deletedProfile.Body.String(), "active_profile_delete_forbidden") {
+	if deletedProfile.Code != http.StatusConflict || !strings.Contains(deletedProfile.Body.String(), "profile_delete_requires_no_profile_confirmation") {
 		t.Fatalf("active delete status=%d body=%s", deletedProfile.Code, deletedProfile.Body.String())
+	}
+	deletedProfile = policyRequest(t, router, http.MethodDelete, "/v0/management/api-key-policies/"+policy.ID+"/profiles/"+policy.ActiveProfileID, "session-a", map[string]any{
+		"version": policy.Version, "confirmNoProfile": apikeypolicy.NoProfileConfirmation,
+	})
+	if deletedProfile.Code != http.StatusNoContent {
+		t.Fatalf("confirmed active delete status=%d body=%s", deletedProfile.Code, deletedProfile.Body.String())
 	}
 }
 

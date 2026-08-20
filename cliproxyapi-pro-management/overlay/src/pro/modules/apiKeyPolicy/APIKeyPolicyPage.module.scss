@@ -244,10 +244,12 @@
 .profileHeading { justify-content: space-between; align-items: flex-start; gap: 16px; }
 .profileHeading h3,
 .mappingHeader h3,
-.quotaHeader h3 { margin: 0; font-size: 16px; }
+.quotaHeader h3,
+.profileToggleSection h3 { margin: 0; font-size: 16px; }
 .profileHeading p,
 .mappingHeader p,
-.quotaHeader p { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; }
+.quotaHeader p,
+.profileToggleSection p { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; }
 .profileActions { gap: 7px; }
 
 .policyGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -257,6 +259,9 @@
 .quotaSection { display: grid; gap: 14px; }
 .quotaHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .quotaToggle { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
+.profileToggleSection { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 14px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
+.profileDisabledHint { display: flex; align-items: flex-start; gap: 9px; margin-top: -8px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--primary-color) 20%, var(--border-color)); border-radius: 8px; color: var(--text-secondary); background: color-mix(in srgb, var(--primary-color) 5%, var(--bg-primary)); font-size: 11px; line-height: 1.55; }
+.profileDisabledHint svg { flex: 0 0 auto; color: var(--primary-color); }
 .quotaGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .quotaPeriodGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 12px; }
 .quotaPeriodGrid :global(.form-group) { margin-bottom: 0; }
@@ -335,6 +340,7 @@
   .quotaRowActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .quotaRowActions :global(.btn) { width: 100%; }
   .profileHeading,
+	.profileToggleSection,
   .conflict { align-items: stretch; flex-direction: column; }
   .profileActions { display: grid; grid-template-columns: 1fr 1fr; }
   .profileActions :global(.btn) { width: 100%; }

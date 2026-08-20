@@ -233,7 +233,7 @@ func validateQuotaBackupRecords(policies []Policy, admissions []backupQuotaAdmis
 	admissionOwners := make(map[string]owner, len(admissions))
 	for _, item := range admissions {
 		expectedEpoch, ok := quotas[item.PolicyID]
-		if strings.TrimSpace(item.AdmissionID) == "" || strings.TrimSpace(item.ProfileID) == "" || !ok || item.Epoch != expectedEpoch || item.AdmittedAtMS <= 0 {
+		if strings.TrimSpace(item.AdmissionID) == "" || !ok || item.Epoch != expectedEpoch || item.AdmittedAtMS <= 0 {
 			return errors.New("invalid API key quota admission backup record")
 		}
 		if _, duplicate := admissionOwners[item.AdmissionID]; duplicate {
@@ -400,7 +400,7 @@ func (s *Service) ImportBackup(ctx context.Context, payload []byte) (err error) 
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = ? where id = ?`, policy.ActiveProfileID, policy.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = nullif(?, '') where id = ?`, policy.ActiveProfileID, policy.ID); err != nil {
 			return err
 		}
 		if policy.Quota != nil {
@@ -546,7 +546,11 @@ func (s *Service) normalizeBackupPolicies(policies []Policy) ([]Policy, error) {
 				activeCount++
 			}
 		}
-		if len(policy.Profiles) == 0 || activeCount != 1 {
+		if len(policy.Profiles) == 0 {
+			if policy.ActiveProfileID != "" || activeCount != 0 {
+				return nil, fmt.Errorf("policy %q without profiles must not have an active profile", policy.ID)
+			}
+		} else if policy.ActiveProfileID == "" || activeCount != 1 {
 			return nil, fmt.Errorf("policy %q must have exactly one active profile", policy.ID)
 		}
 		if policy.Quota != nil {
@@ -1007,8 +1011,20 @@ func (s *Service) publishNextLocked(next *runtimeIndex) {
 func buildRuntimeIndex(policies []Policy, takeoverEnabled bool) (*runtimeIndex, error) {
 	index := &runtimeIndex{healthy: true, takeoverEnabled: takeoverEnabled, items: make(map[string]RequestPolicySnapshot, len(policies))}
 	for _, policy := range policies {
-		if policy.APIKeyHash == "" || policy.ActiveProfileID == "" || policy.Version <= 0 {
+		if policy.APIKeyHash == "" || policy.Version <= 0 {
 			return nil, fmt.Errorf("policy %q is incomplete", policy.ID)
+		}
+		snapshot := RequestPolicySnapshot{
+			PolicyID: policy.ID, APIKeyHash: policy.APIKeyHash, Version: policy.Version,
+			ModelMappings: make(map[string]string), AllowedModels: make(map[string]struct{}),
+			AllowedProviders: make(map[string]struct{}), Quota: cloneQuota(policy.Quota),
+		}
+		if policy.ActiveProfileID == "" {
+			if len(policy.Profiles) != 0 {
+				return nil, fmt.Errorf("policy %q has profiles but no active profile", policy.ID)
+			}
+			index.items[policy.APIKeyHash] = snapshot
+			continue
 		}
 		var active *Profile
 		for profileIndex := range policy.Profiles {
@@ -1025,14 +1041,10 @@ func buildRuntimeIndex(policies []Policy, takeoverEnabled bool) (*runtimeIndex, 
 		if err != nil {
 			return nil, fmt.Errorf("policy %q active profile: %w", policy.ID, err)
 		}
-		snapshot := RequestPolicySnapshot{
-			PolicyID: policy.ID, APIKeyHash: policy.APIKeyHash,
-			ProfileID: active.ID, ProfileName: active.Name, Version: policy.Version,
-			ModelMappings:    make(map[string]string, len(input.Mappings)),
-			AllowedModels:    make(map[string]struct{}, len(input.Models)),
-			AllowedProviders: make(map[string]struct{}, len(input.Providers)),
-			Quota:            cloneQuota(policy.Quota),
-		}
+		snapshot.ProfileID, snapshot.ProfileName = active.ID, active.Name
+		snapshot.ModelMappings = make(map[string]string, len(input.Mappings))
+		snapshot.AllowedModels = make(map[string]struct{}, len(input.Models))
+		snapshot.AllowedProviders = make(map[string]struct{}, len(input.Providers))
 		for _, mapping := range input.Mappings {
 			snapshot.ModelMappings[mapping.Source] = mapping.Target
 		}
@@ -1938,21 +1950,35 @@ func (s *Service) Get(ctx context.Context, policyID string) (Policy, error) {
 }
 
 func (s *Service) Create(ctx context.Context, identity AuthenticatedAPIKeyIdentity, displayName string, initial ProfileInput, quota ...*QuotaInput) (Policy, error) {
+	return s.CreateOptionalProfile(ctx, identity, displayName, &initial, quota...)
+}
+
+// CreateOptionalProfile creates a managed Key policy with an optional initial
+// Profile. A policy without a Profile applies only its Key-wide quota and does
+// not restrict providers, models, or mappings.
+func (s *Service) CreateOptionalProfile(ctx context.Context, identity AuthenticatedAPIKeyIdentity, displayName string, initial *ProfileInput, quota ...*QuotaInput) (Policy, error) {
 	if !identity.Valid() {
 		return Policy{}, errors.New("authenticated api key identity is required")
 	}
-	input, err := s.normalizeProfileForWrite(ctx, initial)
-	if err != nil {
-		return Policy{}, err
+	var input ProfileInput
+	var err error
+	if initial != nil {
+		input, err = s.normalizeProfileForWrite(ctx, *initial)
+		if err != nil {
+			return Policy{}, err
+		}
 	}
 	displayName = strings.TrimSpace(displayName)
 	policyID, err := randomID("key_policy_")
 	if err != nil {
 		return Policy{}, err
 	}
-	profileID, err := randomID("key_profile_")
-	if err != nil {
-		return Policy{}, err
+	profileID := ""
+	if initial != nil {
+		profileID, err = randomID("key_profile_")
+		if err != nil {
+			return Policy{}, err
+		}
 	}
 	now := time.Now().UnixMilli()
 	var initialQuota *QuotaInput
@@ -1966,11 +1992,13 @@ func (s *Service) Create(ctx context.Context, identity AuthenticatedAPIKeyIdenti
 		if _, err := tx.ExecContext(ctx, `insert into api_key_policies(id, api_key_hash, display_name, active_profile_id, version, created_at_ms, updated_at_ms) values(?, ?, ?, null, 1, ?, ?)`, policyID, identity.Hash(), displayName, now, now); err != nil {
 			return sqliteConstraint(err)
 		}
-		if err := insertProfile(ctx, tx, policyID, profileID, input, now); err != nil {
-			return sqliteConstraint(err)
-		}
-		if _, err := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = ? where id = ?`, profileID, policyID); err != nil {
-			return err
+		if initial != nil {
+			if err := insertProfile(ctx, tx, policyID, profileID, input, now); err != nil {
+				return sqliteConstraint(err)
+			}
+			if _, err := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = ? where id = ?`, profileID, policyID); err != nil {
+				return err
+			}
 		}
 		if initialQuota != nil {
 			if err := replaceQuota(ctx, tx, policyID, initialQuota, now); err != nil {
@@ -2037,6 +2065,19 @@ func (s *Service) UpdateWorkspace(ctx context.Context, policyID string, version 
 			if update.CreateProfile {
 				if err := insertProfile(ctx, tx, policyID, profileID, input, now); err != nil {
 					return sqliteConstraint(err)
+				}
+				result, errActivate := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = ? where id = ? and active_profile_id is null`, profileID, policyID)
+				if errActivate != nil {
+					return errActivate
+				}
+				activated, errRows := result.RowsAffected()
+				if errRows != nil {
+					return errRows
+				}
+				if activated == 1 {
+					if err := insertAudit(ctx, tx, policyID, "active_profile_changed", map[string]any{"profileId": profileID, "automatic": true}, now); err != nil {
+						return err
+					}
 				}
 			} else {
 				result, errUpdate := tx.ExecContext(ctx, `update api_key_profiles set name = ?, updated_at_ms = ? where id = ? and policy_id = ?`, input.Name, now, profileID, policyID)
@@ -2217,6 +2258,19 @@ func (s *Service) CreateProfile(ctx context.Context, policyID string, version in
 		if err := insertProfile(ctx, tx, policyID, profileID, input, now); err != nil {
 			return sqliteConstraint(err)
 		}
+		result, errActivate := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = ? where id = ? and active_profile_id is null`, profileID, policyID)
+		if errActivate != nil {
+			return errActivate
+		}
+		activated, errRows := result.RowsAffected()
+		if errRows != nil {
+			return errRows
+		}
+		if activated == 1 {
+			if err := insertAudit(ctx, tx, policyID, "active_profile_changed", map[string]any{"profileId": profileID, "automatic": true}, now); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `update api_key_policies set version = version + 1, updated_at_ms = ? where id = ?`, now, policyID); err != nil {
 			return err
 		}
@@ -2286,7 +2340,7 @@ func (s *Service) ActivateProfile(ctx context.Context, policyID, profileID strin
 	return findPolicy(policies, policyID)
 }
 
-func (s *Service) DeleteProfile(ctx context.Context, policyID, profileID string, version int64) (Policy, error) {
+func (s *Service) DeleteProfile(ctx context.Context, policyID, profileID string, version int64, confirmation ...string) (Policy, error) {
 	now := time.Now().UnixMilli()
 	policies, err := s.write(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := requireVersion(ctx, tx, policyID, version); err != nil {
@@ -2294,13 +2348,26 @@ func (s *Service) DeleteProfile(ctx context.Context, policyID, profileID string,
 		}
 		var active string
 		var count int
-		if err := tx.QueryRowContext(ctx, `select active_profile_id, (select count(*) from api_key_profiles where policy_id = ?) from api_key_policies where id = ?`, policyID, policyID).Scan(&active, &count); err != nil {
+		if err := tx.QueryRowContext(ctx, `select coalesce(active_profile_id, ''), (select count(*) from api_key_profiles where policy_id = ?) from api_key_policies where id = ?`, policyID, policyID).Scan(&active, &count); err != nil {
 			return err
 		}
 		if active == profileID {
-			return ErrActiveProfileDelete
+			if count > 1 {
+				return ErrActiveProfileDelete
+			}
+			if len(confirmation) == 0 || confirmation[0] != NoProfileConfirmation {
+				return ErrNoProfileConfirmation
+			}
+			if _, err := tx.ExecContext(ctx, `update api_key_policies set active_profile_id = null where id = ?`, policyID); err != nil {
+				return err
+			}
+			if err := insertAudit(ctx, tx, policyID, "active_profile_removed", map[string]any{
+				"profileId": profileID, "confirmation": confirmation[0],
+			}, now); err != nil {
+				return err
+			}
 		}
-		if count <= 1 {
+		if count <= 1 && active != profileID {
 			return ErrLastProfileDelete
 		}
 		result, err := tx.ExecContext(ctx, `delete from api_key_profiles where id = ? and policy_id = ?`, profileID, policyID)

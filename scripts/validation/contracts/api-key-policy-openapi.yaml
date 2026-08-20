@@ -182,7 +182,7 @@ paths:
             schema: { $ref: "#/components/schemas/ProfileWrite" }
       responses:
         "201":
-          description: Profile created but not activated
+          description: Profile created; the first Profile on a no-Profile policy is activated automatically, while later Profiles remain inactive
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Policy" }
@@ -214,8 +214,9 @@ paths:
               required: [version]
               properties:
                 version: { type: integer, minimum: 1 }
+                confirmNoProfile: { const: REMOVE_ACTIVE_PROFILE_RESTRICTIONS }
       responses:
-        "204": { description: Non-active profile deleted }
+        "204": { description: Profile deleted; removing the only active Profile returns the policy to unrestricted Profile rules while retaining its Key quota }
         "409": { $ref: "#/components/responses/ActiveProfileDeleteForbidden" }
   /v0/management/api-key-policies/{policyId}/active-profile:
     parameters:
@@ -337,6 +338,7 @@ components:
               - key_quota_overview
               - usage_key_target
               - provider_model_linkage
+              - optional_profile
     PolicyState:
       type: string
       enum: [unconfigured, configured, orphaned, unavailable]
@@ -391,7 +393,7 @@ components:
         activeProfileId: { type: string }
         profiles:
           type: array
-          minItems: 1
+          minItems: 0
           items: { $ref: "#/components/schemas/Profile" }
         quota: { $ref: "#/components/schemas/Quota" }
         version: { type: integer, minimum: 1 }
@@ -399,7 +401,7 @@ components:
         updatedAtMs: { type: integer }
     CreatePolicyRequest:
       type: object
-      required: [keyRef, displayName, initialProfile]
+      required: [keyRef, displayName]
       properties:
         keyRef:
           type: string
@@ -563,7 +565,7 @@ components:
           description: Upstream API-key configuration snapshot generation shared by every page
     DeletePolicyPreview:
       type: object
-      required: [policyId, version, change, targetPolicyMode, affectsNewRequestsOnly, requiresConfirmation, activeProfile]
+      required: [policyId, version, change, targetPolicyMode, affectsNewRequestsOnly, requiresConfirmation]
       properties:
         policyId: { type: string }
         version: { type: integer, minimum: 1 }
