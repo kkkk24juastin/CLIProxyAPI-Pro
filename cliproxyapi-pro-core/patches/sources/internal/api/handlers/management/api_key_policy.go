@@ -461,12 +461,16 @@ type createAPIKeyPolicyRequest struct {
 }
 
 func apiKeyPolicyWriteContext(c *gin.Context, clientFeatures []string) context.Context {
+	ctx := c.Request.Context()
 	for _, feature := range clientFeatures {
-		if feature == "provider_model_linkage" {
-			return apikeypolicy.WithProviderModelLinkageValidation(c.Request.Context())
+		switch feature {
+		case "provider_model_linkage":
+			ctx = apikeypolicy.WithProviderModelLinkageValidation(ctx)
+		case "key_quota_calendar_timezone":
+			ctx = apikeypolicy.WithQuotaTimezoneAwareness(ctx)
 		}
 	}
-	return c.Request.Context()
+	return ctx
 }
 
 func (h *Handler) CreateAPIKeyPolicy(c *gin.Context) {

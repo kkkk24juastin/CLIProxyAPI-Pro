@@ -229,10 +229,32 @@ export const NO_PROFILE_CONFIRMATION = 'REMOVE_ACTIVE_PROFILE_RESTRICTIONS';
 const API_KEY_POLICY_WRITE_FEATURES = ['provider_model_linkage', 'key_quota_cost_period'] as const;
 const apiKeyPolicyWriteFeatures = (quota?: APIKeyQuotaInput | null): string[] => [
   ...API_KEY_POLICY_WRITE_FEATURES,
-  ...(quota?.period.type === 'calendar_duration' && quota.period.timezone
+  ...(quota?.period.type === 'calendar_duration' && quota.period.timezone !== undefined
     ? ['key_quota_calendar_timezone']
     : []),
 ];
+
+export const formatAPIKeyPolicyTimestamp = (
+  value: number,
+  language: string,
+  timeZone?: string,
+): string => {
+  if (value <= 0) return '-';
+  const options: Intl.DateTimeFormatOptions = {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    ...(timeZone ? { timeZone } : {}),
+  };
+  try {
+    return new Intl.DateTimeFormat(language, options).format(value);
+  } catch {
+    try {
+      return new Intl.DateTimeFormat(language, { ...options, timeZone: 'UTC' }).format(value);
+    } catch {
+      return new Date(value).toISOString();
+    }
+  }
+};
 
 const policyPath = (policyId: string) => `/api-key-policies/${encodeURIComponent(policyId)}`;
 const profilePath = (policyId: string, profileId: string) =>

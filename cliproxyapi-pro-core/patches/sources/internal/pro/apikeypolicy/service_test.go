@@ -74,7 +74,7 @@ func TestQuotaSummariesExposeRollingRecoveryAndIsolatedBlockState(t *testing.T) 
 func TestQuotaSummariesUseCalendarBoundaryAndNeverExposeKeyHash(t *testing.T) {
 	service := newTestService(t)
 	requestLimit := int64(1)
-	policy, err := service.Create(context.Background(), testIdentity(t, "calendar-summary-key"), "Calendar", ProfileInput{Name: "default"}, &QuotaInput{
+	policy, err := service.Create(WithQuotaTimezoneAwareness(context.Background()), testIdentity(t, "calendar-summary-key"), "Calendar", ProfileInput{Name: "default"}, &QuotaInput{
 		Enabled: true, Requests: &requestLimit, Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day", Timezone: "Asia/Shanghai"},
 	})
 	if err != nil {
@@ -1799,6 +1799,67 @@ func TestRollingQuotaPeriodChangeResetsEpochAndWritesAudit(t *testing.T) {
 	}
 }
 
+func TestLegacyQuotaWritePreservesExistingCalendarTimezone(t *testing.T) {
+	service := newTestService(t)
+	requestLimit := int64(2)
+	created, err := service.Create(WithQuotaTimezoneAwareness(context.Background()), testIdentity(t, "legacy-calendar-edit-key"), "Calendar", ProfileInput{Name: "window"}, &QuotaInput{
+		Enabled: true, Requests: &requestLimit,
+		Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day", Timezone: "Asia/Shanghai"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := service.Decide(testIdentity(t, "legacy-calendar-edit-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.AdmitDecision(context.Background(), decision); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := service.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.UpdateWorkspace(context.Background(), created.ID, loaded.Version, WorkspaceUpdate{
+		DisplayName: loaded.DisplayName,
+		Quota: QuotaUpdate{Present: true, Value: &QuotaInput{
+			Enabled: true, Requests: &requestLimit,
+			Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "month"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Quota == nil || updated.Quota.Period.Timezone != "Asia/Shanghai" || updated.Quota.Period.Unit != "month" {
+		t.Fatalf("legacy calendar update = %#v", updated.Quota)
+	}
+	if updated.Quota.Epoch <= loaded.Quota.Epoch || updated.Quota.Usage.RequestsUsed != 0 {
+		t.Fatalf("legacy calendar reset = %#v, previous = %#v", updated.Quota, loaded.Quota)
+	}
+
+	_, err = service.UpdateWorkspace(context.Background(), created.ID, updated.Version, WorkspaceUpdate{
+		DisplayName: updated.DisplayName,
+		Quota: QuotaUpdate{Present: true, Value: &QuotaInput{
+			Enabled: true, Requests: &requestLimit,
+			Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "month", Timezone: "America/New_York"},
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "key_quota_calendar_timezone") {
+		t.Fatalf("legacy timezone change error = %v", err)
+	}
+
+	updated, err = service.UpdateWorkspace(WithQuotaTimezoneAwareness(context.Background()), created.ID, updated.Version, WorkspaceUpdate{
+		DisplayName: updated.DisplayName,
+		Quota: QuotaUpdate{Present: true, Value: &QuotaInput{
+			Enabled: true, Requests: &requestLimit,
+			Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "month"},
+		}},
+	})
+	if err != nil || updated.Quota == nil || updated.Quota.Period.Timezone != "UTC" {
+		t.Fatalf("timezone-aware UTC reset = %#v error=%v", updated.Quota, err)
+	}
+}
+
 func TestQuotaCalendarPeriodBoundsUseConfiguredTimezoneAndDST(t *testing.T) {
 	now := time.Date(2026, time.August, 19, 12, 34, 56, 0, time.FixedZone("local", 8*60*60)).UnixMilli()
 	dayStart, dayEnd := quotaPeriodBounds(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day"}, 1, now)
@@ -1819,6 +1880,22 @@ func TestQuotaCalendarPeriodBoundsUseConfiguredTimezoneAndDST(t *testing.T) {
 	}
 	if err := validateQuotaPeriod(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day", Timezone: "Mars/Olympus"}); err == nil {
 		t.Fatal("invalid IANA timezone accepted")
+	}
+	if err := validateQuotaPeriod(QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "day", Timezone: "Local"}); err == nil {
+		t.Fatal("process-local timezone accepted")
+	}
+	quotaLocationCache.Delete("Asia/Shanghai")
+	firstLocation, err := loadQuotaLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached, ok := quotaLocationCache.Load("Asia/Shanghai")
+	if !ok || cached != firstLocation {
+		t.Fatalf("timezone cache = %#v, want %#v", cached, firstLocation)
+	}
+	secondLocation, err := loadQuotaLocation("Asia/Shanghai")
+	if err != nil || secondLocation != firstLocation {
+		t.Fatalf("cached timezone = %#v error=%v, want %#v", secondLocation, err, firstLocation)
 	}
 }
 
@@ -1926,7 +2003,7 @@ func TestPolicyBackupRoundTripAndValidation(t *testing.T) {
 	})
 	identity := testIdentity(t, "backup-key")
 	requestLimit := int64(25)
-	created, err := service.Create(context.Background(), identity, "Backup key", ProfileInput{Name: "Production", Providers: []string{"codex"}, Models: []string{"gpt-5"}}, &QuotaInput{
+	created, err := service.Create(WithQuotaTimezoneAwareness(context.Background()), identity, "Backup key", ProfileInput{Name: "Production", Providers: []string{"codex"}, Models: []string{"gpt-5"}}, &QuotaInput{
 		Enabled: true, Requests: &requestLimit,
 		Period: QuotaPeriod{Type: QuotaPeriodCalendarDuration, Unit: "month", Timezone: "Asia/Shanghai"},
 	})

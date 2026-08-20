@@ -6,6 +6,7 @@ import {
   buildAPIKeyPolicyWorkspaceUpdate,
   cloneProfileInput,
   apiKeyPolicyErrorTranslationKey,
+  formatAPIKeyPolicyTimestamp,
   resolveMappingTargetModels,
   resolveModelsForProviders,
   supportsAPIKeyQuota,
@@ -256,6 +257,16 @@ describe('API Key Policy profile drafts', () => {
       clientFeatures: ['provider_model_linkage', 'key_quota_cost_period', 'key_quota_calendar_timezone'],
       quota: { period: { timezone: 'Asia/Shanghai' } },
     });
+    expect(buildAPIKeyPolicyWorkspaceUpdate('Renamed', 2, 'profile-1', undefined, false, {
+      enabled: true,
+      requests: 100,
+      period: { type: 'calendar_duration', unit: 'day', timezone: '' },
+    })).toMatchObject({
+      clientFeatures: ['provider_model_linkage', 'key_quota_cost_period', 'key_quota_calendar_timezone'],
+    });
+    const timestamp = Date.UTC(2026, 7, 19, 12, 0, 0);
+    expect(formatAPIKeyPolicyTimestamp(timestamp, 'en-US', 'Local'))
+      .toBe(formatAPIKeyPolicyTimestamp(timestamp, 'en-US', 'UTC'));
     expect(page).toContain('quotaSupported ? draft.quota : undefined');
     expect(page).toContain("window.confirm(t('api_key_policy.quota_period_change_confirm'))");
     expect(page).toContain('{quotaSupported ? <section className={styles.quotaSection}>');

@@ -1153,7 +1153,6 @@ func validateQuotaInput(input *QuotaInput) error {
 			return err
 		}
 	}
-	input.Period = normalizeQuotaPeriod(input.Period)
 	if err := validateQuotaPeriod(input.Period); err != nil {
 		return err
 	}
@@ -1161,6 +1160,30 @@ func validateQuotaInput(input *QuotaInput) error {
 		return errors.New("enabled quota requires a request, token or cost limit")
 	}
 	return nil
+}
+
+var quotaLocationCache sync.Map
+
+func loadQuotaLocation(timezone string) (*time.Location, error) {
+	timezone = strings.TrimSpace(timezone)
+	if timezone == "" || timezone == "UTC" {
+		return time.UTC, nil
+	}
+	// Local is process-specific rather than a portable IANA timezone name. A
+	// persisted Local value would change meaning across deployments and is not
+	// accepted by browser Intl.DateTimeFormat either.
+	if timezone == "Local" {
+		return nil, errors.New("Local is not a portable IANA timezone")
+	}
+	if cached, ok := quotaLocationCache.Load(timezone); ok {
+		return cached.(*time.Location), nil
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, err
+	}
+	actual, _ := quotaLocationCache.LoadOrStore(timezone, location)
+	return actual.(*time.Location), nil
 }
 
 func validatePersistedQuota(quota Quota) error {
@@ -1213,7 +1236,7 @@ func validateQuotaPeriod(period QuotaPeriod) error {
 		if period.Unit != "day" && period.Unit != "month" {
 			return errors.New("calendar quota period unit must be day or month")
 		}
-		if _, err := time.LoadLocation(period.Timezone); err != nil {
+		if _, err := loadQuotaLocation(period.Timezone); err != nil {
 			return errors.New("calendar quota timezone must be a valid IANA timezone")
 		}
 		return nil
@@ -1249,7 +1272,7 @@ func quotaPeriodBounds(period QuotaPeriod, startedAtMS, nowMS int64) (int64, int
 			}
 		}
 	case QuotaPeriodCalendarDuration:
-		location, err := time.LoadLocation(period.Timezone)
+		location, err := loadQuotaLocation(period.Timezone)
 		if err != nil {
 			location = time.UTC
 		}
@@ -2137,13 +2160,28 @@ func replaceQuota(ctx context.Context, tx *sql.Tx, policyID string, input *Quota
 		_, err := tx.ExecContext(ctx, `delete from api_key_policy_quotas where policy_id = ?`, policyID)
 		return err
 	}
-	input.Period = normalizeQuotaPeriod(input.Period)
-	costLimitMicros, err := quotaCostLimitMicros(input.Cost)
+	var existing int
+	if err := tx.QueryRowContext(ctx, `select count(*) from api_key_policy_quotas where policy_id = ?`, policyID).Scan(&existing); err != nil {
+		return err
+	}
+	var currentQuota *Quota
+	var err error
+	if existing > 0 {
+		currentQuota, err = getPolicyQuota(ctx, tx, policyID)
+		if err != nil {
+			return err
+		}
+	}
+	normalizedInput, err := quotaInputForWrite(ctx, currentQuota, *input)
 	if err != nil {
 		return err
 	}
-	var existing int
-	if err := tx.QueryRowContext(ctx, `select count(*) from api_key_policy_quotas where policy_id = ?`, policyID).Scan(&existing); err != nil {
+	input = &normalizedInput
+	if err = validateQuotaInput(input); err != nil {
+		return err
+	}
+	costLimitMicros, err := quotaCostLimitMicros(input.Cost)
+	if err != nil {
 		return err
 	}
 	if existing == 0 {
@@ -2152,10 +2190,6 @@ func replaceQuota(ctx context.Context, tx *sql.Tx, policyID string, input *Quota
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `insert into api_key_policy_quotas(policy_id, enabled, request_limit, token_limit, cost_limit_micros, period_type, period_value, period_unit, period_timezone, epoch, started_at_ms, requests_used, total_tokens_used, cost_used_micros, updated_at_ms) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)`, policyID, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, input.Period.Timezone, epoch, now, now)
-		return err
-	}
-	currentQuota, err := getPolicyQuota(ctx, tx, policyID)
-	if err != nil {
 		return err
 	}
 	if currentQuota != nil && !quotaPeriodsEqual(currentQuota.Period, input.Period) {
@@ -2179,6 +2213,31 @@ func replaceQuota(ctx context.Context, tx *sql.Tx, policyID string, input *Quota
 	// Explicit reset and period replacement are the only clearing operations.
 	_, err = tx.ExecContext(ctx, `update api_key_policy_quotas set enabled = ?, request_limit = ?, token_limit = ?, cost_limit_micros = ?, period_type = ?, period_value = ?, period_unit = ?, period_timezone = ?, updated_at_ms = ? where policy_id = ?`, input.Enabled, input.Requests, input.TotalTokens, costLimitMicros, input.Period.Type, input.Period.Value, input.Period.Unit, input.Period.Timezone, now, policyID)
 	return err
+}
+
+func quotaInputForWrite(ctx context.Context, current *Quota, input QuotaInput) (QuotaInput, error) {
+	requestedTimezone := strings.TrimSpace(input.Period.Timezone)
+	input.Period = normalizeQuotaPeriod(input.Period)
+	if input.Period.Type != QuotaPeriodCalendarDuration || quotaTimezoneAwarenessEnabled(ctx) {
+		return input, nil
+	}
+	if current != nil {
+		currentPeriod := normalizeQuotaPeriod(current.Period)
+		if currentPeriod.Type == QuotaPeriodCalendarDuration {
+			if requestedTimezone == "" {
+				input.Period.Timezone = currentPeriod.Timezone
+				return input, nil
+			}
+			if input.Period.Timezone == currentPeriod.Timezone {
+				return input, nil
+			}
+			return QuotaInput{}, errors.New("calendar quota timezone changes require key_quota_calendar_timezone client support")
+		}
+	}
+	if input.Period.Timezone != "UTC" {
+		return QuotaInput{}, errors.New("calendar quota timezone changes require key_quota_calendar_timezone client support")
+	}
+	return input, nil
 }
 
 func quotaCostLimitMicros(cost *float64) (any, error) {

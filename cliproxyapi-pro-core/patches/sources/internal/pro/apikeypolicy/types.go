@@ -49,6 +49,7 @@ const (
 )
 
 type profileValidationContextKey struct{}
+type quotaTimezoneAwarenessContextKey struct{}
 
 // WithProviderModelLinkageValidation opts one Management write into the
 // provider/model relationship contract. Older Management clients omit this
@@ -59,6 +60,18 @@ func WithProviderModelLinkageValidation(ctx context.Context) context.Context {
 
 func providerModelLinkageValidationEnabled(ctx context.Context) bool {
 	enabled, _ := ctx.Value(profileValidationContextKey{}).(bool)
+	return enabled
+}
+
+// WithQuotaTimezoneAwareness opts one Management write into the calendar
+// timezone contract. Older clients omit this signal, so writes from them must
+// preserve an existing calendar timezone that they cannot edit deliberately.
+func WithQuotaTimezoneAwareness(ctx context.Context) context.Context {
+	return context.WithValue(ctx, quotaTimezoneAwarenessContextKey{}, true)
+}
+
+func quotaTimezoneAwarenessEnabled(ctx context.Context) bool {
+	enabled, _ := ctx.Value(quotaTimezoneAwarenessContextKey{}).(bool)
 	return enabled
 }
 

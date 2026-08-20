@@ -29,6 +29,7 @@ import {
   apiKeyPolicyErrorCode,
   apiKeyPolicyErrorTranslationKey,
   cloneProfileInput,
+  formatAPIKeyPolicyTimestamp,
   isAPIKeyPolicyUnsupported,
   resolveMappingTargetModels,
   resolveModelsForProviders,
@@ -214,13 +215,6 @@ const workspaceIsDirty = (
     || JSON.stringify(draft.quota) !== JSON.stringify(quotaInputFromPolicy(target.policy))
   );
 };
-
-const formatUpdatedAt = (value: number, language: string, timeZone?: string): string =>
-  value > 0 ? new Intl.DateTimeFormat(language, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    ...(timeZone ? { timeZone } : {}),
-  }).format(value) : '-';
 
 function ChoiceList({
   title,
@@ -1149,7 +1143,7 @@ export function APIKeyPolicyPage() {
                   })() : null}
                   <div className={styles.cardMeta}>
                     <span>{t('api_key_policy.active_profile')}: <strong>{activeProfile?.name ?? t('api_key_policy.profile_not_configured')}</strong></span>
-                    <span>{t('api_key_policy.updated')}: {policy ? formatUpdatedAt(policy.updatedAtMs, i18n.resolvedLanguage ?? i18n.language) : '-'}</span>
+                    <span>{t('api_key_policy.updated')}: {policy ? formatAPIKeyPolicyTimestamp(policy.updatedAtMs, i18n.resolvedLanguage ?? i18n.language) : '-'}</span>
                   </div>
                   <div className={styles.cardActions}>
                     {policy ? (
@@ -1229,7 +1223,7 @@ export function APIKeyPolicyPage() {
                   return (
                     <div className={styles.quotaTableRow} role="row" key={policy.id}>
                       <div className={styles.quotaKeyCell}><strong>{policy.displayName}</strong><code>{binding.maskedKey}</code></div>
-                      <div className={styles.quotaPeriodCell}><strong>{periodLabel}</strong>{summary?.nextRecoverAtMs ? <small>{t('api_key_policy.quota_overview.recovers_at', { time: formatUpdatedAt(summary.nextRecoverAtMs, i18n.resolvedLanguage ?? i18n.language, quota?.period.type === 'calendar_duration' ? quota.period.timezone ?? 'UTC' : undefined) })}</small> : <small>{!summary ? t('api_key_policy.quota_overview.snapshot_unavailable') : quota?.period.type === 'all_time' ? t('api_key_policy.quota_overview.manual_reset') : t('api_key_policy.quota_overview.active_window')}</small>}</div>
+                      <div className={styles.quotaPeriodCell}><strong>{periodLabel}</strong>{summary?.nextRecoverAtMs ? <small>{t('api_key_policy.quota_overview.recovers_at', { time: formatAPIKeyPolicyTimestamp(summary.nextRecoverAtMs, i18n.resolvedLanguage ?? i18n.language, quota?.period.type === 'calendar_duration' ? quota.period.timezone ?? 'UTC' : undefined) })}</small> : <small>{!summary ? t('api_key_policy.quota_overview.snapshot_unavailable') : quota?.period.type === 'all_time' ? t('api_key_policy.quota_overview.manual_reset') : t('api_key_policy.quota_overview.active_window')}</small>}</div>
                       <QuotaMetric label={t('api_key_policy.quota_requests')} used={quota ? quota.usage.requestsUsed : undefined} limit={quota?.requests} />
                       <QuotaMetric label={t('api_key_policy.quota_tokens')} used={quota ? quota.usage.totalTokensUsed : undefined} limit={quota?.totalTokens} />
                       <QuotaMetric label={t('api_key_policy.quota_cost')} used={quota ? quota.usage.costUsed : undefined} limit={quota?.cost} cost />
@@ -1240,7 +1234,7 @@ export function APIKeyPolicyPage() {
                 })}
                 {!quotaLoading && quotaRows.length === 0 ? <div className={styles.empty}>{t('api_key_policy.quota_overview.empty')}</div> : null}
               </div>
-              {quotaSnapshotAt > 0 ? <p className={styles.quotaSnapshot}>{t('api_key_policy.quota_overview.updated_at', { time: formatUpdatedAt(quotaSnapshotAt, i18n.resolvedLanguage ?? i18n.language) })}</p> : null}
+              {quotaSnapshotAt > 0 ? <p className={styles.quotaSnapshot}>{t('api_key_policy.quota_overview.updated_at', { time: formatAPIKeyPolicyTimestamp(quotaSnapshotAt, i18n.resolvedLanguage ?? i18n.language) })}</p> : null}
             </section>
           )}
         </>

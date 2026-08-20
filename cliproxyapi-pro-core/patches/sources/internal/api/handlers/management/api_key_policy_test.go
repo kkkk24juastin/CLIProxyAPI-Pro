@@ -266,6 +266,36 @@ func TestAPIKeyPolicyCanCreateQuotaOnlyPolicyWithoutInitialProfile(t *testing.T)
 	}
 }
 
+func TestAPIKeyPolicyWriteFeaturesAreComposedForCalendarTimezone(t *testing.T) {
+	_, router := newAPIKeyPolicyManagementHarness(t, []string{"legacy-timezone-handler-key", "timezone-handler-key"})
+	listed := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil)
+	bindings := bindingResponse(t, listed).Items
+	if len(bindings) != 2 {
+		t.Fatalf("bindings=%d body=%s", len(bindings), listed.Body.String())
+	}
+	legacy := policyRequest(t, router, http.MethodPost, "/v0/management/api-key-policies", "session-a", map[string]any{
+		"keyRef": bindings[0].KeyRef, "displayName": "Legacy calendar quota",
+		"quota": map[string]any{
+			"enabled": true, "requests": 10,
+			"period": map[string]any{"type": "calendar_duration", "unit": "day", "timezone": "Asia/Shanghai"},
+		},
+	})
+	if legacy.Code != http.StatusBadRequest || !strings.Contains(legacy.Body.String(), "key_quota_calendar_timezone") {
+		t.Fatalf("legacy calendar quota status=%d body=%s", legacy.Code, legacy.Body.String())
+	}
+	created := policyRequest(t, router, http.MethodPost, "/v0/management/api-key-policies", "session-a", map[string]any{
+		"keyRef": bindings[1].KeyRef, "displayName": "Calendar quota",
+		"clientFeatures": []string{"provider_model_linkage", "key_quota_calendar_timezone"},
+		"quota": map[string]any{
+			"enabled": true, "requests": 10,
+			"period": map[string]any{"type": "calendar_duration", "unit": "day", "timezone": "Asia/Shanghai"},
+		},
+	})
+	if created.Code != http.StatusCreated || !strings.Contains(created.Body.String(), `"timezone":"Asia/Shanghai"`) {
+		t.Fatalf("calendar quota create status=%d body=%s", created.Code, created.Body.String())
+	}
+}
+
 func TestAPIKeyPolicyBindingsAndKeyReferenceSecurity(t *testing.T) {
 	h, router := newAPIKeyPolicyManagementHarness(t, []string{"sk-sensitive-canary-123456789"})
 	listed := policyRequest(t, router, http.MethodGet, "/v0/management/api-key-policy-bindings", "session-a", nil)
