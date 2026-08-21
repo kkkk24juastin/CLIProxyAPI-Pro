@@ -163,49 +163,37 @@
 .cardQuota_blocked { color: var(--danger-color); border-color: color-mix(in srgb, var(--danger-color) 30%, var(--border-color)); background: color-mix(in srgb, var(--danger-color) 7%, var(--bg-primary)); }
 .cardQuota_unknown { color: var(--warning-text); border-color: var(--warning-border); background: var(--warning-bg); }
 
-.quotaOverview { display: grid; gap: 14px; min-width: 0; }
-.quotaStats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
-.quotaStats > div { display: grid; gap: 4px; padding: 13px 15px; border-right: 1px solid var(--border-color); }
+.quotaOverview { display: grid; gap: 12px; min-width: 0; }
+.quotaStats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); }
+.quotaStats > div { display: grid; gap: 3px; padding: 11px 14px; border-right: 1px solid var(--border-color); }
 .quotaStats > div:last-child { border-right: 0; }
-.quotaStats small { color: var(--text-secondary); font-size: 11px; }
-.quotaStats strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.quotaStats small { color: var(--text-secondary); font-size: 10px; }
+.quotaStats strong { font-size: 17px; }
 .quotaToolbar { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(180px, 240px) auto; gap: 10px; align-items: center; }
 .quotaStale { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border: 1px solid var(--warning-border); border-radius: 7px; color: var(--warning-text); background: var(--warning-bg); font-size: 11px; }
-.quotaTable { min-width: 0; overflow: auto; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-primary); }
+.quotaTable { min-width: 0; overflow: hidden; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-primary); }
 .quotaTableHead,
-.quotaTableRow { display: grid; grid-template-columns: minmax(160px, 1.15fr) minmax(132px, .95fr) repeat(3, minmax(125px, 1fr)) minmax(110px, .75fr) minmax(240px, 1.55fr); gap: 14px; align-items: center; min-width: 1120px; padding: 12px 15px; }
-.quotaTableHead { color: var(--text-secondary); background: var(--bg-secondary); font-size: 10px; font-weight: 700; letter-spacing: .01em; }
-.quotaTableRow { position: relative; border-top: 1px solid var(--border-color); background: color-mix(in srgb, var(--bg-secondary) 42%, var(--bg-primary)); transition: background-color .16s ease; }
-.quotaTableRow:hover { background: color-mix(in srgb, var(--primary-color) 5%, var(--bg-primary)); }
-.quotaTableRow_available { box-shadow: inset 3px 0 color-mix(in srgb, var(--success-color) 58%, transparent); }
-.quotaTableRow_warning,
-.quotaTableRow_unknown { box-shadow: inset 3px 0 color-mix(in srgb, var(--warning-text) 68%, transparent); }
-.quotaTableRow_exhausted,
-.quotaTableRow_blocked { box-shadow: inset 3px 0 color-mix(in srgb, var(--danger-color) 68%, transparent); }
-.quotaTableRow_inactive,
-.quotaTableRow_disabled { box-shadow: inset 3px 0 color-mix(in srgb, var(--text-secondary) 35%, transparent); }
+.quotaTableRow { display: grid; grid-template-columns: minmax(150px, 1.2fr) minmax(130px, .9fr) repeat(3, minmax(125px, 1fr)) minmax(120px, .85fr) minmax(150px, auto); gap: 12px; align-items: center; padding: 11px 13px; }
+.quotaTableHead { color: var(--text-secondary); background: var(--bg-secondary); font-size: 10px; font-weight: 700; }
+.quotaTableRow { border-top: 1px solid var(--border-color); }
 .quotaKeyCell,
 .quotaPeriodCell,
 .quotaStateCell { display: grid; min-width: 0; gap: 4px; }
-.quotaKeyCell strong { font-size: 14px; }
-.quotaPeriodCell strong { font-size: 13px; }
 .quotaKeyCell strong,
 .quotaKeyCell code,
 .quotaPeriodCell strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.quotaKeyCell code { font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
 .quotaKeyCell code,
 .quotaPeriodCell small,
 .quotaStateCell small { color: var(--text-secondary); font-size: 10px; }
 .quotaMetric { display: grid; min-width: 0; gap: 5px; }
 .quotaMetric > div:first-child { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
 .quotaMetric > div:first-child span { display: none; }
-.quotaMetric strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; }
-.quotaMetric small { color: var(--text-secondary); font-size: 10px; font-variant-numeric: tabular-nums; }
-.quotaProgress { height: 6px; overflow: hidden; border-radius: 3px; background: var(--muted-bg, rgba(148, 163, 184, .18)); }
+.quotaMetric strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.quotaMetric small { color: var(--text-secondary); font-size: 9px; }
+.quotaProgress { height: 5px; overflow: hidden; border-radius: 3px; background: var(--muted-bg, rgba(148, 163, 184, .18)); }
 .quotaProgress span { display: block; height: 100%; border-radius: inherit; background: var(--primary-color); }
 .quotaStateCell { justify-items: start; }
-.quotaRowActions { display: flex; min-width: 0; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
-.quotaRowActions :global(.btn) { white-space: nowrap; }
+.quotaRowActions { display: flex; justify-content: flex-end; gap: 5px; }
 .quotaSnapshot { margin: 0; color: var(--text-secondary); text-align: right; font-size: 10px; }
 .badge_quota_available { color: var(--success-color); }
 .badge_quota_warning { color: var(--warning-text); border-color: var(--warning-border); background: var(--warning-bg); }
@@ -318,9 +306,8 @@
 	.statusOverview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.overviewItem:nth-child(2) { border-right: 0; }
 	.overviewItem:nth-child(-n + 2) { border-bottom: 1px solid var(--border-color); }
-	.quotaTable { overflow: hidden; }
   .quotaTableHead { display: none; }
-  .quotaTableRow { grid-template-columns: repeat(3, minmax(0, 1fr)); min-width: 0; }
+  .quotaTableRow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .quotaKeyCell,
   .quotaPeriodCell,
   .quotaStateCell,
