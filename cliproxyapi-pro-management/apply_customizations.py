@@ -502,7 +502,8 @@ def patch_modal_lifecycle(target: Path) -> None:
         (
             "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from './scrollLock';\n",
             "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from './scrollLock';\n"
-            "import { isTopOverlayLayer, registerOverlayLayer } from './overlayStack';\n",
+            "import { isTopOverlayLayer, registerOverlayLayer } from './overlayStack';\n"
+            "import { useOverlayLifecycle } from '@/pro/shared/useOverlayLifecycle';\n",
             'modal overlay stack import',
         ),
         (
@@ -512,12 +513,22 @@ def patch_modal_lifecycle(target: Path) -> None:
             'modal close contract',
         ),
         (
+            "  useRef,\n  useState,\n  type PropsWithChildren,\n",
+            "  useRef,\n  type PropsWithChildren,\n",
+            'modal lifecycle state import',
+        ),
+        (
+            "  const [isVisible, setIsVisible] = useState(false);\n"
+            "  const [isClosing, setIsClosing] = useState(false);\n"
             "  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);\n",
-            "  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);\n"
-            "  const closeRequestedRef = useRef(false);\n"
-            "  const onCloseRef = useRef(onClose);\n"
-            "  const onAfterCloseRef = useRef(onAfterClose);\n",
-            'modal close refs',
+            "  const { isVisible, isClosing, requestClose } = useOverlayLifecycle({\n"
+            "    open,\n"
+            "    closeDisabled,\n"
+            "    closeAnimationDuration: CLOSE_ANIMATION_DURATION,\n"
+            "    onClose,\n"
+            "    onAfterClose,\n"
+            "  });\n",
+            'modal lifecycle hook',
         ),
     )
     for old, new, label in replacements:
@@ -536,10 +547,6 @@ def patch_modal_lifecycle(target: Path) -> None:
     text = text.replace(
         focusable_marker,
         "  useEffect(() => {\n"
-        "    onCloseRef.current = onClose;\n"
-        "    onAfterCloseRef.current = onAfterClose;\n"
-        "  }, [onAfterClose, onClose]);\n\n"
-        "  useEffect(() => {\n"
         "    if (!open && !isVisible) return;\n"
         "    return registerOverlayLayer(titleId);\n"
         "  }, [isVisible, open, titleId]);\n\n"
@@ -548,50 +555,19 @@ def patch_modal_lifecycle(target: Path) -> None:
     )
 
     start = text.find('  const startClose = useCallback(')
-    end = text.find('  useEffect(() => {\n    return () => {', start)
-    if start == -1 or end == -1:
+    cleanup_start = text.find('  useEffect(() => {\n    return () => {', start)
+    end = text.find('  }, []);\n', cleanup_start)
+    if start == -1 or cleanup_start == -1 or end == -1:
         raise RuntimeError(f'Pattern not found in {path}: modal close lifecycle')
+    end += len('  }, []);\n')
+    if text[end:end + 1] == '\n':
+        end += 1
     replacement = (
-        "  const finishClose = useCallback(() => {\n"
-        "    if (closeTimerRef.current !== null) return;\n"
-        "    setIsClosing(true);\n"
-        "    closeTimerRef.current = window.setTimeout(() => {\n"
-        "      setIsVisible(false);\n"
-        "      setIsClosing(false);\n"
-        "      closeTimerRef.current = null;\n"
-        "      closeRequestedRef.current = false;\n"
-        "      onAfterCloseRef.current?.();\n"
-        "    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : CLOSE_ANIMATION_DURATION);\n"
-        "  }, []);\n\n"
-        "  useEffect(() => {\n"
-        "    if (open) {\n"
-        "      if (closeTimerRef.current !== null) {\n"
-        "        window.clearTimeout(closeTimerRef.current);\n"
-        "        closeTimerRef.current = null;\n"
-        "      }\n"
-        "      closeRequestedRef.current = false;\n"
-        "      queueMicrotask(() => {\n"
-        "        setIsVisible(true);\n"
-        "        setIsClosing(false);\n"
-        "      });\n"
-        "      return;\n"
-        "    }\n"
-        "    if (isVisible) finishClose();\n"
-        "  }, [finishClose, isVisible, open]);\n\n"
-        "  const handleClose = useCallback(async () => {\n"
-        "    if (closeRequestedRef.current || closeDisabled) return;\n"
-        "    closeRequestedRef.current = true;\n"
-        "    try {\n"
-        "      const shouldClose = await onCloseRef.current();\n"
-        "      if (shouldClose === false) {\n"
-        "        return;\n"
-        "      }\n"
-        "    } catch {\n"
+        "  const handleClose = useCallback(() => {\n"
+        "    void requestClose().catch(() => {\n"
         "      // The parent owns the open state; a rejected close keeps the surface open.\n"
-        "    } finally {\n"
-        "      closeRequestedRef.current = false;\n"
-        "    }\n"
-        "  }, [closeDisabled]);\n\n"
+        "    });\n"
+        "  }, [requestClose]);\n\n"
     )
     text = text[:start] + replacement + text[end:]
     text = text.replace(
@@ -641,7 +617,8 @@ def patch_sheet_lifecycle(target: Path) -> None:
         (
             "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from '../scrollLock';\n",
             "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from '../scrollLock';\n"
-            "import { isTopOverlayLayer, registerOverlayLayer } from '../overlayStack';\n",
+            "import { isTopOverlayLayer, registerOverlayLayer } from '../overlayStack';\n"
+            "import { useOverlayLifecycle } from '@/pro/shared/useOverlayLifecycle';\n",
             'sheet overlay stack import',
         ),
         (
@@ -649,6 +626,11 @@ def patch_sheet_lifecycle(target: Path) -> None:
             "  onClose: () => void | boolean | Promise<void | boolean>;\n"
             "  onAfterClose?: () => void;\n",
             'sheet close contract',
+        ),
+        (
+            "  useRef,\n  useState,\n  type ReactNode,\n",
+            "  useRef,\n  type ReactNode,\n",
+            'sheet lifecycle state import',
         ),
     )
     for old, new, label in replacements:
@@ -661,15 +643,22 @@ def patch_sheet_lifecycle(target: Path) -> None:
         raise RuntimeError(f'Expected one pattern in {path}: sheet props')
     text = text.replace("  onClose,\n  size = 'md',\n", "  onClose,\n  onAfterClose,\n  size = 'md',\n", 1)
 
-    old_refs = "  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);\n"
-    if text.count(old_refs) != 1:
-        raise RuntimeError(f'Expected one pattern in {path}, found {text.count(old_refs)}: sheet close refs')
+    old_lifecycle = (
+        "  const [isVisible, setIsVisible] = useState(false);\n"
+        "  const [isClosing, setIsClosing] = useState(false);\n"
+        "  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);\n"
+    )
+    if text.count(old_lifecycle) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {text.count(old_lifecycle)}: sheet lifecycle')
     text = text.replace(
-        old_refs,
-        old_refs
-        + "  const closeRequestedRef = useRef(false);\n"
-        + "  const onCloseRef = useRef(onClose);\n"
-        + "  const onAfterCloseRef = useRef(onAfterClose);\n",
+        old_lifecycle,
+        "  const { isVisible, isClosing, requestClose } = useOverlayLifecycle({\n"
+        "    open,\n"
+        "    closeDisabled,\n"
+        "    closeAnimationDuration: CLOSE_ANIMATION_DURATION,\n"
+        "    onClose,\n"
+        "    onAfterClose,\n"
+        "  });\n",
         1,
     )
     focusable_marker = "  const getFocusableElements = useCallback(() => {\n"
@@ -677,10 +666,6 @@ def patch_sheet_lifecycle(target: Path) -> None:
         raise RuntimeError(f'Expected one pattern in {path}, found {text.count(focusable_marker)}: sheet callbacks')
     text = text.replace(
         focusable_marker,
-        "  useEffect(() => {\n"
-        "    onCloseRef.current = onClose;\n"
-        "    onAfterCloseRef.current = onAfterClose;\n"
-        "  }, [onAfterClose, onClose]);\n\n"
         "  const shouldRegisterOverlay = open || isVisible;\n\n"
         "  useEffect(() => {\n"
         "    if (!shouldRegisterOverlay) return;\n"
@@ -690,58 +675,17 @@ def patch_sheet_lifecycle(target: Path) -> None:
         1,
     )
     start = text.find('  const startClose = useCallback(')
-    end = text.find('  useEffect(() => {\n    return () => {', start)
-    if start == -1 or end == -1:
+    cleanup_start = text.find('  useEffect(() => {\n    return () => {', start)
+    end = text.find('  }, []);\n', cleanup_start)
+    if start == -1 or cleanup_start == -1 or end == -1:
         raise RuntimeError(f'Pattern not found in {path}: sheet close lifecycle')
+    end += len('  }, []);\n')
+    if text[end:end + 1] == '\n':
+        end += 1
     replacement = (
-        "  const finishClose = useCallback(() => {\n"
-        "    if (closeTimerRef.current !== null) return;\n"
-        "    setIsClosing(true);\n"
-        "    closeTimerRef.current = window.setTimeout(() => {\n"
-        "      setIsVisible(false);\n"
-        "      setIsClosing(false);\n"
-        "      closeTimerRef.current = null;\n"
-        "      closeRequestedRef.current = false;\n"
-        "      onAfterCloseRef.current?.();\n"
-        "    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : CLOSE_ANIMATION_DURATION);\n"
-        "  }, []);\n\n"
-        "  useEffect(() => {\n"
-        "    if (open) {\n"
-        "      if (closeTimerRef.current !== null) {\n"
-        "        window.clearTimeout(closeTimerRef.current);\n"
-        "        closeTimerRef.current = null;\n"
-        "      }\n"
-        "      closeRequestedRef.current = false;\n"
-        "      queueMicrotask(() => {\n"
-        "        setIsVisible(true);\n"
-        "        setIsClosing(false);\n"
-        "      });\n"
-        "      return;\n"
-        "    }\n"
-        "    if (isVisible) finishClose();\n"
-        "  }, [finishClose, isVisible, open]);\n\n"
-        "  const handleClose = useCallback(async () => {\n"
-        "    if (closeRequestedRef.current || closeDisabled) return;\n"
-        "    closeRequestedRef.current = true;\n"
-        "    if (confirmClose) {\n"
-        "      try {\n"
-        "        const ok = await confirmClose();\n"
-        "        if (ok === false) {\n"
-        "          closeRequestedRef.current = false;\n"
-        "          return;\n"
-        "        }\n"
-        "      } catch {\n"
-        "        closeRequestedRef.current = false;\n"
-        "        return;\n"
-        "      }\n"
-        "    }\n"
-        "    try {\n"
-        "      const shouldClose = await onCloseRef.current();\n"
-        "      if (shouldClose === false) return;\n"
-        "    } finally {\n"
-        "      closeRequestedRef.current = false;\n"
-        "    }\n"
-        "  }, [closeDisabled, confirmClose]);\n\n"
+        "  const handleClose = useCallback(() => {\n"
+        "    void requestClose(confirmClose);\n"
+        "  }, [confirmClose, requestClose]);\n\n"
     )
     text = text[:start] + replacement + text[end:]
     text = text.replace(
@@ -806,33 +750,6 @@ def patch_sheet_lifecycle(target: Path) -> None:
         1,
     )
     write(path, text)
-
-
-def patch_overlay_reduced_motion(target: Path) -> None:
-    sheet_path = target / 'src/components/ui/Sheet/Sheet.module.scss'
-    sheet = read(sheet_path)
-    if 'padding: var(--pro-surface-body-padding, 24px);' not in sheet:
-        sheet = sheet.replace(
-            ".body {\n  flex: 1;\n  overflow-y: auto;\n  padding: 24px;\n",
-            ".body {\n  flex: 1;\n  overflow-y: auto;\n  padding: var(--pro-surface-body-padding, 24px);\n",
-            1,
-        )
-        sheet = sheet.replace(
-            "  .body {\n    padding: 16px;\n",
-            "  .body {\n    padding: var(--pro-surface-body-padding, 16px);\n",
-            1,
-        )
-    marker = "@media (prefers-reduced-motion: reduce) {\n  .overlay,\n"
-    if marker not in sheet:
-        sheet += (
-            "\n@media (prefers-reduced-motion: reduce) {\n"
-            "  .overlay,\n"
-            "  .content {\n"
-            "    transition: none !important;\n"
-            "  }\n"
-            "}\n"
-        )
-        write(sheet_path, sheet)
 
 
 def patch_confirmation_queue(target: Path) -> None:
@@ -1098,17 +1015,6 @@ def patch_modal_scroll_lock(target: Path) -> None:
         "}\n\n"
     )
     write(path, f'{text[:start]}{replacement}{text[end:]}')
-
-
-def patch_modal_content_scrollbar_layout(target: Path) -> None:
-    path = target / 'src/styles/global.scss'
-    text = read(path)
-    content_lock = "body.modal-open .content {\n  overflow: hidden;\n}\n\n"
-    if content_lock in text:
-        write(path, text.replace(content_lock, '', 1))
-        return
-    if 'body.modal-open .content' in text:
-        raise RuntimeError(f'Pattern not found in {path}: modal content scroll lock')
 
 
 def patch_api_client_connection_isolation(target: Path) -> None:
@@ -1612,11 +1518,6 @@ def patch_supporting_api_and_types(target: Path) -> None:
     )
 
     auth_files_path = target / 'src/services/api/authFiles.ts'
-    replace_once(
-        auth_files_path,
-        "type AuthFileStatusResponse = { status: string; disabled: boolean };\n",
-        "type AuthFileStatusResponse = { status: string; disabled: boolean };\ntype AuthFilePatchPayload = { name: string; disabled?: boolean; [key: string]: unknown };\n",
-    )
     insert_once(
         auth_files_path,
         "export const authFilesApi = {\n",
@@ -1624,7 +1525,7 @@ def patch_supporting_api_and_types(target: Path) -> None:
         "AUTH_FILES_LIST_CACHE_TTL_MS",
     )
     list_replacement = (
-        "  list: fetchAuthFilesList,\n\n  patchFile: async (payload: AuthFilePatchPayload) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files', payload);\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n  setStatus: async (name: string, disabled: boolean) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n"
+        "  list: fetchAuthFilesList,\n\n  setStatus: async (name: string, disabled: boolean) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n"
     )
     replace_once(
         auth_files_path,
@@ -1637,7 +1538,7 @@ def patch_supporting_api_and_types(target: Path) -> None:
     replace_once(
         auth_files_path,
         "  patchFields: (name: string, fields: AuthFileFieldsPatch) =>\n    apiClient.patch('/auth-files/fields', { name, ...fields }),\n\n",
-        "  setStatusWithFallback: async (name: string, disabled: boolean) => {\n    try {\n      return await authFilesApi.patchFile({ name, disabled });\n    } catch {\n      return authFilesApi.setStatus(name, disabled);\n    }\n  },\n\n  patchFields: async (name: string, fields: AuthFileFieldsPatch) => {\n    const response = await apiClient.patch('/auth-files/fields', { name, ...fields });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n",
+        "  patchFields: async (name: string, fields: AuthFileFieldsPatch) => {\n    const response = await apiClient.patch('/auth-files/fields', { name, ...fields });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n",
     )
     replace_once(
         auth_files_path,
@@ -2128,10 +2029,8 @@ def main() -> None:
     patch_modal_focus_restore(target)
     patch_modal_lifecycle(target)
     patch_sheet_lifecycle(target)
-    patch_overlay_reduced_motion(target)
     patch_confirmation_queue(target)
     patch_modal_scroll_lock(target)
-    patch_modal_content_scrollbar_layout(target)
     patch_routes(target)
     patch_layout(target)
     patch_quota_types_latest(target)

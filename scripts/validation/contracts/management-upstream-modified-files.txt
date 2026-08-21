@@ -4,7 +4,6 @@ src/components/common/ConfirmationModal.tsx
 src/components/layout/MainLayout.tsx
 src/components/ui/Modal.tsx
 src/components/ui/Select.tsx
-src/components/ui/Sheet/Sheet.module.scss
 src/components/ui/Sheet/Sheet.tsx
 src/components/ui/scrollLock.ts
 src/features/authFiles/AuthFilesPage.tsx
@@ -29,7 +28,6 @@ src/services/api/client.ts
 src/stores/useAuthStore.ts
 src/stores/useNotificationStore.ts
 src/stores/useQuotaStore.ts
-src/styles/global.scss
 src/types/authFile.ts
 src/types/quota.ts
 src/utils/format.ts

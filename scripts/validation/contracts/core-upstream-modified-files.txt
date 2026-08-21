@@ -17,7 +17,6 @@ internal/api/server_reload.go
 internal/api/server_routes.go
 internal/api/server_test.go
 internal/client/codex/live/client_secret.go
-internal/client/codex/live/client_secret_test.go
 internal/client/codex/live/live.go
 internal/client/codex/live/sideband.go
 internal/client/codex/live/websocket.go
@@ -25,8 +24,6 @@ internal/cmd/run.go
 internal/config/config_defaults.go
 internal/config/config_normalization.go
 internal/config/config_yaml.go
-internal/logging/requestid.go
-internal/logging/requestmeta.go
 internal/managementasset/updater.go
 internal/pluginhost/adapters_executors.go
 internal/pluginhost/auth_provider.go
@@ -39,12 +36,10 @@ internal/pluginhost/rpc_schema.go
 internal/pluginhost/snapshot.go
 internal/pluginstore/auth.go
 internal/redisqueue/plugin.go
-internal/redisqueue/plugin_test.go
 internal/runtime/executor/claude_executor_execute.go
 internal/runtime/executor/claude_executor_stream.go
 internal/runtime/executor/helps/logging_helpers.go
 internal/runtime/executor/helps/usage_helpers.go
-internal/runtime/executor/helps/usage_helpers_test.go
 internal/runtime/executor/openai_compat_executor.go
 internal/runtime/executor/xai_executor.go
 internal/runtime/executor/xai_executor_execute.go
@@ -55,14 +50,12 @@ sdk/api/handlers/gemini/gemini_handlers.go
 sdk/api/handlers/handlers.go
 sdk/api/handlers/handlers_context.go
 sdk/api/handlers/handlers_execution.go
-sdk/api/handlers/handlers_metadata_test.go
 sdk/api/handlers/handlers_routing.go
 sdk/api/handlers/handlers_stream.go
 sdk/api/handlers/openai/openai_handlers.go
 sdk/api/handlers/openai/openai_responses_websocket.go
 sdk/auth/codex_device.go
 sdk/auth/filestore.go
-sdk/auth/filestore_test.go
 sdk/cliproxy/auth/conductor.go
 sdk/cliproxy/auth/conductor_cooldown.go
 sdk/cliproxy/auth/conductor_execution.go
@@ -84,7 +77,6 @@ sdk/cliproxy/service_lifecycle.go
 sdk/cliproxy/service_models.go
 sdk/cliproxy/service_plugins.go
 sdk/cliproxy/usage/manager.go
-sdk/cliproxy/usage/manager_test.go
 sdk/pluginabi/types.go
 sdk/pluginapi/types.go
 sdk/proxyutil/proxy.go

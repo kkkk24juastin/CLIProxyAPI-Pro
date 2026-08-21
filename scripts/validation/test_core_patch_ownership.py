@@ -8,26 +8,15 @@ SURFACE_PATH = ROOT / 'scripts/validation/contracts/core-upstream-modified-files
 OWNERSHIP_PATH = ROOT / 'scripts/validation/contracts/core-upstream-modified-files.ownership.tsv'
 
 ALLOWED_CATEGORIES = {
-    'plugin-migratable',
     'generic-host-hook',
     'upstream-generic-fix',
     'must-remain-host-patch',
 }
 
 EXPECTED_CATEGORY_COUNTS = {
-    'plugin-migratable': 6,
-    'generic-host-hook': 31,
-    'upstream-generic-fix': 13,
-    'must-remain-host-patch': 38,
-}
-
-PLUGIN_MIGRATABLE_PATHS = {
-    'go.mod',
-    'internal/redisqueue/plugin.go',
-    'internal/redisqueue/plugin_test.go',
-    'sdk/cliproxy/auth/scheduler.go',
-    'sdk/cliproxy/auth/selector.go',
-    'sdk/cliproxy/auth/types.go',
+    'generic-host-hook': 28,
+    'upstream-generic-fix': 12,
+    'must-remain-host-patch': 40,
 }
 
 
@@ -60,7 +49,7 @@ class CorePatchOwnershipContractTest(unittest.TestCase):
         ownership = load_ownership()
         paths = [row['path'] for row in ownership]
 
-        self.assertEqual(88, len(surface))
+        self.assertEqual(80, len(surface))
         self.assertEqual(surface, paths)
         self.assertEqual(len(paths), len(set(paths)))
 
@@ -76,18 +65,6 @@ class CorePatchOwnershipContractTest(unittest.TestCase):
         for row in load_ownership():
             counts[row['category']] += 1
         self.assertEqual(EXPECTED_CATEGORY_COUNTS, counts)
-
-    def test_plugin_migratable_means_whole_file_removal_after_parity(self) -> None:
-        rows = [
-            row
-            for row in load_ownership()
-            if row['category'] == 'plugin-migratable'
-        ]
-        self.assertEqual(PLUGIN_MIGRATABLE_PATHS, {row['path'] for row in rows})
-        for row in rows:
-            with self.subTest(path=row['path']):
-                self.assertIn('after-', row['next_action'])
-
 
 if __name__ == '__main__':
     unittest.main()

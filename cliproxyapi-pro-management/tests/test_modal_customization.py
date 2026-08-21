@@ -49,7 +49,13 @@ export function unlockScroll(): void {
 export const FOCUSABLE_SELECTOR = 'button';
 """
 
-MODAL_LIFECYCLE_SOURCE = """import { useCallback, useEffect, useRef, useState } from 'react';
+MODAL_LIFECYCLE_SOURCE = """import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react';
 import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from './scrollLock';
 interface ModalProps {
   open: boolean;
@@ -137,7 +143,13 @@ export function Modal({
 }
 """
 
-SHEET_LIFECYCLE_SOURCE = """import { useCallback, useEffect, useRef, useState } from 'react';
+SHEET_LIFECYCLE_SOURCE = """import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from '../scrollLock';
 interface SheetProps {
   open: boolean;
@@ -279,23 +291,6 @@ export function ConfirmationModal() {
 }
 """
 
-GLOBAL_STYLE_SOURCE = """@use './layout.scss';
-
-html.modal-open,
-body.modal-open {
-  overflow: hidden;
-}
-
-body.modal-open .content {
-  overflow: hidden;
-}
-
-body {
-  color: var(--text-primary);
-}
-"""
-
-
 class ModalCustomizationTest(unittest.TestCase):
     def test_global_reduced_motion_rules_are_owned_by_pro_overlay(self) -> None:
         bootstrap = (PRO_ROOT / 'ProBootstrap.tsx').read_text()
@@ -306,6 +301,27 @@ class ModalCustomizationTest(unittest.TestCase):
         self.assertIn('.modal-overlay-entering,', styles)
         self.assertIn('.modal-closing {', styles)
         self.assertIn('animation: none !important;', styles)
+        self.assertIn("body > [role='presentation']", styles)
+        self.assertIn(
+            'body.modal-open .content:not(.content-logs):not(.content-plugin-resource) {\n'
+            '  overflow: auto;',
+            styles,
+        )
+        self.assertNotIn('body.modal-open .content {\n', styles)
+
+    def test_shared_overlay_lifecycle_owns_only_common_close_state(self) -> None:
+        lifecycle = (PRO_ROOT / 'shared/useOverlayLifecycle.ts').read_text()
+
+        self.assertIn('const [isVisible, setIsVisible] = useState(false);', lifecycle)
+        self.assertIn('const [isClosing, setIsClosing] = useState(false);', lifecycle)
+        self.assertIn('const closeRequestedRef = useRef(false);', lifecycle)
+        self.assertIn('onAfterCloseRef.current?.();', lifecycle)
+        self.assertIn("window.matchMedia('(prefers-reduced-motion: reduce)').matches", lifecycle)
+        self.assertIn('if (cancelled) return;', lifecycle)
+        self.assertIn('window.clearTimeout(closeTimerRef.current);', lifecycle)
+        self.assertNotIn('confirmClose', lifecycle)
+        self.assertNotIn('registerOverlayLayer', lifecycle)
+        self.assertNotIn('lockScroll', lifecycle)
 
     def setUp(self) -> None:
         CUSTOMIZATIONS._writes.clear()
@@ -368,21 +384,14 @@ class ModalCustomizationTest(unittest.TestCase):
             CUSTOMIZATIONS.flush_writes()
 
             patched = modal_path.read_text()
-            self.assertIn('const closeRequestedRef = useRef(false);', patched)
-            self.assertIn('const onCloseRef = useRef(onClose);', patched)
-            self.assertIn('const onAfterCloseRef = useRef(onAfterClose);', patched)
-            self.assertIn('}, [onAfterClose, onClose]);', patched)
-            self.assertIn('onAfterCloseRef.current?.();', patched)
+            self.assertIn("import { useOverlayLifecycle } from '@/pro/shared/useOverlayLifecycle';", patched)
+            self.assertIn('const { isVisible, isClosing, requestClose } = useOverlayLifecycle({', patched)
+            self.assertIn('closeAnimationDuration: CLOSE_ANIMATION_DURATION,', patched)
             self.assertIn('registerOverlayLayer(titleId)', patched)
             self.assertIn('if (!isTopOverlayLayer(titleId)) return;', patched)
-            self.assertIn("window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0", patched)
-            self.assertIn('closeRequestedRef.current = true;\n    try {', patched)
-            self.assertIn('const shouldClose = await onCloseRef.current();', patched)
-            self.assertIn('if (shouldClose === false) {', patched)
-            self.assertIn('closeRequestedRef.current = false;', patched)
-            self.assertIn('window.clearTimeout(closeTimerRef.current);', patched)
-            self.assertNotIn('if (closeRequestedRef.current) return;', patched)
-            self.assertNotIn('setIsClosing(true);\n    } catch', patched)
+            self.assertIn('void requestClose().catch(() => {', patched)
+            self.assertNotIn('const closeRequestedRef', patched)
+            self.assertNotIn('window.matchMedia', patched)
             self.assertIn("role={open ? 'dialog' : undefined}", patched)
             self.assertNotIn('if (notifyParent)', patched)
 
@@ -398,9 +407,9 @@ class ModalCustomizationTest(unittest.TestCase):
             CUSTOMIZATIONS.flush_writes()
 
             patched = sheet_path.read_text()
-            self.assertIn('const closeRequestedRef = useRef(false);', patched)
-            self.assertIn('}, [onAfterClose, onClose]);', patched)
-            self.assertIn('onAfterCloseRef.current?.();', patched)
+            self.assertIn("import { useOverlayLifecycle } from '@/pro/shared/useOverlayLifecycle';", patched)
+            self.assertIn('const { isVisible, isClosing, requestClose } = useOverlayLifecycle({', patched)
+            self.assertIn('closeAnimationDuration: CLOSE_ANIMATION_DURATION,', patched)
             self.assertIn('registerOverlayLayer(titleId)', patched)
             self.assertIn('const shouldRegisterOverlay = open || isVisible;', patched)
             self.assertIn('}, [shouldRegisterOverlay, titleId]);', patched)
@@ -410,11 +419,9 @@ class ModalCustomizationTest(unittest.TestCase):
             self.assertIn("!el.matches(':disabled')", patched)
             self.assertIn('const fallback = closeBtnRef.current?.disabled ? sheetRef.current : closeBtnRef.current;', patched)
             self.assertIn('if (!isTopOverlayLayer(titleId)) return;', patched)
-            self.assertIn("window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0", patched)
-            self.assertIn('closeRequestedRef.current = true;\n    if (confirmClose)', patched)
-            self.assertIn('closeRequestedRef.current = false;', patched)
-            self.assertNotIn('if (closeRequestedRef.current) return;', patched)
-            self.assertNotIn('setIsClosing(true);\n    onCloseRef.current();', patched)
+            self.assertIn('void requestClose(confirmClose);', patched)
+            self.assertNotIn('const closeRequestedRef', patched)
+            self.assertNotIn('window.matchMedia', patched)
             self.assertIn("aria-hidden={open ? undefined : true}", patched)
             self.assertIn('previouslyFocused?.isConnected', patched)
 
@@ -457,26 +464,6 @@ class ModalCustomizationTest(unittest.TestCase):
             self.assertIn('onAfterClose={advanceConfirmation}', confirmation)
             self.assertIn('const submittingRef = useRef(false);', confirmation)
             self.assertIn('if (submittingRef.current || isLoading) return;', confirmation)
-
-    def test_modal_keeps_the_content_scrollbar_layout(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir)
-            styles_dir = target / 'src/styles'
-            styles_dir.mkdir(parents=True)
-            global_style_path = styles_dir / 'global.scss'
-            global_style_path.write_text(GLOBAL_STYLE_SOURCE)
-
-            CUSTOMIZATIONS.patch_modal_content_scrollbar_layout(target)
-            CUSTOMIZATIONS.flush_writes()
-
-            patched = global_style_path.read_text()
-            self.assertIn('html.modal-open,\nbody.modal-open {\n  overflow: hidden;\n}', patched)
-            self.assertNotIn('body.modal-open .content', patched)
-
-            CUSTOMIZATIONS.patch_modal_content_scrollbar_layout(target)
-            CUSTOMIZATIONS.flush_writes()
-            self.assertEqual(patched, global_style_path.read_text())
-
 
 if __name__ == '__main__':
     unittest.main()

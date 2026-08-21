@@ -1,8 +1,17 @@
+body.modal-open .content:not(.content-logs):not(.content-plugin-resource) {
+  overflow: auto;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .modal-overlay-entering,
   .modal-overlay-closing,
   .modal-entering,
   .modal-closing {
     animation: none !important;
+  }
+
+  body > [role='presentation'],
+  body > [role='presentation'] > [role='dialog'] {
+    transition: none !important;
   }
 }

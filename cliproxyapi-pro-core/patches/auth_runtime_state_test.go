@@ -172,7 +172,8 @@ func TestPickNextLegacyPathRecordsSelectedAuthOnce(t *testing.T) {
 func TestReadyViewRestoresSuccessorOfLastSelectedAuth(t *testing.T) {
 	const key = "single|codex|gpt-5|0|all"
 	persisted := map[string]string{key: "auth-b"}
-	view := buildReadyView(runtimeStateTestEntries("auth-a", "auth-b", "auth-c"), key, persisted)
+	view := buildReadyView(runtimeStateTestEntries("auth-a", "auth-b", "auth-c"))
+	configurePersistedReadyView(&view, key, persisted)
 	picked := view.pickRoundRobin(nil)
 	if picked == nil || picked.auth == nil || picked.auth.ID != "auth-c" {
 		t.Fatalf("restored pick = %#v, want auth-c", picked)
@@ -182,7 +183,8 @@ func TestReadyViewRestoresSuccessorOfLastSelectedAuth(t *testing.T) {
 func TestReadyViewRestoresNextSortedAuthWhenSavedAuthIsMissing(t *testing.T) {
 	const key = "single|codex|gpt-5|0|all"
 	persisted := map[string]string{key: "auth-b"}
-	view := buildReadyView(runtimeStateTestEntries("auth-a", "auth-c", "auth-d"), key, persisted)
+	view := buildReadyView(runtimeStateTestEntries("auth-a", "auth-c", "auth-d"))
+	configurePersistedReadyView(&view, key, persisted)
 	picked := view.pickRoundRobin(nil)
 	if picked == nil || picked.auth == nil || picked.auth.ID != "auth-c" {
 		t.Fatalf("restored missing-auth pick = %#v, want auth-c", picked)

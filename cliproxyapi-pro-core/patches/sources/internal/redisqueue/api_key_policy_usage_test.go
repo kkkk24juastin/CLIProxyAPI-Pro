@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/apikeypolicy"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/requestmeta"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
@@ -17,9 +17,23 @@ func apiKeyPolicyUsageContext(status int) context.Context {
 		RequestedModel: "smart", EffectiveModel: "gpt-5",
 	}}
 	ctx := apikeypolicy.WithDecision(context.Background(), decision)
-	ctx = requestmeta.WithResponseStatusHolder(ctx)
-	requestmeta.SetResponseStatus(ctx, status)
+	ctx = logging.WithResponseStatusHolder(ctx)
+	logging.SetResponseStatus(ctx, status)
 	return ctx
+}
+
+func TestUsageQueuePluginSkipsMonitoringContext(t *testing.T) {
+	withEnabledQueue(t, func() {
+		ctx := coreusage.WithSkipMonitoring(context.Background())
+		(&usageQueuePlugin{}).HandleUsage(ctx, coreusage.Record{
+			Provider: "codex",
+			Model:    "gpt-test",
+			Detail:   coreusage.Detail{InputTokens: 1, TotalTokens: 1},
+		})
+		if items := PopOldest(10); len(items) != 0 {
+			t.Fatalf("PopOldest() items = %d, want 0 for skipped monitoring", len(items))
+		}
+	})
 }
 
 func TestUsageQueuePolicyAttributionIsFrozenForEveryTerminalOutcome(t *testing.T) {

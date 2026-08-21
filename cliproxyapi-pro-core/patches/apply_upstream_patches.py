@@ -216,6 +216,7 @@ new_customization_paths = (
     'internal/api/handlers/management/account_inspection_host.go',
     'internal/api/handlers/management/api_key_policy.go',
     'internal/api/handlers/management/api_key_policy_test.go',
+	'internal/api/handlers/management/auth_file_metadata.go',
     'internal/api/handlers/management/api_tools_executor_proxy_test.go',
     'internal/api/handlers/management/auth_file_connection.go',
     'internal/api/handlers/management/auth_file_connection_test.go',
@@ -237,20 +238,21 @@ new_customization_paths = (
     'internal/pluginhost/gemini_cli_storage_compat.go',
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
     'internal/pluginhost/plugin_executor_usage_test.go',
+	'internal/pluginhost/plugin_executor_usage.go',
     'internal/pluginhost/quota_provider.go',
     'internal/pluginhost/quota_provider_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
     'internal/pluginstore/gitstore_auth_test.go',
     'internal/managementasset/gitstore_token_test.go',
-    'internal/requestmeta/client.go',
-    'internal/requestmeta/client_test.go',
     'internal/requestmeta/observer.go',
     'internal/requestmeta/observer_test.go',
-    'internal/requestmeta/requestid.go',
-    'internal/requestmeta/response.go',
+	'internal/api/server_model_policy.go',
+	'internal/runtime/executor/helps/quota_settlement_test.go',
+	'internal/runtime/executor/helps/usage_pro_extensions.go',
     'internal/runtime/executor/helps/usage_speed_test.go',
 	'internal/runtime/executor/claude_usage_speed_test.go',
+	'internal/runtime/executor/claude_stream_terminal.go',
 	'internal/runtime/executor/api_key_policy_usage_test.go',
 	'internal/runtime/executor/response_translation.go',
 	'internal/pro/observability/config_test.go',
@@ -258,16 +260,22 @@ new_customization_paths = (
 	'internal/redisqueue/api_key_policy_usage_test.go',
 	'sdk/api/handlers/handlers_speed_test.go',
 	'sdk/api/handlers/api_key_policy_test.go',
+	'sdk/api/handlers/api_key_policy_context_test.go',
+	'sdk/auth/filestore_identity_test.go',
+	'sdk/auth/filestore_identity.go',
 	'sdk/cliproxy/auth/conductor_speed_test.go',
 	'sdk/cliproxy/executor/speed.go',
 	'sdk/cliproxy/usage/speed.go',
 	'sdk/cliproxy/usage/speed_test.go',
+	'sdk/cliproxy/usage/manager_pro_test.go',
+	'sdk/cliproxy/usage/manager_extensions.go',
     'internal/runtime/executor/helps/response_observer_test.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
 	'sdk/cliproxy/auth/auth_account_policy.go',
 	'sdk/cliproxy/auth/auth_account_policy_test.go',
+	'sdk/cliproxy/auth/scheduler_runtime_state.go',
     'sdk/cliproxy/auth/inspection_refresh.go',
     'sdk/cliproxy/auth/pinned_execution.go',
     'sdk/cliproxy/pro_features_service_test.go',
@@ -283,10 +291,22 @@ queue_go_source('internal/api/api_key_policy_middleware_test.go')
 queue_go_source('internal/api/api_key_policy_models_test.go')
 queue_go_source('internal/api/handlers/management/api_key_policy.go')
 queue_go_source('internal/api/handlers/management/api_key_policy_test.go')
+queue_go_source('internal/api/handlers/management/auth_file_metadata.go')
+queue_go_source('internal/api/server_model_policy.go')
 queue_go_source('sdk/api/handlers/api_key_policy_test.go')
+queue_go_source('sdk/api/handlers/api_key_policy_context_test.go')
+queue_go_source('sdk/auth/filestore_identity_test.go')
 queue_go_source('internal/runtime/executor/api_key_policy_usage_test.go')
+queue_go_source('internal/runtime/executor/helps/quota_settlement_test.go')
+queue_go_source('internal/runtime/executor/helps/usage_pro_extensions.go')
 queue_go_source('internal/runtime/executor/response_translation.go')
 queue_go_source('internal/pro/observability/config_test.go')
+queue_go_source('sdk/cliproxy/usage/manager_pro_test.go')
+queue_go_source('sdk/cliproxy/usage/manager_extensions.go')
+queue_go_source('internal/pluginhost/plugin_executor_usage.go')
+queue_go_source('sdk/auth/filestore_identity.go')
+queue_go_source('sdk/cliproxy/auth/scheduler_runtime_state.go')
+queue_go_source('internal/runtime/executor/claude_stream_terminal.go')
 
 codex_device = ROOT / 'sdk/auth/codex_device.go'
 replace_once(
@@ -345,339 +365,6 @@ replace_once(
 ''',
     's.reuseExistingProviderIdentity(auth)',
 )
-insert_before(
-    file_token_store,
-    'func (s *FileTokenStore) resolveAuthPath(auth *cliproxyauth.Auth) (string, error) {\n',
-    '''const reusedExistingAuthIdentityAttribute = "reused_existing_auth_identity"
-
-// TakeReusedExistingAuthIdentity reports and consumes the transient marker set
-// when Save updates an existing strong provider identity in place.
-func TakeReusedExistingAuthIdentity(auth *cliproxyauth.Auth) bool {
-	if auth == nil || auth.Attributes == nil {
-		return false
-	}
-	reused := strings.EqualFold(strings.TrimSpace(auth.Attributes[reusedExistingAuthIdentityAttribute]), "true")
-	delete(auth.Attributes, reusedExistingAuthIdentityAttribute)
-	return reused
-}
-
-func authMetadataString(metadata map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := metadata[key].(string); ok {
-			if value = strings.TrimSpace(value); value != "" {
-				return value
-			}
-		}
-	}
-	return ""
-}
-
-type providerFileIdentity struct {
-	provider  string
-	strongKey string
-	companion string
-}
-
-func resolveProviderFileIdentity(provider string, metadata map[string]any) (providerFileIdentity, bool) {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	if provider == "" || metadata == nil {
-		return providerFileIdentity{}, false
-	}
-	email := strings.ToLower(authMetadataString(metadata, "email", "client_email"))
-	identity := providerFileIdentity{provider: provider}
-	switch provider {
-	case "codex":
-		identity.strongKey = authMetadataString(metadata, "account_id", "chatgpt_account_id", "chatgptAccountId")
-		identity.companion = email
-	case "claude":
-		identity.strongKey = authMetadataString(metadata, "account_uuid", "account_id")
-		identity.companion = email
-	case "xai":
-		identity.strongKey = authMetadataString(metadata, "sub", "subject", "user_id")
-		identity.companion = email
-	case "antigravity":
-		// Google userinfo supplies a verified account email and the current
-		// upstream already treats it as the credential filename identity.
-		identity.strongKey = email
-	case "gemini-cli", "gemini", "vertex":
-		identity.strongKey = authMetadataString(metadata, "project_id")
-		identity.companion = email
-	default:
-		// Providers such as Kimi currently expose only device/token material.
-		// Treating those values as account identity would merge unrelated users.
-		return providerFileIdentity{}, false
-	}
-	if identity.strongKey == "" {
-		return providerFileIdentity{}, false
-	}
-	return identity, true
-}
-
-func authProviderFileIdentity(auth *cliproxyauth.Auth) (providerFileIdentity, bool) {
-	if auth == nil {
-		return providerFileIdentity{}, false
-	}
-	provider := strings.TrimSpace(auth.Provider)
-	if provider == "" && auth.Metadata != nil {
-		provider = authMetadataString(auth.Metadata, "type")
-	}
-	return resolveProviderFileIdentity(provider, auth.Metadata)
-}
-
-func storedProviderFileIdentity(path string) (providerFileIdentity, bool) {
-	raw, err := os.ReadFile(path)
-	if err != nil || len(raw) == 0 {
-		return providerFileIdentity{}, false
-	}
-	metadata := make(map[string]any)
-	if err = json.Unmarshal(raw, &metadata); err != nil {
-		return providerFileIdentity{}, false
-	}
-	return resolveProviderFileIdentity(authMetadataString(metadata, "type"), metadata)
-}
-
-// reuseExistingProviderIdentity follows an active-account upsert model: strong
-// identity is only used to find the existing credential, while its file-backed
-// ID and stable index remain the canonical history/runtime keys.
-func (s *FileTokenStore) reuseExistingProviderIdentity(auth *cliproxyauth.Auth) error {
-	if auth == nil {
-		return nil
-	}
-	if auth.Attributes != nil {
-		delete(auth.Attributes, reusedExistingAuthIdentityAttribute)
-		if strings.TrimSpace(auth.Attributes[cliproxyauth.AttributePath]) != "" ||
-			strings.TrimSpace(auth.Attributes[cliproxyauth.AttributeSource]) != "" {
-			return nil
-		}
-	}
-	identity, ok := authProviderFileIdentity(auth)
-	if !ok {
-		return nil
-	}
-	baseDir := s.baseDirSnapshot()
-	if baseDir == "" {
-		return nil
-	}
-	entries, err := os.ReadDir(baseDir)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("auth filestore: list provider identities: %w", err)
-	}
-
-	matches := make([]string, 0, 1)
-	for _, entry := range entries {
-		if entry == nil || entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
-			continue
-		}
-		path := filepath.Join(baseDir, entry.Name())
-		existing, exists := storedProviderFileIdentity(path)
-		if !exists || existing.provider != identity.provider || existing.strongKey != identity.strongKey {
-			continue
-		}
-		if identity.companion != "" && existing.companion != "" &&
-			!strings.EqualFold(identity.companion, existing.companion) {
-			continue
-		}
-		matches = append(matches, path)
-	}
-	if len(matches) == 0 {
-		return nil
-	}
-	if len(matches) > 1 {
-		return fmt.Errorf("auth filestore: multiple %s credentials match the same strong identity", identity.provider)
-	}
-
-	path := matches[0]
-	id := s.idFor(path, baseDir)
-	auth.ID = id
-	auth.Index = ""
-	auth.FileName = id
-	if auth.Attributes == nil {
-		auth.Attributes = make(map[string]string)
-	}
-	auth.Attributes[cliproxyauth.AttributePath] = path
-	auth.Attributes[cliproxyauth.AttributeSource] = path
-	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceFile
-	auth.Attributes[reusedExistingAuthIdentityAttribute] = "true"
-	return nil
-}
-
-''',
-    'func (s *FileTokenStore) reuseExistingProviderIdentity',
-)
-
-file_token_store_test = ROOT / 'sdk/auth/filestore_test.go'
-if 'func TestFileTokenStoreSaveReusesExistingCodexStrongIdentity' not in read(file_token_store_test):
-    write(
-        file_token_store_test,
-        read(file_token_store_test) + '''
-
-func TestFileTokenStoreSaveReusesExistingCodexStrongIdentity(t *testing.T) {
-	baseDir := t.TempDir()
-	oldName := "codex-abc12345-user@example.com-free.json"
-	oldPath := filepath.Join(baseDir, oldName)
-	if err := os.WriteFile(oldPath, []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com","access_token":"old"}`), 0o600); err != nil {
-		t.Fatalf("write old auth: %v", err)
-	}
-
-	store := NewFileTokenStore()
-	store.SetBaseDir(baseDir)
-	auth := &cliproxyauth.Auth{
-		ID:       "codex-abc12345-user@example.com-plus.json",
-		FileName: "codex-abc12345-user@example.com-plus.json",
-		Provider: "codex",
-		Metadata: map[string]any{
-			"type":         "codex",
-			"account_id":   "acct-1",
-			"email":        "user@example.com",
-			"access_token": "new",
-		},
-	}
-
-	savedPath, err := store.Save(context.Background(), auth)
-	if err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	if savedPath != oldPath || auth.ID != oldName || auth.FileName != oldName {
-		t.Fatalf("reused identity = path:%q id:%q file:%q, want %q", savedPath, auth.ID, auth.FileName, oldName)
-	}
-	if !TakeReusedExistingAuthIdentity(auth) || TakeReusedExistingAuthIdentity(auth) {
-		t.Fatal("reused identity marker was not consumed exactly once")
-	}
-	if _, err := os.Stat(filepath.Join(baseDir, "codex-abc12345-user@example.com-plus.json")); !os.IsNotExist(err) {
-		t.Fatalf("Save() created a duplicate credential: %v", err)
-	}
-	persisted, err := os.ReadFile(oldPath)
-	if err != nil {
-		t.Fatalf("read reused auth: %v", err)
-	}
-	if !jsonEqual(persisted, []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com","access_token":"new","disabled":false}`)) {
-		t.Fatalf("reused auth content = %s", persisted)
-	}
-}
-
-func TestFileTokenStoreSaveDoesNotMergeCodexIdentityWithoutGuardedEmail(t *testing.T) {
-	baseDir := t.TempDir()
-	oldPath := filepath.Join(baseDir, "codex-old.json")
-	if err := os.WriteFile(oldPath, []byte(`{"type":"codex","account_id":"acct-1","email":"first@example.com"}`), 0o600); err != nil {
-		t.Fatalf("write old auth: %v", err)
-	}
-
-	store := NewFileTokenStore()
-	store.SetBaseDir(baseDir)
-	auth := &cliproxyauth.Auth{
-		ID: "codex-new.json", FileName: "codex-new.json", Provider: "codex",
-		Metadata: map[string]any{"type": "codex", "account_id": "acct-1", "email": "second@example.com"},
-	}
-	savedPath, err := store.Save(context.Background(), auth)
-	if err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	if savedPath != filepath.Join(baseDir, "codex-new.json") || TakeReusedExistingAuthIdentity(auth) {
-		t.Fatalf("conflicting email reused old identity: path=%q", savedPath)
-	}
-}
-
-func TestFileTokenStoreSaveReusesProviderScopedStrongIdentities(t *testing.T) {
-	tests := []struct {
-		provider string
-		oldJSON  string
-		metadata map[string]any
-	}{
-		{
-			provider: "claude",
-			oldJSON:  `{"type":"claude","account_uuid":"account-1","email":"user@example.com"}`,
-			metadata: map[string]any{"type": "claude", "account_uuid": "account-1", "email": "user@example.com"},
-		},
-		{
-			provider: "xai",
-			oldJSON:  `{"type":"xai","sub":"subject-1","email":"user@example.com"}`,
-			metadata: map[string]any{"type": "xai", "sub": "subject-1", "email": "user@example.com"},
-		},
-		{
-			provider: "antigravity",
-			oldJSON:  `{"type":"antigravity","email":"user@example.com","project_id":"old-project"}`,
-			metadata: map[string]any{"type": "antigravity", "email": "user@example.com", "project_id": "new-project"},
-		},
-		{
-			provider: "vertex",
-			oldJSON:  `{"type":"vertex","project_id":"project-1","email":"service@example.com"}`,
-			metadata: map[string]any{"type": "vertex", "project_id": "project-1", "email": "service@example.com"},
-		},
-		{
-			provider: "gemini-cli",
-			oldJSON:  `{"type":"gemini-cli","project_id":"project-1","email":"user@example.com"}`,
-			metadata: map[string]any{"type": "gemini-cli", "project_id": "project-1", "email": "user@example.com"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.provider, func(t *testing.T) {
-			baseDir := t.TempDir()
-			oldPath := filepath.Join(baseDir, tt.provider+"-old.json")
-			if err := os.WriteFile(oldPath, []byte(tt.oldJSON), 0o600); err != nil {
-				t.Fatalf("write old auth: %v", err)
-			}
-			store := NewFileTokenStore()
-			store.SetBaseDir(baseDir)
-			auth := &cliproxyauth.Auth{
-				ID: tt.provider + "-new.json", FileName: tt.provider + "-new.json",
-				Provider: tt.provider, Metadata: tt.metadata,
-			}
-			savedPath, err := store.Save(context.Background(), auth)
-			if err != nil {
-				t.Fatalf("Save() error = %v", err)
-			}
-			if savedPath != oldPath || !TakeReusedExistingAuthIdentity(auth) {
-				t.Fatalf("provider identity was not reused: path=%q", savedPath)
-			}
-		})
-	}
-}
-
-func TestFileTokenStoreSaveDoesNotGuessUnsupportedProviderIdentity(t *testing.T) {
-	baseDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(baseDir, "kimi-old.json"), []byte(`{"type":"kimi","device_id":"device-1"}`), 0o600); err != nil {
-		t.Fatalf("write old auth: %v", err)
-	}
-	store := NewFileTokenStore()
-	store.SetBaseDir(baseDir)
-	auth := &cliproxyauth.Auth{
-		ID: "kimi-new.json", FileName: "kimi-new.json", Provider: "kimi",
-		Metadata: map[string]any{"type": "kimi", "device_id": "device-1"},
-	}
-	savedPath, err := store.Save(context.Background(), auth)
-	if err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	if savedPath != filepath.Join(baseDir, "kimi-new.json") || TakeReusedExistingAuthIdentity(auth) {
-		t.Fatalf("unsupported provider identity was guessed: path=%q", savedPath)
-	}
-}
-
-func TestFileTokenStoreSaveRejectsAmbiguousCodexStrongIdentity(t *testing.T) {
-	baseDir := t.TempDir()
-	for _, name := range []string{"codex-old-free.json", "codex-old-plus.json"} {
-		if err := os.WriteFile(filepath.Join(baseDir, name), []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com"}`), 0o600); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-
-	store := NewFileTokenStore()
-	store.SetBaseDir(baseDir)
-	auth := &cliproxyauth.Auth{
-		ID: "codex-new.json", FileName: "codex-new.json", Provider: "codex",
-		Metadata: map[string]any{"type": "codex", "account_id": "acct-1", "email": "user@example.com"},
-	}
-	if _, err := store.Save(context.Background(), auth); err == nil {
-		t.Fatal("Save() accepted an ambiguous strong identity")
-	}
-}
-''',
-    )
-
 proxyutil_source = ROOT / 'sdk/proxyutil/proxy.go'
 replace_once(
     proxyutil_source,
@@ -2164,8 +1851,20 @@ replace_once(
 replace_once(
     client_secret_source,
     'func (s *clientSecretStore) create(session json.RawMessage, lifetime time.Duration, issuerPrincipal, issuerProvider string) (string, ClientSecretAuthorization, time.Time, error) {\n',
-    'func (s *clientSecretStore) create(session json.RawMessage, lifetime time.Duration, issuerPrincipal, issuerProvider string, issuerIdentity apikeypolicy.AuthenticatedAPIKeyIdentity) (string, ClientSecretAuthorization, time.Time, error) {\n',
-    'issuerIdentity apikeypolicy.AuthenticatedAPIKeyIdentity',
+    'func (s *clientSecretStore) create(session json.RawMessage, lifetime time.Duration, issuerPrincipal, issuerProvider string, issuerIdentities ...apikeypolicy.AuthenticatedAPIKeyIdentity) (string, ClientSecretAuthorization, time.Time, error) {\n',
+    'issuerIdentities ...apikeypolicy.AuthenticatedAPIKeyIdentity',
+)
+replace_once(
+    client_secret_source,
+    '''\tauthorization := ClientSecretAuthorization{
+''',
+    '''\tissuerIdentity := apikeypolicy.AuthenticatedAPIKeyIdentity{}
+\tif len(issuerIdentities) > 0 {
+\t\tissuerIdentity = issuerIdentities[0]
+\t}
+\tauthorization := ClientSecretAuthorization{
+''',
+    'issuerIdentity = issuerIdentities[0]',
 )
 replace_once(
     client_secret_source,
@@ -2193,30 +1892,6 @@ replace_once(
 ''',
     'issuerIdentity, _ := apikeypolicy.IdentityFromContext',
 )
-
-client_secret_test_source = ROOT / 'internal/client/codex/live/client_secret_test.go'
-client_secret_test_text = read(client_secret_test_source).replace(
-    '.create(session, time.Minute, ',
-    '.create(session, time.Minute, ',
-)
-client_secret_test_text = re.sub(
-    r'(clientSecrets\.create\([^\n]*?,\s*time\.[^\n]*?,\s*[^,\n]+,\s*[^)\n]+)(\))',
-    r'\1, apikeypolicy.AuthenticatedAPIKeyIdentity{}\2',
-    client_secret_test_text,
-)
-client_secret_test_text = re.sub(
-    r'(store\.create\([^\n]*?,\s*[^,\n]+,\s*[^,\n]+,\s*[^)\n]+)(\))',
-    r'\1, apikeypolicy.AuthenticatedAPIKeyIdentity{}\2',
-    client_secret_test_text,
-)
-if 'apikeypolicy.AuthenticatedAPIKeyIdentity{}' in client_secret_test_text:
-    if 'internal/pro/apikeypolicy' not in client_secret_test_text:
-        client_secret_test_text = client_secret_test_text.replace(
-            '"github.com/gin-gonic/gin"\n',
-            '"github.com/gin-gonic/gin"\n\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n',
-            1,
-        )
-    write(client_secret_test_source, client_secret_test_text)
 
 handlers_routing_source = ROOT / 'sdk/api/handlers/handlers_routing.go'
 add_go_import(handlers_routing_source, '"' + import_path('internal/interfaces') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
@@ -2564,79 +2239,6 @@ replace_once(
     'policyCtx, effectiveModel, effectiveBody, policyErr := applyAPIKeyModelPolicy',
 )
 
-handlers_metadata_test_source = ROOT / 'sdk/api/handlers/handlers_metadata_test.go'
-add_go_import(handlers_metadata_test_source, '"' + import_path('internal/logging') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
-insert_before(
-    handlers_metadata_test_source,
-    'func TestRequestExecutionMetadataIncludesExecutionSessionWithoutIdempotencyKey(t *testing.T) {\n',
-    '''func TestGetContextWithCancelInheritsServerAPIKeyPolicySnapshot(t *testing.T) {
-\tgin.SetMode(gin.TestMode)
-\tginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
-\tidentity, errIdentity := apikeypolicy.NewAuthenticatedAPIKeyIdentity("server-authenticated-key")
-\tif errIdentity != nil {
-\t\tt.Fatal(errIdentity)
-\t}
-\tdecision := apikeypolicy.PassthroughDecision()
-\trequestCtx := apikeypolicy.WithIdentity(context.Background(), identity)
-\trequestCtx = apikeypolicy.WithDecision(requestCtx, decision)
-\tginCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(requestCtx)
-
-\thandler := &BaseAPIHandler{Cfg: &config.SDKConfig{}}
-\tctx, cancel := handler.GetContextWithCancel(nil, ginCtx, context.Background())
-\tdefer cancel()
-\tgotIdentity, okIdentity := apikeypolicy.IdentityFromContext(ctx)
-\tgotDecision, okDecision := apikeypolicy.DecisionFromContext(ctx)
-\tif !okIdentity || gotIdentity.Hash() != identity.Hash() {
-\t\tt.Fatalf("identity inherited = %#v, %t", gotIdentity, okIdentity)
-\t}
-\tif !okDecision || gotDecision.Mode != apikeypolicy.ModePassthrough {
-\t\tt.Fatalf("decision inherited = %#v, %t", gotDecision, okDecision)
-\t}
-}
-
-''',
-    'func TestGetContextWithCancelInheritsServerAPIKeyPolicySnapshot(',
-)
-
-client_secret_test_text = read(client_secret_test_source)
-insert_marker = 'func TestStandardRealtimeCallMapsModelAndLocation(t *testing.T) {\n'
-if 'func TestCreateClientSecretRetainsServerIssuedAPIKeyIdentity(' not in client_secret_test_text:
-    identity_test = '''func TestCreateClientSecretRetainsServerIssuedAPIKeyIdentity(t *testing.T) {
-\tgin.SetMode(gin.TestMode)
-\thandler := &Handler{clientSecrets: newClientSecretStore()}
-\tidentity, errIdentity := apikeypolicy.NewAuthenticatedAPIKeyIdentity("issuer-key")
-\tif errIdentity != nil {
-\t\tt.Fatal(errIdentity)
-\t}
-\trouter := gin.New()
-\trouter.POST("/v1/realtime/client_secrets", func(c *gin.Context) {
-\t\tc.Set("userApiKey", "issuer-key")
-\t\tc.Set("accessProvider", "config-inline")
-\t\tc.Request = c.Request.WithContext(apikeypolicy.WithIdentity(c.Request.Context(), identity))
-\t}, handler.CreateClientSecret)
-\trequest := httptest.NewRequest(http.MethodPost, "/v1/realtime/client_secrets", strings.NewReader(`{"session":{"type":"realtime","model":"gpt-realtime"}}`))
-\trequest.Header.Set("Content-Type", "application/json")
-\trecorder := httptest.NewRecorder()
-\trouter.ServeHTTP(recorder, request)
-\tif recorder.Code != http.StatusOK {
-\t\tt.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-\t}
-\tvar response clientSecretCreateResponse
-\tif errDecode := json.Unmarshal(recorder.Body.Bytes(), &response); errDecode != nil {
-\t\tt.Fatal(errDecode)
-\t}
-\tauthRequest := httptest.NewRequest(http.MethodPost, "/v1/realtime", nil)
-\tauthRequest.Header.Set("Authorization", "Bearer "+response.Value)
-\tauthorization, matched, errAuthenticate := handler.AuthenticateClientSecret(authRequest)
-\tif errAuthenticate != nil || !matched || authorization.IssuerAPIKeyIdentity.Hash() != identity.Hash() {
-\t\tt.Fatalf("authorization = %#v matched=%t error=%v", authorization, matched, errAuthenticate)
-\t}
-}
-
-'''
-    client_secret_test_text = client_secret_test_text.replace(insert_marker, identity_test + insert_marker, 1)
-    write(client_secret_test_source, client_secret_test_text)
-
 plugin_executor_route_source = ROOT / 'internal/pluginhost/executor_route.go'
 insert_before(
     plugin_executor_route_source,
@@ -2871,66 +2473,6 @@ replace_once(
     'availableModels, policyErr := handlers.FilterModelMapsForRequest',
 )
 
-insert_before(
-    server_routes_source,
-    'func grokModelsFromHomeEntries(entries []homeModelEntry) []grokbuild.ModelInfo {\n',
-    '''func (s *Server) filterHomeModelEntries(c *gin.Context, entries []homeModelEntry) ([]homeModelEntry, bool) {
-\tids := make([]string, 0, len(entries))
-\tbyID := make(map[string]homeModelEntry, len(entries))
-\tfor _, entry := range entries {
-\t\tids = append(ids, entry.id)
-\t\tbyID[entry.id] = entry
-\t}
-\tvisible, policyErr := handlers.FilterModelsForRequest(c.Request.Context(), ids, func(string) []string { return []string{"home"} })
-\tif policyErr != nil {
-\t\ts.handlers.WriteErrorResponse(c, policyErr)
-\t\treturn nil, false
-\t}
-\tout := make([]homeModelEntry, 0, len(visible))
-\tfor _, model := range visible {
-\t\tentry, exists := byID[model.EffectiveID]
-\t\tif !exists {
-\t\t\tcontinue
-\t\t}
-\t\tentry.id = model.ID
-\t\tout = append(out, entry)
-\t}
-\treturn out, true
-}
-
-func (s *Server) filterRegistryGrokModels(c *gin.Context, infos []*registry.ModelInfo) ([]grokbuild.ModelInfo, bool) {
-\tids := make([]string, 0, len(infos))
-\tbyID := make(map[string]*registry.ModelInfo, len(infos))
-\tfor _, info := range infos {
-\t\tif info == nil {
-\t\t\tcontinue
-\t\t}
-\t\tids = append(ids, info.ID)
-\t\tbyID[info.ID] = info
-\t}
-\tvisible, policyErr := handlers.FilterModelsForRequest(c.Request.Context(), ids, registry.GetGlobalRegistry().GetModelProviders)
-\tif policyErr != nil {
-\t\ts.handlers.WriteErrorResponse(c, policyErr)
-\t\treturn nil, false
-\t}
-\tout := make([]grokbuild.ModelInfo, 0, len(visible))
-\tfor _, model := range visible {
-\t\tinfo := byID[model.EffectiveID]
-\t\tif info == nil {
-\t\t\tcontinue
-\t\t}
-\t\tentry := grokbuild.ModelInfo{ID: model.ID, DisplayName: info.DisplayName, ContextLength: info.ContextLength}
-\t\tif info.Thinking != nil {
-\t\t\tentry.ReasoningLevels = append([]string(nil), info.Thinking.Levels...)
-\t\t}
-\t\tout = append(out, entry)
-\t}
-\treturn out, true
-}
-
-''',
-    'func (s *Server) filterHomeModelEntries(',
-)
 replace_once(
     server_routes_source,
     '''\t} else {
@@ -3104,7 +2646,6 @@ replace_once(
 )
 
 usage_manager = ROOT / 'sdk/cliproxy/usage/manager.go'
-add_go_import(usage_manager, '"net/http"\n', '\t"reflect"\n')
 replace_once(
     usage_manager,
     '''\t// ResponseServiceTier stores the final tier reported by the upstream response.
@@ -3142,29 +2683,6 @@ replace_once(
 )
 replace_once(
     usage_manager,
-    'type serviceTierContextKey struct{}\n',
-    'type serviceTierContextKey struct{}\ntype streamContextKey struct{}\n',
-)
-replace_once(
-    usage_manager,
-    '''type streamContextKey struct{}
-type generateContextKey struct{}
-''',
-    '''type streamContextKey struct{}
-type attemptTrackerContextKey struct{}
-type attemptIndexContextKey struct{}
-type generateContextKey struct{}
-type skipMonitoringContextKey struct{}
-
-type attemptTracker struct {
-\tmu   sync.Mutex
-\tnext int64
-}
-''',
-    'type attemptTrackerContextKey struct{}',
-)
-replace_once(
-    usage_manager,
     '''\tTTFT        time.Duration
 \tFailed      bool
 ''',
@@ -3175,92 +2693,6 @@ replace_once(
 \tFailed       bool
 ''',
     'AttemptIndex *int64',
-)
-insert_before(
-    usage_manager,
-    '// WithServiceTier stores the client-requested service tier for usage sinks.\n',
-    '''// WithStream stores whether the client requested streaming output for usage sinks.
-func WithStream(ctx context.Context, stream bool) context.Context {
-\tif ctx == nil {
-\t\tctx = context.Background()
-\t}
-\treturn context.WithValue(ctx, streamContextKey{}, stream)
-}
-
-// StreamFromContext returns whether the client requested streaming output.
-func StreamFromContext(ctx context.Context) bool {
-\tif ctx == nil {
-\t\treturn false
-\t}
-\tstream, _ := ctx.Value(streamContextKey{}).(bool)
-\treturn stream
-}
-
-''',
-    'func WithStream(ctx context.Context, stream bool) context.Context',
-)
-insert_before(
-    usage_manager,
-    '// WithServiceTier stores the client-requested service tier for usage sinks.\n',
-    '''// WithAttemptTracking attaches one request-scoped upstream-attempt counter.
-func WithAttemptTracking(ctx context.Context) context.Context {
-\tif ctx == nil {
-\t\tctx = context.Background()
-\t}
-\tif tracker, ok := ctx.Value(attemptTrackerContextKey{}).(*attemptTracker); ok && tracker != nil {
-\t\treturn ctx
-\t}
-\treturn context.WithValue(ctx, attemptTrackerContextKey{}, &attemptTracker{})
-}
-
-// NextAttemptContext allocates the next zero-based upstream-attempt index.
-func NextAttemptContext(ctx context.Context) context.Context {
-\tctx = WithAttemptTracking(ctx)
-\ttracker, _ := ctx.Value(attemptTrackerContextKey{}).(*attemptTracker)
-\ttracker.mu.Lock()
-\tindex := tracker.next
-\ttracker.next++
-\ttracker.mu.Unlock()
-\treturn context.WithValue(ctx, attemptIndexContextKey{}, index)
-}
-
-// AttemptIndexFromContext returns the current upstream-attempt index when instrumented.
-func AttemptIndexFromContext(ctx context.Context) (int64, bool) {
-\tif ctx == nil {
-\t\treturn 0, false
-\t}
-\tindex, ok := ctx.Value(attemptIndexContextKey{}).(int64)
-\treturn index, ok
-}
-
-''',
-    'func WithAttemptTracking(ctx context.Context) context.Context',
-)
-insert_before(
-    usage_manager,
-    '// Plugin consumes usage records emitted by the proxy runtime.\n',
-    '''// WithSkipMonitoring marks an internal diagnostic request whose usage must
-// not be persisted by the request-monitoring sink. Other usage consumers still
-// receive the record so this flag does not change executor or auth semantics.
-func WithSkipMonitoring(ctx context.Context) context.Context {
-\tif ctx == nil {
-\t\tctx = context.Background()
-\t}
-\treturn context.WithValue(ctx, skipMonitoringContextKey{}, true)
-}
-
-// SkipMonitoringFromContext reports whether request-monitoring persistence
-// should ignore usage emitted from ctx.
-func SkipMonitoringFromContext(ctx context.Context) bool {
-\tif ctx == nil {
-\t\treturn false
-\t}
-\tskip, _ := ctx.Value(skipMonitoringContextKey{}).(bool)
-\treturn skip
-}
-
-''',
-    'func WithSkipMonitoring(ctx context.Context)',
 )
 replace_once(
     usage_manager,
@@ -3309,146 +2741,6 @@ replace_once(
 ''',
     'for index, existing := range m.plugins',
 )
-insert_before(
-    usage_manager,
-    '// Publish enqueues a usage record for processing. If no plugin is registered\n',
-    '''// UnregisterNamed removes a named plugin only when the current registration
-// still belongs to the supplied plugin. Passing nil removes it unconditionally.
-func (m *Manager) UnregisterNamed(name string, plugin Plugin) {
-\tif m == nil {
-\t\treturn
-\t}
-\tname = strings.TrimSpace(name)
-\tif name == "" {
-\t\treturn
-\t}
-\tm.pluginsMu.Lock()
-\tdefer m.pluginsMu.Unlock()
-\tindex, exists := m.named[name]
-\tif !exists || index < 0 || index >= len(m.plugins) {
-\t\treturn
-\t}
-\tcurrent := m.plugins[index]
-\tif plugin != nil && !samePlugin(current, plugin) {
-\t\towners := removeNamedOwner(m.namedOwners[name], plugin)
-\t\tif len(owners) == 0 {
-\t\t\tdelete(m.namedOwners, name)
-\t\t} else {
-\t\t\tm.namedOwners[name] = owners
-\t\t}
-\t\treturn
-\t}
-\tif plugin == nil {
-\t\tm.plugins[index] = nil
-\t\tdelete(m.named, name)
-\t\tdelete(m.namedOwners, name)
-\t\treturn
-\t}
-\towners := m.namedOwners[name]
-\tif count := len(owners); count > 0 {
-\t\tm.plugins[index] = owners[count-1]
-\t\towners = owners[:count-1]
-\t\tif len(owners) == 0 {
-\t\t\tdelete(m.namedOwners, name)
-\t\t} else {
-\t\t\tm.namedOwners[name] = owners
-\t\t}
-\t\treturn
-\t}
-\tm.plugins[index] = nil
-\tdelete(m.named, name)
-}
-
-func removeNamedOwner(owners []Plugin, plugin Plugin) []Plugin {
-\tfor index := len(owners) - 1; index >= 0; index-- {
-\t\tif samePlugin(owners[index], plugin) {
-\t\t\treturn append(owners[:index], owners[index+1:]...)
-\t\t}
-\t}
-\treturn owners
-}
-
-func samePlugin(left, right Plugin) bool {
-\tif left == nil || right == nil {
-\t\treturn left == nil && right == nil
-\t}
-\tleftValue := reflect.ValueOf(left)
-\trightValue := reflect.ValueOf(right)
-\treturn leftValue.Type() == rightValue.Type() &&
-\t\tleftValue.Type().Comparable() &&
-\t\tleftValue.Interface() == rightValue.Interface()
-}
-
-''',
-    'func (m *Manager) UnregisterNamed(name string, plugin Plugin)',
-)
-insert_before(
-    usage_manager,
-    '// PublishRecord publishes a record using the default manager.\n',
-    '''// UnregisterNamedPlugin removes a matching named plugin from the default manager.
-func UnregisterNamedPlugin(name string, plugin Plugin) { DefaultManager().UnregisterNamed(name, plugin) }
-
-''',
-    'func UnregisterNamedPlugin(name string, plugin Plugin)',
-)
-
-usage_manager_test = ROOT / 'sdk/cliproxy/usage/manager_test.go'
-if 'func TestUnregisterNamedPreservesReplacement' not in read(usage_manager_test):
-    write(usage_manager_test, read(usage_manager_test).rstrip() + '''
-
-type namedLifecycleUsagePlugin struct {
-\tcalls int
-}
-
-func (p *namedLifecycleUsagePlugin) HandleUsage(context.Context, Record) {
-\tp.calls++
-}
-
-func TestUnregisterNamedPreservesReplacement(t *testing.T) {
-\tmanager := NewManager(1)
-\tfirst := &namedLifecycleUsagePlugin{}
-\treplacement := &namedLifecycleUsagePlugin{}
-\tmanager.RegisterNamed("lifecycle", first)
-\tmanager.RegisterNamed("lifecycle", replacement)
-
-\tmanager.UnregisterNamed("lifecycle", first)
-\tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
-\tif replacement.calls != 1 {
-\t\tt.Fatalf("replacement calls = %d, want 1", replacement.calls)
-\t}
-
-\tmanager.UnregisterNamed("lifecycle", replacement)
-\tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
-\tif replacement.calls != 1 {
-\t\tt.Fatalf("replacement calls after unregister = %d, want 1", replacement.calls)
-\t}
-
-\tmanager.RegisterNamed("lifecycle", first)
-\tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
-\tif first.calls != 1 {
-\t\tt.Fatalf("re-registered plugin calls = %d, want 1", first.calls)
-\t}
-}
-''')
-
-if 'func TestUnregisterNamedRestoresOlderLiveOwner' not in read(usage_manager_test):
-    write(usage_manager_test, read(usage_manager_test).rstrip() + '''
-
-func TestUnregisterNamedRestoresOlderLiveOwner(t *testing.T) {
-\tmanager := NewManager(1)
-\tfirst := &namedLifecycleUsagePlugin{}
-\treplacement := &namedLifecycleUsagePlugin{}
-\tmanager.RegisterNamed("lifecycle", first)
-\tmanager.RegisterNamed("lifecycle", replacement)
-
-\tmanager.UnregisterNamed("lifecycle", replacement)
-\tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
-\tif first.calls != 1 || replacement.calls != 0 {
-\t\tt.Fatalf("restored owner calls = first:%d replacement:%d", first.calls, replacement.calls)
-\t}
-}
-''')
-
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_execution.go'
 replace_once(
     auth_conductor,
@@ -3634,10 +2926,6 @@ replace_once(
 )
 
 usage_helpers = ROOT / 'internal/runtime/executor/helps/usage_helpers.go'
-usage_helpers_test = ROOT / 'internal/runtime/executor/helps/usage_helpers_test.go'
-add_go_import(usage_helpers, '"github.com/gin-gonic/gin"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
-add_go_import(usage_helpers, '"github.com/tidwall/gjson"\n', '\tlog "github.com/sirupsen/logrus"\n')
-add_go_import(usage_helpers_test, '"github.com/router-for-me/CLIProxyAPI/v7/internal/clienterror"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
 replace_once(
     usage_helpers,
     '''\treasoning       string
@@ -3766,52 +3054,8 @@ replace_once(
 \tb.ok = true
 }
 
-// ObserveClaude records Anthropic stream usage. The Messages API reports
-// input/cache buckets in message_start and final output in message_delta, so
-// retain earlier input buckets independently of whether the response reports a
-// speed. Keep this protocol-specific behavior out of Observe so OpenAI-style
-// streams continue to use their final complete usage object as authoritative.
-func (b *StreamUsageBuffer) ObserveClaude(detail usage.Detail, ok bool) {
-\tif b == nil || !ok {
-\t\treturn
-\t}
-\tpreservedInput := b.detail.InputTokens
-\tpreservedCacheRead := b.detail.CacheReadTokens
-\tpreservedCacheCreation := b.detail.CacheCreationTokens
-\tb.Observe(detail, true)
-\tmerged := false
-\tif detail.InputTokens == 0 && preservedInput != 0 {
-\t\tb.detail.InputTokens = preservedInput
-\t\tmerged = true
-\t}
-\tif detail.CacheReadTokens == 0 {
-\t\tb.detail.CacheReadTokens = preservedCacheRead
-\t\tmerged = merged || preservedCacheRead != 0
-\t}
-\tif detail.CacheCreationTokens == 0 {
-\t\tb.detail.CacheCreationTokens = preservedCacheCreation
-\t\tmerged = merged || preservedCacheCreation != 0
-\t}
-\tif !merged {
-\t\treturn
-\t}
-\tb.detail.CachedTokens = b.detail.CacheReadTokens
-\tif b.detail.CachedTokens == 0 {
-\t\tb.detail.CachedTokens = b.detail.CacheCreationTokens
-\t}
-\tb.detail.TotalTokens = b.detail.InputTokens + b.detail.OutputTokens + b.detail.CacheReadTokens + b.detail.CacheCreationTokens
-\tb.detail.TokenBreakdown = usage.NewIndependentTokenBreakdown(
-\t\tb.detail.InputTokens,
-\t\tb.detail.CacheReadTokens,
-\t\tb.detail.CacheCreationTokens,
-\t\tmax(b.detail.OutputTokens-b.detail.ReasoningTokens, 0),
-\t\tb.detail.ReasoningTokens,
-\t\tb.detail.TotalTokens,
-\t)
-}
-
 ''',
-    'func (b *StreamUsageBuffer) ObserveClaude(detail usage.Detail, ok bool)',
+    'responseSpeed := strings.TrimSpace(detail.ResponseSpeed)',
 )
 
 stream_usage_failure_signature = 'func (b *StreamUsageBuffer) PublishFailure(ctx context.Context, reporter *UsageReporter, errs ...error) bool'
@@ -4142,10 +3386,10 @@ replace_once(
     '''\t\t\tif upstreamCompleted {
 \t\t\t\tcommitClaudeDiagnostics(diagnosticsState, upstreamMessageID)
 \t\t\t}
-\t\t\tusageBuffer.Publish(ctx, reporter)
+\t\t\tterminal.publishSuccess(&usageBuffer)
 \t\t\treturn
 ''',
-    'usageBuffer.Publish(ctx, reporter)\n\t\t\treturn',
+    'terminal.publishSuccess(&usageBuffer)\n\t\t\treturn',
 )
 replace_once(
     claude_stream,
@@ -4181,10 +3425,10 @@ replace_once(
     '''\t\tif upstreamCompleted {
 \t\t\tcommitClaudeDiagnostics(diagnosticsState, upstreamMessageID)
 \t\t}
-\t\tusageBuffer.Publish(ctx, reporter)
+\t\tterminal.publishSuccess(&usageBuffer)
 \t}()
 ''',
-    'usageBuffer.Publish(ctx, reporter)\n\t}()',
+    'terminal.publishSuccess(&usageBuffer)\n\t}()',
 )
 claude_failure_helpers_old = '''\t\temitCancellation := func(cause error) bool {
 \t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, fp.OAuthCancellation, cause)
@@ -4209,39 +3453,17 @@ claude_failure_helpers_old = '''\t\temitCancellation := func(cause error) bool {
 \t\t\t}
 \t\t}
 '''
-claude_failure_helpers_new = '''\t\tpublishStreamFailure := func(usageBuffer *helps.StreamUsageBuffer, errResponse error) {
-\t\t\tif usageBuffer == nil || !usageBuffer.PublishFailure(ctx, reporter, errResponse) {
-\t\t\t\treporter.PublishFailure(ctx, errResponse)
-\t\t\t}
-\t\t}
-\t\temitCancellation := func(usageBuffer *helps.StreamUsageBuffer, cause error) bool {
-\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, fp.OAuthCancellation, cause)
-\t\t\tif cancelErr == nil {
-\t\t\t\treturn false
-\t\t\t}
-\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, cancelErr)
-\t\t\tpublishStreamFailure(usageBuffer, cancelErr)
-\t\t\tselect {
-\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: cancelErr}:
-\t\t\tdefault:
-\t\t\t}
-\t\t\treturn true
-\t\t}
-\t\temitResponseError := func(usageBuffer *helps.StreamUsageBuffer, errResponse error) {
-\t\t\terrResponse = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errResponse)
-\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errResponse)
-\t\t\tpublishStreamFailure(usageBuffer, errResponse)
-\t\t\tselect {
-\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: errResponse}:
-\t\t\tcase <-ctx.Done():
-\t\t\t}
+claude_terminal_init = '''\t\tterminal := claudeStreamTerminal{
+\t\t\tctx: ctx, cfg: e.cfg, reporter: reporter, out: out,
+\t\t\tstatusCode: httpResp.StatusCode, fastRequest: fastRequest,
+\t\t\toauthCancellation: fp.OAuthCancellation,
 \t\t}
 '''
 replace_once(
     claude_stream,
     claude_failure_helpers_old,
-    claude_failure_helpers_new,
-    'publishStreamFailure := func(usageBuffer *helps.StreamUsageBuffer',
+    claude_terminal_init,
+    'terminal := claudeStreamTerminal{',
 )
 
 stream_text = read(claude_stream)
@@ -4250,7 +3472,7 @@ if stream_text.count(restore_failure_call) != 2:
     raise SystemExit('expected two Claude stream restore failure calls')
 stream_text = stream_text.replace(
     restore_failure_call,
-    'emitResponseError(&usageBuffer, fmt.Errorf("restore Claude OAuth tool name from streaming response: %w", errRestore))',
+    'terminal.emitResponseError(&usageBuffer, fmt.Errorf("restore Claude OAuth tool name from streaming response: %w", errRestore))',
 )
 cancellation_block = '''\t\t\t\tif len(bytes.TrimSpace(line)) == 0 && !flushEvent() {
 \t\t\t\t\temitCancellation(ctx.Err())
@@ -4258,9 +3480,7 @@ cancellation_block = '''\t\t\t\tif len(bytes.TrimSpace(line)) == 0 && !flushEven
 \t\t\t\t}
 '''
 cancellation_replacement = '''\t\t\t\tif len(bytes.TrimSpace(line)) == 0 && !flushEvent() {
-\t\t\t\t\tif !emitCancellation(&usageBuffer, ctx.Err()) {
-\t\t\t\t\t\tpublishStreamFailure(&usageBuffer, ctx.Err())
-\t\t\t\t\t}
+\t\t\t\t\tterminal.publishCancellation(&usageBuffer, ctx.Err())
 \t\t\t\t\treturn
 \t\t\t\t}
 '''
@@ -4273,9 +3493,7 @@ final_flush_block = '''\t\t\tif !flushEvent() {
 \t\t\t}
 '''
 final_flush_replacement = '''\t\t\tif !flushEvent() {
-\t\t\t\tif !emitCancellation(&usageBuffer, ctx.Err()) {
-\t\t\t\t\tpublishStreamFailure(&usageBuffer, ctx.Err())
-\t\t\t\t}
+\t\t\t\tterminal.publishCancellation(&usageBuffer, ctx.Err())
 \t\t\t\treturn
 \t\t\t}
 '''
@@ -4287,56 +3505,54 @@ translated_cancellation_block = '''\t\t\t\tcase <-ctx.Done():
 \t\t\t\t\treturn
 '''
 translated_cancellation_replacement = '''\t\t\t\tcase <-ctx.Done():
-\t\t\t\t\tif !emitCancellation(&usageBuffer, ctx.Err()) {
-\t\t\t\t\t\tpublishStreamFailure(&usageBuffer, ctx.Err())
-\t\t\t\t\t}
+\t\t\t\t\tterminal.publishCancellation(&usageBuffer, ctx.Err())
 \t\t\t\t\treturn
 '''
 if stream_text.count(translated_cancellation_block) != 1:
     raise SystemExit('expected translated Claude output cancellation block')
 stream_text = stream_text.replace(translated_cancellation_block, translated_cancellation_replacement, 1)
-if stream_text.count('emitCancellation(scanner.Err())') != 2:
-    raise SystemExit('expected two Claude scanner cancellation calls')
-stream_text = stream_text.replace('emitCancellation(scanner.Err())', 'emitCancellation(&usageBuffer, scanner.Err())')
-native_scanner_outcome = '''\t\t\tif emitCancellation(&usageBuffer, scanner.Err()) {
+native_scanner_outcome = '''\t\t\tif emitCancellation(scanner.Err()) {
 \t\t\t\treturn
 \t\t\t}
 \t\t\tif errScan := scanner.Err(); errScan != nil {
+\t\t\t\terrScan = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errScan)
+\t\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errScan)
+\t\t\t\treporter.PublishFailure(ctx, errScan)
+\t\t\t\tselect {
+\t\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: errScan}:
+\t\t\t\tcase <-ctx.Done():
+\t\t\t\t}
+\t\t\t\treturn
+\t\t\t}
 '''
-native_scanner_outcome_replacement = '''\t\t\tscannerErr := scanner.Err()
-\t\t\tif emitCancellation(&usageBuffer, scannerErr) {
+native_scanner_replacement = '''\t\t\tif terminal.finishScanner(&usageBuffer, scanner.Err()) {
 \t\t\t\treturn
 \t\t\t}
-\t\t\tif scannerErr == nil && ctx.Err() != nil {
-\t\t\t\tpublishStreamFailure(&usageBuffer, ctx.Err())
-\t\t\t\treturn
-\t\t\t}
-\t\t\tif errScan := scannerErr; errScan != nil {
 '''
 if stream_text.count(native_scanner_outcome) != 1:
     raise SystemExit('expected native Claude scanner outcome block')
-stream_text = stream_text.replace(native_scanner_outcome, native_scanner_outcome_replacement, 1)
-translated_scanner_outcome = '''\t\tif emitCancellation(&usageBuffer, scanner.Err()) {
+stream_text = stream_text.replace(native_scanner_outcome, native_scanner_replacement, 1)
+translated_scanner_outcome = '''\t\tif emitCancellation(scanner.Err()) {
 \t\t\treturn
 \t\t}
 \t\tif errScan := scanner.Err(); errScan != nil {
+\t\t\terrScan = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errScan)
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errScan)
+\t\t\treporter.PublishFailure(ctx, errScan)
+\t\t\tselect {
+\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: errScan}:
+\t\t\tcase <-ctx.Done():
+\t\t\t}
+\t\t\treturn
+\t\t}
 '''
-translated_scanner_outcome_replacement = '''\t\tscannerErr := scanner.Err()
-\t\tif emitCancellation(&usageBuffer, scannerErr) {
+translated_scanner_replacement = '''\t\tif terminal.finishScanner(&usageBuffer, scanner.Err()) {
 \t\t\treturn
 \t\t}
-\t\tif scannerErr == nil && ctx.Err() != nil {
-\t\t\tpublishStreamFailure(&usageBuffer, ctx.Err())
-\t\t\treturn
-\t\t}
-\t\tif errScan := scannerErr; errScan != nil {
 '''
 if stream_text.count(translated_scanner_outcome) != 1:
     raise SystemExit('expected translated Claude scanner outcome block')
-stream_text = stream_text.replace(translated_scanner_outcome, translated_scanner_outcome_replacement, 1)
-if stream_text.count('reporter.PublishFailure(ctx, errScan)') != 2:
-    raise SystemExit('expected two Claude scanner failure publishes')
-stream_text = stream_text.replace('reporter.PublishFailure(ctx, errScan)', 'publishStreamFailure(&usageBuffer, errScan)')
+stream_text = stream_text.replace(translated_scanner_outcome, translated_scanner_replacement, 1)
 write(claude_stream, stream_text)
 replace_once(
     usage_helpers,
@@ -4346,99 +3562,17 @@ replace_once(
 }
 ''',
     '''func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
-\trecord.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
-\tif attemptIndex, ok := usage.AttemptIndexFromContext(ctx); ok {
-\t\trecord.AttemptIndex = &attemptIndex
-\t}
+\tprepareUsageRecordForPublish(ctx, &record)
 \tusage.PublishRecord(ctx, record)
 }
 ''',
-    'record.AttemptIndex = &attemptIndex',
+    'prepareUsageRecordForPublish(ctx, &record)',
 )
 replace_once(
     usage_helpers,
-    '''\trecord.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
-\tif attemptIndex, ok := usage.AttemptIndexFromContext(ctx); ok {
-\t\trecord.AttemptIndex = &attemptIndex
-\t}
-\tusage.PublishRecord(ctx, record)
-''',
-    '''\trecord.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
-\tif attemptIndex, ok := usage.AttemptIndexFromContext(ctx); ok {
-\t\trecord.AttemptIndex = &attemptIndex
-\t}
-\tquotaDetail := usage.EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
-\ttotalTokens := quotaDetail.TokenBreakdown.TotalTokens
-\tif totalTokens == 0 {
-\t\ttotalTokens = quotaDetail.TotalTokens
-\t}
-\tattemptIndex := int64(-1)
-\tif record.AttemptIndex != nil {
-\t\tattemptIndex = *record.AttemptIndex
-\t}
-\teventID := fmt.Sprintf("usage:%d:provider=%q:executor=%q:model=%q:alias=%q:attempt=%d", record.RequestedAt.UnixNano(), record.Provider, record.ExecutorType, record.Model, record.Alias, attemptIndex)
-\tif err := apikeypolicy.SettleQuotaUsage(ctx, eventID, apikeypolicy.QuotaUsageDelta{
-\t\tProvider: record.Provider, Model: record.Model,
-\t\tInputTokens: quotaDetail.InputTokens, OutputTokens: quotaDetail.OutputTokens,
-\t\tReasoningTokens: quotaDetail.ReasoningTokens, CachedTokens: quotaDetail.CachedTokens,
-\t\tCacheReadTokens: quotaDetail.CacheReadTokens, CacheWriteTokens: quotaDetail.CacheCreationTokens,
-\t\tTotalTokens: totalTokens, ServiceTier: record.ServiceTier,
-\t\tEffectiveServiceTier: record.ResponseServiceTier, Speed: record.Speed,
-\t\tEffectiveSpeed: record.ResponseSpeed,
-\t}); err != nil {
-\t\tlog.WithError(err).Error("failed to settle API key quota usage")
-\t}
-\tusage.PublishRecord(ctx, record)
-''',
-    'failed to settle API key quota usage',
+    '\tinternallogging "' + import_path('internal/logging') + '"\n',
+    '',
 )
-
-if 'func TestUsageReporterSettlesQuotaSynchronouslyWithDistinctRecordIDs' not in read(usage_helpers_test):
-    write(usage_helpers_test, read(usage_helpers_test).rstrip() + '''
-
-func TestUsageReporterSettlesQuotaSynchronouslyWithDistinctRecordIDs(t *testing.T) {
-\ttype settlement struct {
-\t\teventID string
-\t\ttokens  int64
-\t}
-\tsettlements := make([]settlement, 0, 2)
-\tctx := apikeypolicy.WithQuotaSettlement(context.Background(), func(_ context.Context, eventID string, totalTokens int64) error {
-\t\tsettlements = append(settlements, settlement{eventID: eventID, tokens: totalTokens})
-\t\treturn nil
-\t})
-\treporter := NewUsageReporter(ctx, "codex", "gpt-5", nil)
-\treporter.Publish(ctx, usage.Detail{TotalTokens: 3})
-\treporter.PublishAdditionalModel(ctx, "gpt-image-1", usage.Detail{TotalTokens: 4})
-
-\tif len(settlements) != 2 {
-\t\tt.Fatalf("synchronous quota settlements = %#v, want two before Publish returns", settlements)
-\t}
-\tif settlements[0].tokens != 3 || settlements[1].tokens != 4 {
-\t\tt.Fatalf("quota settlement tokens = %#v", settlements)
-\t}
-\tif settlements[0].eventID == "" || settlements[0].eventID == settlements[1].eventID {
-\t\tt.Fatalf("quota settlement event IDs = %#v, want distinct stable record identities", settlements)
-\t}
-}
-''')
-
-if 'func TestAttemptTrackingAllocatesZeroBasedIndexes' not in read(usage_manager_test):
-    write(usage_manager_test, read(usage_manager_test).rstrip() + '''
-
-func TestAttemptTrackingAllocatesZeroBasedIndexes(t *testing.T) {
-\tctx := WithAttemptTracking(context.Background())
-\tfor want := int64(0); want < 3; want++ {
-\t\tattemptCtx := NextAttemptContext(ctx)
-\t\tgot, ok := AttemptIndexFromContext(attemptCtx)
-\t\tif !ok || got != want {
-\t\t\tt.Fatalf("attempt index = %d, %t; want %d, true", got, ok, want)
-\t\t}
-\t}
-\tif _, ok := AttemptIndexFromContext(context.Background()); ok {
-\t\tt.Fatal("uninstrumented context unexpectedly has an attempt index")
-\t}
-}
-''')
 
 config_defaults = ROOT / 'internal/config/config_defaults.go'
 replace_once(
@@ -4878,22 +4012,6 @@ replace_once(
 ''',
 )
 
-add_go_import(
-    ROOT / 'internal/pluginhost/adapters_executors.go',
-    f'\t"{MODULE_PATH}/internal/registry"\n',
-    f'\t"{MODULE_PATH}/internal/logging"\n',
-)
-add_go_import(
-    ROOT / 'internal/pluginhost/adapters_executors.go',
-    f'\t"{MODULE_PATH}/internal/logging"\n',
-    f'\t"{MODULE_PATH}/internal/runtime/executor/helps"\n',
-)
-add_go_import(
-    ROOT / 'internal/pluginhost/adapters_executors.go',
-    f'\tcoreexecutor "{MODULE_PATH}/sdk/cliproxy/executor"\n',
-    f'\tcoreusage "{MODULE_PATH}/sdk/cliproxy/usage"\n',
-)
-
 replace_once(
     ROOT / 'internal/pluginhost/adapters_executors.go',
     '''func (a *executorAdapter) Execute(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (resp coreexecutor.Response, err error) {
@@ -5006,161 +4124,6 @@ replace_once(
 ''',
     'trackPluginExecutorStreamUsage(',
 )
-
-replace_once(
-    ROOT / 'internal/pluginhost/adapters_executors.go',
-    '''func mapExecutorStreamChunks(ctx context.Context, in <-chan pluginapi.ExecutorStreamChunk) <-chan coreexecutor.StreamChunk {
-''',
-    '''func pluginExecutorUsageContext(ctx context.Context, headers http.Header) context.Context {
-\tlogging.SetResponseHeaders(ctx, headers)
-\tif len(headers) == 0 || len(logging.GetResponseHeaders(ctx)) > 0 {
-\t\treturn ctx
-\t}
-\tctx = logging.WithResponseHeadersHolder(ctx)
-\tlogging.SetResponseHeaders(ctx, headers)
-\treturn ctx
-}
-
-func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.StreamChunk, reporter *helps.UsageReporter, format sdktranslator.Format) <-chan coreexecutor.StreamChunk {
-\tif ctx == nil {
-\t\tctx = context.Background()
-\t}
-\tout := make(chan coreexecutor.StreamChunk)
-\tgo func() {
-\t\tdefer close(out)
-\t\tsawPayload := false
-\t\tvar usageBuffer helps.StreamUsageBuffer
-	\tvar terminalErr error
-\t\tfor {
-\t\t\tselect {
-\t\t\tcase <-ctx.Done():
-\t\t\t\tif !usageBuffer.PublishFailure(ctx, reporter, ctx.Err()) {
-\t\t\t\t\treporter.PublishFailure(ctx, ctx.Err())
-\t\t\t\t}
-\t\t\t\treturn
-\t\t\tcase chunk, ok := <-in:
-\t\t\t\tif !ok {
-\t\t\t\t\tif terminalErr != nil {
-\t\t\t\t\t\tif !usageBuffer.PublishFailure(ctx, reporter, terminalErr) {
-\t\t\t\t\t\t\treporter.PublishFailure(ctx, terminalErr)
-\t\t\t\t\t\t}
-\t\t\t\t\t} else if sawPayload {
-\t\t\t\t\t\tif !usageBuffer.Publish(ctx, reporter) {
-\t\t\t\t\t\t\treporter.EnsurePublished(ctx)
-\t\t\t\t\t\t}
-\t\t\t\t\t} else {
-\t\t\t\t\t\treporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})
-\t\t\t\t\t}
-\t\t\t\t\treturn
-\t\t\t\t}
-\t\t\t\tif chunk.Err != nil {
-\t\t\t\t\tterminalErr = chunk.Err
-\t\t\t\t} else if len(chunk.Payload) > 0 {
-\t\t\t\t\tsawPayload = true
-\t\t\t\t\tobservePluginExecutorUsage(&usageBuffer, format, chunk.Payload, true)
-\t\t\t\t}
-\t\t\t\tselect {
-\t\t\t\tcase <-ctx.Done():
-\t\t\t\t\tif !usageBuffer.PublishFailure(ctx, reporter, ctx.Err()) {
-\t\t\t\t\t\treporter.PublishFailure(ctx, ctx.Err())
-\t\t\t\t\t}
-\t\t\t\t\treturn
-\t\t\t\tcase out <- chunk:
-\t\t\t\t}
-\t\t\t}
-\t\t}
-\t}()
-\treturn out
-}
-
-func publishPluginExecutorUsage(ctx context.Context, reporter *helps.UsageReporter, format sdktranslator.Format, payload []byte, stream bool) bool {
-\tvar buffer helps.StreamUsageBuffer
-\tobservePluginExecutorUsage(&buffer, format, payload, stream)
-\treturn buffer.Publish(ctx, reporter)
-}
-
-func pluginExecutorUsageFormat(prepared preparedExecutorCall) sdktranslator.Format {
-\tif prepared.requestedFormat != "" {
-\t\treturn prepared.requestedFormat
-\t}
-\treturn prepared.outputFormat
-}
-
-func observePluginExecutorUsage(buffer *helps.StreamUsageBuffer, format sdktranslator.Format, payload []byte, stream bool) {
-\tif buffer == nil || len(payload) == 0 {
-\t\treturn
-\t}
-\tpayload = pluginExecutorJSONPayload(payload)
-\tif len(payload) == 0 {
-\t\treturn
-\t}
-\tvar detail coreusage.Detail
-\tvar ok bool
-\tswitch format {
-\tcase sdktranslator.FormatCodex, sdktranslator.FormatOpenAIResponse:
-\t\tdetail, ok = helps.ParseCodexUsage(payload)
-\tcase sdktranslator.FormatClaude:
-\t\tif stream {
-\t\t\tdetail, ok = helps.ParseClaudeStreamUsage(payload)
-\t\t\tbuffer.ObserveClaude(detail, ok)
-\t\t\treturn
-\t\t}
-\t\tdetail = helps.ParseClaudeUsage(payload)
-\t\tok = pluginExecutorUsageDetailPresent(detail)
-\tcase sdktranslator.FormatGemini, sdktranslator.FormatAntigravity:
-\t\tif stream {
-\t\t\tdetail, ok = helps.ParseGeminiStreamUsage(payload)
-\t\t} else {
-\t\t\tdetail = helps.ParseGeminiUsage(payload)
-\t\t\tok = pluginExecutorUsageDetailPresent(detail)
-\t\t}
-\tcase sdktranslator.FormatInteractions:
-\t\tif stream {
-\t\t\tdetail, ok = helps.ParseInteractionsStreamUsage(payload)
-\t\t} else {
-\t\t\tdetail = helps.ParseInteractionsUsage(payload)
-\t\t\tok = pluginExecutorUsageDetailPresent(detail)
-\t\t}
-\tdefault:
-\t\tif stream {
-\t\t\tdetail, ok = helps.ParseOpenAIStreamUsage(payload)
-\t\t} else {
-\t\t\tdetail = helps.ParseOpenAIUsage(payload)
-\t\t\tok = pluginExecutorUsageDetailPresent(detail)
-\t\t}
-\t}
-\tbuffer.Observe(detail, ok)
-}
-
-func pluginExecutorJSONPayload(payload []byte) []byte {
-\tif parsed := helps.JSONPayload(payload); len(parsed) > 0 {
-\t\treturn parsed
-\t}
-\tfor _, line := range bytes.Split(payload, []byte("\\n")) {
-\t\tif parsed := helps.JSONPayload(line); len(parsed) > 0 {
-\t\t\treturn parsed
-\t\t}
-\t}
-\treturn nil
-}
-
-func pluginExecutorUsageDetailPresent(detail coreusage.Detail) bool {
-\treturn detail.InputTokens != 0 || detail.OutputTokens != 0 || detail.ReasoningTokens != 0 ||
-\t\tdetail.CachedTokens != 0 || detail.CacheReadTokens != 0 || detail.CacheCreationTokens != 0 ||
-\t\tdetail.TotalTokens != 0 || detail.TokenBreakdown.TotalTokens != 0 ||
-\t\tstrings.TrimSpace(detail.ResponseServiceTier) != "" || strings.TrimSpace(detail.ResponseSpeed) != ""
-}
-
-type pluginExecutorEmptyStreamError struct{}
-
-func (pluginExecutorEmptyStreamError) Error() string { return "plugin executor stream closed before first payload" }
-func (pluginExecutorEmptyStreamError) StatusCode() int { return http.StatusBadGateway }
-
-func mapExecutorStreamChunks(ctx context.Context, in <-chan pluginapi.ExecutorStreamChunk) <-chan coreexecutor.StreamChunk {
-''',
-    'func trackPluginExecutorStreamUsage(',
-)
-
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat.go')
 
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat_test.go')
@@ -5184,11 +4147,6 @@ api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
 api_tools_executor_proxy_test = ROOT / 'internal/api/handlers/management/api_tools_executor_proxy_test.go'
 routing_policy = ROOT / 'internal/api/handlers/management/routing_policy.go'
 routing_policy_test = ROOT / 'internal/api/handlers/management/routing_policy_test.go'
-replace_once(
-    auth_files,
-    f'\t"{MODULE_PATH}/internal/credentialweight"\n',
-    f'\t"{MODULE_PATH}/internal/credentialweight"\n\tproquota "{MODULE_PATH}/internal/pro/quota"\n',
-)
 replace_once(
     server_management,
     '\t\tmgmt.GET("/latest-version", s.mgmt.GetLatestVersion)\n',
@@ -5388,75 +4346,6 @@ replace_once(
 		"runtime_only":   runtimeOnly,
 ''',
 )
-insert_before(
-    auth_files,
-    'func authAttribute(auth *coreauth.Auth, key string) string {\n',
-    '''func authFileLastError(auth *coreauth.Auth) *coreauth.Error {
-	if auth == nil {
-		return nil
-	}
-	if auth.LastError != nil {
-		return auth.LastError
-	}
-	if auth.Metadata == nil {
-		return nil
-	}
-	raw, ok := auth.Metadata["last_error"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	lastError := &coreauth.Error{
-		Code:       metadataString(raw["code"]),
-		Message:    metadataString(raw["message"]),
-		Retryable:  metadataBool(raw["retryable"]),
-		HTTPStatus: metadataInt(raw["http_status"]),
-	}
-	if lastError.Code == "" && lastError.Message == "" && lastError.HTTPStatus == 0 {
-		return nil
-	}
-	return lastError
-}
-
-func metadataString(value any) string {
-	if value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
-}
-
-func metadataBool(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true")
-	default:
-		return false
-	}
-}
-
-func metadataInt(value any) int {
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int64:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case json.Number:
-		parsed, _ := typed.Int64()
-		return int(parsed)
-	case string:
-		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
-		return parsed
-	default:
-		return 0
-	}
-}
-
-''',
-    'func authFileLastError',
-)
 replace_once(
     auth_files,
     '''				typeValue := gjson.GetBytes(data, "type").String()
@@ -5486,55 +4375,6 @@ replace_once(
 				}
 ''',
 )
-insert_before(
-    auth_files,
-    'func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {\n',
-    '''func xaiAuthFilePlanTypeFromRaw(accessToken string) string {
-	plan, known := proquota.XAIPlanTypeFromAccessToken(accessToken)
-	if !known {
-		return ""
-	}
-	return plan
-}
-
-func xaiAuthFilePlanType(auth *coreauth.Auth) string {
-	if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "xai") {
-		return ""
-	}
-	if auth.Metadata != nil {
-		for _, key := range []string{"access_token", "accessToken"} {
-			if token, ok := auth.Metadata[key].(string); ok {
-				if plan := xaiAuthFilePlanTypeFromRaw(token); plan != "" {
-					return plan
-				}
-			}
-		}
-	}
-	if auth.Attributes != nil {
-		for _, key := range []string{"access_token", "accessToken"} {
-			if plan := xaiAuthFilePlanTypeFromRaw(auth.Attributes[key]); plan != "" {
-				return plan
-			}
-		}
-	}
-	return ""
-}
-
-func extractCodexIDTokenClaimsFromRaw(idTokenRaw string) gin.H {
-	idToken := strings.TrimSpace(idTokenRaw)
-	if idToken == "" {
-		return nil
-	}
-	claims, err := codex.ParseJWTToken(idToken)
-	if err != nil || claims == nil {
-		return nil
-	}
-	return codexIDTokenClaimsEntry(claims)
-}
-
-''',
-    'func xaiAuthFilePlanTypeFromRaw',
-)
 replace_go_function(
     auth_files,
     'func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H',
@@ -5551,32 +4391,8 @@ replace_go_function(
 	}
 	return extractCodexIDTokenClaimsFromRaw(idTokenRaw)
 }
-
-func codexIDTokenClaimsEntry(claims *codex.JWTClaims) gin.H {
-	if claims == nil {
-		return nil
-	}
-	result := gin.H{}
-	if v := strings.TrimSpace(claims.CodexAuthInfo.ChatgptAccountID); v != "" {
-		result["chatgpt_account_id"] = v
-	}
-	if v := strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType); v != "" {
-		result["plan_type"] = v
-	}
-	if v := claims.CodexAuthInfo.ChatgptSubscriptionActiveStart; v != nil {
-		result["chatgpt_subscription_active_start"] = v
-	}
-	if v := claims.CodexAuthInfo.ChatgptSubscriptionActiveUntil; v != nil {
-		result["chatgpt_subscription_active_until"] = v
-	}
-
-	if len(result) == 0 {
-		return nil
-	}
-	return result
-}
 ''',
-    'func codexIDTokenClaimsEntry',
+    'return extractCodexIDTokenClaimsFromRaw(idTokenRaw)',
 )
 
 patch_dir = Path(__file__).resolve().parent
@@ -5606,19 +4422,9 @@ write(
 )
 
 redisqueue_plugin = ROOT / 'internal/redisqueue/plugin.go'
-replace_once(
-    redisqueue_plugin,
-    f'\tinternallogging "{import_path("internal/logging")}"\n',
-    f'\t"{import_path("internal/requestmeta")}"\n',
-    f'"{import_path("internal/requestmeta")}"',
-)
-redisqueue_plugin_text = read(redisqueue_plugin)
-if 'internallogging.' not in redisqueue_plugin_text:
-    raise SystemExit(f'latest upstream request metadata calls not found in {redisqueue_plugin}')
-write(redisqueue_plugin, redisqueue_plugin_text.replace('internallogging.', 'requestmeta.'))
 add_go_import(
     redisqueue_plugin,
-    '"' + import_path('internal/requestmeta') + '"\n',
+    'internallogging "' + import_path('internal/logging') + '"\n',
     '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n',
 )
 replace_once(
@@ -5638,8 +4444,8 @@ replace_once(
 )
 replace_once(
     redisqueue_plugin,
-    '\trequestID := strings.TrimSpace(requestmeta.GetRequestID(ctx))\n\treasoningEffort :=',
-    '\trequestID := strings.TrimSpace(requestmeta.GetRequestID(ctx))\n\tstream := coreusage.StreamFromContext(ctx)\n\treasoningEffort :=',
+    '\trequestID := strings.TrimSpace(internallogging.GetRequestID(ctx))\n\treasoningEffort :=',
+    '\trequestID := strings.TrimSpace(internallogging.GetRequestID(ctx))\n\tstream := coreusage.StreamFromContext(ctx)\n\treasoningEffort :=',
     'stream := coreusage.StreamFromContext(ctx)',
 )
 replace_once(
@@ -5662,7 +4468,7 @@ replace_once(
 replace_once(
     redisqueue_plugin,
     '''\tresponseServiceTier := strings.TrimSpace(record.ResponseServiceTier)
-\tclientRequestMetadata := requestmeta.GetClientRequestMetadata(ctx)
+\tclientRequestMetadata := internallogging.GetClientRequestMetadata(ctx)
 ''',
     '''\tresponseServiceTier := strings.TrimSpace(record.ResponseServiceTier)
 \tspeed := strings.TrimSpace(record.Speed)
@@ -5670,16 +4476,16 @@ replace_once(
 \t\tspeed = coreusage.SpeedFromContext(ctx)
 \t}
 \tresponseSpeed := strings.TrimSpace(record.ResponseSpeed)
-\tclientRequestMetadata := requestmeta.GetClientRequestMetadata(ctx)
+\tclientRequestMetadata := internallogging.GetClientRequestMetadata(ctx)
 ''',
     'responseSpeed := strings.TrimSpace(record.ResponseSpeed)',
 )
 replace_once(
     redisqueue_plugin,
-    '''\tclientRequestMetadata := requestmeta.GetClientRequestMetadata(ctx)
+    '''\tclientRequestMetadata := internallogging.GetClientRequestMetadata(ctx)
 
 \tusageDetail := coreusage.EnsureTokenBreakdownForProvider''',
-    '''\tclientRequestMetadata := requestmeta.GetClientRequestMetadata(ctx)
+    '''\tclientRequestMetadata := internallogging.GetClientRequestMetadata(ctx)
 \tpolicyDecision, hasPolicyDecision := apikeypolicy.DecisionFromContext(ctx)
 \tpolicyMode := ""
 \tapiKeyPolicyID := ""
@@ -5786,228 +4592,9 @@ if '`json:"attempt_index,omitempty"`' not in redisqueue_plugin_text:
         redisqueue_plugin,
         auth_index_field.sub(lambda match: match.group(0) + attempt_field, redisqueue_plugin_text, count=1),
     )
-redisqueue_plugin_test = ROOT / 'internal/redisqueue/plugin_test.go'
-if redisqueue_plugin_test.exists():
-    text = read_text(redisqueue_plugin_test)
-    text = text.replace(
-        f'internallogging "{import_path("internal/logging")}"',
-        f'"{import_path("internal/requestmeta")}"',
-    )
-    text = text.replace('internallogging.', 'requestmeta.')
-    write(redisqueue_plugin_test, text)
-    insert_before(
-        redisqueue_plugin_test,
-        'func TestUsageQueuePluginNormalizesDirectSDKUsageByProvider(t *testing.T) {\n',
-        '''func TestUsageQueuePluginSkipsMonitoringContext(t *testing.T) {
-\twithEnabledQueue(t, func() {
-\t\tctx := coreusage.WithSkipMonitoring(context.Background())
-\t\t(&usageQueuePlugin{}).HandleUsage(ctx, coreusage.Record{
-\t\t\tProvider: "codex",
-\t\t\tModel:    "gpt-test",
-\t\t\tDetail:   coreusage.Detail{InputTokens: 1, TotalTokens: 1},
-\t\t})
-\t\tif items := PopOldest(10); len(items) != 0 {
-\t\t\tt.Fatalf("PopOldest() items = %d, want 0 for skipped monitoring", len(items))
-\t\t}
-\t})
-}
-
-''',
-        'func TestUsageQueuePluginSkipsMonitoringContext',
-    )
-
-usage_manager_test = ROOT / 'sdk/cliproxy/usage/manager_test.go'
-insert_before(
-    usage_manager_test,
-    'func TestRecordOmittedGenerateIsEnabled(t *testing.T) {\n',
-    '''func TestSkipMonitoringContext(t *testing.T) {
-\tif SkipMonitoringFromContext(context.Background()) {
-\t\tt.Fatal("SkipMonitoringFromContext(background) = true, want false")
-\t}
-\tif !SkipMonitoringFromContext(WithSkipMonitoring(context.Background())) {
-\t\tt.Fatal("SkipMonitoringFromContext(marked) = false, want true")
-\t}
-}
-
-''',
-    'func TestSkipMonitoringContext',
-)
-
-queue_go_source('internal/requestmeta/client.go')
-
-queue_go_source('internal/requestmeta/client_test.go')
-
 queue_go_source('internal/requestmeta/observer.go')
 
 queue_go_source('internal/requestmeta/observer_test.go')
-
-queue_go_source('internal/requestmeta/requestid.go')
-
-queue_go_source('internal/requestmeta/response.go')
-
-logging_request_id = ROOT / 'internal/logging/requestid.go'
-replace_once(
-    logging_request_id,
-    '\t"crypto/rand"\n\t"encoding/hex"\n\n\t"github.com/gin-gonic/gin"\n',
-    '\t"github.com/gin-gonic/gin"\n\t"' + import_path('internal/requestmeta') + '"\n',
-    import_path('internal/requestmeta'),
-)
-replace_once(
-    logging_request_id,
-    '// requestIDKey is the context key for storing/retrieving request IDs.\ntype requestIDKey struct{}\n\n',
-    '',
-    'return requestmeta.GenerateRequestID()',
-)
-replace_go_function(
-    logging_request_id,
-    'func GenerateRequestID()',
-    '''func GenerateRequestID() string {
-\treturn requestmeta.GenerateRequestID()
-}
-''',
-    'return requestmeta.GenerateRequestID()',
-)
-replace_go_function(
-    logging_request_id,
-    'func WithRequestID(',
-    '''func WithRequestID(ctx context.Context, requestID string) context.Context {
-\treturn requestmeta.WithRequestID(ctx, requestID)
-}
-''',
-    'return requestmeta.WithRequestID(ctx, requestID)',
-)
-replace_go_function(
-    logging_request_id,
-    'func GetRequestID(',
-    '''func GetRequestID(ctx context.Context) string {
-\treturn requestmeta.GetRequestID(ctx)
-}
-''',
-    'return requestmeta.GetRequestID(ctx)',
-)
-
-logging_request_meta = ROOT / 'internal/logging/requestmeta.go'
-replace_once(
-    logging_request_meta,
-    '\t"net/http"\n\t"sync"\n\t"sync/atomic"\n',
-    '\t"net/http"\n\n\t"' + import_path('internal/requestmeta') + '"\n',
-    import_path('internal/requestmeta'),
-)
-replace_once(
-    logging_request_meta,
-    '''type endpointKey struct{}
-type responseStatusKey struct{}
-type responseHeadersKey struct{}
-type clientRequestMetadataKey struct{}
-
-// ClientRequestMetadata stores immutable downstream request metadata for asynchronous consumers.
-type ClientRequestMetadata struct {
-\tClientIP      string
-\tXForwardedFor string
-\tUserAgent     string
-}
-
-type responseStatusHolder struct {
-\tstatus atomic.Int32
-}
-
-type responseHeadersHolder struct {
-\tmu      sync.RWMutex
-\theaders http.Header
-}
-''',
-    'type ClientRequestMetadata = requestmeta.ClientRequestMetadata\n',
-    'type ClientRequestMetadata = requestmeta.ClientRequestMetadata',
-)
-for signature, replacement, present in (
-    (
-        'func WithEndpoint(',
-        '''func WithEndpoint(ctx context.Context, endpoint string) context.Context {
-\treturn requestmeta.WithEndpoint(ctx, endpoint)
-}
-''',
-        'return requestmeta.WithEndpoint(ctx, endpoint)',
-    ),
-    (
-        'func GetEndpoint(',
-        '''func GetEndpoint(ctx context.Context) string {
-\treturn requestmeta.GetEndpoint(ctx)
-}
-''',
-        'return requestmeta.GetEndpoint(ctx)',
-    ),
-    (
-        'func WithClientRequestMetadata(',
-        '''func WithClientRequestMetadata(ctx context.Context, metadata ClientRequestMetadata) context.Context {
-\treturn requestmeta.WithClientRequestMetadata(ctx, metadata)
-}
-''',
-        'return requestmeta.WithClientRequestMetadata(ctx, metadata)',
-    ),
-    (
-        'func GetClientRequestMetadata(',
-        '''func GetClientRequestMetadata(ctx context.Context) ClientRequestMetadata {
-\treturn requestmeta.GetClientRequestMetadata(ctx)
-}
-''',
-        'return requestmeta.GetClientRequestMetadata(ctx)',
-    ),
-    (
-        'func WithResponseStatusHolder(',
-        '''func WithResponseStatusHolder(ctx context.Context) context.Context {
-\treturn requestmeta.WithResponseStatusHolder(ctx)
-}
-''',
-        'return requestmeta.WithResponseStatusHolder(ctx)',
-    ),
-    (
-        'func WithResponseHeadersHolder(',
-        '''func WithResponseHeadersHolder(ctx context.Context) context.Context {
-\treturn requestmeta.WithResponseHeadersHolder(ctx)
-}
-''',
-        'return requestmeta.WithResponseHeadersHolder(ctx)',
-    ),
-    (
-        'func SetResponseStatus(',
-        '''func SetResponseStatus(ctx context.Context, status int) {
-\trequestmeta.SetResponseStatus(ctx, status)
-}
-''',
-        'requestmeta.SetResponseStatus(ctx, status)',
-    ),
-    (
-        'func SetResponseHeaders(',
-        '''func SetResponseHeaders(ctx context.Context, headers http.Header) {
-\trequestmeta.SetResponseHeaders(ctx, headers)
-}
-''',
-        'requestmeta.SetResponseHeaders(ctx, headers)',
-    ),
-    (
-        'func GetResponseStatus(',
-        '''func GetResponseStatus(ctx context.Context) int {
-\treturn requestmeta.GetResponseStatus(ctx)
-}
-''',
-        'return requestmeta.GetResponseStatus(ctx)',
-    ),
-    (
-        'func GetResponseHeaders(',
-        '''func GetResponseHeaders(ctx context.Context) http.Header {
-\treturn requestmeta.GetResponseHeaders(ctx)
-}
-''',
-        'return requestmeta.GetResponseHeaders(ctx)',
-    ),
-):
-    replace_go_function(logging_request_meta, signature, replacement, present)
-replace_go_function(
-    logging_request_meta,
-    'func cloneHTTPHeader(',
-    '',
-    '__pro_removed_cloneHTTPHeader__',
-)
 
 logging_helpers = ROOT / 'internal/runtime/executor/helps/logging_helpers.go'
 add_go_import(
@@ -6783,8 +5370,6 @@ replace_once(
 )
 
 auth_scheduler = ROOT / 'sdk/cliproxy/auth/scheduler.go'
-add_go_import(auth_scheduler, '"context"\n', '\t"fmt"\n')
-add_go_import(auth_scheduler, '"time"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
 replace_once(
     auth_scheduler,
     '''\tmixedCursors        map[string]int
@@ -6828,7 +5413,6 @@ replace_once(
 \tcursor        int
 \tweightedState smoothWeightedState
 \tcursorKey     string
-\tlastAuthID    string
 \tpersisted     map[string]string
 }''',
     'cursorKey  string',
@@ -6845,12 +5429,7 @@ replace_once(
 \t}
 }''',
     '''func newAuthScheduler(selector Selector) *authScheduler {
-\tpersistedCursors := make(map[string]string)
-\tif states, err := embeddedusage.ListRoutingCursorStates(context.Background()); err == nil {
-\t\tfor _, state := range states {
-\t\t\tpersistedCursors[state.CursorKey] = state.LastAuthID
-\t\t}
-\t}
+\tpersistedCursors := loadRoutingCursorStates()
 \treturn &authScheduler{
 \t\tstrategy:            selectorStrategy(selector),
 \t\tproviders:           make(map[string]*providerScheduler),
@@ -6861,37 +5440,7 @@ replace_once(
 \t\tpersistedCursors:    persistedCursors,
 \t}
 }''',
-    'persistedCursors := make(map[string]string)',
-)
-insert_before(
-    auth_scheduler,
-    '// selectorStrategy maps a selector implementation to the scheduler semantics it should emulate.\n',
-    '''func (s *authScheduler) applyImportedRuntimeState(states []embeddedusage.RoutingCursorState, auths []*Auth) {
-\tif s == nil {
-\t\treturn
-\t}
-\tpersistedCursors := make(map[string]string, len(states))
-\tfor _, state := range states {
-\t\tif state.CursorKey != "" && state.LastAuthID != "" {
-\t\t\tpersistedCursors[state.CursorKey] = state.LastAuthID
-\t\t}
-\t}
-\ts.mu.Lock()
-\tdefer s.mu.Unlock()
-\ts.persistedCursors = persistedCursors
-\ts.providers = make(map[string]*providerScheduler)
-\ts.authProviders = make(map[string]string)
-\ts.mixedCursors = make(map[string]int)
-\ts.mixedWeightedStates = make(map[string]*smoothWeightedState)
-\ts.mixedRestored = make(map[string]bool)
-\tnow := time.Now()
-\tfor _, auth := range auths {
-\t\ts.upsertAuthLocked(auth, now)
-\t}
-}
-
-''',
-    'func (s *authScheduler) applyImportedRuntimeState',
+    'persistedCursors := loadRoutingCursorStates()',
 )
 replace_once(
     auth_scheduler,
@@ -6950,15 +5499,6 @@ replace_once(
 )
 replace_once(
     auth_scheduler,
-    '''\t\tbucket := buildReadyBucket(entries)
-''',
-    '''\t\tcursorPrefix := fmt.Sprintf("single|%s|%s|%d", m.providerKey, m.modelKey, priority)
-\t\tbucket := buildReadyBucket(entries, cursorPrefix, m.persistedCursors)
-''',
-    'cursorPrefix := fmt.Sprintf("single|%s|%s|%d"',
-)
-replace_once(
-    auth_scheduler,
     '''\t\tif cursorState, ok := cursorStates[priority]; ok && bucket != nil {
 \t\t\trestoreReadyViewCursors(&bucket.all, cursorState.all)
 \t\t\trestoreReadyViewCursors(&bucket.ws, cursorState.ws)
@@ -6969,65 +5509,10 @@ replace_once(
 \t\t\trestoreReadyViewCursors(&bucket.all, cursorState.all)
 \t\t\trestoreReadyViewCursors(&bucket.ws, cursorState.ws)
 \t\t}
-\t\tif bucket != nil {
-\t\t\tbucket.all.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|all"])
-\t\t\tbucket.ws.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|ws"])
-\t\t}
+\t\tm.configurePersistedReadyBucket(bucket, priority)
 \t\tm.readyByPriority[priority] = bucket
 ''',
-    'bucket.all.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|all"])',
-)
-replace_once(
-    auth_scheduler,
-    '''func buildReadyBucket(entries []*scheduledAuth) *readyBucket {
-\tbucket := &readyBucket{}
-\tbucket.all = buildReadyView(entries)''',
-    '''func buildReadyBucket(entries []*scheduledAuth, cursorPrefix string, persisted map[string]string) *readyBucket {
-\tbucket := &readyBucket{}
-\tbucket.all = buildReadyView(entries, cursorPrefix+"|all", persisted)''',
-    'func buildReadyBucket(entries []*scheduledAuth, cursorPrefix string',
-)
-replace_once(
-    auth_scheduler,
-    '''\tbucket.ws = buildReadyView(wsEntries)
-''',
-    '''\tbucket.ws = buildReadyView(wsEntries, cursorPrefix+"|ws", persisted)
-''',
-    'buildReadyView(wsEntries, cursorPrefix+"|ws"',
-)
-replace_once(
-    auth_scheduler,
-    '''func buildReadyView(entries []*scheduledAuth) readyView {
-\treturn readyView{flat: append([]*scheduledAuth(nil), entries...)}
-}''',
-    '''func buildReadyView(entries []*scheduledAuth, cursorKey string, persisted map[string]string) readyView {
-\tview := readyView{flat: append([]*scheduledAuth(nil), entries...), cursorKey: cursorKey, persisted: persisted}
-\tview.restoreAfterAuthID(persisted[cursorKey])
-\treturn view
-}
-
-func (v *readyView) restoreAfterAuthID(lastAuthID string) {
-\tlastAuthID = strings.TrimSpace(lastAuthID)
-\tif lastAuthID == "" || len(v.flat) == 0 {
-\t\treturn
-\t}
-\tv.lastAuthID = lastAuthID
-\tfor index, entry := range v.flat {
-\t\tif entry == nil || entry.auth == nil {
-\t\t\tcontinue
-\t\t}
-\t\tif entry.auth.ID == lastAuthID {
-\t\t\tv.cursor = index + 1
-\t\t\treturn
-\t\t}
-\t\tif entry.auth.ID > lastAuthID {
-\t\t\tv.cursor = index
-\t\t\treturn
-\t\t}
-\t}
-\tv.cursor = 0
-}''',
-    'func (v *readyView) restoreAfterAuthID',
+    'm.configurePersistedReadyBucket(bucket, priority)',
 )
 replace_once(
     auth_scheduler,
@@ -7035,38 +5520,21 @@ replace_once(
 \t\treturn entry
 ''',
     '''\t\tv.cursor = index + 1
-\t\tv.lastAuthID = entry.auth.ID
-\t\tif v.persisted != nil {
-\t\t\tv.persisted[v.cursorKey] = entry.auth.ID
-\t\t}
-\t\tembeddedusage.QueueRoutingCursorState(embeddedusage.RoutingCursorState{
-\t\t\tCursorKey: v.cursorKey, LastAuthID: entry.auth.ID, UpdatedAtMS: time.Now().UnixMilli(),
-\t\t})
+\t\tv.persistSelection(entry)
 \t\treturn entry
 ''',
-    'v.persisted[v.cursorKey] = entry.auth.ID',
+    'v.persistSelection(entry)',
 )
 replace_once(
     auth_scheduler,
     '''\tstartSlot := s.mixedCursors[cursorKey] % totalWeight
 ''',
     '''\tstartSlot := s.mixedCursors[cursorKey] % totalWeight
-\tpersistedCursorKey := fmt.Sprintf("mixed|%s|%d", cursorKey, bestPriority)
-\tif !s.mixedRestored[cursorKey] {
-\t\ts.mixedRestored[cursorKey] = true
-\t\tif lastAuthID := s.persistedCursors[persistedCursorKey]; lastAuthID != "" {
-\t\t\tfor providerIndex, shard := range candidateShards {
-\t\t\t\tif shard != nil {
-\t\t\t\t\tif _, ok := shard.entries[lastAuthID]; ok && weights[providerIndex] > 0 {
-\t\t\t\t\t\tstartSlot = segmentStarts[providerIndex]
-\t\t\t\t\t\tbreak
-\t\t\t\t\t}
-\t\t\t\t}
-\t\t\t}
-\t\t}
-\t}
+\tstartSlot, persistedCursorKey := s.restoreMixedCursor(
+\t\tcursorKey, bestPriority, startSlot, candidateShards, weights, segmentStarts,
+\t)
 ''',
-    'persistedCursorKey := fmt.Sprintf("mixed|%s|%d"',
+    'startSlot, persistedCursorKey := s.restoreMixedCursor(',
 )
 replace_once(
     auth_scheduler,
@@ -7074,13 +5542,10 @@ replace_once(
 \t\treturn picked, providerKey, nil
 ''',
     '''\t\ts.mixedCursors[cursorKey] = slot + 1
-\t\ts.persistedCursors[persistedCursorKey] = picked.ID
-\t\tembeddedusage.QueueRoutingCursorState(embeddedusage.RoutingCursorState{
-\t\t\tCursorKey: persistedCursorKey, LastAuthID: picked.ID, UpdatedAtMS: time.Now().UnixMilli(),
-\t\t})
+\t\ts.persistMixedCursor(persistedCursorKey, picked.ID)
 \t\treturn picked, providerKey, nil
 ''',
-    's.persistedCursors[persistedCursorKey] = picked.ID',
+    's.persistMixedCursor(persistedCursorKey, picked.ID)',
 )
 
 # Account policy fields are execution-only overlays. Every Manager-driven
@@ -7111,6 +5576,7 @@ format_go_writes([
     'internal/api/server_middleware.go',
     'internal/api/server_options.go',
     'internal/api/server_routes.go',
+	'internal/api/server_model_policy.go',
     'internal/api/server_test.go',
     *[
         f'internal/api/handlers/management/{name}'
@@ -7120,6 +5586,7 @@ format_go_writes([
     'internal/api/handlers/management/api_key_policy.go',
     'internal/api/handlers/management/auth_file_connection.go',
     'internal/api/handlers/management/auth_file_connection_test.go',
+    'internal/api/handlers/management/auth_file_metadata.go',
     'internal/api/handlers/management/auth_files_fields.go',
     'internal/api/handlers/management/auth_files.go',
     'internal/api/handlers/management/handler.go',
@@ -7128,7 +5595,6 @@ format_go_writes([
     'internal/managementasset/updater.go',
     'internal/managementasset/gitstore_token_test.go',
     'internal/client/codex/live/client_secret.go',
-    'internal/client/codex/live/client_secret_test.go',
 	'internal/client/codex/live/live.go',
 	'internal/client/codex/live/sideband.go',
     'internal/client/codex/live/websocket.go',
@@ -7138,8 +5604,6 @@ format_go_writes([
     'internal/api/handlers/management/pro_auth_mutation.go',
     'internal/api/handlers/management/pro_features.go',
     'internal/api/handlers/management/pro_management_runtime.go',
-    'internal/logging/requestid.go',
-    'internal/logging/requestmeta.go',
     'internal/api/handlers/management/routing_policy.go',
     'internal/api/handlers/management/routing_policy_test.go',
     'internal/config/config_existing_updates.go',
@@ -7158,28 +5622,27 @@ format_go_writes([
     'internal/pluginhost/snapshot.go',
     'internal/pluginhost/executor_route.go',
     'internal/pluginhost/adapters_executors.go',
+	'internal/pluginhost/plugin_executor_usage.go',
     'internal/pluginhost/plugin_executor_usage_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
     'internal/pluginstore/auth.go',
     'internal/pluginstore/gitstore_auth_test.go',
     'internal/redisqueue/plugin.go',
-    'internal/redisqueue/plugin_test.go',
     'internal/redisqueue/speed_test.go',
-    'internal/requestmeta/client.go',
-    'internal/requestmeta/client_test.go',
+	'internal/redisqueue/api_key_policy_usage_test.go',
     'internal/requestmeta/observer.go',
     'internal/requestmeta/observer_test.go',
-    'internal/requestmeta/requestid.go',
-    'internal/requestmeta/response.go',
     'internal/runtime/executor/helps/logging_helpers.go',
+	'internal/runtime/executor/helps/quota_settlement_test.go',
+	'internal/runtime/executor/helps/usage_pro_extensions.go',
     'internal/runtime/executor/helps/response_observer_test.go',
     'internal/runtime/executor/helps/usage_helpers.go',
-    'internal/runtime/executor/helps/usage_helpers_test.go',
     'internal/runtime/executor/helps/usage_speed_test.go',
     'internal/runtime/executor/claude_usage_speed_test.go',
     'internal/runtime/executor/claude_executor_execute.go',
     'internal/runtime/executor/claude_executor_stream.go',
+    'internal/runtime/executor/claude_stream_terminal.go',
     'internal/pro/oauthpolicy/config/config.go',
     'internal/pro/oauthpolicy/config/config_test.go',
     'internal/pro/oauthpolicy/policy/engine.go',
@@ -7283,9 +5746,11 @@ format_go_writes([
     'internal/runtime/executor/xai_websockets_executor.go',
     'sdk/auth/codex_device.go',
     'sdk/auth/filestore.go',
-    'sdk/auth/filestore_test.go',
+	'sdk/auth/filestore_identity.go',
+	'sdk/auth/filestore_identity_test.go',
     'sdk/api/handlers/handlers.go',
     'sdk/api/handlers/api_key_policy_test.go',
+	'sdk/api/handlers/api_key_policy_context_test.go',
     'sdk/api/handlers/handlers_context.go',
     'sdk/api/handlers/handlers_execution.go',
     'sdk/api/handlers/handlers_routing.go',
@@ -7298,6 +5763,7 @@ format_go_writes([
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
 	'sdk/cliproxy/auth/auth_account_policy.go',
 	'sdk/cliproxy/auth/auth_account_policy_test.go',
+	'sdk/cliproxy/auth/scheduler_runtime_state.go',
     'sdk/cliproxy/auth/pinned_execution.go',
     'sdk/cliproxy/auth/conductor.go',
     'sdk/cliproxy/auth/conductor_execution.go',
@@ -7312,7 +5778,8 @@ format_go_writes([
     'sdk/cliproxy/service_models.go',
     'sdk/cliproxy/executor/speed.go',
     'sdk/cliproxy/usage/manager.go',
-    'sdk/cliproxy/usage/manager_test.go',
+	'sdk/cliproxy/usage/manager_extensions.go',
+	'sdk/cliproxy/usage/manager_pro_test.go',
     'sdk/cliproxy/usage/speed.go',
     'sdk/cliproxy/usage/speed_test.go',
     'sdk/pluginabi/types.go',

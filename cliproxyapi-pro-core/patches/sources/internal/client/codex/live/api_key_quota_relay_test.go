@@ -2,6 +2,7 @@ package live
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,38 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pro/apikeypolicy"
 )
+
+func TestCreateClientSecretRetainsServerIssuedAPIKeyIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := &Handler{clientSecrets: newClientSecretStore()}
+	identity, errIdentity := apikeypolicy.NewAuthenticatedAPIKeyIdentity("issuer-key")
+	if errIdentity != nil {
+		t.Fatal(errIdentity)
+	}
+	router := gin.New()
+	router.POST("/v1/realtime/client_secrets", func(c *gin.Context) {
+		c.Set("userApiKey", "issuer-key")
+		c.Set("accessProvider", "config-inline")
+		c.Request = c.Request.WithContext(apikeypolicy.WithIdentity(c.Request.Context(), identity))
+	}, handler.CreateClientSecret)
+	request := httptest.NewRequest(http.MethodPost, "/v1/realtime/client_secrets", strings.NewReader(`{"session":{"type":"realtime","model":"gpt-realtime"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response clientSecretCreateResponse
+	if errDecode := json.Unmarshal(recorder.Body.Bytes(), &response); errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	authRequest := httptest.NewRequest(http.MethodPost, "/v1/realtime", nil)
+	authRequest.Header.Set("Authorization", "Bearer "+response.Value)
+	authorization, matched, errAuthenticate := handler.AuthenticateClientSecret(authRequest)
+	if errAuthenticate != nil || !matched || authorization.IssuerAPIKeyIdentity.Hash() != identity.Hash() {
+		t.Fatalf("authorization = %#v matched=%t error=%v", authorization, matched, errAuthenticate)
+	}
+}
 
 func TestRealtimeRelayAdmitsAndSettlesEveryResponseTurn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
