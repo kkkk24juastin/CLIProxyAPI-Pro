@@ -323,16 +323,22 @@ function QuotaMetric({
   limit?: number;
   cost?: boolean;
 }) {
+  const { t } = useTranslation();
   const unavailable = used === undefined;
   const ratio = unavailable ? null : quotaRatio(used, limit);
   const format = cost ? (value: number) => `$${formatQuotaCost(value)}` : formatQuotaNumber;
+  const detail = unavailable
+    ? t('api_key_policy.quota_overview.snapshot_unavailable')
+    : limit === undefined
+      ? t('api_key_policy.quota_overview.unlimited')
+      : t('api_key_policy.quota_overview.remaining', { value: format(Math.max(limit - used, 0)) });
   return (
-    <div className={styles.quotaMetric}>
+    <div className={styles.quotaMetric} role="group" aria-label={label}>
       <div><span>{label}</span><strong>{unavailable ? '—' : `${format(used)} / ${limit === undefined ? '∞' : format(limit)}`}</strong></div>
       <div className={styles.quotaProgress} aria-hidden="true">
         {!unavailable ? <span style={{ width: `${Math.min((ratio ?? 0) * 100, 100)}%` }} /> : null}
       </div>
-      <small>{unavailable ? '—' : limit === undefined ? '-' : format(Math.max(limit - used, 0))}</small>
+      <small>{detail}</small>
     </div>
   );
 }
@@ -1214,10 +1220,7 @@ export function APIKeyPolicyPage() {
                 <Button variant="secondary" size="sm" onClick={() => void loadQuotaSummaries()} loading={quotaLoading}>{t('common.refresh')}</Button>
               </div>
               {quotaError ? <div className={styles.quotaStale} role="alert"><IconAlertTriangle size={15} /><span>{t('api_key_policy.quota_overview.stale')}: {quotaError}</span></div> : null}
-              <div className={styles.quotaTable} role="table" aria-label={t('api_key_policy.quota_overview.title')}>
-                <div className={styles.quotaTableHead} role="row">
-                  <span>{t('api_key_policy.quota_overview.key')}</span><span>{t('api_key_policy.quota_period_label')}</span><span>{t('api_key_policy.quota_requests')}</span><span>{t('api_key_policy.quota_tokens')}</span><span>{t('api_key_policy.quota_cost')}</span><span>{t('api_key_policy.quota_overview.state')}</span><span>{t('api_key_policy.quota_overview.actions')}</span>
-                </div>
+              <div className={styles.quotaList} role="list" aria-label={t('api_key_policy.quota_overview.title')}>
                 {quotaRows.map(({ binding, policy, summary, visualState }) => {
                   const quota = summary?.quota;
                   const periodLabel = !summary
@@ -1231,15 +1234,17 @@ export function APIKeyPolicyPage() {
                         })
                         : t('api_key_policy.quota_period.all_time');
                   return (
-                    <div className={styles.quotaTableRow} role="row" key={policy.id}>
-                      <div className={styles.quotaKeyCell}><strong>{policy.displayName}</strong><code>{binding.maskedKey}</code></div>
+                    <article className={styles.quotaListItem} role="listitem" key={policy.id}>
+                      <div className={styles.quotaKeyCell}><strong title={policy.displayName}>{policy.displayName}</strong><code title={binding.maskedKey}>{binding.maskedKey}</code></div>
                       <div className={styles.quotaPeriodCell}><strong>{periodLabel}</strong>{summary?.nextRecoverAtMs ? <small>{t('api_key_policy.quota_overview.recovers_at', { time: formatAPIKeyPolicyTimestamp(summary.nextRecoverAtMs, i18n.resolvedLanguage ?? i18n.language, quota?.period.type === 'calendar_duration' ? quota.period.timezone ?? 'UTC' : undefined) })}</small> : <small>{!summary ? t('api_key_policy.quota_overview.snapshot_unavailable') : quota?.period.type === 'all_time' ? t('api_key_policy.quota_overview.manual_reset') : t('api_key_policy.quota_overview.active_window')}</small>}</div>
-                      <QuotaMetric label={t('api_key_policy.quota_requests')} used={quota ? quota.usage.requestsUsed : undefined} limit={quota?.requests} />
-                      <QuotaMetric label={t('api_key_policy.quota_tokens')} used={quota ? quota.usage.totalTokensUsed : undefined} limit={quota?.totalTokens} />
-                      <QuotaMetric label={t('api_key_policy.quota_cost')} used={quota ? quota.usage.costUsed : undefined} limit={quota?.cost} cost />
                       <div className={styles.quotaStateCell}><PolicyBadge state={`quota_${visualState}`}>{t(`api_key_policy.quota_state.${visualState}`)}</PolicyBadge>{summary?.blockedReason ? <small>{t(`api_key_policy.quota_block.${summary.blockedReason}`)}</small> : null}</div>
                       <div className={styles.quotaRowActions}><Button variant="secondary" size="sm" onClick={() => openWorkspace({ kind: 'policy', policy, readOnly: false })}>{t('api_key_policy.quota_overview.edit')}</Button>{quota?.enabled ? <Button variant="danger" size="sm" onClick={() => void resetQuotaFromOverview(policy)} disabled={quotaBusy}>{t('api_key_policy.quota_reset')}</Button> : null}{usageTargetSupported ? <Button variant="ghost" size="sm" onClick={() => void openUsage(binding)}>{t('api_key_policy.view_usage')}</Button> : null}</div>
-                    </div>
+                      <div className={styles.quotaMetrics}>
+                        <QuotaMetric label={t('api_key_policy.quota_requests')} used={quota ? quota.usage.requestsUsed : undefined} limit={quota?.requests} />
+                        <QuotaMetric label={t('api_key_policy.quota_tokens')} used={quota ? quota.usage.totalTokensUsed : undefined} limit={quota?.totalTokens} />
+                        <QuotaMetric label={t('api_key_policy.quota_cost')} used={quota ? quota.usage.costUsed : undefined} limit={quota?.cost} cost />
+                      </div>
+                    </article>
                   );
                 })}
                 {!quotaLoading && quotaRows.length === 0 ? <div className={styles.empty}>{t('api_key_policy.quota_overview.empty')}</div> : null}

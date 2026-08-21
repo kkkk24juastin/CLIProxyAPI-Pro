@@ -168,6 +168,7 @@ describe('API Key Policy profile drafts', () => {
 
   test('negotiates and renders the lightweight API Key quota overview', () => {
     const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.tsx'), 'utf8');
+    const styles = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/APIKeyPolicyPage.module.scss'), 'utf8');
     const client = readFileSync(resolve(import.meta.dir, '../src/pro/modules/apiKeyPolicy/apiKeyPolicy.ts'), 'utf8');
     const legacyCapabilities = validateAPIKeyPolicyCapabilities({
       apiVersion: 1,
@@ -201,6 +202,13 @@ describe('API Key Policy profile drafts', () => {
       .toBeLessThan(page.indexOf("if (!summary) return quotaConfigured ? 'unknown' : 'disabled';"));
     expect(page).toContain('key={binding.keyRef}');
     expect(page).toContain("t(`api_key_policy.quota_block.${summary.blockedReason}`)");
+    expect(page).toContain('className={styles.quotaList} role="list"');
+    expect(page).toContain('className={styles.quotaListItem} role="listitem"');
+    expect(page).toContain('className={styles.quotaMetrics}');
+    expect(page).not.toContain('className={styles.quotaTableHead}');
+    expect(page).toContain("t('api_key_policy.quota_overview.remaining'");
+    expect(styles).toContain('grid-template-areas: "key period state actions" "metrics metrics metrics metrics";');
+    expect(styles).toContain('grid-template-areas: "key" "state" "period" "metrics" "actions";');
   });
 
   test('has complete distinct translations for every supported language', async () => {
