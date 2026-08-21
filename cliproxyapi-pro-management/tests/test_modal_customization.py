@@ -9,6 +9,7 @@ SPEC = importlib.util.spec_from_file_location('apply_customizations', MODULE_PAT
 assert SPEC and SPEC.loader
 CUSTOMIZATIONS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CUSTOMIZATIONS)
+PRO_ROOT = MODULE_PATH.parent / 'overlay/src/pro'
 
 
 MODAL_SOURCE = """import { useEffect, useRef } from 'react';
@@ -296,6 +297,16 @@ body {
 
 
 class ModalCustomizationTest(unittest.TestCase):
+    def test_global_reduced_motion_rules_are_owned_by_pro_overlay(self) -> None:
+        bootstrap = (PRO_ROOT / 'ProBootstrap.tsx').read_text()
+        styles = (PRO_ROOT / 'global.scss').read_text()
+
+        self.assertIn("import '@/pro/global.scss';", bootstrap)
+        self.assertIn('@media (prefers-reduced-motion: reduce)', styles)
+        self.assertIn('.modal-overlay-entering,', styles)
+        self.assertIn('.modal-closing {', styles)
+        self.assertIn('animation: none !important;', styles)
+
     def setUp(self) -> None:
         CUSTOMIZATIONS._writes.clear()
 

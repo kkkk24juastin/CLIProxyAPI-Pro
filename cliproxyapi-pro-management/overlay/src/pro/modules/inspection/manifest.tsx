@@ -1,4 +1,4 @@
-import { IconSidebarAccountInspection } from '@/components/ui/icons';
+import { IconSidebarAccountInspection } from '@/pro/icons';
 import type { ProModuleManifest } from '@/pro/manifest';
 import { AccountInspectionPage } from './AccountInspectionPage';
 

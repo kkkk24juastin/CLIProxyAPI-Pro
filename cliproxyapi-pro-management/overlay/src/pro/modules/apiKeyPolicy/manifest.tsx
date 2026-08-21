@@ -1,4 +1,4 @@
-import { IconSidebarAPIKeyPolicy } from '@/components/ui/icons';
+import { IconSidebarAPIKeyPolicy } from '@/pro/icons';
 import type { ProModuleManifest } from '@/pro/manifest';
 import { APIKeyPolicyPage } from './APIKeyPolicyPage';
 

@@ -1,0 +1,8 @@
+@media (prefers-reduced-motion: reduce) {
+  .modal-overlay-entering,
+  .modal-overlay-closing,
+  .modal-entering,
+  .modal-closing {
+    animation: none !important;
+  }
+}

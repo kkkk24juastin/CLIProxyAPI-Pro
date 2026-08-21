@@ -6,7 +6,6 @@ src/components/ui/Modal.tsx
 src/components/ui/Select.tsx
 src/components/ui/Sheet/Sheet.module.scss
 src/components/ui/Sheet/Sheet.tsx
-src/components/ui/icons.tsx
 src/components/ui/scrollLock.ts
 src/features/authFiles/AuthFilesPage.tsx
 src/features/authFiles/components/AuthFileCard.tsx
@@ -31,7 +30,6 @@ src/services/api/version.ts
 src/stores/useAuthStore.ts
 src/stores/useNotificationStore.ts
 src/stores/useQuotaStore.ts
-src/styles/components.scss
 src/styles/global.scss
 src/types/authFile.ts
 src/types/config.ts

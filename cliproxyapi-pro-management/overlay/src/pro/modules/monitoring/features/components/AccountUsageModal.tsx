@@ -4,15 +4,14 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { ProWorkspaceDialog } from '@/pro/shared/ProSurface';
 import {
-  IconChartColumnIncreasing,
   IconInfo,
   IconKey,
   IconModelCluster,
   IconRefreshCw,
   IconScrollText,
-  IconSidebarMonitor,
   IconTimer,
 } from '@/components/ui/icons';
+import { IconChartColumnIncreasing, IconSidebarMonitor } from '@/pro/icons';
 import type {
   AccountUsageAPIKeyStat,
   AccountUsageDayStat,

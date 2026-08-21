@@ -1,4 +1,4 @@
-import { IconSidebarDataManagement } from '@/components/ui/icons';
+import { IconSidebarDataManagement } from '@/pro/icons';
 import type { ProModuleManifest } from '@/pro/manifest';
 import { DataManagementPage } from './DataManagementPage';
 

@@ -1,4 +1,4 @@
-import { IconSidebarAccountPolicy } from '@/components/ui/icons';
+import { IconSidebarAccountPolicy } from '@/pro/icons';
 import type { ProModuleManifest } from '@/pro/manifest';
 import { Navigate } from 'react-router-dom';
 import { OAuthPolicyPage } from './OAuthPolicyPage';

@@ -1,4 +1,4 @@
-import { IconSidebarRouting } from '@/components/ui/icons';
+import { IconSidebarRouting } from '@/pro/icons';
 import type { ProModuleManifest } from '@/pro/manifest';
 import { RoutingPolicyPage } from './RoutingPolicyPage';
 

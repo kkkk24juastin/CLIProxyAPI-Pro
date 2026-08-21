@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import {
   IconAlertTriangle,
-  IconChartColumnIncreasing,
   IconCheck,
   IconCheckCircle2,
   IconDownload,
@@ -28,6 +27,7 @@ import {
 } from '@/components/ui/icons';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
+import { IconChartColumnIncreasing } from '@/pro/icons';
 import { ProFeatureTabs } from '@/pro/shared/ProFeatureTabs';
 import { ProTaskDialog, ProWorkspaceSheet } from '@/pro/shared/ProSurface';
 import configStyles from '@/pro/shared/FloatingActionBar.module.scss';

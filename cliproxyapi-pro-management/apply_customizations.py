@@ -799,22 +799,6 @@ def patch_sheet_lifecycle(target: Path) -> None:
 
 
 def patch_overlay_reduced_motion(target: Path) -> None:
-    components_path = target / 'src/styles/components.scss'
-    components = read(components_path)
-    marker = "@media (prefers-reduced-motion: reduce) {\n  .modal-overlay-entering,\n"
-    if marker not in components:
-        components += (
-            "\n@media (prefers-reduced-motion: reduce) {\n"
-            "  .modal-overlay-entering,\n"
-            "  .modal-overlay-closing,\n"
-            "  .modal-entering,\n"
-            "  .modal-closing {\n"
-            "    animation: none !important;\n"
-            "  }\n"
-            "}\n"
-        )
-        write(components_path, components)
-
     sheet_path = target / 'src/components/ui/Sheet/Sheet.module.scss'
     sheet = read(sheet_path)
     if 'padding: var(--pro-surface-body-padding, 24px);' not in sheet:
@@ -1272,147 +1256,6 @@ def patch_layout(target: Path) -> None:
         "            <ProBootstrap />\n            <PageTransition\n",
     )
 
-def patch_icons(target: Path) -> None:
-    path = target / 'src/components/ui/icons.tsx'
-    text = read(path)
-    original_text = text
-
-    if "baseSvgProps" not in text:
-        raise RuntimeError(f'Latest upstream SVG props constant not found in {path}')
-    svg_props = "baseSvgProps"
-
-    monitor_icon = (
-        "export function IconSidebarMonitor({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <path d=\"M3 12h3l2.2-4.5 4.2 9 2.4-5h6.2\" />\n"
-        "      <path d=\"M4 19h16\" />\n"
-        "      <path d=\"M4 5h16\" fill=\"currentColor\" fillOpacity=\"0.08\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    account_inspection_icon = (
-        "export function IconSidebarAccountInspection({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <rect x=\"5\" y=\"3\" width=\"11\" height=\"16\" rx=\"2\" />\n"
-        "      <path d=\"M9 7h3\" />\n"
-        "      <path d=\"m8.5 11 1.4 1.4 2.6-2.8\" />\n"
-        "      <circle cx=\"16.5\" cy=\"16.5\" r=\"3\" />\n"
-        "      <path d=\"m19 19 2 2\" />\n"
-        "      <path d=\"M8 3.5h5\" fill=\"currentColor\" fillOpacity=\"0.08\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    routing_icon = (
-        "export function IconSidebarRouting({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <path d=\"M6 3v18\" />\n"
-        "      <path d=\"M6 5h9l3 3-3 3H6\" />\n"
-        "      <path d=\"M6 13h6l3 3-3 3H6\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    account_policy_icon = (
-        "export function IconSidebarAccountPolicy({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2.5\" />\n"
-        "      <circle cx=\"8.5\" cy=\"9.5\" r=\"2.5\" />\n"
-        "      <path d=\"M5.5 16c.7-2 1.7-3 3-3s2.3 1 3 3\" />\n"
-        "      <path d=\"M15 8h3\" />\n"
-        "      <path d=\"M15 12h3\" />\n"
-        "      <path d=\"M15 16h3\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    api_key_policy_icon = (
-        "export function IconSidebarAPIKeyPolicy({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <circle cx=\"9\" cy=\"13\" r=\"4\" />\n"
-        "      <path d=\"m12 10 7-7\" />\n"
-        "      <path d=\"m16 6 2 2\" />\n"
-        "      <path d=\"m14 8 2 2\" />\n"
-        "      <path d=\"M6 16 3 19v2h2l3-3\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    proxy_pool_icon = (
-        "export function IconSidebarProxyPool({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <rect x=\"3\" y=\"4\" width=\"18\" height=\"6\" rx=\"2\" />\n"
-        "      <rect x=\"3\" y=\"14\" width=\"18\" height=\"6\" rx=\"2\" />\n"
-        "      <path d=\"M7 7h.01\" />\n"
-        "      <path d=\"M7 17h.01\" />\n"
-        "      <path d=\"M11 7h6\" />\n"
-        "      <path d=\"M11 17h6\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    data_management_icon = (
-        "export function IconSidebarDataManagement({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <ellipse cx=\"12\" cy=\"5\" rx=\"8\" ry=\"3\" />\n"
-        "      <path d=\"M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5\" />\n"
-        "      <path d=\"M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6\" />\n"
-        "      <path d=\"M8 9.5h.01\" />\n"
-        "      <path d=\"M8 15.5h.01\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    icons_to_insert = ""
-    for icon_name, icon_source in (
-        ('IconSidebarMonitor', monitor_icon),
-        ('IconSidebarAccountInspection', account_inspection_icon),
-        ('IconSidebarRouting', routing_icon),
-        ('IconSidebarAccountPolicy', account_policy_icon),
-        ('IconSidebarAPIKeyPolicy', api_key_policy_icon),
-        ('IconSidebarProxyPool', proxy_pool_icon),
-        ('IconSidebarDataManagement', data_management_icon),
-    ):
-        marker = f'export function {icon_name}'
-        if marker not in text:
-            icons_to_insert += icon_source
-            continue
-        if icon_source in text:
-            continue
-        text, replaced = re.subn(
-            rf'export function {icon_name}\(.*?\n\}}\n\n',
-            icon_source,
-            text,
-            count=1,
-            flags=re.DOTALL,
-        )
-        if replaced != 1:
-            raise RuntimeError(f'Unable to replace existing {icon_name} in {path}')
-
-    if not icons_to_insert:
-        if text != original_text:
-            write(path, text)
-        return
-    for marker in (
-        "export function IconSidebarLogs({ size = 20, ...props }: IconProps) {\n",
-        "export const IconSidebarLogs = ",
-        "export function IconSidebarSystem({ size = 20, ...props }: IconProps) {\n",
-    ):
-        if marker in text:
-            write(path, text.replace(marker, icons_to_insert + marker, 1))
-            return
-
-    write(path, text.rstrip() + "\n\n" + icons_to_insert)
-
-
 def patch_quota_store(target: Path) -> None:
     path = target / 'src/stores/useQuotaStore.ts'
     replace_once(
@@ -1614,34 +1457,14 @@ def patch_auth_files_runtime_state(target: Path) -> None:
 
 
 def patch_account_usage_feature(target: Path) -> None:
-    icons_path = target / 'src/components/ui/icons.tsx'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
     page_path = auth_files_page_path(target)
 
     insert_once(
-        icons_path,
-        'export function IconModelCluster({ size = 20, ...props }: IconProps) {\n',
-        '''export function IconChartColumnIncreasing({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...baseSvgProps} width={size} height={size} {...props}>
-      <path d="M3 3v18h18" />
-      <path d="M7 16v1" />
-      <path d="M11 12v5" />
-      <path d="M15 8v9" />
-      <path d="M19 4v13" />
-    </svg>
-  );
-}
-
-export function IconModelCluster({ size = 20, ...props }: IconProps) {
-''',
-        'export function IconChartColumnIncreasing',
-    )
-
-    replace_once(
         card_path,
-        '  IconDownload,\n  IconInfo,\n',
-        '  IconChartColumnIncreasing,\n  IconDownload,\n  IconInfo,\n',
+        "} from '@/components/ui/icons';\n",
+        "} from '@/components/ui/icons';\nimport { IconChartColumnIncreasing } from '@/pro/icons';\n",
+        "IconChartColumnIncreasing } from '@/pro/icons'",
     )
     replace_once(
         card_path,
@@ -2534,7 +2357,6 @@ def main() -> None:
     patch_modal_content_scrollbar_layout(target)
     patch_routes(target)
     patch_layout(target)
-    patch_icons(target)
     patch_quota_types_latest(target)
     patch_quota_store(target)
     patch_quota_constants(target)

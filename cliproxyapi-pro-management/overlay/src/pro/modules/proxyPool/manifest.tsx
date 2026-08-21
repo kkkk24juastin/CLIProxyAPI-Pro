@@ -1,4 +1,4 @@
-import { IconSidebarProxyPool } from '@/components/ui/icons';
+import { IconSidebarProxyPool } from '@/pro/icons';
 import type { ProModuleManifest } from '@/pro/manifest';
 import { ProxyPoolPage } from './ProxyPoolPage';
 
