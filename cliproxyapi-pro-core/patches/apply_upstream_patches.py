@@ -3823,21 +3823,12 @@ stream_usage_failure_function = '''func (b *StreamUsageBuffer) PublishFailure(ct
 \treturn true
 }
 '''
-if stream_usage_failure_signature in read(usage_helpers):
-    replace_go_function(
-        usage_helpers,
-        stream_usage_failure_signature,
-        stream_usage_failure_function,
-        stream_usage_failure_signature + ' {\n\tif b == nil || !b.ok || reporter == nil {',
-    )
-else:
-    insert_before(
-        usage_helpers,
-        '// Detail returns the latest observed usage detail.\n',
-        '''// PublishFailure emits one failed record with the latest observed usage.
-''' + stream_usage_failure_function + '\n',
-        stream_usage_failure_signature,
-    )
+replace_go_function(
+    usage_helpers,
+    stream_usage_failure_signature,
+    stream_usage_failure_function,
+    stream_usage_failure_signature + ' {\n\tif b == nil || !b.ok || reporter == nil {',
+)
 
 claude_execute = ROOT / 'internal/runtime/executor/claude_executor_execute.go'
 replace_once(
@@ -4044,12 +4035,9 @@ replace_once(
 openai_stream_text = read(openai_compat_execute)
 deferred_stream_publish = '''\t\tdefer streamUsage.Publish(ctx, reporter)
 '''
-if deferred_stream_publish in openai_stream_text:
-    if openai_stream_text.count(deferred_stream_publish) != 1:
-        raise SystemExit('expected one deferred OpenAI-compatible stream usage publish')
-    openai_stream_text = openai_stream_text.replace(deferred_stream_publish, '', 1)
-elif 'publishStreamFailure := func(errStream error)' not in openai_stream_text:
-    raise SystemExit('OpenAI-compatible stream failure publisher patch missing')
+if openai_stream_text.count(deferred_stream_publish) != 1:
+    raise SystemExit('expected one deferred OpenAI-compatible stream usage publish')
+openai_stream_text = openai_stream_text.replace(deferred_stream_publish, '', 1)
 openai_stream_start = '''func (e *OpenAICompatExecutor) ExecuteStream'''
 openai_stream_end = '''func (e *OpenAICompatExecutor) executeImagesStream'''
 if openai_stream_text.count(openai_stream_start) != 1 or openai_stream_text.count(openai_stream_end) != 1:
@@ -4058,9 +4046,9 @@ openai_stream_prefix, openai_stream_body = openai_stream_text.split(openai_strea
 openai_stream_body, openai_stream_suffix = openai_stream_body.split(openai_stream_end, 1)
 stream_failure_publish = 'reporter.PublishFailure(ctx, streamErr)'
 stream_failure_count = openai_stream_body.count(stream_failure_publish)
-if stream_failure_count not in (1, 2):
+if stream_failure_count != 1:
     raise SystemExit(
-        f'expected one or two OpenAI-compatible stream error publications, found {stream_failure_count}'
+        f'expected one OpenAI-compatible stream error publication, found {stream_failure_count}'
     )
 openai_stream_body = openai_stream_body.replace(
     stream_failure_publish,
@@ -4069,8 +4057,8 @@ openai_stream_body = openai_stream_body.replace(
 )
 logged_stream_failure = 'reporter.PublishFailure(ctx, loggedErr)'
 logged_stream_failure_count = openai_stream_body.count(logged_stream_failure)
-if logged_stream_failure_count not in (0, 1):
-    raise SystemExit('expected at most one sanitized OpenAI-compatible stream error publication')
+if logged_stream_failure_count != 1:
+    raise SystemExit('expected one sanitized OpenAI-compatible stream error publication')
 openai_stream_body = openai_stream_body.replace(
     logged_stream_failure,
     'publishStreamFailure(loggedErr)',
@@ -4080,9 +4068,9 @@ stream_cancel_return = '''\t\t\t\tcase <-ctx.Done():
 \t\t\t\t\treturn
 '''
 stream_cancel_count = openai_stream_body.count(stream_cancel_return)
-if stream_cancel_count not in (1, 2):
+if stream_cancel_count != 1:
     raise SystemExit(
-        f'expected one or two OpenAI-compatible stream cancellation returns, found {stream_cancel_count}'
+        f'expected one OpenAI-compatible stream cancellation return, found {stream_cancel_count}'
     )
 openai_stream_body = openai_stream_body.replace(
     stream_cancel_return,
@@ -4198,13 +4186,8 @@ replace_once(
 ''',
     'usageBuffer.Publish(ctx, reporter)\n\t}()',
 )
-stream_text = read(claude_stream)
-if 'newClaudeOAuthCancellationError(ctx, fp.OAuthCancellation, cause)' in stream_text:
-    claude_cancellation_arg = 'fp.OAuthCancellation'
-else:
-    claude_cancellation_arg = 'oauthToken'
 claude_failure_helpers_old = '''\t\temitCancellation := func(cause error) bool {
-\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, CLAUDE_CANCELLATION_ARG, cause)
+\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, fp.OAuthCancellation, cause)
 \t\t\tif cancelErr == nil {
 \t\t\t\treturn false
 \t\t\t}
@@ -4225,14 +4208,14 @@ claude_failure_helpers_old = '''\t\temitCancellation := func(cause error) bool {
 \t\t\tcase <-ctx.Done():
 \t\t\t}
 \t\t}
-'''.replace('CLAUDE_CANCELLATION_ARG', claude_cancellation_arg)
+'''
 claude_failure_helpers_new = '''\t\tpublishStreamFailure := func(usageBuffer *helps.StreamUsageBuffer, errResponse error) {
 \t\t\tif usageBuffer == nil || !usageBuffer.PublishFailure(ctx, reporter, errResponse) {
 \t\t\t\treporter.PublishFailure(ctx, errResponse)
 \t\t\t}
 \t\t}
 \t\temitCancellation := func(usageBuffer *helps.StreamUsageBuffer, cause error) bool {
-\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, CLAUDE_CANCELLATION_ARG, cause)
+\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, fp.OAuthCancellation, cause)
 \t\t\tif cancelErr == nil {
 \t\t\t\treturn false
 \t\t\t}
@@ -4253,7 +4236,7 @@ claude_failure_helpers_new = '''\t\tpublishStreamFailure := func(usageBuffer *he
 \t\t\tcase <-ctx.Done():
 \t\t\t}
 \t\t}
-'''.replace('CLAUDE_CANCELLATION_ARG', claude_cancellation_arg)
+'''
 replace_once(
     claude_stream,
     claude_failure_helpers_old,
@@ -5215,14 +5198,13 @@ for source_name in ACCOUNT_INSPECTION_SOURCE_FILES:
     source = Path(__file__).resolve().parent / source_name
     source_text = re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(source))
     if source_name == 'account_inspection_transport.go':
-        if 'func (h *Handler) apiCallTransport(auth *coreauth.Auth, requestProxyURL string)' in read(api_tools):
-            source_text = source_text.replace(
-                's.h.resolveTokenForAuth(reqCtx, auth)',
-                's.h.resolveTokenForAuth(reqCtx, auth, "")',
-            ).replace(
-                's.h.apiCallTransport(auth)',
-                's.h.apiCallTransport(auth, "")',
-            )
+        source_text = source_text.replace(
+            's.h.resolveTokenForAuth(reqCtx, auth)',
+            's.h.resolveTokenForAuth(reqCtx, auth, "")',
+        ).replace(
+            's.h.apiCallTransport(auth)',
+            's.h.apiCallTransport(auth, "")',
+        )
     write(
         ROOT / 'internal/api/handlers/management' / source_name,
         source_text,
@@ -5316,17 +5298,12 @@ insert_before(
 ''',
     'func firstNonNilBool(values ...*bool) bool',
 )
-api_call_transport_args = (
-    'auth, requestProxyURL'
-    if 'h.apiCallTransport(auth, requestProxyURL)' in read(api_tools)
-    else 'auth'
-)
-executor_auth_args = 'auth'
-if api_call_transport_args == 'auth, requestProxyURL':
-    insert_before(
-        api_tools,
-        'func firstNonNilBool(values ...*bool) bool {\n',
-        '''func requestScopedExecutorAuth(auth *coreauth.Auth, requestProxyURL string) *coreauth.Auth {
+api_call_transport_args = 'auth, requestProxyURL'
+executor_auth_args = 'requestScopedExecutorAuth(auth, requestProxyURL)'
+insert_before(
+    api_tools,
+    'func firstNonNilBool(values ...*bool) bool {\n',
+    '''func requestScopedExecutorAuth(auth *coreauth.Auth, requestProxyURL string) *coreauth.Auth {
 \tif auth == nil || strings.TrimSpace(requestProxyURL) == "" {
 \t\treturn auth
 \t}
@@ -5336,12 +5313,11 @@ if api_call_transport_args == 'auth, requestProxyURL':
 }
 
 ''',
-        'func requestScopedExecutorAuth(auth *coreauth.Auth, requestProxyURL string)',
-    )
-    executor_auth_args = 'requestScopedExecutorAuth(auth, requestProxyURL)'
-    write(
-        api_tools_executor_proxy_test,
-        f'''package management
+    'func requestScopedExecutorAuth(auth *coreauth.Auth, requestProxyURL string)',
+)
+write(
+    api_tools_executor_proxy_test,
+    f'''package management
 
 import (
 \t"testing"
@@ -5370,7 +5346,7 @@ func TestRequestScopedExecutorAuthKeepsCredentialWhenRequestProxyIsEmpty(t *test
 \t}}
 }}
 ''',
-    )
+)
 replace_once(
     api_tools,
     '''\thttpClient := &http.Client{
@@ -5637,10 +5613,9 @@ replace_once(
     f'"{import_path("internal/requestmeta")}"',
 )
 redisqueue_plugin_text = read(redisqueue_plugin)
-if 'internallogging.' in redisqueue_plugin_text:
-    write(redisqueue_plugin, redisqueue_plugin_text.replace('internallogging.', 'requestmeta.'))
-elif 'requestmeta.' not in redisqueue_plugin_text:
-    raise SystemExit(f'request metadata calls not found in {redisqueue_plugin}')
+if 'internallogging.' not in redisqueue_plugin_text:
+    raise SystemExit(f'latest upstream request metadata calls not found in {redisqueue_plugin}')
+write(redisqueue_plugin, redisqueue_plugin_text.replace('internallogging.', 'requestmeta.'))
 add_go_import(
     redisqueue_plugin,
     '"' + import_path('internal/requestmeta') + '"\n',

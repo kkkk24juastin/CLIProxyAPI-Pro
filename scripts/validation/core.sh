@@ -72,6 +72,10 @@ git -C "${upstream_root}" restore --worktree -- "${late_guarded_source}"
 rm -f "${late_preflight_log}"
 
 python3 "${repo_root}/cliproxyapi-pro-core/patches/apply_upstream_patches.py"
+python3 "${repo_root}/scripts/validation/check_patch_surface.py" \
+  "${upstream_root}" \
+  "${repo_root}/scripts/validation/contracts/core-upstream-modified-files.txt" \
+  --ignore internal/registry/models/models.json
 go -C "${upstream_root}" mod tidy
 git -C "${upstream_root}" diff --check
 

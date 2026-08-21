@@ -21,6 +21,9 @@ if [[ -d "${upstream_root}/.git" ]] && [[ -n "$(git -C "${upstream_root}" status
 fi
 
 bash "${repo_root}/cliproxyapi-pro-management/apply.sh" "${upstream_root}"
+python3 "${repo_root}/scripts/validation/check_patch_surface.py" \
+  "${upstream_root}" \
+  "${repo_root}/scripts/validation/contracts/management-upstream-modified-files.txt"
 git -C "${upstream_root}" diff --check
 
 git -C "${upstream_root}" add -N .

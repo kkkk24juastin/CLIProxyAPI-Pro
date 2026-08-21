@@ -417,22 +417,10 @@ def replace_once(path: Path, old: str, new: str) -> None:
 
 
 def auth_files_page_path(target: Path) -> Path:
-    for relative in ('src/features/authFiles/AuthFilesPage.tsx', 'src/pages/AuthFilesPage.tsx'):
-        path = target / relative
-        if path.is_file():
-            return path
-    raise RuntimeError(f'AuthFilesPage.tsx not found under {target}')
-
-
-def auth_files_styles_path(target: Path) -> Path:
-    for relative in (
-        'src/features/authFiles/AuthFilesPage.module.scss',
-        'src/pages/AuthFilesPage.module.scss',
-    ):
-        path = target / relative
-        if path.is_file():
-            return path
-    raise RuntimeError(f'AuthFilesPage.module.scss not found under {target}')
+    path = target / 'src/features/authFiles/AuthFilesPage.tsx'
+    if not path.is_file():
+        raise RuntimeError(f'AuthFilesPage.tsx not found at latest upstream path: {path}')
+    return path
 
 
 def insert_once(path: Path, marker: str, insertion: str, present: str) -> None:
@@ -1141,13 +1129,13 @@ def patch_api_client_connection_isolation(target: Path) -> None:
     )
     text = read(client)
     if 'this.connectionGeneration += 1;' not in text:
-        current = (
+        old = (
             "    this.apiBase = computeApiUrl(config.apiBase);\n"
             "    this.managementKey = config.managementKey;\n"
             "\n"
             "    if (config.timeout) {\n"
         )
-        current_replacement = (
+        new = (
             "    const nextApiBase = computeApiUrl(config.apiBase);\n"
             "    const connectionChanged =\n"
             "      this.apiBase !== nextApiBase || this.managementKey !== config.managementKey;\n"
@@ -1161,28 +1149,9 @@ def patch_api_client_connection_isolation(target: Path) -> None:
             "\n"
             "    if (config.timeout) {\n"
         )
-        legacy = (
-            "    if (connectionChanged) {\n"
-            "      this.runtimeKind = 'unknown';\n"
-            "    }\n"
-        )
-        legacy_replacement = (
-            "    if (connectionChanged) {\n"
-            "      this.connectionAbortController.abort();\n"
-            "      this.connectionAbortController = new AbortController();\n"
-            "      this.connectionGeneration += 1;\n"
-            "      this.runtimeKind = 'unknown';\n"
-            "    }\n"
-        )
-        matches = text.count(current) + text.count(legacy)
-        if matches != 1:
-            raise RuntimeError(
-                f'Expected one supported connection-change shape in {client}, found {matches}'
-            )
-        if current in text:
-            write(client, text.replace(current, current_replacement, 1))
-        else:
-            write(client, text.replace(legacy, legacy_replacement, 1))
+        if text.count(old) != 1:
+            raise RuntimeError(f'Expected latest connection-change shape in {client}')
+        write(client, text.replace(old, new, 1))
     if 'this.connectionGeneration += 1;' not in read(client):
         raise RuntimeError(f'Pattern not found in {client}: connection change handling')
     insert_once(
@@ -1308,12 +1277,9 @@ def patch_icons(target: Path) -> None:
     text = read(path)
     original_text = text
 
-    if "baseSvgProps" in text:
-        svg_props = "baseSvgProps"
-    elif "sidebarSvgProps" in text:
-        svg_props = "sidebarSvgProps"
-    else:
-        raise RuntimeError(f'Pattern not found in {path}: svg props constant')
+    if "baseSvgProps" not in text:
+        raise RuntimeError(f'Latest upstream SVG props constant not found in {path}')
+    svg_props = "baseSvgProps"
 
     monitor_icon = (
         "export function IconSidebarMonitor({ size = 20, ...props }: IconProps) {\n"
@@ -1611,32 +1577,7 @@ def patch_auth_files_runtime_state(target: Path) -> None:
         "selected?: unknown;",
     )
     card_text = read(card_path)
-    legacy_stats = (
-        "  const fileStats = {\n    success: normalizeUsageTotal(file.success),\n"
-        "    failure: normalizeUsageTotal(file.failed),\n  };\n"
-    )
-    if legacy_stats in card_text:
-        write(
-            card_path,
-            card_text.replace(
-                legacy_stats,
-                "  const fileStats = {\n    selected: normalizeUsageTotal(file.selected),\n"
-                "    success: normalizeUsageTotal(file.success),\n"
-                "    failure: normalizeUsageTotal(file.failed),\n  };\n",
-                1,
-            ),
-        )
-        insert_once(
-            card_path,
-            "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n",
-            "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n"
-            "              <div className={styles.statPill}>\n"
-            "                <span className={styles.statLabel}>{t('auth_files.selected_count')}</span>\n"
-            "                <span className={styles.statValue}>{fileStats.selected}</span>\n"
-            "              </div>\n",
-            "t('auth_files.selected_count')",
-        )
-    elif 'const selectedCount =' not in card_text and 'const successCount = file.successCount ?? 0;' in card_text:
+    if 'const selectedCount =' not in card_text:
         write(
             card_path,
             card_text.replace(
@@ -1655,8 +1596,6 @@ def patch_auth_files_runtime_state(target: Path) -> None:
             "            </span>\n",
             "{t('auth_files.selected_count')} {selectedCount}",
         )
-    elif "t('auth_files.selected_count')" not in card_text:
-        raise RuntimeError(f'Pattern not found in {card_path}: auth runtime counters')
 
     insert_once(
         page_path,
@@ -1667,24 +1606,17 @@ def patch_auth_files_runtime_state(target: Path) -> None:
     )
     text = read(page_path)
     if 'quotaPersistenceMiddleware.ensureFresh()' not in text:
-        refresh_variants = (
-            "    await Promise.all([loadFiles(), loadExcluded(), loadModelAlias()]);\n",
-            "    await Promise.all([loadFiles({ background: true }), loadExcluded(), loadModelAlias()]);\n",
-        )
-        for refresh in refresh_variants:
-            if refresh in text:
-                replacement = refresh.replace(']);\n', ', quotaPersistenceMiddleware.ensureFresh()]);\n')
-                write(page_path, text.replace(refresh, replacement, 1))
-                break
-        else:
-            raise RuntimeError(f'Pattern not found in {page_path}: header refresh')
+        refresh = "    await Promise.all([loadFiles({ background: true }), loadExcluded(), loadModelAlias()]);\n"
+        if text.count(refresh) != 1:
+            raise RuntimeError(f'Latest upstream header refresh not found in {page_path}')
+        replacement = refresh.replace(']);\n', ', quotaPersistenceMiddleware.ensureFresh()]);\n')
+        write(page_path, text.replace(refresh, replacement, 1))
 
 
 def patch_account_usage_feature(target: Path) -> None:
     icons_path = target / 'src/components/ui/icons.tsx'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
     page_path = auth_files_page_path(target)
-    styles_path = auth_files_styles_path(target)
 
     insert_once(
         icons_path,
@@ -1723,63 +1655,7 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
         '    onShowUsage,\n',
     )
     card_text = read(card_path)
-    legacy_usage_marker = '            </div>\n          </div>\n\n          <div className={`${styles.cardMeta}'
-    if "onClick={() => onShowUsage(file)}" not in card_text and legacy_usage_marker in card_text:
-        write(card_path, card_text.replace(legacy_usage_marker, '''            </div>
-            {authIndexKey && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => onShowUsage(file)}
-                className={styles.usageCornerButton}
-                title={t('account_usage.card_action')}
-                aria-label={t('account_usage.card_action')}
-                disabled={disableControls}
-              >
-                <IconChartColumnIncreasing className={styles.actionIcon} size={17} />
-              </Button>
-            )}
-          </div>
-
-          <div className={`${styles.cardMeta}''',
-        1))
-        insert_once(
-            styles_path,
-            '.modelsActionButton:global(.btn.btn-sm) {\n',
-            '''.usageCornerButton:global(.btn.btn-sm) {
-  flex: 0 0 auto;
-  align-self: flex-start;
-  width: 34px;
-  height: 34px;
-  min-width: 34px;
-  padding: 0;
-  background: color-mix(in srgb, #0f766e 9%, var(--bg-secondary));
-  border-color: color-mix(in srgb, #0f766e 22%, var(--border-color));
-  color: color-mix(in srgb, #0f766e 78%, var(--text-primary));
-}
-
-.usageCornerButton:global(.btn.btn-sm):hover {
-  background: color-mix(in srgb, #0f766e 14%, var(--bg-secondary));
-  border-color: color-mix(in srgb, #0f766e 38%, var(--border-color));
-}
-
-.usageCornerButton:global(.btn.btn-sm) > span {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.fileCardCompact .usageCornerButton:global(.btn.btn-sm) {
-  width: 30px;
-  height: 30px;
-  min-width: 30px;
-}
-
-.modelsActionButton:global(.btn.btn-sm) {
-''',
-            '.usageCornerButton:global(.btn.btn-sm)',
-        )
-    elif "onClick={() => onShowUsage(file)}" not in card_text:
+    if "onClick={() => onShowUsage(file)}" not in card_text:
         actions_marker = '        <div className={styles.actionsMain}>\n'
         if actions_marker not in card_text:
             raise RuntimeError(f'Pattern not found in {card_path}: auth file actions')
@@ -1816,48 +1692,40 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
     )
     page_text = read(page_path)
     if 'const [accountUsageFile, setAccountUsageFileState]' not in page_text:
-        state_markers = (
-            "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n",
-            "  const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');\n",
+        marker = "  const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');\n"
+        if page_text.count(marker) != 1:
+            raise RuntimeError(f'Latest upstream account usage state marker not found in {page_path}')
+        write(
+            page_path,
+            page_text.replace(
+                marker,
+                marker
+                + "  const [accountUsageFile, setAccountUsageFileState] = useState<AuthFileItem | null>(null);\n"
+                + "  const { activeSurface: activeAuthSurface, openSurface: openAuthSurface, closeSurface: closeAuthSurface } = useProSurfaceState<'usage' | 'connection-test'>();\n"
+                + "  const setAccountUsageFile = useCallback((file: AuthFileItem | null) => {\n"
+                + "    setAccountUsageFileState(file);\n"
+                + "    if (file) openAuthSurface('usage');\n"
+                + "    else if (activeAuthSurface === 'usage') closeAuthSurface();\n"
+                + "  }, [activeAuthSurface, closeAuthSurface, openAuthSurface]);\n",
+                1,
+            ),
         )
-        for marker in state_markers:
-            if marker in page_text:
-                write(
-                    page_path,
-                    page_text.replace(
-                        marker,
-                        marker
-                        + "  const [accountUsageFile, setAccountUsageFileState] = useState<AuthFileItem | null>(null);\n"
-                        + "  const { activeSurface: activeAuthSurface, openSurface: openAuthSurface, closeSurface: closeAuthSurface } = useProSurfaceState<'usage' | 'connection-test'>();\n"
-                        + "  const setAccountUsageFile = useCallback((file: AuthFileItem | null) => {\n"
-                        + "    setAccountUsageFileState(file);\n"
-                        + "    if (file) openAuthSurface('usage');\n"
-                        + "    else if (activeAuthSurface === 'usage') closeAuthSurface();\n"
-                        + "  }, [activeAuthSurface, closeAuthSurface, openAuthSurface]);\n",
-                        1,
-                    ),
-                )
-                break
-        else:
-            raise RuntimeError(f'Pattern not found in {page_path}: account usage state')
     page_text = read(page_path)
     if 'onShowUsage={setAccountUsageFile}' not in page_text:
-        for indent in ('                  ', '                '):
-            marker = f'{indent}onShowModels={{showModels}}\n{indent}onDownload={{handleDownload}}\n'
-            if marker in page_text:
-                write(
-                    page_path,
-                    page_text.replace(
-                        marker,
-                        f'{indent}onShowModels={{showModels}}\n'
-                        f'{indent}onShowUsage={{setAccountUsageFile}}\n'
-                        f'{indent}onDownload={{handleDownload}}\n',
-                        1,
-                    ),
-                )
-                break
-        else:
-            raise RuntimeError(f'Pattern not found in {page_path}: auth card usage callback')
+        indent = '                '
+        marker = f'{indent}onShowModels={{showModels}}\n{indent}onDownload={{handleDownload}}\n'
+        if page_text.count(marker) != 1:
+            raise RuntimeError(f'Latest upstream auth card usage callback not found in {page_path}')
+        write(
+            page_path,
+            page_text.replace(
+                marker,
+                f'{indent}onShowModels={{showModels}}\n'
+                f'{indent}onShowUsage={{setAccountUsageFile}}\n'
+                f'{indent}onDownload={{handleDownload}}\n',
+                1,
+            ),
+        )
     insert_once(
         page_path,
         "      <AuthFileModelsModal\n",
@@ -2207,46 +2075,18 @@ def patch_supporting_api_and_types(target: Path) -> None:
         )
     if 'dropdownClassName].filter(Boolean).join' not in read(select_path):
         text = read(select_path)
-        dropdown_class_replacements = [
-            (
-                "            className={styles.dropdown}\n",
-                "            className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n",
-            ),
-            (
-                "        className={styles.dropdown}\n",
-                "        className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n",
-            ),
-        ]
-        for old, new in dropdown_class_replacements:
-            if old in text:
-                write(select_path, text.replace(old, new, 1))
-                break
-        else:
-            raise RuntimeError(f'Pattern not found in {select_path}: Select dropdown className')
+        old = "        className={styles.dropdown}\n"
+        new = "        className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n"
+        if text.count(old) != 1:
+            raise RuntimeError(f'Latest upstream Select dropdown className not found in {select_path}')
+        write(select_path, text.replace(old, new, 1))
     if 'triggerClassName].filter(Boolean).join' not in read(select_path):
         text = read(select_path)
-        old_simple = "          className={styles.trigger}\n"
-        old_sized = "          className={`${styles.trigger} ${size === 'sm' ? styles.triggerSm : ''}`.trim()}\n"
-        if old_simple in text:
-            write(
-                select_path,
-                text.replace(
-                    old_simple,
-                    "          className={[styles.trigger, triggerClassName].filter(Boolean).join(' ')}\n",
-                    1,
-                ),
-            )
-        elif old_sized in text:
-            write(
-                select_path,
-                text.replace(
-                    old_sized,
-                    "          className={[styles.trigger, size === 'sm' ? styles.triggerSm : '', triggerClassName].filter(Boolean).join(' ')}\n",
-                    1,
-                ),
-            )
-        else:
-            raise RuntimeError(f'Pattern not found in {select_path}: Select trigger className')
+        old = "          className={`${styles.trigger} ${size === 'sm' ? styles.triggerSm : ''}`.trim()}\n"
+        new = "          className={[styles.trigger, size === 'sm' ? styles.triggerSm : '', triggerClassName].filter(Boolean).join(' ')}\n"
+        if text.count(old) != 1:
+            raise RuntimeError(f'Latest upstream Select trigger className not found in {select_path}')
+        write(select_path, text.replace(old, new, 1))
 
 
 def patch_locales(target: Path) -> None:

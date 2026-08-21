@@ -10,9 +10,8 @@ class APIToolsPatchContractTests(unittest.TestCase):
     def test_executor_patch_preserves_upstream_request_proxy_transport(self) -> None:
         source = PATCHER.read_text(encoding='utf-8')
 
-        self.assertIn("api_call_transport_args = (", source)
-        self.assertIn("'auth, requestProxyURL'", source)
-        self.assertIn("'h.apiCallTransport(auth, requestProxyURL)' in read(api_tools)", source)
+        self.assertIn("api_call_transport_args = 'auth, requestProxyURL'", source)
+        self.assertNotIn("'h.apiCallTransport(auth, requestProxyURL)' in read(api_tools)", source)
         self.assertIn(
             "h.apiCallTransport(__API_CALL_TRANSPORT_ARGS__)",
             source,
@@ -22,7 +21,7 @@ class APIToolsPatchContractTests(unittest.TestCase):
     def test_account_inspection_transport_adapts_to_proxy_aware_helpers(self) -> None:
         source = PATCHER.read_text(encoding='utf-8')
 
-        self.assertIn(
+        self.assertNotIn(
             "'func (h *Handler) apiCallTransport(auth *coreauth.Auth, requestProxyURL string)' in read(api_tools)",
             source,
         )

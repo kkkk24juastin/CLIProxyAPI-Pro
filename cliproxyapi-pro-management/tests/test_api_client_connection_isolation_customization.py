@@ -43,7 +43,7 @@ class ApiClientConnectionIsolationCustomizationTests(unittest.TestCase):
         self.assertEqual(auth_store.read_text(), first_store)
         return first_client, first_store
 
-    def test_patches_v1_19_3_generation_guard_and_logout_client_clear(self):
+    def test_patches_latest_generation_guard_and_logout_client_clear(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             upstream_client = """import axios, { AxiosRequestConfig } from 'axios';
@@ -90,7 +90,7 @@ class ApiClient {
             self.assertIn('this.isStaleConnection(response.config)', first_client)
             self.assertIn("apiClient.setConfig({ apiBase: '', managementKey: '' });", first_store)
 
-    def test_extends_legacy_runtime_aware_connection_change(self):
+    def test_rejects_legacy_runtime_aware_connection_change(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             upstream_client = """import axios, { AxiosRequestConfig } from 'axios';
@@ -133,11 +133,8 @@ class ApiClient {
   }
 }
 """
-            client, _ = self.apply_patch(root, upstream_client)
-
-            self.assertEqual(client.count('const connectionChanged ='), 1)
-            self.assertIn('this.connectionAbortController.abort();', client)
-            self.assertIn("this.runtimeKind = 'unknown';", client)
+            with self.assertRaisesRegex(RuntimeError, 'Expected latest connection-change shape'):
+                self.apply_patch(root, upstream_client)
 
 
 if __name__ == '__main__':
