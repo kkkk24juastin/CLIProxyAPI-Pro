@@ -327,7 +327,7 @@ function QuotaMetric({
   const ratio = unavailable ? null : quotaRatio(used, limit);
   const format = cost ? (value: number) => `$${formatQuotaCost(value)}` : formatQuotaNumber;
   return (
-    <div className={styles.quotaMetric}>
+    <div className={styles.quotaMetric} role="group" aria-label={label}>
       <div><span>{label}</span><strong>{unavailable ? '—' : `${format(used)} / ${limit === undefined ? '∞' : format(limit)}`}</strong></div>
       <div className={styles.quotaProgress} aria-hidden="true">
         {!unavailable ? <span style={{ width: `${Math.min((ratio ?? 0) * 100, 100)}%` }} /> : null}
@@ -1231,9 +1231,9 @@ export function APIKeyPolicyPage() {
                         })
                         : t('api_key_policy.quota_period.all_time');
                   return (
-                    <div className={styles.quotaTableRow} role="row" key={policy.id}>
-                      <div className={styles.quotaKeyCell}><strong>{policy.displayName}</strong><code>{binding.maskedKey}</code></div>
-                      <div className={styles.quotaPeriodCell}><strong>{periodLabel}</strong>{summary?.nextRecoverAtMs ? <small>{t('api_key_policy.quota_overview.recovers_at', { time: formatAPIKeyPolicyTimestamp(summary.nextRecoverAtMs, i18n.resolvedLanguage ?? i18n.language, quota?.period.type === 'calendar_duration' ? quota.period.timezone ?? 'UTC' : undefined) })}</small> : <small>{!summary ? t('api_key_policy.quota_overview.snapshot_unavailable') : quota?.period.type === 'all_time' ? t('api_key_policy.quota_overview.manual_reset') : t('api_key_policy.quota_overview.active_window')}</small>}</div>
+                    <div className={`${styles.quotaTableRow} ${styles[`quotaTableRow_${visualState}`] ?? ''}`} role="row" key={policy.id}>
+                      <div className={styles.quotaKeyCell}><strong title={policy.displayName}>{policy.displayName}</strong><code title={binding.maskedKey}>{binding.maskedKey}</code></div>
+                      <div className={styles.quotaPeriodCell}><strong title={periodLabel}>{periodLabel}</strong>{summary?.nextRecoverAtMs ? <small>{t('api_key_policy.quota_overview.recovers_at', { time: formatAPIKeyPolicyTimestamp(summary.nextRecoverAtMs, i18n.resolvedLanguage ?? i18n.language, quota?.period.type === 'calendar_duration' ? quota.period.timezone ?? 'UTC' : undefined) })}</small> : <small>{!summary ? t('api_key_policy.quota_overview.snapshot_unavailable') : quota?.period.type === 'all_time' ? t('api_key_policy.quota_overview.manual_reset') : t('api_key_policy.quota_overview.active_window')}</small>}</div>
                       <QuotaMetric label={t('api_key_policy.quota_requests')} used={quota ? quota.usage.requestsUsed : undefined} limit={quota?.requests} />
                       <QuotaMetric label={t('api_key_policy.quota_tokens')} used={quota ? quota.usage.totalTokensUsed : undefined} limit={quota?.totalTokens} />
                       <QuotaMetric label={t('api_key_policy.quota_cost')} used={quota ? quota.usage.costUsed : undefined} limit={quota?.cost} cost />
