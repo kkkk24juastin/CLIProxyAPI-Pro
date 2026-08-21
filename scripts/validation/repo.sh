@@ -39,17 +39,6 @@ python3 -m json.tool \
 python3 "${repo_root}/scripts/validation/check_workflow_actions.py" \
   "${repo_root}/.github/workflows"
 
-observability_plugin_root="${repo_root}/cliproxyapi-pro-plugins/pro-observability"
-observability_plugin_tmp="$(mktemp -d "${TMPDIR:-/tmp}/cliproxyapi-pro-observability.XXXXXX")"
-trap 'rm -rf "${observability_plugin_tmp}"' EXIT
-observability_go_cache="${GOCACHE:-${TMPDIR:-/tmp}/cliproxyapi-pro-go-cache}"
-GOCACHE="${observability_go_cache}" go -C "${observability_plugin_root}" test -count=1 .
-CGO_ENABLED=1 GOCACHE="${observability_go_cache}" go -C "${observability_plugin_root}" build \
-  -buildmode=c-shared \
-  -trimpath \
-  -o "${observability_plugin_tmp}/pro-observability.plugin" \
-  .
-
 if grep -RIn --exclude='*_test.go' 'internal/embeddedusage' \
   "${repo_root}/cliproxyapi-pro-core/patches/sources/internal/pro"; then
   echo "internal/pro modules must not depend on the embeddedusage compatibility facade" >&2

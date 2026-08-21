@@ -41,8 +41,8 @@ internal/pluginhost/rpc_client.go	generic-host-hook	plugin-quota	upstream-rpc-qu
 internal/pluginhost/rpc_schema.go	generic-host-hook	plugin-quota	upstream-rpc-quota-schema
 internal/pluginhost/snapshot.go	generic-host-hook	plugin-quota	upstream-quota-capability-snapshot
 internal/pluginstore/auth.go	upstream-generic-fix	plugin-store-auth	upstream-private-github-release-auth
-internal/redisqueue/plugin.go	plugin-migratable	observability	remove-host-usage-enrichment-after-observability-storage-and-route-parity
-internal/redisqueue/plugin_test.go	plugin-migratable	observability	remove-host-usage-enrichment-regressions-after-observability-storage-and-route-parity
+internal/redisqueue/plugin.go	plugin-migratable	observability	remove-host-usage-enrichment-after-plugin-rpc-metadata-parity
+internal/redisqueue/plugin_test.go	plugin-migratable	observability	remove-host-usage-enrichment-regressions-after-plugin-rpc-metadata-parity
 internal/runtime/executor/claude_executor_execute.go	upstream-generic-fix	usage-accounting	upstream-preserve-claude-failed-usage
 internal/runtime/executor/claude_executor_stream.go	upstream-generic-fix	usage-accounting	upstream-preserve-claude-stream-failed-usage
 internal/runtime/executor/helps/logging_helpers.go	generic-host-hook	request-observer	upstream-final-response-observer
