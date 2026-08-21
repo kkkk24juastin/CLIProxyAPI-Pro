@@ -415,15 +415,9 @@ write(
 xai_executor = ROOT / 'internal/runtime/executor/xai_executor.go'
 replace_once(
     xai_executor,
-    '''\tif strings.TrimSpace(token) != "" {
-\t\treq.Header.Set("Authorization", "Bearer "+token)
-\t}
-\tvar attrs map[string]string
+    '''\tvar attrs map[string]string
 ''',
-    '''\tif strings.TrimSpace(token) != "" {
-\t\treq.Header.Set("Authorization", "Bearer "+token)
-\t}
-\tapplyProXAIHTTPRequestIdentity(req, auth)
+    '''\tapplyProXAIHTTPRequestIdentity(req, auth)
 \tvar attrs map[string]string
 ''',
     'applyProXAIHTTPRequestIdentity(req, auth)',
