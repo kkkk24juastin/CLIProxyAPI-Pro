@@ -11,10 +11,10 @@ query, import/export, backup, pricing, and reset contracts have parity tests.
 The next read-only migration slice exposes authenticated shadow endpoints at
 `/v0/management/plugins/pro-observability/usage` and
 `/v0/management/plugins/pro-observability/usage/events`. They preserve the
-current snapshot and forward-incremental payload shapes without replacing the
-canonical `/v0/management/usage*` routes. History cursors, aggregates, account
-analytics, and SSE remain on the host until their contracts and generic plugin
-hooks are complete.
+current snapshot, forward-incremental, history cursor, and structured-filter
+payload shapes without replacing the canonical `/v0/management/usage*` routes.
+Aggregates, account analytics, and SSE remain on the host until their contracts
+and generic plugin hooks are complete.
 
 Example plugin configuration:
 

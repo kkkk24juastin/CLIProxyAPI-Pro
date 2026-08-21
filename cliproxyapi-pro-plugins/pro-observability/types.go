@@ -344,6 +344,11 @@ type usagePayload struct {
 	DetailsCount   int64                         `json:"details_count,omitempty"`
 	DetailsLimit   int64                         `json:"details_limit,omitempty"`
 	DetailsLimited bool                          `json:"details_limited,omitempty"`
+	MatchedTotal   int64                         `json:"matched_total,omitempty"`
+	SnapshotMaxID  int64                         `json:"snapshot_max_id,omitempty"`
+	PageCursor     string                        `json:"page_cursor,omitempty"`
+	NextCursor     string                        `json:"next_cursor,omitempty"`
+	HasMore        bool                          `json:"has_more,omitempty"`
 	APIs           map[string]*usageAPIAggregate `json:"apis"`
 }
 

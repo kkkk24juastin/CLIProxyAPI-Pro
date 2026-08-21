@@ -49,11 +49,7 @@ func handleUsageQuery(query url.Values) ([]byte, error) {
 
 func handleUsageEventsQuery(query url.Values) ([]byte, error) {
 	if strings.TrimSpace(query.Get("cursor")) != "" || strings.EqualFold(strings.TrimSpace(query.Get("direction")), "before") {
-		response, err := jsonManagementResponse(http.StatusNotImplemented, map[string]string{"error": "history cursor queries are not available in the shadow reader"})
-		if err != nil {
-			return nil, err
-		}
-		return okEnvelope(response)
+		return handleUsageHistoryQuery(query)
 	}
 	afterID := queryInt64(query, "after_id", 0)
 	limit := queryInt(query, "limit", positiveEnvironmentInt("USAGE_BATCH_SIZE", 100))

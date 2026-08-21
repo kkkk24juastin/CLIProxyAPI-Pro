@@ -108,11 +108,11 @@ func TestShadowReaderReturnsHostCompatibleUsageAndIncrementalEvents(t *testing.T
 	}
 }
 
-func TestShadowReaderRejectsUnsupportedHistoryCursorExplicitly(t *testing.T) {
+func TestShadowReaderRejectsInvalidHistoryCursor(t *testing.T) {
 	shutdownRuntime()
 	t.Cleanup(shutdownRuntime)
-	response := callManagementQuery(t, managementEventsPath, url.Values{"cursor": []string{"opaque"}})
-	if response.StatusCode != http.StatusNotImplemented || !strings.Contains(string(response.Body), "history cursor") {
+	response := callManagementQuery(t, managementEventsPath, url.Values{"cursor": []string{"not-a-cursor"}})
+	if response.StatusCode != http.StatusBadRequest || !strings.Contains(string(response.Body), "invalid usage cursor") {
 		t.Fatalf("history response = %d %s", response.StatusCode, response.Body)
 	}
 }
