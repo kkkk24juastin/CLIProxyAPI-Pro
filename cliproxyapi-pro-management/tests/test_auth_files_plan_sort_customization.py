@@ -12,7 +12,10 @@ CUSTOMIZATIONS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CUSTOMIZATIONS)
 
 
-AUTH_FILES_PAGE_SOURCE = """import { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';
+AUTH_FILES_PAGE_SOURCE = """import {
+  sortAuthFiles,
+} from '@/features/authFiles/utils';
+import { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';
 
 export function AuthFilesPage() {
   const normalizedFilter = normalizeProviderKey(String(filter));
@@ -54,6 +57,26 @@ class AuthFilesSortingCustomizationTest(unittest.TestCase):
         CUSTOMIZATIONS._writes.clear()
 
     def test_adds_provider_scoped_sorting_and_state_fallback(self) -> None:
+        hook = (
+            MODULE_PATH.parent / 'overlay/src/pro/authFiles/useAuthFilesQuotaExtensions.ts'
+        ).read_text()
+        customizer = MODULE_PATH.read_text()
+
+        self.assertIn("['default', 'az', 'priority', 'plan', 'quota']", customizer)
+        self.assertIn('compareAuthFilesByPlanDescending', hook)
+        self.assertIn('compareAuthFilesByAvailableQuotaDescending', hook)
+        self.assertIn('const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter)', hook)
+        self.assertIn('const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter)', hook)
+        self.assertIn("options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') })", hook)
+        self.assertIn("options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') })", hook)
+        self.assertIn('if (selectedSortModeAvailable) return;', hook)
+        self.assertIn("setSortMode('default');", hook)
+        self.assertIn("selectedSortModeAvailable ? sortMode : 'default'", hook)
+        self.assertIn('compareAuthFilesByPlanDescending(a, b, quotaSearchStore)', hook)
+        self.assertIn('compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore)', hook)
+        self.assertIn("'          sortMode={effectiveSortMode}\\n'", customizer)
+
+    def test_replaces_upstream_sorting_and_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             target = Path(temp_dir)
             feature_dir = target / 'src/features/authFiles'
@@ -65,29 +88,15 @@ class AuthFilesSortingCustomizationTest(unittest.TestCase):
 
             CUSTOMIZATIONS.patch_auth_files_page_sorting_latest(target)
             CUSTOMIZATIONS.flush_writes()
-
-            page = page_path.read_text()
-            ui_state = ui_state_path.read_text()
-
-            self.assertIn("['default', 'az', 'priority', 'plan', 'quota']", ui_state)
-            self.assertEqual(page.count("from '@/pro/modules/quota'"), 1)
-            self.assertIn('compareAuthFilesByPlanDescending', page)
-            self.assertIn('compareAuthFilesByAvailableQuotaDescending', page)
-            self.assertIn('const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter)', page)
-            self.assertIn('const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter)', page)
-            self.assertIn("options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') })", page)
-            self.assertIn("options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') })", page)
-            self.assertIn('if (selectedSortModeAvailable) return;', page)
-            self.assertIn("setSortMode('default');", page)
-            self.assertIn("selectedSortModeAvailable ? sortMode : 'default'", page)
-            self.assertIn('compareAuthFilesByPlanDescending(a, b, quotaSearchStore)', page)
-            self.assertIn('compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore)', page)
-            self.assertIn('sortMode={effectiveSortMode}', page)
-
             CUSTOMIZATIONS.patch_auth_files_page_sorting_latest(target)
             CUSTOMIZATIONS.flush_writes()
-            self.assertEqual(page, page_path.read_text())
-            self.assertEqual(ui_state, ui_state_path.read_text())
+
+            page = page_path.read_text()
+            self.assertNotIn('  sortAuthFiles,\n', page)
+            self.assertIn('const sortOptions = quotaSortOptions;', page)
+            self.assertIn('sortFilesWithQuota(filtered)', page)
+            self.assertIn('sortMode={effectiveSortMode}', page)
+            self.assertIn("'plan', 'quota'", ui_state_path.read_text())
 
     def test_adds_sort_locale_labels(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

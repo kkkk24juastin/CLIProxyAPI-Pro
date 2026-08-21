@@ -26,13 +26,11 @@ src/router/MainRoutes.tsx
 src/services/api/apiCall.ts
 src/services/api/authFiles.ts
 src/services/api/client.ts
-src/services/api/version.ts
 src/stores/useAuthStore.ts
 src/stores/useNotificationStore.ts
 src/stores/useQuotaStore.ts
 src/styles/global.scss
 src/types/authFile.ts
-src/types/config.ts
 src/types/quota.ts
 src/utils/format.ts
 src/utils/quota/builders.ts

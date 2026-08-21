@@ -416,6 +416,16 @@ def replace_once(path: Path, old: str, new: str) -> None:
     write(path, text.replace(old, new, 1))
 
 
+def remove_once(path: Path, old: str, present: str) -> None:
+    text = read(path)
+    if present in text:
+        return
+    match_count = text.count(old)
+    if match_count != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {match_count}: {old[:120]!r}')
+    write(path, text.replace(old, '', 1))
+
+
 def auth_files_page_path(target: Path) -> Path:
     path = target / 'src/features/authFiles/AuthFilesPage.tsx'
     if not path.is_file():
@@ -1411,7 +1421,6 @@ def patch_antigravity_quota_builders(target: Path) -> None:
 def patch_auth_files_runtime_state(target: Path) -> None:
     type_path = target / 'src/types/authFile.ts'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
-    page_path = auth_files_page_path(target)
 
     insert_once(
         type_path,
@@ -1440,22 +1449,6 @@ def patch_auth_files_runtime_state(target: Path) -> None:
             "{t('auth_files.selected_count')} {selectedCount}",
         )
 
-    insert_once(
-        page_path,
-        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
-        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n"
-        "import { quotaPersistenceMiddleware } from '@/pro/modules/quota';\n",
-        "quotaPersistenceMiddleware } from '@/pro/modules/quota'",
-    )
-    text = read(page_path)
-    if 'quotaPersistenceMiddleware.ensureFresh()' not in text:
-        refresh = "    await Promise.all([loadFiles({ background: true }), loadExcluded(), loadModelAlias()]);\n"
-        if text.count(refresh) != 1:
-            raise RuntimeError(f'Latest upstream header refresh not found in {page_path}')
-        replacement = refresh.replace(']);\n', ', quotaPersistenceMiddleware.ensureFresh()]);\n')
-        write(page_path, text.replace(refresh, replacement, 1))
-
-
 def patch_account_usage_feature(target: Path) -> None:
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
     page_path = auth_files_page_path(target)
@@ -1463,22 +1456,15 @@ def patch_account_usage_feature(target: Path) -> None:
     insert_once(
         card_path,
         "} from '@/components/ui/icons';\n",
-        "} from '@/components/ui/icons';\nimport { IconChartColumnIncreasing } from '@/pro/icons';\n",
-        "IconChartColumnIncreasing } from '@/pro/icons'",
-    )
-    replace_once(
-        card_path,
-        '  onShowModels: (file: AuthFileItem) => void;\n',
-        '  onShowModels: (file: AuthFileItem) => void;\n  onShowUsage: (file: AuthFileItem) => void;\n',
-    )
-    insert_once(
-        card_path,
-        '    onShowModels,\n    onDownload,\n',
-        '    onShowModels,\n    onShowUsage,\n    onDownload,\n',
-        '    onShowUsage,\n',
+        "} from '@/components/ui/icons';\n"
+        "import {\n"
+        "  AuthFileConnectionActionExtension,\n"
+        "  AuthFileUsageActionExtension,\n"
+        "} from '@/pro/authFiles/AuthFileExtensions';\n",
+        "AuthFileUsageActionExtension,",
     )
     card_text = read(card_path)
-    if "onClick={() => onShowUsage(file)}" not in card_text:
+    if '<AuthFileUsageActionExtension' not in card_text:
         actions_marker = '        <div className={styles.actionsMain}>\n'
         if actions_marker not in card_text:
             raise RuntimeError(f'Pattern not found in {card_path}: auth file actions')
@@ -1487,13 +1473,7 @@ def patch_account_usage_feature(target: Path) -> None:
             card_text.replace(
                 actions_marker,
                 actions_marker
-                + "          {authIndexKey && (\n"
-                + "            <Button variant=\"secondary\" size=\"sm\" onClick={() => onShowUsage(file)}\n"
-                + "              title={t('account_usage.card_action')} disabled={disableControls}>\n"
-                + "              <IconChartColumnIncreasing size={14} />\n"
-                + "              {t('account_usage.card_action')}\n"
-                + "            </Button>\n"
-                + "          )}\n",
+                + "          <AuthFileUsageActionExtension file={file} disabled={disableControls} />\n",
                 1,
             ),
         )
@@ -1502,77 +1482,20 @@ def patch_account_usage_feature(target: Path) -> None:
         page_path,
         "import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';\n",
         "import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';\n"
-        "import { AccountUsageModal } from '@/pro/modules/monitoring';\n",
-        "AccountUsageModal } from '@/pro/modules/monitoring'",
+        "import { AuthFileSurfaceExtensions } from '@/pro/authFiles/AuthFileExtensions';\n",
+        "AuthFileSurfaceExtensions } from '@/pro/authFiles/AuthFileExtensions'",
     )
-    insert_once(
-        page_path,
-        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
-        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n"
-        "import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';\n"
-        "import type { AuthFileItem } from '@/types';\n",
-        "useProSurfaceState } from '@/pro/shared/useProSurfaceState'",
-    )
-    page_text = read(page_path)
-    if 'const [accountUsageFile, setAccountUsageFileState]' not in page_text:
-        marker = "  const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');\n"
-        if page_text.count(marker) != 1:
-            raise RuntimeError(f'Latest upstream account usage state marker not found in {page_path}')
-        write(
-            page_path,
-            page_text.replace(
-                marker,
-                marker
-                + "  const [accountUsageFile, setAccountUsageFileState] = useState<AuthFileItem | null>(null);\n"
-                + "  const { activeSurface: activeAuthSurface, openSurface: openAuthSurface, closeSurface: closeAuthSurface } = useProSurfaceState<'usage' | 'connection-test'>();\n"
-                + "  const setAccountUsageFile = useCallback((file: AuthFileItem | null) => {\n"
-                + "    setAccountUsageFileState(file);\n"
-                + "    if (file) openAuthSurface('usage');\n"
-                + "    else if (activeAuthSurface === 'usage') closeAuthSurface();\n"
-                + "  }, [activeAuthSurface, closeAuthSurface, openAuthSurface]);\n",
-                1,
-            ),
-        )
-    page_text = read(page_path)
-    if 'onShowUsage={setAccountUsageFile}' not in page_text:
-        indent = '                '
-        marker = f'{indent}onShowModels={{showModels}}\n{indent}onDownload={{handleDownload}}\n'
-        if page_text.count(marker) != 1:
-            raise RuntimeError(f'Latest upstream auth card usage callback not found in {page_path}')
-        write(
-            page_path,
-            page_text.replace(
-                marker,
-                f'{indent}onShowModels={{showModels}}\n'
-                f'{indent}onShowUsage={{setAccountUsageFile}}\n'
-                f'{indent}onDownload={{handleDownload}}\n',
-                1,
-            ),
-        )
     insert_once(
         page_path,
         "      <AuthFileModelsModal\n",
-        "      <AccountUsageModal file={activeAuthSurface === 'usage' ? accountUsageFile : null} onClose={() => setAccountUsageFile(null)} />\n\n"
+        "      <AuthFileSurfaceExtensions />\n\n"
         "      <AuthFileModelsModal\n",
-        "<AccountUsageModal file={activeAuthSurface === 'usage' ? accountUsageFile : null}",
+        '<AuthFileSurfaceExtensions />',
     )
-
-    insert_once(
-        page_path,
-        "  const existingTypes = useMemo(() => {\n",
-        "  useEffect(() => {\n"
-        "    if (!isCurrentLayer) return;\n"
-        "    void quotaPersistenceMiddleware.ensureFresh();\n"
-        "  }, [files, isCurrentLayer]);\n\n"
-        "  const existingTypes = useMemo(() => {\n",
-        "}, [files, isCurrentLayer]);",
-    )
-
 
 def patch_auth_file_connection_test(target: Path) -> None:
     api_path = target / 'src/services/api/authFiles.ts'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
-    page_path = auth_files_page_path(target)
 
     insert_once(
         api_path,
@@ -1624,141 +1547,30 @@ def patch_auth_file_connection_test(target: Path) -> None:
         "    );\n",
     )
 
-    replace_once(
-        card_path,
-        "  IconModelCluster,\n  IconRefreshCw,\n",
-        "  IconModelCluster,\n  IconNetwork,\n  IconRefreshCw,\n",
-    )
-    replace_once(
-        card_path,
-        "  onShowUsage: (file: AuthFileItem) => void;\n  onDownload: (name: string) => void;\n",
-        "  onShowUsage: (file: AuthFileItem) => void;\n"
-        "  onTestConnection: (file: AuthFileItem) => void;\n"
-        "  onDownload: (name: string) => void;\n",
-    )
-    replace_once(
-        card_path,
-        "    onShowUsage,\n    onDownload,\n",
-        "    onShowUsage,\n    onTestConnection,\n    onDownload,\n",
-    )
     insert_once(
         card_path,
         "              {showManualRefreshButton && (\n",
-        "              <Button\n"
-        "                variant=\"secondary\"\n"
-        "                size=\"sm\"\n"
-        "                onClick={() => onTestConnection(file)}\n"
-        "                className={styles.iconButton}\n"
-        "                title={t('auth_files.connection_test_button')}\n"
+        "              <AuthFileConnectionActionExtension\n"
+        "                file={file}\n"
         "                disabled={\n"
         "                  disableControls ||\n"
         "                  statusUpdating[file.name] === true ||\n"
         "                  isManualRefreshing\n"
         "                }\n"
-        "              >\n"
-        "                <IconNetwork size={15} />\n"
-        "              </Button>\n"
+        "              />\n"
         "              {showManualRefreshButton && (\n",
-        "onClick={() => onTestConnection(file)}",
-    )
-
-    insert_once(
-        page_path,
-        "import { AccountUsageModal } from '@/pro/modules/monitoring';\n",
-        "import { AccountUsageModal } from '@/pro/modules/monitoring';\n"
-        "import { AuthFileConnectionTestModal } from '@/pro/authFiles/AuthFileConnectionTestModal';\n",
-        "AuthFileConnectionTestModal } from '@/pro/authFiles/AuthFileConnectionTestModal'",
-    )
-    insert_once(
-        page_path,
-        "  const setAccountUsageFile = useCallback((file: AuthFileItem | null) => {\n"
-        "    setAccountUsageFileState(file);\n"
-        "    if (file) openAuthSurface('usage');\n"
-        "    else if (activeAuthSurface === 'usage') closeAuthSurface();\n"
-        "  }, [activeAuthSurface, closeAuthSurface, openAuthSurface]);\n",
-        "  const setAccountUsageFile = useCallback((file: AuthFileItem | null) => {\n"
-        "    setAccountUsageFileState(file);\n"
-        "    if (file) openAuthSurface('usage');\n"
-        "    else if (activeAuthSurface === 'usage') closeAuthSurface();\n"
-        "  }, [activeAuthSurface, closeAuthSurface, openAuthSurface]);\n"
-        "  const [connectionTestFile, setConnectionTestFileState] = useState<AuthFileItem | null>(null);\n"
-        "  const setConnectionTestFile = useCallback((file: AuthFileItem | null) => {\n"
-        "    setConnectionTestFileState(file);\n"
-        "    if (file) openAuthSurface('connection-test');\n"
-        "    else if (activeAuthSurface === 'connection-test') closeAuthSurface();\n"
-        "  }, [activeAuthSurface, closeAuthSurface, openAuthSurface]);\n",
-        'const [connectionTestFile, setConnectionTestFileState]',
-    )
-    insert_once(
-        page_path,
-        "                onShowUsage={setAccountUsageFile}\n",
-        "                onShowUsage={setAccountUsageFile}\n"
-        "                onTestConnection={setConnectionTestFile}\n",
-        "onTestConnection={setConnectionTestFile}",
-    )
-    insert_once(
-        page_path,
-        "      <AccountUsageModal file={activeAuthSurface === 'usage' ? accountUsageFile : null} onClose={() => setAccountUsageFile(null)} />\n",
-        "      <AuthFileConnectionTestModal\n"
-        "        file={activeAuthSurface === 'connection-test' ? connectionTestFile : null}\n"
-        "        onClose={() => setConnectionTestFile(null)}\n"
-        "      />\n\n"
-        "      <AccountUsageModal file={activeAuthSurface === 'usage' ? accountUsageFile : null} onClose={() => setAccountUsageFile(null)} />\n",
-        '<AuthFileConnectionTestModal',
+        '<AuthFileConnectionActionExtension',
     )
 
 
 def patch_management_update_check(target: Path) -> None:
-    version_path = target / 'src/services/api/version.ts'
-    insert_once(
-        version_path,
-        "  checkLatest: () => apiClient.get<Record<string, unknown>>('/latest-version'),\n",
-        "  checkLatest: () => apiClient.get<Record<string, unknown>>('/latest-version'),\n"
-        "  checkManagementPanelUpdate: () =>\n"
-        "    apiClient.post<{ status: string; updated: boolean; sha256: string }>(\n"
-        "      '/management-panel/check-update'\n"
-        "    ),\n",
-        'checkManagementPanelUpdate:',
-    )
-
     page_path = target / 'src/pages/SystemPage.tsx'
     insert_once(
         page_path,
-        "  const [checkingVersion, setCheckingVersion] = useState(false);\n",
-        "  const [checkingVersion, setCheckingVersion] = useState(false);\n"
-        "  const [checkingManagementUpdate, setCheckingManagementUpdate] = useState(false);\n",
-        'const [checkingManagementUpdate, setCheckingManagementUpdate]',
-    )
-    insert_once(
-        page_path,
-        "  useEffect(() => {\n    fetchConfig().catch(() => {\n",
-        "  const handleManagementUpdateCheck = useCallback(async () => {\n"
-        "    setCheckingManagementUpdate(true);\n"
-        "    try {\n"
-        "      const result = await versionApi.checkManagementPanelUpdate();\n"
-        "      if (result.updated) {\n"
-        "        showNotification(t('system_info.management_check_update_updated'), 'success');\n"
-        "        window.setTimeout(() => {\n"
-        "          const nextUrl = new URL(window.location.href);\n"
-        "          nextUrl.searchParams.set('_management_updated', Date.now().toString());\n"
-        "          window.location.replace(nextUrl.toString());\n"
-        "        }, 500);\n"
-        "      } else {\n"
-        "        showNotification(t('system_info.management_check_update_unchanged'), 'success');\n"
-        "      }\n"
-        "    } catch (error: unknown) {\n"
-        "      const message =\n"
-        "        error instanceof Error ? error.message : typeof error === 'string' ? error : '';\n"
-        "      showNotification(\n"
-        "        `${t('system_info.management_check_update_error')}${message ? `: ${message}` : ''}`,\n"
-        "        'error'\n"
-        "      );\n"
-        "    } finally {\n"
-        "      setCheckingManagementUpdate(false);\n"
-        "    }\n"
-        "  }, [showNotification, t]);\n\n"
-        "  useEffect(() => {\n    fetchConfig().catch(() => {\n",
-        'const handleManagementUpdateCheck = useCallback',
+        "import { configApi, versionApi } from '@/services/api';\n",
+        "import { configApi, versionApi } from '@/services/api';\n"
+        "import { ManagementVersionTileExtension } from '@/pro/system/ManagementVersionTileExtension';\n",
+        "ManagementVersionTileExtension } from '@/pro/system/ManagementVersionTileExtension'",
     )
     replace_once(
         page_path,
@@ -1772,46 +1584,14 @@ def patch_management_update_check(target: Path) -> None:
         "              </div>\n"
         "              <div className={styles.tileValue}>{appVersion}</div>\n"
         "            </button>\n",
-        "            <div\n"
-        "              className={`${styles.infoTile} ${styles.tapTile}`}\n"
-        "              onClick={handleInfoVersionTap}\n"
-        "            >\n"
-        "              <div className={styles.tileHeader}>\n"
-        "                <div className={styles.tileLabel}>{t('footer.version')}</div>\n"
-        "                <Button\n"
-        "                  type=\"button\"\n"
-        "                  variant=\"ghost\"\n"
-        "                  size=\"sm\"\n"
-        "                  className={styles.tileAction}\n"
-        "                  onClick={(event) => {\n"
-        "                    event.stopPropagation();\n"
-        "                    void handleManagementUpdateCheck();\n"
-        "                  }}\n"
-        "                  loading={checkingManagementUpdate}\n"
-        "                  title={t('system_info.management_check_update_button')}\n"
-        "                  aria-label={t('system_info.management_check_update_button')}\n"
-        "                >\n"
-        "                  {t('system_info.management_check_update_button')}\n"
-        "                </Button>\n"
-        "              </div>\n"
-        "              <div className={styles.tileValue}>{appVersion}</div>\n"
-        "            </div>\n",
+        "            <ManagementVersionTileExtension\n"
+        "              appVersion={appVersion}\n"
+        "              onVersionTap={handleInfoVersionTap}\n"
+        "            />\n",
     )
 
 
 def patch_supporting_api_and_types(target: Path) -> None:
-    config_path = target / 'src/types/config.ts'
-    replace_once(
-        config_path,
-        "  quotaExceeded?: QuotaExceededConfig;\n  requestLog?: boolean;\n",
-        "  quotaExceeded?: QuotaExceededConfig;\n  usageStatisticsEnabled?: boolean;\n  requestLog?: boolean;\n",
-    )
-    replace_once(
-        config_path,
-        "  | 'quota-exceeded'\n  | 'request-log'\n",
-        "  | 'quota-exceeded'\n  | 'usage-statistics-enabled'\n  | 'request-log'\n",
-    )
-
     auth_file_type_path = target / 'src/types/authFile.ts'
     replace_once(
         auth_file_type_path,
@@ -2249,60 +2029,71 @@ def patch_auth_files_gemini_quota_latest(target: Path) -> None:
 
 def patch_auth_files_page_search_latest(target: Path) -> None:
     path = target / 'src/features/authFiles/AuthFilesPage.tsx'
-    replace_once(path, "import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';", "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';")
-    insert_once(path, "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n", "import { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';\nimport { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n", 'buildQuotaSearchValues')
     insert_once(
         path,
-        '  const statusBarCache = useAuthFilesStatusBarCache(files);\n',
-        "  const statusBarCache = useAuthFilesStatusBarCache(files);\n\n  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);\n  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n  const kimiQuota = useQuotaStore((state) => state.kimiQuota);\n  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n  const quotaSearchStore = useMemo(\n    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n  );\n",
-        'const quotaSearchStore',
+        "} from '@/features/authFiles/uiState';\n",
+        "} from '@/features/authFiles/uiState';\n"
+        "import { useAuthFilesQuotaExtensions } from '@/pro/authFiles/useAuthFilesQuotaExtensions';\n",
+        "useAuthFilesQuotaExtensions } from '@/pro/authFiles/useAuthFilesQuotaExtensions'",
+    )
+    insert_once(
+        path,
+        "  const enabledOnly = statusFilterMode === 'enabled';\n",
+        "  const enabledOnly = statusFilterMode === 'enabled';\n"
+        "  const resetPage = useCallback(() => setPage(1), []);\n"
+        "  const {\n"
+        "    effectiveSortMode,\n"
+        "    ensureFresh: ensureQuotaFresh,\n"
+        "    matchesQuotaMetadata,\n"
+        "    sortFiles: sortFilesWithQuota,\n"
+        "    sortOptions: quotaSortOptions,\n"
+        "  } = useAuthFilesQuotaExtensions({\n"
+        "    files,\n"
+        "    isCurrentLayer,\n"
+        "    normalizedFilter,\n"
+        "    search,\n"
+        "    sortMode,\n"
+        "    setSortMode,\n"
+        "    resetPage,\n"
+        "    t,\n"
+        "  });\n",
+        'useAuthFilesQuotaExtensions({',
+    )
+    replace_once(
+        path,
+        "    await Promise.all([loadFiles({ background: true }), loadExcluded(), loadModelAlias()]);\n",
+        "    await Promise.all([\n"
+        "      loadFiles({ background: true }),\n"
+        "      loadExcluded(),\n"
+        "      loadModelAlias(),\n"
+        "      ensureQuotaFresh(),\n"
+        "    ]);\n",
+    )
+    replace_once(
+        path,
+        '  }, [loadFiles, loadExcluded, loadModelAlias]);',
+        '  }, [ensureQuotaFresh, loadFiles, loadExcluded, loadModelAlias]);',
     )
     replace_once(
         path,
         '        return matchType && matchesAuthFileSearch(item, normalizedSearch, wildcardSearch);',
-        '        return matchType && (\n          matchesAuthFileSearch(item, normalizedSearch, wildcardSearch) ||\n          matchesQuotaSearch(buildQuotaSearchValues(item, quotaSearchStore, t), normalizedSearch)\n        );',
+        '        return matchType && (\n          matchesAuthFileSearch(item, normalizedSearch, wildcardSearch) ||\n          matchesQuotaMetadata(item)\n        );',
     )
-    replace_once(path, '[filesMatchingStatusFilters, normalizedFilter, normalizedSearch, wildcardSearch]', '[filesMatchingStatusFilters, normalizedFilter, normalizedSearch, quotaSearchStore, t, wildcardSearch]')
+    replace_once(
+        path,
+        '[filesMatchingStatusFilters, normalizedFilter, normalizedSearch, wildcardSearch]',
+        '[filesMatchingStatusFilters, matchesQuotaMetadata, normalizedFilter, normalizedSearch, wildcardSearch]',
+    )
 
 
 def patch_auth_files_page_sorting_latest(target: Path) -> None:
     page_path = target / 'src/features/authFiles/AuthFilesPage.tsx'
     ui_state_path = target / 'src/features/authFiles/uiState.ts'
     replace_once(ui_state_path, "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority'] as const;", "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority', 'plan', 'quota'] as const;")
-    insert_once(
+    remove_once(
         page_path,
-        "import { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';\n",
-        "import {\n"
-        "  buildQuotaSearchValues,\n"
-        "  compareAuthFilesByAvailableQuotaDescending,\n"
-        "  compareAuthFilesByPlanDescending,\n"
-        "  isAuthFilePlanSortProvider,\n"
-        "  isAuthFileQuotaSortProvider,\n"
-        "  matchesQuotaSearch,\n"
-        "} from '@/pro/modules/quota';\n",
-        'compareAuthFilesByPlanDescending',
-    )
-    insert_once(
-        page_path,
-        "  const enabledOnly = statusFilterMode === 'enabled';\n",
-        "  const enabledOnly = statusFilterMode === 'enabled';\n"
-        "  const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter);\n"
-        "  const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter);\n"
-        "  const selectedSortModeAvailable =\n"
-        "    (sortMode !== 'plan' || planSortAvailable) &&\n"
-        "    (sortMode !== 'quota' || quotaSortAvailable);\n",
-        'const planSortAvailable',
-    )
-    insert_once(
-        page_path,
-        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
-        "  useEffect(() => {\n"
-        "    if (selectedSortModeAvailable) return;\n"
-        "    setSortMode('default');\n"
-        "    setPage(1);\n"
-        "  }, [selectedSortModeAvailable]);\n\n"
-        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
-        'if (selectedSortModeAvailable) return;',
+        "  sortAuthFiles,\n",
+        'sortFilesWithQuota(filtered)',
     )
     replace_once(
         page_path,
@@ -2314,26 +2105,12 @@ def patch_auth_files_page_sorting_latest(target: Path) -> None:
         "    ],\n"
         "    [t]\n"
         "  );\n",
-        "  const sortOptions = useMemo(() => {\n"
-        "    const options: Array<{ value: AuthFilesSortMode; label: string }> = [\n"
-        "      { value: 'default', label: t('auth_files.sort_default') },\n"
-        "      { value: 'az', label: t('auth_files.sort_az') },\n"
-        "      { value: 'priority', label: t('auth_files.sort_priority') },\n"
-        "    ];\n"
-        "    if (planSortAvailable) {\n"
-        "      options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') });\n"
-        "    }\n"
-        "    if (quotaSortAvailable) {\n"
-        "      options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') });\n"
-        "    }\n"
-        "    return options;\n"
-        "  }, [planSortAvailable, quotaSortAvailable, t]);\n",
+        "  const sortOptions = quotaSortOptions;\n",
     )
-    insert_once(
+    replace_once(
         page_path,
         '  const sorted = useMemo(() => sortAuthFiles(filtered, sortMode), [filtered, sortMode]);\n',
-        "  const effectiveSortMode: AuthFilesSortMode =\n    selectedSortModeAvailable ? sortMode : 'default';\n  const sorted = useMemo(() => {\n    if (effectiveSortMode === 'plan') {\n      return [...filtered].sort((a, b) => compareAuthFilesByPlanDescending(a, b, quotaSearchStore));\n    }\n    if (effectiveSortMode === 'quota') {\n      return [...filtered].sort((a, b) => compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore));\n    }\n    return sortAuthFiles(filtered, effectiveSortMode);\n  }, [effectiveSortMode, filtered, quotaSearchStore]);\n",
-        'const effectiveSortMode',
+        '  const sorted = useMemo(() => sortFilesWithQuota(filtered), [filtered, sortFilesWithQuota]);\n',
     )
     replace_once(page_path, '          sortMode={sortMode}\n', '          sortMode={effectiveSortMode}\n')
 

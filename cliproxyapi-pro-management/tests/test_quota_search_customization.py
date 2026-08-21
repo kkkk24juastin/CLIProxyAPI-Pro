@@ -84,27 +84,18 @@ class QuotaSearchCustomizationTest(unittest.TestCase):
         CUSTOMIZATIONS._writes.clear()
 
     def test_adds_search_without_pruning_hidden_quota_state(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir)
-            feature_dir = target / 'src/features/authFiles'
-            feature_dir.mkdir(parents=True)
-            page_path = feature_dir / 'AuthFilesPage.tsx'
-            page_path.write_text(AUTH_FILES_PAGE_SOURCE)
+        hook = (
+            MODULE_PATH.parent / 'overlay/src/pro/authFiles/useAuthFilesQuotaExtensions.ts'
+        ).read_text()
+        customizer = MODULE_PATH.read_text()
 
-            CUSTOMIZATIONS.patch_auth_files_page_search_latest(target)
-            CUSTOMIZATIONS.flush_writes()
-
-            page = page_path.read_text()
-            self.assertIn('buildQuotaSearchValues', page)
-            self.assertIn('matchesQuotaSearch', page)
-            self.assertIn('const quotaSearchStore = useMemo(', page)
-            self.assertIn('state.geminiCliQuota', page)
-            self.assertIn('matchesQuotaSearch(buildQuotaSearchValues(item, quotaSearchStore, t)', page)
-            self.assertIn('quotaSearchStore, t, wildcardSearch', page)
-
-            CUSTOMIZATIONS.patch_auth_files_page_search_latest(target)
-            CUSTOMIZATIONS.flush_writes()
-            self.assertEqual(page, page_path.read_text())
+        self.assertIn('buildQuotaSearchValues', hook)
+        self.assertIn('matchesQuotaSearch', hook)
+        self.assertIn('const quotaSearchStore = useMemo(', hook)
+        self.assertIn('state.geminiCliQuota', hook)
+        self.assertIn('matchesQuotaSearch(buildQuotaSearchValues(file, quotaSearchStore, t)', hook)
+        self.assertIn('matchesQuotaMetadata(item)', customizer)
+        self.assertIn('matchesQuotaMetadata, normalizedFilter', customizer)
 
     def test_quota_page_search_preserves_upstream_sort_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

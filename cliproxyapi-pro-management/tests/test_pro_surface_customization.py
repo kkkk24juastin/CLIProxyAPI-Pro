@@ -327,16 +327,17 @@ class ProSurfaceCustomizationTest(unittest.TestCase):
         self.assertIn('${target.key}:${target.action}', inspection)
         self.assertIn('${item.key}:${item.action}', inspection)
 
-    def test_auth_surface_state_insertion_has_an_exact_idempotency_marker(self) -> None:
+    def test_auth_surface_extensions_keep_one_external_active_surface(self) -> None:
         source = CUSTOMIZER.read_text()
+        extensions = (PRO_ROOT / 'authFiles/AuthFileExtensions.tsx').read_text()
         self.assertIn(
-            "'const [connectionTestFile, setConnectionTestFileState]'",
+            "'<AuthFileSurfaceExtensions />'",
             source,
         )
-        self.assertNotIn(
-            "'const [connectionTestFile, setConnectionTestFile]'",
-            source,
-        )
+        self.assertIn('let activeSurface: AuthFileSurfaceState | null = null;', extensions)
+        self.assertIn('useSyncExternalStore(', extensions)
+        self.assertIn("openSurface('usage', file)", extensions)
+        self.assertIn("openSurface('connection-test', file)", extensions)
 
 
 if __name__ == '__main__':
