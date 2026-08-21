@@ -66,6 +66,10 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
         self.assertIn("t('monitoring.realtime_duration_ttft')", source)
         self.assertIn("t('monitoring.realtime_duration_total')", source)
         self.assertIn("className={styles.realtimeDurationCell}", source)
+        total_duration = source[source.index("t('monitoring.realtime_duration_total')"):]
+        total_value_end = total_duration.index('formatDurationMs(row.latencyMs')
+        self.assertLess(total_duration.index('<small className={'), total_value_end)
+        self.assertNotIn('<strong className={', total_duration[:total_value_end])
 
     def test_simplified_chinese_inspection_duration_uses_concise_minute_unit(self) -> None:
         locales = json.loads(LOCALES_PATH.read_text())

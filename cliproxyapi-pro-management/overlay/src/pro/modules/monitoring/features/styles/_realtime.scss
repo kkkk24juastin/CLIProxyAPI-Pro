@@ -462,11 +462,11 @@
   font-weight: 750;
 }
 
-.realtimeDurationCell strong.warnText {
+.realtimeDurationCell :is(strong, small).warnText {
   color: var(--monitor-amber);
 }
 
-.realtimeDurationCell strong.badText {
+.realtimeDurationCell :is(strong, small).badText {
   color: var(--monitor-red);
 }
 

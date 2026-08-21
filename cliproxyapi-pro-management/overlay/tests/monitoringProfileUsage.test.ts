@@ -86,6 +86,8 @@ describe('monitoring API key and Profile usage navigation', () => {
     expect(monitoringPage).toContain('profileCatalogFetchedAtRef.current');
     expect(monitoringPage).toContain('profileCatalogGenerationRef.current === catalog.policyGeneration');
     expect(monitoringPage).toContain('styles.realtimeApiKeyCell');
+    expect(monitoringPage).toContain("resolveUsageProfileSnapshot(row.profileName, row.profileId, '')");
+    expect(monitoringPage).toContain('{profileSnapshot ? <small title={profileSnapshot}>{profileSnapshot}</small> : null}');
     expect(monitoringPage).not.toContain("t('monitoring.api_key_profile'");
     expect(monitoringPage).toContain('profileId: selectedProfile');
     expect(preferences).toContain('apiKey: 168');

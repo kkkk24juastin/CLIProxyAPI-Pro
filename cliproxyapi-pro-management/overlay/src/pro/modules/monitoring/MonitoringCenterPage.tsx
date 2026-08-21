@@ -919,22 +919,15 @@ export function MonitoringCenterPage() {
       label: t('monitoring.api_key_label'),
       colClassName: styles.realtimeApiKeyCol,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.apiKey,
-      render: (row) => (
-        <div className={`${styles.primaryCell} ${styles.realtimeApiKeyCell}`}>
-          <span className={styles.monoCell} title={row.clientApiKey.masked}>{row.clientApiKey.masked}</span>
-          <small title={resolveUsageProfileSnapshot(
-            row.profileName,
-            row.profileId,
-            t('monitoring.api_key_profile_none'),
-          )}>
-            {resolveUsageProfileSnapshot(
-              row.profileName,
-              row.profileId,
-              t('monitoring.api_key_profile_none'),
-            )}
-          </small>
-        </div>
-      ),
+      render: (row) => {
+        const profileSnapshot = resolveUsageProfileSnapshot(row.profileName, row.profileId, '');
+        return (
+          <div className={`${styles.primaryCell} ${styles.realtimeApiKeyCell}`}>
+            <span className={styles.monoCell} title={row.clientApiKey.masked}>{row.clientApiKey.masked}</span>
+            {profileSnapshot ? <small title={profileSnapshot}>{profileSnapshot}</small> : null}
+          </div>
+        );
+      },
     },
     recent: {
       key: 'recent',
@@ -1023,7 +1016,7 @@ export function MonitoringCenterPage() {
           </span>
           <span>
             <small>{t('monitoring.realtime_duration_total')}</small>
-            <strong className={
+            <small className={
               row.latencyMs !== null && row.latencyMs >= 30000
                 ? styles.badText
                 : row.latencyMs !== null && row.latencyMs >= 15000
@@ -1031,7 +1024,7 @@ export function MonitoringCenterPage() {
                   : undefined
             }>
               {formatDurationMs(row.latencyMs, { locale: i18n.language })}
-            </strong>
+            </small>
           </span>
         </div>
       ),
