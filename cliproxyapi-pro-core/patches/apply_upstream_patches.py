@@ -800,6 +800,124 @@ insert_before(
     read_text(Path(__file__).resolve().parent / 'plugin_quota_api.go'),
     'type QuotaProvider interface',
 )
+replace_once(
+    pluginapi_types,
+    '''\t// Source identifies the request source or integration.
+\tSource string
+\t// ReasoningEffort records the requested reasoning effort.
+''',
+    '''\t// Source identifies the request source or integration.
+\tSource string
+\t// RequestID correlates usage with request lifecycle and monitoring records.
+\tRequestID string
+\t// Endpoint is the normalized downstream method and path when available.
+\tEndpoint string
+\t// AccessTokenSHA256 identifies an OAuth token version without exposing it.
+\tAccessTokenSHA256 string
+\t// ClientIP is the direct downstream client address captured by the host.
+\tClientIP string
+\t// XForwardedFor preserves the downstream forwarding chain when present.
+\tXForwardedFor string
+\t// UserAgent is the downstream request user agent.
+\tUserAgent string
+\t// APIKeyPolicyID identifies the frozen Pro API-key policy decision.
+\tAPIKeyPolicyID string
+\t// ProfileID identifies the frozen active policy profile.
+\tProfileID string
+\t// ProfileNameSnapshot preserves the profile name used for this request.
+\tProfileNameSnapshot string
+\t// PolicyMode is passthrough or profile for the frozen request decision.
+\tPolicyMode string
+\t// RequestedModel is the client-facing model before policy mapping.
+\tRequestedModel string
+\t// EffectiveModel is the final policy-approved execution model.
+\tEffectiveModel string
+\t// ReasoningEffort records the requested reasoning effort.
+''',
+    'ProfileNameSnapshot string',
+)
+replace_once(
+    pluginapi_types,
+    '''\t// ServiceTier records the requested or reported service tier.
+\tServiceTier string
+\t// Generate reports whether the client requested actual generation.
+''',
+    '''\t// ServiceTier records the requested service tier.
+\tServiceTier string
+\t// ResponseServiceTier records the final upstream-reported service tier.
+\tResponseServiceTier string
+\t// Speed records the client-requested inference speed.
+\tSpeed string
+\t// ResponseSpeed records the final upstream-reported inference speed.
+\tResponseSpeed string
+\t// Generate reports whether the client requested actual generation.
+''',
+    'ResponseSpeed string',
+)
+replace_once(
+    pluginapi_types,
+    '''\t// TTFT is the time to first token for streaming requests.
+\tTTFT time.Duration
+\t// Failed reports whether the request failed.
+''',
+    '''\t// TTFT is the time to first token for streaming requests.
+\tTTFT time.Duration
+\t// AttemptIndex is the zero-based upstream attempt when instrumented.
+\tAttemptIndex *int64
+\t// Stream reports whether the downstream request used streaming.
+\tStream bool
+\t// Failed reports whether the request failed.
+''',
+    'AttemptIndex *int64',
+)
+replace_once(
+    pluginapi_types,
+    '''\t// Detail contains token usage counters.
+\tDetail UsageDetail
+\t// ResponseHeaders contains selected upstream response headers.
+''',
+    '''\t// Detail contains token usage counters.
+\tDetail UsageDetail
+\t// AccountingVersion identifies the canonical token-accounting schema.
+\tAccountingVersion int
+\t// TokenBreakdown contains non-overlapping input/output token buckets.
+\tTokenBreakdown UsageTokenBreakdown
+\t// ResponseHeaders contains selected upstream response headers.
+''',
+    'TokenBreakdown UsageTokenBreakdown',
+)
+insert_before(
+    pluginapi_types,
+    '// UsageFailure describes an upstream or executor failure.\n',
+    '''// UsageTokenInputBreakdown contains mutually exclusive input token buckets.
+type UsageTokenInputBreakdown struct {
+\tTotalTokens      int64
+\tUncachedTokens   int64
+\tCacheReadTokens  int64
+\tCacheWriteTokens int64
+}
+
+// UsageTokenOutputBreakdown contains mutually exclusive output token buckets.
+type UsageTokenOutputBreakdown struct {
+\tTotalTokens        int64
+\tNonReasoningTokens int64
+\tReasoningTokens    int64
+}
+
+// UsageTokenBreakdown is the provider-neutral token-accounting contract sent
+// to external usage plugins.
+type UsageTokenBreakdown struct {
+\tSchemaVersion      int
+\tQuality            string
+\tTotalTokens        int64
+\tInput              UsageTokenInputBreakdown
+\tOutput             UsageTokenOutputBreakdown
+\tUnclassifiedTokens int64
+}
+
+''',
+    'type UsageTokenBreakdown struct',
+)
 pluginabi_types = ROOT / 'sdk/pluginabi/types.go'
 replace_once(
     pluginabi_types,
@@ -896,6 +1014,21 @@ func (p rpcQuotaProvider) FetchQuota(ctx context.Context, req pluginapi.QuotaFet
 ''',
     'func (p rpcQuotaProvider) FetchQuota',
 )
+replace_once(
+    rpc_client,
+    '''func (a *rpcPluginAdapter) HandleUsage(ctx context.Context, record pluginapi.UsageRecord) {
+\t_, _ = callPlugin[rpcEmptyResponse](ctx, a.client, pluginabi.MethodUsageHandle, record)
+}
+''',
+    '''func (a *rpcPluginAdapter) HandleUsage(ctx context.Context, record pluginapi.UsageRecord) {
+\trecord = enrichRPCUsageRecord(ctx, record)
+\t_, _ = callPlugin[rpcEmptyResponse](ctx, a.client, pluginabi.MethodUsageHandle, record)
+}
+''',
+    'record = enrichRPCUsageRecord(ctx, record)',
+)
+queue_go_source('internal/pluginhost/usage_metadata.go')
+queue_go_source('internal/pluginhost/usage_metadata_test.go')
 plugin_host = ROOT / 'internal/pluginhost/host.go'
 replace_once(
     plugin_host,
@@ -3262,6 +3395,90 @@ func SkipMonitoringFromContext(ctx context.Context) bool {
 ''',
     'func WithSkipMonitoring(ctx context.Context)',
 )
+replace_once(
+    usage_manager,
+    'type skipMonitoringContextKey struct{}\n',
+    'type skipMonitoringContextKey struct{}\ntype recordSnapshotContextKey struct{}\n',
+    'type recordSnapshotContextKey struct{}',
+)
+insert_before(
+    usage_manager,
+    '// Plugin consumes usage records emitted by the proxy runtime.\n',
+    '''// WithRecordSnapshot stores an isolated usage record for adapters that need
+// fields not present in an older public plugin contract.
+func WithRecordSnapshot(ctx context.Context, record Record) context.Context {
+\tif ctx == nil {
+\t\tctx = context.Background()
+\t}
+\treturn context.WithValue(ctx, recordSnapshotContextKey{}, cloneRecordSnapshot(record))
+}
+
+// RecordFromContext returns an isolated copy of the current usage record.
+func RecordFromContext(ctx context.Context) (Record, bool) {
+\tif ctx == nil {
+\t\treturn Record{}, false
+\t}
+\trecord, ok := ctx.Value(recordSnapshotContextKey{}).(Record)
+\tif !ok {
+\t\treturn Record{}, false
+\t}
+\treturn cloneRecordSnapshot(record), true
+}
+
+func cloneRecordSnapshot(record Record) Record {
+\tif record.Generate != nil {
+\t\tgenerate := *record.Generate
+\t\trecord.Generate = &generate
+\t}
+\tif record.AttemptIndex != nil {
+\t\tattempt := *record.AttemptIndex
+\t\trecord.AttemptIndex = &attempt
+\t}
+\trecord.ResponseHeaders = record.ResponseHeaders.Clone()
+\treturn record
+}
+
+''',
+    'func WithRecordSnapshot(ctx context.Context, record Record)',
+)
+replace_once(
+    usage_manager,
+    '''func (m *Manager) dispatch(item queueItem) {
+\tm.pluginsMu.RLock()
+\tplugins := make([]Plugin, len(m.plugins))
+\tcopy(plugins, m.plugins)
+\tm.pluginsMu.RUnlock()
+\tif len(plugins) == 0 {
+\t\treturn
+\t}
+\tfor _, plugin := range plugins {
+\t\tif plugin == nil {
+\t\t\tcontinue
+\t\t}
+\t\tsafeInvoke(plugin, item.ctx, item.record)
+\t}
+}
+''',
+    '''func (m *Manager) dispatch(item queueItem) {
+\tm.pluginsMu.RLock()
+\tplugins := make([]Plugin, len(m.plugins))
+\tcopy(plugins, m.plugins)
+\tm.pluginsMu.RUnlock()
+\tif len(plugins) == 0 {
+\t\treturn
+\t}
+\tctx := WithRecordSnapshot(item.ctx, item.record)
+\tfor _, plugin := range plugins {
+\t\tif plugin == nil {
+\t\t\tcontinue
+\t\t}
+\t\tsafeInvoke(plugin, ctx, item.record)
+\t}
+}
+''',
+    'ctx := WithRecordSnapshot(item.ctx, item.record)',
+)
+queue_go_source('sdk/cliproxy/usage/record_context_test.go')
 replace_once(
     usage_manager,
     '''\tif index, exists := m.named[name]; exists && index >= 0 && index < len(m.plugins) {
