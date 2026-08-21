@@ -37,14 +37,14 @@ func lifecyclePayload(t *testing.T, config string) []byte {
 func TestParsePluginConfigAcceptsHostScopedAndFullYAML(t *testing.T) {
 	for name, raw := range map[string]string{
 		"host scoped":   "enabled: true\npriority: 100\nwrite-enabled: true\ndatabase-path: /tmp/scoped.sqlite\n",
-		"full document": "plugins:\n  configs:\n    pro-observability:\n      write-enabled: true\n      database-path: /tmp/full.sqlite\n",
+		"full document": "plugins:\n  configs:\n    pro-observability:\n      read-enabled: true\n      database-path: /tmp/full.sqlite\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			config, err := parsePluginConfig([]byte(raw))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !config.WriteEnabled || !strings.HasPrefix(config.DatabasePath, "/tmp/") {
+			if !config.ReadEnabled || !strings.HasPrefix(config.DatabasePath, "/tmp/") {
 				t.Fatalf("config = %#v", config)
 			}
 		})
@@ -75,7 +75,7 @@ func TestPluginDefaultsToDisabledWriterAndRegistersNoResourceUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	management := decodeEnvelopeResult[managementRegistration](t, raw)
-	if len(management.Routes) != 1 || management.Routes[0].Method != http.MethodGet || management.Routes[0].Path != managementStatusPath {
+	if len(management.Routes) != 3 || management.Routes[0].Method != http.MethodGet || management.Routes[0].Path != managementStatusPath || management.Routes[1].Path != managementUsagePath || management.Routes[2].Path != managementEventsPath {
 		t.Fatalf("management registration = %#v", management)
 	}
 	if strings.Contains(string(raw), "resources") || strings.Contains(string(raw), "menu") {
@@ -110,7 +110,7 @@ func TestPluginOptInWriterAndAuthenticatedStatus(t *testing.T) {
 	if err := json.Unmarshal(response.Body, &status); err != nil {
 		t.Fatal(err)
 	}
-	if !status.WriteEnabled || !status.StoreOpen || status.MigrationMode != "opt-in-writer" || status.Summary == nil || status.Summary.TotalRequests != 1 {
+	if !status.ReadEnabled || !status.WriteEnabled || !status.StoreOpen || status.MigrationMode != "opt-in-writer" || status.Summary == nil || status.Summary.TotalRequests != 1 {
 		t.Fatalf("runtime status = %#v", status)
 	}
 }

@@ -16,6 +16,8 @@ const (
 	pluginSchemaVersion = 2
 
 	managementStatusPath = "/plugins/pro-observability/status"
+	managementUsagePath  = "/plugins/pro-observability/usage"
+	managementEventsPath = "/plugins/pro-observability/usage/events"
 	defaultDatabasePath  = "/CLIProxyAPI/usage/usage.sqlite"
 )
 
@@ -206,6 +208,7 @@ func (breakdown tokenBreakdown) valid() bool {
 }
 
 type usageEvent struct {
+	ID                   int64
 	RequestID            string
 	EventHash            string
 	TimestampMS          int64
@@ -258,9 +261,90 @@ type usageEvent struct {
 	EffectiveServiceTier string
 	Speed                string
 	EffectiveSpeed       string
+	EstimatedCost        *float64
+	PriceRuleID          int64
+	CostBreakdownJSON    string
 	Failed               bool
 	RawJSON              string
 	CreatedAtMS          int64
+}
+
+type usageTokens struct {
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	ReasoningTokens  int64 `json:"reasoning_tokens"`
+	CachedTokens     int64 `json:"cached_tokens"`
+	CacheTokens      int64 `json:"cache_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
+	CacheInputTokens int64 `json:"cache_input_tokens,omitempty"`
+	TotalTokens      int64 `json:"total_tokens"`
+}
+
+type usageDetailPayload struct {
+	ID                   int64           `json:"id,omitempty"`
+	RequestID            string          `json:"request_id,omitempty"`
+	Timestamp            string          `json:"timestamp"`
+	Source               string          `json:"source"`
+	AuthIndex            string          `json:"auth_index,omitempty"`
+	APIKeyHash           string          `json:"api_key_hash,omitempty"`
+	APIKeyPolicyID       string          `json:"api_key_policy_id,omitempty"`
+	ProfileID            string          `json:"profile_id,omitempty"`
+	ProfileNameSnapshot  string          `json:"profile_name_snapshot,omitempty"`
+	PolicyMode           string          `json:"policy_mode,omitempty"`
+	RequestedModel       string          `json:"requested_model,omitempty"`
+	EffectiveModel       string          `json:"effective_model,omitempty"`
+	ClientIP             string          `json:"client_ip,omitempty"`
+	XForwardedFor        string          `json:"x_forwarded_for,omitempty"`
+	UserAgent            string          `json:"user_agent,omitempty"`
+	Provider             string          `json:"provider,omitempty"`
+	ExecutorType         string          `json:"executor_type,omitempty"`
+	Alias                string          `json:"alias,omitempty"`
+	AuthType             string          `json:"auth_type,omitempty"`
+	LatencyMS            *int64          `json:"latency_ms,omitempty"`
+	TTFTMS               *int64          `json:"ttft_ms,omitempty"`
+	StatusCode           *int            `json:"status_code,omitempty"`
+	ErrorCode            string          `json:"error_code,omitempty"`
+	ErrorMessage         string          `json:"error_message,omitempty"`
+	UpstreamRequestID    string          `json:"upstream_request_id,omitempty"`
+	RetryAfter           string          `json:"retry_after,omitempty"`
+	AttemptIndex         *int64          `json:"attempt_index,omitempty"`
+	Stream               bool            `json:"stream"`
+	ReasoningEffort      string          `json:"reasoning_effort,omitempty"`
+	ServiceTier          string          `json:"service_tier,omitempty"`
+	EffectiveServiceTier string          `json:"effective_service_tier,omitempty"`
+	Speed                string          `json:"speed,omitempty"`
+	EffectiveSpeed       string          `json:"effective_speed,omitempty"`
+	EstimatedCost        *float64        `json:"estimated_cost,omitempty"`
+	PriceRuleID          int64           `json:"price_rule_id,omitempty"`
+	CostBreakdown        json.RawMessage `json:"cost_breakdown,omitempty"`
+	AccountingVersion    int             `json:"accounting_version,omitempty"`
+	AccountingQuality    string          `json:"accounting_quality,omitempty"`
+	TokenBreakdown       tokenBreakdown  `json:"token_breakdown"`
+	Tokens               usageTokens     `json:"tokens"`
+	Failed               bool            `json:"failed"`
+}
+
+type usageModelAggregate struct {
+	Details []usageDetailPayload `json:"details"`
+}
+
+type usageAPIAggregate struct {
+	Models map[string]*usageModelAggregate `json:"models"`
+}
+
+type usagePayload struct {
+	TotalRequests  int64                         `json:"total_requests"`
+	SuccessCount   int64                         `json:"success_count"`
+	FailureCount   int64                         `json:"failure_count"`
+	TotalTokens    int64                         `json:"total_tokens"`
+	LatestID       int64                         `json:"latest_id"`
+	Generation     int64                         `json:"generation"`
+	ResetAtMS      int64                         `json:"reset_at_ms,omitempty"`
+	DetailsCount   int64                         `json:"details_count,omitempty"`
+	DetailsLimit   int64                         `json:"details_limit,omitempty"`
+	DetailsLimited bool                          `json:"details_limited,omitempty"`
+	APIs           map[string]*usageAPIAggregate `json:"apis"`
 }
 
 type insertResult struct {

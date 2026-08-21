@@ -23,6 +23,7 @@ const (
 )
 
 type pluginConfig struct {
+	ReadEnabled  bool
 	WriteEnabled bool
 	DatabasePath string
 }
@@ -34,6 +35,7 @@ type yamlConfigDocument struct {
 }
 
 type yamlPluginConfig struct {
+	ReadEnabled  bool   `yaml:"read-enabled"`
 	WriteEnabled bool   `yaml:"write-enabled"`
 	DatabasePath string `yaml:"database-path"`
 }
@@ -41,6 +43,7 @@ type yamlPluginConfig struct {
 type runtimeStatus struct {
 	PluginID      string        `json:"pluginId"`
 	Version       string        `json:"version"`
+	ReadEnabled   bool          `json:"readEnabled"`
 	WriteEnabled  bool          `json:"writeEnabled"`
 	DatabasePath  string        `json:"databasePath"`
 	StoreOpen     bool          `json:"storeOpen"`
@@ -78,11 +81,11 @@ func dispatchMethod(method string, rawRequest []byte) ([]byte, error) {
 		}
 		return okEnvelope(struct{}{})
 	case methodManagementRegister:
-		return okEnvelope(managementRegistration{Routes: []managementRoute{{
-			Method:      http.MethodGet,
-			Path:        managementStatusPath,
-			Description: "Reports the opt-in observability writer migration state.",
-		}}})
+		return okEnvelope(managementRegistration{Routes: []managementRoute{
+			{Method: http.MethodGet, Path: managementStatusPath, Description: "Reports the opt-in observability migration state."},
+			{Method: http.MethodGet, Path: managementUsagePath, Description: "Reads a host-compatible usage snapshot from plugin storage."},
+			{Method: http.MethodGet, Path: managementEventsPath, Description: "Reads host-compatible incremental usage events from plugin storage."},
+		}})
 	case methodManagementHandle:
 		return handleManagement(rawRequest)
 	case methodPluginShutdown:
@@ -131,6 +134,7 @@ func parsePluginConfig(raw []byte) (pluginConfig, error) {
 		plugin = nested
 	}
 	config.WriteEnabled = plugin.WriteEnabled
+	config.ReadEnabled = plugin.ReadEnabled || plugin.WriteEnabled
 	if path := strings.TrimSpace(plugin.DatabasePath); path != "" {
 		config.DatabasePath = path
 	}
@@ -147,6 +151,11 @@ func (runtime *pluginRuntime) configure(raw []byte) error {
 		nextStore, err = openUsageStore(config.DatabasePath)
 		if err != nil {
 			return fmt.Errorf("enable observability writer: %w", err)
+		}
+	} else if config.ReadEnabled {
+		nextStore, err = openReadOnlyUsageStore(config.DatabasePath)
+		if err != nil {
+			return fmt.Errorf("enable observability reader: %w", err)
 		}
 	}
 	runtime.mu.Lock()
@@ -195,6 +204,7 @@ func (runtime *pluginRuntime) status(ctx context.Context) runtimeStatus {
 	status := runtimeStatus{
 		PluginID:      pluginID,
 		Version:       pluginVersion,
+		ReadEnabled:   runtime.config.ReadEnabled,
 		WriteEnabled:  runtime.config.WriteEnabled,
 		DatabasePath:  runtime.config.DatabasePath,
 		StoreOpen:     runtime.store != nil,
@@ -203,6 +213,8 @@ func (runtime *pluginRuntime) status(ctx context.Context) runtimeStatus {
 	}
 	if runtime.config.WriteEnabled {
 		status.MigrationMode = "opt-in-writer"
+	} else if runtime.config.ReadEnabled {
+		status.MigrationMode = "shadow-reader"
 	}
 	if runtime.store != nil {
 		if summary, err := runtime.store.summary(ctx); err == nil {
@@ -239,6 +251,12 @@ func handleManagement(raw []byte) ([]byte, error) {
 			Headers:    http.Header{"Content-Type": []string{"application/json"}},
 			Body:       body,
 		})
+	}
+	if method == http.MethodGet && (path == managementUsagePath || strings.HasSuffix(path, managementUsagePath)) {
+		return handleUsageQuery(request.Query)
+	}
+	if method == http.MethodGet && (path == managementEventsPath || strings.HasSuffix(path, managementEventsPath)) {
+		return handleUsageEventsQuery(request.Query)
 	}
 	body, _ := json.Marshal(map[string]string{"error": "not_found"})
 	return okEnvelope(managementResponse{

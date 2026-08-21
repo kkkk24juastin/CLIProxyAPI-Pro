@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,6 +163,54 @@ func openUsageStore(databasePath string) (*usageStore, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func openReadOnlyUsageStore(databasePath string) (*usageStore, error) {
+	databasePath = strings.TrimSpace(databasePath)
+	if databasePath == "" || databasePath == ":memory:" {
+		return nil, fmt.Errorf("read-only database path is invalid")
+	}
+	dsn, err := readOnlySQLiteDSN(databasePath)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open read-only usage database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("open read-only usage database: %w", err)
+	}
+	store := &usageStore{db: db}
+	if _, err := store.summary(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("verify read-only usage schema: %w", err)
+	}
+	if _, err := store.recentEvents(context.Background(), 1); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("verify read-only usage schema: %w", err)
+	}
+	return store, nil
+}
+
+func readOnlySQLiteDSN(databasePath string) (string, error) {
+	if strings.HasPrefix(databasePath, "file:") {
+		parsed, err := url.Parse(databasePath)
+		if err != nil {
+			return "", fmt.Errorf("parse database path: %w", err)
+		}
+		query := parsed.Query()
+		query.Set("mode", "ro")
+		parsed.RawQuery = query.Encode()
+		return parsed.String(), nil
+	}
+	absolutePath, err := filepath.Abs(databasePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve database path: %w", err)
+	}
+	return (&url.URL{Scheme: "file", Path: absolutePath, RawQuery: "mode=ro"}).String(), nil
 }
 
 func (store *usageStore) init(ctx context.Context) error {
@@ -329,6 +378,160 @@ func (store *usageStore) summary(ctx context.Context) (usageSummary, error) {
 		&summary.TotalTokens, &summary.Generation, &summary.ResetAtMS, &summary.UpdatedAtMS,
 	)
 	return summary, err
+}
+
+func (store *usageStore) latestCursor(ctx context.Context) (int64, error) {
+	var latestID sql.NullInt64
+	err := store.db.QueryRowContext(ctx, `select id from usage_events order by id desc limit 1`).Scan(&latestID)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return latestID.Int64, nil
+}
+
+func (store *usageStore) summaryAt(ctx context.Context, maxID int64) (usageSummary, error) {
+	if maxID <= 0 {
+		return usageSummary{}, nil
+	}
+	summary, err := store.summary(ctx)
+	if err != nil {
+		return usageSummary{}, err
+	}
+	if summary.LatestEventID == maxID {
+		return summary, nil
+	}
+	result := usageSummary{LatestEventID: maxID}
+	err = store.db.QueryRowContext(ctx, `select
+		count(*),
+		coalesce(sum(case when failed = 0 then 1 else 0 end), 0),
+		coalesce(sum(case when failed != 0 then 1 else 0 end), 0),
+		coalesce(sum(total_tokens), 0)
+		from usage_events where id <= ?`, maxID).Scan(
+		&result.TotalRequests,
+		&result.SuccessCount,
+		&result.FailureCount,
+		&result.TotalTokens,
+	)
+	return result, err
+}
+
+func (store *usageStore) recentEvents(ctx context.Context, limit int) ([]usageEvent, error) {
+	if limit <= 0 {
+		limit = 50000
+	}
+	return store.queryEvents(ctx, `order by timestamp_ms desc, id desc limit ?`, limit)
+}
+
+func (store *usageStore) eventsAfter(ctx context.Context, afterID int64, limit int) ([]usageEvent, error) {
+	if afterID < 0 {
+		afterID = 0
+	}
+	if limit <= 0 || limit > 5001 {
+		limit = 5001
+	}
+	return store.queryEvents(ctx, `where id > ? order by id asc limit ?`, afterID, limit)
+}
+
+func (store *usageStore) queryEvents(ctx context.Context, suffix string, args ...any) ([]usageEvent, error) {
+	query := `select id,` + strings.Join(usageEventInsertColumns, ",") + ` from usage_events ` + suffix
+	rows, err := store.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUsageEvents(rows)
+}
+
+func scanUsageEvents(rows *sql.Rows) ([]usageEvent, error) {
+	events := make([]usageEvent, 0)
+	for rows.Next() {
+		var event usageEvent
+		var requestID, provider, executorType, alias, endpoint, method, path sql.NullString
+		var authType, authIndex, source, sourceHash, apiKeyHash sql.NullString
+		var apiKeyPolicyID, profileID, profileNameSnapshot, policyMode, requestedModel, effectiveModel sql.NullString
+		var clientIP, xForwardedFor, userAgent sql.NullString
+		var accountingQuality, tokenBreakdownJSON sql.NullString
+		var latencyMS, ttftMS, statusCode, attemptIndex sql.NullInt64
+		var errorCode, errorMessage, upstreamRequestID, retryAfter sql.NullString
+		var reasoningEffort, serviceTier, effectiveServiceTier, speed, effectiveSpeed sql.NullString
+		var estimatedCost sql.NullFloat64
+		var priceRuleID sql.NullInt64
+		var costBreakdownJSON, rawJSON sql.NullString
+		var stream, failed int
+		if err := rows.Scan(
+			&event.ID, &requestID, &event.EventHash, &event.TimestampMS, &event.Timestamp,
+			&provider, &executorType, &event.Model, &alias, &endpoint, &method, &path,
+			&authType, &authIndex, &source, &sourceHash, &apiKeyHash, &apiKeyPolicyID, &profileID, &profileNameSnapshot, &policyMode, &requestedModel, &effectiveModel, &clientIP, &xForwardedFor, &userAgent,
+			&event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheTokens, &event.CacheReadTokens, &event.CacheWriteTokens, &event.TotalTokens,
+			&event.AccountingVersion, &accountingQuality, &event.UncachedInputTokens, &event.UnclassifiedTokens, &tokenBreakdownJSON,
+			&latencyMS, &ttftMS, &statusCode, &errorCode, &errorMessage, &upstreamRequestID, &retryAfter, &attemptIndex, &stream, &reasoningEffort, &serviceTier, &effectiveServiceTier, &speed, &effectiveSpeed,
+			&estimatedCost, &priceRuleID, &costBreakdownJSON, &failed, &rawJSON, &event.CreatedAtMS,
+		); err != nil {
+			return nil, err
+		}
+		event.RequestID = requestID.String
+		event.Provider = provider.String
+		event.ExecutorType = executorType.String
+		event.Alias = alias.String
+		event.Endpoint = endpoint.String
+		event.Method = method.String
+		event.Path = path.String
+		event.AuthType = authType.String
+		event.AuthIndex = authIndex.String
+		event.Source = source.String
+		event.SourceHash = sourceHash.String
+		event.APIKeyHash = apiKeyHash.String
+		event.APIKeyPolicyID = apiKeyPolicyID.String
+		event.ProfileID = profileID.String
+		event.ProfileNameSnapshot = profileNameSnapshot.String
+		event.PolicyMode = policyMode.String
+		event.RequestedModel = requestedModel.String
+		event.EffectiveModel = effectiveModel.String
+		event.ClientIP = clientIP.String
+		event.XForwardedFor = xForwardedFor.String
+		event.UserAgent = userAgent.String
+		event.AccountingQuality = accountingQuality.String
+		event.TokenBreakdownJSON = tokenBreakdownJSON.String
+		if latencyMS.Valid {
+			value := latencyMS.Int64
+			event.LatencyMS = &value
+		}
+		if ttftMS.Valid {
+			value := ttftMS.Int64
+			event.TTFTMS = &value
+		}
+		if statusCode.Valid {
+			value := int(statusCode.Int64)
+			event.StatusCode = &value
+		}
+		event.ErrorCode = errorCode.String
+		event.ErrorMessage = errorMessage.String
+		event.UpstreamRequestID = upstreamRequestID.String
+		event.RetryAfter = retryAfter.String
+		if attemptIndex.Valid {
+			value := attemptIndex.Int64
+			event.AttemptIndex = &value
+		}
+		event.Stream = stream != 0
+		event.ReasoningEffort = reasoningEffort.String
+		event.ServiceTier = serviceTier.String
+		event.EffectiveServiceTier = effectiveServiceTier.String
+		event.Speed = speed.String
+		event.EffectiveSpeed = effectiveSpeed.String
+		if estimatedCost.Valid {
+			value := estimatedCost.Float64
+			event.EstimatedCost = &value
+		}
+		event.PriceRuleID = priceRuleID.Int64
+		event.CostBreakdownJSON = costBreakdownJSON.String
+		event.Failed = failed != 0
+		event.RawJSON = rawJSON.String
+		events = append(events, event)
+	}
+	return events, rows.Err()
 }
 
 func (store *usageStore) reset(ctx context.Context, resetAtMS int64) (usageSummary, error) {
