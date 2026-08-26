@@ -130,19 +130,9 @@ func legacyRoundRobinCursorKey(provider, model string) string {
 	return prorouting.LegacyRoundRobinCursorKey(provider, canonicalModelKey(model))
 }
 
-func routingCursorAfterAuthID(auths []*Auth, lastAuthID string) int {
-	ids := make([]string, 0, len(auths))
-	for _, auth := range auths {
-		if auth != nil {
-			ids = append(ids, auth.ID)
-		}
-	}
-	return prorouting.CursorAfterID(ids, lastAuthID)
-}
-
 // restoreRoutingCursorLocked restores the legacy built-in round-robin selector.
-// The caller must hold s.mu and pass the already sorted available auth slice.
-func (s *RoundRobinSelector) restoreRoutingCursorLocked(provider, model, selectorKey string, auths []*Auth) {
+// The caller must hold s.mu.
+func (s *RoundRobinSelector) restoreRoutingCursorLocked(provider, model, selectorKey string) {
 	if s == nil {
 		return
 	}
@@ -163,7 +153,7 @@ func (s *RoundRobinSelector) restoreRoutingCursorLocked(provider, model, selecto
 			s.persistedRoutingCursors[stateKey] = lastAuthID
 		}
 	}
-	s.cursors[selectorKey] = routingCursorAfterAuthID(auths, lastAuthID)
+	s.lastPicked[selectorKey] = lastAuthID
 	s.routingCursorRestored[selectorKey] = true
 }
 
@@ -194,7 +184,7 @@ func (s *RoundRobinSelector) applyImportedRoutingCursors(cursors []embeddedusage
 		}
 	}
 	s.mu.Lock()
-	s.cursors = make(map[string]int)
+	s.lastPicked = make(map[string]string)
 	s.routingCursorRestored = make(map[string]bool)
 	s.persistedRoutingCursors = persisted
 	s.mu.Unlock()

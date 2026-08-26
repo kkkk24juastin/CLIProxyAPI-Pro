@@ -2918,6 +2918,20 @@ replace_once(
     tracked_closure_execution,
     home_attempt_marker,
 )
+replace_once(
+    auth_conductor_home_execution,
+    '''\t\t\t\t\texecCtx = newUpstreamAttemptContext(execCtx)
+\t\t\t\t\texecutorCtx = execCtx
+\t\t\t\t\tif countTokens {
+\t\t\t\t\t\texecutorCtx = withAccessTokenFingerprintObserver(execCtx, setEffectiveAuth)
+\t\t\t\t\t}
+\t\t\t\t\tstartHomeRetry := time.Now()
+''',
+    '''\t\t\t\t\texecCtx = newUpstreamAttemptContext(execCtx)
+\t\t\t\t\tstartHomeRetry := time.Now()
+''',
+    'execCtx = newUpstreamAttemptContext(execCtx)\n\t\t\t\t\tstartHomeRetry := time.Now()',
+)
 
 usage_helpers = ROOT / 'internal/runtime/executor/helps/usage_helpers.go'
 replace_once(
@@ -3655,8 +3669,26 @@ replace_once(
     'defaultManagementReleaseURL  = "https://api.github.com/repos/router-for-me/Cli-Proxy-API-Management-Center/releases/latest"',
     f'defaultManagementReleaseURL  = "{PRO_PANEL_RELEASE_API}"',
 )
-replace_once(updater, '\tgitURL := strings.ToLower(strings.TrimSpace(os.Getenv("GITSTORE_GIT_URL")))\n', '')
-replace_once(updater, 'tok != "" && strings.Contains(gitURL, "github.com")', 'tok != "" && isGitHubAPIURL(releaseURL)')
+replace_once(
+    updater,
+    '''\tif token := util.ResolveGitHubToken(); token != "" {
+\t\theaders["Authorization"] = "Bearer " + token
+\t}
+''',
+    '''\ttoken := strings.TrimSpace(os.Getenv("GITSTORE_GIT_TOKEN"))
+\tif token != "" {
+\t\tif isGitHubAPIURL(releaseURL) {
+\t\t\theaders["Authorization"] = "Bearer " + token
+\t\t}
+\t} else {
+\t\ttoken = util.ResolveGitHubToken()
+\t\tif token != "" {
+\t\t\theaders["Authorization"] = "Bearer " + token
+\t\t}
+\t}
+''',
+    'token = util.ResolveGitHubToken()',
+)
 insert_before(
     updater,
     'func fetchLatestAsset(ctx context.Context, client *http.Client, releaseURL string) (*releaseAsset, string, error) {\n',
@@ -4940,13 +4972,13 @@ auth_selector = ROOT / 'sdk/cliproxy/auth/selector.go'
 replace_once(
     auth_selector,
     '''type RoundRobinSelector struct {
-\tmu      sync.Mutex
-\tcursors map[string]int
-\tmaxKeys int
+\tmu         sync.Mutex
+\tlastPicked map[string]string
+\tmaxKeys    int
 }''',
     '''type RoundRobinSelector struct {
 \tmu                      sync.Mutex
-\tcursors                 map[string]int
+\tlastPicked              map[string]string
 \tmaxKeys                  int
 \troutingCursorRestored    map[string]bool
 \tpersistedRoutingCursors map[string]string
@@ -4955,37 +4987,28 @@ replace_once(
 )
 replace_once(
     auth_selector,
-    '''\ts.ensureCursorKey(key, limit)
-\tindex := s.cursors[key]
-\tif index >= 2_147_483_640 {
-\t\tindex = 0
-\t}
-\ts.cursors[key] = index + 1
-\ts.mu.Unlock()
-\treturn available[index%len(available)], nil
-}''',
-    '''\ts.ensureCursorKey(key, limit)
-\ts.restoreRoutingCursorLocked(provider, model, key, available)
-\tindex := s.cursors[key]
-\tif index >= 2_147_483_640 {
-\t\tindex = 0
-\t}
-\ts.cursors[key] = index + 1
-\tpicked := available[index%len(available)]
-\ts.persistRoutingCursorLocked(provider, model, picked)
-\ts.mu.Unlock()
+    '''\ts.ensureRotationKey(key, limit)
+\tpicked := available[successorIndex(available, s.lastPicked[key])]
+\ts.lastPicked[key] = picked.ID
 \treturn picked, nil
 }''',
-    's.restoreRoutingCursorLocked(provider, model, key, available)',
+    '''\ts.ensureRotationKey(key, limit)
+\ts.restoreRoutingCursorLocked(provider, model, key)
+\tpicked := available[successorIndex(available, s.lastPicked[key])]
+\ts.lastPicked[key] = picked.ID
+\ts.persistRoutingCursorLocked(provider, model, picked)
+\treturn picked, nil
+}''',
+    's.restoreRoutingCursorLocked(provider, model, key)',
 )
 replace_once(
     auth_selector,
-    '''\tif _, ok := s.cursors[key]; !ok && len(s.cursors) >= limit {
-\t\ts.cursors = make(map[string]int)
+    '''\tif _, ok := s.lastPicked[key]; !ok && len(s.lastPicked) >= limit {
+\t\ts.lastPicked = make(map[string]string)
 \t}
 }''',
-    '''\tif _, ok := s.cursors[key]; !ok && len(s.cursors) >= limit {
-\t\ts.cursors = make(map[string]int)
+    '''\tif _, ok := s.lastPicked[key]; !ok && len(s.lastPicked) >= limit {
+\t\ts.lastPicked = make(map[string]string)
 \t\ts.routingCursorRestored = make(map[string]bool)
 \t}
 }''',
@@ -5093,11 +5116,11 @@ replace_once(
 replace_once(
     auth_conductor,
     '''\t\tnow := time.Now()
-\t\tvar cooldownRecordsBefore []CooldownStateRecord
+\t\tresponseHeaders := internallogging.GetResponseHeaders(ctx)
 ''',
     '''\t\tnow := time.Now()
 \t\tauthStatsObservedAt = now
-\t\tvar cooldownRecordsBefore []CooldownStateRecord
+\t\tresponseHeaders := internallogging.GetResponseHeaders(ctx)
 ''',
     'authStatsObservedAt = now',
 )
