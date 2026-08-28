@@ -103,23 +103,10 @@ func configurePersistedReadyView(view *readyView, cursorKey string, persisted ma
 
 func (v *readyView) restoreAfterAuthID(lastAuthID string) {
 	lastAuthID = strings.TrimSpace(lastAuthID)
-	if v == nil || lastAuthID == "" || len(v.flat) == 0 {
+	if v == nil || lastAuthID == "" {
 		return
 	}
-	for index, entry := range v.flat {
-		if entry == nil || entry.auth == nil {
-			continue
-		}
-		if entry.auth.ID == lastAuthID {
-			v.cursor = index + 1
-			return
-		}
-		if entry.auth.ID > lastAuthID {
-			v.cursor = index
-			return
-		}
-	}
-	v.cursor = 0
+	v.lastPicked = lastAuthID
 }
 
 func (v *readyView) persistSelection(entry *scheduledAuth) {

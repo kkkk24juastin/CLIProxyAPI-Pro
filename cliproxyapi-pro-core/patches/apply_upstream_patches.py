@@ -5424,12 +5424,12 @@ replace_once(
     auth_scheduler,
     '''type readyView struct {
 \tflat          []*scheduledAuth
-\tcursor        int
+\tlastPicked    string
 \tweightedState smoothWeightedState
 }''',
     '''type readyView struct {
 \tflat          []*scheduledAuth
-\tcursor        int
+\tlastPicked    string
 \tweightedState smoothWeightedState
 \tcursorKey     string
 \tpersisted     map[string]string
@@ -5535,10 +5535,10 @@ replace_once(
 )
 replace_once(
     auth_scheduler,
-    '''\t\tv.cursor = index + 1
+    '''\t\tv.lastPicked = entry.auth.ID
 \t\treturn entry
 ''',
-    '''\t\tv.cursor = index + 1
+    '''\t\tv.lastPicked = entry.auth.ID
 \t\tv.persistSelection(entry)
 \t\treturn entry
 ''',
