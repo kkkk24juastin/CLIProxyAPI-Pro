@@ -2333,7 +2333,8 @@ openai_handlers_source = ROOT / 'sdk/api/handlers/openai/openai_handlers.go'
 replace_once(
     openai_handlers_source,
     '''\tif _, ok := c.Request.URL.Query()["client_version"]; ok {
-\t\tc.JSON(http.StatusOK, h.codexClientModelsResponse())
+\t\tclientVersion := c.Query("client_version")
+\t\tc.JSON(http.StatusOK, h.codexClientModelsResponse(clientVersion))
 \t\treturn
 \t}
 
@@ -2346,7 +2347,8 @@ replace_once(
 \t\treturn
 \t}
 \tif _, ok := c.Request.URL.Query()["client_version"]; ok {
-\t\tc.JSON(http.StatusOK, codexmodels.BuildResponse(allModels, registry.GetGlobalRegistry().GetModelProviders, h.Cfg != nil && h.Cfg.CodexOptimizeMultiAgentV2))
+\t\tclientVersion := c.Query("client_version")
+\t\tc.JSON(http.StatusOK, codexmodels.BuildResponseForClient(allModels, registry.GetGlobalRegistry().GetModelProviders, h.Cfg != nil && h.Cfg.CodexOptimizeMultiAgentV2, clientVersion))
 \t\treturn
 \t}
 

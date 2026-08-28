@@ -269,7 +269,9 @@ func TestAPIKeyPolicyHomeDiscoveryFiltersEveryNativeFormat(t *testing.T) {
 		t.Fatalf("OpenAI status=%d body=%s commands=%v", openAI.Code, openAI.Body.String(), commands.snapshot())
 	}
 	assertContainsOnly("OpenAI", openAI, "shared-policy-model", "smart-policy-model")
-	assertContainsOnly("Codex", invoke("/v1/models?client_version=0.1", nil, "", server.handleHomeCodexClientModels), "shared-policy-model", "smart-policy-model")
+	assertContainsOnly("Codex", invoke("/v1/models?client_version=0.1", nil, "", func(c *gin.Context) {
+		server.handleHomeCodexClientModels(c, c.Query("client_version"))
+	}), "shared-policy-model", "smart-policy-model")
 	assertContainsOnly("Claude", invoke("/v1/models", map[string]string{"Anthropic-Version": "2023-06-01"}, "", server.handleHomeModels), "claude-fable-5-dd-")
 	assertContainsOnly("Gemini", invoke("/v1beta/models", nil, "", server.handleHomeGeminiModels), "models/shared-policy-model", "models/smart-policy-model")
 	assertContainsOnly("Grok", invoke("/v1/models", map[string]string{"User-Agent": "grok-shell/0.2.119"}, "", server.handleGrokModels), "shared-policy-model", "smart-policy-model")
