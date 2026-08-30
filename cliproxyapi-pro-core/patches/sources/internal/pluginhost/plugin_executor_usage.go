@@ -8,7 +8,6 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
@@ -21,58 +20,6 @@ func pluginExecutorUsageContext(ctx context.Context, headers http.Header) contex
 	ctx = logging.WithResponseHeadersHolder(ctx)
 	logging.SetResponseHeaders(ctx, headers)
 	return ctx
-}
-
-func trackPluginExecutorStreamUsage(ctx context.Context, in <-chan coreexecutor.StreamChunk, reporter *helps.UsageReporter, format sdktranslator.Format) <-chan coreexecutor.StreamChunk {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	out := make(chan coreexecutor.StreamChunk)
-	go func() {
-		defer close(out)
-		sawPayload := false
-		var usageBuffer helps.StreamUsageBuffer
-		var terminalErr error
-		for {
-			select {
-			case <-ctx.Done():
-				if !usageBuffer.PublishFailure(ctx, reporter, ctx.Err()) {
-					reporter.PublishFailure(ctx, ctx.Err())
-				}
-				return
-			case chunk, ok := <-in:
-				if !ok {
-					if terminalErr != nil {
-						if !usageBuffer.PublishFailure(ctx, reporter, terminalErr) {
-							reporter.PublishFailure(ctx, terminalErr)
-						}
-					} else if sawPayload {
-						if !usageBuffer.Publish(ctx, reporter) {
-							reporter.EnsurePublished(ctx)
-						}
-					} else {
-						reporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})
-					}
-					return
-				}
-				if chunk.Err != nil {
-					terminalErr = chunk.Err
-				} else if len(chunk.Payload) > 0 {
-					sawPayload = true
-					observePluginExecutorUsage(&usageBuffer, format, chunk.Payload, true)
-				}
-				select {
-				case <-ctx.Done():
-					if !usageBuffer.PublishFailure(ctx, reporter, ctx.Err()) {
-						reporter.PublishFailure(ctx, ctx.Err())
-					}
-					return
-				case out <- chunk:
-				}
-			}
-		}
-	}()
-	return out
 }
 
 func publishPluginExecutorUsage(ctx context.Context, reporter *helps.UsageReporter, format sdktranslator.Format, payload []byte, stream bool) bool {

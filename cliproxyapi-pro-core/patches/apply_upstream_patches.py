@@ -2920,32 +2920,17 @@ replace_once(
     tracked_closure_execution,
     home_attempt_marker,
 )
-replace_once(
-    auth_conductor_home_execution,
-    '''\t\t\t\t\texecCtx = newUpstreamAttemptContext(execCtx)
-\t\t\t\t\texecutorCtx = execCtx
-\t\t\t\t\tif countTokens {
-\t\t\t\t\t\texecutorCtx = withAccessTokenFingerprintObserver(execCtx, setEffectiveAuth)
-\t\t\t\t\t}
-\t\t\t\t\tstartHomeRetry := time.Now()
-''',
-    '''\t\t\t\t\texecCtx = newUpstreamAttemptContext(execCtx)
-\t\t\t\t\tstartHomeRetry := time.Now()
-''',
-    'execCtx = newUpstreamAttemptContext(execCtx)\n\t\t\t\t\tstartHomeRetry := time.Now()',
-)
-
 usage_helpers = ROOT / 'internal/runtime/executor/helps/usage_helpers.go'
 replace_once(
     usage_helpers,
-    '''\treasoning       string
-\tserviceTier     string
-\tgenerate        bool
+    '''\treasoning           string
+\tserviceTier         string
+\tgenerate            bool
 ''',
-    '''\treasoning       string
-\tserviceTier     string
-\tspeed           string
-\tgenerate        bool
+    '''\treasoning           string
+\tserviceTier         string
+\tspeed               string
+\tgenerate            bool
 ''',
     '\tspeed           string\n',
 )
@@ -4042,74 +4027,30 @@ replace_once(
 
 replace_once(
     ROOT / 'internal/pluginhost/adapters_executors.go',
-    '''func (a *executorAdapter) Execute(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (resp coreexecutor.Response, err error) {
-\tif a == nil || a.executor == nil || a.host.isPluginFused(a.pluginID) || !a.host.pluginIdentityCurrent(a.pluginID, a.path, a.version) {
-\t\treturn coreexecutor.Response{}, fmt.Errorf("plugin executor %s is unavailable", a.Identifier())
+    '''\tif reporter != nil {
+\t\treporter.RecordFirstPacket()
+\t\tdetail := helps.ParsePluginExecutorResponseUsage(prepared.outputFormat.String(), pluginResp.Payload)
+\t\treporter.Publish(ctx, detail)
+\t\treporter.EnsurePublished(ctx)
 \t}
-\tdefer func() {
-''',
-    '''func (a *executorAdapter) Execute(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (resp coreexecutor.Response, err error) {
-\tif a == nil || a.executor == nil || a.host.isPluginFused(a.pluginID) || !a.host.pluginIdentityCurrent(a.pluginID, a.path, a.version) {
-\t\treturn coreexecutor.Response{}, fmt.Errorf("plugin executor %s is unavailable", a.Identifier())
-\t}
-\treporter := helps.NewExecutorUsageReporter(ctx, a, req.Model, auth)
-\tdefer reporter.TrackFailure(ctx, &err)
-\tdefer func() {
-''',
-    'defer reporter.TrackFailure(ctx, &err)',
-)
 
-replace_once(
-    ROOT / 'internal/pluginhost/adapters_executors.go',
-    '''func (a *executorAdapter) ExecuteStream(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (result *coreexecutor.StreamResult, err error) {
-\tif a == nil || a.executor == nil || a.host.isPluginFused(a.pluginID) || !a.host.pluginIdentityCurrent(a.pluginID, a.path, a.version) {
-\t\treturn nil, fmt.Errorf("plugin executor %s is unavailable", a.Identifier())
-\t}
-\tdefer func() {
-''',
-    '''func (a *executorAdapter) ExecuteStream(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (result *coreexecutor.StreamResult, err error) {
-\tif a == nil || a.executor == nil || a.host.isPluginFused(a.pluginID) || !a.host.pluginIdentityCurrent(a.pluginID, a.path, a.version) {
-\t\treturn nil, fmt.Errorf("plugin executor %s is unavailable", a.Identifier())
-\t}
-\treporter := helps.NewExecutorUsageReporter(ctx, a, req.Model, auth)
-\tdefer reporter.TrackFailure(ctx, &err)
-\tdefer func() {
-''',
-    'return nil, fmt.Errorf("plugin executor %s is unavailable", a.Identifier())\n\t}\n\treporter := helps.NewExecutorUsageReporter',
-)
-
-replace_once(
-    ROOT / 'internal/pluginhost/adapters_executors.go',
-    '''\tprepared, errPrepare := a.prepareExecutorCall(req, opts)
-\tif errPrepare != nil {
-\t\treturn coreexecutor.Response{}, errPrepare
-\t}
-\tpluginResp, errExecute := a.executor.Execute(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
-\tif errExecute != nil {
-\t\treturn coreexecutor.Response{}, errExecute
-\t}
 \treturn coreexecutor.Response{
 \t\tPayload:  a.translateExecutorResponse(ctx, prepared, pluginResp.Payload, false, nil),
 \t\tMetadata: cloneAnyMap(pluginResp.Metadata),
 \t\tHeaders:  cloneHeader(pluginResp.Headers),
 \t}, nil
 ''',
-    '''\tprepared, errPrepare := a.prepareExecutorCall(req, opts)
-\tif errPrepare != nil {
-\t\treturn coreexecutor.Response{}, errPrepare
-\t}
-\tpluginResp, errExecute := a.executor.Execute(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
-\tif errExecute != nil {
-\t\treturn coreexecutor.Response{}, errExecute
-\t}
-\tctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)
+    '''\tctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)
 \tresp = coreexecutor.Response{
 \t\tPayload:  a.translateExecutorResponse(ctx, prepared, pluginResp.Payload, false, nil),
 \t\tMetadata: cloneAnyMap(pluginResp.Metadata),
 \t\tHeaders:  cloneHeader(pluginResp.Headers),
 \t}
-\tif !publishPluginExecutorUsage(ctx, reporter, pluginExecutorUsageFormat(prepared), resp.Payload, false) {
-\t\treporter.EnsurePublished(ctx)
+\tif reporter != nil {
+\t\treporter.RecordFirstPacket()
+\t\tif !publishPluginExecutorUsage(ctx, reporter, pluginExecutorUsageFormat(prepared), resp.Payload, false) {
+\t\t\treporter.EnsurePublished(ctx)
+\t\t}
 \t}
 \treturn resp, nil
 ''',
@@ -4118,40 +4059,88 @@ replace_once(
 
 replace_once(
     ROOT / 'internal/pluginhost/adapters_executors.go',
-    '''\tprepared, errPrepare := a.prepareExecutorCall(req, opts)
-\tif errPrepare != nil {
-\t\treturn nil, errPrepare
-\t}
-\tpluginResp, errExecuteStream := a.executor.ExecuteStream(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
-\tif errExecuteStream != nil {
-\t\treturn nil, errExecuteStream
-\t}
+    '''\tchunks := a.observeAndTranslateExecutorStream(ctx, prepared, pluginResp.Chunks, reporter)
 \treturn &coreexecutor.StreamResult{
 \t\tHeaders: cloneHeader(pluginResp.Headers),
-\t\tChunks:  mapExecutorStreamChunks(ctx, a.translateExecutorStreamChunks(ctx, prepared, pluginResp.Chunks)),
+\t\tChunks:  chunks,
 \t}, nil
 ''',
-    '''\tprepared, errPrepare := a.prepareExecutorCall(req, opts)
-\tif errPrepare != nil {
-\t\treturn nil, errPrepare
-\t}
-\tpluginResp, errExecuteStream := a.executor.ExecuteStream(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
-\tif errExecuteStream != nil {
-\t\treturn nil, errExecuteStream
-\t}
-\tctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)
+    '''\tctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)
+\tchunks := a.observeAndTranslateExecutorStream(ctx, prepared, pluginResp.Chunks, reporter)
 \treturn &coreexecutor.StreamResult{
 \t\tHeaders: cloneHeader(pluginResp.Headers),
-\t\tChunks: trackPluginExecutorStreamUsage(
-\t\t\tctx,
-\t\t\tmapExecutorStreamChunks(ctx, a.translateExecutorStreamChunks(ctx, prepared, pluginResp.Chunks)),
-\t\t\treporter,
-\t\t\tpluginExecutorUsageFormat(prepared),
-\t\t),
+\t\tChunks:  chunks,
 \t}, nil
 ''',
-    'trackPluginExecutorStreamUsage(',
+    'ctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)\n\tchunks := a.observeAndTranslateExecutorStream',
 )
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\tif in == nil {
+\t\tout := make(chan coreexecutor.StreamChunk)
+\t\tclose(out)
+\t\tif reporter != nil {
+\t\t\treporter.EnsurePublished(ctx)
+\t\t}
+\t\treturn out
+\t}
+''',
+    '''\tif in == nil {
+\t\tout := make(chan coreexecutor.StreamChunk)
+\t\tclose(out)
+\t\tif reporter != nil {
+\t\t\treporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})
+\t\t}
+\t\treturn out
+\t}
+''',
+    'reporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\tvar streamUsage helps.StreamUsageBuffer
+\tvar streamErr error
+\tvar publishOnce sync.Once
+''',
+    '''\tvar streamUsage helps.StreamUsageBuffer
+\tvar streamErr error
+\tvar sawPayload bool
+\tvar publishOnce sync.Once
+''',
+    'var sawPayload bool',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\t\t\tif !streamUsage.Publish(ctx, reporter) {
+\t\t\t\treporter.EnsurePublished(ctx)
+\t\t\t}
+''',
+    '''\t\t\tif !sawPayload {
+\t\t\t\treporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})
+\t\t\t\treturn
+\t\t\t}
+\t\t\tif !streamUsage.Publish(ctx, reporter) {
+\t\t\t\treporter.EnsurePublished(ctx)
+\t\t\t}
+''',
+    'if !sawPayload {\n\t\t\t\treporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\t\t\t\tif len(chunk.Payload) > 0 {
+\t\t\t\t\thelps.ObservePluginExecutorStreamTTFT(prepared.outputFormat.String(), reporter, chunk.Payload)
+''',
+    '''\t\t\t\tif len(chunk.Payload) > 0 {
+\t\t\t\t\tsawPayload = true
+\t\t\t\t\thelps.ObservePluginExecutorStreamTTFT(prepared.outputFormat.String(), reporter, chunk.Payload)
+''',
+    'sawPayload = true\n\t\t\t\t\thelps.ObservePluginExecutorStreamTTFT',
+)
+
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat.go')
 
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat_test.go')
@@ -5059,16 +5048,12 @@ replace_once(
 replace_once(
     auth_conductor,
     '''\tauth.EnsureIndex()
-\tauthClone := auth.Clone()
 \tm.mu.Lock()
-\tm.auths[auth.ID] = authClone
 ''',
     '''\tauth.EnsureIndex()
 \trestoreAuthRuntimeStats(auth)
 \tcleanupLegacyQuotaCacheOnRegister(auth)
-\tauthClone := auth.Clone()
 \tm.mu.Lock()
-\tm.auths[auth.ID] = authClone
 ''',
     'cleanupLegacyQuotaCacheOnRegister(auth)',
 )
@@ -5087,7 +5072,7 @@ replace_once(
 )
 auth_conductor_text = read(auth_conductor)
 lifecycle_scheduler_upsert = '''\tif m.scheduler != nil {
-\t\tm.scheduler.upsertAuth(authClone)
+\t\tm.scheduler.upsertAuth(authClone.Clone())
 \t}
 '''
 if auth_conductor_text.count(lifecycle_scheduler_upsert) != 2:
@@ -5117,10 +5102,10 @@ replace_once(
 )
 replace_once(
     auth_conductor,
-    '''\t\tnow := time.Now()
+    '''\t\tnow = time.Now()
 \t\tresponseHeaders := internallogging.GetResponseHeaders(ctx)
 ''',
-    '''\t\tnow := time.Now()
+    '''\t\tnow = time.Now()
 \t\tauthStatsObservedAt = now
 \t\tresponseHeaders := internallogging.GetResponseHeaders(ctx)
 ''',
@@ -5224,18 +5209,14 @@ replace_once(
 )
 replace_once(
     auth_conductor,
-    '''\tif m.scheduler != nil && snapshot != nil {
+    '''\tif m.scheduler != nil {
 \t\tm.scheduler.upsertAuth(snapshot)
 \t}
-}''',
-    '''\tif snapshot != nil {
-\t\tm.RefreshSchedulerEntry(snapshot.ID)
-\t}
-}''',
-    '''\tif snapshot != nil {
-\t\tm.RefreshSchedulerEntry(snapshot.ID)
-\t}
-}''',
+\tif cooldownStateChanged {''',
+    '''\tm.RefreshSchedulerEntry(snapshot.ID)
+\tif cooldownStateChanged {''',
+    '''\tm.RefreshSchedulerEntry(snapshot.ID)
+\tif cooldownStateChanged {''',
 )
 auth_conductor_text = read(auth_conductor)
 candidate_append = '\t\tcandidates = append(candidates, candidate)\n'
@@ -5443,6 +5424,7 @@ replace_once(
 \t\tstrategy:            selectorStrategy(selector),
 \t\tproviders:           make(map[string]*providerScheduler),
 \t\tauthProviders:       make(map[string]string),
+\t\tauthGenerations:     make(map[string]scheduledGenerationMeta),
 \t\tmixedCursors:        make(map[string]int),
 \t\tmixedWeightedStates: make(map[string]*smoothWeightedState),
 \t}
@@ -5453,6 +5435,7 @@ replace_once(
 \t\tstrategy:            selectorStrategy(selector),
 \t\tproviders:           make(map[string]*providerScheduler),
 \t\tauthProviders:       make(map[string]string),
+\t\tauthGenerations:     make(map[string]scheduledGenerationMeta),
 \t\tmixedCursors:        make(map[string]int),
 \t\tmixedWeightedStates: make(map[string]*smoothWeightedState),
 \t\tmixedRestored:       make(map[string]bool),
