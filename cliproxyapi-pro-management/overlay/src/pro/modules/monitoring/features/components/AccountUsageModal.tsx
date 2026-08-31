@@ -94,8 +94,17 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const activeFile = file ?? displayFile;
   const authIndex = normalizeAuthIndex(activeFile?.['auth_index'] ?? activeFile?.authIndex);
   const accountLabel = resolveAccountUsageLabel(activeFile, authIndex);
-  const { data, loading, error, refresh } = useAccountUsage(authIndex, timeRange, Boolean(file));
+  const {
+    data,
+    dataTimeRange,
+    scopeMatches,
+    loading,
+    refreshing,
+    error,
+    refresh,
+  } = useAccountUsage(authIndex, timeRange, Boolean(activeFile));
   const detail = data?.detail ?? null;
+  const displayTimeRange = dataTimeRange ?? timeRange;
   const configuredApiKeys = useMemo(
     () => buildConfiguredApiKeyMap(configuredApiKeyValues),
     [configuredApiKeyValues]
@@ -128,15 +137,15 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const cacheHitRate = ratio(detail?.cacheHitRequests ?? 0, detail?.totalRequests ?? 0);
   const modelTotal = detail?.models.reduce((sum, item) => sum + distributionValue(item, modelMetric), 0) ?? 0;
   const apiKeyTotal = detail?.apiKeys.reduce((sum, item) => sum + distributionValue(item, apiKeyMetric), 0) ?? 0;
-  const rangeLabel = timeRange.type === 'custom'
-    ? formatCustomTimeRange(timeRange, i18n.resolvedLanguage || i18n.language)
-    : t(`time_range.${timeRange.preset === '7d' ? 'days_7' : timeRange.preset === '30d' ? 'days_30' : timeRange.preset}`);
-  const rangeSummary = timeRange.type === 'custom'
+  const rangeLabel = displayTimeRange.type === 'custom'
+    ? formatCustomTimeRange(displayTimeRange, i18n.resolvedLanguage || i18n.language)
+    : t(`time_range.${displayTimeRange.preset === '7d' ? 'days_7' : displayTimeRange.preset === '30d' ? 'days_30' : displayTimeRange.preset}`);
+  const rangeSummary = displayTimeRange.type === 'custom'
     ? t('account_usage.range_summary_custom', { range: rangeLabel })
-    : timeRange.preset === 'today'
+    : displayTimeRange.preset === 'today'
       ? t('account_usage.range_summary_today')
       : t('account_usage.range_summary', { range: rangeLabel });
-  const rangeCoversToday = timeRangeCoversElapsedLocalToday(timeRange);
+  const rangeCoversToday = timeRangeCoversElapsedLocalToday(displayTimeRange);
   const statusKey = activeFile?.unavailable
     ? 'account_usage.status_unavailable'
     : activeFile?.disabled
@@ -144,7 +153,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
       : 'account_usage.status_active';
 
   const openRequestLogs = () => {
-    if (!detail || !authIndex) return;
+    if (!detail || !authIndex || !scopeMatches) return;
     const path = buildAccountUsageLogPath(authIndex, detail.fromMs, detail.toMs);
     onClose();
     navigate(path);
@@ -206,7 +215,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
             size="sm"
             className={styles.logButton}
             onClick={openRequestLogs}
-            disabled={!detail || !authIndex}
+            disabled={!detail || !authIndex || !scopeMatches}
           >
             <IconScrollText size={15} />
             {t('account_usage.view_logs')}
@@ -241,16 +250,17 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
         <TimeRangeSelector
           value={timeRange}
           onChange={setTimeRange}
-          disabled={loading}
+          disabled={!authIndex}
           className={styles.timeRangeSelector}
         />
         <button
           type="button"
           className={styles.refreshButton}
           onClick={refresh}
-          disabled={loading || !authIndex}
+          disabled={!authIndex}
           title={t('common.refresh')}
           aria-label={t('common.refresh')}
+          aria-busy={refreshing}
         >
           <IconRefreshCw size={16} />
         </button>
@@ -273,7 +283,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
       ) : null}
 
       {detail ? (
-        <div className={styles.content} aria-busy={loading}>
+        <div className={styles.content} aria-busy={loading || refreshing}>
           {activeTab === 'overview' ? (
             <>
               <div className={styles.overviewGrid}>

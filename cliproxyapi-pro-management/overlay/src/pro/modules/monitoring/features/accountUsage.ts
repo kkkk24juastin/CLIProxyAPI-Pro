@@ -4,6 +4,25 @@ const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+$/;
 
 const readText = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 
+type AccountUsageDisplayIdentity = {
+  authIndex: string;
+  connectionKey: string;
+};
+
+export function matchesAccountUsageDisplayIdentity(
+  dataIdentity: AccountUsageDisplayIdentity | null,
+  authIndex: string | null,
+  connectionKey: string
+): boolean {
+  return Boolean(
+    dataIdentity
+      && authIndex
+      && connectionKey
+      && dataIdentity.authIndex === authIndex
+      && dataIdentity.connectionKey === connectionKey
+  );
+}
+
 export function resolveAccountUsageLabel(file: AuthFileItem | null, authIndex: string | null): string {
   const idToken = file?.id_token && typeof file.id_token === 'object'
     ? file.id_token as Record<string, unknown>
