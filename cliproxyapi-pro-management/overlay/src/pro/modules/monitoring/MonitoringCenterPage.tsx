@@ -171,9 +171,10 @@ const getSuccessRateClassName = (rate: number) => (
 const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: RealtimeLogDisplayRow) => {
   switch (key) {
     case 'type':
-      return [row.provider, row.account || row.authLabel || row.accountMasked || '-'];
-    case 'accountPlan':
-      return [row.accountPlan];
+      return [
+        row.accountPlan === '-' ? row.provider : `${row.provider} · ${row.accountPlan}`,
+        row.account || row.authLabel || row.accountMasked || '-',
+      ];
     case 'model':
       return [row.model, row.modelAlias && row.modelAlias !== row.model ? row.modelAlias : buildRealtimeMetaText(row)];
     case 'reasoningEffort':
@@ -882,21 +883,15 @@ export function MonitoringCenterPage() {
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.type,
       render: (row) => (
         <div className={styles.primaryCell}>
-          <span>{row.provider}</span>
+          <span
+            className={styles.realtimeAccountTypeLine}
+            title={row.accountPlan === '-' ? row.provider : `${row.provider} · ${row.accountPlan}`}
+          >
+            <strong>{row.provider}{row.accountPlan === '-' ? '' : ' · '}</strong>
+            {row.accountPlan === '-' ? null : row.accountPlan}
+          </span>
           <small>{row.account || row.authLabel || row.accountMasked || '-'}</small>
         </div>
-      ),
-    },
-    accountPlan: {
-      key: 'accountPlan',
-      label: t('monitoring.column_account_plan'),
-      colClassName: styles.realtimePlanCol,
-      cellClassName: () => styles.realtimeNowrapCell,
-      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.accountPlan,
-      render: (row) => row.accountPlan === '-' ? (
-        <span className={styles.mutedText}>-</span>
-      ) : (
-        <span title={row.accountPlan}>{row.accountPlan}</span>
       ),
     },
     model: {

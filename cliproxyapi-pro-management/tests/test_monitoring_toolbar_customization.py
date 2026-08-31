@@ -153,25 +153,29 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
         self.assertIn(".realtimeUpdateBar {\n  position: absolute;", styles)
         self.assertIn("flex-wrap: nowrap;", styles)
 
-    def test_realtime_logs_show_account_plan_from_shared_quota_sources(self) -> None:
+    def test_realtime_logs_merge_account_plan_into_account_type(self) -> None:
         source = PAGE_PATH.read_text()
         preferences = REALTIME_PREFERENCES_PATH.read_text()
         account_plan = ACCOUNT_PLAN_PATH.read_text()
-        locales = LOCALES_PATH.read_text()
+        locales = json.loads(LOCALES_PATH.read_text())
 
-        self.assertIn("'accountPlan'", preferences)
-        self.assertIn("shouldMigrateAccountPlan", preferences)
-        self.assertIn("label: t('monitoring.column_account_plan')", source)
+        self.assertNotIn("'accountPlan'", preferences)
+        self.assertNotIn("shouldMigrateAccountPlan", preferences)
+        self.assertNotIn("label: t('monitoring.column_account_plan')", source)
         self.assertIn("authFileByAuthIndex.get(row.authIndex)", source)
         self.assertIn("accountPlan: resolveAccountPlanLabel({", source)
+        self.assertIn("`${row.provider} · ${row.accountPlan}`", source)
+        self.assertIn("className={styles.realtimeAccountTypeLine}", source)
         self.assertIn("quotaStore.antigravityQuota[fileName]", account_plan)
         self.assertIn("quotaStore.claudeQuota[fileName]", account_plan)
         self.assertIn("quotaStore.codexQuota[fileName]", account_plan)
         self.assertIn("quotaStore.geminiCliQuota[fileName]", account_plan)
         self.assertIn("quotaStore.kimiQuota[fileName]", account_plan)
         self.assertIn("quotaStore.xaiQuota[fileName]", account_plan)
-        self.assertIn('"column_account_plan": "Account Plan"', locales)
-        self.assertIn('"column_account_plan": "账号套餐"', locales)
+        self.assertEqual('Account Type', locales['en.json']['monitoring']['column_type'])
+        self.assertEqual('账号类型', locales['zh-CN.json']['monitoring']['column_type'])
+        for locale_name in ('en.json', 'ru.json', 'zh-CN.json', 'zh-TW.json'):
+            self.assertNotIn('column_account_plan', locales[locale_name]['monitoring'])
 
     def test_codex_oauth_request_authoritative_tier_is_preserved_and_explained(self) -> None:
         usage_model = USAGE_MODEL_PATH.read_text()

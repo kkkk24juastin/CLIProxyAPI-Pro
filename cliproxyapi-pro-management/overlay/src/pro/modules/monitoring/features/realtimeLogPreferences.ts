@@ -3,7 +3,6 @@ const REALTIME_LOG_FOLLOW_STORAGE_KEY = 'cli-proxy-realtime-log-follow-v1';
 
 const REALTIME_LOG_COLUMN_KEYS = [
   'type',
-  'accountPlan',
   'model',
   'reasoningEffort',
   'stream',
@@ -28,8 +27,7 @@ export type RealtimeLogColumnPreference = {
 };
 
 export const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, number> = {
-  type: 170,
-  accountPlan: 132,
+  type: 240,
   model: 230,
   reasoningEffort: 116,
   stream: 108,
@@ -46,8 +44,7 @@ export const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, nu
 };
 
 const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
-  type: 96,
-  accountPlan: 104,
+  type: 160,
   model: 132,
   reasoningEffort: 96,
   stream: 92,
@@ -65,7 +62,7 @@ const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
 
 const REALTIME_LOG_COLUMN_MAX_WIDTH = 420;
 const REALTIME_LOG_COLUMN_MAX_WIDTHS: Partial<Record<RealtimeLogColumnKey, number>> = {
-  type: 240,
+  type: 320,
 };
 const REALTIME_LOG_COLUMN_KEY_SET = new Set<RealtimeLogColumnKey>(REALTIME_LOG_COLUMN_KEYS);
 
@@ -140,7 +137,6 @@ export const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPr
 
   const shouldMigrateReasoningEffort = next.length > 0 && !seen.has('reasoningEffort');
   const shouldMigrateStream = next.length > 0 && !seen.has('stream');
-  const shouldMigrateAccountPlan = next.length > 0 && !seen.has('accountPlan');
 
   REALTIME_LOG_DEFAULT_COLUMNS.forEach((item) => {
     if (!seen.has(item.key)) next.push({ ...item });
@@ -153,16 +149,6 @@ export const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPr
       const [reasoningEffortColumn] = next.splice(reasoningEffortIndex, 1);
       const migratedModelIndex = next.findIndex((item) => item.key === 'model');
       next.splice(migratedModelIndex + 1, 0, reasoningEffortColumn);
-    }
-  }
-
-  if (shouldMigrateAccountPlan) {
-    const accountPlanIndex = next.findIndex((item) => item.key === 'accountPlan');
-    const typeIndex = next.findIndex((item) => item.key === 'type');
-    if (accountPlanIndex >= 0 && typeIndex >= 0) {
-      const [accountPlanColumn] = next.splice(accountPlanIndex, 1);
-      const migratedTypeIndex = next.findIndex((item) => item.key === 'type');
-      next.splice(migratedTypeIndex + 1, 0, accountPlanColumn);
     }
   }
 

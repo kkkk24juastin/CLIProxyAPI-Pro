@@ -195,6 +195,15 @@
   font-weight: 600;
 }
 
+.primaryCell .realtimeAccountTypeLine {
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.realtimeAccountTypeLine strong {
+  font-weight: 650;
+}
+
 .realtimeTimeCell {
   white-space: normal;
   line-height: 1.35;
@@ -474,8 +483,8 @@
   min-width: 96px;
 }
 
-.realtimePlanCol {
-  min-width: 104px;
+.realtimeTypeCol {
+  min-width: 160px;
 }
 
 .realtimeStreamCol {

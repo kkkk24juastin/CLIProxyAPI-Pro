@@ -39,12 +39,23 @@ describe('realtime log column preferences', () => {
   });
 
   test('clamps persisted widths and restores defaults when every column is hidden', () => {
-    expect(clampRealtimeLogColumnWidth('type', 999)).toBe(240);
+    expect(clampRealtimeLogColumnWidth('type', 999)).toBe(320);
     expect(clampRealtimeLogColumnWidth('model', 1)).toBe(132);
 
     const normalized = normalizeRealtimeLogColumns(
       createDefaultRealtimeLogColumns().map((column) => ({ ...column, visible: false }))
     );
     expect(normalized.every(({ visible }) => visible)).toBe(true);
+  });
+
+  test('drops the retired account-plan column from saved preferences', () => {
+    const columns = normalizeRealtimeLogColumns([
+      { key: 'type', visible: true, width: 96 },
+      { key: 'accountPlan', visible: true, width: 132 },
+      { key: 'model', visible: true },
+    ]);
+
+    expect(columns.map(({ key }) => key)).not.toContain('accountPlan');
+    expect(columns.find(({ key }) => key === 'type')?.width).toBe(160);
   });
 });
