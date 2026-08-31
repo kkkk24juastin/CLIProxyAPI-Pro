@@ -493,7 +493,7 @@ describe('API Key Policy profile drafts', () => {
     expect(client).toContain('for (let attempt = 0; attempt < 2; attempt += 1)');
   });
 
-  test('keeps aggregate fallback scoped only to aggregate controls', () => {
+  test('keeps aggregate fallback scoped and preserves stale data only within one connection', () => {
     const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/MonitoringCenterPage.tsx'), 'utf8');
     const hook = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/features/hooks/useUsageAggregates.ts'), 'utf8');
     expect(page).toContain('usageAggregates.scopeTimeRangeKey === timeRangeKey');
@@ -501,8 +501,10 @@ describe('API Key Policy profile drafts', () => {
     expect(page).not.toContain('scopeAPIKeyPolicyId');
     expect(page).not.toContain('scopePolicyMode');
     expect(page).toContain('if (!serverUsageTrendAnalytics || !aggregateTrendScopeMatches)');
-    expect(hook).toContain('hasDataRef.current = false;');
+    expect(hook).toContain('const connectionChanged = activeConnectionKeyRef.current !== connectionKey;');
+    expect(hook).toContain('if (connectionChanged) {');
     expect(hook).toContain('setData(null);');
+    expect(hook).toContain('data?.scopeConnectionKey === connectionKey ? data : null');
   });
 
   test('accepts only server-catalog providers, models, and allowed mapping targets', () => {

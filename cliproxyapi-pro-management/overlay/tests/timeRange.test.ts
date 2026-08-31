@@ -25,22 +25,22 @@ describe('shared monitoring time range', () => {
     expect(sevenDays.interval).toBe('day');
   });
 
-  test('normalizes visible second precision to an inclusive end second', () => {
+  test('normalizes visible minute precision to an inclusive end minute', () => {
     expect(normalizeCustomTimeRange(10_456, 20_123)).toEqual({
-      fromMs: 10_000,
-      toMs: 20_999,
+      fromMs: 0,
+      toMs: 59_999,
     });
-    expect(normalizeCustomTimeRange(21_000, 20_000)).toBeNull();
+    expect(normalizeCustomTimeRange(61_000, 20_000)).toBeNull();
   });
 
-  test('round trips datetime-local values without exposing milliseconds', () => {
+  test('round trips datetime-local values at minute precision', () => {
     const timestamp = new Date(2026, 7, 31, 8, 9, 10, 987).getTime();
     const value = formatDateTimeLocalValue(timestamp);
 
-    expect(value).toBe('2026-08-31T08:09:10');
-    expect(parseDateTimeLocalValue(value)).toBe(new Date(2026, 7, 31, 8, 9, 10, 0).getTime());
+    expect(value).toBe('2026-08-31T08:09');
     expect(parseDateTimeLocalValue('2026-08-31T08:09')).toBe(new Date(2026, 7, 31, 8, 9, 0, 0).getTime());
-    expect(parseDateTimeLocalValue('2026-02-31T08:09:10')).toBeNull();
+    expect(parseDateTimeLocalValue('2026-08-31T08:09:10')).toBeNull();
+    expect(parseDateTimeLocalValue('2026-02-31T08:09')).toBeNull();
   });
 
   test('keeps custom windows fixed and gives them a stable query key', () => {
@@ -48,8 +48,8 @@ describe('shared monitoring time range', () => {
     expect(selection).not.toBeNull();
     if (!selection) return;
 
-    expect(resolveTimeRange(selection, 99_999)).toEqual({ fromMs: 10_000, toMs: 20_999, interval: 'hour' });
-    expect(getTimeRangeKey(selection)).toBe('custom:10000:20999');
+    expect(resolveTimeRange(selection, 99_999)).toEqual({ fromMs: 0, toMs: 59_999, interval: 'hour' });
+    expect(getTimeRangeKey(selection)).toBe('custom:0:59999');
   });
 
   test('computes rates from elapsed range time instead of bucket count', () => {

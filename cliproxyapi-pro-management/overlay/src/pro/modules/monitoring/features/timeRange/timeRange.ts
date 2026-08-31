@@ -26,8 +26,8 @@ export function createPresetTimeRange(preset: TimeRangePreset): TimeRangeSelecti
 
 export function normalizeCustomTimeRange(fromMs: number, toMs: number): CustomTimeRange | null {
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return null;
-  const normalizedFromMs = Math.floor(fromMs / SECOND_MS) * SECOND_MS;
-  const normalizedToMs = Math.floor(toMs / SECOND_MS) * SECOND_MS + SECOND_MS - 1;
+  const normalizedFromMs = Math.floor(fromMs / MINUTE_MS) * MINUTE_MS;
+  const normalizedToMs = Math.floor(toMs / MINUTE_MS) * MINUTE_MS + MINUTE_MS - 1;
   if (normalizedFromMs < 0 || normalizedToMs < normalizedFromMs) return null;
   return { fromMs: normalizedFromMs, toMs: normalizedToMs };
 }
@@ -103,16 +103,15 @@ export function formatDateTimeLocalValue(timestampMs: number): string {
   const date = new Date(timestampMs);
   if (!Number.isFinite(date.getTime())) return '';
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-    + `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    + `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 export function parseDateTimeLocalValue(value: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(value)) return null;
-  const valueWithSeconds = value.length === 16 ? `${value}:00` : value;
-  const timestampMs = new Date(valueWithSeconds).getTime();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
+  const timestampMs = new Date(value).getTime();
   if (!Number.isFinite(timestampMs)) return null;
-  const normalizedTimestampMs = Math.floor(timestampMs / SECOND_MS) * SECOND_MS;
-  return formatDateTimeLocalValue(normalizedTimestampMs) === valueWithSeconds ? normalizedTimestampMs : null;
+  const normalizedTimestampMs = Math.floor(timestampMs / MINUTE_MS) * MINUTE_MS;
+  return formatDateTimeLocalValue(normalizedTimestampMs) === value ? normalizedTimestampMs : null;
 }
 
 export function formatCustomTimeRange(selection: TimeRangeSelection, locale?: string): string {
@@ -123,7 +122,6 @@ export function formatCustomTimeRange(selection: TimeRangeSelection, locale?: st
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
     hour12: false,
   });
   return `${formatter.format(selection.range.fromMs)} – ${formatter.format(selection.range.toMs)}`;

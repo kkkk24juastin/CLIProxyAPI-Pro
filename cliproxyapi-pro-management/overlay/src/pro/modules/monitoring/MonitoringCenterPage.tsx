@@ -431,7 +431,6 @@ export function MonitoringCenterPage() {
     authFiles,
     allRows,
     filteredRows,
-    refreshMeta,
   } = useMonitoringEventRows({
     usage: deferredUsage,
     logUsage: realtimeLogUsage,
@@ -510,9 +509,9 @@ export function MonitoringCenterPage() {
   });
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshUsage(), refreshMeta(false), refreshRealtimeLogs()]);
+    await Promise.all([refreshUsage(), refreshRealtimeLogs()]);
     await refreshAggregates();
-  }, [refreshAggregates, refreshMeta, refreshRealtimeLogs, refreshUsage]);
+  }, [refreshAggregates, refreshRealtimeLogs, refreshUsage]);
 
   const fetchMonitoringSettings = useCallback(async () => {
     const response = await apiClient.get<{ settings: MonitoringSettings }>('/usage/settings');
@@ -745,10 +744,7 @@ export function MonitoringCenterPage() {
     Boolean(usage),
     usage?.details_limited === true
   );
-  const usageTrendStatusText = usageTrendDataReady
-    ? undefined
-    : usageAggregatesError || t('common.loading');
-  const usageTrendAnalytics = useMemo(() => {
+  const currentUsageTrendAnalytics = useMemo(() => {
     if (!serverUsageTrendAnalytics || !aggregateTrendScopeMatches) {
       return clientUsageTrendAnalytics;
     }
@@ -760,6 +756,18 @@ export function MonitoringCenterPage() {
       apiKeyRows: clientUsageTrendAnalytics.apiKeyRows,
     };
   }, [aggregateTrendScopeMatches, clientUsageTrendAnalytics, serverUsageTrendAnalytics]);
+  const staleUsageTrendAnalytics = !aggregateTrendScopeMatches
+    ? serverUsageTrendAnalytics
+    : null;
+  const usageTrendAnalytics = usageTrendDataReady
+    ? currentUsageTrendAnalytics
+    : staleUsageTrendAnalytics ?? currentUsageTrendAnalytics;
+  const usageTrendHasDisplayData = usageTrendDataReady || Boolean(staleUsageTrendAnalytics);
+  const usageTrendDataRefreshing = usageTrendHasDisplayData
+    && (usageAggregatesRefreshing || !usageTrendDataReady);
+  const usageTrendDataStale = usageTrendHasDisplayData && !usageTrendDataReady;
+  const usageTrendStatusText = usageAggregatesError
+    || (!usageTrendDataReady ? t('common.loading') : undefined);
   const usageTrendApiKeyOptions = usageTrendAnalytics.apiKeyOptions;
   const usageTrendPoints = usageTrendAnalytics.trendPoints;
   const tokenDistributionPoints = usageTrendAnalytics.tokenDistributionPoints;
@@ -1579,48 +1587,61 @@ export function MonitoringCenterPage() {
             onHide={() => setIsUsageTrendHidden(true)}
             t={t}
           />
-          {usageTrendDataReady ? (
+          {usageTrendHasDisplayData ? (
             <>
-              <div className={styles.usageTrendInsightsGrid}>
-                <UsageTrendPanel
-                  points={usageTrendPoints}
-                  durationMinutes={usageTrendAnalytics.durationMinutes}
-                  hasPrices={hasPrices}
-                  emptyText={t('monitoring.no_data')}
-                  t={t}
-                />
-                <ApiKeyRankingPanel
-                  title={t('monitoring.api_key_ranking_title')}
-                  subtitle={t('monitoring.api_key_ranking_desc')}
-                  rows={apiKeyRankingRows}
-                  metric={apiKeyRankingMetric}
-                  metricTotal={apiKeyRankingMetricTotal}
-                  onMetricChange={setApiKeyRankingMetric}
-                  emptyText={t('monitoring.no_data')}
-                  hasPrices={hasPrices}
-                  t={t}
-                />
+              <div
+                className={`${styles.usageTrendData} ${usageTrendDataStale ? styles.usageTrendDataStale : ''}`.trim()}
+                aria-busy={usageTrendDataRefreshing}
+              >
+                <div className={styles.usageTrendInsightsGrid}>
+                  <UsageTrendPanel
+                    points={usageTrendPoints}
+                    durationMinutes={usageTrendAnalytics.durationMinutes}
+                    hasPrices={hasPrices}
+                    emptyText={t('monitoring.no_data')}
+                    t={t}
+                  />
+                  <ApiKeyRankingPanel
+                    title={t('monitoring.api_key_ranking_title')}
+                    subtitle={t('monitoring.api_key_ranking_desc')}
+                    rows={apiKeyRankingRows}
+                    metric={apiKeyRankingMetric}
+                    metricTotal={apiKeyRankingMetricTotal}
+                    onMetricChange={setApiKeyRankingMetric}
+                    emptyText={t('monitoring.no_data')}
+                    hasPrices={hasPrices}
+                    t={t}
+                  />
+                </div>
+                <div className={styles.rankingGrid}>
+                  <ModelStatsPanel
+                    title={t('monitoring.model_stats_title')}
+                    subtitle={t('monitoring.model_stats_desc')}
+                    rows={modelRankingRows}
+                    metric={modelRankingMetric}
+                    metricTotal={modelRankingMetricTotal}
+                    onMetricChange={setModelRankingMetric}
+                    emptyText={t('monitoring.no_data')}
+                    hasPrices={hasPrices}
+                    t={t}
+                  />
+                  <TokenDistributionPanel
+                    points={tokenDistributionPoints}
+                    durationMinutes={usageTrendAnalytics.durationMinutes}
+                    emptyText={t('monitoring.no_data')}
+                    hasPrices={hasPrices}
+                    t={t}
+                  />
+                </div>
               </div>
-              <div className={styles.rankingGrid}>
-                <ModelStatsPanel
-                  title={t('monitoring.model_stats_title')}
-                  subtitle={t('monitoring.model_stats_desc')}
-                  rows={modelRankingRows}
-                  metric={modelRankingMetric}
-                  metricTotal={modelRankingMetricTotal}
-                  onMetricChange={setModelRankingMetric}
-                  emptyText={t('monitoring.no_data')}
-                  hasPrices={hasPrices}
-                  t={t}
-                />
-                <TokenDistributionPanel
-                  points={tokenDistributionPoints}
-                  durationMinutes={usageTrendAnalytics.durationMinutes}
-                  emptyText={t('monitoring.no_data')}
-                  hasPrices={hasPrices}
-                  t={t}
-                />
-              </div>
+              {usageAggregatesError ? (
+                <div className={`${styles.errorBox} ${styles.usageTrendState}`} role="alert">
+                  <span>{usageAggregatesError}</span>
+                  <Button variant="secondary" size="sm" onClick={() => void refreshAggregates()}>
+                    {t('common.retry')}
+                  </Button>
+                </div>
+              ) : null}
             </>
           ) : (
             <div

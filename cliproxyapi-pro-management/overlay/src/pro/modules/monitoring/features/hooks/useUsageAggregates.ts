@@ -51,6 +51,7 @@ export type UsageAggregates = {
   scopeTimeRange: TimeRangeSelection;
   scopeTimeRangeKey: string;
   scopeApiKeyHash: string;
+  scopeConnectionKey?: string;
 };
 
 type UseUsageAggregatesParams = {
@@ -99,6 +100,8 @@ export function useUsageAggregates({
     && connectionStatus === 'connected'
     && Boolean(apiBase)
     && Boolean(managementKey);
+  const connectionKey = effectiveEnabled ? `${apiBase}\u0000${managementKey}` : '';
+  const activeConnectionKeyRef = useRef(connectionKey);
 
   const load = useCallback(async () => {
     if (!effectiveEnabled) return;
@@ -205,6 +208,7 @@ export function useUsageAggregates({
         scopeTimeRange: timeRange,
         scopeTimeRangeKey: timeRangeKey,
         scopeApiKeyHash: apiKeyHash,
+        scopeConnectionKey: connectionKey,
       });
       hasDataRef.current = true;
       lastFetchedAtRef.current = Date.now();
@@ -223,7 +227,7 @@ export function useUsageAggregates({
         }
       }
     }
-  }, [apiKeyHash, effectiveEnabled, timeRange, timeRangeKey]);
+  }, [apiKeyHash, connectionKey, effectiveEnabled, timeRange, timeRangeKey]);
 
   const loadRef = useRef(load);
 
@@ -232,14 +236,17 @@ export function useUsageAggregates({
   }, [load]);
 
   useEffect(() => {
+    const connectionChanged = activeConnectionKeyRef.current !== connectionKey;
+    activeConnectionKeyRef.current = connectionKey;
     queryGenerationRef.current += 1;
     requestIdRef.current += 1;
     refreshInFlightRef.current = false;
     refreshPendingRef.current = false;
-    hasDataRef.current = false;
-    setData(null);
-    lastFetchedAtRef.current = 0;
-    refreshPendingRef.current = refreshInFlightRef.current;
+    if (connectionChanged) {
+      hasDataRef.current = false;
+      setData(null);
+      lastFetchedAtRef.current = 0;
+    }
     setError('');
     setLoading(effectiveEnabled && !hasDataRef.current);
     if (refreshTimerRef.current) {
@@ -247,7 +254,7 @@ export function useUsageAggregates({
       refreshTimerRef.current = null;
     }
     setRefreshNonce((value) => value + 1);
-  }, [apiBase, apiKeyHash, effectiveEnabled, managementKey, timeRangeKey]);
+  }, [apiKeyHash, connectionKey, effectiveEnabled, timeRangeKey]);
 
   useEffect(() => {
     if (!effectiveEnabled) {
@@ -271,5 +278,6 @@ export function useUsageAggregates({
     }
   }, []);
 
-  return { data, loading, refreshing, error, refresh: load };
+  const connectionScopedData = data?.scopeConnectionKey === connectionKey ? data : null;
+  return { data: connectionScopedData, loading, refreshing, error, refresh: load };
 }

@@ -118,7 +118,7 @@ export function TimeRangeSelector({
               <span>{t('time_range.start')}</span>
               <input
                 type="datetime-local"
-                step="1"
+                step="60"
                 value={fromValue}
                 onChange={(event) => {
                   setFromValue(event.target.value);
@@ -130,7 +130,7 @@ export function TimeRangeSelector({
               <span>{t('time_range.end')}</span>
               <input
                 type="datetime-local"
-                step="1"
+                step="60"
                 value={toValue}
                 onChange={(event) => {
                   setToValue(event.target.value);

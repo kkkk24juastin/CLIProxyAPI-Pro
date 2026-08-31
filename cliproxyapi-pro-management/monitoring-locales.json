@@ -30,7 +30,7 @@
       "end": "End time",
       "apply": "Apply",
       "cancel": "Cancel",
-      "required_error": "Enter both start and end times, including seconds.",
+      "required_error": "Enter both start and end times, to the minute.",
       "order_error": "The start time must not be later than the end time."
     },
     "data_management": {
@@ -1583,7 +1583,7 @@
       "end": "Окончание",
       "apply": "Применить",
       "cancel": "Отмена",
-      "required_error": "Укажите время начала и окончания с точностью до секунды.",
+      "required_error": "Укажите время начала и окончания с точностью до минуты.",
       "order_error": "Время начала не может быть позже времени окончания."
     },
     "data_management": {
@@ -2803,7 +2803,7 @@
       "end": "结束时间",
       "apply": "应用",
       "cancel": "取消",
-      "required_error": "请填写精确到秒的开始时间和结束时间。",
+      "required_error": "请填写精确到分钟的开始时间和结束时间。",
       "order_error": "开始时间不能晚于结束时间。"
     },
     "data_management": {
@@ -4495,7 +4495,7 @@
       "end": "結束時間",
       "apply": "套用",
       "cancel": "取消",
-      "required_error": "請填寫精確到秒的開始時間和結束時間。",
+      "required_error": "請填寫精確到分鐘的開始時間和結束時間。",
       "order_error": "開始時間不能晚於結束時間。"
     },
     "data_management": {
