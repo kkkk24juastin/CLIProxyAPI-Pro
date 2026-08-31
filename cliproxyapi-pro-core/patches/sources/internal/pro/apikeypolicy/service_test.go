@@ -1279,7 +1279,7 @@ func TestAdmitQuotaTurnCreatesFreshPerTurnAdmission(t *testing.T) {
 func TestCostQuotaUsesServerPricingAndFailsClosedAfterExhaustion(t *testing.T) {
 	service := newTestService(t)
 	service.SetCostEstimator(func(_ context.Context, usage QuotaUsageDelta) (int64, error) {
-		if usage.Provider != "codex" || usage.Model != "gpt-5" || usage.InputTokens != 8 || usage.OutputTokens != 2 {
+		if usage.Provider != "codex" || usage.AuthType != "oauth" || usage.Model != "gpt-5" || usage.InputTokens != 8 || usage.OutputTokens != 2 {
 			t.Fatalf("cost usage input = %#v", usage)
 		}
 		return 1_250_000, nil
@@ -1304,7 +1304,7 @@ func TestCostQuotaUsesServerPricingAndFailsClosedAfterExhaustion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = SettleQuotaUsage(WithDecision(context.Background(), admitted), "priced-attempt", QuotaUsageDelta{
-		Provider: "codex", Model: "gpt-5", InputTokens: 8, OutputTokens: 2, TotalTokens: 10,
+		Provider: "codex", AuthType: "oauth", Model: "gpt-5", InputTokens: 8, OutputTokens: 2, TotalTokens: 10,
 	}); err != nil {
 		t.Fatal(err)
 	}

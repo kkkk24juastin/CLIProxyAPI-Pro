@@ -154,6 +154,8 @@ export function RealtimeCostCell({ row, hasPrices, t }: {
               {matchedTier ? <div><span>{t('monitoring.cost_detail_matched_tier')}</span><strong>{formatCostTierLabel(matchedTier)}</strong></div> : null}
               <div><span>{t('monitoring.cost_detail_tier_basis')}</span><strong>{breakdown.serviceTierSource === 'response'
                 ? t('monitoring.cost_detail_response_authoritative')
+                : breakdown.serviceTierSource === 'codex_oauth_request'
+                  ? t('monitoring.cost_detail_codex_oauth_request')
                 : breakdown.serviceTierSource === 'request_fallback'
                   ? t('monitoring.cost_detail_request_fallback')
                   : breakdown.serviceTierSource === 'none'

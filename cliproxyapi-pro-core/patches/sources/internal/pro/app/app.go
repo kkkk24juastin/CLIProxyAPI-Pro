@@ -67,7 +67,7 @@ func New(ctx context.Context, configFilePath, baseProxyURL string) (*App, error)
 	})
 	apiKeyPolicy.SetCostEstimator(func(ctx context.Context, usage apikeypolicy.QuotaUsageDelta) (int64, error) {
 		cost, err := observability.EstimateUsageCostMicros(ctx, observability.UsageCostInput{
-			Provider: usage.Provider, Model: usage.Model,
+			Provider: usage.Provider, AuthType: usage.AuthType, Model: usage.Model,
 			InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
 			ReasoningTokens: usage.ReasoningTokens, CachedTokens: usage.CachedTokens,
 			CacheTokens: usage.CacheTokens, CacheReadTokens: usage.CacheReadTokens,

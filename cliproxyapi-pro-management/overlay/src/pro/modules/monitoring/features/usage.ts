@@ -143,7 +143,7 @@ export interface UsageCostBreakdown {
   requestedServiceTier: string;
   effectiveServiceTier: string;
   matchedServiceTier: string;
-  serviceTierSource?: 'response' | 'request_fallback' | 'none';
+  serviceTierSource?: 'response' | 'request_fallback' | 'codex_oauth_request' | 'none';
   speed: string;
   requestedSpeed: string;
   effectiveSpeed: string;
@@ -453,7 +453,7 @@ const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undef
     matchedServiceTier: readString('matchedServiceTier', 'matched_service_tier'),
     serviceTierSource: (() => {
       const source = readString('serviceTierSource', 'service_tier_source');
-      return source === 'response' || source === 'request_fallback' || source === 'none' ? source : undefined;
+      return source === 'response' || source === 'request_fallback' || source === 'codex_oauth_request' || source === 'none' ? source : undefined;
     })(),
     speed: readString('speed', 'speed'),
     requestedSpeed: readString('requestedSpeed', 'requested_speed') || readString('speed', 'speed'),

@@ -29,7 +29,7 @@ func prepareUsageRecordForPublish(ctx context.Context, record *usage.Record) {
 	}
 	eventID := fmt.Sprintf("usage:%d:provider=%q:executor=%q:model=%q:alias=%q:attempt=%d", record.RequestedAt.UnixNano(), record.Provider, record.ExecutorType, record.Model, record.Alias, attemptIndex)
 	if err := apikeypolicy.SettleQuotaUsage(ctx, eventID, apikeypolicy.QuotaUsageDelta{
-		Provider: record.Provider, Model: record.Model,
+		Provider: record.Provider, AuthType: record.AuthType, Model: record.Model,
 		InputTokens: quotaDetail.InputTokens, OutputTokens: quotaDetail.OutputTokens,
 		ReasoningTokens: quotaDetail.ReasoningTokens, CachedTokens: quotaDetail.CachedTokens,
 		CacheReadTokens: quotaDetail.CacheReadTokens, CacheWriteTokens: quotaDetail.CacheCreationTokens,

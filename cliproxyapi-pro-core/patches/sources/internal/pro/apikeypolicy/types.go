@@ -408,6 +408,7 @@ type QuotaSummary struct {
 // price quotas. Cost is evaluated server-side from the active model-price rule.
 type QuotaUsageDelta struct {
 	Provider             string `json:"provider,omitempty"`
+	AuthType             string `json:"authType,omitempty"`
 	Model                string `json:"model,omitempty"`
 	InputTokens          int64  `json:"inputTokens,omitempty"`
 	OutputTokens         int64  `json:"outputTokens,omitempty"`

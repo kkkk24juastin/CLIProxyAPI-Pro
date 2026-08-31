@@ -2701,6 +2701,27 @@ replace_once(
     'meta[coreexecutor.SpeedMetadataKey] = speed',
 )
 
+codex_responses_request = ROOT / 'internal/translator/codex/openai/responses/codex_openai-responses_request.go'
+add_go_import(codex_responses_request, '\t"encoding/json"\n', '\t"strings"\n')
+replace_once(
+    codex_responses_request,
+    '''\tif serviceTier := gjson.GetBytes(rawJSON, "service_tier"); serviceTier.Exists() && serviceTier.String() != "priority" {
+\t\trawJSON = deleteCodexRequestFields(rawJSON, "service_tier")
+\t}
+''',
+    '''\tif serviceTier := gjson.GetBytes(rawJSON, "service_tier"); serviceTier.Exists() {
+\t\tswitch strings.ToLower(strings.TrimSpace(serviceTier.String())) {
+\t\tcase "fast", "priority":
+\t\t\trawJSON, _ = sjson.SetBytes(rawJSON, "service_tier", "priority")
+\t\tdefault:
+\t\t\trawJSON = deleteCodexRequestFields(rawJSON, "service_tier")
+\t\t}
+\t}
+''',
+    'case "fast", "priority":',
+)
+queue_go_source('internal/translator/codex/openai/responses/codex_fast_service_tier_test.go')
+
 usage_manager = ROOT / 'sdk/cliproxy/usage/manager.go'
 replace_once(
     usage_manager,
@@ -5806,6 +5827,8 @@ format_go_writes([
     'internal/runtime/executor/xai_executor_stream.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'internal/runtime/executor/xai_websockets_executor.go',
+    'internal/translator/codex/openai/responses/codex_fast_service_tier_test.go',
+    'internal/translator/codex/openai/responses/codex_openai-responses_request.go',
     'sdk/auth/codex_device.go',
     'sdk/auth/filestore.go',
 	'sdk/auth/filestore_identity.go',

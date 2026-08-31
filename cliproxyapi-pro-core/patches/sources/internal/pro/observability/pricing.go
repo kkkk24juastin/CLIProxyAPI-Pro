@@ -22,18 +22,19 @@ const modelPriceSourceManual = "manual"
 const modelPriceSourceModelsDev = "models.dev"
 
 const (
-	modelPriceModeBase        = "base"
-	modelPriceModeContext     = "context"
-	modelPriceModeServiceTier = "service_tier"
-	modelPriceModeSpeed       = "speed"
-	serviceTierFast           = "fast"
-	serviceTierPriority       = "priority"
-	serviceTierSourceResponse = "response"
-	serviceTierSourceRequest  = "request_fallback"
-	serviceTierSourceNone     = "none"
-	speedSourceResponse       = "response"
-	speedSourceRequest        = "request_fallback"
-	speedSourceNone           = "none"
+	modelPriceModeBase                 = "base"
+	modelPriceModeContext              = "context"
+	modelPriceModeServiceTier          = "service_tier"
+	modelPriceModeSpeed                = "speed"
+	serviceTierFast                    = "fast"
+	serviceTierPriority                = "priority"
+	serviceTierSourceResponse          = "response"
+	serviceTierSourceRequest           = "request_fallback"
+	serviceTierSourceCodexOAuthRequest = "codex_oauth_request"
+	serviceTierSourceNone              = "none"
+	speedSourceResponse                = "response"
+	speedSourceRequest                 = "request_fallback"
+	speedSourceNone                    = "none"
 )
 
 type ModelPriceRate struct {
@@ -114,6 +115,7 @@ type ObservedModel struct {
 // settlement. It intentionally mirrors only fields that affect model pricing.
 type UsageCostInput struct {
 	Provider             string
+	AuthType             string
 	Model                string
 	InputTokens          int64
 	OutputTokens         int64
@@ -146,7 +148,7 @@ func (s *Store) EstimateUsageCostMicros(ctx context.Context, input UsageCostInpu
 		return 0, fmt.Errorf("%w for %q", ErrModelPriceUnavailable, strings.TrimSpace(input.Model))
 	}
 	cost, _ := evaluateEventCost(internalusage.Event{
-		Provider: input.Provider, Model: input.Model,
+		Provider: input.Provider, AuthType: input.AuthType, Model: input.Model,
 		InputTokens: input.InputTokens, OutputTokens: input.OutputTokens,
 		ReasoningTokens: input.ReasoningTokens, CachedTokens: input.CachedTokens,
 		CacheTokens: input.CacheTokens, CacheReadTokens: input.CacheReadTokens,
@@ -339,7 +341,10 @@ func selectModelPriceRate(rule ModelPriceRule, event internalusage.Event) modelP
 		}
 	}
 	billingTier := selection.EffectiveServiceTier
-	if billingTier != "" {
+	if isCodexOAuthFastRequest(event) {
+		billingTier = selection.RequestedServiceTier
+		selection.ServiceTierSource = serviceTierSourceCodexOAuthRequest
+	} else if billingTier != "" {
 		selection.ServiceTierSource = serviceTierSourceResponse
 	} else if selection.RequestedServiceTier != "" {
 		billingTier = selection.RequestedServiceTier
@@ -369,6 +374,12 @@ func selectModelPriceRate(rule ModelPriceRule, event internalusage.Event) modelP
 		}
 	}
 	return selection
+}
+
+func isCodexOAuthFastRequest(event internalusage.Event) bool {
+	return strings.EqualFold(strings.TrimSpace(event.Provider), "codex") &&
+		strings.EqualFold(strings.TrimSpace(event.AuthType), "oauth") &&
+		normalizeServiceTierName(event.ServiceTier) == serviceTierFast
 }
 
 func evaluateEventCost(event internalusage.Event, rule ModelPriceRule) (float64, ModelPriceCostBreakdown) {
@@ -671,7 +682,7 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 	if err != nil {
 		return 0, err
 	}
-	query := `select id, provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens,
+	query := `select id, provider, auth_type, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens,
 		cache_read_tokens, cache_write_tokens, uncached_input_tokens, accounting_quality, service_tier, effective_service_tier, speed, effective_speed from usage_events`
 	if onlyUnpriced {
 		query += ` where estimated_cost is null`
@@ -687,14 +698,15 @@ func (s *Store) RecalculateEventCosts(ctx context.Context, onlyUnpriced bool) (i
 	items := make([]pricedEvent, 0)
 	for rows.Next() {
 		var item pricedEvent
-		var provider, serviceTier, effectiveServiceTier, speed, effectiveSpeed, accountingQuality sql.NullString
-		if err := rows.Scan(&item.id, &provider, &item.event.Model, &item.event.InputTokens, &item.event.OutputTokens,
+		var provider, authType, serviceTier, effectiveServiceTier, speed, effectiveSpeed, accountingQuality sql.NullString
+		if err := rows.Scan(&item.id, &provider, &authType, &item.event.Model, &item.event.InputTokens, &item.event.OutputTokens,
 			&item.event.ReasoningTokens, &item.event.CachedTokens, &item.event.CacheTokens, &item.event.CacheReadTokens,
 			&item.event.CacheWriteTokens, &item.event.UncachedInputTokens, &accountingQuality, &serviceTier, &effectiveServiceTier, &speed, &effectiveSpeed); err != nil {
 			_ = rows.Close()
 			return 0, err
 		}
 		item.event.Provider = provider.String
+		item.event.AuthType = authType.String
 		item.event.AccountingQuality = accountingQuality.String
 		item.event.ServiceTier = serviceTier.String
 		item.event.EffectiveServiceTier = effectiveServiceTier.String

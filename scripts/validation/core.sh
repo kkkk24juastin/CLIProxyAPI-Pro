@@ -128,6 +128,7 @@ go -C "${upstream_root}" test "${test_flags[@]}" \
   ./internal/redisqueue \
   ./internal/requestmeta \
   ./internal/runtime/executor/helps \
+  ./internal/translator/codex/openai/responses \
   ./internal/pro/... \
   ./sdk/api/handlers \
   ./sdk/api/handlers/claude \

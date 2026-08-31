@@ -33,6 +33,14 @@ ACCOUNT_PLAN_PATH = (
     Path(__file__).resolve().parents[1]
     / 'overlay/src/pro/modules/quota/accountPlan.ts'
 )
+COST_CELL_PATH = (
+    Path(__file__).resolve().parents[1]
+    / 'overlay/src/pro/modules/monitoring/features/components/RealtimeCostCell.tsx'
+)
+USAGE_MODEL_PATH = (
+    Path(__file__).resolve().parents[1]
+    / 'overlay/src/pro/modules/monitoring/features/usage.ts'
+)
 LOCALES_PATH = Path(__file__).resolve().parents[1] / 'monitoring-locales.json'
 
 
@@ -164,6 +172,20 @@ class MonitoringToolbarCustomizationTest(unittest.TestCase):
         self.assertIn("quotaStore.xaiQuota[fileName]", account_plan)
         self.assertIn('"column_account_plan": "Account Plan"', locales)
         self.assertIn('"column_account_plan": "账号套餐"', locales)
+
+    def test_codex_oauth_request_authoritative_tier_is_preserved_and_explained(self) -> None:
+        usage_model = USAGE_MODEL_PATH.read_text()
+        cost_cell = COST_CELL_PATH.read_text()
+        locales = json.loads(LOCALES_PATH.read_text())
+
+        self.assertIn("'codex_oauth_request'", usage_model)
+        self.assertIn("breakdown.serviceTierSource === 'codex_oauth_request'", cost_cell)
+        self.assertIn("monitoring.cost_detail_codex_oauth_request", cost_cell)
+        for locale_name in ('en.json', 'ru.json', 'zh-CN.json', 'zh-TW.json'):
+            self.assertTrue(
+                locales[locale_name]['monitoring']['cost_detail_codex_oauth_request'].strip(),
+                locale_name,
+            )
 
 
 if __name__ == '__main__':

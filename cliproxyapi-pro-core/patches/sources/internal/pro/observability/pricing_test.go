@@ -149,6 +149,13 @@ func TestEstimateUsageCostMicrosUsesActivePriceRuleAndRejectsUnknownModel(t *tes
 	if err != nil || micros != 110 {
 		t.Fatalf("estimated cost micros = %d, %v; want 110", micros, err)
 	}
+	fastMicros, err := store.EstimateUsageCostMicros(context.Background(), UsageCostInput{
+		Provider: "codex", AuthType: "oauth", Model: rule.Model, InputTokens: 10, OutputTokens: 2,
+		ServiceTier: "fast", EffectiveServiceTier: "default",
+	})
+	if err != nil || fastMicros != 220 {
+		t.Fatalf("Codex OAuth fast estimated cost micros = %d, %v; want 220", fastMicros, err)
+	}
 	if _, err := store.EstimateUsageCostMicros(context.Background(), UsageCostInput{Model: "unknown", InputTokens: 1}); !errors.Is(err, ErrModelPriceUnavailable) {
 		t.Fatalf("unknown model error = %v, want ErrModelPriceUnavailable", err)
 	}
@@ -182,12 +189,47 @@ func TestEvaluateEventCostUsesEffectivePriorityForFastAndOverridesContextTier(t 
 
 func TestEvaluateEventCostEffectiveDefaultDowngradeUsesStandardPricing(t *testing.T) {
 	rule := testGPT56PriceRule()
-	event := internalusage.Event{InputTokens: 300000, OutputTokens: 1000, ServiceTier: "fast", EffectiveServiceTier: "default"}
+	event := internalusage.Event{Provider: "codex", AuthType: "apikey", InputTokens: 300000, OutputTokens: 1000, ServiceTier: "fast", EffectiveServiceTier: "default"}
 	cost, breakdown := evaluateEventCost(event, rule)
 	assertCostClose(t, cost, float64(300000)/1_000_000*10+float64(1000)/1_000_000*45)
 	if breakdown.ContextTierSize != 272000 || breakdown.PricingMode != modelPriceModeContext || breakdown.MatchedServiceTier != "" ||
 		breakdown.EffectiveServiceTier != "default" || breakdown.ServiceTierSource != serviceTierSourceResponse {
 		t.Fatalf("breakdown = %+v, want authoritative standard downgrade with context pricing", breakdown)
+	}
+}
+
+func TestEvaluateEventCostCodexOAuthFastUsesRequestedTierWhenResponseIsDefault(t *testing.T) {
+	rule := testGPT56PriceRule()
+	for _, requestedTier := range []string{"fast", "priority"} {
+		t.Run(requestedTier, func(t *testing.T) {
+			event := internalusage.Event{
+				Provider: " CoDeX ", AuthType: " OAUTH ", InputTokens: 300000, OutputTokens: 1000,
+				ServiceTier: requestedTier, EffectiveServiceTier: "default",
+			}
+			cost, breakdown := evaluateEventCost(event, rule)
+			assertCostClose(t, cost, float64(300000)/1_000_000*10+float64(1000)/1_000_000*60)
+			if breakdown.ContextTierSize != 0 || breakdown.PricingMode != modelPriceModeServiceTier ||
+				breakdown.MatchedServiceTier != "fast" || breakdown.EffectiveServiceTier != "default" ||
+				breakdown.ServiceTierSource != serviceTierSourceCodexOAuthRequest {
+				t.Fatalf("breakdown = %+v, want Codex OAuth request-authoritative fast pricing", breakdown)
+			}
+		})
+	}
+}
+
+func TestEvaluateEventCostDoesNotUseCodexOAuthRuleOutsideExactBoundary(t *testing.T) {
+	rule := testGPT56PriceRule()
+	for _, event := range []internalusage.Event{
+		{Provider: "codex", AuthType: "apikey", ServiceTier: "fast", EffectiveServiceTier: "default"},
+		{Provider: "openai", AuthType: "oauth", ServiceTier: "fast", EffectiveServiceTier: "default"},
+		{Provider: "codex", AuthType: "oauth", ServiceTier: "default", EffectiveServiceTier: "priority"},
+	} {
+		event.InputTokens = 100000
+		event.OutputTokens = 1000
+		_, breakdown := evaluateEventCost(event, rule)
+		if breakdown.ServiceTierSource != serviceTierSourceResponse {
+			t.Fatalf("event = %+v breakdown = %+v, want response-authoritative pricing", event, breakdown)
+		}
 	}
 }
 
@@ -528,6 +570,37 @@ func TestRecalculateEventCostsOnlyUpdatesUnpricedEvents(t *testing.T) {
 				t.Fatalf("existing cost changed: %+v", event.EstimatedCost)
 			}
 		}
+	}
+}
+
+func TestRecalculateEventCostsUsesStoredAuthTypeForCodexOAuthFast(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	event := testUsageEvent(0, false, 1000)
+	event.Provider = "codex"
+	event.AuthType = "oauth"
+	event.Model = "gpt-5.6-sol"
+	event.ServiceTier = "fast"
+	event.EffectiveServiceTier = "default"
+	insertTestUsageEvents(t, store, event)
+	if _, _, err := store.UpsertModelPriceRule(ctx, testGPT56PriceRule(), true); err != nil {
+		t.Fatalf("UpsertModelPriceRule() error = %v", err)
+	}
+
+	updated, err := store.RecalculateEventCosts(ctx, true)
+	if err != nil || updated != 1 {
+		t.Fatalf("RecalculateEventCosts() = %d, %v; want 1, nil", updated, err)
+	}
+	var raw string
+	if err := store.db.QueryRowContext(ctx, `select cost_breakdown_json from usage_events where event_hash = ?`, event.EventHash).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var breakdown ModelPriceCostBreakdown
+	if err := json.Unmarshal([]byte(raw), &breakdown); err != nil {
+		t.Fatal(err)
+	}
+	if breakdown.MatchedServiceTier != "fast" || breakdown.ServiceTierSource != serviceTierSourceCodexOAuthRequest {
+		t.Fatalf("recalculated breakdown = %+v, want stored Codex OAuth auth type to preserve fast pricing", breakdown)
 	}
 }
 
