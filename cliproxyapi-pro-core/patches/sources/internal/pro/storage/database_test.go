@@ -6,7 +6,20 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestEmbeddedIANATimezoneDataIsAvailable(t *testing.T) {
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+	_, winterOffset := time.Date(2026, 1, 1, 12, 0, 0, 0, location).Zone()
+	_, summerOffset := time.Date(2026, 7, 1, 12, 0, 0, 0, location).Zone()
+	if winterOffset == summerOffset {
+		t.Fatalf("timezone data has no DST transition: winter=%d summer=%d", winterOffset, summerOffset)
+	}
+}
 
 func TestDatabaseOwnsLifecycleAndDomainRepositories(t *testing.T) {
 	database, err := OpenSQLite(filepath.Join(t.TempDir(), "nested", "pro.db"))

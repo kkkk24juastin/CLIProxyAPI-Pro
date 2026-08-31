@@ -496,7 +496,7 @@ describe('API Key Policy profile drafts', () => {
   test('keeps aggregate fallback scoped only to aggregate controls', () => {
     const page = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/MonitoringCenterPage.tsx'), 'utf8');
     const hook = readFileSync(resolve(import.meta.dir, '../src/pro/modules/monitoring/features/hooks/useUsageAggregates.ts'), 'utf8');
-    expect(page).toContain('usageAggregates.scopeTimeRange === timeRange');
+    expect(page).toContain('usageAggregates.scopeTimeRangeKey === timeRangeKey');
     expect(page).toContain('usageAggregates.scopeApiKeyHash === usageTrendApiKey');
     expect(page).not.toContain('scopeAPIKeyPolicyId');
     expect(page).not.toContain('scopePolicyMode');

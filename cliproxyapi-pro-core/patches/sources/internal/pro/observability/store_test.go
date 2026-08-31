@@ -943,6 +943,50 @@ func TestUsageAggregatesSupportsAuthIndexGroupingAndLastSeen(t *testing.T) {
 	}
 }
 
+func TestUsageAggregatesUsesIANATimezoneAcrossDST(t *testing.T) {
+	store := openTestStore(t)
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+	eventTimes := []time.Time{
+		time.Date(2026, 3, 8, 0, 30, 0, 0, location),
+		time.Date(2026, 3, 9, 0, 30, 0, 0, location),
+	}
+	events := make([]internalusage.Event, 0, len(eventTimes))
+	for index, eventTime := range eventTimes {
+		event := testUsageEvent(index, false, 10)
+		event.EventHash = fmt.Sprintf("dst-aggregate-%d", index)
+		event.TimestampMS = eventTime.UnixMilli()
+		event.Timestamp = eventTime.UTC().Format(time.RFC3339Nano)
+		event.CreatedAtMS = event.TimestampMS
+		events = append(events, event)
+	}
+	insertTestUsageEvents(t, store, events...)
+
+	buckets, err := store.UsageAggregates(context.Background(), UsageAggregateOptions{
+		FromMS:       eventTimes[0].Add(-time.Minute).UnixMilli(),
+		ToMS:         eventTimes[1].Add(time.Minute).UnixMilli(),
+		Interval:     "day",
+		Limit:        10,
+		TimezoneName: "America/New_York",
+	})
+	if err != nil {
+		t.Fatalf("UsageAggregates() error = %v", err)
+	}
+	if len(buckets) != 2 {
+		t.Fatalf("UsageAggregates() len = %d, want 2", len(buckets))
+	}
+	firstStart := time.Date(2026, 3, 8, 0, 0, 0, 0, location).UnixMilli()
+	secondStart := time.Date(2026, 3, 9, 0, 0, 0, 0, location).UnixMilli()
+	if buckets[0].BucketStartMS != firstStart || buckets[1].BucketStartMS != secondStart {
+		t.Fatalf("DST bucket starts = %d, %d; want %d, %d", buckets[0].BucketStartMS, buckets[1].BucketStartMS, firstStart, secondStart)
+	}
+	if buckets[1].BucketStartMS-buckets[0].BucketStartMS != int64(23*time.Hour/time.Millisecond) {
+		t.Fatalf("DST bucket distance = %d, want 23 hours", buckets[1].BucketStartMS-buckets[0].BucketStartMS)
+	}
+}
+
 func TestAccountUsageAggregatesExactAuthIndexAndQualityMetrics(t *testing.T) {
 	store := openTestStore(t)
 	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -1014,6 +1058,101 @@ func TestAccountUsageAggregatesExactAuthIndexAndQualityMetrics(t *testing.T) {
 	}
 	if detail.HighestCostDay == nil || detail.HighestCostDay.EstimatedCost != 6.25 || detail.HighestRequestDay == nil || detail.HighestRequestDay.Requests != 2 {
 		t.Fatalf("highlights = cost:%+v requests:%+v", detail.HighestCostDay, detail.HighestRequestDay)
+	}
+
+	todayDetail, err := store.AccountUsage(context.Background(), AccountUsageOptions{
+		AuthIndex:             "codex:account-a",
+		Days:                  1,
+		TimezoneOffsetMinutes: 480,
+		NowMS:                 now.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("AccountUsage(today) error = %v", err)
+	}
+	if todayDetail.TotalRequests != 1 || todayDetail.Today.Requests != 1 || todayDetail.PeriodDays != 1 {
+		t.Fatalf("today detail = requests:%d today:%+v days:%d", todayDetail.TotalRequests, todayDetail.Today, todayDetail.PeriodDays)
+	}
+}
+
+func TestAccountUsageCustomRangeUsesExactMillisecondBounds(t *testing.T) {
+	store := openTestStore(t)
+	base := time.Date(2026, 8, 31, 8, 0, 0, 0, time.UTC).UnixMilli()
+	events := make([]internalusage.Event, 0, 3)
+	for index, timestampMS := range []int64{base + 999, base + 1000, base + 2000} {
+		event := testUsageEvent(index, false, int64(index+1))
+		event.EventHash = fmt.Sprintf("custom-range-event-%d", index)
+		event.AuthIndex = "codex:custom-range"
+		event.TimestampMS = timestampMS
+		event.Timestamp = time.UnixMilli(timestampMS).UTC().Format(time.RFC3339Nano)
+		event.CreatedAtMS = timestampMS
+		events = append(events, event)
+	}
+	insertTestUsageEvents(t, store, events...)
+
+	detail, err := store.AccountUsage(context.Background(), AccountUsageOptions{
+		AuthIndex: "codex:custom-range",
+		FromMS:    base + 1000,
+		ToMS:      base + 1999,
+		NowMS:     base + 5000,
+	})
+	if err != nil {
+		t.Fatalf("AccountUsage() error = %v", err)
+	}
+	if detail.TotalRequests != 1 || detail.TotalTokens != 2 {
+		t.Fatalf("custom range totals = requests:%d tokens:%d", detail.TotalRequests, detail.TotalTokens)
+	}
+	if detail.FromMS != base+1000 || detail.ToMS != base+1999 || detail.PeriodDays != 1 {
+		t.Fatalf("custom range metadata = from:%d to:%d days:%d", detail.FromMS, detail.ToMS, detail.PeriodDays)
+	}
+}
+
+func TestAccountUsageTodayUsesIANATimezoneAcrossDST(t *testing.T) {
+	store := openTestStore(t)
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+	previousDay := time.Date(2026, 3, 7, 23, 30, 0, 0, location)
+	today := time.Date(2026, 3, 8, 0, 30, 0, 0, location)
+	events := make([]internalusage.Event, 0, 2)
+	for index, eventTime := range []time.Time{previousDay, today} {
+		event := testUsageEvent(index, false, 10)
+		event.EventHash = fmt.Sprintf("dst-account-%d", index)
+		event.AuthIndex = "codex:dst-account"
+		event.TimestampMS = eventTime.UnixMilli()
+		event.Timestamp = eventTime.UTC().Format(time.RFC3339Nano)
+		event.CreatedAtMS = event.TimestampMS
+		events = append(events, event)
+	}
+	insertTestUsageEvents(t, store, events...)
+
+	detail, err := store.AccountUsage(context.Background(), AccountUsageOptions{
+		AuthIndex:             "codex:dst-account",
+		Days:                  1,
+		TimezoneOffsetMinutes: -4 * 60,
+		TimezoneName:          "America/New_York",
+		NowMS:                 time.Date(2026, 3, 8, 12, 0, 0, 0, location).UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("AccountUsage() error = %v", err)
+	}
+	wantStart := time.Date(2026, 3, 8, 0, 0, 0, 0, location).UnixMilli()
+	if detail.FromMS != wantStart || detail.TotalRequests != 1 || detail.Today.Requests != 1 {
+		t.Fatalf("DST today detail = from:%d total:%d today:%+v; want from:%d total=1", detail.FromMS, detail.TotalRequests, detail.Today, wantStart)
+	}
+
+	customDetail, err := store.AccountUsage(context.Background(), AccountUsageOptions{
+		AuthIndex:             "codex:dst-account",
+		FromMS:                time.Date(2026, 3, 7, 0, 0, 0, 0, location).UnixMilli(),
+		ToMS:                  time.Date(2026, 3, 9, 23, 59, 59, 999_000_000, location).UnixMilli(),
+		TimezoneOffsetMinutes: -4 * 60,
+		TimezoneName:          "America/New_York",
+	})
+	if err != nil {
+		t.Fatalf("AccountUsage(custom DST range) error = %v", err)
+	}
+	if customDetail.PeriodDays != 3 {
+		t.Fatalf("custom DST period days = %d, want 3", customDetail.PeriodDays)
 	}
 }
 

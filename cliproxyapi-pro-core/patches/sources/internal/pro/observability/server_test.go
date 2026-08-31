@@ -1039,6 +1039,13 @@ func TestHandleUsageAggregatesReturnsBuckets(t *testing.T) {
 	if item.Provider != "test" || item.Model != "model" || item.TotalRequests != 2 || item.FailureCount != 1 || item.TotalTokens != 30 {
 		t.Fatalf("aggregate item = %+v, want totals by provider/model", item)
 	}
+
+	invalidTimezoneRecorder := httptest.NewRecorder()
+	invalidTimezoneRequest := httptest.NewRequest(http.MethodGet, "/usage/aggregates?interval=day&timezone=Not%2FA_Timezone", nil)
+	router.ServeHTTP(invalidTimezoneRecorder, invalidTimezoneRequest)
+	if invalidTimezoneRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid timezone status = %d, want 400", invalidTimezoneRecorder.Code)
+	}
 }
 
 func TestHandleAccountUsageValidatesScopeAndReturnsDatasetState(t *testing.T) {
@@ -1052,6 +1059,16 @@ func TestHandleAccountUsageValidatesScopeAndReturnsDatasetState(t *testing.T) {
 	router.ServeHTTP(invalidRecorder, httptest.NewRequest(http.MethodGet, "/usage/account?days=30", nil))
 	if invalidRecorder.Code != http.StatusBadRequest {
 		t.Fatalf("missing auth_index status = %d, want 400", invalidRecorder.Code)
+	}
+	invalidRangeRecorder := httptest.NewRecorder()
+	router.ServeHTTP(invalidRangeRecorder, httptest.NewRequest(http.MethodGet, "/usage/account?auth_index=codex%3Aaccount&from_ms=1000", nil))
+	if invalidRangeRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("partial custom range status = %d, want 400", invalidRangeRecorder.Code)
+	}
+	invalidTimezoneRecorder := httptest.NewRecorder()
+	router.ServeHTTP(invalidTimezoneRecorder, httptest.NewRequest(http.MethodGet, "/usage/account?auth_index=codex%3Aaccount&days=1&timezone=Not%2FA_Timezone", nil))
+	if invalidTimezoneRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid timezone status = %d, want 400", invalidTimezoneRecorder.Code)
 	}
 
 	recorder := httptest.NewRecorder()
@@ -1074,6 +1091,13 @@ func TestHandleAccountUsageValidatesScopeAndReturnsDatasetState(t *testing.T) {
 	}
 	if payload.LatestID != 1 || payload.Generation < 1 || payload.SnapshotAt <= 0 {
 		t.Fatalf("dataset state = latest:%d generation:%d snapshot:%d", payload.LatestID, payload.Generation, payload.SnapshotAt)
+	}
+
+	customRecorder := httptest.NewRecorder()
+	customPath := fmt.Sprintf("/usage/account?auth_index=codex%%3Aaccount&from_ms=%d&to_ms=%d", event.TimestampMS, event.TimestampMS+999)
+	router.ServeHTTP(customRecorder, httptest.NewRequest(http.MethodGet, customPath, nil))
+	if customRecorder.Code != http.StatusOK {
+		t.Fatalf("custom range status = %d, want 200; body=%s", customRecorder.Code, customRecorder.Body.String())
 	}
 }
 

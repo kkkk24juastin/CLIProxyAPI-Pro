@@ -179,6 +179,10 @@
   }
 }
 
+.timeRangeSelector {
+  min-width: 0;
+}
+
 .refreshButton {
   display: inline-flex;
   align-items: center;
@@ -996,14 +1000,8 @@
     }
   }
 
-  .rangeRow > .segmented {
-    display: grid;
+  .timeRangeSelector {
     grid-column: 1;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-
-    button {
-      padding: 0 6px;
-    }
   }
 
   .refreshButton {

@@ -4,6 +4,7 @@ import {
   ratio,
   resolveAccountUsageLabel,
 } from '../src/pro/modules/monitoring/features/accountUsage';
+import { buildAccountUsageRangeParams } from '../src/pro/modules/monitoring/api';
 import {
   buildConfiguredApiKeyMap,
   resolveConfiguredApiKeyLabel,
@@ -29,6 +30,16 @@ describe('account usage helpers', () => {
     expect(buildAccountUsageLogPath('codex:user+one@example.com', 100.4, 200.6)).toBe(
       '/monitoring?auth_index=codex%3Auser%2Bone%40example.com&from_ms=100&to_ms=201#request-events'
     );
+  });
+
+  test('keeps all-time account usage on the legacy unbounded scope', () => {
+    expect(buildAccountUsageRangeParams({ type: 'preset', preset: 'all' }, 123_456)).toEqual({ days: 0 });
+    const now = new Date(2026, 7, 31, 12, 34, 56, 789);
+    const todayParams = buildAccountUsageRangeParams({ type: 'preset', preset: 'today' }, now.getTime());
+    expect(todayParams).toEqual({
+      from_ms: new Date(2026, 7, 31, 0, 0, 0, 0).getTime(),
+      to_ms: now.getTime(),
+    });
   });
 
   test('resolves API key hashes through the configured keys used by request monitoring', () => {

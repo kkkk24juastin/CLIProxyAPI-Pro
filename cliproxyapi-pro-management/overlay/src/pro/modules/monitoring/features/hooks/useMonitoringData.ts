@@ -39,30 +39,6 @@ export const formatShortDateTime = (timestampMs: number) => {
   return `${date.getMonth() + 1}/${date.getDate()} ${padNumber(date.getHours())}:${padNumber(date.getMinutes())}`;
 };
 
-const startOfTodayMs = (nowMs: number) => {
-  const now = new Date(nowMs);
-  now.setHours(0, 0, 0, 0);
-  return now.getTime();
-};
-
-export const getRangeStartMs = (range: MonitoringTimeRange, nowMs: number) => {
-  const todayStart = startOfTodayMs(nowMs);
-
-  switch (range) {
-    case 'today':
-      return todayStart;
-    case '7d':
-      return todayStart - 6 * 24 * 60 * 60 * 1000;
-    case '14d':
-      return todayStart - 13 * 24 * 60 * 60 * 1000;
-    case '30d':
-      return todayStart - 29 * 24 * 60 * 60 * 1000;
-    case 'all':
-    default:
-      return Number.NEGATIVE_INFINITY;
-  }
-};
-
 const DELETED_CREDENTIAL_FALLBACK_LABEL = 'Deleted credential';
 
 const maskEmailLike = (value: string) => {
@@ -133,8 +109,6 @@ type MonitoringAuthMeta = {
   planType: string;
   updatedAt: string;
 };
-
-export type MonitoringTimeRange = 'today' | '7d' | '14d' | '30d' | 'all';
 
 export type MonitoringStatusTone = 'good' | 'warn' | 'bad';
 

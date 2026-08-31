@@ -16,7 +16,6 @@ import type {
   AccountUsageAPIKeyStat,
   AccountUsageDayStat,
   AccountUsageModelStat,
-  AccountUsageRangeDays,
 } from '@/pro/modules/monitoring/api';
 import { useConfigStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
@@ -32,6 +31,12 @@ import {
   resolveConfiguredApiKeyLabel,
 } from '../apiKeyIdentity';
 import { useAccountUsage } from '../hooks/useAccountUsage';
+import {
+  TimeRangeSelector,
+  createPresetTimeRange,
+  formatCustomTimeRange,
+  type TimeRangeSelection,
+} from '../timeRange';
 import styles from './AccountUsageModal.module.scss';
 
 type AccountUsageTab = 'overview' | 'detail' | 'quality';
@@ -43,7 +48,6 @@ type AccountUsageModalProps = {
   onClose: () => void;
 };
 
-const RANGE_OPTIONS: AccountUsageRangeDays[] = [7, 30, 90, 0];
 const TAB_OPTIONS: AccountUsageTab[] = ['overview', 'detail', 'quality'];
 const DISTRIBUTION_OPTIONS: DistributionMetric[] = ['requests', 'tokens', 'cost'];
 const MODEL_COLORS = ['#0f8a7c', '#2563eb', '#f59e0b', '#8b5cf6', '#dc2626'];
@@ -81,7 +85,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const configuredApiKeyValues = useConfigStore((state) => state.config?.apiKeys);
-  const [rangeDays, setRangeDays] = useState<AccountUsageRangeDays>(30);
+  const [timeRange, setTimeRange] = useState<TimeRangeSelection>(() => createPresetTimeRange('30d'));
   const [activeTab, setActiveTab] = useState<AccountUsageTab>('overview');
   const [modelMetric, setModelMetric] = useState<DistributionMetric>('requests');
   const [apiKeyMetric, setApiKeyMetric] = useState<DistributionMetric>('requests');
@@ -89,7 +93,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const activeFile = file ?? displayFile;
   const authIndex = normalizeAuthIndex(activeFile?.['auth_index'] ?? activeFile?.authIndex);
   const accountLabel = resolveAccountUsageLabel(activeFile, authIndex);
-  const { data, loading, error, refresh } = useAccountUsage(authIndex, rangeDays, Boolean(file));
+  const { data, loading, error, refresh } = useAccountUsage(authIndex, timeRange, Boolean(file));
   const detail = data?.detail ?? null;
   const configuredApiKeys = useMemo(
     () => buildConfiguredApiKeyMap(configuredApiKeyValues),
@@ -123,7 +127,14 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const cacheHitRate = ratio(detail?.cacheHitRequests ?? 0, detail?.totalRequests ?? 0);
   const modelTotal = detail?.models.reduce((sum, item) => sum + distributionValue(item, modelMetric), 0) ?? 0;
   const apiKeyTotal = detail?.apiKeys.reduce((sum, item) => sum + distributionValue(item, apiKeyMetric), 0) ?? 0;
-  const rangeLabel = t(rangeDays === 0 ? 'account_usage.range_all' : `account_usage.range_${rangeDays}d`);
+  const rangeLabel = timeRange.type === 'custom'
+    ? formatCustomTimeRange(timeRange, i18n.resolvedLanguage || i18n.language)
+    : t(`time_range.${timeRange.preset === '7d' ? 'days_7' : timeRange.preset === '30d' ? 'days_30' : timeRange.preset}`);
+  const rangeSummary = timeRange.type === 'custom'
+    ? t('account_usage.range_summary_custom', { range: rangeLabel })
+    : timeRange.preset === 'today'
+      ? t('account_usage.range_summary_today')
+      : t('account_usage.range_summary', { range: rangeLabel });
   const statusKey = activeFile?.unavailable
     ? 'account_usage.status_unavailable'
     : activeFile?.disabled
@@ -181,7 +192,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
           <span className={styles.accountIcon}><IconChartColumnIncreasing size={23} /></span>
           <div>
             <strong title={accountLabel}>{accountLabel}</strong>
-            <p>{t('account_usage.range_summary', { range: rangeLabel })}</p>
+            <p>{rangeSummary}</p>
           </div>
         </div>
         <div className={styles.accountActions}>
@@ -225,18 +236,12 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
 
       <div className={styles.rangeRow}>
         <span>{t('account_usage.range_short')}</span>
-        <div className={styles.segmented} role="group" aria-label={t('account_usage.range_label')}>
-          {RANGE_OPTIONS.map((days) => (
-            <button
-              key={days}
-              type="button"
-              className={rangeDays === days ? styles.segmentActive : undefined}
-              onClick={() => setRangeDays(days)}
-            >
-              {t(days === 0 ? 'account_usage.range_all' : `account_usage.range_${days}d`)}
-            </button>
-          ))}
-        </div>
+        <TimeRangeSelector
+          value={timeRange}
+          onChange={setTimeRange}
+          disabled={loading}
+          className={styles.timeRangeSelector}
+        />
         <button
           type="button"
           className={styles.refreshButton}

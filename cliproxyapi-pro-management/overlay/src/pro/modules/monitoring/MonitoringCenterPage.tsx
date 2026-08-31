@@ -11,10 +11,8 @@ import {
 } from '@/components/ui/icons';
 import {
   buildLocalDayKey,
-  getRangeStartMs,
   useMonitoringEventRows,
   type MonitoringEventRow,
-  type MonitoringTimeRange,
 } from '@/pro/modules/monitoring/features/hooks/useMonitoringData';
 import { useRealtimeLogData } from '@/pro/modules/monitoring/features/hooks/useRealtimeLogData';
 import { useUsageData, type UsageEventPageFilters, type UsagePayload } from '@/pro/modules/monitoring/features/hooks/useUsageData';
@@ -57,7 +55,14 @@ import {
   getRankingMetricValue,
   type RankingMetric,
 } from '@/pro/modules/monitoring/features/monitoringAnalytics';
-import { TIME_RANGE_OPTIONS } from '@/pro/modules/monitoring/features/monitoringOptions';
+import {
+  DEFAULT_TIME_RANGE,
+  TimeRangeSelector,
+  createCustomTimeRange,
+  getTimeRangeKey,
+  resolveTimeRange,
+  type TimeRangeSelection,
+} from '@/pro/modules/monitoring/features/timeRange';
 import {
   buildMonitoringSettingsFromDraft,
   createMonitoringSettingsDraft,
@@ -244,7 +249,7 @@ export function MonitoringCenterPage() {
   const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);
   const kimiQuota = useQuotaStore((state) => state.kimiQuota);
   const xaiQuota = useQuotaStore((state) => state.xaiQuota);
-  const [timeRange, setTimeRange] = useState<MonitoringTimeRange>('today');
+  const [timeRange, setTimeRange] = useState<TimeRangeSelection>(DEFAULT_TIME_RANGE);
   const [searchInput, setSearchInput] = useState('');
   const [selectedProvider, setSelectedProvider] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
@@ -308,6 +313,11 @@ export function MonitoringCenterPage() {
   const deferredSearchInput = useDeferredValue(searchInput);
   const [deferredSearch, setDeferredSearch] = useState(searchInput);
   const paginationCopy = resolveProPaginationCopy(i18n.resolvedLanguage ?? i18n.language);
+  const timeRangeKey = getTimeRangeKey(timeRange);
+  const handleTimeRangeChange = useCallback((nextRange: TimeRangeSelection) => {
+    setLinkedRequestLogScope(null);
+    setTimeRange(nextRange);
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -332,6 +342,8 @@ export function MonitoringCenterPage() {
       return;
     }
     setLinkedRequestLogScope({ authIndex, fromMs, toMs });
+    const linkedTimeRange = createCustomTimeRange(fromMs, toMs);
+    if (linkedTimeRange) setTimeRange(linkedTimeRange);
     setSearchInput(authIndex);
     window.requestAnimationFrame(() => {
       document.getElementById('request-events')?.scrollIntoView({ block: 'start' });
@@ -444,10 +456,11 @@ export function MonitoringCenterPage() {
 
   const buildRealtimeLogFilters = useCallback((): UsageEventPageFilters => {
     const nowMs = Date.now();
-    const fromMs = linkedRequestLogScope?.fromMs ?? getRangeStartMs(timeRange, nowMs);
+    const resolvedRange = resolveTimeRange(timeRange, nowMs);
+    const fromMs = linkedRequestLogScope?.fromMs ?? resolvedRange.fromMs;
     return {
       fromMs: Number.isFinite(fromMs) && fromMs > 0 ? fromMs : undefined,
-      toMs: linkedRequestLogScope?.toMs ?? nowMs,
+      toMs: linkedRequestLogScope?.toMs ?? resolvedRange.toMs,
       provider: selectedProvider === 'all' ? undefined : selectedProvider,
       model: selectedModel === 'all' ? undefined : selectedModel,
       authIndex: linkedRequestLogScope?.authIndex,
@@ -664,7 +677,7 @@ export function MonitoringCenterPage() {
     tomorrowStart.setDate(tomorrowStart.getDate() + 1);
     const yesterdayStart = new Date(todayStart);
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-    const trendStartMs = getRangeStartMs(timeRange, nowMs);
+    const resolvedRange = resolveTimeRange(timeRange, nowMs);
     const trendStatsRows: MonitoringEventRow[] = [];
     const topSummaryAccumulator = createMonitoringSummaryAccumulator();
     const todaySummaryAccumulator = createMonitoringSummaryAccumulator();
@@ -681,7 +694,7 @@ export function MonitoringCenterPage() {
       } else if (row.timestampMs >= yesterdayStart.getTime() && row.timestampMs < todayStart.getTime()) {
         yesterdayCost += row.totalCost;
       }
-      if (row.timestampMs >= trendStartMs && row.timestampMs <= nowMs) {
+      if (row.timestampMs >= resolvedRange.fromMs && row.timestampMs <= resolvedRange.toMs) {
         trendStatsRows.push(row);
         addMonitoringSummaryRow(trendSummaryAccumulator, row, summaryWindowStartMs, nowMs);
       }
@@ -720,7 +733,7 @@ export function MonitoringCenterPage() {
   );
   const aggregateTrendScopeMatches = Boolean(
     usageAggregates
-      && usageAggregates.scopeTimeRange === timeRange
+      && usageAggregates.scopeTimeRangeKey === timeRangeKey
       && usageAggregates.scopeApiKeyHash === usageTrendApiKey
   );
   const usageTrendAnalytics = useMemo(() => {
@@ -1547,7 +1560,7 @@ export function MonitoringCenterPage() {
             totalCalls={usageTrendAnalytics.scopedTotals.requests}
             apiKeyFilter={usageTrendApiKey}
             apiKeyOptions={usageTrendApiKeyOptions}
-            onRangeChange={setTimeRange}
+            onRangeChange={handleTimeRangeChange}
             onApiKeyFilterChange={setUsageTrendApiKey}
             onHide={() => setIsUsageTrendHidden(true)}
             t={t}
@@ -1614,18 +1627,7 @@ export function MonitoringCenterPage() {
             </p>
           </div>
           <div className={styles.usageTrendActions}>
-            <div className={`${styles.rankingMetricSwitch} ${styles.timeRangeControl}`}>
-              {TIME_RANGE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`${styles.rankingMetricButton} ${styles.timeRangeButton} ${timeRange === option.value ? styles.rankingMetricButtonActive : ''}`}
-                  onClick={() => setTimeRange(option.value)}
-                >
-                  {t(option.labelKey)}
-                </button>
-              ))}
-            </div>
+            <TimeRangeSelector value={timeRange} onChange={handleTimeRangeChange} panelAlign="end" />
           </div>
         </div>
 

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '@/services/api/client';
 import { useAuthStore } from '@/stores/useAuthStore';
-import { getRangeStartMs, type MonitoringTimeRange } from './useMonitoringData';
+import {
+  getTimeRangeKey,
+  getLocalTimeZone,
+  resolveTimeRange,
+  type TimeRangeSelection,
+} from '../timeRange';
 
 export type UsageAggregateBucket = {
   bucketStartMs: number;
@@ -43,13 +48,14 @@ export type UsageAggregates = {
   recentDailySummary: UsageAggregateBucket[];
   latestId: number;
   snapshotAtMs: number;
-  scopeTimeRange: MonitoringTimeRange;
+  scopeTimeRange: TimeRangeSelection;
+  scopeTimeRangeKey: string;
   scopeApiKeyHash: string;
 };
 
 type UseUsageAggregatesParams = {
   latestId: number;
-  timeRange: MonitoringTimeRange;
+  timeRange: TimeRangeSelection;
   apiKeyHash: string;
   enabled?: boolean;
 };
@@ -88,6 +94,7 @@ export function useUsageAggregates({
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
+  const timeRangeKey = getTimeRangeKey(timeRange);
   const effectiveEnabled = enabled
     && connectionStatus === 'connected'
     && Boolean(apiBase)
@@ -107,36 +114,33 @@ export function useUsageAggregates({
     setError('');
 
     const nowMs = Date.now();
-    const rangeStartMs = Number.isFinite(getRangeStartMs(timeRange, nowMs))
-      ? getRangeStartMs(timeRange, nowMs)
-      : 0;
-    const allTrendStart = new Date(nowMs);
-    allTrendStart.setHours(0, 0, 0, 0);
-    allTrendStart.setDate(allTrendStart.getDate() - 23);
+    const resolvedRange = resolveTimeRange(timeRange, nowMs);
+    const rangeStartMs = resolvedRange.fromMs;
     const todayStart = new Date(nowMs);
     todayStart.setHours(0, 0, 0, 0);
     const yesterdayStart = new Date(todayStart);
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-    const trendFromMs = timeRange === 'all' ? allTrendStart.getTime() : rangeStartMs;
-    const interval = timeRange === 'today' ? 'hour' : 'day';
+    const interval = resolvedRange.interval;
     const timezoneOffsetMinutes = -new Date().getTimezoneOffset();
+    const timezone = getLocalTimeZone();
     const trendParams: Record<string, string | number> = {
-      from_ms: Math.max(trendFromMs, 0),
-      to_ms: nowMs,
+      from_ms: Math.max(rangeStartMs, 0),
+      to_ms: resolvedRange.toMs,
       interval,
-      group_by: 'model',
       limit: 10000,
       timezone_offset_minutes: timezoneOffsetMinutes,
     };
+    if (timezone) trendParams.timezone = timezone;
     if (apiKeyHash !== 'all') {
       trendParams.api_key_hash = apiKeyHash;
     }
     const rankingParams = {
       from_ms: Math.max(rangeStartMs, 0),
-      to_ms: nowMs,
+      to_ms: resolvedRange.toMs,
       interval: 'all',
       limit: 10000,
       timezone_offset_minutes: timezoneOffsetMinutes,
+      ...(timezone ? { timezone } : {}),
     };
 
     try {
@@ -158,6 +162,7 @@ export function useUsageAggregates({
             group_by: 'model',
             limit: 10000,
             timezone_offset_minutes: timezoneOffsetMinutes,
+            ...(timezone ? { timezone } : {}),
           },
         }),
         apiClient.get<UsageAggregateResponse>('/usage/aggregates', {
@@ -168,6 +173,7 @@ export function useUsageAggregates({
             group_by: 'model',
             limit: 10000,
             timezone_offset_minutes: timezoneOffsetMinutes,
+            ...(timezone ? { timezone } : {}),
           },
         }),
       ]);
@@ -197,6 +203,7 @@ export function useUsageAggregates({
         ),
         snapshotAtMs,
         scopeTimeRange: timeRange,
+        scopeTimeRangeKey: timeRangeKey,
         scopeApiKeyHash: apiKeyHash,
       });
       hasDataRef.current = true;
@@ -216,7 +223,7 @@ export function useUsageAggregates({
         }
       }
     }
-  }, [apiKeyHash, effectiveEnabled, timeRange]);
+  }, [apiKeyHash, effectiveEnabled, timeRange, timeRangeKey]);
 
   const loadRef = useRef(load);
 
@@ -240,7 +247,7 @@ export function useUsageAggregates({
       refreshTimerRef.current = null;
     }
     setRefreshNonce((value) => value + 1);
-  }, [apiBase, apiKeyHash, effectiveEnabled, managementKey, timeRange]);
+  }, [apiBase, apiKeyHash, effectiveEnabled, managementKey, timeRangeKey]);
 
   useEffect(() => {
     if (!effectiveEnabled) {
@@ -256,7 +263,7 @@ export function useUsageAggregates({
       refreshTimerRef.current = null;
       void loadRef.current();
     }, lastFetchedAtRef.current > 0 ? AGGREGATE_REFRESH_DEBOUNCE_MS : 0);
-  }, [effectiveEnabled, latestId, refreshNonce, timeRange]);
+  }, [effectiveEnabled, latestId, refreshNonce, timeRangeKey]);
 
   useEffect(() => () => {
     if (refreshTimerRef.current) {

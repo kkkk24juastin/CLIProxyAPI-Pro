@@ -6,15 +6,61 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+	_ "time/tzdata"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
+
+const timezoneBucketFunction = "pro_tz_bucket_start_ms"
+
+var timezoneLocations sync.Map
+
+func init() {
+	sqlite.MustRegisterDeterministicScalarFunction(
+		timezoneBucketFunction,
+		3,
+		func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			if len(args) != 3 {
+				return nil, errors.New("timezone bucket requires timestamp, interval, and timezone")
+			}
+			timestampMS, ok := args[0].(int64)
+			if !ok {
+				return nil, errors.New("timezone bucket timestamp is invalid")
+			}
+			intervalMS, ok := args[1].(int64)
+			if !ok || intervalMS <= 0 {
+				return nil, errors.New("timezone bucket interval is invalid")
+			}
+			timezone, ok := args[2].(string)
+			if !ok || strings.TrimSpace(timezone) == "" {
+				return nil, errors.New("timezone bucket timezone is invalid")
+			}
+			locationValue, ok := timezoneLocations.Load(timezone)
+			if !ok {
+				location, err := time.LoadLocation(timezone)
+				if err != nil {
+					return nil, err
+				}
+				locationValue, _ = timezoneLocations.LoadOrStore(timezone, location)
+			}
+			location := locationValue.(*time.Location)
+			localTime := time.UnixMilli(timestampMS).In(location)
+			if intervalMS == int64(24*time.Hour/time.Millisecond) {
+				return time.Date(localTime.Year(), localTime.Month(), localTime.Day(), 0, 0, 0, 0, location).UnixMilli(), nil
+			}
+			_, offsetSeconds := localTime.Zone()
+			offsetMS := int64(offsetSeconds) * int64(time.Second/time.Millisecond)
+			return ((timestampMS + offsetMS) / intervalMS * intervalMS) - offsetMS, nil
+		},
+	)
+}
 
 type Domain string
 

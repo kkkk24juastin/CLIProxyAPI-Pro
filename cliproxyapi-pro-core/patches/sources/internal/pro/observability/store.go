@@ -107,6 +107,7 @@ type UsageAggregateOptions struct {
 	ProfileID             string
 	PolicyMode            string
 	TimezoneOffsetMinutes int
+	TimezoneName          string
 }
 
 type AccountUsageDayStat struct {
@@ -170,7 +171,10 @@ type AccountUsageDetail struct {
 type AccountUsageOptions struct {
 	AuthIndex             string
 	Days                  int
+	FromMS                int64
+	ToMS                  int64
 	TimezoneOffsetMinutes int
+	TimezoneName          string
 	NowMS                 int64
 }
 
@@ -1639,9 +1643,17 @@ func (s *Store) UsageAggregates(ctx context.Context, options UsageAggregateOptio
 		selects = append(selects, `? as bucket_start_ms`)
 		args = append(args, options.FromMS)
 	} else {
-		offsetMs := int64(options.TimezoneOffsetMinutes) * int64(time.Minute/time.Millisecond)
-		selects = append(selects, `((timestamp_ms + ?) / ?) * ? - ? as bucket_start_ms`)
-		args = append(args, offsetMs, intervalMs, intervalMs, offsetMs)
+		if timezoneName := strings.TrimSpace(options.TimezoneName); timezoneName != "" {
+			if _, err := time.LoadLocation(timezoneName); err != nil {
+				return nil, fmt.Errorf("timezone is invalid: %w", err)
+			}
+			selects = append(selects, `pro_tz_bucket_start_ms(timestamp_ms, ?, ?) as bucket_start_ms`)
+			args = append(args, intervalMs, timezoneName)
+		} else {
+			offsetMs := int64(options.TimezoneOffsetMinutes) * int64(time.Minute/time.Millisecond)
+			selects = append(selects, `((timestamp_ms + ?) / ?) * ? - ? as bucket_start_ms`)
+			args = append(args, offsetMs, intervalMs, intervalMs, offsetMs)
+		}
 	}
 	for _, group := range normalizeAggregateGroups(options.GroupBy) {
 		selects = append(selects, group)
@@ -1761,11 +1773,24 @@ func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (
 	if authIndex == "" {
 		return AccountUsageDetail{}, fmt.Errorf("auth_index is required")
 	}
-	if options.Days != 0 && options.Days != 7 && options.Days != 30 && options.Days != 90 {
-		return AccountUsageDetail{}, fmt.Errorf("days must be one of 0, 7, 30, or 90")
+	customRange := options.FromMS != 0 || options.ToMS != 0
+	if customRange {
+		if options.FromMS < 0 || options.ToMS <= 0 || options.FromMS > options.ToMS {
+			return AccountUsageDetail{}, fmt.Errorf("from_ms and to_ms must define a valid range")
+		}
+	} else if options.Days != 0 && options.Days != 1 && options.Days != 7 && options.Days != 30 && options.Days != 90 {
+		return AccountUsageDetail{}, fmt.Errorf("days must be one of 0, 1, 7, 30, or 90")
 	}
 	if options.TimezoneOffsetMinutes < -14*60 || options.TimezoneOffsetMinutes > 14*60 {
 		return AccountUsageDetail{}, fmt.Errorf("timezone offset is out of range")
+	}
+	location := time.FixedZone("usage-offset", options.TimezoneOffsetMinutes*60)
+	if timezoneName := strings.TrimSpace(options.TimezoneName); timezoneName != "" {
+		loadedLocation, err := time.LoadLocation(timezoneName)
+		if err != nil {
+			return AccountUsageDetail{}, fmt.Errorf("timezone is invalid: %w", err)
+		}
+		location = loadedLocation
 	}
 	nowMS := options.NowMS
 	if nowMS <= 0 {
@@ -1773,24 +1798,37 @@ func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (
 	}
 	const dayMS = int64(24 * time.Hour / time.Millisecond)
 	offsetMS := int64(options.TimezoneOffsetMinutes) * int64(time.Minute/time.Millisecond)
-	todayStartMS := ((nowMS + offsetMS) / dayMS * dayMS) - offsetMS
+	todayLocal := time.UnixMilli(nowMS).In(location)
+	todayStart := time.Date(todayLocal.Year(), todayLocal.Month(), todayLocal.Day(), 0, 0, 0, 0, location)
+	todayStartMS := todayStart.UnixMilli()
 	fromMS := int64(0)
+	toMS := nowMS
+	periodDays := options.Days
 	if options.Days > 0 {
-		fromMS = todayStartMS - int64(options.Days-1)*dayMS
+		fromMS = todayStart.AddDate(0, 0, -(options.Days - 1)).UnixMilli()
+	}
+	if customRange {
+		fromMS = options.FromMS
+		toMS = options.ToMS
+		fromLocal := time.UnixMilli(fromMS).In(location)
+		toLocal := time.UnixMilli(toMS).In(location)
+		fromDate := time.Date(fromLocal.Year(), fromLocal.Month(), fromLocal.Day(), 0, 0, 0, 0, time.UTC)
+		toDate := time.Date(toLocal.Year(), toLocal.Month(), toLocal.Day(), 0, 0, 0, 0, time.UTC)
+		periodDays = int(toDate.Sub(fromDate)/(24*time.Hour)) + 1
 	}
 
 	detail := AccountUsageDetail{
 		AuthIndex:  authIndex,
-		PeriodDays: options.Days,
+		PeriodDays: periodDays,
 		FromMS:     fromMS,
-		ToMS:       nowMS,
+		ToMS:       toMS,
 		Today:      AccountUsageDayStat{BucketStartMS: todayStartMS},
 		History:    []AccountUsageDayStat{},
 		Models:     []AccountUsageModelStat{},
 		APIKeys:    []AccountUsageAPIKeyStat{},
 	}
 	where := `auth_index = ? and timestamp_ms <= ?`
-	args := []any{authIndex, nowMS}
+	args := []any{authIndex, toMS}
 	if fromMS > 0 {
 		where += ` and timestamp_ms >= ?`
 		args = append(args, fromMS)
@@ -1858,13 +1896,19 @@ func (s *Store) AccountUsage(ctx context.Context, options AccountUsageOptions) (
 		detail.P95LatencyMS = &p95
 	}
 
+	dayBucketExpression := `((timestamp_ms + ?) / ?) * ? - ?`
+	dayArgs := []any{offsetMS, dayMS, dayMS, offsetMS}
+	if timezoneName := strings.TrimSpace(options.TimezoneName); timezoneName != "" {
+		dayBucketExpression = `pro_tz_bucket_start_ms(timestamp_ms, ?, ?)`
+		dayArgs = []any{dayMS, timezoneName}
+	}
 	dayQuery := `select
-		((timestamp_ms + ?) / ?) * ? - ? as bucket_start_ms,
+		` + dayBucketExpression + ` as bucket_start_ms,
 		count(*),
 		coalesce(sum(total_tokens), 0),
 		coalesce(sum(estimated_cost), 0)
 		from usage_events where ` + where + ` group by bucket_start_ms order by bucket_start_ms asc`
-	dayArgs := append([]any{offsetMS, dayMS, dayMS, offsetMS}, args...)
+	dayArgs = append(dayArgs, args...)
 	dayRows, err := s.executor(ctx).QueryContext(ctx, dayQuery, dayArgs...)
 	if err != nil {
 		return AccountUsageDetail{}, err

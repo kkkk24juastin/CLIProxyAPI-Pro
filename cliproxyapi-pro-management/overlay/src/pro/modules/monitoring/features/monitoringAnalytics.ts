@@ -3,12 +3,11 @@ import {
   buildDayLabel,
   buildHourLabel,
   buildLocalDayKey,
-  getRangeStartMs,
   type MonitoringAccountRow,
   type MonitoringEventRow,
   type MonitoringSummary,
-  type MonitoringTimeRange,
 } from './hooks/useMonitoringData';
+import { resolveTimeRange, type TimeRangeSelection } from './timeRange';
 import type { UsageAggregateBucket, UsageAggregates } from './hooks/useUsageAggregates';
 import { calculateAggregateCost } from './monitoringAggregates';
 import {
@@ -218,6 +217,33 @@ export const getChartAxisLabels = <T extends { key: string; label: string }>(poi
   return labels;
 };
 
+export const aggregateTrendPointsForDisplay = (points: TrendPoint[], maxBuckets = 30): TrendPoint[] => {
+  const bucketCount = Math.max(1, Math.floor(maxBuckets));
+  if (points.length <= bucketCount) return points;
+
+  return Array.from({ length: bucketCount }, (_, bucketIndex) => {
+    const startIndex = Math.floor((bucketIndex * points.length) / bucketCount);
+    const endIndex = Math.floor(((bucketIndex + 1) * points.length) / bucketCount);
+    const bucket = points.slice(startIndex, endIndex);
+    const first = bucket[0];
+    const last = bucket[bucket.length - 1];
+    return bucket.reduce<TrendPoint>((total, point) => ({
+      ...total,
+      requests: total.requests + point.requests,
+      failures: total.failures + point.failures,
+      tokens: total.tokens + point.tokens,
+      cost: total.cost + point.cost,
+    }), {
+      key: first.key === last.key ? first.key : `${first.key}..${last.key}`,
+      label: first.label === last.label ? first.label : `${first.label} – ${last.label}`,
+      requests: 0,
+      failures: 0,
+      tokens: 0,
+      cost: 0,
+    });
+  });
+};
+
 const getEmptyTrendPoint = (key: string, label: string): TrendPoint => ({
   key,
   label,
@@ -227,17 +253,18 @@ const getEmptyTrendPoint = (key: string, label: string): TrendPoint => ({
   cost: 0,
 });
 
-const buildFilledTrendBuckets = (range: MonitoringTimeRange, nowMs: number) => {
-  if (range === 'all') return [];
+const buildFilledTrendBuckets = (range: TimeRangeSelection, nowMs: number) => {
+  if (range.type === 'preset' && range.preset === 'all') return [];
 
-  const startMs = getRangeStartMs(range, nowMs);
+  const resolved = resolveTimeRange(range, nowMs);
+  if (resolved.interval === 'day' && resolved.toMs - resolved.fromMs > 366 * 24 * 60 * 60 * 1000) return [];
   const buckets: TrendPoint[] = [];
-  const cursor = new Date(startMs);
+  const cursor = new Date(resolved.fromMs);
 
-  if (range === 'today') {
-    const now = new Date(nowMs);
+  if (resolved.interval === 'hour') {
+    const end = new Date(resolved.toMs);
     cursor.setMinutes(0, 0, 0);
-    while (cursor.getTime() <= now.getTime()) {
+    while (cursor.getTime() <= end.getTime()) {
       const dayKey = buildLocalDayKey(cursor.getTime());
       const label = buildHourLabel(cursor.getTime());
       buckets.push(getEmptyTrendPoint(`${dayKey} ${label}`, label));
@@ -247,7 +274,7 @@ const buildFilledTrendBuckets = (range: MonitoringTimeRange, nowMs: number) => {
   }
 
   cursor.setHours(0, 0, 0, 0);
-  const end = new Date(nowMs);
+  const end = new Date(resolved.toMs);
   end.setHours(0, 0, 0, 0);
   while (cursor.getTime() <= end.getTime()) {
     const key = buildLocalDayKey(cursor.getTime());
@@ -257,8 +284,8 @@ const buildFilledTrendBuckets = (range: MonitoringTimeRange, nowMs: number) => {
   return buckets;
 };
 
-const buildTimeBucketMeta = (range: MonitoringTimeRange) => {
-  const useHourly = range === 'today';
+const buildTimeBucketMeta = (range: TimeRangeSelection) => {
+  const useHourly = resolveTimeRange(range).interval === 'hour';
   return {
     useHourly,
     getKey: (row: MonitoringEventRow) => (useHourly ? `${row.dayKey} ${row.hourLabel}` : row.dayKey),
@@ -346,7 +373,7 @@ const finalizeRankingRows = (grouped: Map<string, RankingRowAccumulator>): Monit
 
 export const buildUsageTrendAnalytics = (
   rows: MonitoringEventRow[],
-  range: MonitoringTimeRange,
+  range: TimeRangeSelection,
   apiKeyFilter: string,
   allApiKeyLabel: string
 ): UsageTrendAnalytics => {
@@ -432,8 +459,8 @@ export const buildUsageTrendAnalytics = (
 
   return {
     apiKeyOptions,
-    trendPoints: Array.from(trendGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)).slice(-24),
-    tokenDistributionPoints: Array.from(tokenGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)).slice(-24),
+    trendPoints: Array.from(trendGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)),
+    tokenDistributionPoints: Array.from(tokenGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)),
     modelRows: finalizeRankingRows(modelGrouped),
     apiKeyRows: finalizeRankingRows(apiKeyGrouped),
     scopedTotals,
@@ -480,7 +507,7 @@ const createAggregateRankingRow = (
 
 export const buildServerUsageTrendAnalytics = (
   aggregates: UsageAggregates | null,
-  range: MonitoringTimeRange,
+  range: TimeRangeSelection,
   modelPrices: Record<string, ModelPrice>,
   apiKeyOptions: Array<{ value: string; label: string }>,
   apiKeyFilter: string,
@@ -557,7 +584,7 @@ export const buildServerUsageTrendAnalytics = (
   aggregates.trend.forEach((item) => {
     const timestampMs = Number(item.bucketStartMs) || Date.parse(item.bucketStart);
     const dayKey = buildLocalDayKey(timestampMs);
-    const useHourly = range === 'today';
+    const useHourly = resolveTimeRange(range).interval === 'hour';
     const key = useHourly ? `${dayKey} ${buildHourLabel(timestampMs)}` : dayKey;
     const label = useHourly ? buildHourLabel(timestampMs) : buildDayLabel(dayKey);
     const cost = calculateAggregateCost(item, modelPrices);
@@ -597,8 +624,8 @@ export const buildServerUsageTrendAnalytics = (
 
   return {
     apiKeyOptions: resolvedApiKeyOptions,
-    trendPoints: Array.from(trendGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)).slice(-24),
-    tokenDistributionPoints: Array.from(tokenGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)).slice(-24),
+    trendPoints: Array.from(trendGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)),
+    tokenDistributionPoints: Array.from(tokenGrouped.values()).sort((left, right) => left.key.localeCompare(right.key)),
     modelRows,
     apiKeyRows,
     scopedTotals,

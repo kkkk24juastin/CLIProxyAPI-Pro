@@ -687,6 +687,13 @@ func (s *Server) handleUsageAggregates(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	timezoneName := strings.TrimSpace(c.Query("timezone"))
+	if timezoneName != "" {
+		if _, err = time.LoadLocation(timezoneName); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "timezone is invalid"})
+			return
+		}
+	}
 	options := UsageAggregateOptions{
 		FromMS:                parseQueryInt64(c, "from_ms", 0),
 		ToMS:                  parseQueryInt64(c, "to_ms", 0),
@@ -698,6 +705,7 @@ func (s *Server) handleUsageAggregates(c *gin.Context) {
 		ProfileID:             strings.TrimSpace(c.Query("profile_id")),
 		PolicyMode:            strings.TrimSpace(c.Query("policy_mode")),
 		TimezoneOffsetMinutes: parseQueryInt(c, "timezone_offset_minutes", 0),
+		TimezoneName:          timezoneName,
 	}
 	buckets, err := s.store.UsageAggregates(c.Request.Context(), options)
 	if err != nil {
@@ -725,10 +733,23 @@ func (s *Server) handleAccountUsage(c *gin.Context) {
 		return
 	}
 	days := 30
-	if rawDays := strings.TrimSpace(c.Query("days")); rawDays != "" {
+	fromMS := int64(0)
+	toMS := int64(0)
+	rawFromMS := strings.TrimSpace(c.Query("from_ms"))
+	rawToMS := strings.TrimSpace(c.Query("to_ms"))
+	if rawFromMS != "" || rawToMS != "" {
+		parsedFromMS, fromErr := strconv.ParseInt(rawFromMS, 10, 64)
+		parsedToMS, toErr := strconv.ParseInt(rawToMS, 10, 64)
+		if fromErr != nil || toErr != nil || parsedFromMS < 0 || parsedToMS <= 0 || parsedFromMS > parsedToMS {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "from_ms and to_ms must define a valid range"})
+			return
+		}
+		fromMS = parsedFromMS
+		toMS = parsedToMS
+	} else if rawDays := strings.TrimSpace(c.Query("days")); rawDays != "" {
 		parsed, err := strconv.Atoi(rawDays)
-		if err != nil || (parsed != 0 && parsed != 7 && parsed != 30 && parsed != 90) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "days must be one of 0, 7, 30, or 90"})
+		if err != nil || (parsed != 0 && parsed != 1 && parsed != 7 && parsed != 30 && parsed != 90) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "days must be one of 0, 1, 7, 30, or 90"})
 			return
 		}
 		days = parsed
@@ -742,10 +763,20 @@ func (s *Server) handleAccountUsage(c *gin.Context) {
 		}
 		timezoneOffset = parsed
 	}
+	timezoneName := strings.TrimSpace(c.Query("timezone"))
+	if timezoneName != "" {
+		if _, err := time.LoadLocation(timezoneName); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "timezone is invalid"})
+			return
+		}
+	}
 	detail, err := s.store.AccountUsage(c.Request.Context(), AccountUsageOptions{
 		AuthIndex:             authIndex,
 		Days:                  days,
+		FromMS:                fromMS,
+		ToMS:                  toMS,
 		TimezoneOffsetMinutes: timezoneOffset,
+		TimezoneName:          timezoneName,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

@@ -19,6 +19,20 @@
       "enabled": "Enabled",
       "disabled": "Disabled"
     },
+    "time_range": {
+      "label": "Time range",
+      "today": "Today",
+      "days_7": "7 days",
+      "days_30": "30 days",
+      "all": "All",
+      "custom": "Custom",
+      "start": "Start time",
+      "end": "End time",
+      "apply": "Apply",
+      "cancel": "Cancel",
+      "required_error": "Enter both start and end times, including seconds.",
+      "order_error": "The start time must not be later than the end time."
+    },
     "data_management": {
       "restore_from_webdav": "Restore"
     },
@@ -1074,6 +1088,8 @@
       "range_90d": "90d",
       "range_all": "All",
       "range_summary": "{{range}} usage statistics (daily averages use active days)",
+      "range_summary_today": "Today's usage statistics (daily averages use active days)",
+      "range_summary_custom": "Usage statistics for {{range}} (daily averages use active days)",
       "status_active": "Active",
       "status_disabled": "Disabled",
       "status_unavailable": "Unavailable",
@@ -1555,6 +1571,20 @@
     "common": {
       "enabled": "Включено",
       "disabled": "Отключено"
+    },
+    "time_range": {
+      "label": "Период времени",
+      "today": "Сегодня",
+      "days_7": "7 дней",
+      "days_30": "30 дней",
+      "all": "Всё",
+      "custom": "Свой период",
+      "start": "Начало",
+      "end": "Окончание",
+      "apply": "Применить",
+      "cancel": "Отмена",
+      "required_error": "Укажите время начала и окончания с точностью до секунды.",
+      "order_error": "Время начала не может быть позже времени окончания."
     },
     "data_management": {
       "restore_from_webdav": "Восстановить"
@@ -2278,6 +2308,8 @@
       "range_90d": "90 дн.",
       "range_all": "Всё",
       "range_summary": "Статистика за {{range}} (средние значения по активным дням)",
+      "range_summary_today": "Статистика за сегодня (средние значения по активным дням)",
+      "range_summary_custom": "Статистика за период {{range}} (средние значения по активным дням)",
       "status_active": "Активен",
       "status_disabled": "Отключён",
       "status_unavailable": "Недоступен",
@@ -2759,6 +2791,20 @@
     "common": {
       "enabled": "已启用",
       "disabled": "未启用"
+    },
+    "time_range": {
+      "label": "时间范围",
+      "today": "今日",
+      "days_7": "7 天",
+      "days_30": "30 天",
+      "all": "全部",
+      "custom": "自定义",
+      "start": "开始时间",
+      "end": "结束时间",
+      "apply": "应用",
+      "cancel": "取消",
+      "required_error": "请填写精确到秒的开始时间和结束时间。",
+      "order_error": "开始时间不能晚于结束时间。"
     },
     "data_management": {
       "title": "数据管理",
@@ -3954,6 +4000,8 @@
       "range_90d": "90 天",
       "range_all": "全部",
       "range_summary": "近 {{range}} 使用统计（日均基于实际使用天数）",
+      "range_summary_today": "今日使用统计（日均基于实际使用天数）",
+      "range_summary_custom": "{{range}} 使用统计（日均基于实际使用天数）",
       "status_active": "正常",
       "status_disabled": "已禁用",
       "status_unavailable": "不可用",
@@ -4435,6 +4483,20 @@
     "common": {
       "enabled": "已啟用",
       "disabled": "未啟用"
+    },
+    "time_range": {
+      "label": "時間範圍",
+      "today": "今日",
+      "days_7": "7 天",
+      "days_30": "30 天",
+      "all": "全部",
+      "custom": "自訂",
+      "start": "開始時間",
+      "end": "結束時間",
+      "apply": "套用",
+      "cancel": "取消",
+      "required_error": "請填寫精確到秒的開始時間和結束時間。",
+      "order_error": "開始時間不能晚於結束時間。"
     },
     "data_management": {
       "restore_from_webdav": "還原"
@@ -5491,6 +5553,8 @@
       "range_90d": "90 天",
       "range_all": "全部",
       "range_summary": "近 {{range}} 使用統計（日均基於實際使用天數）",
+      "range_summary_today": "今日使用統計（日均基於實際使用天數）",
+      "range_summary_custom": "{{range}} 使用統計（日均基於實際使用天數）",
       "status_active": "正常",
       "status_disabled": "已禁用",
       "status_unavailable": "不可用",
