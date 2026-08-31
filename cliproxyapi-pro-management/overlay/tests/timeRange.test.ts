@@ -27,10 +27,17 @@ describe('shared monitoring time range', () => {
     expect(selectorSource).toContain("window.matchMedia('(max-width: 620px)')");
     expect(selectorSource).toContain("import { ProFormDialog } from '@/pro/shared/ProSurface'");
     expect(selectorSource).toContain('open={editingCustom && useMobileDialog}');
+    expect(selectorSource).toContain('className={styles.mobileDialog}');
+    expect(selectorSource).toContain('onClick={() => editingCustom ? closeCustom() : openCustom()}');
     expect(selectorSource).toContain('if (!editingCustom || useMobileDialog) return');
     expect(selectorSource).toContain("document.addEventListener('keydown', closeOnEscape, true)");
     expect(selectorSource).not.toContain('createPortal(');
     expect(styleSource).not.toContain('z-index: 2100');
+    expect(styleSource).toContain('width: min(440px, calc(100vw - 24px));');
+    expect(styleSource).toContain(':global(.modal-overlay):has(.mobileDialog)');
+    expect(styleSource).toContain('grid-template-columns: 1fr 1fr;');
+    expect(styleSource).toContain('padding: 12px 16px calc(12px + env(safe-area-inset-bottom));');
+    expect(styleSource).toContain('animation: mobile-panel-exit 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;');
   });
 
   test('resolves presets from local calendar boundaries', () => {

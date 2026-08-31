@@ -10,7 +10,7 @@
   align-items: center;
   width: max-content;
   max-width: 100%;
-  padding: 3px;
+  padding: 2px;
   border: 1px solid var(--border-color);
   border-radius: 7px;
   overflow-x: auto;
@@ -26,9 +26,9 @@
     align-items: center;
     justify-content: center;
     flex: 0 0 auto;
-    min-width: 50px;
-    min-height: 30px;
-    padding: 0 12px;
+    min-width: 44px;
+    min-height: 28px;
+    padding: 0 10px;
     border: 0;
     border-radius: 5px;
     background: transparent;
@@ -59,9 +59,9 @@
 .customPanel {
   position: absolute;
   z-index: 50;
-  top: calc(100% + 8px);
-  width: min(520px, calc(100vw - 32px));
-  padding: 14px;
+  top: calc(100% + 6px);
+  width: min(440px, calc(100vw - 24px));
+  padding: 12px;
   border: 1px solid var(--border-color);
   border-radius: 9px;
   background: var(--bg-primary);
@@ -81,7 +81,7 @@
 .fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 
   label {
     display: grid;
@@ -95,8 +95,8 @@
   input {
     width: 100%;
     min-width: 0;
-    min-height: 38px;
-    padding: 0 10px;
+    min-height: 36px;
+    padding: 0 9px;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     background: var(--bg-primary);
@@ -146,11 +146,85 @@
 
 @media (max-width: 620px) {
   .presets button {
-    min-width: 54px;
-    padding: 0 10px;
+    min-width: 44px;
+    padding: 0 8px;
   }
 
   .fields {
     grid-template-columns: 1fr;
+  }
+
+  :global(.modal-overlay):has(.mobileDialog) {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .mobileDialog {
+    width: min(100%, 480px) !important;
+    max-height: min(82dvh, 520px) !important;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 14px 14px 0 0 !important;
+    transform-origin: 50% 100%;
+  }
+
+  .mobileDialog:global(.modal-entering) {
+    animation: mobile-panel-enter 0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  .mobileDialog:global(.modal-closing) {
+    animation: mobile-panel-exit 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  }
+
+  .mobileDialog :global(.modal-header) {
+    min-height: 52px;
+    padding: 14px 52px 12px 16px;
+  }
+
+  .mobileDialog :global(.modal-title) {
+    font-size: 16px;
+  }
+
+  .mobileDialog :global(.modal-body) {
+    padding: 16px;
+  }
+
+  .mobileDialog :global(.modal-footer) {
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .mobileActions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .mobileActions button {
+    width: 100%;
+    min-height: 40px;
+  }
+}
+
+@keyframes mobile-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes mobile-panel-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(24px);
   }
 }

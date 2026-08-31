@@ -169,7 +169,7 @@ export function TimeRangeSelector({
           ref={customButtonRef}
           type="button"
           className={value.type === 'custom' || editingCustom ? styles.active : undefined}
-          onClick={openCustom}
+          onClick={() => editingCustom ? closeCustom() : openCustom()}
           disabled={disabled}
           aria-haspopup="dialog"
           aria-expanded={editingCustom}
@@ -184,6 +184,7 @@ export function TimeRangeSelector({
         title={t('time_range.custom')}
         onClose={() => closeCustom()}
         footer={editorActions(styles.mobileActions)}
+        className={styles.mobileDialog}
       >
         {editorFields}
         {errorKey ? <p className={styles.error}>{t(errorKey)}</p> : null}
