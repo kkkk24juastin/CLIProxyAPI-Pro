@@ -2711,14 +2711,18 @@ replace_once(
 ''',
     '''\tif serviceTier := gjson.GetBytes(rawJSON, "service_tier"); serviceTier.Exists() {
 \t\tswitch strings.ToLower(strings.TrimSpace(serviceTier.String())) {
-\t\tcase "fast", "priority":
+\t\tcase "fast":
 \t\t\trawJSON, _ = sjson.SetBytes(rawJSON, "service_tier", "priority")
+\t\tcase "priority":
+\t\t\tif serviceTier.String() != "priority" {
+\t\t\t\trawJSON, _ = sjson.SetBytes(rawJSON, "service_tier", "priority")
+\t\t\t}
 \t\tdefault:
 \t\t\trawJSON = deleteCodexRequestFields(rawJSON, "service_tier")
 \t\t}
 \t}
 ''',
-    'case "fast", "priority":',
+    'case "fast":',
 )
 queue_go_source('internal/translator/codex/openai/responses/codex_fast_service_tier_test.go')
 
