@@ -35,7 +35,7 @@ import {
   TimeRangeSelector,
   createPresetTimeRange,
   formatCustomTimeRange,
-  timeRangeIncludesLocalToday,
+  timeRangeCoversElapsedLocalToday,
   type TimeRangeSelection,
 } from '../timeRange';
 import styles from './AccountUsageModal.module.scss';
@@ -136,7 +136,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
     : timeRange.preset === 'today'
       ? t('account_usage.range_summary_today')
       : t('account_usage.range_summary', { range: rangeLabel });
-  const rangeIncludesToday = timeRangeIncludesLocalToday(timeRange);
+  const rangeCoversToday = timeRangeCoversElapsedLocalToday(timeRange);
   const statusKey = activeFile?.unavailable
     ? 'account_usage.status_unavailable'
     : activeFile?.disabled
@@ -314,7 +314,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
                 </section>
 
                 <div className={styles.overviewSide}>
-                  {rangeIncludesToday ? (
+                  {rangeCoversToday ? (
                     <section className={`${styles.panel} ${styles.summaryPanel}`}>
                       <div className={styles.panelTitle}><span><IconSidebarMonitor size={18} /></span><h3>{t('account_usage.today')}</h3></div>
                       <dl className={styles.definitionList}>

@@ -66,6 +66,12 @@ export type UsageTrendAnalytics = {
   durationMinutes: number;
 };
 
+export const hasCompleteUsageAnalyticsSource = (
+  aggregateScopeMatches: boolean,
+  clientDetailsLoaded: boolean,
+  clientDetailsLimited: boolean
+): boolean => aggregateScopeMatches || (clientDetailsLoaded && !clientDetailsLimited);
+
 
 type MonitoringSummaryAccumulator = {
   totalCalls: number;

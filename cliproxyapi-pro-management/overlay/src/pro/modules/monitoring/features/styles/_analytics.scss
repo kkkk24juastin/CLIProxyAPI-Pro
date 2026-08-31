@@ -180,6 +180,15 @@
   z-index: 3;
 }
 
+.usageTrendState {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 0;
+}
+
 .usageTrendHeader,
 .usageTrendCollapsed {
   display: grid;

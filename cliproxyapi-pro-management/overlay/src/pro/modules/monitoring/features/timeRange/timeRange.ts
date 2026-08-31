@@ -76,13 +76,11 @@ export function getTimeRangeDurationMinutes(
   return Math.max((resolved.toMs - fromMs + 1) / MINUTE_MS, 1);
 }
 
-export function timeRangeIncludesLocalToday(selection: TimeRangeSelection, nowMs = Date.now()): boolean {
+export function timeRangeCoversElapsedLocalToday(selection: TimeRangeSelection, nowMs = Date.now()): boolean {
   const resolved = resolveTimeRange(selection, nowMs);
   const todayStart = new Date(nowMs);
   todayStart.setHours(0, 0, 0, 0);
-  const tomorrowStart = new Date(todayStart);
-  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-  return resolved.toMs >= todayStart.getTime() && resolved.fromMs < tomorrowStart.getTime();
+  return resolved.fromMs <= todayStart.getTime() && resolved.toMs >= nowMs;
 }
 
 export function getTimeRangeKey(selection: TimeRangeSelection): string {

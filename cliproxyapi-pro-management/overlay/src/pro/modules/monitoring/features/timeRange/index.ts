@@ -12,7 +12,7 @@ export {
   normalizeCustomTimeRange,
   parseDateTimeLocalValue,
   resolveTimeRange,
-  timeRangeIncludesLocalToday,
+  timeRangeCoversElapsedLocalToday,
   type CustomTimeRange,
   type ResolvedTimeRange,
   type TimeRangePreset,

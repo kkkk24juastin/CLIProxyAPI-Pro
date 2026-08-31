@@ -53,6 +53,7 @@ import {
   finalizeMonitoringSummary,
   formatPercent,
   getRankingMetricValue,
+  hasCompleteUsageAnalyticsSource,
   type RankingMetric,
 } from '@/pro/modules/monitoring/features/monitoringAnalytics';
 import {
@@ -442,6 +443,9 @@ export function MonitoringCenterPage() {
 
   const {
     data: usageAggregates,
+    loading: usageAggregatesLoading,
+    refreshing: usageAggregatesRefreshing,
+    error: usageAggregatesError,
     refresh: refreshAggregates,
   } = useUsageAggregates({
     latestId,
@@ -736,6 +740,14 @@ export function MonitoringCenterPage() {
       && usageAggregates.scopeTimeRangeKey === timeRangeKey
       && usageAggregates.scopeApiKeyHash === usageTrendApiKey
   );
+  const usageTrendDataReady = hasCompleteUsageAnalyticsSource(
+    aggregateTrendScopeMatches,
+    Boolean(usage),
+    usage?.details_limited === true
+  );
+  const usageTrendStatusText = usageTrendDataReady
+    ? undefined
+    : usageAggregatesError || t('common.loading');
   const usageTrendAnalytics = useMemo(() => {
     if (!serverUsageTrendAnalytics || !aggregateTrendScopeMatches) {
       return clientUsageTrendAnalytics;
@@ -752,10 +764,11 @@ export function MonitoringCenterPage() {
   const usageTrendPoints = usageTrendAnalytics.trendPoints;
   const tokenDistributionPoints = usageTrendAnalytics.tokenDistributionPoints;
   useEffect(() => {
+    if (!usageTrendDataReady) return;
     if (usageTrendApiKey !== 'all' && !usageTrendApiKeyOptions.some((option) => option.value === usageTrendApiKey)) {
       setUsageTrendApiKey('all');
     }
-  }, [usageTrendApiKey, usageTrendApiKeyOptions]);
+  }, [usageTrendApiKey, usageTrendApiKeyOptions, usageTrendDataReady]);
 
   const modelRankingRows = useMemo(
     () => [...usageTrendAnalytics.modelRows]
@@ -1558,6 +1571,7 @@ export function MonitoringCenterPage() {
           <UsageTrendHeader
             range={timeRange}
             totalCalls={usageTrendAnalytics.scopedTotals.requests}
+            statusText={usageTrendStatusText}
             apiKeyFilter={usageTrendApiKey}
             apiKeyOptions={usageTrendApiKeyOptions}
             onRangeChange={handleTimeRangeChange}
@@ -1565,46 +1579,63 @@ export function MonitoringCenterPage() {
             onHide={() => setIsUsageTrendHidden(true)}
             t={t}
           />
-          <div className={styles.usageTrendInsightsGrid}>
-            <UsageTrendPanel
-              points={usageTrendPoints}
-              durationMinutes={usageTrendAnalytics.durationMinutes}
-              hasPrices={hasPrices}
-              emptyText={t('monitoring.no_data')}
-              t={t}
-            />
-            <ApiKeyRankingPanel
-              title={t('monitoring.api_key_ranking_title')}
-              subtitle={t('monitoring.api_key_ranking_desc')}
-              rows={apiKeyRankingRows}
-              metric={apiKeyRankingMetric}
-              metricTotal={apiKeyRankingMetricTotal}
-              onMetricChange={setApiKeyRankingMetric}
-              emptyText={t('monitoring.no_data')}
-              hasPrices={hasPrices}
-              t={t}
-            />
-          </div>
-          <div className={styles.rankingGrid}>
-            <ModelStatsPanel
-              title={t('monitoring.model_stats_title')}
-              subtitle={t('monitoring.model_stats_desc')}
-              rows={modelRankingRows}
-              metric={modelRankingMetric}
-              metricTotal={modelRankingMetricTotal}
-              onMetricChange={setModelRankingMetric}
-              emptyText={t('monitoring.no_data')}
-              hasPrices={hasPrices}
-              t={t}
-            />
-            <TokenDistributionPanel
-              points={tokenDistributionPoints}
-              durationMinutes={usageTrendAnalytics.durationMinutes}
-              emptyText={t('monitoring.no_data')}
-              hasPrices={hasPrices}
-              t={t}
-            />
-          </div>
+          {usageTrendDataReady ? (
+            <>
+              <div className={styles.usageTrendInsightsGrid}>
+                <UsageTrendPanel
+                  points={usageTrendPoints}
+                  durationMinutes={usageTrendAnalytics.durationMinutes}
+                  hasPrices={hasPrices}
+                  emptyText={t('monitoring.no_data')}
+                  t={t}
+                />
+                <ApiKeyRankingPanel
+                  title={t('monitoring.api_key_ranking_title')}
+                  subtitle={t('monitoring.api_key_ranking_desc')}
+                  rows={apiKeyRankingRows}
+                  metric={apiKeyRankingMetric}
+                  metricTotal={apiKeyRankingMetricTotal}
+                  onMetricChange={setApiKeyRankingMetric}
+                  emptyText={t('monitoring.no_data')}
+                  hasPrices={hasPrices}
+                  t={t}
+                />
+              </div>
+              <div className={styles.rankingGrid}>
+                <ModelStatsPanel
+                  title={t('monitoring.model_stats_title')}
+                  subtitle={t('monitoring.model_stats_desc')}
+                  rows={modelRankingRows}
+                  metric={modelRankingMetric}
+                  metricTotal={modelRankingMetricTotal}
+                  onMetricChange={setModelRankingMetric}
+                  emptyText={t('monitoring.no_data')}
+                  hasPrices={hasPrices}
+                  t={t}
+                />
+                <TokenDistributionPanel
+                  points={tokenDistributionPoints}
+                  durationMinutes={usageTrendAnalytics.durationMinutes}
+                  emptyText={t('monitoring.no_data')}
+                  hasPrices={hasPrices}
+                  t={t}
+                />
+              </div>
+            </>
+          ) : (
+            <div
+              className={`${usageAggregatesError ? styles.errorBox : styles.callout} ${styles.usageTrendState}`}
+              role={usageAggregatesError ? 'alert' : 'status'}
+              aria-busy={usageAggregatesLoading || usageAggregatesRefreshing}
+            >
+              <span>{usageTrendStatusText}</span>
+              {usageAggregatesError ? (
+                <Button variant="secondary" size="sm" onClick={() => void refreshAggregates()}>
+                  {t('common.retry')}
+                </Button>
+              ) : null}
+            </div>
+          )}
         </section>
       ) : (
         <section className={styles.usageTrendCollapsed}>

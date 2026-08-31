@@ -8,7 +8,7 @@ import {
   normalizeCustomTimeRange,
   parseDateTimeLocalValue,
   resolveTimeRange,
-  timeRangeIncludesLocalToday,
+  timeRangeCoversElapsedLocalToday,
 } from '../src/pro/modules/monitoring/features/timeRange/timeRange';
 
 describe('shared monitoring time range', () => {
@@ -65,18 +65,24 @@ describe('shared monitoring time range', () => {
       .toBeCloseTo(120, 4);
   });
 
-  test('detects whether a custom range includes the current local day', () => {
+  test('only treats ranges covering the elapsed local day as complete today data', () => {
     const now = new Date(2026, 7, 31, 12, 0, 0, 0).getTime();
     const historical = createCustomTimeRange(
       new Date(2026, 7, 1, 0, 0, 0, 0).getTime(),
       new Date(2026, 7, 2, 23, 59, 59, 0).getTime()
     );
-    const current = createCustomTimeRange(
+    const currentPartial = createCustomTimeRange(
       new Date(2026, 7, 31, 8, 0, 0, 0).getTime(),
       new Date(2026, 7, 31, 9, 0, 0, 0).getTime()
     );
+    const currentComplete = createCustomTimeRange(
+      new Date(2026, 7, 31, 0, 0, 0, 0).getTime(),
+      now
+    );
 
-    expect(historical && timeRangeIncludesLocalToday(historical, now)).toBe(false);
-    expect(current && timeRangeIncludesLocalToday(current, now)).toBe(true);
+    expect(historical && timeRangeCoversElapsedLocalToday(historical, now)).toBe(false);
+    expect(currentPartial && timeRangeCoversElapsedLocalToday(currentPartial, now)).toBe(false);
+    expect(currentComplete && timeRangeCoversElapsedLocalToday(currentComplete, now)).toBe(true);
+    expect(timeRangeCoversElapsedLocalToday(createPresetTimeRange('today'), now)).toBe(true);
   });
 });

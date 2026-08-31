@@ -63,6 +63,7 @@ const RankingMetricSwitch = ({
 export function UsageTrendHeader({
   range,
   totalCalls,
+  statusText,
   apiKeyFilter,
   apiKeyOptions,
   onRangeChange,
@@ -72,6 +73,7 @@ export function UsageTrendHeader({
 }: {
   range: TimeRangeSelection;
   totalCalls: number;
+  statusText?: string;
   apiKeyFilter: string;
   apiKeyOptions: Array<{ value: string; label: string }>;
   onRangeChange: (range: TimeRangeSelection) => void;
@@ -83,7 +85,7 @@ export function UsageTrendHeader({
     <div className={styles.usageTrendHeader}>
       <div className={styles.usageTrendCopy}>
         <h2>{t('monitoring.usage_stats_title')}</h2>
-        <p>{t('monitoring.usage_stats_desc', { value: formatCompactNumber(totalCalls) })}</p>
+        <p>{statusText ?? t('monitoring.usage_stats_desc', { value: formatCompactNumber(totalCalls) })}</p>
       </div>
       <button type="button" className={`${styles.rankingMetricButton} ${styles.usageTrendHideButton} ${styles.mobileHeaderHideButton}`} onClick={onHide}>
         {t('monitoring.hide_analysis')}

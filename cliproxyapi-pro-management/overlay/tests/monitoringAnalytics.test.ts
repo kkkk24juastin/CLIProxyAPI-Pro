@@ -8,6 +8,7 @@ import {
   buildUsageTrendAnalytics,
   createMonitoringSummaryAccumulator,
   finalizeMonitoringSummary,
+  hasCompleteUsageAnalyticsSource,
 } from '../src/pro/modules/monitoring/features/monitoringAnalytics';
 import type { MonitoringEventRow } from '../src/pro/modules/monitoring/features/hooks/useMonitoringData';
 import type { UsageAggregates } from '../src/pro/modules/monitoring/features/hooks/useUsageAggregates';
@@ -78,6 +79,13 @@ describe('monitoring analytics', () => {
     expect(analytics.modelRows.map(({ model }) => model)).toEqual(['gpt-test']);
     expect(analytics.apiKeyRows).toHaveLength(2);
     expect(analytics.scopedTotals.tokens).toBe(30);
+  });
+
+  test('never treats truncated client details as a complete analytics source', () => {
+    expect(hasCompleteUsageAnalyticsSource(false, true, true)).toBe(false);
+    expect(hasCompleteUsageAnalyticsSource(false, true, false)).toBe(true);
+    expect(hasCompleteUsageAnalyticsSource(true, true, true)).toBe(true);
+    expect(hasCompleteUsageAnalyticsSource(false, false, false)).toBe(false);
   });
 
   test('keeps every aggregate bucket for the all-time range', () => {

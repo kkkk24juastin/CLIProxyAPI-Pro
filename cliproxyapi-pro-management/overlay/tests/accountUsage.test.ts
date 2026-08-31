@@ -66,7 +66,7 @@ describe('account usage helpers', () => {
     expect(ratio(1, 0)).toBe(0);
   });
 
-  test('binds account usage responses to the requested range and handles historical today cards', () => {
+  test('binds account usage responses to the requested range and gates complete today cards', () => {
     const hookSource = readFileSync(resolve(
       import.meta.dir,
       '../src/pro/modules/monitoring/features/hooks/useAccountUsage.ts'
@@ -81,6 +81,6 @@ describe('account usage helpers', () => {
     expect(hookSource).toContain('setDataState({ scopeKey, response })');
     expect(hookSource).toContain("errorState?.scopeKey === scopeKey ? errorState.message : ''");
     expect(modalSource).toContain('error && detail');
-    expect(modalSource).toContain('rangeIncludesToday ? (');
+    expect(modalSource).toContain('rangeCoversToday ? (');
   });
 });
