@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   createCustomTimeRange,
   createPresetTimeRange,
@@ -12,6 +14,25 @@ import {
 } from '../src/pro/modules/monitoring/features/timeRange/timeRange';
 
 describe('shared monitoring time range', () => {
+  test('uses the shared modal stack for the mobile custom editor', () => {
+    const selectorSource = readFileSync(resolve(
+      import.meta.dir,
+      '../src/pro/modules/monitoring/features/timeRange/TimeRangeSelector.tsx'
+    ), 'utf8');
+    const styleSource = readFileSync(resolve(
+      import.meta.dir,
+      '../src/pro/modules/monitoring/features/timeRange/TimeRangeSelector.module.scss'
+    ), 'utf8');
+
+    expect(selectorSource).toContain("window.matchMedia('(max-width: 620px)')");
+    expect(selectorSource).toContain("import { ProFormDialog } from '@/pro/shared/ProSurface'");
+    expect(selectorSource).toContain('open={editingCustom && useMobileDialog}');
+    expect(selectorSource).toContain('if (!editingCustom || useMobileDialog) return');
+    expect(selectorSource).toContain("document.addEventListener('keydown', closeOnEscape, true)");
+    expect(selectorSource).not.toContain('createPortal(');
+    expect(styleSource).not.toContain('z-index: 2100');
+  });
+
   test('resolves presets from local calendar boundaries', () => {
     const now = new Date(2026, 7, 31, 12, 34, 56, 789);
     const today = resolveTimeRange(createPresetTimeRange('today'), now.getTime());
