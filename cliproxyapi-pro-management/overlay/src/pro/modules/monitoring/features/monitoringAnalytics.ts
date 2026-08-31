@@ -7,7 +7,11 @@ import {
   type MonitoringEventRow,
   type MonitoringSummary,
 } from './hooks/useMonitoringData';
-import { resolveTimeRange, type TimeRangeSelection } from './timeRange';
+import {
+  getTimeRangeDurationMinutes,
+  resolveTimeRange,
+  type TimeRangeSelection,
+} from './timeRange';
 import type { UsageAggregateBucket, UsageAggregates } from './hooks/useUsageAggregates';
 import { calculateAggregateCost } from './monitoringAggregates';
 import {
@@ -59,6 +63,7 @@ export type UsageTrendAnalytics = {
   modelRows: MonitoringAccountRow[];
   apiKeyRows: MonitoringAccountRow[];
   scopedTotals: Record<RankingMetric, number>;
+  durationMinutes: number;
 };
 
 
@@ -378,6 +383,10 @@ export const buildUsageTrendAnalytics = (
   allApiKeyLabel: string
 ): UsageTrendAnalytics => {
   const nowMs = Date.now();
+  const observedFromMs = rows.reduce((earliest, row) => {
+    if (apiKeyFilter !== 'all' && row.clientApiKey.hash !== apiKeyFilter) return earliest;
+    return Math.min(earliest, row.timestampMs);
+  }, Number.POSITIVE_INFINITY);
   const prefilled = buildFilledTrendBuckets(range, nowMs);
   const trendGrouped = new Map<string, TrendPoint>(prefilled.map((point) => [point.key, point]));
   const tokenGrouped = new Map<string, TokenDistributionPoint>();
@@ -464,6 +473,7 @@ export const buildUsageTrendAnalytics = (
     modelRows: finalizeRankingRows(modelGrouped),
     apiKeyRows: finalizeRankingRows(apiKeyGrouped),
     scopedTotals,
+    durationMinutes: getTimeRangeDurationMinutes(range, nowMs, observedFromMs),
   };
 };
 
@@ -514,7 +524,7 @@ export const buildServerUsageTrendAnalytics = (
   unattributedApiKeyLabel: string
 ): UsageTrendAnalytics | null => {
   if (!aggregates) return null;
-  const nowMs = Date.now();
+  const nowMs = Number(aggregates.snapshotAtMs) > 0 ? Number(aggregates.snapshotAtMs) : Date.now();
   const prefilled = buildFilledTrendBuckets(range, nowMs);
   const trendGrouped = new Map<string, TrendPoint>(prefilled.map((point) => [point.key, point]));
   const tokenGrouped = new Map<string, TokenDistributionPoint>();
@@ -621,6 +631,10 @@ export const buildServerUsageTrendAnalytics = (
     tokens: totals.tokens + row.totalTokens,
     cost: totals.cost + row.totalCost,
   }), { requests: 0, tokens: 0, cost: 0 });
+  const observedFromMs = aggregates.trend.reduce((earliest, item) => {
+    const timestampMs = Number(item.bucketStartMs) || Date.parse(item.bucketStart);
+    return Number.isFinite(timestampMs) ? Math.min(earliest, timestampMs) : earliest;
+  }, Number.POSITIVE_INFINITY);
 
   return {
     apiKeyOptions: resolvedApiKeyOptions,
@@ -629,5 +643,6 @@ export const buildServerUsageTrendAnalytics = (
     modelRows,
     apiKeyRows,
     scopedTotals,
+    durationMinutes: getTimeRangeDurationMinutes(range, nowMs, observedFromMs),
   };
 };

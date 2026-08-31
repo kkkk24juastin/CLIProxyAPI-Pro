@@ -149,5 +149,7 @@ describe('monitoring analytics', () => {
     expect(source.match(/tabIndex=\{0\}/g)).toHaveLength(1);
     expect(source).toContain('aria-keyshortcuts="ArrowLeft ArrowRight Home End"');
     expect(source).not.toContain('className={styles.trendHoverTarget}\n                  onMouseEnter={() => setHoveredIndex(index)}\n                  onMouseLeave={() => setHoveredIndex(null)}\n                  tabIndex={0}');
+    expect(source).not.toContain('points.length * 60');
+    expect(source.match(/Math\.max\(durationMinutes, 1\)/g)).toHaveLength(2);
   });
 });

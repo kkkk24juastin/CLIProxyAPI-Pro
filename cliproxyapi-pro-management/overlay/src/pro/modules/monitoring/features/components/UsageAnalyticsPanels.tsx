@@ -135,11 +135,13 @@ export function TopUsageStats({ cards }: { cards: UsageMetricCard[] }) {
 
 export function UsageTrendPanel({
   points,
+  durationMinutes,
   hasPrices,
   emptyText,
   t,
 }: {
   points: TrendPoint[];
+  durationMinutes: number;
   hasPrices: boolean;
   emptyText: string;
   t: TFunction;
@@ -211,7 +213,7 @@ export function UsageTrendPanel({
     ...(hasPrices ? [{ key: 'cost', label: t('monitoring.total_cost_label'), value: formatUsd(totals.cost), color: '#059669' }] : []),
     { key: 'peak', label: t('monitoring.peak_period'), value: peakTokenPoint?.label ?? '--', color: '#f97316' },
   ];
-  const trendMinutes = Math.max(points.length * 60, 1);
+  const trendMinutes = Math.max(durationMinutes, 1);
   const headerStats = [
     { key: 'rpm', label: 'RPM', value: (totals.requests / trendMinutes).toFixed(2) },
     { key: 'tpm', label: 'TPM', value: formatCompactNumber(totals.tokens / trendMinutes) },
@@ -423,11 +425,13 @@ export function UsageTrendPanel({
 
 export function TokenDistributionPanel({
   points,
+  durationMinutes,
   emptyText,
   hasPrices,
   t,
 }: {
   points: TokenDistributionPoint[];
+  durationMinutes: number;
   emptyText: string;
   hasPrices: boolean;
   t: TFunction;
@@ -444,7 +448,7 @@ export function TokenDistributionPanel({
     }),
     { requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cachedTokens: 0, totalCost: 0 }
   );
-  const tokenMinutes = Math.max(points.length * 60, 1);
+  const tokenMinutes = Math.max(durationMinutes, 1);
   const rpm = totals.requests / tokenMinutes;
   const tpm = totals.totalTokens / tokenMinutes;
   const rows = [

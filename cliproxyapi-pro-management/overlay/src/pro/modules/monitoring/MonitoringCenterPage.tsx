@@ -1568,6 +1568,7 @@ export function MonitoringCenterPage() {
           <div className={styles.usageTrendInsightsGrid}>
             <UsageTrendPanel
               points={usageTrendPoints}
+              durationMinutes={usageTrendAnalytics.durationMinutes}
               hasPrices={hasPrices}
               emptyText={t('monitoring.no_data')}
               t={t}
@@ -1598,6 +1599,7 @@ export function MonitoringCenterPage() {
             />
             <TokenDistributionPanel
               points={tokenDistributionPoints}
+              durationMinutes={usageTrendAnalytics.durationMinutes}
               emptyText={t('monitoring.no_data')}
               hasPrices={hasPrices}
               t={t}

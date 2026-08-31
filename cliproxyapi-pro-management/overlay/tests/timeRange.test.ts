@@ -3,10 +3,12 @@ import {
   createCustomTimeRange,
   createPresetTimeRange,
   formatDateTimeLocalValue,
+  getTimeRangeDurationMinutes,
   getTimeRangeKey,
   normalizeCustomTimeRange,
   parseDateTimeLocalValue,
   resolveTimeRange,
+  timeRangeIncludesLocalToday,
 } from '../src/pro/modules/monitoring/features/timeRange/timeRange';
 
 describe('shared monitoring time range', () => {
@@ -48,5 +50,33 @@ describe('shared monitoring time range', () => {
 
     expect(resolveTimeRange(selection, 99_999)).toEqual({ fromMs: 10_000, toMs: 20_999, interval: 'hour' });
     expect(getTimeRangeKey(selection)).toBe('custom:10000:20999');
+  });
+
+  test('computes rates from elapsed range time instead of bucket count', () => {
+    const now = new Date(2026, 7, 31, 12, 0, 0, 0).getTime();
+    const sevenDays = createPresetTimeRange('7d');
+    const sevenDayStart = resolveTimeRange(sevenDays, now).fromMs;
+
+    expect(getTimeRangeDurationMinutes(sevenDays, now)).toBeCloseTo(
+      (now - sevenDayStart + 1) / 60_000,
+      8
+    );
+    expect(getTimeRangeDurationMinutes(createPresetTimeRange('all'), now, now - 2 * 60 * 60 * 1000))
+      .toBeCloseTo(120, 4);
+  });
+
+  test('detects whether a custom range includes the current local day', () => {
+    const now = new Date(2026, 7, 31, 12, 0, 0, 0).getTime();
+    const historical = createCustomTimeRange(
+      new Date(2026, 7, 1, 0, 0, 0, 0).getTime(),
+      new Date(2026, 7, 2, 23, 59, 59, 0).getTime()
+    );
+    const current = createCustomTimeRange(
+      new Date(2026, 7, 31, 8, 0, 0, 0).getTime(),
+      new Date(2026, 7, 31, 9, 0, 0, 0).getTime()
+    );
+
+    expect(historical && timeRangeIncludesLocalToday(historical, now)).toBe(false);
+    expect(current && timeRangeIncludesLocalToday(current, now)).toBe(true);
   });
 });

@@ -17,6 +17,7 @@ export const TIME_RANGE_PRESETS: TimeRangePreset[] = ['today', '7d', '30d', 'all
 export const DEFAULT_TIME_RANGE: TimeRangeSelection = { type: 'preset', preset: 'today' };
 
 const SECOND_MS = 1000;
+const MINUTE_MS = 60 * SECOND_MS;
 const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
 
 export function createPresetTimeRange(preset: TimeRangePreset): TimeRangeSelection {
@@ -58,6 +59,30 @@ export function resolveTimeRange(selection: TimeRangeSelection, nowMs = Date.now
     toMs,
     interval: selection.preset === 'today' ? 'hour' : 'day',
   };
+}
+
+export function getTimeRangeDurationMinutes(
+  selection: TimeRangeSelection,
+  nowMs = Date.now(),
+  observedFromMs?: number
+): number {
+  const resolved = resolveTimeRange(selection, nowMs);
+  const useObservedStart = selection.type === 'preset'
+    && selection.preset === 'all'
+    && Number.isFinite(observedFromMs)
+    && Number(observedFromMs) >= 0
+    && Number(observedFromMs) <= resolved.toMs;
+  const fromMs = useObservedStart ? Number(observedFromMs) : resolved.fromMs;
+  return Math.max((resolved.toMs - fromMs + 1) / MINUTE_MS, 1);
+}
+
+export function timeRangeIncludesLocalToday(selection: TimeRangeSelection, nowMs = Date.now()): boolean {
+  const resolved = resolveTimeRange(selection, nowMs);
+  const todayStart = new Date(nowMs);
+  todayStart.setHours(0, 0, 0, 0);
+  const tomorrowStart = new Date(todayStart);
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+  return resolved.toMs >= todayStart.getTime() && resolved.fromMs < tomorrowStart.getTime();
 }
 
 export function getTimeRangeKey(selection: TimeRangeSelection): string {

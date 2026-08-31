@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   buildAccountUsageLogPath,
   ratio,
@@ -62,5 +64,23 @@ describe('account usage helpers', () => {
     expect(ratio(1, 4)).toBe(0.25);
     expect(ratio(3, 2)).toBe(1);
     expect(ratio(1, 0)).toBe(0);
+  });
+
+  test('binds account usage responses to the requested range and handles historical today cards', () => {
+    const hookSource = readFileSync(resolve(
+      import.meta.dir,
+      '../src/pro/modules/monitoring/features/hooks/useAccountUsage.ts'
+    ), 'utf8');
+    const modalSource = readFileSync(resolve(
+      import.meta.dir,
+      '../src/pro/modules/monitoring/features/components/AccountUsageModal.tsx'
+    ), 'utf8');
+
+    expect(hookSource).toContain("const scopeKey = `${authIndex ?? ''}:${timeRangeKey}`");
+    expect(hookSource).toContain('dataState?.scopeKey === scopeKey ? dataState.response : null');
+    expect(hookSource).toContain('setDataState({ scopeKey, response })');
+    expect(hookSource).toContain("errorState?.scopeKey === scopeKey ? errorState.message : ''");
+    expect(modalSource).toContain('error && detail');
+    expect(modalSource).toContain('rangeIncludesToday ? (');
   });
 });

@@ -15,32 +15,44 @@ export function useAccountUsage(
   timeRange: TimeRangeSelection,
   enabled: boolean
 ) {
-  const [data, setData] = useState<AccountUsageResponse | null>(null);
+  const [dataState, setDataState] = useState<{
+    scopeKey: string;
+    response: AccountUsageResponse;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [errorState, setErrorState] = useState<{
+    scopeKey: string;
+    message: string;
+  } | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const timeRangeKey = getTimeRangeKey(timeRange);
+  const scopeKey = `${authIndex ?? ''}:${timeRangeKey}`;
+  const data = dataState?.scopeKey === scopeKey ? dataState.response : null;
+  const error = errorState?.scopeKey === scopeKey ? errorState.message : '';
 
   const refresh = useCallback(() => setRefreshToken((current) => current + 1), []);
 
   useEffect(() => {
     if (!enabled || !authIndex) {
-      setData(null);
+      setDataState(null);
       setLoading(false);
-      setError('');
+      setErrorState(null);
       return;
     }
 
     const controller = new AbortController();
     setLoading(true);
-    setError('');
+    setErrorState(null);
     void getAccountUsage(authIndex, timeRange, -new Date().getTimezoneOffset(), getLocalTimeZone(), {
       signal: controller.signal,
     })
-      .then((response) => setData(response))
+      .then((response) => setDataState({ scopeKey, response }))
       .catch((requestError: unknown) => {
         if (!isCanceledRequest(requestError)) {
-          setError(requestError instanceof Error ? requestError.message : String(requestError));
+          setErrorState({
+            scopeKey,
+            message: requestError instanceof Error ? requestError.message : String(requestError),
+          });
         }
       })
       .finally(() => {
@@ -48,7 +60,7 @@ export function useAccountUsage(
       });
 
     return () => controller.abort();
-  }, [authIndex, enabled, refreshToken, timeRange, timeRangeKey]);
+  }, [authIndex, enabled, refreshToken, scopeKey, timeRange, timeRangeKey]);
 
   return { data, loading, error, refresh };
 }

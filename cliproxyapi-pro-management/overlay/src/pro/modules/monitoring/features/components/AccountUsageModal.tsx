@@ -35,6 +35,7 @@ import {
   TimeRangeSelector,
   createPresetTimeRange,
   formatCustomTimeRange,
+  timeRangeIncludesLocalToday,
   type TimeRangeSelection,
 } from '../timeRange';
 import styles from './AccountUsageModal.module.scss';
@@ -135,6 +136,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
     : timeRange.preset === 'today'
       ? t('account_usage.range_summary_today')
       : t('account_usage.range_summary', { range: rangeLabel });
+  const rangeIncludesToday = timeRangeIncludesLocalToday(timeRange);
   const statusKey = activeFile?.unavailable
     ? 'account_usage.status_unavailable'
     : activeFile?.disabled
@@ -263,6 +265,12 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
           <Button variant="secondary" size="sm" onClick={refresh}>{t('common.retry')}</Button>
         </div>
       ) : null}
+      {authIndex && error && detail ? (
+        <div className={styles.inlineError} role="alert">
+          <span>{t('account_usage.load_failed')}: {error}</span>
+          <Button variant="secondary" size="sm" onClick={refresh}>{t('common.retry')}</Button>
+        </div>
+      ) : null}
 
       {detail ? (
         <div className={styles.content} aria-busy={loading}>
@@ -306,14 +314,16 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
                 </section>
 
                 <div className={styles.overviewSide}>
-                  <section className={`${styles.panel} ${styles.summaryPanel}`}>
-                    <div className={styles.panelTitle}><span><IconSidebarMonitor size={18} /></span><h3>{t('account_usage.today')}</h3></div>
-                    <dl className={styles.definitionList}>
-                      <div><dt>{t('account_usage.requests')}</dt><dd>{formatCompactNumber(detail.today.requests)}</dd></div>
-                      <div><dt>{t('account_usage.tokens')}</dt><dd>{formatCompactNumber(detail.today.tokens)}</dd></div>
-                      <div><dt>{t('account_usage.estimated_cost')}</dt><dd>{formatUsd(detail.today.estimatedCost)}</dd></div>
-                    </dl>
-                  </section>
+                  {rangeIncludesToday ? (
+                    <section className={`${styles.panel} ${styles.summaryPanel}`}>
+                      <div className={styles.panelTitle}><span><IconSidebarMonitor size={18} /></span><h3>{t('account_usage.today')}</h3></div>
+                      <dl className={styles.definitionList}>
+                        <div><dt>{t('account_usage.requests')}</dt><dd>{formatCompactNumber(detail.today.requests)}</dd></div>
+                        <div><dt>{t('account_usage.tokens')}</dt><dd>{formatCompactNumber(detail.today.tokens)}</dd></div>
+                        <div><dt>{t('account_usage.estimated_cost')}</dt><dd>{formatUsd(detail.today.estimatedCost)}</dd></div>
+                      </dl>
+                    </section>
+                  ) : null}
                   <section className={`${styles.panel} ${styles.summaryPanel}`}>
                     <div className={styles.panelTitle}><span><IconTimer size={18} /></span><h3>{t('account_usage.active_day_average')}</h3></div>
                     <dl className={styles.definitionList}>

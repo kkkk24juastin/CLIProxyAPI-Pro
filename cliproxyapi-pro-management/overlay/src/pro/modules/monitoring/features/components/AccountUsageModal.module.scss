@@ -236,6 +236,25 @@
   color: var(--danger-color, #dc2626);
 }
 
+.inlineError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger-color, #dc2626) 36%, var(--border-color));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger-color, #dc2626) 8%, var(--bg-primary));
+  color: var(--danger-color, #dc2626);
+  font-size: 12px;
+
+  span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
 .panel,
 .highlightCard,
 .detailStats > div,
