@@ -2505,6 +2505,66 @@ func formatHomeGeminiModels(entries []homeModelEntry) []map[string]any {
 server_test_source = ROOT / 'internal/api/server_test.go'
 replace_once(
     server_test_source,
+    '''type codexSearchHomeDispatcher struct {
+\tcalls  atomic.Int32
+\tpolicy atomic.Value
+}
+''',
+    '''type codexSearchHomeDispatcher struct {
+\tcalls  atomic.Int32
+\tpolicy atomic.Value
+\tauthID string
+}
+''',
+    'policy atomic.Value\n\tauthID string',
+)
+replace_once(
+    server_test_source,
+    '''func (d *codexSearchHomeDispatcher) RPopAuth(_ context.Context, model string, _ string, _ http.Header, _ int) ([]byte, error) {
+\td.calls.Add(1)
+\treturn json.Marshal(map[string]any{
+''',
+    '''func (d *codexSearchHomeDispatcher) RPopAuth(_ context.Context, model string, _ string, _ http.Header, _ int) ([]byte, error) {
+\td.calls.Add(1)
+\tauthID := strings.TrimSpace(d.authID)
+\tif authID == "" {
+\t\tauthID = "home-codex-search"
+\t}
+\treturn json.Marshal(map[string]any{
+''',
+    'authID := strings.TrimSpace(d.authID)',
+)
+replace_once(
+    server_test_source,
+    '\t\t"auth_index": "home-codex-search",\n',
+    '\t\t"auth_index": authID,\n',
+)
+replace_once(
+    server_test_source,
+    '\t\t\t"id":       "home-codex-search",\n',
+    '\t\t\t"id":       authID,\n',
+)
+replace_once(
+    server_test_source,
+    '\t\t\t"credential_id": "home-codex-search",\n',
+    '\t\t\t"credential_id": authID,\n',
+)
+replace_once(
+    server_test_source,
+    '''\t\t\tserver.handlers.AuthManager.PublishHomeDispatch(&codexSearchHomeDispatcher{}, registry, 1)
+''',
+    '''\t\t\tauthID := "home-codex-search-" + t.Name()
+\t\t\tserver.handlers.AuthManager.PublishHomeDispatch(&codexSearchHomeDispatcher{authID: authID}, registry, 1)
+''',
+    'codexSearchHomeDispatcher{authID: authID}',
+)
+replace_once(
+    server_test_source,
+    '\t\t\tusageCapture := registerHomeUnauthorizedUsageCapture(t, t.Name(), "home-codex-search")\n',
+    '\t\t\tusageCapture := registerHomeUnauthorizedUsageCapture(t, t.Name(), authID)\n',
+)
+replace_once(
+    server_test_source,
     '''\tif legacyRR.Code != http.StatusNotFound {
 \t\tt.Fatalf("legacy usage status = %d, want %d body=%s", legacyRR.Code, http.StatusNotFound, legacyRR.Body.String())
 \t}
