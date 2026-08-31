@@ -431,6 +431,7 @@ export function MonitoringCenterPage() {
     authFiles,
     allRows,
     filteredRows,
+    refreshMeta,
   } = useMonitoringEventRows({
     usage: deferredUsage,
     logUsage: realtimeLogUsage,
@@ -509,9 +510,9 @@ export function MonitoringCenterPage() {
   });
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshUsage(), refreshRealtimeLogs()]);
+    await Promise.all([refreshUsage(), refreshMeta(false), refreshRealtimeLogs()]);
     await refreshAggregates();
-  }, [refreshAggregates, refreshRealtimeLogs, refreshUsage]);
+  }, [refreshAggregates, refreshMeta, refreshRealtimeLogs, refreshUsage]);
 
   const fetchMonitoringSettings = useCallback(async () => {
     const response = await apiClient.get<{ settings: MonitoringSettings }>('/usage/settings');

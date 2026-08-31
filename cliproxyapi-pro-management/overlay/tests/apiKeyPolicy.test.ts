@@ -505,6 +505,7 @@ describe('API Key Policy profile drafts', () => {
     expect(hook).toContain('if (connectionChanged) {');
     expect(hook).toContain('setData(null);');
     expect(hook).toContain('data?.scopeConnectionKey === connectionKey ? data : null');
+    expect(page).toContain('refreshMeta(false)');
   });
 
   test('accepts only server-catalog providers, models, and allowed mapping targets', () => {
