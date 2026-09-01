@@ -7,7 +7,6 @@ import (
 	"sync"
 )
 
-type streamContextKey struct{}
 type attemptTrackerContextKey struct{}
 type attemptIndexContextKey struct{}
 type skipMonitoringContextKey struct{}
@@ -15,22 +14,6 @@ type skipMonitoringContextKey struct{}
 type attemptTracker struct {
 	mu   sync.Mutex
 	next int64
-}
-
-func WithStream(ctx context.Context, stream bool) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, streamContextKey{}, stream)
-}
-
-// StreamFromContext returns whether the client requested streaming output.
-func StreamFromContext(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	stream, _ := ctx.Value(streamContextKey{}).(bool)
-	return stream
 }
 
 // WithAttemptTracking attaches one request-scoped upstream-attempt counter.

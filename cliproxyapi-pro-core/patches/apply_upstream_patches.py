@@ -2505,66 +2505,6 @@ func formatHomeGeminiModels(entries []homeModelEntry) []map[string]any {
 server_test_source = ROOT / 'internal/api/server_test.go'
 replace_once(
     server_test_source,
-    '''type codexSearchHomeDispatcher struct {
-\tcalls  atomic.Int32
-\tpolicy atomic.Value
-}
-''',
-    '''type codexSearchHomeDispatcher struct {
-\tcalls  atomic.Int32
-\tpolicy atomic.Value
-\tauthID string
-}
-''',
-    'policy atomic.Value\n\tauthID string',
-)
-replace_once(
-    server_test_source,
-    '''func (d *codexSearchHomeDispatcher) RPopAuth(_ context.Context, model string, _ string, _ http.Header, _ int) ([]byte, error) {
-\td.calls.Add(1)
-\treturn json.Marshal(map[string]any{
-''',
-    '''func (d *codexSearchHomeDispatcher) RPopAuth(_ context.Context, model string, _ string, _ http.Header, _ int) ([]byte, error) {
-\td.calls.Add(1)
-\tauthID := strings.TrimSpace(d.authID)
-\tif authID == "" {
-\t\tauthID = "home-codex-search"
-\t}
-\treturn json.Marshal(map[string]any{
-''',
-    'authID := strings.TrimSpace(d.authID)',
-)
-replace_once(
-    server_test_source,
-    '\t\t"auth_index": "home-codex-search",\n',
-    '\t\t"auth_index": authID,\n',
-)
-replace_once(
-    server_test_source,
-    '\t\t\t"id":       "home-codex-search",\n',
-    '\t\t\t"id":       authID,\n',
-)
-replace_once(
-    server_test_source,
-    '\t\t\t"credential_id": "home-codex-search",\n',
-    '\t\t\t"credential_id": authID,\n',
-)
-replace_once(
-    server_test_source,
-    '''\t\t\tserver.handlers.AuthManager.PublishHomeDispatch(&codexSearchHomeDispatcher{}, registry, 1)
-''',
-    '''\t\t\tauthID := "home-codex-search-" + t.Name()
-\t\t\tserver.handlers.AuthManager.PublishHomeDispatch(&codexSearchHomeDispatcher{authID: authID}, registry, 1)
-''',
-    'codexSearchHomeDispatcher{authID: authID}',
-)
-replace_once(
-    server_test_source,
-    '\t\t\tusageCapture := registerHomeUnauthorizedUsageCapture(t, t.Name(), "home-codex-search")\n',
-    '\t\t\tusageCapture := registerHomeUnauthorizedUsageCapture(t, t.Name(), authID)\n',
-)
-replace_once(
-    server_test_source,
     '''\tif legacyRR.Code != http.StatusNotFound {
 \t\tt.Fatalf("legacy usage status = %d, want %d body=%s", legacyRR.Code, http.StatusNotFound, legacyRR.Body.String())
 \t}
@@ -2843,11 +2783,6 @@ replace_once(
     'for index, existing := range m.plugins',
 )
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_execution.go'
-replace_once(
-    auth_conductor,
-    '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n',
-    '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n\tctx = coreusage.WithStream(ctx, opts.Stream)\n',
-)
 replace_once(
     auth_conductor,
     '''\tserviceTier := serviceTierFromOptions(opts)
@@ -4566,18 +4501,6 @@ replace_once(
 )
 replace_once(
     redisqueue_plugin,
-    '\trequestID := strings.TrimSpace(internallogging.GetRequestID(ctx))\n\treasoningEffort :=',
-    '\trequestID := strings.TrimSpace(internallogging.GetRequestID(ctx))\n\tstream := coreusage.StreamFromContext(ctx)\n\treasoningEffort :=',
-    'stream := coreusage.StreamFromContext(ctx)',
-)
-replace_once(
-    redisqueue_plugin,
-    '\t\tRequestID:           requestID,\n\t\tReasoningEffort:',
-    '\t\tRequestID:           requestID,\n\t\tStream:              stream,\n\t\tReasoningEffort:',
-    'Stream:              stream',
-)
-replace_once(
-    redisqueue_plugin,
     '''\t\tUserAgent:       clientRequestMetadata.UserAgent,
 \t\tTokens:          tokens,
 ''',
@@ -4688,19 +4611,6 @@ replace_once(
 ''',
     '`json:"response_speed,omitempty"`',
 )
-redisqueue_plugin_text = read(redisqueue_plugin)
-stream_field = '\tStream bool `json:"stream"`\n'
-if '`json:"stream"`' not in redisqueue_plugin_text:
-    request_id_field = re.compile(r'(?m)^\tRequestID[ \t]+string[ \t]+`json:"request_id"`\n')
-    matches = request_id_field.findall(redisqueue_plugin_text)
-    if len(matches) != 1:
-        raise SystemExit(
-            f'expected one request ID field in {redisqueue_plugin}, found {len(matches)}'
-        )
-    write(
-        redisqueue_plugin,
-        request_id_field.sub(lambda match: match.group(0) + stream_field, redisqueue_plugin_text, count=1),
-    )
 redisqueue_plugin_text = read(redisqueue_plugin)
 attempt_field = '\tAttemptIndex *int64 `json:"attempt_index,omitempty"`\n'
 if '`json:"attempt_index,omitempty"`' not in redisqueue_plugin_text:
