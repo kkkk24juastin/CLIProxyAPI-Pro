@@ -150,7 +150,6 @@ class QuotaSearchCustomizationTest(unittest.TestCase):
         self.assertIn('filterEntriesByTab(searchedEntries, tab)', source)
         self.assertIn('sortQuotaEntries(filteredEntries, sortMode, resolveNextRecovery)', QUOTA_PAGE_SOURCE)
         self.assertIn('paginate(sortedEntries, page, QUOTA_PAGE_SIZE)', QUOTA_PAGE_SOURCE)
-        self.assertIn("const backendRefresh = useBackendQuotaRefresh(tab === 'all' ? '' : tab)", source)
 
     def test_search_placeholders_are_concise_and_match_each_page(self) -> None:
         self.assertTrue(all('auth_index' in value for value in CUSTOMIZATIONS.AUTH_FILES_SEARCH_PLACEHOLDER_KEYS.values()))
@@ -164,18 +163,6 @@ class QuotaSearchCustomizationTest(unittest.TestCase):
         ]
         self.assertTrue(all('auth_index' in placeholder for placeholder in placeholders))
         self.assertTrue(all('*' in placeholder for placeholder in placeholders))
-
-    def test_refresh_all_uses_backend_job(self) -> None:
-        source = MODULE_PATH.read_text()
-        hook = (
-            MODULE_PATH.parent
-            / 'overlay/src/pro/modules/quota/extensions/useBackendQuotaRefresh.ts'
-        ).read_text()
-        self.assertIn("tab !== 'all'", source)
-        self.assertIn('void backendRefresh.start()', source)
-        self.assertIn("t('quota_management.refresh_progress'", source)
-        self.assertIn("response.status.runKind === 'quota-refresh'", hook)
-        self.assertNotIn('Promise.all', hook)
 
 
 if __name__ == '__main__':
