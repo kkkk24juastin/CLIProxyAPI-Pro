@@ -16,7 +16,7 @@
   }
 
   .assetKpiGrid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .cockpitGrid,
@@ -27,6 +27,19 @@
   .actionStudioLayout,
   .chartGrid,
   .inspectionStatsLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@container pro-workspace-sheet (max-width: 900px) {
+  .settingsThreeGrid,
+  .settingsMatrixGrid,
+  .settingsFocusGrid,
+  .settingsAutomationGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settingsSplitGrid {
     grid-template-columns: 1fr;
   }
 }
@@ -172,29 +185,6 @@
     grid-template-columns: 1fr;
   }
 
-  .settingsWorkbench {
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .settingsSidebar {
-    grid-template-rows: auto auto auto;
-    border-right: 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--inspect-line) 74%, transparent);
-  }
-
-  .settingsSidebarNav {
-    display: flex;
-    overflow-x: auto;
-    padding-bottom: 2px;
-  }
-
-  .settingsSidebarNav button {
-    min-width: 170px;
-  }
-
-  .settingsSidebarStatus,
-  .settingsSummaryGrid,
   .settingsThreeGrid,
   .settingsMatrixGrid,
   .settingsFocusGrid,
@@ -346,39 +336,44 @@
     justify-self: start;
   }
 
-  :global(.modal):has(.confirmationBatchBody) {
+  :global(.modal):has(.confirmationDecisionBody) {
     width: calc(100vw - 24px) !important;
     max-height: calc(100vh - 24px);
   }
 
   @supports (height: 100dvh) {
-    :global(.modal):has(.confirmationBatchBody) {
+    :global(.modal):has(.confirmationDecisionBody) {
       max-height: calc(100dvh - 24px);
     }
   }
 
-  :global(.modal-body):has(.confirmationBatchBody) {
+  :global(.modal-body):has(.confirmationDecisionBody) {
     max-height: calc(100vh - 116px);
   }
 
   @supports (height: 100dvh) {
-    :global(.modal-body):has(.confirmationBatchBody) {
+    :global(.modal-body):has(.confirmationDecisionBody) {
       max-height: calc(100dvh - 116px);
     }
   }
 
-  :global(.modal-body):has(.confirmationBatchBody) > div:first-child {
+  :global(.modal):has(.confirmationDecisionBody) :global(.modal-header) {
+    min-height: 54px;
+    padding: 15px 54px 15px 16px;
+  }
+
+  :global(.modal-body):has(.confirmationDecisionBody) > div:first-child {
     padding: 16px 16px 10px;
   }
 
-  :global(.modal-body):has(.confirmationBatchBody) > div:last-child {
+  :global(.modal-body):has(.confirmationDecisionBody) > div:last-child {
     flex-direction: column-reverse;
     align-items: stretch;
     gap: 8px !important;
     padding: 12px 16px 16px;
   }
 
-  :global(.modal-body):has(.confirmationBatchBody) > div:last-child :global(.btn) {
+  :global(.modal-body):has(.confirmationDecisionBody) > div:last-child :global(.btn) {
     width: 100%;
   }
 
@@ -407,6 +402,7 @@
 
   .confirmationPreviewRow {
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto auto;
     gap: 5px 10px;
     align-items: start;
     padding: 10px 12px;
@@ -414,6 +410,7 @@
 
   .confirmationPreviewRow small {
     grid-column: 1;
+    grid-row: 2;
   }
 
   .confirmationPreviewRow strong {
@@ -424,21 +421,18 @@
 
   .confirmationPreviewRow em {
     grid-column: 1 / -1;
-    display: -webkit-box;
+    grid-row: 3;
+    display: block;
     padding-top: 6px;
     border-top: 1px dashed color-mix(in srgb, var(--inspect-line) 72%, transparent);
-    overflow: hidden;
+    overflow: visible;
     white-space: normal;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
   }
 
   .emptyState {
     padding: 22px 16px;
   }
 
-  .settingsSummaryGrid,
-  .settingsSidebarStatus,
   .settingsThreeGrid,
   .settingsMatrixGrid,
   .settingsFocusGrid,
@@ -446,41 +440,16 @@
     grid-template-columns: 1fr;
   }
 
-  .settingsModal :global(.modal-body) {
-    display: block;
-    max-height: min(72vh, calc(100vh - 132px));
-    overflow-y: auto;
-    padding: 0;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  @supports (height: 100dvh) {
-    .settingsModal :global(.modal-body) {
-      max-height: min(72dvh, calc(100dvh - 132px));
-    }
-  }
-
   .settingsWorkbench {
     display: block;
-    max-height: none;
-    min-height: 0;
-    overflow: visible;
-    border-radius: 14px 14px 0 0;
-  }
-
-  .settingsSidebar {
-    display: none;
   }
 
   .settingsWorkbenchMain {
     display: grid;
-    max-height: none;
-    overflow: visible;
-    padding: 14px;
+    gap: 12px;
   }
 
-  .settingsWorkbenchSection,
-  .settingsHeroPanel {
+  .settingsWorkbenchSection {
     padding: 14px;
     border-radius: 14px;
   }
@@ -490,31 +459,4 @@
     align-items: flex-start;
   }
 
-  .settingsActionsBar {
-    position: sticky;
-    bottom: 0;
-    display: grid;
-    grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
-    align-items: stretch;
-    gap: 8px;
-    padding: 10px 14px 14px;
-    border-radius: 0 0 14px 14px;
-    background: var(--inspect-surface-elevated);
-  }
-
-  .settingsActionsBar > :global(button) {
-    width: auto;
-    min-width: 96px;
-  }
-
-  .settingsActionsRight {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    width: auto;
-    gap: 8px;
-  }
-
-  .settingsActionsRight :global(button) {
-    width: 100%;
-  }
 }

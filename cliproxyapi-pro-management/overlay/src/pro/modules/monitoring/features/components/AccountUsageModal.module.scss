@@ -1,28 +1,17 @@
 .modal {
   min-width: 0;
-  border-radius: 8px;
+  background: var(--bg-secondary);
 }
 
-.modal :global(.modal-header) {
-  min-height: 68px;
-  padding: 18px 64px 18px 28px;
-  background: var(--bg-secondary);
+@media (min-width: 721px) {
+  .modal {
+    width: min(960px, calc(100vw - 32px)) !important;
+  }
 }
 
 .modal :global(.modal-title) {
   min-width: 0;
   font-size: 21px;
-}
-
-.modal :global(.modal-body) {
-  max-height: min(80vh, 900px);
-  padding: 22px;
-  background: var(--bg-secondary);
-}
-
-.modal :global(.modal-close-floating) {
-  top: 17px;
-  right: 18px;
 }
 
 .titleBlock {
@@ -190,6 +179,10 @@
   }
 }
 
+.timeRangeSelector {
+  min-width: 0;
+}
+
 .refreshButton {
   display: inline-flex;
   align-items: center;
@@ -213,6 +206,10 @@
     cursor: not-allowed;
     opacity: 0.5;
   }
+
+  &[aria-busy='true'] svg {
+    animation: account-usage-refresh-spin 0.8s linear infinite;
+  }
 }
 
 .content {
@@ -220,10 +217,17 @@
   flex-direction: column;
   gap: 16px;
   padding-top: 18px;
-  transition: opacity 0.15s ease;
+}
 
-  &[aria-busy='true'] {
-    opacity: 0.66;
+@keyframes account-usage-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refreshButton[aria-busy='true'] svg {
+    animation: none;
   }
 }
 
@@ -241,6 +245,25 @@
 
 .errorState strong {
   color: var(--danger-color, #dc2626);
+}
+
+.inlineError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger-color, #dc2626) 36%, var(--border-color));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger-color, #dc2626) 8%, var(--bg-primary));
+  color: var(--danger-color, #dc2626);
+  font-size: 12px;
+
+  span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
 }
 
 .panel,
@@ -940,32 +963,8 @@
 }
 
 @media (max-width: 720px) {
-  .modal {
-    max-height: calc(100vh - 32px);
-  }
-
-  @supports (height: 100dvh) {
-    .modal {
-      max-height: calc(100dvh - 32px);
-    }
-  }
-
-  .modal :global(.modal-header) {
-    min-height: 58px;
-    padding: 14px 52px 14px 16px;
-  }
-
   .modal :global(.modal-title) {
     font-size: 16px;
-  }
-
-  .modal :global(.modal-body) {
-    flex: 1 1 auto;
-    min-height: 0;
-    max-height: none;
-    padding: 10px;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
   }
 
   .titleBlock {
@@ -1031,14 +1030,8 @@
     }
   }
 
-  .rangeRow > .segmented {
-    display: grid;
+  .timeRangeSelector {
     grid-column: 1;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-
-    button {
-      padding: 0 6px;
-    }
   }
 
   .refreshButton {

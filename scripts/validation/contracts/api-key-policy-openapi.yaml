@@ -1,0 +1,635 @@
+openapi: 3.1.0
+info:
+  title: CLIProxyAPI Pro API Key Policy Management
+  version: 1.0.0
+paths:
+  /v0/management/api-key-policy-capabilities:
+    get:
+      operationId: getApiKeyPolicyCapabilities
+      responses:
+        "200":
+          description: Explicit Core compatibility contract for the Management policy workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Capabilities" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v0/management/api-key-policy-bindings:
+    get:
+      operationId: listApiKeyPolicyBindings
+      responses:
+        "200":
+          description: Current upstream API keys merged with Pro policy state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BindingPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/PolicyUnavailable" }
+  /v0/management/api-key-policy-catalog:
+    get:
+      operationId: getApiKeyPolicyCatalog
+      description: Current provider, effective-model, and provider-to-model relationships accepted by Profile writes
+      responses:
+        "200":
+          description: Runtime catalog used to link allowed providers with allowed effective models
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyCatalog" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/PolicyUnavailable" }
+  /v0/management/api-key-policy-profile-catalog:
+    get:
+      operationId: listApiKeyPolicyProfileCatalog
+      description: Lightweight current Profile-name directory for request-monitoring filters; includes Profiles whose policies are currently orphaned
+      responses:
+        "200":
+          description: Profile names from one atomic policy generation without API-key or policy-rule data
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileCatalogSnapshot" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/PolicyUnavailable" }
+  /v0/management/api-key-policy-quota-summaries:
+    get:
+      operationId: listApiKeyPolicyQuotaSummaries
+      description: Lightweight Key-wide quota usage and admission state snapshot; never contains API-key fingerprints or Profile rules
+      responses:
+        "200":
+          description: Quota summaries captured at one server timestamp
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaSummaryResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/PolicyUnavailable" }
+  /v0/management/api-key-policy-usage-target:
+    post:
+      operationId: resolveApiKeyPolicyUsageTarget
+      description: Resolve one session- and config-generation-bound opaque Key reference for request-monitoring filtering
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UsageTargetRequest" }
+      responses:
+        "200":
+          description: Stable API Key fingerprint for the selected binding only
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UsageTarget" }
+        "400": { $ref: "#/components/responses/InvalidKeyReference" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/StaleKeyReference" }
+  /v0/management/api-key-policies:
+    post:
+      operationId: createApiKeyPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePolicyRequest"
+      responses:
+        "201":
+          description: Policy created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+        "400": { $ref: "#/components/responses/InvalidProfile" }
+        "404": { $ref: "#/components/responses/UpstreamKeyNotFound" }
+        "409": { $ref: "#/components/responses/VersionConflict" }
+        "503": { $ref: "#/components/responses/PolicyUnavailable" }
+  /v0/management/api-key-policies/{policyId}:
+    parameters:
+      - $ref: "#/components/parameters/PolicyId"
+    get:
+      operationId: getApiKeyPolicy
+      responses:
+        "200":
+          description: Policy details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+        "404": { $ref: "#/components/responses/PolicyNotFound" }
+    patch:
+      operationId: updateApiKeyPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [displayName, version]
+              properties:
+                displayName: { type: string }
+                version: { type: integer, minimum: 1 }
+                profileId:
+                  type: string
+                  description: Existing Profile to atomically replace; empty only when createProfile is true
+                profile: { $ref: "#/components/schemas/ProfileInput" }
+                createProfile:
+                  type: boolean
+                  default: false
+                quota:
+                  oneOf:
+                    - $ref: "#/components/schemas/QuotaInput"
+                    - type: "null"
+                clientFeatures:
+                  $ref: "#/components/schemas/WriteClientFeatures"
+      responses:
+        "200":
+          description: Updated policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+        "409": { $ref: "#/components/responses/VersionConflict" }
+    delete:
+      operationId: deleteApiKeyPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, confirmPassthrough]
+              properties:
+                version: { type: integer, minimum: 1 }
+                confirmPassthrough: { const: RESTORE_UNRESTRICTED_PASSTHROUGH }
+      responses:
+        "204": { description: Explicit policy deleted; new requests use passthrough }
+        "409": { $ref: "#/components/responses/DeleteConfirmationRequired" }
+  /v0/management/api-key-policies/{policyId}/delete-preview:
+    parameters:
+      - $ref: "#/components/parameters/PolicyId"
+    get:
+      operationId: previewDeleteApiKeyPolicy
+      responses:
+        "200":
+          description: Server-derived permission expansion preview for deleting an explicit policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeletePolicyPreview" }
+        "404": { $ref: "#/components/responses/PolicyNotFound" }
+        "409": { $ref: "#/components/responses/VersionConflict" }
+  /v0/management/api-key-policies/{policyId}/profiles:
+    parameters:
+      - $ref: "#/components/parameters/PolicyId"
+    post:
+      operationId: createApiKeyProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfileWrite" }
+      responses:
+        "201":
+          description: Profile created; the first Profile on a no-Profile policy is activated automatically, while later Profiles remain inactive
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+  /v0/management/api-key-policies/{policyId}/profiles/{profileId}:
+    parameters:
+      - $ref: "#/components/parameters/PolicyId"
+      - $ref: "#/components/parameters/ProfileId"
+    put:
+      operationId: replaceApiKeyProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfileWrite" }
+      responses:
+        "200":
+          description: Profile replaced
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+    delete:
+      operationId: deleteApiKeyProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: integer, minimum: 1 }
+                confirmNoProfile: { const: REMOVE_ACTIVE_PROFILE_RESTRICTIONS }
+      responses:
+        "204": { description: Profile deleted; removing the only active Profile returns the policy to unrestricted Profile rules while retaining its Key quota }
+        "409": { $ref: "#/components/responses/ActiveProfileDeleteForbidden" }
+  /v0/management/api-key-policies/{policyId}/active-profile:
+    parameters:
+      - $ref: "#/components/parameters/PolicyId"
+    put:
+      operationId: activateApiKeyProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profileId, version]
+              properties:
+                profileId: { type: string }
+                version: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: New active profile published for new requests
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+  /v0/management/api-key-policies/{policyId}/quota/reset:
+    parameters:
+      - $ref: "#/components/parameters/PolicyId"
+    post:
+      operationId: resetApiKeyQuota
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, confirmReset]
+              properties:
+                version: { type: integer, minimum: 1 }
+                confirmReset: { const: RESET_API_KEY_QUOTA }
+      responses:
+        "200":
+          description: Key-wide quota usage reset
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+        "400": { $ref: "#/components/responses/InvalidQuota" }
+        "404": { $ref: "#/components/responses/PolicyNotFound" }
+        "409": { $ref: "#/components/responses/QuotaResetConflict" }
+  /v0/management/orphaned-api-key-policies/{policyId}:
+    parameters:
+      - $ref: "#/components/parameters/PolicyId"
+    delete:
+      operationId: permanentlyDeleteOrphanedApiKeyPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, configGeneration]
+              properties:
+                version: { type: integer, minimum: 1 }
+                configGeneration: { type: integer, minimum: 1 }
+      responses:
+        "204": { description: Orphaned policy permanently deleted }
+        "409": { $ref: "#/components/responses/VersionConflict" }
+components:
+  parameters:
+    PolicyId:
+      name: policyId
+      in: path
+      required: true
+      schema: { type: string }
+    ProfileId:
+      name: profileId
+      in: path
+      required: true
+      schema: { type: string }
+  schemas:
+    PolicyCatalog:
+      type: object
+      additionalProperties: false
+      required: [providers, models, modelProviders]
+      properties:
+        providers:
+          type: array
+          items: { type: string }
+          uniqueItems: true
+        models:
+          type: array
+          items: { type: string }
+          uniqueItems: true
+        modelProviders:
+          type: object
+          description: Effective model ID to the currently available provider IDs that can serve it
+          additionalProperties:
+            type: array
+            items: { type: string }
+            uniqueItems: true
+    Capabilities:
+      type: object
+      required: [apiVersion, features]
+      properties:
+        apiVersion: { type: integer, minimum: 1 }
+        features:
+          type: array
+          uniqueItems: true
+          items:
+            enum:
+              - policy_crud
+              - profile_crud
+              - optimistic_concurrency
+              - atomic_workspace_save
+              - policy_backup_restore
+              - policy_delete_preview
+              - orphaned_purge_guard
+              - takeover_control
+              - key_quota_requests_tokens
+              - key_quota_cost_period
+              - key_quota_calendar_timezone
+              - key_quota_explicit_reset
+              - key_quota_overview
+              - usage_key_target
+              - provider_model_linkage
+              - optional_profile
+    PolicyState:
+      type: string
+      enum: [unconfigured, configured, orphaned, unavailable]
+    ModelMapping:
+      type: object
+      required: [source, target]
+      properties:
+        source: { type: string }
+        target: { type: string }
+    ProfileInput:
+      type: object
+      required: [name, providers, models, mappings]
+      properties:
+        name: { type: string }
+        providers:
+          type: array
+          minItems: 1
+          items: { type: string }
+        models:
+          type: array
+          minItems: 1
+          items: { type: string }
+        mappings:
+          type: array
+          items: { $ref: "#/components/schemas/ModelMapping" }
+    ProfileWrite:
+      allOf:
+        - $ref: "#/components/schemas/ProfileInput"
+        - type: object
+          required: [version]
+          properties:
+            version: { type: integer, minimum: 1 }
+            clientFeatures:
+              $ref: "#/components/schemas/WriteClientFeatures"
+    Profile:
+      allOf:
+        - $ref: "#/components/schemas/ProfileInput"
+        - type: object
+          required: [id, policyId, createdAtMs, updatedAtMs]
+          properties:
+            id: { type: string }
+            policyId: { type: string }
+            createdAtMs: { type: integer }
+            updatedAtMs: { type: integer }
+    Policy:
+      type: object
+      required: [id, displayName, state, activeProfileId, profiles, version, createdAtMs, updatedAtMs]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        state: { $ref: "#/components/schemas/PolicyState" }
+        activeProfileId: { type: string }
+        profiles:
+          type: array
+          minItems: 0
+          items: { $ref: "#/components/schemas/Profile" }
+        quota: { $ref: "#/components/schemas/Quota" }
+        version: { type: integer, minimum: 1 }
+        createdAtMs: { type: integer }
+        updatedAtMs: { type: integer }
+    CreatePolicyRequest:
+      type: object
+      required: [keyRef, displayName]
+      properties:
+        keyRef:
+          type: string
+          description: Short-lived opaque reference bound to the management session and config generation
+        displayName: { type: string }
+        initialProfile:
+          $ref: "#/components/schemas/ProfileInput"
+        quota:
+          oneOf:
+            - $ref: "#/components/schemas/QuotaInput"
+            - type: "null"
+        clientFeatures:
+          $ref: "#/components/schemas/WriteClientFeatures"
+    WriteClientFeatures:
+      type: array
+      description: Opt-in capabilities understood by the Management client; omitted by legacy clients
+      uniqueItems: true
+      items:
+        type: string
+        enum: [provider_model_linkage, key_quota_cost_period, key_quota_calendar_timezone]
+    QuotaPeriod:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [type]
+          properties:
+            type: { const: all_time }
+        - type: object
+          additionalProperties: false
+          required: [type, value, unit]
+          properties:
+            type: { const: past_duration }
+            value: { type: integer, minimum: 1 }
+            unit: { enum: [minute, hour, day] }
+        - type: object
+          additionalProperties: false
+          required: [type, unit]
+          properties:
+            type: { const: calendar_duration }
+            unit: { enum: [day, month] }
+            timezone:
+              type: string
+              minLength: 1
+              default: UTC
+              description: IANA timezone; legacy records without this field default to UTC
+    QuotaInput:
+      type: object
+      additionalProperties: false
+      required: [enabled, period]
+      properties:
+        enabled: { type: boolean }
+        requests: { type: integer, minimum: 1 }
+        totalTokens: { type: integer, minimum: 1 }
+        cost: { type: number, exclusiveMinimum: 0 }
+        period: { $ref: "#/components/schemas/QuotaPeriod" }
+    QuotaUsage:
+      type: object
+      required: [requestsUsed, totalTokensUsed, costUsed, windowStartedAtMs, exhausted]
+      properties:
+        requestsUsed: { type: integer, minimum: 0 }
+        totalTokensUsed: { type: integer, minimum: 0 }
+        costUsed: { type: number, minimum: 0 }
+        requestsRemaining: { type: integer, minimum: 0 }
+        totalTokensRemaining: { type: integer, minimum: 0 }
+        costRemaining: { type: number, minimum: 0 }
+        windowStartedAtMs: { type: integer }
+        windowEndsAtMs: { type: integer }
+        exhausted:
+          type: array
+          uniqueItems: true
+          items: { enum: [requests, total_tokens, cost] }
+    Quota:
+      allOf:
+        - $ref: "#/components/schemas/QuotaInput"
+        - type: object
+          required: [epoch, startedAtMs, updatedAtMs, usage]
+          properties:
+            epoch: { type: integer, minimum: 1 }
+            startedAtMs: { type: integer }
+            updatedAtMs: { type: integer }
+            usage: { $ref: "#/components/schemas/QuotaUsage" }
+    QuotaAdmissionState:
+      type: string
+      enum: [available, disabled, exhausted, blocked]
+    QuotaBlockReason:
+      type: string
+      enum: [pricing_store_unavailable, settlement_store_unavailable]
+    QuotaSummary:
+      type: object
+      additionalProperties: false
+      required: [policyId, policyVersion, admissionState]
+      properties:
+        policyId: { type: string }
+        policyVersion: { type: integer, minimum: 1 }
+        quota: { $ref: "#/components/schemas/Quota" }
+        admissionState: { $ref: "#/components/schemas/QuotaAdmissionState" }
+        blockedReason: { $ref: "#/components/schemas/QuotaBlockReason" }
+        nextRecoverAtMs: { type: integer }
+    QuotaSummaryResponse:
+      type: object
+      additionalProperties: false
+      required: [items, snapshotAtMs]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/QuotaSummary" }
+        snapshotAtMs: { type: integer }
+    UsageTargetRequest:
+      type: object
+      required: [keyRef]
+      properties:
+        keyRef:
+          type: string
+          description: Short-lived opaque reference returned by the binding list; never place it in a URL
+    UsageTarget:
+      type: object
+      required: [apiKeyHash, configGeneration]
+      properties:
+        apiKeyHash:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+          description: Returned only for the explicitly selected protected keyRef
+        configGeneration: { type: integer, minimum: 1 }
+    ProfileCatalogItem:
+      type: object
+      additionalProperties: false
+      required: [id, name, updatedAtMs]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        updatedAtMs: { type: integer }
+    ProfileCatalogSnapshot:
+      type: object
+      additionalProperties: false
+      required: [items, policyGeneration]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ProfileCatalogItem" }
+        policyGeneration: { type: integer, minimum: 1 }
+    Binding:
+      type: object
+      required: [maskedKey, keyRef, state, weakKey]
+      properties:
+        maskedKey: { type: string }
+        keyRef:
+          type: string
+          description: Memory-only opaque reference; never persist or place in a URL
+        state: { $ref: "#/components/schemas/PolicyState" }
+        policy: { $ref: "#/components/schemas/Policy" }
+        weakKey: { type: boolean }
+    BindingPage:
+      type: object
+      required: [items, orphaned, nextCursor, configGeneration]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Binding" }
+        orphaned:
+          type: array
+          items: { $ref: "#/components/schemas/Policy" }
+        nextCursor: { type: string }
+        configGeneration:
+          type: integer
+          minimum: 1
+          description: Upstream API-key configuration snapshot generation shared by every page
+    DeletePolicyPreview:
+      type: object
+      required: [policyId, version, change, targetPolicyMode, affectsNewRequestsOnly, requiresConfirmation]
+      properties:
+        policyId: { type: string }
+        version: { type: integer, minimum: 1 }
+        change: { const: restricted_profile_to_unrestricted_passthrough }
+        targetPolicyMode: { const: passthrough }
+        affectsNewRequestsOnly: { const: true }
+        requiresConfirmation: { const: RESTORE_UNRESTRICTED_PASSTHROUGH }
+        activeProfile:
+          type: object
+          required: [id, name, providers, models]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            providers: { type: array, items: { type: string } }
+            models: { type: array, items: { type: string } }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+  responses:
+    Unauthorized:
+      description: Management authentication required
+    InvalidKeyReference:
+      description: invalid_api_key_reference
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    StaleKeyReference:
+      description: api_key_reference_stale
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    InvalidProfile:
+      description: invalid_api_key_profile
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    InvalidQuota:
+      description: invalid_api_key_quota
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    UpstreamKeyNotFound:
+      description: upstream_api_key_not_found
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    PolicyNotFound:
+      description: api_key_policy_not_found
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    VersionConflict:
+      description: config_version_conflict
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    QuotaResetConflict:
+      description: config_version_conflict, api_key_quota_not_configured, or api_key_quota_reset_confirmation_required
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ActiveProfileDeleteForbidden:
+      description: active_profile_delete_forbidden
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    DeleteConfirmationRequired:
+      description: policy_delete_requires_passthrough_confirmation
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    PolicyUnavailable:
+      description: api_key_policy_unavailable
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }

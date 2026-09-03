@@ -10,7 +10,7 @@ This directory does not vendor the upstream application. It keeps overlay files 
 
 Adds a top-level `/proxy-pool` page for Core's statically linked proxy pool. It manages HTTP/HTTPS/SOCKS5/SOCKS5H nodes, selection strategy, weights, health checks, isolation, and failover. It also supports batch paste, node search, filtered enable/disable, quick duplication, unsaved-draft tests, and manual isolation recovery. Runtime details include success rate, failures, active tunnels, last success/failure, config generation, and health-cycle timestamps.
 
-Adds a top-level `/oauth-model-policy` page for Core's statically linked model policy. Provider tabs edit plan-specific model exclusions for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi, including custom plan keys, while keeping `_unknown` plan-discovery failures separate from the `_default` fallback for recognized plans without a dedicated rule. The page also controls cache TTL and provider resolve timeout.
+Adds a top-level `/oauth-policy` page for Core's statically linked OAuth account policy. Provider tabs edit plan-specific model exclusions, prefixes, priorities, and scheduler weights for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi, including custom plans, `_unknown`/`_default` fallbacks, and effective runtime previews. The legacy `/oauth-model-policy` route redirects to the new page.
 
 The page toggles runtime proxy takeover through native management APIs without changing `config.yaml` or the root `proxy-url`. Credentials with their own `proxy-url` are listed explicitly as bypasses. Both feature configurations persist in the usage SQLite `pro_settings` table, while health state and connection counters remain process-local runtime data.
 
@@ -39,6 +39,8 @@ The page consumes the customized `cliproxyapi-pro-core` backend usage API. It lo
 - realtime request table with recent success/failure pattern bars
 - masking for sensitive token-like text in request metadata
 
+Auth-file account cards also expose a connection test. The dialog reuses upstream `GET /v0/management/auth-files/models`; when upstream no longer registers models for a disabled credential, the Pro backend makes that endpoint fall back to the matching provider's static definitions. It then calls `POST /v0/management/auth-files/test` with the exact `auth_index`. The dialog shows model output and latency on success, or the upstream HTTP status, error code, and masked failure details on failure. Disabled and cooling-down credentials can be tested without changing the operator-controlled disabled switch or creating request-monitoring records.
+
 Large account and realtime tables scroll inside their panels, so long histories do not stretch the whole page.
 
 ### Model price persistence
@@ -56,7 +58,7 @@ If the backend has no saved prices, the UI can migrate old `localStorage` price 
 
 Rules apply globally by model ID, so the same model shares one rule across providers. They support input, output, cache-read, cache-write, multiple context-size tiers, and service-tier overrides. Prices can be synchronized manually or periodically from models.dev; only models observed in request history are persisted, and locked manual rules are not overwritten.
 
-The backend selects pricing per request and snapshots the estimated cost on each usage event. Aggregate APIs sum those event costs. JSONL export/import preserves both complete rules and cost snapshots.
+The backend selects pricing per request and snapshots the estimated cost on each usage event. The cost breakdown `pricingMode` distinguishes base pricing, context tiers, and a service-tier override that actually matched, while the UI shows requested, effective, and matched pricing tiers separately. OpenAI Fast rules are stored as `fast` and accept `priority` in requests or responses as a compatibility alias; merely recording a requested `service_tier` does not mean an override was applied. Aggregate APIs sum those event costs. JSONL export/import preserves both complete rules and cost snapshots.
 
 ### SQLite-backed quota persistence
 
@@ -101,7 +103,7 @@ The page controls and displays backend-run inspections. The browser does not exe
 Features include:
 
 - target provider selection
-- configurable workers, delete workers, timeout, retries, used-percent threshold, and sample size
+- configurable global probe concurrency `workers` (`1–8`), per-provider concurrency `providerWorkers` (`1–4`), action concurrency `deleteWorkers` (`1–4`), timeout, retries, used-percent threshold, and sample size
 - backend run, pause, resume, and stop controls
 - backend schedule enablement and interval configuration
 - progress, summary cards, and result table from backend status polling
@@ -111,6 +113,8 @@ Features include:
 - business-result toast messages for single-account rechecks, such as account errors, quota exhaustion, or healthy state
 - optional backend auto-execution policies for quota-limit disable, quota-recovery enable, and account-error disable/delete
 - quota snapshot refresh from backend inspection results
+
+Global probe concurrency applies across all providers, while per-provider concurrency independently caps each provider within that global limit. Regular probes, deep probes, xAI probes, and pre-probe token refreshes use the same limits. Action concurrency applies to both automatic actions and manual bulk actions. The page persists these values through the account-inspection schedule API and neither reads nor modifies `config.yaml`.
 
 Backend schedule/status/control routes expected by the page:
 
@@ -127,24 +131,23 @@ Backend schedule/status/control routes expected by the page:
 
 Under the full management API prefix these are exposed by the backend as `/v0/management/account-inspection/...`.
 
-### Routing policy page
+### Scheduling policy page
 
-Adds a top-level routing-policy route:
+Adds a top-level scheduling-policy route:
 
 ```text
 /routing
 ```
 
-The page combines upstream routing configuration with Pro request-state protection in three views:
+The page manages only Pro request-state protection, never global routing values in `config.yaml`, and has two views:
 
-- Global routing: round-robin/fill-first mode, session stickiness and TTL, retries and account switching, cooldown and cooldown persistence, transient-error cooldown, quota fallback, and Codex identity cloaking.
 - Provider protection: only supported providers with current API configuration or credentials, with per-provider enablement, HTTP statuses, confirmation thresholds and windows, 429 quota evidence, automatic release, and fallback disable duration.
 - Runtime status: accounts currently disabled by request protection plus recent events, detailed reason/context dialogs, and manual release for one account.
 
 The page uses:
 
 - `GET /routing-policy`
-- `PUT|PATCH /routing-policy`
+- `PUT /routing-policy/request-protection`
 - `POST /routing-policy/release`
 
 Protection is disabled by default. `observe` records matches; only `enforce` disables accounts. Automatic and manual release affect only accounts carrying request-protection ownership metadata.
@@ -156,7 +159,7 @@ Protection is disabled by default. `observe` records matches; only `enforce` dis
 - `/monitoring`, `/account-inspection`, and `/routing` routes.
 - sidebar navigation labels and icon.
 - locale entries from `monitoring-locales.json`.
-- `usageStatisticsEnabled` and `clean` config types used by monitoring/account inspection.
+- the `usageStatisticsEnabled` config type used by monitoring; account-inspection settings are managed only through the schedule API.
 - `authFilesApi.patchFile` and `setStatusWithFallback` helpers.
 - `accountInspection` service export.
 - `Select` `triggerClassName` and `dropdownClassName` props.
@@ -171,8 +174,8 @@ Request Monitoring uses an initial snapshot plus SSE increments and cursor catch
 - `overlay/` — files copied directly into the upstream checkout.
 - `overlay/src/pro/modules/monitoring/` — request monitoring, usage analytics, and backup UI.
 - `overlay/src/pro/modules/inspection/` — account inspection page, state, and actions.
-- `overlay/src/pro/modules/routing/` — routing policy and request-state-protection UI.
-- `overlay/src/pro/modules/proxyPool/` and `modelPolicy/` — independent module pages and APIs.
+- `overlay/src/pro/modules/routing/` — scheduling policy and request-state-protection UI.
+- `overlay/src/pro/modules/proxyPool/` and `oauthPolicy/` — independent module pages and APIs.
 - `overlay/src/pro/modules/quota/` — SQLite quota persistence, sorting, and provider extensions.
 - `overlay/src/pro/modules/*/manifest.tsx` — each business module declares its route, navigation, and startup effects; `registry.tsx` keeps only the module list and derives host projections, while `ProBootstrap.tsx` mounts them after authentication.
 - `overlay/src/pro/shared/` — domain-neutral shared UI models; business modules depend on another module only through its `index.ts` public surface and never through internal `features/` or style files.

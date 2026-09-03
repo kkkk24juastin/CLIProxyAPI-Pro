@@ -6,6 +6,36 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isNormalizedGeminiQuotaSnapshot = (data: unknown): boolean =>
   isRecord(data) && data.status === undefined && Array.isArray(data.items);
 
+export const isAuthCardQuotaCacheDataCompatible = (
+  provider: string,
+  data: unknown
+): boolean => {
+  if (provider === 'gemini-cli' && isNormalizedGeminiQuotaSnapshot(data)) return true;
+  if (!isRecord(data)) return false;
+
+  const status = data.status;
+  if (!['idle', 'loading', 'success', 'error'].includes(String(status))) return false;
+  if (status !== 'success') return true;
+
+  switch (provider) {
+    case 'antigravity':
+      return Array.isArray(data.groups) && data.groups.every((group) => (
+        isRecord(group) && Array.isArray(group.buckets)
+      ));
+    case 'claude':
+    case 'codex':
+      return Array.isArray(data.windows);
+    case 'gemini-cli':
+      return Array.isArray(data.buckets);
+    case 'kimi':
+      return Array.isArray(data.rows);
+    case 'xai':
+      return isRecord(data.billing);
+    default:
+      return false;
+  }
+};
+
 const quotaCacheFreshness = (entry: QuotaCacheEntry): number[] => [
   entry.observedAt || 0,
   entry.cachedAt || 0,
@@ -33,6 +63,11 @@ export const selectPreferredQuotaCacheEntries = (
   const selected = new Map<string, QuotaCacheEntry>();
 
   entries.forEach((entry) => {
+    // Account policy consumes exactly the cache representations that the auth
+    // card can hydrate. Other plugin rows remain persisted but cannot displace
+    // a valid inspection snapshot for the same file.
+    if (!isAuthCardQuotaCacheDataCompatible(provider, entry.data)) return;
+
     const current = selected.get(entry.fileName);
     if (!current) {
       selected.set(entry.fileName, entry);

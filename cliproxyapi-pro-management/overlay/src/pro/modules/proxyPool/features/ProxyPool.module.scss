@@ -10,20 +10,6 @@
   padding-bottom: calc(var(--proxy-pool-action-bar-height, 46px) + 38px);
 }
 
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 15px 18px;
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-  background: var(--bg-secondary);
-}
-
-.headerIdentity,
-.titleLine,
-.headerActions,
 .panelActions,
 .sheetFooter,
 .sheetStatusLine,
@@ -35,44 +21,6 @@
   align-items: center;
 }
 
-.headerIdentity {
-  min-width: 0;
-  gap: 12px;
-}
-.headerIcon {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
-  place-items: center;
-  border-radius: 11px;
-  color: var(--text-secondary);
-  background: var(--muted-bg, rgba(148, 163, 184, 0.12));
-}
-.headerIconActive {
-  color: #15803d;
-  background: rgba(34, 197, 94, 0.13);
-}
-.titleLine {
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 9px;
-}
-.titleLine h1 {
-  margin: 0;
-  font-size: clamp(22px, 3vw, 27px);
-  line-height: 1.25;
-}
-.headerIdentity p {
-  margin: 3px 0 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-.headerActions {
-  flex: 0 0 auto;
-  gap: 8px;
-}
-.headerActions button > span,
 .panelActions button > span,
 .sheetActions button > span,
 .rowActions button,
@@ -82,33 +30,6 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-.takeoverOn,
-.takeoverOff {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.takeoverOn {
-  color: #15803d;
-  background: rgba(34, 197, 94, 0.12);
-}
-.takeoverOff {
-  color: var(--text-secondary);
-  background: var(--muted-bg, rgba(148, 163, 184, 0.12));
-}
-.takeoverOn > span,
-.takeoverOff > span {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
 }
 
 .statusOverview {
@@ -167,38 +88,6 @@
 .overviewMuted {
   color: var(--text-secondary);
   background: var(--muted-bg, rgba(148, 163, 184, 0.12));
-}
-
-.viewTabs {
-  display: inline-flex;
-  align-self: flex-start;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--border-color);
-  border-radius: 11px;
-  background: var(--bg-secondary);
-}
-.viewTabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 8px;
-  color: var(--text-secondary);
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-}
-.viewTabs button:hover {
-  color: var(--text-primary);
-  background: var(--muted-bg, rgba(148, 163, 184, 0.1));
-}
-.viewTabs .viewTabActive {
-  color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 11%, transparent);
 }
 
 .quickSettings {
@@ -286,6 +175,19 @@
   flex: 0 0 auto;
   flex-wrap: wrap;
   gap: 7px;
+}
+
+.testConcurrencyControl {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.testConcurrencyControl > div {
+  min-width: 72px;
 }
 
 .nodeFilters {
@@ -1070,23 +972,6 @@
   .pageWithSave {
     padding-bottom: calc(var(--proxy-pool-action-bar-height, 46px) + 28px);
   }
-  .header {
-    align-items: flex-start;
-    padding: 13px;
-  }
-  .headerIcon {
-    display: none;
-  }
-  .headerIdentity p {
-    max-width: 250px;
-  }
-  .headerActions {
-    flex-direction: column-reverse;
-    align-items: stretch;
-  }
-  .headerActions button {
-    min-height: 34px;
-  }
   .statusOverview {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1101,22 +986,6 @@
   .overviewItem code,
   .overviewItem strong {
     font-size: 12px;
-  }
-  .viewTabs {
-    display: grid;
-    width: 100%;
-    box-sizing: border-box;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .viewTabs button {
-    justify-content: center;
-    padding: 8px 5px;
-  }
-  .viewTabs button span {
-    overflow: hidden;
-    font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .quickSettings {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1231,33 +1100,11 @@
 }
 
 @media (max-width: 480px) {
-  .header {
-    gap: 9px;
-  }
-  .headerIdentity p {
-    display: none;
-  }
-  .titleLine {
-    display: block;
-  }
-  .titleLine h1 {
-    font-size: 21px;
-  }
-  .takeoverOn,
-  .takeoverOff {
-    margin-top: 4px;
-  }
-  .headerActions button:first-child {
-    display: none;
-  }
   .overviewItem {
     gap: 7px;
   }
   .overviewItem small {
     font-size: 9px;
-  }
-  .viewTabs svg {
-    display: none;
   }
   .quickSettings {
     grid-template-columns: 1fr;

@@ -27,14 +27,3 @@ func Sample[T any](items []T, sampleSize int, seed int64) []T {
 	})
 	return out[:sampleSize]
 }
-
-func ProviderLimiters(providers map[string]struct{}, concurrency int) map[string]chan struct{} {
-	if concurrency <= 0 {
-		concurrency = 1
-	}
-	limiters := make(map[string]chan struct{}, len(providers))
-	for provider := range providers {
-		limiters[provider] = make(chan struct{}, concurrency)
-	}
-	return limiters
-}

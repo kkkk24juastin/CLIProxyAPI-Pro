@@ -62,8 +62,14 @@
   .usageTrendActions {
     grid-column: 1 / -1;
     grid-row: 3;
+    flex-wrap: wrap;
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .usageTrendActions > :first-child {
+    flex: 1 1 100%;
+    width: 100%;
   }
 
   .usageTrendHeader > .usageTrendActions > .usageTrendHideButton {
@@ -337,6 +343,7 @@
   }
 
   .titleActions {
+    flex-wrap: wrap;
     justify-content: flex-start;
     width: 100%;
   }
@@ -551,14 +558,6 @@
 
   .filterGrid {
     gap: 8px;
-  }
-
-  .priceActionsBar {
-    justify-content: stretch;
-  }
-
-  .priceActionsBar :global(.btn) {
-    flex: 1 1 0;
   }
 
   .table {

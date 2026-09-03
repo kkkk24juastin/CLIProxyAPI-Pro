@@ -14,6 +14,17 @@ func TestQuotaDecisionHonorsDisabledAndThreshold(t *testing.T) {
 	}
 }
 
+func TestQuotaDecisionHonorsFractionalThreshold(t *testing.T) {
+	below := 99.4
+	if got := QuotaDecision(false, &below, true, 99.5); got.Action != ActionKeep || got.IsQuota {
+		t.Fatalf("below-threshold decision = %+v", got)
+	}
+	at := 99.5
+	if got := QuotaDecision(false, &at, true, 99.5); got.Action != ActionDisable || !got.IsQuota {
+		t.Fatalf("at-threshold decision = %+v", got)
+	}
+}
+
 func TestCodexDecisionAndErrorCodePrecedence(t *testing.T) {
 	used := 100.0
 	decision := CodexDecision(false, 401, &used, true, 95)

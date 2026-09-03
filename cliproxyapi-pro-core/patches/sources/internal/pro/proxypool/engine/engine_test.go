@@ -115,6 +115,25 @@ func freeAddress(t *testing.T) string {
 	return address
 }
 
+func TestNormalizeProbeConcurrency(t *testing.T) {
+	tests := []struct {
+		input int
+		want  int
+	}{{0, DefaultProbeConcurrency}, {-1, DefaultProbeConcurrency}, {1, 1}, {8, 8}, {9, MaxProbeConcurrency}}
+	for _, test := range tests {
+		if got := NormalizeProbeConcurrency(test.input); got != test.want {
+			t.Fatalf("NormalizeProbeConcurrency(%d) = %d, want %d", test.input, got, test.want)
+		}
+	}
+}
+
+func TestUnconfiguredEngineStatusDoesNotPublishMalformedProxyURL(t *testing.T) {
+	status := New().Status()
+	if status.ProxyURL != "" || status.Listen != "" || status.Strategy != "" || status.Ready {
+		t.Fatalf("Status() = %+v", status)
+	}
+}
+
 func TestEngineRoutesSOCKSConnectionsRoundRobin(t *testing.T) {
 	proxyA := startConnectProxy(t)
 	proxyB := startConnectProxy(t)
@@ -161,7 +180,7 @@ func TestEngineRoutesSOCKSConnectionsRoundRobin(t *testing.T) {
 		t.Fatalf("proxy counts = a:%d b:%d", proxyA.count.Load(), proxyB.count.Load())
 	}
 	status := engine.Status()
-	if !status.Ready || status.TotalNodes != 2 || status.Generation != 1 {
+	if !status.Ready || status.TotalNodes != 2 || status.EligibleNodes != 2 || status.Generation != 1 {
 		t.Fatalf("Status() = %+v", status)
 	}
 }

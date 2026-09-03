@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-import hashlib
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(os.environ.get('SRC_ROOT', '/src/CLIProxyAPI'))
 PATCH_SOURCE_DIR = Path(__file__).resolve().parent / 'sources'
-PRO_PANEL_REPOSITORY = 'https://github.com/kkkk24juastin/CLIProxyAPI-Pro'
-PRO_PANEL_RELEASE_API = 'https://api.github.com/repos/kkkk24juastin/CLIProxyAPI-Pro/releases/latest'
+PRO_PANEL_REPOSITORY = 'https://github.com/ssfun/CLIProxyAPI-Pro'
+PRO_PANEL_RELEASE_API = 'https://api.github.com/repos/ssfun/CLIProxyAPI-Pro/releases/latest'
 
 
 _writes = {}
@@ -32,12 +32,6 @@ def write(path: Path, text: str) -> None:
     _writes[path] = text
 
 
-def require_source_hash(path: Path, allowed_hashes: set[str]) -> None:
-    digest = hashlib.sha256(read(path).encode('utf-8')).hexdigest()
-    if digest not in allowed_hashes:
-        raise SystemExit(f'upstream source changed before full-file replacement: {path} ({digest})')
-
-
 def module_path() -> str:
     match = re.search(r'^module\s+(\S+)', read_text(ROOT / 'go.mod'), re.MULTILINE)
     if not match:
@@ -54,6 +48,23 @@ def flush_writes() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         write_text(path, text)
     _writes.clear()
+
+
+def format_go_writes(relative_paths: list[str]) -> None:
+    with tempfile.TemporaryDirectory(prefix='cliproxyapi-pro-gofmt-') as temp_dir:
+        temp_root = Path(temp_dir)
+        for relative_path in relative_paths:
+            path = ROOT / relative_path
+            if path not in _writes:
+                raise SystemExit(f'gofmt target was not changed by the patch: {relative_path}')
+            temp_path = temp_root / relative_path
+            temp_path.parent.mkdir(parents=True, exist_ok=True)
+            write_text(temp_path, read(path))
+
+        subprocess.run(['gofmt', '-w', *relative_paths], cwd=temp_root, check=True)
+
+        for relative_path in relative_paths:
+            write(ROOT / relative_path, read_text(temp_root / relative_path))
 
 
 def queue_tree(source: Path, target: Path) -> None:
@@ -200,7 +211,15 @@ if customization_sentinel.exists():
 
 new_customization_paths = (
     'internal/pro',
+    'internal/api/api_key_policy_middleware_test.go',
+	'internal/api/api_key_policy_models_test.go',
     'internal/api/handlers/management/account_inspection_host.go',
+    'internal/api/handlers/management/api_key_policy.go',
+    'internal/api/handlers/management/api_key_policy_test.go',
+	'internal/api/handlers/management/auth_file_metadata.go',
+    'internal/api/handlers/management/api_tools_executor_proxy_test.go',
+    'internal/api/handlers/management/auth_file_connection.go',
+    'internal/api/handlers/management/auth_file_connection_test.go',
     *[
         f'internal/api/handlers/management/{name}'
         for name in ACCOUNT_INSPECTION_SOURCE_FILES
@@ -218,20 +237,47 @@ new_customization_paths = (
     'internal/pluginhost/gemini_cli_quota_legacy_test.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
+    'internal/pluginhost/plugin_executor_usage_test.go',
+	'internal/pluginhost/plugin_executor_usage.go',
     'internal/pluginhost/quota_provider.go',
     'internal/pluginhost/quota_provider_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
     'internal/pluginstore/gitstore_auth_test.go',
     'internal/managementasset/gitstore_token_test.go',
-    'internal/requestmeta/client.go',
-    'internal/requestmeta/client_test.go',
-    'internal/requestmeta/requestid.go',
-    'internal/requestmeta/response.go',
+    'internal/requestmeta/observer.go',
+    'internal/requestmeta/observer_test.go',
+	'internal/api/server_model_policy.go',
+	'internal/runtime/executor/helps/quota_settlement_test.go',
+	'internal/runtime/executor/helps/usage_pro_extensions.go',
+    'internal/runtime/executor/helps/usage_speed_test.go',
+	'internal/runtime/executor/claude_usage_speed_test.go',
+	'internal/runtime/executor/claude_stream_terminal.go',
+	'internal/runtime/executor/api_key_policy_usage_test.go',
+	'internal/runtime/executor/response_translation.go',
+	'internal/pro/observability/config_test.go',
+	'internal/redisqueue/speed_test.go',
+	'internal/redisqueue/api_key_policy_usage_test.go',
+	'sdk/api/handlers/handlers_speed_test.go',
+	'sdk/api/handlers/api_key_policy_test.go',
+	'sdk/api/handlers/api_key_policy_context_test.go',
+	'sdk/auth/filestore_identity_test.go',
+	'sdk/auth/filestore_identity.go',
+	'sdk/cliproxy/auth/conductor_speed_test.go',
+	'sdk/cliproxy/executor/speed.go',
+	'sdk/cliproxy/usage/speed.go',
+	'sdk/cliproxy/usage/speed_test.go',
+	'sdk/cliproxy/usage/manager_pro_test.go',
+	'sdk/cliproxy/usage/manager_extensions.go',
+    'internal/runtime/executor/helps/response_observer_test.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
+	'sdk/cliproxy/auth/auth_account_policy.go',
+	'sdk/cliproxy/auth/auth_account_policy_test.go',
+	'sdk/cliproxy/auth/scheduler_runtime_state.go',
     'sdk/cliproxy/auth/inspection_refresh.go',
+    'sdk/cliproxy/auth/pinned_execution.go',
     'sdk/cliproxy/pro_features_service_test.go',
 )
 for relative_path in new_customization_paths:
@@ -241,73 +287,26 @@ for relative_path in new_customization_paths:
 
 queue_tree(PATCH_SOURCE_DIR / 'internal/pro', ROOT / 'internal/pro')
 queue_tree(PATCH_SOURCE_DIR / 'sdk/proxyutil', ROOT / 'sdk/proxyutil')
-
-codex_filename = ROOT / 'internal/auth/codex/filename.go'
-replace_once(
-    codex_filename,
-    '''// The account hash is included when available to keep accounts with the same email
-// and plan distinct. The legacy email-based format remains the fallback.
-''',
-    '''// The account hash is included when available to keep accounts with the same email
-// distinct without treating the mutable subscription plan as identity.
-''',
-    'mutable subscription plan as identity',
-)
-replace_go_function(
-    codex_filename,
-    'func CredentialFileName(',
-    '''func CredentialFileName(email, planType, hashAccountID string, includeProviderPrefix bool) string {
-	email = strings.TrimSpace(email)
-	plan := normalizePlanTypeForFilename(planType)
-	hashAccountID = strings.TrimSpace(hashAccountID)
-
-	prefix := ""
-	if includeProviderPrefix {
-		prefix = "codex"
-	}
-
-	// The account hash is the strong identity. A subscription plan is mutable
-	// metadata and must not create a second credential when the same account is
-	// upgraded or downgraded.
-	if hashAccountID != "" {
-		return fmt.Sprintf("%s-%s-%s.json", prefix, hashAccountID, email)
-	}
-
-	// Keep the existing weak-identity fallback when an account ID is unavailable.
-	// Without a strong identity, automatically collapsing credentials is unsafe.
-	if plan == "" {
-		return fmt.Sprintf("%s-%s.json", prefix, email)
-	}
-	return fmt.Sprintf("%s-%s-%s.json", prefix, email, plan)
-}
-''',
-    'A subscription plan is mutable',
-)
-
-codex_filename_test = ROOT / 'internal/auth/codex/filename_test.go'
-for old, new in (
-    ('codex-abc12345-user@example.com-team.json', 'codex-abc12345-user@example.com.json'),
-    ('codex-def67890-user@example.com-k12.json', 'codex-def67890-user@example.com.json'),
-    ('codex-abc12345-user@example.com-plus.json', 'codex-abc12345-user@example.com.json'),
-    ('codex-abc12345-user@example.com-team-plan.json', 'codex-abc12345-user@example.com.json'),
-):
-    text = read(codex_filename_test)
-    if text.count(old) != 1:
-        raise SystemExit(f'expected one Codex filename test value in {codex_filename_test}: {old!r}')
-    write(codex_filename_test, text.replace(old, new, 1))
-if 'func TestCredentialFileNameIgnoresPlanForStrongIdentity' not in read(codex_filename_test):
-    write(
-        codex_filename_test,
-        read(codex_filename_test) + '''
-func TestCredentialFileNameIgnoresPlanForStrongIdentity(t *testing.T) {
-	free := CredentialFileName("user@example.com", "free", "abc12345", true)
-	plus := CredentialFileName("user@example.com", "plus", "abc12345", true)
-	if free != plus {
-		t.Fatalf("plan change altered strong credential identity: %q != %q", free, plus)
-	}
-}
-''',
-    )
+queue_go_source('internal/api/api_key_policy_middleware_test.go')
+queue_go_source('internal/api/api_key_policy_models_test.go')
+queue_go_source('internal/api/handlers/management/api_key_policy.go')
+queue_go_source('internal/api/handlers/management/api_key_policy_test.go')
+queue_go_source('internal/api/handlers/management/auth_file_metadata.go')
+queue_go_source('internal/api/server_model_policy.go')
+queue_go_source('sdk/api/handlers/api_key_policy_test.go')
+queue_go_source('sdk/api/handlers/api_key_policy_context_test.go')
+queue_go_source('sdk/auth/filestore_identity_test.go')
+queue_go_source('internal/runtime/executor/api_key_policy_usage_test.go')
+queue_go_source('internal/runtime/executor/helps/quota_settlement_test.go')
+queue_go_source('internal/runtime/executor/helps/usage_pro_extensions.go')
+queue_go_source('internal/runtime/executor/response_translation.go')
+queue_go_source('internal/pro/observability/config_test.go')
+queue_go_source('sdk/cliproxy/usage/manager_pro_test.go')
+queue_go_source('sdk/cliproxy/usage/manager_extensions.go')
+queue_go_source('internal/pluginhost/plugin_executor_usage.go')
+queue_go_source('sdk/auth/filestore_identity.go')
+queue_go_source('sdk/cliproxy/auth/scheduler_runtime_state.go')
+queue_go_source('internal/runtime/executor/claude_stream_terminal.go')
 
 codex_device = ROOT / 'sdk/auth/codex_device.go'
 replace_once(
@@ -366,339 +365,6 @@ replace_once(
 ''',
     's.reuseExistingProviderIdentity(auth)',
 )
-insert_before(
-    file_token_store,
-    'func (s *FileTokenStore) resolveAuthPath(auth *cliproxyauth.Auth) (string, error) {\n',
-    '''const reusedExistingAuthIdentityAttribute = "reused_existing_auth_identity"
-
-// TakeReusedExistingAuthIdentity reports and consumes the transient marker set
-// when Save updates an existing strong provider identity in place.
-func TakeReusedExistingAuthIdentity(auth *cliproxyauth.Auth) bool {
-	if auth == nil || auth.Attributes == nil {
-		return false
-	}
-	reused := strings.EqualFold(strings.TrimSpace(auth.Attributes[reusedExistingAuthIdentityAttribute]), "true")
-	delete(auth.Attributes, reusedExistingAuthIdentityAttribute)
-	return reused
-}
-
-func authMetadataString(metadata map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := metadata[key].(string); ok {
-			if value = strings.TrimSpace(value); value != "" {
-				return value
-			}
-		}
-	}
-	return ""
-}
-
-type providerFileIdentity struct {
-	provider  string
-	strongKey string
-	companion string
-}
-
-func resolveProviderFileIdentity(provider string, metadata map[string]any) (providerFileIdentity, bool) {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	if provider == "" || metadata == nil {
-		return providerFileIdentity{}, false
-	}
-	email := strings.ToLower(authMetadataString(metadata, "email", "client_email"))
-	identity := providerFileIdentity{provider: provider}
-	switch provider {
-	case "codex":
-		identity.strongKey = authMetadataString(metadata, "account_id", "chatgpt_account_id", "chatgptAccountId")
-		identity.companion = email
-	case "claude":
-		identity.strongKey = authMetadataString(metadata, "account_uuid", "account_id")
-		identity.companion = email
-	case "xai":
-		identity.strongKey = authMetadataString(metadata, "sub", "subject", "user_id")
-		identity.companion = email
-	case "antigravity":
-		// Google userinfo supplies a verified account email and the current
-		// upstream already treats it as the credential filename identity.
-		identity.strongKey = email
-	case "gemini-cli", "gemini", "vertex":
-		identity.strongKey = authMetadataString(metadata, "project_id")
-		identity.companion = email
-	default:
-		// Providers such as Kimi currently expose only device/token material.
-		// Treating those values as account identity would merge unrelated users.
-		return providerFileIdentity{}, false
-	}
-	if identity.strongKey == "" {
-		return providerFileIdentity{}, false
-	}
-	return identity, true
-}
-
-func authProviderFileIdentity(auth *cliproxyauth.Auth) (providerFileIdentity, bool) {
-	if auth == nil {
-		return providerFileIdentity{}, false
-	}
-	provider := strings.TrimSpace(auth.Provider)
-	if provider == "" && auth.Metadata != nil {
-		provider = authMetadataString(auth.Metadata, "type")
-	}
-	return resolveProviderFileIdentity(provider, auth.Metadata)
-}
-
-func storedProviderFileIdentity(path string) (providerFileIdentity, bool) {
-	raw, err := os.ReadFile(path)
-	if err != nil || len(raw) == 0 {
-		return providerFileIdentity{}, false
-	}
-	metadata := make(map[string]any)
-	if err = json.Unmarshal(raw, &metadata); err != nil {
-		return providerFileIdentity{}, false
-	}
-	return resolveProviderFileIdentity(authMetadataString(metadata, "type"), metadata)
-}
-
-// reuseExistingProviderIdentity follows an active-account upsert model: strong
-// identity is only used to find the existing credential, while its file-backed
-// ID and stable index remain the canonical history/runtime keys.
-func (s *FileTokenStore) reuseExistingProviderIdentity(auth *cliproxyauth.Auth) error {
-	if auth == nil {
-		return nil
-	}
-	if auth.Attributes != nil {
-		delete(auth.Attributes, reusedExistingAuthIdentityAttribute)
-		if strings.TrimSpace(auth.Attributes[cliproxyauth.AttributePath]) != "" ||
-			strings.TrimSpace(auth.Attributes[cliproxyauth.AttributeSource]) != "" {
-			return nil
-		}
-	}
-	identity, ok := authProviderFileIdentity(auth)
-	if !ok {
-		return nil
-	}
-	baseDir := s.baseDirSnapshot()
-	if baseDir == "" {
-		return nil
-	}
-	entries, err := os.ReadDir(baseDir)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("auth filestore: list provider identities: %w", err)
-	}
-
-	matches := make([]string, 0, 1)
-	for _, entry := range entries {
-		if entry == nil || entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
-			continue
-		}
-		path := filepath.Join(baseDir, entry.Name())
-		existing, exists := storedProviderFileIdentity(path)
-		if !exists || existing.provider != identity.provider || existing.strongKey != identity.strongKey {
-			continue
-		}
-		if identity.companion != "" && existing.companion != "" &&
-			!strings.EqualFold(identity.companion, existing.companion) {
-			continue
-		}
-		matches = append(matches, path)
-	}
-	if len(matches) == 0 {
-		return nil
-	}
-	if len(matches) > 1 {
-		return fmt.Errorf("auth filestore: multiple %s credentials match the same strong identity", identity.provider)
-	}
-
-	path := matches[0]
-	id := s.idFor(path, baseDir)
-	auth.ID = id
-	auth.Index = ""
-	auth.FileName = id
-	if auth.Attributes == nil {
-		auth.Attributes = make(map[string]string)
-	}
-	auth.Attributes[cliproxyauth.AttributePath] = path
-	auth.Attributes[cliproxyauth.AttributeSource] = path
-	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceFile
-	auth.Attributes[reusedExistingAuthIdentityAttribute] = "true"
-	return nil
-}
-
-''',
-    'func (s *FileTokenStore) reuseExistingProviderIdentity',
-)
-
-file_token_store_test = ROOT / 'sdk/auth/filestore_test.go'
-if 'func TestFileTokenStoreSaveReusesExistingCodexStrongIdentity' not in read(file_token_store_test):
-    write(
-        file_token_store_test,
-        read(file_token_store_test) + '''
-
-func TestFileTokenStoreSaveReusesExistingCodexStrongIdentity(t *testing.T) {
-	baseDir := t.TempDir()
-	oldName := "codex-abc12345-user@example.com-free.json"
-	oldPath := filepath.Join(baseDir, oldName)
-	if err := os.WriteFile(oldPath, []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com","access_token":"old"}`), 0o600); err != nil {
-		t.Fatalf("write old auth: %v", err)
-	}
-
-	store := NewFileTokenStore()
-	store.SetBaseDir(baseDir)
-	auth := &cliproxyauth.Auth{
-		ID:       "codex-abc12345-user@example.com.json",
-		FileName: "codex-abc12345-user@example.com.json",
-		Provider: "codex",
-		Metadata: map[string]any{
-			"type":         "codex",
-			"account_id":   "acct-1",
-			"email":        "user@example.com",
-			"access_token": "new",
-		},
-	}
-
-	savedPath, err := store.Save(context.Background(), auth)
-	if err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	if savedPath != oldPath || auth.ID != oldName || auth.FileName != oldName {
-		t.Fatalf("reused identity = path:%q id:%q file:%q, want %q", savedPath, auth.ID, auth.FileName, oldName)
-	}
-	if !TakeReusedExistingAuthIdentity(auth) || TakeReusedExistingAuthIdentity(auth) {
-		t.Fatal("reused identity marker was not consumed exactly once")
-	}
-	if _, err := os.Stat(filepath.Join(baseDir, "codex-abc12345-user@example.com.json")); !os.IsNotExist(err) {
-		t.Fatalf("Save() created a duplicate credential: %v", err)
-	}
-	persisted, err := os.ReadFile(oldPath)
-	if err != nil {
-		t.Fatalf("read reused auth: %v", err)
-	}
-	if !jsonEqual(persisted, []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com","access_token":"new","disabled":false}`)) {
-		t.Fatalf("reused auth content = %s", persisted)
-	}
-}
-
-func TestFileTokenStoreSaveDoesNotMergeCodexIdentityWithoutGuardedEmail(t *testing.T) {
-	baseDir := t.TempDir()
-	oldPath := filepath.Join(baseDir, "codex-old.json")
-	if err := os.WriteFile(oldPath, []byte(`{"type":"codex","account_id":"acct-1","email":"first@example.com"}`), 0o600); err != nil {
-		t.Fatalf("write old auth: %v", err)
-	}
-
-	store := NewFileTokenStore()
-	store.SetBaseDir(baseDir)
-	auth := &cliproxyauth.Auth{
-		ID: "codex-new.json", FileName: "codex-new.json", Provider: "codex",
-		Metadata: map[string]any{"type": "codex", "account_id": "acct-1", "email": "second@example.com"},
-	}
-	savedPath, err := store.Save(context.Background(), auth)
-	if err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	if savedPath != filepath.Join(baseDir, "codex-new.json") || TakeReusedExistingAuthIdentity(auth) {
-		t.Fatalf("conflicting email reused old identity: path=%q", savedPath)
-	}
-}
-
-func TestFileTokenStoreSaveReusesProviderScopedStrongIdentities(t *testing.T) {
-	tests := []struct {
-		provider string
-		oldJSON  string
-		metadata map[string]any
-	}{
-		{
-			provider: "claude",
-			oldJSON:  `{"type":"claude","account_uuid":"account-1","email":"user@example.com"}`,
-			metadata: map[string]any{"type": "claude", "account_uuid": "account-1", "email": "user@example.com"},
-		},
-		{
-			provider: "xai",
-			oldJSON:  `{"type":"xai","sub":"subject-1","email":"user@example.com"}`,
-			metadata: map[string]any{"type": "xai", "sub": "subject-1", "email": "user@example.com"},
-		},
-		{
-			provider: "antigravity",
-			oldJSON:  `{"type":"antigravity","email":"user@example.com","project_id":"old-project"}`,
-			metadata: map[string]any{"type": "antigravity", "email": "user@example.com", "project_id": "new-project"},
-		},
-		{
-			provider: "vertex",
-			oldJSON:  `{"type":"vertex","project_id":"project-1","email":"service@example.com"}`,
-			metadata: map[string]any{"type": "vertex", "project_id": "project-1", "email": "service@example.com"},
-		},
-		{
-			provider: "gemini-cli",
-			oldJSON:  `{"type":"gemini-cli","project_id":"project-1","email":"user@example.com"}`,
-			metadata: map[string]any{"type": "gemini-cli", "project_id": "project-1", "email": "user@example.com"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.provider, func(t *testing.T) {
-			baseDir := t.TempDir()
-			oldPath := filepath.Join(baseDir, tt.provider+"-old.json")
-			if err := os.WriteFile(oldPath, []byte(tt.oldJSON), 0o600); err != nil {
-				t.Fatalf("write old auth: %v", err)
-			}
-			store := NewFileTokenStore()
-			store.SetBaseDir(baseDir)
-			auth := &cliproxyauth.Auth{
-				ID: tt.provider + "-new.json", FileName: tt.provider + "-new.json",
-				Provider: tt.provider, Metadata: tt.metadata,
-			}
-			savedPath, err := store.Save(context.Background(), auth)
-			if err != nil {
-				t.Fatalf("Save() error = %v", err)
-			}
-			if savedPath != oldPath || !TakeReusedExistingAuthIdentity(auth) {
-				t.Fatalf("provider identity was not reused: path=%q", savedPath)
-			}
-		})
-	}
-}
-
-func TestFileTokenStoreSaveDoesNotGuessUnsupportedProviderIdentity(t *testing.T) {
-	baseDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(baseDir, "kimi-old.json"), []byte(`{"type":"kimi","device_id":"device-1"}`), 0o600); err != nil {
-		t.Fatalf("write old auth: %v", err)
-	}
-	store := NewFileTokenStore()
-	store.SetBaseDir(baseDir)
-	auth := &cliproxyauth.Auth{
-		ID: "kimi-new.json", FileName: "kimi-new.json", Provider: "kimi",
-		Metadata: map[string]any{"type": "kimi", "device_id": "device-1"},
-	}
-	savedPath, err := store.Save(context.Background(), auth)
-	if err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	if savedPath != filepath.Join(baseDir, "kimi-new.json") || TakeReusedExistingAuthIdentity(auth) {
-		t.Fatalf("unsupported provider identity was guessed: path=%q", savedPath)
-	}
-}
-
-func TestFileTokenStoreSaveRejectsAmbiguousCodexStrongIdentity(t *testing.T) {
-	baseDir := t.TempDir()
-	for _, name := range []string{"codex-old-free.json", "codex-old-plus.json"} {
-		if err := os.WriteFile(filepath.Join(baseDir, name), []byte(`{"type":"codex","account_id":"acct-1","email":"user@example.com"}`), 0o600); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-
-	store := NewFileTokenStore()
-	store.SetBaseDir(baseDir)
-	auth := &cliproxyauth.Auth{
-		ID: "codex-new.json", FileName: "codex-new.json", Provider: "codex",
-		Metadata: map[string]any{"type": "codex", "account_id": "acct-1", "email": "user@example.com"},
-	}
-	if _, err := store.Save(context.Background(), auth); err == nil {
-		t.Fatal("Save() accepted an ambiguous strong identity")
-	}
-}
-''',
-    )
-
 proxyutil_source = ROOT / 'sdk/proxyutil/proxy.go'
 replace_once(
     proxyutil_source,
@@ -737,121 +403,68 @@ write(
         read_text(Path(__file__).resolve().parent / 'xai_upstream_bridge_test.go'),
     ),
 )
+write(
+    ROOT / 'internal/runtime/executor/helps/response_observer_test.go',
+    re.sub(
+        r'github\.com/router-for-me/CLIProxyAPI/v\d+',
+        MODULE_PATH,
+        read_text(Path(__file__).resolve().parent / 'response_observer_test.go'),
+    ),
+)
 
 xai_executor = ROOT / 'internal/runtime/executor/xai_executor.go'
 replace_once(
     xai_executor,
-    '''\tif strings.TrimSpace(token) != "" {
-\t\treq.Header.Set("Authorization", "Bearer "+token)
-\t}
-\tvar attrs map[string]string
+    '''\tvar attrs map[string]string
 ''',
-    '''\tif strings.TrimSpace(token) != "" {
-\t\treq.Header.Set("Authorization", "Bearer "+token)
-\t}
-\tapplyProXAIHTTPRequestIdentity(req, auth)
+    '''\tapplyProXAIHTTPRequestIdentity(req, auth)
 \tvar attrs map[string]string
 ''',
     'applyProXAIHTTPRequestIdentity(req, auth)',
 )
 
-xai_executor_sources = (
-    ROOT / 'internal/runtime/executor/xai_executor_execute.go',
-    ROOT / 'internal/runtime/executor/xai_executor_stream.go',
-    ROOT / 'internal/runtime/executor/xai_executor_media.go',
+xai_executor_execute = ROOT / 'internal/runtime/executor/xai_executor_execute.go'
+replace_once(
+    xai_executor_execute,
+    '''func (e *XAIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+''',
+    '''func (e *XAIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+\tctx = withXAIQuotaObserver(ctx, auth, req.Model)
+''',
+    'ctx = withXAIQuotaObserver(ctx, auth, req.Model)',
 )
-xai_observation_marker = '\thelps.AppendAPIResponseChunk(ctx, e.cfg, data)\n'
-xai_executor_texts = {path: read(path) for path in xai_executor_sources}
-if not any(
-    'observeXAIQuotaResponse(ctx, auth, req.Model' in text
-    for text in xai_executor_texts.values()
-):
-    if sum(text.count(xai_observation_marker) for text in xai_executor_texts.values()) != 6:
-        raise SystemExit('unexpected xAI response chunk observation anchors')
-    xai_metadata_marker = '\thelps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())\n'
-    if sum(text.count(xai_metadata_marker) for text in xai_executor_texts.values()) != 5:
-        raise SystemExit('unexpected xAI response metadata observation anchors')
-    for path, text in xai_executor_texts.items():
-        text = text.replace(
-            xai_observation_marker,
-            xai_observation_marker + '\tobserveXAIQuotaResponse(ctx, auth, req.Model, httpResp.StatusCode, httpResp.Header.Clone(), data)\n',
-        )
-        text = text.replace(
-            xai_metadata_marker,
-            xai_metadata_marker + '\tobserveXAIQuotaResponse(ctx, auth, req.Model, httpResp.StatusCode, httpResp.Header.Clone(), nil)\n',
-        )
-        write(path, text)
-
+xai_executor_stream = ROOT / 'internal/runtime/executor/xai_executor_stream.go'
+replace_once(
+    xai_executor_stream,
+    '''func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
+''',
+    '''func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
+\tctx = withXAIQuotaObserver(ctx, auth, req.Model)
+''',
+    'ctx = withXAIQuotaObserver(ctx, auth, req.Model)',
+)
 xai_websocket_executor = ROOT / 'internal/runtime/executor/xai_websockets_executor.go'
 replace_once(
     xai_websocket_executor,
-    '''\t\tif respHS != nil && respHS.StatusCode > 0 {
-\t\t\tif sess != nil {
+    '''func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 ''',
-    '''\t\tif respHS != nil && respHS.StatusCode > 0 {
-\t\t\tobserveXAIQuotaResponse(ctx, auth, req.Model, respHS.StatusCode, respHS.Header.Clone(), bodyErr)
-\t\t\tif sess != nil {
+    '''func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
+\tctx = withXAIQuotaObserver(ctx, auth, req.Model)
 ''',
-    'observeXAIQuotaResponse(ctx, auth, req.Model, respHS.StatusCode',
+    'ctx = withXAIQuotaObserver(ctx, auth, req.Model)',
 )
 replace_once(
     xai_websocket_executor,
-    '''\t\t\t\tif respHSRetry != nil && respHSRetry.StatusCode > 0 {
-\t\t\t\t\treturn nil, xaiStatusErr(respHSRetry.StatusCode, bodyErrRetry)
+    '''\t\t\t\tbodyErrRetry := websocketHandshakeBody(respHSRetry)
+\t\t\t\tcloseHTTPResponseBody(respHSRetry, "xai websockets executor: close handshake response body error")
 ''',
-    '''\t\t\t\tif respHSRetry != nil && respHSRetry.StatusCode > 0 {
-\t\t\t\t\tobserveXAIQuotaResponse(ctx, auth, req.Model, respHSRetry.StatusCode, respHSRetry.Header.Clone(), bodyErrRetry)
-\t\t\t\t\treturn nil, xaiStatusErr(respHSRetry.StatusCode, bodyErrRetry)
+    '''\t\t\t\tbodyErrRetry := websocketHandshakeBody(respHSRetry)
+\t\t\t\tif respHSRetry != nil {
+\t\t\t\t\thelps.RecordAPIWebsocketUpgradeRejection(ctx, e.cfg, websocketUpgradeRequestLog(wsReqLog), respHSRetry.StatusCode, respHSRetry.Header.Clone(), bodyErrRetry)
+\t\t\t\t}
+\t\t\t\tcloseHTTPResponseBody(respHSRetry, "xai websockets executor: close handshake response body error")
 ''',
-    'observeXAIQuotaResponse(ctx, auth, req.Model, respHSRetry.StatusCode',
-)
-replace_once(
-    xai_websocket_executor,
-    '''\t\t\thelps.AppendAPIWebsocketResponse(ctx, e.cfg, payload)
-
-\t\t\tif wsErr, ok := parseXAIWebsocketError(payload); ok {
-''',
-    '''\t\t\thelps.AppendAPIWebsocketResponse(ctx, e.cfg, payload)
-\t\t\tobserveXAIQuotaResponse(ctx, auth, req.Model, 0, nil, payload)
-
-\t\t\tif wsErr, ok := parseXAIWebsocketError(payload); ok {
-''',
-    'observeXAIQuotaResponse(ctx, auth, req.Model, 0, nil, payload)',
-)
-replace_once(
-    xai_websocket_executor,
-    '''\trecordAPIWebsocketHandshake(ctx, e.cfg, respHS)
-\treporter.StartResponseTTFT()
-''',
-    '''\trecordAPIWebsocketHandshake(ctx, e.cfg, respHS)
-\tif respHS != nil {
-\t\tobserveXAIQuotaResponse(ctx, auth, req.Model, respHS.StatusCode, respHS.Header.Clone(), nil)
-\t}
-\treporter.StartResponseTTFT()
-''',
-    'observeXAIQuotaResponse(ctx, auth, req.Model, respHS.StatusCode, respHS.Header.Clone(), nil)',
-)
-replace_once(
-    xai_websocket_executor,
-    '''\t\t\trecordAPIWebsocketHandshake(ctx, e.cfg, respHSRetry)
-\t\t\treporter.StartResponseTTFT()
-''',
-    '''\t\t\trecordAPIWebsocketHandshake(ctx, e.cfg, respHSRetry)
-\t\t\tif respHSRetry != nil {
-\t\t\t\tobserveXAIQuotaResponse(ctx, auth, req.Model, respHSRetry.StatusCode, respHSRetry.Header.Clone(), nil)
-\t\t\t}
-\t\t\treporter.StartResponseTTFT()
-''',
-    'observeXAIQuotaResponse(ctx, auth, req.Model, respHSRetry.StatusCode, respHSRetry.Header.Clone(), nil)',
-)
-
-require_source_hash(
-    ROOT / 'internal/logging/requestid.go',
-    {'69d256ca4c4a75759395f6ed6640e9d2673c777e111fcae80faa7b6eea5b15ac'},
-)
-require_source_hash(
-    ROOT / 'internal/logging/requestmeta.go',
-    {'276db8481b85d9909073ed823062a2c83fcbf38b68952486fb86712cfb99ce9d'},
+    'helps.RecordAPIWebsocketUpgradeRejection(ctx, e.cfg, websocketUpgradeRequestLog(wsReqLog), respHSRetry.StatusCode',
 )
 
 # Add the optional QuotaProvider capability without changing ABI/schema v1.
@@ -1040,36 +653,335 @@ replace_once(
     '''\tif ctx.Err() != nil {
 \t\treturn
 \t}
-\tmodels = s.applyOAuthModelPolicy(ctx, a, models)
+\tmodels = s.applyOAuthPolicy(ctx, a, models)
 \tmodels = applyOAuthModelAliasForAuth(s.cfg, provider, authKind, a.Attributes, models)
 ''',
-    'models = s.applyOAuthModelPolicy(ctx, a, models)',
+    'models = s.applyOAuthPolicy(ctx, a, models)',
 )
 insert_before(
     service_models,
     'func (s *Service) oauthExcludedModels(provider, authKind string) []string {\n',
-    '''func (s *Service) applyOAuthModelPolicy(ctx context.Context, auth *coreauth.Auth, models []*ModelInfo) []*ModelInfo {
+    '''func (s *Service) applyOAuthPolicy(ctx context.Context, auth *coreauth.Auth, models []*ModelInfo) []*ModelInfo {
 \tif s == nil || s.proApp == nil || auth == nil || len(models) == 0 {
 \t\treturn models
 \t}
-\treturn s.proApp.FilterModels(ctx, s.cfg, auth, models)
+\treturn s.proApp.FilterModels(ctx, s.cfg, auth, models, s.coreManager)
 }
 
 ''',
-    'func (s *Service) applyOAuthModelPolicy',
+    'func (s *Service) applyOAuthPolicy',
+)
+
+service_auth = ROOT / 'sdk/cliproxy/service_auth.go'
+replace_once(
+    service_auth,
+    '''\tGlobalModelRegistry().UnregisterClient(id)
+\ts.coreManager.Remove(ctx, id)
+''',
+    '''\tGlobalModelRegistry().UnregisterClient(id)
+\tif s.proApp != nil {
+\t\ts.proApp.ForgetAccountPolicy(id)
+\t}
+\ts.coreManager.Remove(ctx, id)
+\ts.authModelCommitMu.Unlock()
+''',
+    's.authModelCommitMu.Unlock()',
+)
+
+service_source = ROOT / 'sdk/cliproxy/service.go'
+replace_once(
+    service_source,
+    '''\tconfigRuntimeMu        sync.Mutex
+\texecutorRegistrationMu sync.Mutex
+''',
+    '''\tconfigRuntimeMu        sync.Mutex
+\texecutorRegistrationMu sync.Mutex
+\tauthModelCommitMu      sync.Mutex
+\tauthModelGenerations   map[string]uint64
+''',
+    'authModelGenerations   map[string]uint64',
 )
 
 service_executors = ROOT / 'sdk/cliproxy/service_executors.go'
+replace_once(
+    service_executors,
+    '''func (s *Service) registerResolvedModelsForAuth(a *coreauth.Auth, providerKey string, models []*ModelInfo) {
+\tif a == nil || a.ID == "" {
+\t\treturn
+\t}
+''',
+    '''func (s *Service) registerResolvedModelsForAuth(ctx context.Context, a *coreauth.Auth, providerKey string, models []*ModelInfo) {
+\tif a == nil || a.ID == "" {
+\t\treturn
+\t}
+\tif !s.withCurrentAuthModelCommit(ctx, a, func() {
+\t\ts.registerResolvedModelsForCurrentAuth(a, providerKey, models)
+\t}) {
+\t\treturn
+\t}
+}
+
+func (s *Service) registerResolvedModelsForCurrentAuth(a *coreauth.Auth, providerKey string, models []*ModelInfo) {
+''',
+    'func (s *Service) registerResolvedModelsForCurrentAuth',
+)
 replace_once(
     service_executors,
     '''\tmodels := applyExcludedModels(result.Models, activeExcluded)
 \tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
 ''',
     '''\tmodels := applyExcludedModels(result.Models, activeExcluded)
-\tmodels = s.applyOAuthModelPolicy(ctx, activeAuth, models)
+\tmodels = s.applyOAuthPolicy(ctx, activeAuth, models)
 \tmodels = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
 ''',
-    'models = s.applyOAuthModelPolicy(ctx, activeAuth, models)',
+    'models = s.applyOAuthPolicy(ctx, activeAuth, models)',
+)
+
+replace_once(
+    service_executors,
+    's.registerResolvedModelsForAuth(activeAuth, providerKey, applyModelPrefixes(models, activeAuth.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))',
+    's.registerResolvedModelsForAuth(ctx, activeAuth, providerKey, applyModelPrefixes(models, activeAuth.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))',
+    's.registerResolvedModelsForAuth(ctx, activeAuth, providerKey',
+)
+
+replace_once(
+    service_auth,
+    '''\tid = strings.TrimSpace(id)
+\tvar provider string
+''',
+    '''\tid = strings.TrimSpace(id)
+\ts.authModelCommitMu.Lock()
+\tif s.authModelGenerations == nil {
+\t\ts.authModelGenerations = make(map[string]uint64)
+\t}
+\ts.authModelGenerations[id]++
+\tvar provider string
+''',
+    '''\tid = strings.TrimSpace(id)
+\ts.authModelCommitMu.Lock()
+\tif s.authModelGenerations == nil {
+\t\ts.authModelGenerations = make(map[string]uint64)
+\t}
+\ts.authModelGenerations[id]++
+\tvar provider string
+    ''',
+)
+
+insert_before(
+    service_auth,
+    'func (s *Service) applyCoreAuthRemoval(ctx context.Context, id string) {\n',
+    '''type authModelRegistrationContextKey struct{}
+
+type authModelRegistrationToken struct {
+\tauthID     string
+\tgeneration uint64
+}
+
+func (s *Service) beginAuthModelRegistration(ctx context.Context, authID string) context.Context {
+\tif ctx == nil {
+\t\tctx = context.Background()
+\t}
+\tif token, found := ctx.Value(authModelRegistrationContextKey{}).(authModelRegistrationToken); found && token.authID == authID {
+\t\treturn ctx
+\t}
+\ts.authModelCommitMu.Lock()
+\tif s.authModelGenerations == nil {
+\t\ts.authModelGenerations = make(map[string]uint64)
+\t}
+\ts.authModelGenerations[authID]++
+\ttoken := authModelRegistrationToken{authID: authID, generation: s.authModelGenerations[authID]}
+\ts.authModelCommitMu.Unlock()
+\treturn context.WithValue(ctx, authModelRegistrationContextKey{}, token)
+}
+
+func (s *Service) currentAuthModelRegistrationLocked(ctx context.Context, auth *coreauth.Auth) bool {
+\tif s == nil || ctx == nil || auth == nil || auth.ID == "" {
+\t\treturn false
+\t}
+\ttoken, found := ctx.Value(authModelRegistrationContextKey{}).(authModelRegistrationToken)
+\tif !found || token.authID != auth.ID || s.authModelGenerations[token.authID] != token.generation {
+\t\treturn false
+\t}
+\tif s.coreManager != nil {
+\t\tif current, exists := s.coreManager.GetByID(auth.ID); !exists || current == nil {
+\t\t\treturn false
+\t\t}
+\t}
+\treturn true
+}
+
+func (s *Service) isCurrentAuthModelRegistration(ctx context.Context, auth *coreauth.Auth) bool {
+\tif s == nil {
+\t\treturn false
+\t}
+\ts.authModelCommitMu.Lock()
+\tdefer s.authModelCommitMu.Unlock()
+\treturn s.currentAuthModelRegistrationLocked(ctx, auth)
+}
+
+func (s *Service) withCurrentAuthModelCommit(ctx context.Context, auth *coreauth.Auth, commit func()) bool {
+\tif s == nil || auth == nil || auth.ID == "" || commit == nil {
+\t\treturn false
+\t}
+\ts.authModelCommitMu.Lock()
+\tdefer s.authModelCommitMu.Unlock()
+\tif !s.currentAuthModelRegistrationLocked(ctx, auth) {
+\t\treturn false
+\t}
+\tcommit()
+\treturn true
+}
+
+func (s *Service) updateAuthForCurrentModelRegistration(ctx context.Context, auth, updated *coreauth.Auth) (*coreauth.Auth, bool) {
+\tif s == nil || s.coreManager == nil || updated == nil {
+\t\treturn nil, false
+\t}
+\tvar result *coreauth.Auth
+\tvar errUpdate error
+\tif !s.withCurrentAuthModelCommit(ctx, auth, func() {
+\t\tresult, errUpdate = s.coreManager.Update(ctx, updated)
+\t}) || errUpdate != nil || result == nil {
+\t\treturn nil, false
+\t}
+\treturn result, true
+}
+
+func (s *Service) unregisterModelsForCurrentAuth(ctx context.Context, auth *coreauth.Auth) {
+\t_ = s.withCurrentAuthModelCommit(ctx, auth, func() {
+\t\tGlobalModelRegistry().UnregisterClient(auth.ID)
+\t})
+}
+
+''',
+    'func (s *Service) withCurrentAuthModelCommit',
+)
+
+service_models_text = read(service_models)
+service_models_text = service_models_text.replace(
+    '''\tif ctx.Err() != nil {
+\t\treturn
+\t}
+\tif a.Disabled {
+''',
+    '''\tif ctx.Err() != nil {
+\t\treturn
+\t}
+\tctx = s.beginAuthModelRegistration(ctx, a.ID)
+\tif !s.isCurrentAuthModelRegistration(ctx, a) {
+\t\treturn
+\t}
+\tif a.Disabled {
+''',
+    1,
+)
+unregister_model_call = '\tGlobalModelRegistry().UnregisterClient(a.ID)'
+if service_models_text.count(unregister_model_call) != 5:
+    raise SystemExit(
+        f'expected five auth model unregister calls in {service_models}, '
+        f'found {service_models_text.count(unregister_model_call)}'
+    )
+write(
+    service_models,
+    service_models_text.replace(
+        unregister_model_call,
+        '\ts.unregisterModelsForCurrentAuth(ctx, a)',
+    ).replace(
+        's.registerResolvedModelsForAuth(a,',
+        's.registerResolvedModelsForAuth(ctx, a,',
+    ),
+)
+
+replace_once(
+    service_executors,
+    '\tGlobalModelRegistry().UnregisterClient(activeAuth.ID)\n\treturn true\n',
+    '\ts.unregisterModelsForCurrentAuth(ctx, activeAuth)\n\treturn true\n',
+    's.unregisterModelsForCurrentAuth(ctx, activeAuth)',
+)
+
+replace_once(
+    service_executors,
+    '''\t\tif updated, errUpdate := s.coreManager.Update(ctx, result.Auth); errUpdate == nil && updated != nil {
+\t\t\tactiveAuth = updated.Clone()
+\t\t}
+''',
+    '''\t\tif updated, committed := s.updateAuthForCurrentModelRegistration(ctx, a, result.Auth); committed {
+\t\t\tactiveAuth = updated.Clone()
+\t\t}
+''',
+    's.updateAuthForCurrentModelRegistration(ctx, a, result.Auth)',
+)
+
+service_plugins = ROOT / 'sdk/cliproxy/service_plugins.go'
+service_config_source = ROOT / 'sdk/cliproxy/service_config.go'
+replace_once(
+    service_plugins,
+    '''\t\tauthForRegistration := auth.Clone()
+\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    '''\t\tauthForRegistration := auth.Clone()
+\t\tregistrationCtx := s.beginAuthModelRegistration(ctx, authForRegistration.ID)
+\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    'registrationCtx := s.beginAuthModelRegistration(ctx, authForRegistration.ID)',
+)
+replace_once(
+    service_plugins,
+    's.completeModelRegistrationForAuthWithCache(ctx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(registrationCtx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(registrationCtx, authForRegistration, compatCache)',
+)
+replace_once(
+    service_plugins,
+    '''\t\t\tauthForRefresh := auth
+\t\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    '''\t\t\tauthForRefresh := auth
+\t\t\tregistrationCtx := s.beginAuthModelRegistration(context.Background(), authForRefresh.ID)
+\t\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    'registrationCtx := s.beginAuthModelRegistration(context.Background(), authForRefresh.ID)',
+)
+replace_once(
+    service_plugins,
+    'if s.refreshModelRegistrationForAuthWithCache(authForRefresh, compatCache) {',
+    'if s.refreshModelRegistrationForAuthWithContext(registrationCtx, authForRefresh, compatCache) {',
+    's.refreshModelRegistrationForAuthWithContext(registrationCtx, authForRefresh, compatCache)',
+)
+
+replace_once(
+    service_auth,
+    '''\t\t\tauthForRegistration := auth
+\t\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    '''\t\t\tauthForRegistration := auth
+\t\t\tauthRegistrationCtx := s.beginAuthModelRegistration(registrationCtx, authForRegistration.ID)
+\t\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    'authRegistrationCtx := s.beginAuthModelRegistration(registrationCtx, authForRegistration.ID)',
+)
+replace_once(
+    service_auth,
+    's.completeModelRegistrationForAuthWithCache(registrationCtx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(authRegistrationCtx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(authRegistrationCtx, authForRegistration, compatCache)',
+)
+
+replace_once(
+    service_config_source,
+    '''\t\tauthForRegistration := prepared
+\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    '''\t\tauthForRegistration := prepared
+\t\tauthRegistrationCtx := s.beginAuthModelRegistration(registrationCtx, authForRegistration.ID)
+\t\ttasks = append(tasks, modelRegistrationTask{
+''',
+    'authRegistrationCtx := s.beginAuthModelRegistration(registrationCtx, authForRegistration.ID)',
+)
+replace_once(
+    service_config_source,
+    's.completeModelRegistrationForAuthWithCache(registrationCtx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(authRegistrationCtx, authForRegistration, compatCache)',
+    's.completeModelRegistrationForAuthWithCache(authRegistrationCtx, authForRegistration, compatCache)',
 )
 
 write(
@@ -1095,6 +1007,8 @@ write(plugin_quota_management_test, read_text(Path(__file__).resolve().parent / 
 
 for source_name, target_name in (
     ('account_inspection_host.go', 'account_inspection_host.go'),
+    ('auth_file_connection.go', 'auth_file_connection.go'),
+    ('auth_file_connection_test.go', 'auth_file_connection_test.go'),
     ('pro_auth_mutation.go', 'pro_auth_mutation.go'),
     ('pro_management_runtime.go', 'pro_management_runtime.go'),
 ):
@@ -1140,13 +1054,1469 @@ replace_once(
     '\tpluginHost              *pluginhost.Host\n\tproApp                 *proapp.App\n',
     'proApp                 *proapp.App',
 )
+add_go_import(management_handler_source, '"crypto/subtle"\n', '\t"crypto/sha256"\n\t"encoding/hex"\n')
+replace_once(
+    management_handler_source,
+    '\tappliedReloadGeneration uint64\n',
+    '\tappliedReloadGeneration uint64\n\tconfigGeneration        uint64\n',
+    'configGeneration        uint64',
+)
+replace_once(
+    management_handler_source,
+    '\tproApp                 *proapp.App\n',
+    '\tproApp                 *proapp.App\n\tapiKeyRefsMu           sync.Mutex\n\tapiKeyRefs             map[string]apiKeyReference\n',
+    'apiKeyRefs              map[string]apiKeyReference',
+)
+replace_once(
+    management_handler_source,
+    '''\t\tenvSecret:           envSecret,
+''',
+    '''\t\tenvSecret:           envSecret,
+\t\tconfigGeneration:    1,
+\t\tapiKeyRefs:          make(map[string]apiKeyReference),
+''',
+    'apiKeyRefs:          make(map[string]apiKeyReference)',
+)
+replace_once(
+    management_handler_source,
+    '''\th.mu.Lock()
+\th.cfg = cfg
+\th.mu.Unlock()
+''',
+    '''\th.mu.Lock()
+\th.cfg = cfg
+\th.configGeneration++
+\tapplication := h.proApp
+\tvar apiKeys []string
+\tif cfg != nil {
+\t\tapiKeys = append(apiKeys, cfg.APIKeys...)
+\t}
+\th.mu.Unlock()
+\tif application != nil && application.APIKeyPolicy() != nil {
+\t\tapplication.APIKeyPolicy().SetConfiguredAPIKeys(apiKeys)
+\t}
+''',
+    'application.APIKeyPolicy().SetConfiguredAPIKeys(apiKeys)',
+)
+replace_once(
+    management_handler_source,
+    '''\t\tallowed, statusCode, errMsg := h.AuthenticateManagementKey(clientIP, localClient, provided)
+\t\tif !allowed {
+''',
+    '''\t\tallowed, statusCode, errMsg := h.AuthenticateManagementKey(clientIP, localClient, provided)
+\t\tif !allowed {
+''',
+    'AuthenticateManagementKey(clientIP, localClient, provided)',
+)
+replace_once(
+    management_handler_source,
+    '''\t\t\tc.AbortWithStatusJSON(statusCode, gin.H{"error": errMsg})
+\t\t\treturn
+\t\t}
+\t\tc.Next()
+''',
+    '''\t\t\tc.AbortWithStatusJSON(statusCode, gin.H{"error": errMsg})
+\t\t\treturn
+\t\t}
+\t\tsessionSum := sha256.Sum256([]byte(clientIP + "\\x00" + provided))
+\t\tc.Set(apiKeyPolicyManagementSessionContextKey, hex.EncodeToString(sessionSum[:]))
+\t\tc.Next()
+''',
+    'apiKeyPolicyManagementSessionContextKey',
+)
+
+insert_before(
+    management_handler_source,
+    'type attemptInfo struct {\n',
+    'const apiKeyPolicyManagementSessionContextKey = "apiKeyPolicyManagementSession"\n\n',
+    'const apiKeyPolicyManagementSessionContextKey',
+)
+
+replace_once(
+    management_handler_source,
+    '''\tif err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg); err != nil {
+''',
+    '''\tif err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg); err != nil {
+''',
+    'config.SaveConfigPreserveComments(h.configFilePath, h.cfg)',
+)
+replace_once(
+    management_handler_source,
+    '''\t\treturn false
+\t}
+\tsnapshot := h.reloadSnapshotConfigLocked()
+''',
+    '''\t\treturn false
+\t}
+\th.configGeneration++
+\tsnapshot := h.reloadSnapshotConfigLocked()
+''',
+    'h.configGeneration++\n\tsnapshot := h.reloadSnapshotConfigLocked()',
+)
 
 server_source = ROOT / 'internal/api/server.go'
+add_go_import(server_source, '"' + import_path('internal/pluginhost') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+replace_once(
+    server_source,
+    '\t// requestLogger is the request logger instance for dynamic configuration updates.\n',
+    '\t// apiKeyPolicy freezes the authenticated API-key policy for each request.\n\tapiKeyPolicy *apikeypolicy.Service\n\n\t// requestLogger is the request logger instance for dynamic configuration updates.\n',
+    'apiKeyPolicy *apikeypolicy.Service',
+)
 replace_once(
     server_source,
     '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n',
     '\ts.mgmt.SetPluginHost(optionState.pluginHost)\n\ts.mgmt.SetProApp(optionState.proApp)\n',
     's.mgmt.SetProApp(optionState.proApp)',
+)
+replace_once(
+    server_source,
+    '\ts.handlers.SetPluginHost(optionState.pluginHost)\n',
+    '''\tif optionState.proApp != nil {
+\t\ts.apiKeyPolicy = optionState.proApp.APIKeyPolicy()
+\t}
+\ts.handlers.SetPluginHost(optionState.pluginHost)
+''',
+    's.apiKeyPolicy = optionState.proApp.APIKeyPolicy()',
+)
+
+server_reload_source = ROOT / 'internal/api/server_reload.go'
+replace_once(
+    server_reload_source,
+    '''	accessConfigApplied := s.applyAccessConfig(oldCfg, cfg)
+''',
+    '''	// Publish the committed Key set to the policy service before access auth
+	// can accept a restored Key. Orphan purge shares this service guard, so it
+	// cannot delete a policy in the gap between auth and Management reload.
+	if s.apiKeyPolicy != nil {
+		s.apiKeyPolicy.SetConfiguredAPIKeys(cfg.APIKeys)
+	}
+	accessConfigApplied := s.applyAccessConfig(oldCfg, cfg)
+''',
+    's.apiKeyPolicy.SetConfiguredAPIKeys(cfg.APIKeys)',
+)
+
+server_middleware_source = ROOT / 'internal/api/server_middleware.go'
+add_go_import(server_middleware_source, 'codexlive "' + import_path('internal/client/codex/live') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+replace_once(
+    server_middleware_source,
+    '''func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
+\treturn accessAuthMiddleware(manager, false)
+}
+
+func realtimeStandardAuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
+\treturn accessAuthMiddleware(manager, true)
+}
+
+func accessAuthMiddleware(manager *sdkaccess.Manager, realtimeError bool) gin.HandlerFunc {
+''',
+    '''func AuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service) gin.HandlerFunc {
+\treturn accessAuthMiddleware(manager, policy, false)
+}
+
+func realtimeStandardAuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service) gin.HandlerFunc {
+\treturn accessAuthMiddleware(manager, policy, true)
+}
+
+func accessAuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service, realtimeError bool) gin.HandlerFunc {
+''',
+    'func AuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service)',
+)
+replace_once(
+    server_middleware_source,
+    '''\t\tif err == nil {
+\t\t\tif result != nil {
+\t\t\t\tc.Set("userApiKey", result.Principal)
+\t\t\t\tc.Set("accessProvider", result.Provider)
+\t\t\t\tif len(result.Metadata) > 0 {
+\t\t\t\t\tc.Set("accessMetadata", result.Metadata)
+\t\t\t\t}
+\t\t\t}
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+''',
+    '''\t\tif err == nil {
+\t\t\tif result != nil {
+\t\t\t\tc.Set("userApiKey", result.Principal)
+\t\t\t\tc.Set("accessProvider", result.Provider)
+\t\t\t\tif len(result.Metadata) > 0 {
+\t\t\t\t\tc.Set("accessMetadata", result.Metadata)
+\t\t\t\t}
+\t\t\t\tif result.Provider == sdkaccess.DefaultAccessProviderName && policy != nil {
+\t\t\t\t\tidentity, identityErr := apikeypolicy.NewAuthenticatedAPIKeyIdentity(result.Principal)
+\t\t\t\t\tif identityErr != nil {
+\t\t\t\t\t\twriteAPIKeyPolicyMiddlewareError(c, realtimeError, identityErr)
+\t\t\t\t\t\treturn
+\t\t\t\t\t}
+\t\t\t\t\tdecision, decisionErr := policy.Decide(identity)
+\t\t\t\t\tif decisionErr != nil {
+\t\t\t\t\t\twriteAPIKeyPolicyMiddlewareError(c, realtimeError, decisionErr)
+\t\t\t\t\t\treturn
+\t\t\t\t\t}
+\t\t\t\t\trequestCtx := apikeypolicy.WithIdentity(c.Request.Context(), identity)
+\t\t\t\t\trequestCtx = apikeypolicy.WithDecision(requestCtx, decision)
+\t\t\t\t\tc.Request = c.Request.WithContext(requestCtx)
+\t\t\t\t}
+\t\t\t}
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+''',
+    'requestCtx = apikeypolicy.WithDecision(requestCtx, decision)',
+)
+replace_once(
+    server_middleware_source,
+    '''func realtimeAuthMiddleware(manager *sdkaccess.Manager, handler *codexlive.Handler) gin.HandlerFunc {
+\tfallback := realtimeStandardAuthMiddleware(manager)
+''',
+    '''func writeAPIKeyPolicyMiddlewareError(c *gin.Context, realtimeError bool, err error) {
+\tstatus := http.StatusServiceUnavailable
+\tcode := "api_key_policy_unavailable"
+\tmessage := "API key policy is unavailable"
+\tif quotaErr, ok := err.(*apikeypolicy.QuotaExceededError); ok {
+\t\tstatus = http.StatusTooManyRequests
+\t\tcode = "api_key_quota_exceeded"
+\t\tmessage = quotaErr.Error()
+\t}
+\tif policyErr, ok := err.(*apikeypolicy.PolicyError); ok {
+\t\tstatus = http.StatusForbidden
+\t\tcode = policyErr.Code
+\t\tmessage = policyErr.Message
+\t}
+\terrorType := "server_error"
+\tif status == http.StatusForbidden || status == http.StatusTooManyRequests {
+\t\terrorType = "permission_error"
+\t}
+\tif realtimeError {
+\t\tc.AbortWithStatusJSON(status, gin.H{"error": gin.H{"message": message, "type": errorType, "param": nil, "code": code}})
+\t\treturn
+\t}
+\tif c != nil && c.Request != nil {
+\t\tpath := c.Request.URL.Path
+\t\tif strings.HasPrefix(path, "/v1beta/") {
+\t\t\tstatusName := "UNAVAILABLE"
+\t\t\tif status == http.StatusForbidden {
+\t\t\t\tstatusName = "PERMISSION_DENIED"
+\t\t\t} else if status == http.StatusTooManyRequests {
+\t\t\t\tstatusName = "RESOURCE_EXHAUSTED"
+\t\t\t}
+\t\t\tc.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": status, "message": message, "status": statusName, "reason": code}})
+\t\t\treturn
+\t\t}
+\t\tif c.GetHeader("Anthropic-Version") != "" || strings.HasPrefix(c.GetHeader("User-Agent"), "claude-cli") || strings.HasPrefix(path, "/v1/messages") {
+\t\t\tclaudeType := "api_error"
+\t\t\tif status == http.StatusForbidden || status == http.StatusTooManyRequests {
+\t\t\t\tclaudeType = "permission_error"
+\t\t\t}
+\t\t\tc.AbortWithStatusJSON(status, gin.H{"type": "error", "error": gin.H{"type": claudeType, "message": message + " (" + code + ")"}})
+\t\t\treturn
+\t\t}
+\t}
+\tc.AbortWithStatusJSON(status, gin.H{"error": gin.H{"message": message, "type": errorType, "code": code}})
+}
+
+func realtimeAuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service, handler *codexlive.Handler) gin.HandlerFunc {
+\tfallback := realtimeStandardAuthMiddleware(manager, policy)
+''',
+    'func realtimeAuthMiddleware(manager *sdkaccess.Manager, policy *apikeypolicy.Service',
+)
+replace_once(
+    server_middleware_source,
+    '''\t\tc.Set("userApiKey", principal)
+\t\tc.Set("accessProvider", provider)
+''',
+    '''\t\tc.Set("userApiKey", principal)
+\t\tc.Set("accessProvider", provider)
+\t\tif identity := authorization.IssuerAPIKeyIdentity; identity.Valid() && policy != nil {
+\t\t\tdecision, decisionErr := policy.Decide(identity)
+\t\t\tif decisionErr != nil {
+\t\t\t\twriteAPIKeyPolicyMiddlewareError(c, true, decisionErr)
+\t\t\t\treturn
+\t\t\t}
+\t\t\trequestCtx := apikeypolicy.WithIdentity(c.Request.Context(), identity)
+\t\t\trequestCtx = apikeypolicy.WithDecision(requestCtx, decision)
+\t\t\tc.Request = c.Request.WithContext(requestCtx)
+\t\t}
+''',
+    'authorization.IssuerAPIKeyIdentity',
+)
+
+server_routes_source = ROOT / 'internal/api/server_routes.go'
+routes_text = read(server_routes_source)
+routes_text = routes_text.replace('AuthMiddleware(s.accessManager)', 'AuthMiddleware(s.accessManager, s.apiKeyPolicy)')
+routes_text = routes_text.replace('realtimeAuthMiddleware(s.accessManager, s.codexLiveHandler)', 'realtimeAuthMiddleware(s.accessManager, s.apiKeyPolicy, s.codexLiveHandler)')
+routes_text = routes_text.replace('realtimeStandardAuthMiddleware(s.accessManager)', 'realtimeStandardAuthMiddleware(s.accessManager, s.apiKeyPolicy)')
+write(server_routes_source, routes_text)
+
+insert_before(
+    server_middleware_source,
+    '// corsMiddleware returns a Gin middleware handler',
+    '''func apiKeyQuotaMiddleware(policy *apikeypolicy.Service) gin.HandlerFunc {
+\treturn func(c *gin.Context) {
+\t\tif policy == nil || c == nil || c.Request == nil {
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+\t\tpath := c.Request.URL.Path
+\t\tgeminiModelPath := strings.TrimPrefix(path, "/v1beta/models/")
+\t\tgeminiModelDiscovery := geminiModelPath != path && geminiModelPath != "" && !strings.Contains(geminiModelPath, ":")
+\t\tif c.Request.Method == http.MethodGet && (path == "/v1/models" || path == "/v1beta/models" || geminiModelDiscovery || strings.HasPrefix(path, "/v1/live/") || (path == "/v1/realtime" && strings.TrimSpace(c.Query("call_id")) != "")) {
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+\t\tdecision, ok := apikeypolicy.DecisionFromContext(c.Request.Context())
+\t\tif !ok {
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+\t\tupgrade := strings.EqualFold(strings.TrimSpace(c.GetHeader("Upgrade")), "websocket")
+\t\tdeferredRealtime := c.Request.Method == http.MethodPost && (path == "/v1/realtime" || path == "/v1/realtime/calls")
+\t\tif upgrade && (path == "/v1/responses" || path == "/v1/realtime") || deferredRealtime {
+\t\t\trequestCtx := apikeypolicy.WithQuotaAdmission(c.Request.Context(), policy.AdmitDecision)
+\t\t\tc.Request = c.Request.WithContext(requestCtx)
+\t\t\tc.Next()
+\t\t\treturn
+\t\t}
+\t\tadmitted, err := policy.AdmitDecision(c.Request.Context(), decision)
+\t\tif err != nil {
+\t\t\twriteAPIKeyPolicyMiddlewareError(c, strings.HasPrefix(c.Request.URL.Path, "/v1/realtime"), err)
+\t\t\treturn
+\t\t}
+\t\tc.Request = c.Request.WithContext(apikeypolicy.WithDecision(c.Request.Context(), admitted))
+\t\tc.Next()
+\t}
+}
+
+''',
+    'func apiKeyQuotaMiddleware(policy *apikeypolicy.Service)',
+)
+
+routes_text = read(server_routes_source)
+for auth_line in (
+    'v1.Use(AuthMiddleware(s.accessManager, s.apiKeyPolicy))',
+    'openaiV1.Use(AuthMiddleware(s.accessManager, s.apiKeyPolicy))',
+    'codexDirect.Use(AuthMiddleware(s.accessManager, s.apiKeyPolicy))',
+    'v1beta.Use(AuthMiddleware(s.accessManager, s.apiKeyPolicy))',
+):
+    if routes_text.count(auth_line) != 1:
+        raise SystemExit(f'expected one quota group anchor: {auth_line}')
+    group_name = auth_line.split('.')[0]
+    routes_text = routes_text.replace(auth_line, auth_line + '\n\t' + group_name + '.Use(apiKeyQuotaMiddleware(s.apiKeyPolicy))', 1)
+for route in (
+    's.engine.GET("/v1/realtime", realtimeAuth, s.codexLiveHandler.HandleRealtimeWebsocket)',
+    's.engine.POST("/v1/realtime", realtimeAuth, s.codexLiveHandler.Handle)',
+    's.engine.POST("/v1/realtime/calls", realtimeAuth, s.codexLiveHandler.Handle)',
+    's.engine.GET("/v1/realtime/translations", realtimeAuth, s.codexLiveHandler.HandleTranslation)',
+    's.engine.POST("/v1/realtime/translations", realtimeAuth, s.codexLiveHandler.HandleTranslation)',
+):
+    if routes_text.count(route) != 1:
+        raise SystemExit(f'expected one realtime quota route anchor: {route}')
+    routes_text = routes_text.replace(route, route.replace(', realtimeAuth,', ', realtimeAuth, apiKeyQuotaMiddleware(s.apiKeyPolicy),'), 1)
+write(server_routes_source, routes_text)
+
+responses_websocket_source = ROOT / 'sdk/api/handlers/openai/openai_responses_websocket.go'
+add_go_import(
+    responses_websocket_source,
+    f'\t"{MODULE_PATH}/internal/interfaces"\n',
+    f'\tapikeypolicy "{MODULE_PATH}/internal/pro/apikeypolicy"\n',
+)
+replace_once(
+    responses_websocket_source,
+    '''\t\t\tcontinue
+\t\t}
+
+\t\tvar toolCacheTurn *responsesWebsocketToolCacheTurn
+''',
+    '''\t\t\tcontinue
+\t\t}
+
+\t\texecutionParent, errAdmission := apikeypolicy.AdmitQuotaTurn(executionParent)
+\t\tif errAdmission != nil {
+\t\t\terrMsg := handlers.ExecutionErrorMessage(errAdmission)
+\t\t\tif errors.Is(errAdmission, apikeypolicy.ErrQuotaUnavailable) {
+\t\t\t\terrMsg.StatusCode = http.StatusServiceUnavailable
+\t\t\t}
+\t\t\th.LoggingAPIResponseError(context.WithValue(context.Background(), "gin", c), errMsg)
+\t\t\tmarkAPIResponseTimestamp(c)
+\t\t\tif _, errWrite := writeResponsesWebsocketError(writer, wsTimelineLog, errMsg); errWrite != nil {
+\t\t\t\twsTerminateErr = errWrite
+\t\t\t\treturn
+\t\t\t}
+\t\t\tcontinue
+\t\t}
+
+\t\tvar toolCacheTurn *responsesWebsocketToolCacheTurn
+''',
+    'apikeypolicy.AdmitQuotaTurn(executionParent)',
+)
+
+realtime_websocket_source = ROOT / 'internal/client/codex/live/websocket.go'
+add_go_import(realtime_websocket_source, '\t"encoding/json"\n', '\t"errors"\n')
+add_go_import(realtime_websocket_source, '\t"errors"\n', '\t"fmt"\n')
+add_go_import(realtime_websocket_source, '\t"strings"\n', '\t"sync"\n')
+add_go_import(realtime_websocket_source, '\t"sync"\n', '\t"time"\n')
+add_go_import(
+    realtime_websocket_source,
+    f'\t"{MODULE_PATH}/internal/logging"\n',
+    f'\tapikeypolicy "{MODULE_PATH}/internal/pro/apikeypolicy"\n',
+)
+replace_once(
+    realtime_websocket_source,
+	'''\tif len(tokenSession) > 0 {
+\t\ttokenModel := codexRealtimeModel(modelFromJSON(tokenSession))
+\t\tif selectionModel != tokenModel {
+\t\t\twriteRealtimeError(c, http.StatusForbidden, "Realtime client secret is not valid for the requested model", "invalid_request_error", "realtime_client_secret_scope_mismatch")
+\t\t\treturn
+\t\t}
+\t}
+\tctx := context.WithValue(c.Request.Context(), "gin", c)
+''',
+	'''\tpolicyCtx, effectiveModel, errPolicy := applyRealtimeAPIKeyPolicy(c.Request.Context(), requestedModel)
+\tif errPolicy != nil {
+\t\twriteRealtimeAPIKeyPolicyError(c, errPolicy)
+\t\treturn
+\t}
+\trequestedModel = effectiveModel
+\tselectionModel = codexRealtimeModel(requestedModel)
+\tif len(tokenSession) > 0 {
+\t\ttokenModel := codexRealtimeModel(modelFromJSON(tokenSession))
+\t\tif selectionModel != tokenModel {
+\t\t\twriteRealtimeError(c, http.StatusForbidden, "Realtime client secret is not valid for the requested model", "invalid_request_error", "realtime_client_secret_scope_mismatch")
+\t\t\treturn
+\t\t}
+\t}
+\tctx := context.WithValue(policyCtx, "gin", c)
+''',
+	'policyCtx, effectiveModel, errPolicy := applyRealtimeAPIKeyPolicy',
+)
+insert_before(
+    realtime_websocket_source,
+    'func realtimeSessionUpdate(session json.RawMessage) (json.RawMessage, error) {',
+    r'''func applyRealtimeAPIKeyPolicy(ctx context.Context, requestedModel string) (context.Context, string, error) {
+	decision, configured := apikeypolicy.DecisionFromContext(ctx)
+	if !configured {
+		return ctx, requestedModel, nil
+	}
+	effectiveModel, err := decision.ApplyModel(requestedModel)
+	if err != nil {
+		return ctx, "", err
+	}
+	if err = decision.AllowsProvider("codex"); err != nil {
+		return ctx, "", err
+	}
+	settle := apikeypolicy.QuotaUsageSettlementFromContext(ctx)
+	policyCtx := apikeypolicy.WithDecision(ctx, decision.WithModels(requestedModel, effectiveModel))
+	return apikeypolicy.WithQuotaUsageSettlement(policyCtx, settle), effectiveModel, nil
+}
+
+func writeRealtimeAPIKeyPolicyError(c *gin.Context, err error) {
+	status := http.StatusServiceUnavailable
+	code := "api_key_policy_unavailable"
+	message := "API key policy is unavailable"
+	errorType := "server_error"
+	if policyErr, ok := err.(*apikeypolicy.PolicyError); ok {
+		status = http.StatusForbidden
+		code = policyErr.Code
+		message = policyErr.Message
+		errorType = "permission_error"
+	}
+	writeRealtimeError(c, status, message, errorType, code)
+}
+
+func writeRealtimeQuotaAdmissionError(c *gin.Context, err error) {
+	status := http.StatusServiceUnavailable
+	code := "api_key_quota_unavailable"
+	errorType := "server_error"
+	if _, ok := err.(*apikeypolicy.QuotaExceededError); ok {
+		status = http.StatusTooManyRequests
+		code = "api_key_quota_exceeded"
+		errorType = "rate_limit_error"
+	}
+	writeRealtimeError(c, status, err.Error(), errorType, code)
+}
+
+''',
+    'func applyRealtimeAPIKeyPolicy(',
+)
+replace_once(
+    realtime_websocket_source,
+    '\tif errRelay := relayWebsockets(downstream, upstream); errRelay != nil && !isNormalWebsocketClose(errRelay) {\n',
+    '\tif errRelay := relayRealtimeWebsockets(ctx, downstream, upstream, requestedModel); errRelay != nil && !isNormalWebsocketClose(errRelay) {\n',
+    'relayRealtimeWebsockets(ctx, downstream, upstream, requestedModel)',
+)
+insert_before(
+    realtime_websocket_source,
+    'func realtimeSessionUpdate(session json.RawMessage) (json.RawMessage, error) {',
+    r'''type realtimeQuotaTurn struct {
+	ctx     context.Context
+	eventID string
+	model   string
+}
+
+type realtimeQuotaState struct {
+	mu     sync.Mutex
+	active *realtimeQuotaTurn
+}
+
+func relayRealtimeWebsockets(ctx context.Context, downstream, upstream *websocket.Conn, billingModel string) error {
+	state := &realtimeQuotaState{}
+	downstreamWriteMu := &sync.Mutex{}
+	results := make(chan error, 2)
+	go func() { results <- copyRealtimeDownstream(ctx, downstream, upstream, state, downstreamWriteMu, billingModel) }()
+	go func() { results <- copyRealtimeUpstream(ctx, downstream, upstream, state, downstreamWriteMu) }()
+
+	firstErr := <-results
+	closeCode, closeReason := websocketCloseDetails(firstErr)
+	payload := websocket.FormatCloseMessage(closeCode, closeReason)
+	downstreamWriteMu.Lock()
+	_ = downstream.WriteControl(websocket.CloseMessage, payload, time.Time{})
+	downstreamWriteMu.Unlock()
+	_ = upstream.WriteControl(websocket.CloseMessage, payload, time.Time{})
+	_ = downstream.Close()
+	_ = upstream.Close()
+	<-results
+	return firstErr
+}
+
+func copyRealtimeDownstream(ctx context.Context, downstream, upstream *websocket.Conn, state *realtimeQuotaState, downstreamWriteMu *sync.Mutex, billingModel string) error {
+	for {
+		messageType, payload, errRead := downstream.ReadMessage()
+		if errRead != nil {
+			return errRead
+		}
+		if messageType == websocket.TextMessage || messageType == websocket.BinaryMessage {
+			var event struct{ Type string `json:"type"` }
+			if json.Unmarshal(payload, &event) == nil && strings.TrimSpace(event.Type) == "response.create" {
+				state.mu.Lock()
+				busy := state.active != nil
+				state.mu.Unlock()
+				if busy {
+					writeRealtimeQuotaError(downstream, downstreamWriteMu, errors.New("a realtime response is already active"), "realtime_response_in_progress")
+					continue
+				}
+				turnCtx, errAdmission := apikeypolicy.AdmitQuotaTurn(ctx)
+				if errAdmission != nil {
+					writeRealtimeQuotaError(downstream, downstreamWriteMu, errAdmission, "api_key_quota_exceeded")
+					continue
+				}
+				if decision, ok := apikeypolicy.DecisionFromContext(turnCtx); ok {
+					if _, charged := decision.QuotaAttribution(); charged {
+						state.mu.Lock()
+						state.active = &realtimeQuotaTurn{ctx: turnCtx, eventID: fmt.Sprintf("realtime:%d", time.Now().UnixNano()), model: strings.TrimSpace(billingModel)}
+						state.mu.Unlock()
+					}
+				}
+			}
+		}
+		if errWrite := upstream.WriteMessage(messageType, payload); errWrite != nil {
+			return errWrite
+		}
+	}
+}
+
+func copyRealtimeUpstream(ctx context.Context, downstream, upstream *websocket.Conn, state *realtimeQuotaState, downstreamWriteMu *sync.Mutex) error {
+	for {
+		messageType, payload, errRead := upstream.ReadMessage()
+		if errRead != nil {
+			return errRead
+		}
+		if messageType == websocket.TextMessage || messageType == websocket.BinaryMessage {
+			var event struct {
+				Type     string `json:"type"`
+				Response struct{ ID string `json:"id"` } `json:"response"`
+			}
+			if json.Unmarshal(payload, &event) == nil && (event.Type == "response.done" || event.Type == "response.completed") {
+				state.mu.Lock()
+				turn := state.active
+				state.active = nil
+				state.mu.Unlock()
+				if turn != nil {
+					detail, ok := helps.ParseCodexUsage(payload)
+					if !ok {
+						detail = helps.ParseOpenAIUsage(payload)
+					}
+					totalTokens := detail.TokenBreakdown.TotalTokens
+					if totalTokens == 0 {
+						totalTokens = detail.TotalTokens
+					}
+					eventID := turn.eventID
+					if responseID := strings.TrimSpace(event.Response.ID); responseID != "" {
+						eventID += ":response=" + responseID
+					}
+					if errSettle := apikeypolicy.SettleQuotaUsage(turn.ctx, eventID, apikeypolicy.QuotaUsageDelta{
+						Provider: "codex", Model: turn.model, InputTokens: detail.InputTokens,
+						OutputTokens: detail.OutputTokens, ReasoningTokens: detail.ReasoningTokens,
+						CachedTokens: detail.CachedTokens, CacheReadTokens: detail.CacheReadTokens,
+						CacheWriteTokens: detail.CacheCreationTokens, TotalTokens: totalTokens,
+						EffectiveServiceTier: detail.ResponseServiceTier, EffectiveSpeed: detail.ResponseSpeed,
+					}); errSettle != nil {
+						log.WithError(errSettle).Error("failed to settle realtime API key quota usage")
+					}
+				}
+			}
+		}
+		downstreamWriteMu.Lock()
+		errWrite := downstream.WriteMessage(messageType, payload)
+		downstreamWriteMu.Unlock()
+		if errWrite != nil {
+			return errWrite
+		}
+	}
+}
+
+func writeRealtimeQuotaError(downstream *websocket.Conn, writeMu *sync.Mutex, err error, code string) {
+	errorType := "rate_limit_error"
+	if errors.Is(err, apikeypolicy.ErrQuotaUnavailable) {
+		errorType = "server_error"
+		code = "api_key_quota_unavailable"
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"type": "error",
+		"error": map[string]any{"type": errorType, "code": code, "message": err.Error(), "param": nil},
+	})
+	writeMu.Lock()
+	_ = downstream.WriteMessage(websocket.TextMessage, payload)
+	writeMu.Unlock()
+}
+
+''',
+    'func relayRealtimeWebsockets(',
+)
+
+realtime_live_source = ROOT / 'internal/client/codex/live/live.go'
+add_go_import(
+    realtime_live_source,
+    f'\t"{MODULE_PATH}/internal/logging"\n',
+    f'\tapikeypolicy "{MODULE_PATH}/internal/pro/apikeypolicy"\n',
+)
+replace_once(
+    realtime_live_source,
+    '''\tif errPayload == nil {
+\t\tupstreamBody, model, errPayload = rewriteCallRequestModel(upstreamBody, upstreamContentType, model)
+\t}
+''',
+    '''\tif errPayload == nil {
+\t\tpolicyCtx, effectiveModel, errPolicy := applyRealtimeAPIKeyPolicy(c.Request.Context(), model)
+\t\tif errPolicy != nil {
+\t\t\twriteRealtimeAPIKeyPolicyError(c, errPolicy)
+\t\t\treturn
+\t\t}
+\t\tmodel = effectiveModel
+\t\tadmittedCtx, errAdmission := apikeypolicy.AdmitQuotaTurn(policyCtx)
+\t\tif errAdmission != nil {
+\t\t\twriteRealtimeQuotaAdmissionError(c, errAdmission)
+\t\t\treturn
+\t\t}
+\t\tc.Request = c.Request.WithContext(admittedCtx)
+\t}
+\tquotaModel := model
+\tif errPayload == nil {
+\t\tupstreamBody, model, errPayload = rewriteCallRequestModel(upstreamBody, upstreamContentType, model)
+\t}
+''',
+    'quotaModel := model',
+)
+replace_once(
+    realtime_live_source,
+    '''\t\t\tsession := liveSession{authID: selected.ID, model: model, media: mediaSession}
+''',
+    '''\t\t\tsession := liveSession{
+\t\t\t\tauthID: selected.ID, model: model, media: mediaSession,
+\t\t\t\tquotaModel: quotaModel, quotaSettlement: apikeypolicy.QuotaUsageSettlementFromContext(c.Request.Context()),
+\t\t\t}
+''',
+    'quotaSettlement: apikeypolicy.QuotaUsageSettlementFromContext',
+)
+
+realtime_sideband_source = ROOT / 'internal/client/codex/live/sideband.go'
+add_go_import(realtime_sideband_source, '\t"context"\n', '\t"encoding/json"\n')
+add_go_import(realtime_sideband_source, '\t"context"\n', '\t"crypto/sha256"\n')
+add_go_import(realtime_sideband_source, '\t"errors"\n', '\t"fmt"\n')
+add_go_import(
+    realtime_sideband_source,
+    f'\t"{MODULE_PATH}/internal/logging"\n',
+    f'\tapikeypolicy "{MODULE_PATH}/internal/pro/apikeypolicy"\n',
+)
+replace_once(
+    realtime_sideband_source,
+    '''\tclientSecretPrincipal string
+\thomeSelection         *auth.HomeDispatchSelection
+''',
+    '''\tclientSecretPrincipal string
+\tquotaModel           string
+\tquotaSettlement      func(context.Context, string, apikeypolicy.QuotaUsageDelta) error
+\thomeSelection         *auth.HomeDispatchSelection
+''',
+    'quotaSettlement func(context.Context, string, apikeypolicy.QuotaUsageDelta) error',
+)
+replace_once(
+    realtime_sideband_source,
+    '''\tif errRelay := relayWebsockets(downstream, upstream); errRelay != nil && !isNormalWebsocketClose(errRelay) {
+''',
+    '''\tif errRelay := relaySidebandQuotaWebsockets(ctx, downstream, upstream, session); errRelay != nil && !isNormalWebsocketClose(errRelay) {
+''',
+    'relaySidebandQuotaWebsockets(ctx, downstream, upstream, session)',
+)
+insert_before(
+    realtime_sideband_source,
+    'func sidebandTarget(c *gin.Context) (sidebandStyle, string, bool) {',
+    r'''func relaySidebandQuotaWebsockets(ctx context.Context, downstream, upstream *websocket.Conn, session liveSession) error {
+	if session.quotaSettlement == nil {
+		return relayWebsockets(downstream, upstream)
+	}
+	results := make(chan error, 2)
+	go func() { results <- copyWebsocket(upstream, downstream) }()
+	go func() {
+		for {
+			messageType, payload, errRead := upstream.ReadMessage()
+			if errRead != nil {
+				results <- errRead
+				return
+			}
+			var event struct {
+				Type string `json:"type"`
+				Response struct{ ID string `json:"id"` } `json:"response"`
+			}
+			if json.Unmarshal(payload, &event) == nil && (event.Type == "response.done" || event.Type == "response.completed") {
+				detail, ok := helps.ParseCodexUsage(payload)
+				if !ok {
+					detail = helps.ParseOpenAIUsage(payload)
+				}
+				totalTokens := detail.TokenBreakdown.TotalTokens
+				if totalTokens == 0 {
+					totalTokens = detail.TotalTokens
+				}
+				eventID := "webrtc:" + session.callID + ":response=" + strings.TrimSpace(event.Response.ID)
+				if strings.TrimSpace(event.Response.ID) == "" {
+					eventID = fmt.Sprintf("webrtc:%s:payload=%x", session.callID, sha256.Sum256(payload))
+				}
+				if errSettle := session.quotaSettlement(context.WithoutCancel(ctx), eventID, apikeypolicy.QuotaUsageDelta{
+					Provider: "codex", Model: session.quotaModel, InputTokens: detail.InputTokens,
+					OutputTokens: detail.OutputTokens, ReasoningTokens: detail.ReasoningTokens,
+					CachedTokens: detail.CachedTokens, CacheReadTokens: detail.CacheReadTokens,
+					CacheWriteTokens: detail.CacheCreationTokens, TotalTokens: totalTokens,
+					EffectiveServiceTier: detail.ResponseServiceTier, EffectiveSpeed: detail.ResponseSpeed,
+				}); errSettle != nil {
+					log.WithError(errSettle).Error("failed to settle WebRTC API key quota usage")
+				}
+			}
+			if errWrite := downstream.WriteMessage(messageType, payload); errWrite != nil {
+				results <- errWrite
+				return
+			}
+		}
+	}()
+	firstErr := <-results
+	closeCode, closeReason := websocketCloseDetails(firstErr)
+	payload := websocket.FormatCloseMessage(closeCode, closeReason)
+	_ = downstream.WriteControl(websocket.CloseMessage, payload, time.Time{})
+	_ = upstream.WriteControl(websocket.CloseMessage, payload, time.Time{})
+	_ = downstream.Close()
+	_ = upstream.Close()
+	<-results
+	return firstErr
+}
+
+''',
+    'func relaySidebandQuotaWebsockets(',
+)
+
+client_secret_source = ROOT / 'internal/client/codex/live/client_secret.go'
+add_go_import(client_secret_source, '"github.com/gin-gonic/gin"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+replace_once(
+    client_secret_source,
+    '''type ClientSecretAuthorization struct {
+\tPrincipal       string
+\tIssuerPrincipal string
+\tIssuerProvider  string
+\tSession         json.RawMessage
+}
+''',
+    '''type ClientSecretAuthorization struct {
+\tPrincipal           string
+\tIssuerPrincipal     string
+\tIssuerProvider      string
+\tIssuerAPIKeyIdentity apikeypolicy.AuthenticatedAPIKeyIdentity
+\tSession             json.RawMessage
+}
+''',
+    'IssuerAPIKeyIdentity apikeypolicy.AuthenticatedAPIKeyIdentity',
+)
+replace_once(
+    client_secret_source,
+    'func (s *clientSecretStore) create(session json.RawMessage, lifetime time.Duration, issuerPrincipal, issuerProvider string) (string, ClientSecretAuthorization, time.Time, error) {\n',
+    'func (s *clientSecretStore) create(session json.RawMessage, lifetime time.Duration, issuerPrincipal, issuerProvider string, issuerIdentities ...apikeypolicy.AuthenticatedAPIKeyIdentity) (string, ClientSecretAuthorization, time.Time, error) {\n',
+    'issuerIdentities ...apikeypolicy.AuthenticatedAPIKeyIdentity',
+)
+replace_once(
+    client_secret_source,
+    '''\tauthorization := ClientSecretAuthorization{
+''',
+    '''\tissuerIdentity := apikeypolicy.AuthenticatedAPIKeyIdentity{}
+\tif len(issuerIdentities) > 0 {
+\t\tissuerIdentity = issuerIdentities[0]
+\t}
+\tauthorization := ClientSecretAuthorization{
+''',
+    'issuerIdentity = issuerIdentities[0]',
+)
+replace_once(
+    client_secret_source,
+    '''\t\tIssuerPrincipal: strings.TrimSpace(issuerPrincipal),
+\t\tIssuerProvider:  strings.TrimSpace(issuerProvider),
+\t\tSession:         append(json.RawMessage(nil), session...),
+''',
+    '''\t\tIssuerPrincipal:      strings.TrimSpace(issuerPrincipal),
+\t\tIssuerProvider:       strings.TrimSpace(issuerProvider),
+\t\tIssuerAPIKeyIdentity: issuerIdentity,
+\t\tSession:              append(json.RawMessage(nil), session...),
+''',
+    'IssuerAPIKeyIdentity: issuerIdentity',
+)
+replace_once(
+    client_secret_source,
+    '''\tissuerPrincipalValue, _ := issuerPrincipal.(string)
+\tissuerProviderValue, _ := issuerProvider.(string)
+\ttoken, authorization, expiresAt, errCreate := h.clientSecrets.create(upstreamSession, lifetime, issuerPrincipalValue, issuerProviderValue)
+''',
+    '''\tissuerPrincipalValue, _ := issuerPrincipal.(string)
+\tissuerProviderValue, _ := issuerProvider.(string)
+\tissuerIdentity, _ := apikeypolicy.IdentityFromContext(c.Request.Context())
+\ttoken, authorization, expiresAt, errCreate := h.clientSecrets.create(upstreamSession, lifetime, issuerPrincipalValue, issuerProviderValue, issuerIdentity)
+''',
+    'issuerIdentity, _ := apikeypolicy.IdentityFromContext',
+)
+
+handlers_routing_source = ROOT / 'sdk/api/handlers/handlers_routing.go'
+add_go_import(handlers_routing_source, '"' + import_path('internal/interfaces') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+insert_before(
+    handlers_routing_source,
+    'func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {\n',
+    '''func applyAPIKeyModelPolicy(h *BaseAPIHandler, ctx context.Context, modelName string, rawJSON []byte) (context.Context, string, []byte, *interfaces.ErrorMessage) {
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured {
+\t\treturn ctx, modelName, rawJSON, nil
+\t}
+\t// A Profile's exact alias contract wins over the host-wide auto resolver.
+\t// Passthrough keeps the upstream order unchanged; profile requests first
+\t// apply their exact mapping and only resolve an unmapped auto model.
+\tparsed := thinking.ParseSuffix(modelName)
+\tprofileOwnsMapping := decision.Mode == apikeypolicy.ModeProfile && (decision.HasExactModelMapping(modelName) || (parsed.HasSuffix && decision.HasExactModelMapping(parsed.ModelName)))
+\tif profileOwnsMapping {
+\t\teffectiveModel, errApply := decision.ApplyModel(modelName)
+\t\tif errApply != nil {
+\t\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(errApply)
+\t\t}
+\t\tctx = apikeypolicy.WithDecision(ctx, decision.WithModels(modelName, effectiveModel))
+\t\tif effectiveModel == modelName || len(rawJSON) == 0 {
+\t\t\treturn ctx, effectiveModel, rawJSON, nil
+\t\t}
+\t\tupdated, errSet := sjson.SetBytes(rawJSON, "model", effectiveModel)
+\t\tif errSet != nil {
+\t\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(apikeypolicy.ErrUnavailable)
+\t\t}
+\t\treturn ctx, effectiveModel, updated, nil
+\t}
+\tresolvedModel := modelName
+\thomeEnabled := h != nil && h.AuthManager != nil && h.AuthManager.HomeEnabled()
+\tif parsed.ModelName == "auto" && !homeEnabled {
+\t\tresolvedBase := util.ResolveAutoModel(parsed.ModelName)
+\t\tif parsed.HasSuffix {
+\t\t\tresolvedModel = fmt.Sprintf("%s(%s)", resolvedBase, parsed.RawSuffix)
+\t\t} else {
+\t\t\tresolvedModel = resolvedBase
+\t\t}
+\t} else if !homeEnabled {
+\t\tresolvedModel = util.ResolveAutoModel(modelName)
+\t}
+\teffectiveModel, errApply := decision.ApplyModel(resolvedModel)
+\tif errApply != nil {
+\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(errApply)
+\t}
+\tctx = apikeypolicy.WithDecision(ctx, decision.WithModels(modelName, effectiveModel))
+\tif effectiveModel == modelName || len(rawJSON) == 0 {
+\t\treturn ctx, effectiveModel, rawJSON, nil
+\t}
+\tupdated, errSet := sjson.SetBytes(rawJSON, "model", effectiveModel)
+\tif errSet != nil {
+\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(apikeypolicy.ErrUnavailable)
+\t}
+\treturn ctx, effectiveModel, updated, nil
+}
+
+func applyAPIKeyRoutedModelPolicy(ctx context.Context, modelName string, rawJSON []byte, routeDecision *modelRouteDecision) (context.Context, string, []byte, *interfaces.ErrorMessage) {
+\tif routeDecision == nil || routeDecision.Provider == "" || strings.TrimSpace(routeDecision.Model) == "" {
+\t\treturn ctx, modelName, rawJSON, nil
+\t}
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured {
+\t\treturn ctx, modelName, rawJSON, nil
+\t}
+\teffectiveModel, errApply := decision.ValidateEffectiveModel(routeDecision.Model)
+\tif errApply != nil {
+\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(errApply)
+\t}
+\trouteDecision.Model = effectiveModel
+\tattribution := decision.UsageAttribution()
+\tctx = apikeypolicy.WithDecision(ctx, decision.WithModels(attribution.RequestedModel, effectiveModel))
+\tif len(rawJSON) == 0 {
+\t\treturn ctx, modelName, rawJSON, nil
+\t}
+\tupdated, errSet := sjson.SetBytes(rawJSON, "model", effectiveModel)
+\tif errSet != nil {
+\t\treturn ctx, "", nil, apiKeyPolicyExecutionError(apikeypolicy.ErrUnavailable)
+\t}
+\treturn ctx, modelName, updated, nil
+}
+
+func applyAPIKeyProviderPolicy(ctx context.Context, providers []string) ([]string, *interfaces.ErrorMessage) {
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured {
+\t\treturn providers, nil
+\t}
+\tfiltered, errFilter := decision.FilterProviders(providers)
+\tif errFilter != nil {
+\t\treturn nil, apiKeyPolicyExecutionError(errFilter)
+\t}
+\treturn filtered, nil
+}
+
+func requireAPIKeyExecutionProvider(ctx context.Context, provider string) *interfaces.ErrorMessage {
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured {
+\t\treturn nil
+\t}
+\tif errAllowed := decision.AllowsProvider(provider); errAllowed != nil {
+\t\treturn apiKeyPolicyExecutionError(errAllowed)
+\t}
+\treturn nil
+}
+
+func apiKeyPolicyExecutionError(err error) *interfaces.ErrorMessage {
+\tstatus := http.StatusServiceUnavailable
+\tcode := "api_key_policy_unavailable"
+\tmessage := "API key policy is unavailable"
+\terrorType := "server_error"
+\tif policyErr, ok := err.(*apikeypolicy.PolicyError); ok {
+\t\tstatus = http.StatusForbidden
+\t\tcode = policyErr.Code
+\t\tmessage = policyErr.Message
+\t\terrorType = "permission_error"
+\t}
+\tbody := `{"error":{"message":"","type":"","code":""}}`
+\tbody, _ = sjson.Set(body, "error.message", message)
+\tbody, _ = sjson.Set(body, "error.type", errorType)
+\tbody, _ = sjson.Set(body, "error.code", code)
+\treturn &interfaces.ErrorMessage{StatusCode: status, Error: errors.New(body)}
+}
+
+''',
+    'func applyAPIKeyModelPolicy(',
+)
+
+handlers_execution_source = ROOT / 'sdk/api/handlers/handlers_execution.go'
+insert_before(
+    handlers_execution_source,
+    '// ExecuteWithAuthManager executes a non-streaming request via the core auth manager.\n',
+    '''type pluginExecutorProviderResolver interface {
+\tPluginExecutorProvider(string) (string, bool)
+}
+
+func (h *BaseAPIHandler) validateAPIKeyPluginExecutor(ctx context.Context, pluginID string) *interfaces.ErrorMessage {
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured || decision.Mode == apikeypolicy.ModePassthrough {
+\t\treturn nil
+\t}
+\thost := h.pluginExecutorHost()
+\tresolver, ok := host.(pluginExecutorProviderResolver)
+\tif !ok || resolver == nil {
+\t\treturn apiKeyPolicyExecutionError(&apikeypolicy.PolicyError{Code: "profile_provider_forbidden", Message: "plugin execution provider cannot be resolved for the active API key profile"})
+\t}
+\tprovider, resolved := resolver.PluginExecutorProvider(pluginID)
+\tif !resolved {
+\t\treturn apiKeyPolicyExecutionError(&apikeypolicy.PolicyError{Code: "profile_provider_forbidden", Message: "plugin execution provider cannot be resolved for the active API key profile"})
+\t}
+\treturn requireAPIKeyExecutionProvider(ctx, provider)
+}
+
+''',
+    'func (h *BaseAPIHandler) validateAPIKeyPluginExecutor(',
+)
+add_go_import(handlers_execution_source, '"' + import_path('internal/interfaces') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+replace_once(
+    handlers_execution_source,
+    '''\toriginalRequestedModel := modelName
+\trouteDecision := h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, false, execOptions)
+''',
+    '''\toriginalRequestedModel := modelName
+\tvar policyErr *interfaces.ErrorMessage
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)
+\tif policyErr != nil {
+\t\treturn nil, nil, policyErr
+\t}
+\trouteDecision := h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, false, execOptions)
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyRoutedModelPolicy(ctx, modelName, rawJSON, &routeDecision)
+\tif policyErr != nil {
+\t\treturn nil, nil, policyErr
+\t}
+''',
+    'ctx, modelName, rawJSON, policyErr = applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)',
+)
+replace_once(
+    handlers_execution_source,
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\treturn h.executeWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\tif errMsg := h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID); errMsg != nil {
+\t\t\treturn nil, nil, errMsg
+\t\t}
+\t\treturn h.executeWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    'h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID)',
+)
+replace_once(
+    handlers_execution_source,
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+\tproviders, errMsg = applyAPIKeyProviderPolicy(ctx, providers)
+\tif errMsg != nil {
+\t\treturn nil, nil, errMsg
+\t}
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    'providers, errMsg = applyAPIKeyProviderPolicy(ctx, providers)',
+)
+replace_once(
+    handlers_execution_source,
+    '''func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+\toriginalRequestedModel := modelName
+\trouteDecision := h.applyModelRouter(ctx, handlerType, modelName, rawJSON, false, execOptions)
+''',
+    '''func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+\toriginalRequestedModel := modelName
+\tvar policyErr *interfaces.ErrorMessage
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)
+\tif policyErr != nil {
+\t\treturn nil, nil, policyErr
+\t}
+\trouteDecision := h.applyModelRouter(ctx, handlerType, modelName, rawJSON, false, execOptions)
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyRoutedModelPolicy(ctx, modelName, rawJSON, &routeDecision)
+\tif policyErr != nil {
+\t\treturn nil, nil, policyErr
+\t}
+''',
+    'executeCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {\n\toriginalRequestedModel := modelName\n\tvar policyErr *interfaces.ErrorMessage',
+)
+replace_once(
+    handlers_execution_source,
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\treturn h.countWithPluginExecutor(ctx, handlerType, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\tif errMsg := h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID); errMsg != nil {
+\t\t\treturn nil, nil, errMsg
+\t\t}
+\t\treturn h.countWithPluginExecutor(ctx, handlerType, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    'if errMsg := h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID); errMsg != nil {\n\t\t\treturn nil, nil, errMsg\n\t\t}\n\t\treturn h.countWithPluginExecutor',
+)
+replace_once(
+    handlers_execution_source,
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(handlerType, providers)
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(handlerType, providers)
+\tproviders, errMsg = applyAPIKeyProviderPolicy(ctx, providers)
+\tif errMsg != nil {
+\t\treturn nil, nil, errMsg
+\t}
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    'adjustExecutionProvidersForEntryProtocol(handlerType, providers)\n\tproviders, errMsg = applyAPIKeyProviderPolicy',
+)
+
+handlers_stream_source = ROOT / 'sdk/api/handlers/handlers_stream.go'
+replace_once(
+    handlers_stream_source,
+    '''\toriginalRequestedModel := modelName
+\trouteDecision, preparedRoute := preparedModelRouteFromContext(ctx, execOptions.SkipRouterPluginID)
+''',
+    '''\toriginalRequestedModel := modelName
+\tvar policyErr *interfaces.ErrorMessage
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)
+\tif policyErr != nil {
+\t\terrChan := make(chan *interfaces.ErrorMessage, 1)
+\t\terrChan <- policyErr
+\t\tclose(errChan)
+\t\treturn nil, nil, errChan
+\t}
+\trouteDecision, preparedRoute := preparedModelRouteFromContext(ctx, execOptions.SkipRouterPluginID)
+''',
+    'ctx, modelName, rawJSON, policyErr = applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)',
+)
+replace_once(
+    handlers_stream_source,
+    '''\tif !preparedRoute {
+\t\trouteDecision = h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, true, execOptions)
+\t}
+''',
+    '''\tif !preparedRoute {
+\t\trouteDecision = h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, true, execOptions)
+\t}
+\tctx, modelName, rawJSON, policyErr = applyAPIKeyRoutedModelPolicy(ctx, modelName, rawJSON, &routeDecision)
+\tif policyErr != nil {
+\t\terrChan := make(chan *interfaces.ErrorMessage, 1)
+\t\terrChan <- policyErr
+\t\tclose(errChan)
+\t\treturn nil, nil, errChan
+\t}
+''',
+    'applyAPIKeyRoutedModelPolicy(ctx, modelName, rawJSON, &routeDecision)',
+)
+replace_once(
+    handlers_stream_source,
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\treturn h.streamWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    '''\tif routeDecision.ExecutorPluginID != "" {
+\t\tif errMsg := h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID); errMsg != nil {
+\t\t\terrChan := make(chan *interfaces.ErrorMessage, 1)
+\t\t\terrChan <- errMsg
+\t\t\tclose(errChan)
+\t\t\treturn nil, nil, errChan
+\t\t}
+\t\treturn h.streamWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+\t}
+''',
+    'h.validateAPIKeyPluginExecutor(ctx, routeDecision.ExecutorPluginID); errMsg != nil',
+)
+replace_once(
+    handlers_stream_source,
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    '''\tproviders = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+\tproviders, errMsg = applyAPIKeyProviderPolicy(ctx, providers)
+\tif errMsg != nil {
+\t\terrChan := make(chan *interfaces.ErrorMessage, 1)
+\t\terrChan <- errMsg
+\t\tclose(errChan)
+\t\treturn nil, nil, errChan
+\t}
+\treqMeta := requestExecutionMetadata(ctx)
+''',
+    'adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)\n\tproviders, errMsg = applyAPIKeyProviderPolicy',
+)
+
+handlers_context_source = ROOT / 'sdk/api/handlers/handlers_context.go'
+replace_once(
+    handlers_context_source,
+    '''\tdecision := h.applyModelRouter(ctx, handlerType, modelName, rawJSON, true, modelExecutionOptions{})
+\tctx = context.WithValue(ctx, preparedModelRouteContextKey{}, decision)
+''',
+    '''\tpolicyCtx, effectiveModel, effectiveBody, policyErr := applyAPIKeyModelPolicy(h, ctx, modelName, rawJSON)
+\tif policyErr != nil {
+\t\tctx = context.WithValue(ctx, preparedModelRouteContextKey{}, modelRouteDecision{})
+\t\treturn ctx, false
+\t}
+\tdecision := h.applyModelRouter(policyCtx, handlerType, effectiveModel, effectiveBody, true, modelExecutionOptions{})
+\tctx = context.WithValue(policyCtx, preparedModelRouteContextKey{}, decision)
+''',
+    'policyCtx, effectiveModel, effectiveBody, policyErr := applyAPIKeyModelPolicy',
+)
+
+plugin_executor_route_source = ROOT / 'internal/pluginhost/executor_route.go'
+insert_before(
+    plugin_executor_route_source,
+    '// ExecutePluginExecutor executes a request with the named plugin executor without changing the requested model.\n',
+    '''// PluginExecutorProvider resolves the normalized execution provider declared by a plugin executor.
+func (h *Host) PluginExecutorProvider(pluginID string) (string, bool) {
+\tadapter, errAdapter := h.executorAdapterForPlugin(pluginID)
+\tif errAdapter != nil || adapter == nil {
+\t\treturn "", false
+\t}
+\tprovider := strings.ToLower(strings.TrimSpace(adapter.Identifier()))
+\treturn provider, provider != ""
+}
+
+''',
+    'func (h *Host) PluginExecutorProvider(',
+)
+
+handlers_source = ROOT / 'sdk/api/handlers/handlers.go'
+insert_before(
+    handlers_source,
+    '// BaseAPIHandler contains the handlers for API endpoints.\n',
+    '''type PolicyVisibleModel struct {
+\tID          string
+\tEffectiveID string
+}
+
+// FilterModelsForRequest applies the frozen API-key policy to one model catalog.
+// providers resolves current provider carriage for canonical model IDs.
+func FilterModelsForRequest(ctx context.Context, modelIDs []string, providers func(string) []string) ([]PolicyVisibleModel, *interfaces.ErrorMessage) {
+\tdecision, configured := apikeypolicy.DecisionFromContext(ctx)
+\tif !configured {
+\t\tout := make([]PolicyVisibleModel, 0, len(modelIDs))
+\t\tfor _, id := range modelIDs {
+\t\t\tout = append(out, PolicyVisibleModel{ID: id, EffectiveID: id})
+\t\t}
+\t\treturn out, nil
+\t}
+\tcandidates := make([]apikeypolicy.ModelCandidate, 0, len(modelIDs))
+\tfor _, id := range modelIDs {
+\t\tvar carrying []string
+\t\tif providers != nil {
+\t\t\tcarrying = providers(id)
+\t\t}
+\t\tcandidates = append(candidates, apikeypolicy.ModelCandidate{ID: id, Providers: carrying})
+\t}
+\tvisible, errFilter := decision.FilterVisibleModels(candidates)
+\tif errFilter != nil {
+\t\treturn nil, apiKeyPolicyExecutionError(errFilter)
+\t}
+\tout := make([]PolicyVisibleModel, 0, len(visible))
+\tfor _, model := range visible {
+\t\tout = append(out, PolicyVisibleModel{ID: model.ID, EffectiveID: model.EffectiveID})
+\t}
+\treturn out, nil
+}
+
+// FilterModelMapsForRequest clones canonical model maps and duplicates mapped
+// aliases without mutating registry-owned values.
+func FilterModelMapsForRequest(ctx context.Context, models []map[string]any, idKey string, providers func(string) []string) ([]map[string]any, *interfaces.ErrorMessage) {
+\tids := make([]string, 0, len(models))
+\tbyID := make(map[string]map[string]any, len(models))
+\tfor _, model := range models {
+\t\tid, _ := model[idKey].(string)
+\t\tid = strings.TrimPrefix(strings.TrimSpace(id), "models/")
+\t\tif id == "" {
+\t\t\tcontinue
+\t\t}
+\t\tids = append(ids, id)
+\t\tbyID[id] = model
+\t}
+\tvisible, errMsg := FilterModelsForRequest(ctx, ids, providers)
+\tif errMsg != nil {
+\t\treturn nil, errMsg
+\t}
+\tout := make([]map[string]any, 0, len(visible))
+\tfor _, item := range visible {
+\t\tsource := byID[item.EffectiveID]
+\t\tclone := make(map[string]any, len(source))
+\t\tfor key, value := range source {
+\t\t\tclone[key] = value
+\t\t}
+\t\tvalue := item.ID
+\t\tif idKey == "name" {
+\t\t\tvalue = "models/" + item.ID
+\t\t}
+\t\tclone[idKey] = value
+\t\tout = append(out, clone)
+\t}
+\treturn out, nil
+}
+
+''',
+    'func FilterModelsForRequest(',
+)
+
+openai_handlers_source = ROOT / 'sdk/api/handlers/openai/openai_handlers.go'
+replace_once(
+    openai_handlers_source,
+    '''\tif _, ok := c.Request.URL.Query()["client_version"]; ok {
+\t\tclientVersion := c.Query("client_version")
+\t\tc.JSON(http.StatusOK, h.codexClientModelsResponse(clientVersion))
+\t\treturn
+\t}
+
+\t// Get all available models
+\tallModels := h.Models()
+''',
+    '''\tallModels, policyErr := handlers.FilterModelMapsForRequest(c.Request.Context(), h.Models(), "id", registry.GetGlobalRegistry().GetModelProviders)
+\tif policyErr != nil {
+\t\th.WriteErrorResponse(c, policyErr)
+\t\treturn
+\t}
+\tif _, ok := c.Request.URL.Query()["client_version"]; ok {
+\t\tclientVersion := c.Query("client_version")
+\t\tc.JSON(http.StatusOK, codexmodels.BuildResponseForClient(allModels, registry.GetGlobalRegistry().GetModelProviders, h.Cfg != nil && h.Cfg.CodexOptimizeMultiAgentV2, clientVersion))
+\t\treturn
+\t}
+
+\t// Get all models visible to the frozen request policy.
+''',
+    'allModels, policyErr := handlers.FilterModelMapsForRequest',
+)
+add_go_import(openai_handlers_source, '"' + import_path('internal/registry') + '"\n', '\tcodexmodels "' + import_path('internal/client/codex/models') + '"\n')
+
+claude_handlers_source = ROOT / 'sdk/api/handlers/claude/code_handlers.go'
+replace_once(
+    claude_handlers_source,
+    '''\t\t\t\tif m, ok := e["message"].(string); ok && strings.TrimSpace(m) != "" {
+\t\t\t\t\tmessage = strings.TrimSpace(m)
+\t\t\t\t} else if c, ok := e["code"].(string); ok && strings.TrimSpace(c) != "" {
+\t\t\t\t\tmessage = strings.TrimSpace(c)
+\t\t\t\t}
+''',
+    '''\t\t\t\tif m, ok := e["message"].(string); ok && strings.TrimSpace(m) != "" {
+\t\t\t\t\tmessage = strings.TrimSpace(m)
+\t\t\t\t\tif code, okCode := e["code"].(string); okCode && (strings.HasPrefix(code, "profile_") || strings.HasPrefix(code, "api_key_policy_")) {
+\t\t\t\t\t\tmessage += " (" + strings.TrimSpace(code) + ")"
+\t\t\t\t\t}
+\t\t\t\t} else if c, ok := e["code"].(string); ok && strings.TrimSpace(c) != "" {
+\t\t\t\t\tmessage = strings.TrimSpace(c)
+\t\t\t\t}
+''',
+    'strings.HasPrefix(code, "profile_")',
+)
+replace_once(
+    claude_handlers_source,
+    '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
+\tdisableCloaking := h.Cfg != nil && h.Cfg.ClaudeCode.DisableCloakingModelList
+\tc.JSON(http.StatusOK, claudemodels.BuildResponse(h.Models(), disableCloaking))
+}
+''',
+    '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
+\trequestCtx := context.Background()
+\tif c != nil && c.Request != nil {
+\t\trequestCtx = c.Request.Context()
+\t}
+\tmodels, policyErr := handlers.FilterModelMapsForRequest(requestCtx, h.Models(), "id", registry.GetGlobalRegistry().GetModelProviders)
+\tif policyErr != nil {
+\t\th.WriteErrorResponse(c, policyErr)
+\t\treturn
+\t}
+\tdisableCloaking := h.Cfg != nil && h.Cfg.ClaudeCode.DisableCloakingModelList
+\tc.JSON(http.StatusOK, claudemodels.BuildResponse(models, disableCloaking))
+}
+''',
+    'models, policyErr := handlers.FilterModelMapsForRequest',
+)
+
+gemini_handlers_source = ROOT / 'sdk/api/handlers/gemini/gemini_handlers.go'
+add_go_import(gemini_handlers_source, '"context"\n', '"encoding/json"\n')
+insert_before(
+    gemini_handlers_source,
+    'func (h *GeminiAPIHandler) GeminiModels(c *gin.Context) {\n',
+    '''func (h *GeminiAPIHandler) WriteErrorResponse(c *gin.Context, msg *interfaces.ErrorMessage) {
+\tstatus := http.StatusInternalServerError
+\tif msg != nil && msg.StatusCode > 0 {
+\t\tstatus = msg.StatusCode
+\t}
+\tvar policyEnvelope struct {
+\t\tError struct {
+\t\t\tMessage string `json:"message"`
+\t\t\tCode    string `json:"code"`
+\t\t} `json:"error"`
+\t}
+\tif msg != nil && msg.Error != nil && json.Unmarshal([]byte(msg.Error.Error()), &policyEnvelope) == nil &&
+\t\t(strings.HasPrefix(policyEnvelope.Error.Code, "profile_") || strings.HasPrefix(policyEnvelope.Error.Code, "api_key_policy_")) {
+\t\tstatusName := "UNAVAILABLE"
+\t\tif status == http.StatusForbidden {
+\t\t\tstatusName = "PERMISSION_DENIED"
+\t\t}
+\t\tc.JSON(status, gin.H{"error": gin.H{
+\t\t\t"code": status, "message": policyEnvelope.Error.Message,
+\t\t\t"status": statusName, "reason": policyEnvelope.Error.Code,
+\t\t}})
+\t\treturn
+\t}
+\th.BaseAPIHandler.WriteErrorResponse(c, msg)
+}
+
+''',
+    'func (h *GeminiAPIHandler) WriteErrorResponse',
+)
+replace_once(
+    gemini_handlers_source,
+    '''func (h *GeminiAPIHandler) GeminiModels(c *gin.Context) {
+\trawModels := h.Models()
+''',
+    '''func (h *GeminiAPIHandler) GeminiModels(c *gin.Context) {
+\trequestCtx := context.Background()
+\tif c != nil && c.Request != nil {
+\t\trequestCtx = c.Request.Context()
+\t}
+\trawModels, policyErr := handlers.FilterModelMapsForRequest(requestCtx, h.Models(), "name", registry.GetGlobalRegistry().GetModelProviders)
+\tif policyErr != nil {
+\t\th.WriteErrorResponse(c, policyErr)
+\t\treturn
+\t}
+''',
+    'rawModels, policyErr := handlers.FilterModelMapsForRequest',
+)
+replace_once(
+    gemini_handlers_source,
+    '''\t// Get dynamic models from the global registry and find the matching one
+\tavailableModels := h.Models()
+''',
+    '''\t// Get dynamic models visible to the frozen request policy.
+\tavailableModels, policyErr := handlers.FilterModelMapsForRequest(c.Request.Context(), h.Models(), "name", registry.GetGlobalRegistry().GetModelProviders)
+\tif policyErr != nil {
+\t\th.WriteErrorResponse(c, policyErr)
+\t\treturn
+\t}
+''',
+    'availableModels, policyErr := handlers.FilterModelMapsForRequest',
+)
+
+replace_once(
+    server_routes_source,
+    '''\t} else {
+\t\tmodels = grokModelsFromRegistryInfos(registry.GetGlobalRegistry().GetAvailableModelInfos())
+\t}
+\tc.JSON(http.StatusOK, grokbuild.BuildResponse(models))
+''',
+    '''\t} else {
+\t\tvar ok bool
+\t\tmodels, ok = s.filterRegistryGrokModels(c, registry.GetGlobalRegistry().GetAvailableModelInfos())
+\t\tif !ok {
+\t\t\treturn
+\t\t}
+\t}
+\tc.JSON(http.StatusOK, grokbuild.BuildResponse(models))
+''',
+    'models, ok = s.filterRegistryGrokModels',
+)
+replace_once(
+    server_routes_source,
+    '''\treturn entries, true
+}
+
+func formatHomeGeminiModels(entries []homeModelEntry) []map[string]any {
+''',
+    '''\treturn s.filterHomeModelEntries(c, entries)
+}
+
+func formatHomeGeminiModels(entries []homeModelEntry) []map[string]any {
+''',
+    'return s.filterHomeModelEntries(c, entries)',
+)
+
+server_test_source = ROOT / 'internal/api/server_test.go'
+replace_once(
+    server_test_source,
+    '''\tif legacyRR.Code != http.StatusNotFound {
+\t\tt.Fatalf("legacy usage status = %d, want %d body=%s", legacyRR.Code, http.StatusNotFound, legacyRR.Body.String())
+\t}
+''',
+    '''\tif legacyRR.Code != http.StatusServiceUnavailable {
+\t\tt.Fatalf("unavailable usage status = %d, want %d body=%s", legacyRR.Code, http.StatusServiceUnavailable, legacyRR.Body.String())
+\t}
+\tif body := strings.TrimSpace(legacyRR.Body.String()); body != `{"error":"usage service is not available"}` {
+\t\tt.Fatalf("unavailable usage body = %s", body)
+\t}
+''',
+    'unavailable usage body = %s',
 )
 
 service_source = ROOT / 'sdk/cliproxy/service.go'
@@ -1188,18 +2558,19 @@ replace_once(
 \t\tservice.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
 \t}
 ''',
-    '''\tproApplication.SetModelPolicyChangeHandler(func(ctx context.Context) {
+    '''\tproApplication.SetOAuthPolicyChangeHandler(func(ctx context.Context) {
 \t\tif service.coreManager == nil {
 \t\t\treturn
 \t\t}
-\t\tservice.registerModelsForAuthBatch(coreauth.WithSkipPersist(ctx), service.coreManager.List())
-\t\tservice.coreManager.RefreshSchedulerAll()
+\t\tpolicyCtx := coreauth.WithSkipPersist(ctx)
+\t\tservice.registerModelsForAuthBatch(policyCtx, service.coreManager.List())
 \t})
+\tservice.coreManager.SetAccountPolicyResolver(proApplication.ApplyCachedAccountPolicy)
 \tif b.postAuthHook != nil {
 \t\tservice.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
 \t}
 ''',
-    'proApplication.SetModelPolicyChangeHandler',
+    'proApplication.SetOAuthPolicyChangeHandler',
 )
 replace_once(
     builder_source,
@@ -1229,35 +2600,127 @@ replace_once(
     's.proApp.Close()',
 )
 
+for speed_source in (
+    'internal/redisqueue/speed_test.go',
+    'internal/runtime/executor/helps/usage_speed_test.go',
+    'internal/runtime/executor/claude_usage_speed_test.go',
+    'sdk/api/handlers/handlers_speed_test.go',
+    'sdk/cliproxy/auth/conductor_speed_test.go',
+    'sdk/cliproxy/executor/speed.go',
+    'sdk/cliproxy/usage/speed.go',
+    'sdk/cliproxy/usage/speed_test.go',
+):
+    queue_go_source(speed_source)
+queue_go_source('internal/redisqueue/api_key_policy_usage_test.go')
+
+handlers_source = ROOT / 'sdk/api/handlers/handlers.go'
+add_go_import(handlers_source, '"' + import_path('internal/logging') + '"\n', '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n')
+replace_once(
+    handlers_source,
+    '''\tif requestCtx != nil && logging.GetRequestID(parentCtx) == "" {
+''',
+    '''\tif requestCtx != nil {
+\t\tparentCtx = apikeypolicy.InheritContext(parentCtx, requestCtx)
+\t}
+\tif requestCtx != nil && logging.GetRequestID(parentCtx) == "" {
+''',
+    'parentCtx = apikeypolicy.InheritContext(parentCtx, requestCtx)',
+)
+replace_once(
+    handlers_source,
+    '''\tmeta[coreexecutor.ServiceTierMetadataKey] = serviceTier
+}
+''',
+    '''\tmeta[coreexecutor.ServiceTierMetadataKey] = serviceTier
+\tspeed := strings.TrimSpace(gjson.GetBytes(rawJSON, "speed").String())
+\tif speed != "" {
+\t\tmeta[coreexecutor.SpeedMetadataKey] = speed
+\t}
+}
+''',
+    'meta[coreexecutor.SpeedMetadataKey] = speed',
+)
+
+codex_chat_completions_request = ROOT / 'internal/translator/codex/openai/chat-completions/codex_openai_request.go'
+replace_once(
+    codex_chat_completions_request,
+    '''\t// Model
+\tout, _ = sjson.SetBytes(out, "model", modelName)
+''',
+    '''\t// Model
+\tout, _ = sjson.SetBytes(out, "model", modelName)
+
+\tif serviceTier := root.Get("service_tier"); serviceTier.Type == gjson.String {
+\t\tswitch strings.ToLower(strings.TrimSpace(serviceTier.String())) {
+\t\tcase "fast", "priority":
+\t\t\tout, _ = sjson.SetBytes(out, "service_tier", "priority")
+\t\t}
+\t}
+''',
+    'case "fast", "priority":',
+)
+queue_go_source('internal/translator/codex/openai/chat-completions/codex_fast_service_tier_test.go')
+
+codex_responses_request = ROOT / 'internal/translator/codex/openai/responses/codex_openai-responses_request.go'
+add_go_import(codex_responses_request, '\t"encoding/json"\n', '\t"strings"\n')
+replace_once(
+    codex_responses_request,
+    '''\tif serviceTier := gjson.GetBytes(rawJSON, "service_tier"); serviceTier.Exists() && serviceTier.String() != "priority" {
+\t\trawJSON = deleteCodexRequestFields(rawJSON, "service_tier")
+\t}
+''',
+    '''\tif serviceTier := gjson.GetBytes(rawJSON, "service_tier"); serviceTier.Exists() {
+\t\tswitch strings.ToLower(strings.TrimSpace(serviceTier.String())) {
+\t\tcase "fast":
+\t\t\trawJSON, _ = sjson.SetBytes(rawJSON, "service_tier", "priority")
+\t\tcase "priority":
+\t\t\tif serviceTier.String() != "priority" {
+\t\t\t\trawJSON, _ = sjson.SetBytes(rawJSON, "service_tier", "priority")
+\t\t\t}
+\t\tdefault:
+\t\t\trawJSON = deleteCodexRequestFields(rawJSON, "service_tier")
+\t\t}
+\t}
+''',
+    'case "fast":',
+)
+queue_go_source('internal/translator/codex/openai/responses/codex_fast_service_tier_test.go')
+
 usage_manager = ROOT / 'sdk/cliproxy/usage/manager.go'
-add_go_import(usage_manager, '"net/http"\n', '\t"reflect"\n')
+replace_once(
+    usage_manager,
+    '''\t// ResponseServiceTier stores the final tier reported by the upstream response.
+\tResponseServiceTier string
+\t// Generate reports whether the client requested actual generation.
+''',
+    '''\t// ResponseServiceTier stores the final tier reported by the upstream response.
+\tResponseServiceTier string
+\t// Speed stores the client-requested inference speed.
+\tSpeed string
+\t// ResponseSpeed stores the final inference speed reported by the upstream response.
+\tResponseSpeed string
+\t// Generate reports whether the client requested actual generation.
+''',
+    'ResponseSpeed string',
+)
+replace_once(
+    usage_manager,
+    '''\tTokenBreakdown      TokenBreakdown
+\tResponseServiceTier string
+}
+''',
+    '''\tTokenBreakdown      TokenBreakdown
+\tResponseServiceTier string
+\tResponseSpeed       string
+}
+''',
+    'ResponseSpeed       string',
+)
 replace_once(
     usage_manager,
     '\tnamed     map[string]int\n',
     '\tnamed       map[string]int\n\tnamedOwners map[string][]Plugin\n',
     'namedOwners map[string][]Plugin',
-)
-replace_once(
-    usage_manager,
-    'type serviceTierContextKey struct{}\n',
-    'type serviceTierContextKey struct{}\ntype streamContextKey struct{}\n',
-)
-replace_once(
-    usage_manager,
-    '''type streamContextKey struct{}
-type generateContextKey struct{}
-''',
-    '''type streamContextKey struct{}
-type attemptTrackerContextKey struct{}
-type attemptIndexContextKey struct{}
-type generateContextKey struct{}
-
-type attemptTracker struct {
-\tmu   sync.Mutex
-\tnext int64
-}
-''',
-    'type attemptTrackerContextKey struct{}',
 )
 replace_once(
     usage_manager,
@@ -1271,66 +2734,6 @@ replace_once(
 \tFailed       bool
 ''',
     'AttemptIndex *int64',
-)
-insert_before(
-    usage_manager,
-    '// WithServiceTier stores the client-requested service tier for usage sinks.\n',
-    '''// WithStream stores whether the client requested streaming output for usage sinks.
-func WithStream(ctx context.Context, stream bool) context.Context {
-\tif ctx == nil {
-\t\tctx = context.Background()
-\t}
-\treturn context.WithValue(ctx, streamContextKey{}, stream)
-}
-
-// StreamFromContext returns whether the client requested streaming output.
-func StreamFromContext(ctx context.Context) bool {
-\tif ctx == nil {
-\t\treturn false
-\t}
-\tstream, _ := ctx.Value(streamContextKey{}).(bool)
-\treturn stream
-}
-
-''',
-    'func WithStream(ctx context.Context, stream bool) context.Context',
-)
-insert_before(
-    usage_manager,
-    '// WithServiceTier stores the client-requested service tier for usage sinks.\n',
-    '''// WithAttemptTracking attaches one request-scoped upstream-attempt counter.
-func WithAttemptTracking(ctx context.Context) context.Context {
-\tif ctx == nil {
-\t\tctx = context.Background()
-\t}
-\tif tracker, ok := ctx.Value(attemptTrackerContextKey{}).(*attemptTracker); ok && tracker != nil {
-\t\treturn ctx
-\t}
-\treturn context.WithValue(ctx, attemptTrackerContextKey{}, &attemptTracker{})
-}
-
-// NextAttemptContext allocates the next zero-based upstream-attempt index.
-func NextAttemptContext(ctx context.Context) context.Context {
-\tctx = WithAttemptTracking(ctx)
-\ttracker, _ := ctx.Value(attemptTrackerContextKey{}).(*attemptTracker)
-\ttracker.mu.Lock()
-\tindex := tracker.next
-\ttracker.next++
-\ttracker.mu.Unlock()
-\treturn context.WithValue(ctx, attemptIndexContextKey{}, index)
-}
-
-// AttemptIndexFromContext returns the current upstream-attempt index when instrumented.
-func AttemptIndexFromContext(ctx context.Context) (int64, bool) {
-\tif ctx == nil {
-\t\treturn 0, false
-\t}
-\tindex, ok := ctx.Value(attemptIndexContextKey{}).(int64)
-\treturn index, ok
-}
-
-''',
-    'func WithAttemptTracking(ctx context.Context) context.Context',
 )
 replace_once(
     usage_manager,
@@ -1379,151 +2782,49 @@ replace_once(
 ''',
     'for index, existing := range m.plugins',
 )
-insert_before(
-    usage_manager,
-    '// Publish enqueues a usage record for processing. If no plugin is registered\n',
-    '''// UnregisterNamed removes a named plugin only when the current registration
-// still belongs to the supplied plugin. Passing nil removes it unconditionally.
-func (m *Manager) UnregisterNamed(name string, plugin Plugin) {
-\tif m == nil {
-\t\treturn
-\t}
-\tname = strings.TrimSpace(name)
-\tif name == "" {
-\t\treturn
-\t}
-\tm.pluginsMu.Lock()
-\tdefer m.pluginsMu.Unlock()
-\tindex, exists := m.named[name]
-\tif !exists || index < 0 || index >= len(m.plugins) {
-\t\treturn
-\t}
-\tcurrent := m.plugins[index]
-\tif plugin != nil && !samePlugin(current, plugin) {
-\t\towners := removeNamedOwner(m.namedOwners[name], plugin)
-\t\tif len(owners) == 0 {
-\t\t\tdelete(m.namedOwners, name)
-\t\t} else {
-\t\t\tm.namedOwners[name] = owners
-\t\t}
-\t\treturn
-\t}
-\tif plugin == nil {
-\t\tm.plugins[index] = nil
-\t\tdelete(m.named, name)
-\t\tdelete(m.namedOwners, name)
-\t\treturn
-\t}
-\towners := m.namedOwners[name]
-\tif count := len(owners); count > 0 {
-\t\tm.plugins[index] = owners[count-1]
-\t\towners = owners[:count-1]
-\t\tif len(owners) == 0 {
-\t\t\tdelete(m.namedOwners, name)
-\t\t} else {
-\t\t\tm.namedOwners[name] = owners
-\t\t}
-\t\treturn
-\t}
-\tm.plugins[index] = nil
-\tdelete(m.named, name)
-}
-
-func removeNamedOwner(owners []Plugin, plugin Plugin) []Plugin {
-\tfor index := len(owners) - 1; index >= 0; index-- {
-\t\tif samePlugin(owners[index], plugin) {
-\t\t\treturn append(owners[:index], owners[index+1:]...)
-\t\t}
-\t}
-\treturn owners
-}
-
-func samePlugin(left, right Plugin) bool {
-\tif left == nil || right == nil {
-\t\treturn left == nil && right == nil
-\t}
-\tleftValue := reflect.ValueOf(left)
-\trightValue := reflect.ValueOf(right)
-\treturn leftValue.Type() == rightValue.Type() &&
-\t\tleftValue.Type().Comparable() &&
-\t\tleftValue.Interface() == rightValue.Interface()
-}
-
-''',
-    'func (m *Manager) UnregisterNamed(name string, plugin Plugin)',
-)
-insert_before(
-    usage_manager,
-    '// PublishRecord publishes a record using the default manager.\n',
-    '''// UnregisterNamedPlugin removes a matching named plugin from the default manager.
-func UnregisterNamedPlugin(name string, plugin Plugin) { DefaultManager().UnregisterNamed(name, plugin) }
-
-''',
-    'func UnregisterNamedPlugin(name string, plugin Plugin)',
-)
-
-usage_manager_test = ROOT / 'sdk/cliproxy/usage/manager_test.go'
-if 'func TestUnregisterNamedPreservesReplacement' not in read(usage_manager_test):
-    write(usage_manager_test, read(usage_manager_test).rstrip() + '''
-
-type namedLifecycleUsagePlugin struct {
-\tcalls int
-}
-
-func (p *namedLifecycleUsagePlugin) HandleUsage(context.Context, Record) {
-\tp.calls++
-}
-
-func TestUnregisterNamedPreservesReplacement(t *testing.T) {
-\tmanager := NewManager(1)
-\tfirst := &namedLifecycleUsagePlugin{}
-\treplacement := &namedLifecycleUsagePlugin{}
-\tmanager.RegisterNamed("lifecycle", first)
-\tmanager.RegisterNamed("lifecycle", replacement)
-
-\tmanager.UnregisterNamed("lifecycle", first)
-\tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
-\tif replacement.calls != 1 {
-\t\tt.Fatalf("replacement calls = %d, want 1", replacement.calls)
-\t}
-
-\tmanager.UnregisterNamed("lifecycle", replacement)
-\tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
-\tif replacement.calls != 1 {
-\t\tt.Fatalf("replacement calls after unregister = %d, want 1", replacement.calls)
-\t}
-
-\tmanager.RegisterNamed("lifecycle", first)
-\tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
-\tif first.calls != 1 {
-\t\tt.Fatalf("re-registered plugin calls = %d, want 1", first.calls)
-\t}
-}
-''')
-
-if 'func TestUnregisterNamedRestoresOlderLiveOwner' not in read(usage_manager_test):
-    write(usage_manager_test, read(usage_manager_test).rstrip() + '''
-
-func TestUnregisterNamedRestoresOlderLiveOwner(t *testing.T) {
-\tmanager := NewManager(1)
-\tfirst := &namedLifecycleUsagePlugin{}
-\treplacement := &namedLifecycleUsagePlugin{}
-\tmanager.RegisterNamed("lifecycle", first)
-\tmanager.RegisterNamed("lifecycle", replacement)
-
-\tmanager.UnregisterNamed("lifecycle", replacement)
-\tmanager.dispatch(queueItem{ctx: context.Background(), record: Record{}})
-\tif first.calls != 1 || replacement.calls != 0 {
-\t\tt.Fatalf("restored owner calls = first:%d replacement:%d", first.calls, replacement.calls)
-\t}
-}
-''')
-
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_execution.go'
 replace_once(
     auth_conductor,
-    '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n',
-    '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n\tctx = coreusage.WithStream(ctx, opts.Stream)\n',
+    '''\tserviceTier := serviceTierFromOptions(opts)
+\tif serviceTier != "" {
+\t\tctx = coreusage.WithServiceTier(ctx, serviceTier)
+\t}
+\tif generate, ok := generateFromOptions(opts); ok {
+''',
+    '''\tserviceTier := serviceTierFromOptions(opts)
+\tif serviceTier != "" {
+\t\tctx = coreusage.WithServiceTier(ctx, serviceTier)
+\t}
+\tif speed := speedFromOptions(opts); speed != "" {
+\t\tctx = coreusage.WithSpeed(ctx, speed)
+\t}
+\tif generate, ok := generateFromOptions(opts); ok {
+''',
+    'ctx = coreusage.WithSpeed(ctx, speed)',
+)
+insert_before(
+    auth_conductor,
+    'func generateFromOptions(opts cliproxyexecutor.Options) (bool, bool) {\n',
+    '''func speedFromOptions(opts cliproxyexecutor.Options) string {
+\treturn stringMetadataValue(opts.Metadata, cliproxyexecutor.SpeedMetadataKey)
+}
+
+''',
+    'func speedFromOptions(opts cliproxyexecutor.Options) string',
+)
+
+auth_conductor_base = ROOT / 'sdk/cliproxy/auth/conductor.go'
+replace_once(
+    auth_conductor_base,
+    '''	// pluginScheduler runs outside m.mu before falling back to native selection.
+	pluginScheduler PluginScheduler
+''',
+    '''	// pluginScheduler runs outside m.mu before falling back to native selection.
+	pluginScheduler PluginScheduler
+	// accountPolicyResolver derives execution-only OAuth policy overlays.
+	accountPolicyResolver AccountPolicyResolver
+''',
+    'accountPolicyResolver AccountPolicyResolver',
 )
 replace_once(
     auth_conductor,
@@ -1659,8 +2960,635 @@ replace_once(
     tracked_closure_execution,
     home_attempt_marker,
 )
-
 usage_helpers = ROOT / 'internal/runtime/executor/helps/usage_helpers.go'
+replace_once(
+    usage_helpers,
+    '''\treasoning           string
+\tserviceTier         string
+\tgenerate            bool
+''',
+    '''\treasoning           string
+\tserviceTier         string
+\tspeed               string
+\tgenerate            bool
+''',
+    '\tspeed           string\n',
+)
+replace_once(
+    usage_helpers,
+    '''\t\treasoning:   usage.ReasoningEffortFromContext(ctx),
+\t\tserviceTier: usage.ServiceTierFromContext(ctx),
+\t\tgenerate:    usage.GenerateFromContext(ctx),
+''',
+    '''\t\treasoning:   usage.ReasoningEffortFromContext(ctx),
+\t\tserviceTier: usage.ServiceTierFromContext(ctx),
+\t\tspeed:       usage.SpeedFromContext(ctx),
+\t\tgenerate:    usage.GenerateFromContext(ctx),
+''',
+    'speed:       usage.SpeedFromContext(ctx)',
+)
+replace_once(
+    usage_helpers,
+    '''\t\tServiceTier:         r.serviceTier,
+\t\tResponseServiceTier: strings.TrimSpace(detail.ResponseServiceTier),
+\t\tGenerate:            usage.GenerateFlag(r.generate),
+''',
+    '''\t\tServiceTier:         r.serviceTier,
+\t\tResponseServiceTier: strings.TrimSpace(detail.ResponseServiceTier),
+\t\tSpeed:               r.speed,
+\t\tResponseSpeed:       strings.TrimSpace(detail.ResponseSpeed),
+\t\tGenerate:            usage.GenerateFlag(r.generate),
+''',
+    'ResponseSpeed:       strings.TrimSpace(detail.ResponseSpeed)',
+)
+replace_once(
+    usage_helpers,
+    '''\tusageNode := gjson.GetBytes(payload, "usage")
+\tif !usageNode.Exists() {
+\t\treturn usage.Detail{}, false
+\t}
+\treturn parseClaudeUsageNode(usageNode), true
+''',
+    '''\tusageNode := gjson.GetBytes(payload, "usage")
+\tif !usageNode.Exists() {
+\t\tusageNode = gjson.GetBytes(payload, "message.usage")
+\t}
+\tif !usageNode.Exists() {
+\t\treturn usage.Detail{}, false
+\t}
+\treturn parseClaudeUsageNode(usageNode), true
+''',
+    'usageNode = gjson.GetBytes(payload, "message.usage")',
+)
+replace_once(
+    usage_helpers,
+    '''\t\tCacheReadTokens:     cacheReadTokens,
+\t\tCacheCreationTokens: cacheCreationTokens,
+\t}
+''',
+    '''\t\tCacheReadTokens:     cacheReadTokens,
+\t\tCacheCreationTokens: cacheCreationTokens,
+\t\tResponseSpeed:       strings.TrimSpace(usageNode.Get("speed").String()),
+\t}
+''',
+    'ResponseSpeed:       strings.TrimSpace(usageNode.Get("speed").String())',
+)
+replace_once(
+    usage_helpers,
+    '''func (r *UsageReporter) PublishFailure(ctx context.Context, errs ...error) {
+\tr.publishWithOutcome(ctx, usage.Detail{}, true, failFromErrors(errs...))
+}
+''',
+    '''func (r *UsageReporter) PublishFailure(ctx context.Context, errs ...error) {
+\tr.publishWithOutcome(ctx, usage.Detail{}, true, failFromErrors(errs...))
+}
+
+// PublishFailureWithDetail emits one failed record while preserving usage
+// already observed before a streaming request terminated.
+func (r *UsageReporter) PublishFailureWithDetail(ctx context.Context, detail usage.Detail, errs ...error) {
+\tr.publishWithOutcome(ctx, detail, true, failFromErrors(errs...))
+}
+''',
+    'func (r *UsageReporter) PublishFailureWithDetail(',
+)
+replace_once(
+    usage_helpers,
+    '''\tresponseServiceTier := strings.TrimSpace(detail.ResponseServiceTier)
+\tif responseServiceTier == "" || hasNonZeroTokenUsage(detail) {
+\t\tpreservedTier := b.detail.ResponseServiceTier
+\t\tb.detail = detail
+\t\tif b.detail.ResponseServiceTier == "" {
+\t\t\tb.detail.ResponseServiceTier = preservedTier
+\t\t}
+\t} else {
+\t\tb.detail.ResponseServiceTier = responseServiceTier
+\t}
+\tb.ok = true
+}
+''',
+    '''\tresponseServiceTier := strings.TrimSpace(detail.ResponseServiceTier)
+\tresponseSpeed := strings.TrimSpace(detail.ResponseSpeed)
+\tif (responseServiceTier == "" && responseSpeed == "") || hasNonZeroTokenUsage(detail) {
+\t\tpreservedTier := b.detail.ResponseServiceTier
+\t\tpreservedSpeed := b.detail.ResponseSpeed
+\t\tb.detail = detail
+\t\tif b.detail.ResponseServiceTier == "" {
+\t\t\tb.detail.ResponseServiceTier = preservedTier
+\t\t}
+\t\tif b.detail.ResponseSpeed == "" {
+\t\t\tb.detail.ResponseSpeed = preservedSpeed
+\t\t}
+\t} else {
+\t\tif responseServiceTier != "" {
+\t\t\tb.detail.ResponseServiceTier = responseServiceTier
+\t\t}
+\t\tif responseSpeed != "" {
+\t\t\tb.detail.ResponseSpeed = responseSpeed
+\t\t}
+\t}
+\tb.ok = true
+}
+
+''',
+    'responseSpeed := strings.TrimSpace(detail.ResponseSpeed)',
+)
+
+stream_usage_failure_signature = 'func (b *StreamUsageBuffer) PublishFailure(ctx context.Context, reporter *UsageReporter, errs ...error) bool'
+stream_usage_failure_function = '''func (b *StreamUsageBuffer) PublishFailure(ctx context.Context, reporter *UsageReporter, errs ...error) bool {
+\tif b == nil || !b.ok || reporter == nil {
+\t\treturn false
+\t}
+\treporter.PublishFailureWithDetail(ctx, b.detail, errs...)
+\treturn true
+}
+'''
+replace_go_function(
+    usage_helpers,
+    stream_usage_failure_signature,
+    stream_usage_failure_function,
+    stream_usage_failure_signature + ' {\n\tif b == nil || !b.ok || reporter == nil {',
+)
+
+claude_execute = ROOT / 'internal/runtime/executor/claude_executor_execute.go'
+replace_once(
+    claude_execute,
+    '''\tif upstreamStream {
+\t\tif errValidate := validateClaudeStreamingResponse(data); errValidate != nil {
+''',
+    '''\tvar responseUsageBuffer helps.StreamUsageBuffer
+\tif upstreamStream {
+\t\tif errValidate := validateClaudeStreamingResponse(data); errValidate != nil {
+''',
+    'var responseUsageBuffer helps.StreamUsageBuffer',
+)
+replace_once(
+    claude_execute,
+    '''\t\tlines := bytes.Split(data, []byte("\\n"))
+\t\tfor i, line := range lines {
+\t\t\tif detail, ok := helps.ParseClaudeStreamUsage(line); ok {
+\t\t\t\treporter.Publish(ctx, detail)
+\t\t\t}
+''',
+    '''\t\tlines := bytes.Split(data, []byte("\\n"))
+\t\tfor i, line := range lines {
+\t\t\tresponseUsageBuffer.ObserveClaude(helps.ParseClaudeStreamUsage(line))
+''',
+    'responseUsageBuffer.ObserveClaude(',
+)
+replace_once(
+    claude_execute,
+    '''\t\t\trestoredLine, errRestore := restoreClaudeOAuthToolNamesFromStreamLine(line, oauthToolNamesReverseMap)
+\t\t\tif errRestore != nil {
+\t\t\t\terrRestore = fmt.Errorf("restore Claude OAuth tool name from streaming response: %w", errRestore)
+\t\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errRestore)
+\t\t\t\treturn resp, wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errRestore)
+\t\t\t}
+''',
+    '''\t\t\trestoredLine, errRestore := restoreClaudeOAuthToolNamesFromStreamLine(line, oauthToolNamesReverseMap)
+\t\t\tif errRestore != nil {
+\t\t\t\terrRestore = fmt.Errorf("restore Claude OAuth tool name from streaming response: %w", errRestore)
+\t\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errRestore)
+\t\t\t\terr = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errRestore)
+\t\t\t\tif !responseUsageBuffer.PublishFailure(ctx, reporter, err) {
+\t\t\t\t\treporter.PublishFailure(ctx, err)
+\t\t\t\t}
+\t\t\t\treturn resp, err
+\t\t\t}
+''',
+)
+replace_once(
+    claude_execute,
+    '''\t\tif errRestore != nil {
+\t\t\terrRestore = fmt.Errorf("restore Claude OAuth tool name from response: %w", errRestore)
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errRestore)
+\t\t\treturn resp, wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errRestore)
+\t\t}
+''',
+    '''\t\tif errRestore != nil {
+\t\t\terrRestore = fmt.Errorf("restore Claude OAuth tool name from response: %w", errRestore)
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errRestore)
+\t\t\terr = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errRestore)
+\t\t\treporter.PublishFailureWithDetail(ctx, helps.ParseClaudeUsage(data), err)
+\t\t\treturn resp, err
+\t\t}
+''',
+)
+replace_once(
+    claude_execute,
+    '''\t\t\tlines[i] = restoredLine
+\t\t}
+\t\tdata = bytes.Join(lines, []byte("\\n"))
+''',
+    '''\t\t\tlines[i] = restoredLine
+\t\t}
+\t\tdata = bytes.Join(lines, []byte("\\n"))
+''',
+    'responseUsageBuffer.ObserveClaude(',
+)
+replace_once(
+    claude_execute,
+    '''\t} else {
+\t\tcommitClaudeDiagnostics(diagnosticsState, claudeMessageIDFromResponse(data))
+\t\treporter.Publish(ctx, helps.ParseClaudeUsage(data))
+\t\tvar errRestore error
+''',
+    '''\t} else {
+\t\tcommitClaudeDiagnostics(diagnosticsState, claudeMessageIDFromResponse(data))
+\t\tvar errRestore error
+''',
+)
+# Keep the replacement scoped to the translator call. Upstream may insert
+# response-format post-processing between translation and response assembly,
+# and those transformations must remain authoritative.
+replace_once(
+    claude_execute,
+    '''\tvar param any
+\tout := sdktranslator.TranslateNonStream(
+\t\tctx,
+\t\tto,
+\t\tresponseFormat,
+\t\treq.Model,
+\t\topts.OriginalRequest,
+\t\tbodyForTranslation,
+\t\tdata,
+\t\t&param,
+\t)
+''',
+    '''\tvar param any
+\tout, errTranslate := translateNonStreamResponse(
+\t\tctx,
+\t\tto,
+\t\tresponseFormat,
+\t\treq.Model,
+\t\topts.OriginalRequest,
+\t\tbodyForTranslation,
+\t\tdata,
+\t\t&param,
+\t)
+\tif errTranslate != nil {
+\t\terr = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errTranslate)
+\t\tif upstreamStream {
+\t\t\tif !responseUsageBuffer.PublishFailure(ctx, reporter, err) {
+\t\t\t\treporter.PublishFailure(ctx, err)
+\t\t\t}
+\t\t} else {
+\t\t\treporter.PublishFailureWithDetail(ctx, helps.ParseClaudeUsage(data), err)
+\t\t}
+\t\treturn resp, err
+\t}
+''',
+    'translateNonStreamResponse(',
+)
+insert_before(
+    claude_execute,
+    '\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}\n',
+    '''\tif upstreamStream {
+\t\tresponseUsageBuffer.Publish(ctx, reporter)
+\t} else {
+\t\treporter.Publish(ctx, helps.ParseClaudeUsage(data))
+\t}
+\treporter.EnsurePublished(ctx)
+''',
+    '''\treporter.EnsurePublished(ctx)
+\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
+''',
+)
+
+openai_compat_execute = ROOT / 'internal/runtime/executor/openai_compat_executor.go'
+replace_once(
+    openai_compat_execute,
+    '''\thelps.AppendAPIResponseChunk(ctx, e.cfg, body)
+\treporter.Publish(ctx, helps.ParseOpenAIUsage(body))
+\t// Ensure we at least record the request even if upstream doesn't return usage
+\treporter.EnsurePublished(ctx)
+\t// Translate response back to source format when needed
+''',
+    '''\thelps.AppendAPIResponseChunk(ctx, e.cfg, body)
+\t// Translate response back to source format before publishing success. A
+\t// translator panic is an upstream-attempt failure and must win the one-shot
+\t// terminal usage publication while retaining the parsed token detail.
+''',
+    'translator panic is an upstream-attempt failure',
+)
+replace_once(
+    openai_compat_execute,
+    '''\tvar param any
+\tout := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, body, &param)
+''',
+    '''\tvar param any
+\tout, errTranslate := translateNonStreamResponse(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, body, &param)
+\tif errTranslate != nil {
+\t\terr = errTranslate
+\t\treporter.PublishFailureWithDetail(ctx, helps.ParseOpenAIUsage(body), err)
+\t\treturn resp, err
+\t}
+''',
+    'out, errTranslate := translateNonStreamResponse(ctx, to, responseFormat',
+)
+insert_before(
+    openai_compat_execute,
+    '\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}\n',
+    '''\treporter.Publish(ctx, helps.ParseOpenAIUsage(body))
+\t// Ensure we at least record the request even if upstream doesn't return usage.
+\treporter.EnsurePublished(ctx)
+''',
+    '''\treporter.EnsurePublished(ctx)
+\tresp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
+''',
+)
+replace_once(
+    openai_compat_execute,
+    '''\t\tvar streamUsage helps.StreamUsageBuffer
+\t\tvar seenDone bool
+''',
+    '''\t\tvar streamUsage helps.StreamUsageBuffer
+\t\tvar seenDone bool
+\t\tpublishStreamFailure := func(errStream error) {
+\t\t\tif !streamUsage.PublishFailure(ctx, reporter, errStream) {
+\t\t\t\treporter.PublishFailure(ctx, errStream)
+\t\t\t}
+\t\t}
+''',
+    'publishStreamFailure := func(errStream error)',
+)
+openai_stream_text = read(openai_compat_execute)
+deferred_stream_publish = '''\t\tdefer streamUsage.Publish(ctx, reporter)
+'''
+if openai_stream_text.count(deferred_stream_publish) != 1:
+    raise SystemExit('expected one deferred OpenAI-compatible stream usage publish')
+openai_stream_text = openai_stream_text.replace(deferred_stream_publish, '', 1)
+openai_stream_start = '''func (e *OpenAICompatExecutor) ExecuteStream'''
+openai_stream_end = '''func (e *OpenAICompatExecutor) executeImagesStream'''
+if openai_stream_text.count(openai_stream_start) != 1 or openai_stream_text.count(openai_stream_end) != 1:
+    raise SystemExit('expected one OpenAI-compatible stream function boundary')
+openai_stream_prefix, openai_stream_body = openai_stream_text.split(openai_stream_start, 1)
+openai_stream_body, openai_stream_suffix = openai_stream_body.split(openai_stream_end, 1)
+stream_failure_publish = 'reporter.PublishFailure(ctx, streamErr)'
+stream_failure_count = openai_stream_body.count(stream_failure_publish)
+if stream_failure_count != 1:
+    raise SystemExit(
+        f'expected one OpenAI-compatible stream error publication, found {stream_failure_count}'
+    )
+openai_stream_body = openai_stream_body.replace(
+    stream_failure_publish,
+    'publishStreamFailure(streamErr)',
+    stream_failure_count,
+)
+logged_stream_failure = 'reporter.PublishFailure(ctx, loggedErr)'
+logged_stream_failure_count = openai_stream_body.count(logged_stream_failure)
+if logged_stream_failure_count != 1:
+    raise SystemExit('expected one sanitized OpenAI-compatible stream error publication')
+openai_stream_body = openai_stream_body.replace(
+    logged_stream_failure,
+    'publishStreamFailure(loggedErr)',
+    logged_stream_failure_count,
+)
+stream_cancel_return = '''\t\t\t\tcase <-ctx.Done():
+\t\t\t\t\treturn
+'''
+stream_cancel_count = openai_stream_body.count(stream_cancel_return)
+if stream_cancel_count != 1:
+    raise SystemExit(
+        f'expected one OpenAI-compatible stream cancellation return, found {stream_cancel_count}'
+    )
+openai_stream_body = openai_stream_body.replace(
+    stream_cancel_return,
+    '''\t\t\t\tcase <-ctx.Done():
+\t\t\t\t\tpublishStreamFailure(ctx.Err())
+\t\t\t\t\treturn
+''',
+    stream_cancel_count,
+)
+stream_scan_failure = '''\t\t\treporter.PublishFailure(ctx, errScan)
+'''
+if openai_stream_body.count(stream_scan_failure) != 1:
+    raise SystemExit('expected one OpenAI-compatible scanner failure publication')
+openai_stream_body = openai_stream_body.replace(
+    stream_scan_failure,
+    '''\t\t\tpublishStreamFailure(errScan)
+''',
+    1,
+)
+openai_stream_text = (
+    openai_stream_prefix
+    + openai_stream_start
+    + openai_stream_body
+    + openai_stream_end
+    + openai_stream_suffix
+)
+write(openai_compat_execute, openai_stream_text)
+replace_once(
+    openai_compat_execute,
+    '''\t\tstreamUsage.Publish(ctx, reporter)
+\t\treporter.EnsurePublished(ctx)
+''',
+    '''\t\tstreamUsage.Publish(ctx, reporter)
+\t\treporter.EnsurePublished(ctx)
+''',
+    'publishStreamFailure := func(errStream error)',
+)
+
+claude_stream = ROOT / 'internal/runtime/executor/claude_executor_stream.go'
+replace_once(
+    claude_stream,
+    '''\t\t\tvar event bytes.Buffer
+\t\t\tvar upstreamMessageID string
+''',
+    '''\t\t\tvar event bytes.Buffer
+\t\t\tvar usageBuffer helps.StreamUsageBuffer
+\t\t\tvar upstreamMessageID string
+''',
+    'var usageBuffer helps.StreamUsageBuffer',
+)
+stream_publish_block = '''\t\t\t\tif detail, ok := helps.ParseClaudeStreamUsage(line); ok {
+\t\t\t\t\treporter.Publish(ctx, detail)
+\t\t\t\t}
+'''
+stream_observe_block = '''\t\t\t\tusageBuffer.ObserveClaude(helps.ParseClaudeStreamUsage(line))
+'''
+stream_text = read(claude_stream)
+if stream_observe_block not in stream_text:
+    if stream_text.count(stream_publish_block) != 1:
+        raise SystemExit('expected one native Claude stream usage publish block')
+    write(claude_stream, stream_text.replace(stream_publish_block, stream_observe_block, 1))
+replace_once(
+    claude_stream,
+    '''\t\t\tif upstreamCompleted {
+\t\t\t\tcommitClaudeDiagnostics(diagnosticsState, upstreamMessageID)
+\t\t\t}
+\t\t\treturn
+''',
+    '''\t\t\tif upstreamCompleted {
+\t\t\t\tcommitClaudeDiagnostics(diagnosticsState, upstreamMessageID)
+\t\t\t}
+\t\t\tterminal.publishSuccess(&usageBuffer)
+\t\t\treturn
+''',
+    'terminal.publishSuccess(&usageBuffer)\n\t\t\treturn',
+)
+replace_once(
+    claude_stream,
+    '''\t\tvar param any
+\t\tvar upstreamMessageID string
+''',
+    '''\t\tvar param any
+\t\tvar usageBuffer helps.StreamUsageBuffer
+\t\tvar upstreamMessageID string
+''',
+    'var param any\n\t\tvar usageBuffer helps.StreamUsageBuffer',
+)
+stream_publish_block = '''\t\t\tif detail, ok := helps.ParseClaudeStreamUsage(line); ok {
+\t\t\t\treporter.Publish(ctx, detail)
+\t\t\t}
+'''
+stream_observe_block = '''\t\t\tusageBuffer.ObserveClaude(helps.ParseClaudeStreamUsage(line))
+'''
+stream_text = read(claude_stream)
+if stream_publish_block in stream_text:
+    if stream_text.count(stream_publish_block) != 1:
+        raise SystemExit('expected one translated Claude stream usage publish block')
+    write(claude_stream, stream_text.replace(stream_publish_block, stream_observe_block, 1))
+elif stream_text.count(stream_observe_block) < 2:
+    raise SystemExit('translated Claude stream usage buffer patch missing')
+replace_once(
+    claude_stream,
+    '''\t\tif upstreamCompleted {
+\t\t\tcommitClaudeDiagnostics(diagnosticsState, upstreamMessageID)
+\t\t}
+\t}()
+''',
+    '''\t\tif upstreamCompleted {
+\t\t\tcommitClaudeDiagnostics(diagnosticsState, upstreamMessageID)
+\t\t}
+\t\tterminal.publishSuccess(&usageBuffer)
+\t}()
+''',
+    'terminal.publishSuccess(&usageBuffer)\n\t}()',
+)
+claude_failure_helpers_old = '''\t\temitCancellation := func(cause error) bool {
+\t\t\tcancelErr := newClaudeOAuthCancellationError(ctx, fp.OAuthCancellation, cause)
+\t\t\tif cancelErr == nil {
+\t\t\t\treturn false
+\t\t\t}
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, cancelErr)
+\t\t\treporter.PublishFailure(ctx, cancelErr)
+\t\t\tselect {
+\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: cancelErr}:
+\t\t\tdefault:
+\t\t\t}
+\t\t\treturn true
+\t\t}
+\t\temitResponseError := func(errResponse error) {
+\t\t\terrResponse = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errResponse)
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errResponse)
+\t\t\treporter.PublishFailure(ctx, errResponse)
+\t\t\tselect {
+\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: errResponse}:
+\t\t\tcase <-ctx.Done():
+\t\t\t}
+\t\t}
+'''
+claude_terminal_init = '''\t\tterminal := claudeStreamTerminal{
+\t\t\tctx: ctx, cfg: e.cfg, reporter: reporter, out: out,
+\t\t\tstatusCode: httpResp.StatusCode, fastRequest: fastRequest,
+\t\t\toauthCancellation: fp.OAuthCancellation,
+\t\t}
+'''
+replace_once(
+    claude_stream,
+    claude_failure_helpers_old,
+    claude_terminal_init,
+    'terminal := claudeStreamTerminal{',
+)
+
+stream_text = read(claude_stream)
+restore_failure_call = 'emitResponseError(fmt.Errorf("restore Claude OAuth tool name from streaming response: %w", errRestore))'
+if stream_text.count(restore_failure_call) != 2:
+    raise SystemExit('expected two Claude stream restore failure calls')
+stream_text = stream_text.replace(
+    restore_failure_call,
+    'terminal.emitResponseError(&usageBuffer, fmt.Errorf("restore Claude OAuth tool name from streaming response: %w", errRestore))',
+)
+cancellation_block = '''\t\t\t\tif len(bytes.TrimSpace(line)) == 0 && !flushEvent() {
+\t\t\t\t\temitCancellation(ctx.Err())
+\t\t\t\t\treturn
+\t\t\t\t}
+'''
+cancellation_replacement = '''\t\t\t\tif len(bytes.TrimSpace(line)) == 0 && !flushEvent() {
+\t\t\t\t\tterminal.publishCancellation(&usageBuffer, ctx.Err())
+\t\t\t\t\treturn
+\t\t\t\t}
+'''
+if stream_text.count(cancellation_block) != 1:
+    raise SystemExit('expected native Claude event flush cancellation block')
+stream_text = stream_text.replace(cancellation_block, cancellation_replacement, 1)
+final_flush_block = '''\t\t\tif !flushEvent() {
+\t\t\t\temitCancellation(ctx.Err())
+\t\t\t\treturn
+\t\t\t}
+'''
+final_flush_replacement = '''\t\t\tif !flushEvent() {
+\t\t\t\tterminal.publishCancellation(&usageBuffer, ctx.Err())
+\t\t\t\treturn
+\t\t\t}
+'''
+if stream_text.count(final_flush_block) != 1:
+    raise SystemExit('expected native Claude final flush cancellation block')
+stream_text = stream_text.replace(final_flush_block, final_flush_replacement, 1)
+translated_cancellation_block = '''\t\t\t\tcase <-ctx.Done():
+\t\t\t\t\temitCancellation(ctx.Err())
+\t\t\t\t\treturn
+'''
+translated_cancellation_replacement = '''\t\t\t\tcase <-ctx.Done():
+\t\t\t\t\tterminal.publishCancellation(&usageBuffer, ctx.Err())
+\t\t\t\t\treturn
+'''
+if stream_text.count(translated_cancellation_block) != 1:
+    raise SystemExit('expected translated Claude output cancellation block')
+stream_text = stream_text.replace(translated_cancellation_block, translated_cancellation_replacement, 1)
+native_scanner_outcome = '''\t\t\tif emitCancellation(scanner.Err()) {
+\t\t\t\treturn
+\t\t\t}
+\t\t\tif errScan := scanner.Err(); errScan != nil {
+\t\t\t\terrScan = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errScan)
+\t\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errScan)
+\t\t\t\treporter.PublishFailure(ctx, errScan)
+\t\t\t\tselect {
+\t\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: errScan}:
+\t\t\t\tcase <-ctx.Done():
+\t\t\t\t}
+\t\t\t\treturn
+\t\t\t}
+'''
+native_scanner_replacement = '''\t\t\tif terminal.finishScanner(&usageBuffer, scanner.Err()) {
+\t\t\t\treturn
+\t\t\t}
+'''
+if stream_text.count(native_scanner_outcome) != 1:
+    raise SystemExit('expected native Claude scanner outcome block')
+stream_text = stream_text.replace(native_scanner_outcome, native_scanner_replacement, 1)
+translated_scanner_outcome = '''\t\tif emitCancellation(scanner.Err()) {
+\t\t\treturn
+\t\t}
+\t\tif errScan := scanner.Err(); errScan != nil {
+\t\t\terrScan = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errScan)
+\t\t\thelps.RecordAPIResponseError(ctx, e.cfg, errScan)
+\t\t\treporter.PublishFailure(ctx, errScan)
+\t\t\tselect {
+\t\t\tcase out <- cliproxyexecutor.StreamChunk{Err: errScan}:
+\t\t\tcase <-ctx.Done():
+\t\t\t}
+\t\t\treturn
+\t\t}
+'''
+translated_scanner_replacement = '''\t\tif terminal.finishScanner(&usageBuffer, scanner.Err()) {
+\t\t\treturn
+\t\t}
+'''
+if stream_text.count(translated_scanner_outcome) != 1:
+    raise SystemExit('expected translated Claude scanner outcome block')
+stream_text = stream_text.replace(translated_scanner_outcome, translated_scanner_replacement, 1)
+write(claude_stream, stream_text)
 replace_once(
     usage_helpers,
     '''func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
@@ -1669,264 +3597,23 @@ replace_once(
 }
 ''',
     '''func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
-\trecord.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
-\tif attemptIndex, ok := usage.AttemptIndexFromContext(ctx); ok {
-\t\trecord.AttemptIndex = &attemptIndex
-\t}
+\tprepareUsageRecordForPublish(ctx, &record)
 \tusage.PublishRecord(ctx, record)
 }
 ''',
-    'record.AttemptIndex = &attemptIndex',
+    'prepareUsageRecordForPublish(ctx, &record)',
 )
-
-if 'func TestAttemptTrackingAllocatesZeroBasedIndexes' not in read(usage_manager_test):
-    write(usage_manager_test, read(usage_manager_test).rstrip() + '''
-
-func TestAttemptTrackingAllocatesZeroBasedIndexes(t *testing.T) {
-\tctx := WithAttemptTracking(context.Background())
-\tfor want := int64(0); want < 3; want++ {
-\t\tattemptCtx := NextAttemptContext(ctx)
-\t\tgot, ok := AttemptIndexFromContext(attemptCtx)
-\t\tif !ok || got != want {
-\t\t\tt.Fatalf("attempt index = %d, %t; want %d, true", got, ok, want)
-\t\t}
-\t}
-\tif _, ok := AttemptIndexFromContext(context.Background()); ok {
-\t\tt.Fatal("uninstrumented context unexpectedly has an attempt index")
-\t}
-}
-''')
+replace_once(
+    usage_helpers,
+    '\tinternallogging "' + import_path('internal/logging') + '"\n',
+    '',
+)
 
 config_defaults = ROOT / 'internal/config/config_defaults.go'
 replace_once(
     config_defaults,
     'DefaultPanelGitHubRepository = "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"',
     f'DefaultPanelGitHubRepository = "{PRO_PANEL_REPOSITORY}"',
-)
-
-sdk_config_go = ROOT / 'internal/config/sdk_config.go'
-replace_once(
-    sdk_config_go,
-    '''\tForceModelPrefix bool `yaml:"force-model-prefix" json:"force-model-prefix"`
-
-\t// RequestLog enables or disables detailed request logging functionality.
-''',
-    '''\tForceModelPrefix bool `yaml:"force-model-prefix" json:"force-model-prefix"`
-
-\t// ClaudeModelIDCloakMode controls model ID cloaking in Anthropic-compatible
-\t// model listings. Supported values are auto, always, and never.
-\tClaudeModelIDCloakMode string `yaml:"claude-model-id-cloak-mode,omitempty" json:"claude-model-id-cloak-mode,omitempty"`
-
-\t// RequestLog enables or disables detailed request logging functionality.
-''',
-)
-
-claude_models = ROOT / 'internal/client/claude/models/models.go'
-add_go_import(claude_models, '\t"sort"\n', '\t"net/http"\n')
-insert_before(
-    claude_models,
-    '// BuildResponse builds an Anthropic model response from available models.\n',
-    '''const (
-\tClaudeModelIDCloakModeAuto   = "auto"
-\tClaudeModelIDCloakModeAlways = "always"
-\tClaudeModelIDCloakModeNever  = "never"
-)
-
-// ShouldDisableClaudeModelIDCloaking combines the Pro three-state mode with the
-// upstream explicit disable switch. An explicit upstream disable always wins.
-func ShouldDisableClaudeModelIDCloaking(mode string, headers http.Header, upstreamDisable bool) bool {
-\tif upstreamDisable {
-\t\treturn true
-\t}
-\tswitch strings.ToLower(strings.TrimSpace(mode)) {
-\tcase ClaudeModelIDCloakModeAlways:
-\t\treturn false
-\tcase ClaudeModelIDCloakModeNever:
-\t\treturn true
-\tdefault:
-\t\treturn !isClaudeDesktopModelClient(headers)
-\t}
-}
-
-func isClaudeDesktopModelClient(headers http.Header) bool {
-\tif headers == nil {
-\t\treturn false
-\t}
-\tfor _, value := range []string{
-\t\theaders.Get("User-Agent"),
-\t\theaders.Get("X-Client-Name"),
-\t\theaders.Get("X-Application-Name"),
-\t} {
-\t\tcompact := strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(value)))
-\t\tif strings.Contains(compact, "claudedesktop") {
-\t\t\treturn true
-\t\t}
-\t}
-\treturn false
-}
-
-''',
-    'func ShouldDisableClaudeModelIDCloaking(',
-)
-
-claude_handler = ROOT / 'sdk/api/handlers/claude/code_handlers.go'
-replace_once(
-    claude_handler,
-    '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
-\tdisableCloaking := h.Cfg != nil && h.Cfg.ClaudeCode.DisableCloakingModelList
-\tc.JSON(http.StatusOK, claudemodels.BuildResponse(h.Models(), disableCloaking))
-}
-''',
-    '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
-\tmode := ""
-\tupstreamDisable := false
-\tif h != nil && h.BaseAPIHandler != nil && h.Cfg != nil {
-\t\tmode = h.Cfg.ClaudeModelIDCloakMode
-\t\tupstreamDisable = h.Cfg.ClaudeCode.DisableCloakingModelList
-\t}
-\tvar headers http.Header
-\tif c != nil && c.Request != nil {
-\t\theaders = c.Request.Header
-\t}
-\tdisableCloaking := claudemodels.ShouldDisableClaudeModelIDCloaking(mode, headers, upstreamDisable)
-\tc.JSON(http.StatusOK, claudemodels.BuildResponse(h.Models(), disableCloaking))
-}
-''',
-)
-
-claude_models_test = ROOT / 'internal/client/claude/models/models_test.go'
-replace_once(
-    claude_models_test,
-    'import "testing"\n',
-    '''import (
-\t"net/http"
-\t"testing"
-)
-''',
-)
-if 'func TestShouldDisableClaudeModelIDCloaking' not in read(claude_models_test):
-    write(claude_models_test, read(claude_models_test).rstrip() + '''
-
-func TestShouldDisableClaudeModelIDCloaking(t *testing.T) {
-\ttests := []struct {
-\t\tname            string
-\t\tmode            string
-\t\theaders         http.Header
-\t\tupstreamDisable bool
-\t\twant            bool
-\t}{
-\t\t{name: "auto cloaks desktop", mode: "auto", headers: http.Header{"User-Agent": []string{"Claude-Desktop/1.0"}}, want: false},
-\t\t{name: "auto detects desktop header", mode: "auto", headers: http.Header{"X-Client-Name": []string{"Claude Desktop"}}, want: false},
-\t\t{name: "auto leaves claude code raw", mode: "auto", headers: http.Header{"User-Agent": []string{"claude-cli/2.1.44"}}, want: true},
-\t\t{name: "empty defaults to auto", headers: http.Header{"User-Agent": []string{"Zed/1.0"}}, want: true},
-\t\t{name: "always cloaks generic clients", mode: "always", headers: http.Header{"User-Agent": []string{"Zed/1.0"}}, want: false},
-\t\t{name: "never leaves desktop raw", mode: "never", headers: http.Header{"User-Agent": []string{"Claude-Desktop/1.0"}}, want: true},
-\t\t{name: "upstream disable wins over always", mode: "always", upstreamDisable: true, want: true},
-\t}
-\tfor _, tt := range tests {
-\t\tt.Run(tt.name, func(t *testing.T) {
-\t\t\tif got := ShouldDisableClaudeModelIDCloaking(tt.mode, tt.headers, tt.upstreamDisable); got != tt.want {
-\t\t\t\tt.Fatalf("ShouldDisableClaudeModelIDCloaking(%q, %v, %t) = %t, want %t", tt.mode, tt.headers, tt.upstreamDisable, got, tt.want)
-\t\t\t}
-\t\t})
-\t}
-}
-''' + '\n')
-
-claude_handler_test = ROOT / 'sdk/api/handlers/claude/code_handlers_model_test.go'
-add_go_import(claude_handler_test, '"encoding/json"\n', '\t"net/http"\n')
-if 'func TestClaudeModelsCloakMode' not in read(claude_handler_test):
-    write(claude_handler_test, read(claude_handler_test).rstrip() + '''
-
-func TestClaudeModelsCloakMode(t *testing.T) {
-\tconst clientID = "claude-model-id-cloak-mode-test"
-\tregistryRef := registry.GetGlobalRegistry()
-\tregistryRef.RegisterClient(clientID, "claude", []*registry.ModelInfo{{
-\t\tID: "gpt-4o", Object: "model", OwnedBy: "openai", DisplayName: "GPT-4o",
-\t}})
-\tt.Cleanup(func() { registryRef.UnregisterClient(clientID) })
-
-\ttests := []struct {
-\t\tname            string
-\t\tmode            string
-\t\tuserAgent       string
-\t\tupstreamDisable bool
-\t\twantID          string
-\t}{
-\t\t{name: "auto cloaks desktop", mode: "auto", userAgent: "Claude-Desktop/1.0", wantID: "claude-fable-5-dd-o4-tpg"},
-\t\t{name: "auto keeps generic raw", mode: "auto", userAgent: "Zed/1.0", wantID: "gpt-4o"},
-\t\t{name: "always cloaks generic", mode: "always", userAgent: "Zed/1.0", wantID: "claude-fable-5-dd-o4-tpg"},
-\t\t{name: "never keeps desktop raw", mode: "never", userAgent: "Claude-Desktop/1.0", wantID: "gpt-4o"},
-\t\t{name: "upstream disable wins", mode: "always", upstreamDisable: true, wantID: "gpt-4o"},
-\t}
-\tfor _, tt := range tests {
-\t\tt.Run(tt.name, func(t *testing.T) {
-\t\t\trecorder := httptest.NewRecorder()
-\t\t\tctx, _ := gin.CreateTestContext(recorder)
-\t\t\tctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-\t\t\tctx.Request.Header.Set("User-Agent", tt.userAgent)
-\t\t\thandler := NewClaudeCodeAPIHandler(&handlers.BaseAPIHandler{Cfg: &sdkconfig.SDKConfig{
-\t\t\t\tClaudeModelIDCloakMode: tt.mode,
-\t\t\t\tClaudeCode: sdkconfig.ClaudeCodeConfig{DisableCloakingModelList: tt.upstreamDisable},
-\t\t\t}})
-\t\t\thandler.ClaudeModels(ctx)
-\t\t\tvar response struct { Data []struct { ID string `json:"id"` } `json:"data"` }
-\t\t\tif errUnmarshal := json.Unmarshal(recorder.Body.Bytes(), &response); errUnmarshal != nil {
-\t\t\t\tt.Fatalf("decode response: %v", errUnmarshal)
-\t\t\t}
-\t\t\tfor _, model := range response.Data {
-\t\t\t\tif model.ID == tt.wantID { return }
-\t\t\t}
-\t\t\tt.Fatalf("model %q not found in response: %s", tt.wantID, recorder.Body.String())
-\t\t})
-\t}
-}
-''' + '\n')
-
-server_test = ROOT / 'internal/api/server_test.go'
-replace_once(
-    server_test,
-    '''\t\treq.Header.Set("Authorization", "Bearer test-key")
-\t\treq.Header.Set("Anthropic-Version", "2023-06-01")
-
-\t\trecorder := httptest.NewRecorder()
-''',
-    '''\t\treq.Header.Set("Authorization", "Bearer test-key")
-\t\treq.Header.Set("Anthropic-Version", "2023-06-01")
-\t\treq.Header.Set("User-Agent", "Claude-Desktop/1.0")
-
-\t\trecorder := httptest.NewRecorder()
-''',
-    'req.Header.Set("User-Agent", "Claude-Desktop/1.0")',
-)
-
-claude_executor_test = ROOT / 'internal/runtime/executor/claude_executor_test.go'
-replace_once(
-    claude_executor_test,
-    '''\tapplyClaudeHeaders(thirdPartyReq, auth, "key-disable-stability", false, nil, nil, cfg, nil, false)
-\tassertClaudeFingerprint(t, thirdPartyReq.Header, "claude-cli/2.1.60 (external, cli)", "0.70.0", "v22.0.0", helps.MapStainlessOS(), helps.MapStainlessArch())
-''',
-    '''\tapplyClaudeHeaders(thirdPartyReq, auth, "key-disable-stability", false, nil, nil, cfg, nil, false)
-\tassertClaudeFingerprint(t, thirdPartyReq.Header, "claude-cli/2.1.60 (external, cli)", "0.70.0", "v22.0.0", "MacOS", "arm64")
-''',
-    '"key-disable-stability", false, nil, nil, cfg, nil, false)\n\tassertClaudeFingerprint(t, thirdPartyReq.Header, "claude-cli/2.1.60 (external, cli)", "0.70.0", "v22.0.0", "MacOS", "arm64")',
-)
-replace_once(
-    claude_executor_test,
-    '''\tassertClaudeFingerprint(t, req.Header, "config-ua/1.0", "0.70.0", "v22.0.0", helps.MapStainlessOS(), helps.MapStainlessArch())
-''',
-    '''\tassertClaudeFingerprint(t, req.Header, "config-ua/1.0", "0.70.0", "v22.0.0", "MacOS", "arm64")
-''',
-)
-replace_once(
-    claude_executor_test,
-    '''\tassertClaudeFingerprint(t, seenHeaders, "claude-cli/2.1.220 (external, cli)", "0.94.0", "v26.3.0", helps.MapStainlessOS(), helps.MapStainlessArch())
-\tif got := seenHeaders.Get("X-App"); got != "cli" {
-''',
-    '''\tassertClaudeFingerprint(t, seenHeaders, "claude-cli/2.1.220 (external, cli)", "0.94.0", "v26.3.0", "MacOS", "arm64")
-\tif got := seenHeaders.Get("X-App"); got != "cli" {
-''',
-    '"v26.3.0", "MacOS", "arm64")\n\tif got := seenHeaders.Get("X-App"); got != "cli"',
 )
 
 config_existing_updates = ROOT / 'internal/config/config_existing_updates.go'
@@ -1939,41 +3626,6 @@ replace_once(
     config_example,
     '  panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"',
     f'  panel-github-repository: "{PRO_PANEL_REPOSITORY}"',
-)
-replace_once(
-    config_example,
-    '''# "auto" behavior (cloak only non-Claude-Code clients).
-disable-claude-cloak-mode: false
-
-# Claude Code compatibility settings.
-''',
-    '''# "auto" behavior (cloak only non-Claude-Code clients).
-disable-claude-cloak-mode: false
-
-# Controls model ID cloaking in Anthropic-compatible /v1/models responses.
-# - "auto" (default): cloak only identified Claude Desktop clients.
-# - "always": cloak every Anthropic-compatible model-list response.
-# - "never": always return original model IDs.
-claude-model-id-cloak-mode: "auto"
-
-# Claude Code compatibility settings.
-''',
-)
-
-config_diff = ROOT / 'internal/watcher/diff/config_diff.go'
-replace_once(
-    config_diff,
-    '''\tif oldCfg.ClaudeCode.DisableCloakingModelList != newCfg.ClaudeCode.DisableCloakingModelList {
-\t\tchanges = append(changes, fmt.Sprintf("claude-code.disable-cloaking-model-list: %t -> %t", oldCfg.ClaudeCode.DisableCloakingModelList, newCfg.ClaudeCode.DisableCloakingModelList))
-\t}
-''',
-    '''\tif oldCfg.ClaudeCode.DisableCloakingModelList != newCfg.ClaudeCode.DisableCloakingModelList {
-\t\tchanges = append(changes, fmt.Sprintf("claude-code.disable-cloaking-model-list: %t -> %t", oldCfg.ClaudeCode.DisableCloakingModelList, newCfg.ClaudeCode.DisableCloakingModelList))
-\t}
-\tif strings.TrimSpace(oldCfg.ClaudeModelIDCloakMode) != strings.TrimSpace(newCfg.ClaudeModelIDCloakMode) {
-\t\tchanges = append(changes, fmt.Sprintf("claude-model-id-cloak-mode: %s -> %s", strings.TrimSpace(oldCfg.ClaudeModelIDCloakMode), strings.TrimSpace(newCfg.ClaudeModelIDCloakMode)))
-\t}
-''',
 )
 replace_once(
     config_example,
@@ -2044,8 +3696,26 @@ replace_once(
     'defaultManagementReleaseURL  = "https://api.github.com/repos/router-for-me/Cli-Proxy-API-Management-Center/releases/latest"',
     f'defaultManagementReleaseURL  = "{PRO_PANEL_RELEASE_API}"',
 )
-replace_once(updater, '\tgitURL := strings.ToLower(strings.TrimSpace(os.Getenv("GITSTORE_GIT_URL")))\n', '')
-replace_once(updater, 'tok != "" && strings.Contains(gitURL, "github.com")', 'tok != "" && isGitHubAPIURL(releaseURL)')
+replace_once(
+    updater,
+    '''\tif token := util.ResolveGitHubToken(); token != "" {
+\t\theaders["Authorization"] = "Bearer " + token
+\t}
+''',
+    '''\ttoken := strings.TrimSpace(os.Getenv("GITSTORE_GIT_TOKEN"))
+\tif token != "" {
+\t\tif isGitHubAPIURL(releaseURL) {
+\t\t\theaders["Authorization"] = "Bearer " + token
+\t\t}
+\t} else {
+\t\ttoken = util.ResolveGitHubToken()
+\t\tif token != "" {
+\t\t\theaders["Authorization"] = "Bearer " + token
+\t\t}
+\t}
+''',
+    'token = util.ResolveGitHubToken()',
+)
 insert_before(
     updater,
     'func fetchLatestAsset(ctx context.Context, client *http.Client, releaseURL string) (*releaseAsset, string, error) {\n',
@@ -2185,6 +3855,126 @@ replace_once(
 ''',
 )
 
+replace_once(
+    ROOT / 'internal/pluginhost/host_callbacks.go',
+    '''\tstreamCtx, cancel := newStreamContext(ctx)
+\tresp, errDo := h.newHTTPClient(nil).DoStream(streamCtx, httpReq)
+\tif errDo != nil {
+\t\tcancel()
+\t\treturn nil, errDo
+\t}
+\tstreamID := ""
+\tif h != nil && h.httpStreams != nil {
+\t\tstreamID = h.httpStreams.open(resp.Chunks, cancel)
+\t}
+\tif streamID == "" {
+\t\tcancel()
+\t\treturn nil, fmt.Errorf("host http stream bridge is unavailable")
+\t}
+\treturn marshalRPCResult(rpcHostHTTPStreamResponse{
+\t\tStatusCode: resp.StatusCode,
+\t\tHeaders:    httpHeader(resp.Headers),
+\t\tStreamID:   streamID,
+\t})
+''',
+    '''\tstreamCtx, cancel := newStreamContext(ctx)
+\tcancelOwned := true
+\tdefer func() {
+\t\tif cancelOwned {
+\t\t\tcancel()
+\t\t}
+\t}()
+\tresp, errDo := h.newHTTPClient(nil).DoStream(streamCtx, httpReq)
+\tif errDo != nil {
+\t\treturn nil, errDo
+\t}
+\tstreamID := ""
+\tif h != nil && h.httpStreams != nil {
+\t\tstreamID = h.httpStreams.open(resp.Chunks, cancel)
+\t}
+\tif streamID == "" {
+\t\treturn nil, fmt.Errorf("host http stream bridge is unavailable")
+\t}
+\trawResponse, errMarshal := marshalRPCResult(rpcHostHTTPStreamResponse{
+\t\tStatusCode: resp.StatusCode,
+\t\tHeaders:    httpHeader(resp.Headers),
+\t\tStreamID:   streamID,
+\t})
+\tif errMarshal != nil {
+\t\th.httpStreams.close(streamID)
+\t\treturn nil, errMarshal
+\t}
+\tcancelOwned = false
+\treturn rawResponse, nil
+''',
+    'rawResponse, errMarshal := marshalRPCResult(rpcHostHTTPStreamResponse{',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/host_model_stream_callbacks.go',
+    '''\tstreamCtx, cancel := newStreamContext(context.WithoutCancel(callbackCtx))
+\tstream, errMsg := executor.ExecuteModelStream(streamCtx, modelExecutionRequestFromPlugin(req.HostModelExecutionRequest, skipPluginID))
+\tif errMsg != nil {
+\t\tcancel()
+\t\treturn nil, modelExecutionError(errMsg)
+\t}
+\tstreamID := ""
+\tif h.modelStreams != nil {
+\t\tstreamID = h.modelStreams.open(req.HostCallbackID, stream.Chunks, cancel)
+\t}
+\tif streamID == "" {
+\t\tcancel()
+\t\treturn nil, fmt.Errorf("host model stream bridge is unavailable")
+\t}
+\tif req.HostCallbackID != "" {
+\t\th.addCallbackCleanup(req.HostCallbackID, func() {
+\t\t\th.modelStreams.close(streamID)
+\t\t})
+\t}
+\treturn marshalRPCResult(pluginapi.HostModelStreamResponse{
+\t\tStatusCode: stream.StatusCode,
+\t\tHeaders:    cloneHeader(stream.Headers),
+\t\tStreamID:   streamID,
+\t})
+''',
+    '''\tstreamCtx, cancel := newStreamContext(context.WithoutCancel(callbackCtx))
+\tcancelOwned := true
+\tdefer func() {
+\t\tif cancelOwned {
+\t\t\tcancel()
+\t\t}
+\t}()
+\tstream, errMsg := executor.ExecuteModelStream(streamCtx, modelExecutionRequestFromPlugin(req.HostModelExecutionRequest, skipPluginID))
+\tif errMsg != nil {
+\t\treturn nil, modelExecutionError(errMsg)
+\t}
+\tstreamID := ""
+\tif h.modelStreams != nil {
+\t\tstreamID = h.modelStreams.open(req.HostCallbackID, stream.Chunks, cancel)
+\t}
+\tif streamID == "" {
+\t\treturn nil, fmt.Errorf("host model stream bridge is unavailable")
+\t}
+\tif req.HostCallbackID != "" {
+\t\th.addCallbackCleanup(req.HostCallbackID, func() {
+\t\t\th.modelStreams.close(streamID)
+\t\t})
+\t}
+\trawResponse, errMarshal := marshalRPCResult(pluginapi.HostModelStreamResponse{
+\t\tStatusCode: stream.StatusCode,
+\t\tHeaders:    cloneHeader(stream.Headers),
+\t\tStreamID:   streamID,
+\t})
+\tif errMarshal != nil {
+\t\th.modelStreams.close(streamID)
+\t\treturn nil, errMarshal
+\t}
+\tcancelOwned = false
+\treturn rawResponse, nil
+''',
+    'rawResponse, errMarshal := marshalRPCResult(pluginapi.HostModelStreamResponse{',
+)
+
 queue_go_source('internal/pluginstore/autoinstall.go')
 
 queue_go_source('internal/pluginstore/autoinstall_test.go')
@@ -2275,16 +4065,143 @@ replace_once(
 ''',
 )
 
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\tif reporter != nil {
+\t\treporter.RecordFirstPacket()
+\t\tdetail := helps.ParsePluginExecutorResponseUsage(prepared.outputFormat.String(), pluginResp.Payload)
+\t\treporter.Publish(ctx, detail)
+\t\treporter.EnsurePublished(ctx)
+\t}
+
+\treturn coreexecutor.Response{
+\t\tPayload:  a.translateExecutorResponse(ctx, prepared, pluginResp.Payload, false, nil),
+\t\tMetadata: cloneAnyMap(pluginResp.Metadata),
+\t\tHeaders:  cloneHeader(pluginResp.Headers),
+\t}, nil
+''',
+    '''\tctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)
+\tresp = coreexecutor.Response{
+\t\tPayload:  a.translateExecutorResponse(ctx, prepared, pluginResp.Payload, false, nil),
+\t\tMetadata: cloneAnyMap(pluginResp.Metadata),
+\t\tHeaders:  cloneHeader(pluginResp.Headers),
+\t}
+\tif reporter != nil {
+\t\treporter.RecordFirstPacket()
+\t\tif !publishPluginExecutorUsage(ctx, reporter, pluginExecutorUsageFormat(prepared), resp.Payload, false) {
+\t\t\treporter.EnsurePublished(ctx)
+\t\t}
+\t}
+\treturn resp, nil
+''',
+    'publishPluginExecutorUsage(ctx, reporter, pluginExecutorUsageFormat(prepared), resp.Payload, false)',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\tchunks := a.observeAndTranslateExecutorStream(ctx, prepared, pluginResp.Chunks, reporter)
+\treturn &coreexecutor.StreamResult{
+\t\tHeaders: cloneHeader(pluginResp.Headers),
+\t\tChunks:  chunks,
+\t}, nil
+''',
+    '''\tctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)
+\tchunks := a.observeAndTranslateExecutorStream(ctx, prepared, pluginResp.Chunks, reporter)
+\treturn &coreexecutor.StreamResult{
+\t\tHeaders: cloneHeader(pluginResp.Headers),
+\t\tChunks:  chunks,
+\t}, nil
+''',
+    'ctx = pluginExecutorUsageContext(ctx, pluginResp.Headers)\n\tchunks := a.observeAndTranslateExecutorStream',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\tif in == nil {
+\t\tout := make(chan coreexecutor.StreamChunk)
+\t\tclose(out)
+\t\tif reporter != nil {
+\t\t\treporter.EnsurePublished(ctx)
+\t\t}
+\t\treturn out
+\t}
+''',
+    '''\tif in == nil {
+\t\tout := make(chan coreexecutor.StreamChunk)
+\t\tclose(out)
+\t\tif reporter != nil {
+\t\t\treporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})
+\t\t}
+\t\treturn out
+\t}
+''',
+    'reporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\tvar streamUsage helps.StreamUsageBuffer
+\tvar streamErr error
+\tvar publishOnce sync.Once
+''',
+    '''\tvar streamUsage helps.StreamUsageBuffer
+\tvar streamErr error
+\tvar sawPayload bool
+\tvar publishOnce sync.Once
+''',
+    'var sawPayload bool',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\t\t\tif !streamUsage.Publish(ctx, reporter) {
+\t\t\t\treporter.EnsurePublished(ctx)
+\t\t\t}
+''',
+    '''\t\t\tif !sawPayload {
+\t\t\t\treporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})
+\t\t\t\treturn
+\t\t\t}
+\t\t\tif !streamUsage.Publish(ctx, reporter) {
+\t\t\t\treporter.EnsurePublished(ctx)
+\t\t\t}
+''',
+    'if !sawPayload {\n\t\t\t\treporter.PublishFailure(ctx, pluginExecutorEmptyStreamError{})',
+)
+
+replace_once(
+    ROOT / 'internal/pluginhost/adapters_executors.go',
+    '''\t\t\t\tif len(chunk.Payload) > 0 {
+\t\t\t\t\thelps.ObservePluginExecutorStreamTTFT(prepared.outputFormat.String(), reporter, chunk.Payload)
+''',
+    '''\t\t\t\tif len(chunk.Payload) > 0 {
+\t\t\t\t\tsawPayload = true
+\t\t\t\t\thelps.ObservePluginExecutorStreamTTFT(prepared.outputFormat.String(), reporter, chunk.Payload)
+''',
+    'sawPayload = true\n\t\t\t\t\thelps.ObservePluginExecutorStreamTTFT',
+)
+
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat.go')
 
 queue_go_source('internal/pluginhost/gemini_cli_storage_compat_test.go')
 
+queue_go_source('internal/pluginhost/plugin_executor_usage_test.go')
+
+queue_go_source('internal/client/codex/live/api_key_quota_relay_test.go')
+
 server = ROOT / 'internal/api/server.go'
 server_routes = ROOT / 'internal/api/server_routes.go'
 server_management = ROOT / 'internal/api/server_management.go'
+replace_once(
+    server_management,
+    '\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n',
+    '\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterAPIKeyPolicyRoutes(mgmt)\n',
+    's.mgmt.RegisterAPIKeyPolicyRoutes(mgmt)',
+)
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 auth_files_fields = ROOT / 'internal/api/handlers/management/auth_files_fields.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
+api_tools_executor_proxy_test = ROOT / 'internal/api/handlers/management/api_tools_executor_proxy_test.go'
 routing_policy = ROOT / 'internal/api/handlers/management/routing_policy.go'
 routing_policy_test = ROOT / 'internal/api/handlers/management/routing_policy_test.go'
 replace_once(
@@ -2294,95 +4211,21 @@ replace_once(
 )
 for source_name in ACCOUNT_INSPECTION_SOURCE_FILES:
     source = Path(__file__).resolve().parent / source_name
+    source_text = re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(source))
+    if source_name == 'account_inspection_transport.go':
+        source_text = source_text.replace(
+            's.h.resolveTokenForAuth(reqCtx, auth)',
+            's.h.resolveTokenForAuth(reqCtx, auth, "")',
+        ).replace(
+            's.h.apiCallTransport(auth)',
+            's.h.apiCallTransport(auth, "")',
+        )
     write(
         ROOT / 'internal/api/handlers/management' / source_name,
-        re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(source)),
+        source_text,
     )
 write(routing_policy, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy.go')))
 write(routing_policy_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy_test.go')))
-
-replace_once(
-    server_routes,
-    '''\tif isClaude {
-\t\tdisableCloaking := s.cfg != nil && s.cfg.ClaudeCode.DisableCloakingModelList
-\t\tc.JSON(http.StatusOK, claudemodels.BuildResponse(formatHomeClaudeModels(entries), disableCloaking))
-\t\treturn
-\t}
-''',
-    '''\tif isClaude {
-\t\tmode := ""
-\t\tupstreamDisable := false
-\t\tif s != nil && s.cfg != nil {
-\t\t\tmode = s.cfg.ClaudeModelIDCloakMode
-\t\t\tupstreamDisable = s.cfg.ClaudeCode.DisableCloakingModelList
-\t\t}
-\t\tvar headers http.Header
-\t\tif c != nil && c.Request != nil {
-\t\t\theaders = c.Request.Header
-\t\t}
-\t\tdisableCloaking := claudemodels.ShouldDisableClaudeModelIDCloaking(mode, headers, upstreamDisable)
-\t\tc.JSON(http.StatusOK, claudemodels.BuildResponse(formatHomeClaudeModels(entries), disableCloaking))
-\t\treturn
-\t}
-''',
-)
-
-server_test = ROOT / 'internal/api/server_test.go'
-replace_once(
-    server_test,
-    '''\t\tvar claudeModel map[string]any
-\t\tvar rewrittenModel map[string]any
-\t\tfor _, m := range resp.Data {
-\t\t\tid, _ := m["id"].(string)
-\t\t\tswitch id {
-\t\t\tcase "claude-sonnet-4-6":
-\t\t\t\tclaudeModel = m
-\t\t\tcase "claude-fable-5-dd-o4-tpg":
-\t\t\t\trewrittenModel = m
-\t\t\tcase "gpt-4o", "claude-gpt-4o":
-\t\t\t\tt.Fatalf("expected non-claude model id to be rewritten as claude-fable-5-dd-<reversed>, got %q", id)
-\t\t\t}
-\t\t}
-\t\tif claudeModel == nil {
-\t\t\tt.Fatalf("expected claude-sonnet-4-6 in response, got %s", rr.Body.String())
-\t\t}
-\t\tif rewrittenModel == nil {
-\t\t\tt.Fatalf("expected claude-fable-5-dd-o4-tpg in response, got %s", rr.Body.String())
-\t\t}
-''',
-    '''\t\tvar claudeModel map[string]any
-\t\tvar rawModel map[string]any
-\t\tfor _, m := range resp.Data {
-\t\t\tid, _ := m["id"].(string)
-\t\t\tswitch id {
-\t\t\tcase "claude-sonnet-4-6":
-\t\t\t\tclaudeModel = m
-\t\t\tcase "gpt-4o":
-\t\t\t\trawModel = m
-\t\t\tcase "claude-gpt-4o", "claude-fable-5-dd-o4-tpg":
-\t\t\t\tt.Fatalf("did not expect generic Anthropic client model id to be cloaked, got %q", id)
-\t\t\t}
-\t\t}
-\t\tif claudeModel == nil {
-\t\t\tt.Fatalf("expected claude-sonnet-4-6 in response, got %s", rr.Body.String())
-\t\t}
-\t\tif rawModel == nil {
-\t\t\tt.Fatalf("expected raw gpt-4o in response, got %s", rr.Body.String())
-\t\t}
-''',
-)
-replace_once(
-    server_test,
-    '''\tif legacyRR.Code != http.StatusNotFound {
-\t\tt.Fatalf("legacy usage status = %d, want %d body=%s", legacyRR.Code, http.StatusNotFound, legacyRR.Body.String())
-\t}
-''',
-    '''\tif legacyRR.Code != http.StatusServiceUnavailable {
-\t\tt.Fatalf("legacy usage status = %d, want %d body=%s", legacyRR.Code, http.StatusServiceUnavailable, legacyRR.Body.String())
-\t}
-''',
-    'legacyRR.Code != http.StatusServiceUnavailable',
-)
 
 replace_once(
     auth_files_fields,
@@ -2439,6 +4282,22 @@ replace_once(
 }
 ''',
 )
+replace_once(
+    auth_files,
+    '''\tif claims := extractCodexIDTokenClaims(auth); claims != nil {
+\t\tentry["id_token"] = claims
+\t}
+\t// Expose priority from Attributes (set by synthesizer from JSON "priority" field).
+''',
+    '''\tif claims := extractCodexIDTokenClaims(auth); claims != nil {
+\t\tentry["id_token"] = claims
+\t}
+\tif plan := xaiAuthFilePlanType(auth); plan != "" {
+\t\tentry["plan_type"] = plan
+\t}
+\t// Expose priority from Attributes (set by synthesizer from JSON "priority" field).
+''',
+)
 insert_before(
     api_tools,
     'func firstNonEmptyString(values ...*string) string {\n',
@@ -2454,15 +4313,64 @@ insert_before(
 ''',
     'func firstNonNilBool(values ...*bool) bool',
 )
+api_call_transport_args = 'auth, requestProxyURL'
+executor_auth_args = 'requestScopedExecutorAuth(auth, requestProxyURL)'
+insert_before(
+    api_tools,
+    'func firstNonNilBool(values ...*bool) bool {\n',
+    '''func requestScopedExecutorAuth(auth *coreauth.Auth, requestProxyURL string) *coreauth.Auth {
+\tif auth == nil || strings.TrimSpace(requestProxyURL) == "" {
+\t\treturn auth
+\t}
+\trequestAuth := auth.Clone()
+\trequestAuth.ProxyURL = strings.TrimSpace(requestProxyURL)
+\treturn requestAuth
+}
+
+''',
+    'func requestScopedExecutorAuth(auth *coreauth.Auth, requestProxyURL string)',
+)
+write(
+    api_tools_executor_proxy_test,
+    f'''package management
+
+import (
+\t"testing"
+
+\tcoreauth "{MODULE_PATH}/sdk/cliproxy/auth"
+)
+
+func TestRequestScopedExecutorAuthOverridesProxyWithoutMutatingCredential(t *testing.T) {{
+\tauth := &coreauth.Auth{{ProxyURL: "http://credential-proxy.example.com:8080"}}
+\trequestAuth := requestScopedExecutorAuth(auth, " direct ")
+\tif requestAuth == auth {{
+\t\tt.Fatal("request-scoped auth aliases shared credential")
+\t}}
+\tif requestAuth.ProxyURL != "direct" {{
+\t\tt.Fatalf("request-scoped proxy = %q, want direct", requestAuth.ProxyURL)
+\t}}
+\tif auth.ProxyURL != "http://credential-proxy.example.com:8080" {{
+\t\tt.Fatalf("shared credential proxy mutated to %q", auth.ProxyURL)
+\t}}
+}}
+
+func TestRequestScopedExecutorAuthKeepsCredentialWhenRequestProxyIsEmpty(t *testing.T) {{
+\tauth := &coreauth.Auth{{ProxyURL: "http://credential-proxy.example.com:8080"}}
+\tif requestAuth := requestScopedExecutorAuth(auth, "  "); requestAuth != auth {{
+\t\tt.Fatal("empty request proxy should reuse credential auth")
+\t}}
+}}
+''',
+)
 replace_once(
     api_tools,
     '''\thttpClient := &http.Client{
 \t\tTimeout: defaultAPICallTimeout,
 \t}
-\thttpClient.Transport = h.apiCallTransport(auth)
+\thttpClient.Transport = h.apiCallTransport(__API_CALL_TRANSPORT_ARGS__)
 
 \tresp, errDo := httpClient.Do(req)
-''',
+'''.replace('__API_CALL_TRANSPORT_ARGS__', api_call_transport_args),
     '''\tuseExecutor := firstNonNilBool(body.UseExecutorSnake, body.UseExecutorCamel, body.UseExecutorPascal)
 \tvar resp *http.Response
 \tvar errDo error
@@ -2475,15 +4383,15 @@ replace_once(
 \t\t\tc.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 \t\t\treturn
 \t\t}
-\t\tresp, errDo = h.authManager.HttpRequest(c.Request.Context(), auth, req)
+\t\tresp, errDo = h.authManager.HttpRequest(c.Request.Context(), __EXECUTOR_AUTH_ARGS__, req)
 \t} else {
 \t\thttpClient := &http.Client{
 \t\t\tTimeout: defaultAPICallTimeout,
 \t\t}
-\t\thttpClient.Transport = h.apiCallTransport(auth)
+\t\thttpClient.Transport = h.apiCallTransport(__API_CALL_TRANSPORT_ARGS__)
 \t\tresp, errDo = httpClient.Do(req)
 \t}
-''',
+'''.replace('__API_CALL_TRANSPORT_ARGS__', api_call_transport_args).replace('__EXECUTOR_AUTH_ARGS__', executor_auth_args),
 )
 replace_once(
     auth_files,
@@ -2494,75 +4402,6 @@ replace_once(
 		"last_error":     authFileLastError(auth),
 		"runtime_only":   runtimeOnly,
 ''',
-)
-insert_before(
-    auth_files,
-    'func authAttribute(auth *coreauth.Auth, key string) string {\n',
-    '''func authFileLastError(auth *coreauth.Auth) *coreauth.Error {
-	if auth == nil {
-		return nil
-	}
-	if auth.LastError != nil {
-		return auth.LastError
-	}
-	if auth.Metadata == nil {
-		return nil
-	}
-	raw, ok := auth.Metadata["last_error"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	lastError := &coreauth.Error{
-		Code:       metadataString(raw["code"]),
-		Message:    metadataString(raw["message"]),
-		Retryable:  metadataBool(raw["retryable"]),
-		HTTPStatus: metadataInt(raw["http_status"]),
-	}
-	if lastError.Code == "" && lastError.Message == "" && lastError.HTTPStatus == 0 {
-		return nil
-	}
-	return lastError
-}
-
-func metadataString(value any) string {
-	if value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
-}
-
-func metadataBool(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true")
-	default:
-		return false
-	}
-}
-
-func metadataInt(value any) int {
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int64:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case json.Number:
-		parsed, _ := typed.Int64()
-		return int(parsed)
-	case string:
-		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
-		return parsed
-	default:
-		return 0
-	}
-}
-
-''',
-    'func authFileLastError',
 )
 replace_once(
     auth_files,
@@ -2586,25 +4425,12 @@ replace_once(
 						fileData["id_token"] = claims
 					}
 				}
+				if strings.EqualFold(strings.TrimSpace(typeValue), "xai") {
+					if plan := xaiAuthFilePlanTypeFromRaw(gjson.GetBytes(data, "access_token").String()); plan != "" {
+						fileData["plan_type"] = plan
+					}
+				}
 ''',
-)
-insert_before(
-    auth_files,
-    'func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {\n',
-    '''func extractCodexIDTokenClaimsFromRaw(idTokenRaw string) gin.H {
-	idToken := strings.TrimSpace(idTokenRaw)
-	if idToken == "" {
-		return nil
-	}
-	claims, err := codex.ParseJWTToken(idToken)
-	if err != nil || claims == nil {
-		return nil
-	}
-	return codexIDTokenClaimsEntry(claims)
-}
-
-''',
-    'func extractCodexIDTokenClaimsFromRaw',
 )
 replace_go_function(
     auth_files,
@@ -2622,32 +4448,8 @@ replace_go_function(
 	}
 	return extractCodexIDTokenClaimsFromRaw(idTokenRaw)
 }
-
-func codexIDTokenClaimsEntry(claims *codex.JWTClaims) gin.H {
-	if claims == nil {
-		return nil
-	}
-	result := gin.H{}
-	if v := strings.TrimSpace(claims.CodexAuthInfo.ChatgptAccountID); v != "" {
-		result["chatgpt_account_id"] = v
-	}
-	if v := strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType); v != "" {
-		result["plan_type"] = v
-	}
-	if v := claims.CodexAuthInfo.ChatgptSubscriptionActiveStart; v != nil {
-		result["chatgpt_subscription_active_start"] = v
-	}
-	if v := claims.CodexAuthInfo.ChatgptSubscriptionActiveUntil; v != nil {
-		result["chatgpt_subscription_active_until"] = v
-	}
-
-	if len(result) == 0 {
-		return nil
-	}
-	return result
-}
 ''',
-    'func codexIDTokenClaimsEntry',
+    'return extractCodexIDTokenClaimsFromRaw(idTokenRaw)',
 )
 
 patch_dir = Path(__file__).resolve().parent
@@ -2667,30 +4469,35 @@ write(
     ROOT / 'sdk/cliproxy/auth/auth_runtime_state_test.go',
     re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(patch_dir / 'auth_runtime_state_test.go')),
 )
+write(
+    ROOT / 'sdk/cliproxy/auth/auth_account_policy.go',
+    read_text(patch_dir / 'auth_account_policy.go'),
+)
+write(
+    ROOT / 'sdk/cliproxy/auth/auth_account_policy_test.go',
+    re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(patch_dir / 'auth_account_policy_test.go')),
+)
 
 redisqueue_plugin = ROOT / 'internal/redisqueue/plugin.go'
-replace_once(
+add_go_import(
     redisqueue_plugin,
-    f'\tinternallogging "{import_path("internal/logging")}"\n',
-    f'\t"{import_path("internal/requestmeta")}"\n',
-    f'"{import_path("internal/requestmeta")}"',
-)
-redisqueue_plugin_text = read(redisqueue_plugin)
-if 'internallogging.' in redisqueue_plugin_text:
-    write(redisqueue_plugin, redisqueue_plugin_text.replace('internallogging.', 'requestmeta.'))
-elif 'requestmeta.' not in redisqueue_plugin_text:
-    raise SystemExit(f'request metadata calls not found in {redisqueue_plugin}')
-replace_once(
-    redisqueue_plugin,
-    '\trequestID := strings.TrimSpace(requestmeta.GetRequestID(ctx))\n\treasoningEffort :=',
-    '\trequestID := strings.TrimSpace(requestmeta.GetRequestID(ctx))\n\tstream := coreusage.StreamFromContext(ctx)\n\treasoningEffort :=',
-    'stream := coreusage.StreamFromContext(ctx)',
+    'internallogging "' + import_path('internal/logging') + '"\n',
+    '\tapikeypolicy "' + import_path('internal/pro/apikeypolicy') + '"\n',
 )
 replace_once(
     redisqueue_plugin,
-    '\t\tRequestID:           requestID,\n\t\tReasoningEffort:',
-    '\t\tRequestID:           requestID,\n\t\tStream:              stream,\n\t\tReasoningEffort:',
-    'Stream:              stream',
+    '''\tif p == nil {
+\t\treturn
+\t}
+''',
+    '''\tif p == nil {
+\t\treturn
+\t}
+\tif coreusage.SkipMonitoringFromContext(ctx) {
+\t\treturn
+\t}
+''',
+    'coreusage.SkipMonitoringFromContext(ctx)',
 )
 replace_once(
     redisqueue_plugin,
@@ -2703,19 +4510,107 @@ replace_once(
 ''',
     'AttemptIndex:    record.AttemptIndex',
 )
-redisqueue_plugin_text = read(redisqueue_plugin)
-stream_field = '\tStream bool `json:"stream"`\n'
-if '`json:"stream"`' not in redisqueue_plugin_text:
-    request_id_field = re.compile(r'(?m)^\tRequestID[ \t]+string[ \t]+`json:"request_id"`\n')
-    matches = request_id_field.findall(redisqueue_plugin_text)
-    if len(matches) != 1:
-        raise SystemExit(
-            f'expected one request ID field in {redisqueue_plugin}, found {len(matches)}'
-        )
-    write(
-        redisqueue_plugin,
-        request_id_field.sub(lambda match: match.group(0) + stream_field, redisqueue_plugin_text, count=1),
-    )
+replace_once(
+    redisqueue_plugin,
+    '''\tresponseServiceTier := strings.TrimSpace(record.ResponseServiceTier)
+\tclientRequestMetadata := internallogging.GetClientRequestMetadata(ctx)
+''',
+    '''\tresponseServiceTier := strings.TrimSpace(record.ResponseServiceTier)
+\tspeed := strings.TrimSpace(record.Speed)
+\tif speed == "" {
+\t\tspeed = coreusage.SpeedFromContext(ctx)
+\t}
+\tresponseSpeed := strings.TrimSpace(record.ResponseSpeed)
+\tclientRequestMetadata := internallogging.GetClientRequestMetadata(ctx)
+''',
+    'responseSpeed := strings.TrimSpace(record.ResponseSpeed)',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\tclientRequestMetadata := internallogging.GetClientRequestMetadata(ctx)
+
+\tusageDetail := coreusage.EnsureTokenBreakdownForProvider''',
+    '''\tclientRequestMetadata := internallogging.GetClientRequestMetadata(ctx)
+\tpolicyDecision, hasPolicyDecision := apikeypolicy.DecisionFromContext(ctx)
+\tpolicyMode := ""
+\tapiKeyPolicyID := ""
+\tprofileID := ""
+\tprofileNameSnapshot := ""
+\trequestedModel := ""
+\teffectiveModel := ""
+\tif hasPolicyDecision {
+\t\tattribution := policyDecision.UsageAttribution()
+\t\tpolicyMode = attribution.PolicyMode
+\t\tapiKeyPolicyID = attribution.APIKeyPolicyID
+\t\tprofileID = attribution.ProfileID
+\t\tprofileNameSnapshot = attribution.ProfileName
+\t\trequestedModel = attribution.RequestedModel
+\t\teffectiveModel = attribution.EffectiveModel
+\t}
+
+\tusageDetail := coreusage.EnsureTokenBreakdownForProvider''',
+    'profileNameSnapshot = attribution.ProfileName',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\t\tAPIKey:              apiKey,
+\t\tRequestID:           requestID,
+''',
+    '''\t\tAPIKey:              apiKey,
+\t\tAPIKeyPolicyID:      apiKeyPolicyID,
+\t\tProfileID:           profileID,
+\t\tProfileNameSnapshot: profileNameSnapshot,
+\t\tPolicyMode:          policyMode,
+\t\tRequestedModel:      requestedModel,
+\t\tEffectiveModel:      effectiveModel,
+\t\tRequestID:           requestID,
+''',
+    'APIKeyPolicyID:      apiKeyPolicyID',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\tAPIKey              string                   `json:"api_key"`
+\tRequestID           string                   `json:"request_id"`
+''',
+    '''\tAPIKey              string                   `json:"api_key"`
+\tAPIKeyPolicyID      string                   `json:"api_key_policy_id,omitempty"`
+\tProfileID           string                   `json:"profile_id,omitempty"`
+\tProfileNameSnapshot string                   `json:"profile_name_snapshot,omitempty"`
+\tPolicyMode          string                   `json:"policy_mode,omitempty"`
+\tRequestedModel      string                   `json:"requested_model,omitempty"`
+\tEffectiveModel      string                   `json:"effective_model,omitempty"`
+\tRequestID           string                   `json:"request_id"`
+''',
+    '`json:"api_key_policy_id,omitempty"`',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\t\tServiceTier:         serviceTier,
+\t\tResponseServiceTier: responseServiceTier,
+\t})
+''',
+    '''\t\tServiceTier:         serviceTier,
+\t\tResponseServiceTier: responseServiceTier,
+\t\tSpeed:               speed,
+\t\tResponseSpeed:       responseSpeed,
+\t})
+''',
+    'ResponseSpeed:       responseSpeed',
+)
+replace_once(
+    redisqueue_plugin,
+    '''\tServiceTier         string                   `json:"service_tier"`
+\tResponseServiceTier string                   `json:"response_service_tier,omitempty"`
+}
+''',
+    '''\tServiceTier         string                   `json:"service_tier"`
+\tResponseServiceTier string                   `json:"response_service_tier,omitempty"`
+\tSpeed               string                   `json:"speed,omitempty"`
+\tResponseSpeed       string                   `json:"response_speed,omitempty"`
+}
+''',
+    '`json:"response_speed,omitempty"`',
+)
 redisqueue_plugin_text = read(redisqueue_plugin)
 attempt_field = '\tAttemptIndex *int64 `json:"attempt_index,omitempty"`\n'
 if '`json:"attempt_index,omitempty"`' not in redisqueue_plugin_text:
@@ -2729,29 +4624,84 @@ if '`json:"attempt_index,omitempty"`' not in redisqueue_plugin_text:
         redisqueue_plugin,
         auth_index_field.sub(lambda match: match.group(0) + attempt_field, redisqueue_plugin_text, count=1),
     )
-redisqueue_plugin_test = ROOT / 'internal/redisqueue/plugin_test.go'
-if redisqueue_plugin_test.exists():
-    text = read_text(redisqueue_plugin_test)
-    text = text.replace(
-        f'internallogging "{import_path("internal/logging")}"',
-        f'"{import_path("internal/requestmeta")}"',
-    )
-    text = text.replace('internallogging.', 'requestmeta.')
-    write(redisqueue_plugin_test, text)
+queue_go_source('internal/requestmeta/observer.go')
 
-queue_go_source('internal/requestmeta/client.go')
+queue_go_source('internal/requestmeta/observer_test.go')
 
-queue_go_source('internal/requestmeta/client_test.go')
-
-queue_go_source('internal/requestmeta/requestid.go')
-
-queue_go_source('internal/requestmeta/response.go')
-
-logging_request_id = ROOT / 'internal/logging/requestid.go'
-queue_go_source('internal/logging/requestid.go')
-
-logging_request_meta = ROOT / 'internal/logging/requestmeta.go'
-queue_go_source('internal/logging/requestmeta.go')
+logging_helpers = ROOT / 'internal/runtime/executor/helps/logging_helpers.go'
+add_go_import(
+    logging_helpers,
+    '\t"' + import_path('internal/logging') + '"\n',
+    '\t"' + import_path('internal/requestmeta') + '"\n',
+)
+replace_once(
+    logging_helpers,
+    '''func RecordAPIResponseMetadata(ctx context.Context, cfg *config.Config, status int, headers http.Header) {
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    '''func RecordAPIResponseMetadata(ctx context.Context, cfg *config.Config, status int, headers http.Header) {
+\trequestmeta.ObserveUpstreamResponse(ctx, status, headers, nil)
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    'requestmeta.ObserveUpstreamResponse(ctx, status, headers, nil)',
+)
+replace_once(
+    logging_helpers,
+    '''func AppendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byte) {
+\tif !requestLogCaptureEnabled(cfg) {
+''',
+    '''func AppendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byte) {
+\trequestmeta.ObserveUpstreamResponse(ctx, 0, nil, chunk)
+\tif !requestLogCaptureEnabled(cfg) {
+''',
+    'requestmeta.ObserveUpstreamResponse(ctx, 0, nil, chunk)',
+)
+replace_once(
+    logging_helpers,
+    '''func RecordAPIWebsocketHandshake(ctx context.Context, cfg *config.Config, status int, headers http.Header) {
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    '''func RecordAPIWebsocketHandshake(ctx context.Context, cfg *config.Config, status int, headers http.Header) {
+\trequestmeta.ObserveUpstreamResponse(ctx, status, headers, nil)
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    'func RecordAPIWebsocketHandshake(ctx context.Context, cfg *config.Config, status int, headers http.Header) {\n\trequestmeta.ObserveUpstreamResponse',
+)
+replace_once(
+    logging_helpers,
+    '''func RecordAPIWebsocketUpgradeRejection(ctx context.Context, cfg *config.Config, info UpstreamRequestLog, status int, headers http.Header, body []byte) {
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    '''func RecordAPIWebsocketUpgradeRejection(ctx context.Context, cfg *config.Config, info UpstreamRequestLog, status int, headers http.Header, body []byte) {
+\trequestmeta.ObserveUpstreamResponse(ctx, status, headers, body)
+\tlogging.SetResponseHeaders(ctx, headers)
+''',
+    'func RecordAPIWebsocketUpgradeRejection(ctx context.Context, cfg *config.Config, info UpstreamRequestLog, status int, headers http.Header, body []byte) {\n\trequestmeta.ObserveUpstreamResponse',
+)
+replace_once(
+    logging_helpers,
+    '''\tRecordAPIRequest(ctx, cfg, info)
+\tRecordAPIResponseMetadata(ctx, cfg, status, headers)
+\tAppendAPIResponseChunk(ctx, cfg, body)
+''',
+    '''\tRecordAPIRequest(ctx, cfg, info)
+\tlogOnlyCtx := requestmeta.WithoutUpstreamResponseObserver(ctx)
+\tRecordAPIResponseMetadata(logOnlyCtx, cfg, status, headers)
+\tAppendAPIResponseChunk(logOnlyCtx, cfg, body)
+''',
+    'logOnlyCtx := requestmeta.WithoutUpstreamResponseObserver(ctx)',
+)
+replace_once(
+    logging_helpers,
+    '''func AppendAPIWebsocketResponse(ctx context.Context, cfg *config.Config, payload []byte) {
+\tif !requestLogCaptureEnabled(cfg) {
+''',
+    '''func AppendAPIWebsocketResponse(ctx context.Context, cfg *config.Config, payload []byte) {
+\trequestmeta.ObserveUpstreamResponse(ctx, 0, nil, payload)
+\tif !requestLogCaptureEnabled(cfg) {
+''',
+    'func AppendAPIWebsocketResponse(ctx context.Context, cfg *config.Config, payload []byte) {\n\trequestmeta.ObserveUpstreamResponse',
+)
 
 add_go_import(server_management, '"github.com/gin-gonic/gin"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
 
@@ -2771,6 +4721,7 @@ replace_once(
 ''',
     '''\t{
 \t\tembeddedusage.RegisterGinRoutes(mgmt.Group("/usage"))
+\t\tembeddedusage.RegisterDataManagementGinRoutes(mgmt.Group("/data"))
 
 \t\tmgmt.GET("/config", s.mgmt.GetConfig)
 ''',
@@ -2778,7 +4729,52 @@ replace_once(
 replace_once(
     server_management,
     '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n''',
-    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n\t\ts.mgmt.RegisterProFeatureRoutes(mgmt)\n''',
+	'''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\tmgmt.POST("/auth-files/test", s.mgmt.TestAuthFileConnection)\n\t\ts.mgmt.RegisterPluginQuotaRoutes(mgmt)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n\t\ts.mgmt.RegisterProFeatureRoutes(mgmt)\n''',
+)
+
+auth_files_handler = ROOT / 'internal/api/handlers/management/auth_files.go'
+replace_once(
+    auth_files_handler,
+    '''\t// Try to find auth ID via authManager
+\tvar authID string
+\tif h.authManager != nil {
+\t\tauths := h.authManager.List()
+\t\tfor _, auth := range auths {
+\t\t\tif auth.FileName == name || auth.ID == name {
+\t\t\t\tauthID = auth.ID
+\t\t\t\tbreak
+\t\t\t}
+\t\t}
+\t}
+''',
+    '''\t// Try to find the exact auth record via authManager. Disabled auths are
+\t// intentionally absent from the upstream model registry, but their provider
+\t// metadata is still needed for the static model fallback below.
+\tauthIndex := strings.TrimSpace(c.Query("auth_index"))
+\tselectedAuth, foundAuth := h.lookupAuthFile(name, authIndex)
+\tif authIndex != "" && !foundAuth {
+\t\tc.JSON(404, gin.H{"error": "auth file not found"})
+\t\treturn
+\t}
+\tvar authID string
+\tif selectedAuth != nil {
+\t\tauthID = selectedAuth.ID
+\t}
+''',
+)
+replace_once(
+    auth_files_handler,
+    '''\tmodels := reg.GetModelsForClient(authID)
+
+\tresult := make([]gin.H, 0, len(models))
+''',
+    '''\tmodels := reg.GetModelsForClient(authID)
+\tif len(models) == 0 && selectedAuth != nil {
+\t\tmodels = authFileManagementFallbackModels(selectedAuth)
+\t}
+
+\tresult := make([]gin.H, 0, len(models))
+''',
 )
 
 handler = ROOT / 'internal/api/handlers/management/handler.go'
@@ -2791,13 +4787,14 @@ replace_once(
 ''',
     '''\tpluginReleaseCacheMu    sync.Mutex
 \tpluginReleaseCache      map[string]pluginReleaseCacheEntry
+\tproAuthMutationMu       sync.Mutex
 \tlifecycleContext        context.Context
 \tlifecycleCancel         context.CancelFunc
 \tlifecycleWG             sync.WaitGroup
 \tshutdownOnce            sync.Once
 }
 ''',
-    'lifecycleContext        context.Context',
+    'proAuthMutationMu       sync.Mutex',
 )
 replace_once(
     handler,
@@ -2813,10 +4810,14 @@ replace_once(
     handler,
     '''\t\tallowRemoteOverride: envSecret != "",
 \t\tenvSecret:           envSecret,
+\t\tconfigGeneration:    1,
+\t\tapiKeyRefs:          make(map[string]apiKeyReference),
 \t}
 ''',
     '''\t\tallowRemoteOverride: envSecret != "",
 \t\tenvSecret:           envSecret,
+\t\tconfigGeneration:    1,
+\t\tapiKeyRefs:          make(map[string]apiKeyReference),
 \t\tlifecycleContext:    lifecycleContext,
 \t\tlifecycleCancel:     lifecycleCancel,
 \t}
@@ -2927,7 +4928,7 @@ insert_before_nth(
     run,
     '''\tservice, err := builder.Build()
 ''',
-    '''\tusageService, err := embeddedusage.Start(ctx)
+    '''\tusageService, err := embeddedusage.StartForPath(ctx, configPath)
 \tif err != nil {
 \t\tlog.Errorf("failed to start embedded usage service: %v", err)
 \t\tclose(doneCh)
@@ -2938,13 +4939,13 @@ insert_before_nth(
 
 ''',
     2,
-    'embeddedusage.Start(ctx)',
+    'embeddedusage.StartForPath(ctx, configPath)',
 )
 insert_before_nth(
     run,
     '''\tservice, err := builder.Build()
 ''',
-    '''\tusageService, err := embeddedusage.Start(runCtx)
+    '''\tusageService, err := embeddedusage.StartForPath(runCtx, configPath)
 \tif err != nil {
 \t\tlog.Errorf("failed to start embedded usage service: %v", err)
 \t\treturn
@@ -2954,10 +4955,11 @@ insert_before_nth(
 
 ''',
     1,
-    'embeddedusage.Start(runCtx)',
+    'embeddedusage.StartForPath(runCtx, configPath)',
 )
 
 queue_go_source('sdk/cliproxy/auth/inspection_refresh.go')
+queue_go_source('sdk/cliproxy/auth/pinned_execution.go')
 
 auth_types = ROOT / 'sdk/cliproxy/auth/types.go'
 replace_once(
@@ -2976,13 +4978,13 @@ auth_selector = ROOT / 'sdk/cliproxy/auth/selector.go'
 replace_once(
     auth_selector,
     '''type RoundRobinSelector struct {
-\tmu      sync.Mutex
-\tcursors map[string]int
-\tmaxKeys int
+\tmu         sync.Mutex
+\tlastPicked map[string]string
+\tmaxKeys    int
 }''',
     '''type RoundRobinSelector struct {
 \tmu                      sync.Mutex
-\tcursors                 map[string]int
+\tlastPicked              map[string]string
 \tmaxKeys                  int
 \troutingCursorRestored    map[string]bool
 \tpersistedRoutingCursors map[string]string
@@ -2991,37 +4993,28 @@ replace_once(
 )
 replace_once(
     auth_selector,
-    '''\ts.ensureCursorKey(key, limit)
-\tindex := s.cursors[key]
-\tif index >= 2_147_483_640 {
-\t\tindex = 0
-\t}
-\ts.cursors[key] = index + 1
-\ts.mu.Unlock()
-\treturn available[index%len(available)], nil
-}''',
-    '''\ts.ensureCursorKey(key, limit)
-\ts.restoreRoutingCursorLocked(provider, model, key, available)
-\tindex := s.cursors[key]
-\tif index >= 2_147_483_640 {
-\t\tindex = 0
-\t}
-\ts.cursors[key] = index + 1
-\tpicked := available[index%len(available)]
-\ts.persistRoutingCursorLocked(provider, model, picked)
-\ts.mu.Unlock()
+    '''\ts.ensureRotationKey(key, limit)
+\tpicked := available[successorIndex(available, s.lastPicked[key])]
+\ts.lastPicked[key] = picked.ID
 \treturn picked, nil
 }''',
-    's.restoreRoutingCursorLocked(provider, model, key, available)',
+    '''\ts.ensureRotationKey(key, limit)
+\ts.restoreRoutingCursorLocked(provider, model, key)
+\tpicked := available[successorIndex(available, s.lastPicked[key])]
+\ts.lastPicked[key] = picked.ID
+\ts.persistRoutingCursorLocked(provider, model, picked)
+\treturn picked, nil
+}''',
+    's.restoreRoutingCursorLocked(provider, model, key)',
 )
 replace_once(
     auth_selector,
-    '''\tif _, ok := s.cursors[key]; !ok && len(s.cursors) >= limit {
-\t\ts.cursors = make(map[string]int)
+    '''\tif _, ok := s.lastPicked[key]; !ok && len(s.lastPicked) >= limit {
+\t\ts.lastPicked = make(map[string]string)
 \t}
 }''',
-    '''\tif _, ok := s.cursors[key]; !ok && len(s.cursors) >= limit {
-\t\ts.cursors = make(map[string]int)
+    '''\tif _, ok := s.lastPicked[key]; !ok && len(s.lastPicked) >= limit {
+\t\ts.lastPicked = make(map[string]string)
 \t\ts.routingCursorRestored = make(map[string]bool)
 \t}
 }''',
@@ -3031,17 +5024,51 @@ replace_once(
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_lifecycle.go'
 replace_once(
     auth_conductor,
+    '''func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil {
+		return nil, nil
+	}
+''',
+    '''func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil {
+		return nil, nil
+	}
+	RestoreAccountPolicyBase(auth)
+''',
+    '''func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil {
+		return nil, nil
+	}
+	RestoreAccountPolicyBase(auth)''',
+)
+replace_once(
+    auth_conductor,
+    '''func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil || auth.ID == "" {
+		return nil, nil
+	}
+''',
+    '''func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil || auth.ID == "" {
+		return nil, nil
+	}
+	RestoreAccountPolicyBase(auth)
+''',
+    '''func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil || auth.ID == "" {
+		return nil, nil
+	}
+	RestoreAccountPolicyBase(auth)''',
+)
+replace_once(
+    auth_conductor,
     '''\tauth.EnsureIndex()
-\tauthClone := auth.Clone()
 \tm.mu.Lock()
-\tm.auths[auth.ID] = authClone
 ''',
     '''\tauth.EnsureIndex()
 \trestoreAuthRuntimeStats(auth)
 \tcleanupLegacyQuotaCacheOnRegister(auth)
-\tauthClone := auth.Clone()
 \tm.mu.Lock()
-\tm.auths[auth.ID] = authClone
 ''',
     'cleanupLegacyQuotaCacheOnRegister(auth)',
 )
@@ -3058,8 +5085,47 @@ replace_once(
 ''',
     'auth.Selected = existing.Selected',
 )
+auth_conductor_text = read(auth_conductor)
+lifecycle_scheduler_upsert = '''\tif m.scheduler != nil {
+\t\tm.scheduler.upsertAuth(authClone.Clone())
+\t}
+'''
+if auth_conductor_text.count(lifecycle_scheduler_upsert) != 2:
+    raise SystemExit(
+        f'expected two lifecycle scheduler upserts in {auth_conductor}, '
+        f'found {auth_conductor_text.count(lifecycle_scheduler_upsert)}'
+    )
+write(
+    auth_conductor,
+    auth_conductor_text.replace(
+        lifecycle_scheduler_upsert,
+        '\tm.RefreshSchedulerEntry(authClone.ID)\n',
+    ),
+)
 
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_cooldown.go'
+replace_once(
+    auth_conductor,
+    '''\tvar authSnapshot *Auth
+\tcooldownStateChanged := false
+''',
+    '''\tvar authSnapshot *Auth
+\tvar authStatsObservedAt time.Time
+\tcooldownStateChanged := false
+''',
+    'var authStatsObservedAt time.Time',
+)
+replace_once(
+    auth_conductor,
+    '''\t\tnow = time.Now()
+\t\tresponseHeaders := internallogging.GetResponseHeaders(ctx)
+''',
+    '''\t\tnow = time.Now()
+\t\tauthStatsObservedAt = now
+\t\tresponseHeaders := internallogging.GetResponseHeaders(ctx)
+''',
+    'authStatsObservedAt = now',
+)
 replace_once(
     auth_conductor,
     '''\tm.mu.Unlock()
@@ -3068,133 +5134,161 @@ replace_once(
 \t}
 ''',
     '''\tm.mu.Unlock()
-\tqueueAuthRuntimeStats(authSnapshot)
-\tif m.scheduler != nil && authSnapshot != nil {
-\t\tm.scheduler.upsertAuth(authSnapshot)
+\tqueueAuthRuntimeStats(authSnapshot, authStatsObservedAt)
+\tif authSnapshot != nil {
+\t\tm.RefreshSchedulerEntry(authSnapshot.ID)
 \t}
 ''',
-    'queueAuthRuntimeStats(authSnapshot)',
+    'queueAuthRuntimeStats(authSnapshot, authStatsObservedAt)',
+)
+replace_once(
+    auth_conductor,
+    '''\tif m.scheduler != nil {
+\t\tfor _, snapshot := range snapshots {
+\t\t\tm.scheduler.upsertAuth(snapshot)
+\t\t}
+\t}
+''',
+    '''\tfor _, snapshot := range snapshots {
+\t\tm.RefreshSchedulerEntry(snapshot.ID)
+\t}
+''',
+    'm.RefreshSchedulerEntry(snapshot.ID)',
+)
+replace_once(
+    auth_conductor,
+    '''\tif m.scheduler != nil {
+\t\tfor _, snapshot := range snapshotsByID {
+\t\t\tm.scheduler.upsertAuth(snapshot)
+\t\t}
+\t}
+''',
+    '''\tfor _, snapshot := range snapshotsByID {
+\t\tm.RefreshSchedulerEntry(snapshot.ID)
+\t}
+''',
+    'for _, snapshot := range snapshotsByID {\n\t\tm.RefreshSchedulerEntry(snapshot.ID)',
+)
+replace_once(
+    auth_conductor,
+    '''\tif m.scheduler != nil && snapshot != nil {
+\t\tm.scheduler.upsertAuth(snapshot)
+\t}
+''',
+    '''\tif snapshot != nil {
+\t\tm.RefreshSchedulerEntry(snapshot.ID)
+\t}
+''',
+    '''\tif snapshot != nil {
+\t\tm.RefreshSchedulerEntry(snapshot.ID)
+\t}
+\tif snapshot != nil && cooldownStateChanged''',
 )
 
 auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_selection.go'
 replace_once(
     auth_conductor,
-    '''\tif m.HomeEnabled() {
-\t\tauth, exec, _, err := m.pickNextViaHome(ctx, model, opts, tried)
-\t\treturn auth, exec, err
-\t}
-
-\tif m.hasPluginScheduler() || !m.useSchedulerFastPath() {
-\t\treturn m.pickNextLegacy(ctx, provider, model, opts, tried)
-\t}
+    '''func (m *Manager) snapshotAuths() []*Auth {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*Auth, 0, len(m.auths))
+	for _, a := range m.auths {
+		out = append(out, a.Clone())
+	}
+	return out
+}''',
+    '''func (m *Manager) snapshotAuths() []*Auth {
+	m.mu.RLock()
+	resolver := m.accountPolicyResolver
+	out := make([]*Auth, 0, len(m.auths))
+	for _, a := range m.auths {
+		out = append(out, resolveAccountPolicy(a, resolver))
+	}
+	m.mu.RUnlock()
+	return out
+}''',
+    'out = append(out, resolveAccountPolicy(a, resolver))',
+)
+replace_once(
+    auth_conductor,
+    '''	snapshot := auth.Clone()
+	m.mu.RUnlock()
+	m.scheduler.upsertAuth(snapshot)
 ''',
-    '''\tif m.HomeEnabled() {
-\t\tauth, exec, _, err := m.pickNextViaHome(ctx, model, opts, tried)
+    '''	resolver := m.accountPolicyResolver
+	snapshot := resolveAccountPolicy(auth, resolver)
+	m.mu.RUnlock()
+	m.scheduler.upsertAuth(snapshot)
+''',
+    'snapshot := resolveAccountPolicy(auth, resolver)',
+)
+replace_once(
+    auth_conductor,
+    '''\tif m.scheduler != nil {
+\t\tm.scheduler.upsertAuth(snapshot)
+\t}
+\tif cooldownStateChanged {''',
+    '''\tm.RefreshSchedulerEntry(snapshot.ID)
+\tif cooldownStateChanged {''',
+    '''\tm.RefreshSchedulerEntry(snapshot.ID)
+\tif cooldownStateChanged {''',
+)
+auth_conductor_text = read(auth_conductor)
+candidate_append = '\t\tcandidates = append(candidates, candidate)\n'
+policy_candidate_append = '\t\tcandidates = append(candidates, resolveAccountPolicy(candidate, m.accountPolicyResolver))\n'
+if policy_candidate_append not in auth_conductor_text:
+    if auth_conductor_text.count(candidate_append) < 2:
+        raise SystemExit(f'expected at least two legacy candidate appends in {auth_conductor}')
+    write(auth_conductor, auth_conductor_text.replace(candidate_append, policy_candidate_append))
+
+auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_refresh.go'
+replace_once(
+    auth_conductor,
+    '''\t\t\tm.auths[id] = current
+\t\t\tshouldReschedule = true
+\t\t\tif m.scheduler != nil {
+\t\t\t\tm.scheduler.upsertAuth(current.Clone())
+\t\t\t}
+\t\t}
+\t\tm.mu.Unlock()
+\t\tif shouldReschedule {
+\t\t\tm.queueRefreshReschedule(id)
+''',
+    '''\t\t\tm.auths[id] = current
+\t\t\tshouldReschedule = true
+\t\t}
+\t\tm.mu.Unlock()
+\t\tif shouldReschedule {
+\t\t\tm.RefreshSchedulerEntry(id)
+\t\t\tm.queueRefreshReschedule(id)
+''',
+    'shouldReschedule {\n\t\t\tm.RefreshSchedulerEntry(id)',
+)
+
+auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor_selection.go'
+replace_once(
+    auth_conductor,
+    'func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, error) {\n',
+    '''func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (auth *Auth, executor ProviderExecutor, err error) {
+\tdefer func() {
 \t\tif err == nil && auth != nil {
 \t\t\tm.recordAuthSelected(auth.ID)
 \t\t}
-\t\treturn auth, exec, err
-\t}
-
-\tif m.hasPluginScheduler() || !m.useSchedulerFastPath() {
-\t\tauth, exec, err := m.pickNextLegacy(ctx, provider, model, opts, tried)
+\t}()
+''',
+    'func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (auth *Auth, executor ProviderExecutor, err error)',
+)
+replace_once(
+    auth_conductor,
+    'func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, string, error) {\n',
+    '''func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (auth *Auth, executor ProviderExecutor, providerKey string, err error) {
+\tdefer func() {
 \t\tif err == nil && auth != nil {
 \t\t\tm.recordAuthSelected(auth.ID)
 \t\t}
-\t\treturn auth, exec, err
-\t}
+\t}()
 ''',
-    'm.recordAuthSelected(auth.ID)',
-)
-replace_once(
-    auth_conductor,
-    '''\treturn authCopy, executor, nil
-}
-
-func (m *Manager) pickNextMixedLegacy''',
-    '''\tm.recordAuthSelected(authCopy.ID)
-\treturn authCopy, executor, nil
-}
-
-func (m *Manager) pickNextMixedLegacy''',
-    'm.recordAuthSelected(authCopy.ID)\n\treturn authCopy, executor, nil',
-)
-replace_once(
-    auth_conductor,
-    '''\t\t\tif m.routeAwareSelectionRequired(candidate, model) {
-\t\t\t\tm.mu.RUnlock()
-\t\t\t\treturn m.pickNextLegacy(ctx, provider, model, opts, tried)
-\t\t\t}
-''',
-    '''\t\t\tif m.routeAwareSelectionRequired(candidate, model) {
-\t\t\t\tm.mu.RUnlock()
-\t\t\t\tauth, exec, err := m.pickNextLegacy(ctx, provider, model, opts, tried)
-\t\t\t\tif err == nil && auth != nil {
-\t\t\t\t\tm.recordAuthSelected(auth.ID)
-\t\t\t\t}
-\t\t\t\treturn auth, exec, err
-\t\t\t}
-''',
-    'm.mu.RUnlock()\n\t\t\t\tauth, exec, err := m.pickNextLegacy',
-)
-replace_once(
-    auth_conductor,
-    '''\tif m.HomeEnabled() {
-\t\treturn m.pickNextViaHome(ctx, model, opts, tried)
-\t}
-
-\tif m.hasPluginScheduler() || !m.useSchedulerFastPath() {
-\t\treturn m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
-\t}
-''',
-    '''\tif m.HomeEnabled() {
-\t\tauth, exec, providerKey, err := m.pickNextViaHome(ctx, model, opts, tried)
-\t\tif err == nil && auth != nil {
-\t\t\tm.recordAuthSelected(auth.ID)
-\t\t}
-\t\treturn auth, exec, providerKey, err
-\t}
-
-\tif m.hasPluginScheduler() || !m.useSchedulerFastPath() {
-\t\tauth, exec, providerKey, err := m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
-\t\tif err == nil && auth != nil {
-\t\t\tm.recordAuthSelected(auth.ID)
-\t\t}
-\t\treturn auth, exec, providerKey, err
-\t}
-''',
-    'auth, exec, providerKey, err := m.pickNextViaHome',
-)
-replace_once(
-    auth_conductor,
-    '''\treturn authCopy, executor, providerKey, nil
-}
-
-func (m *Manager) pickNextMixed(''',
-    '''\tm.recordAuthSelected(authCopy.ID)
-\treturn authCopy, executor, providerKey, nil
-}
-
-func (m *Manager) pickNextMixed(''',
-    'm.recordAuthSelected(authCopy.ID)\n\treturn authCopy, executor, providerKey, nil',
-)
-replace_once(
-    auth_conductor,
-    '''\t\t\tif m.routeAwareSelectionRequired(candidate, model) {
-\t\t\t\tm.mu.RUnlock()
-\t\t\t\treturn m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
-\t\t\t}
-''',
-    '''\t\t\tif m.routeAwareSelectionRequired(candidate, model) {
-\t\t\t\tm.mu.RUnlock()
-\t\t\t\tauth, exec, providerKey, err := m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
-\t\t\t\tif err == nil && auth != nil {
-\t\t\t\t\tm.recordAuthSelected(auth.ID)
-\t\t\t\t}
-\t\t\t\treturn auth, exec, providerKey, err
-\t\t\t}
-''',
-    'm.mu.RUnlock()\n\t\t\t\tauth, exec, providerKey, err := m.pickNextMixedLegacy',
+    'func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (auth *Auth, executor ProviderExecutor, providerKey string, err error)',
 )
 
 auth_files_handler = ROOT / 'internal/api/handlers/management/auth_files.go'
@@ -3243,130 +5337,16 @@ replace_once(
 ''',
     'entry["selected"] = auth.Selected',
 )
-queue_go_source('internal/api/handlers/management/auth_files_delete_missing_test.go')
 replace_once(
     auth_files_crud_handler,
-    '''\tctx := c.Request.Context()
-\tif all := c.Query("all"); all == "true" || all == "1" || all == "*" {
-\t\tentries, err := os.ReadDir(h.cfg.AuthDir)
-\t\tif err != nil {
-\t\t\tc.JSON(500, gin.H{"error": fmt.Sprintf("failed to read auth dir: %v", err)})
-\t\t\treturn
-\t\t}
-\t\tdeleted := 0
-\t\tfor _, e := range entries {
-\t\t\tif e.IsDir() {
-\t\t\t\tcontinue
-\t\t\t}
-\t\t\tname := e.Name()
-\t\t\tif !strings.HasSuffix(strings.ToLower(name), ".json") {
-\t\t\t\tcontinue
-\t\t\t}
-\t\t\tfull := filepath.Join(h.cfg.AuthDir, name)
-\t\t\tif !filepath.IsAbs(full) {
-\t\t\t\tif abs, errAbs := filepath.Abs(full); errAbs == nil {
-\t\t\t\t\tfull = abs
-\t\t\t\t}
-\t\t\t}
-\t\t\tif err = os.Remove(full); err == nil {
-\t\t\t\tif errDel := h.deleteTokenRecord(ctx, full); errDel != nil {
-\t\t\t\t\tc.JSON(500, gin.H{"error": errDel.Error()})
-\t\t\t\t\treturn
-\t\t\t\t}
-\t\t\t\tdeleted++
+    '''\t\t\t\tdeleted++
 \t\t\t\th.removeAuth(ctx, full)
-\t\t\t}
-\t\t}
-\t\tc.JSON(200, gin.H{"status": "ok", "deleted": deleted})
-\t\treturn
-\t}
 ''',
-    '''\tctx := c.Request.Context()
-\tif all := c.Query("all"); all == "true" || all == "1" || all == "*" {
-\t\tnames, errNames := h.authFileNamesForDeleteAll()
-\t\tif errNames != nil {
-\t\t\tc.JSON(http.StatusInternalServerError, gin.H{"error": errNames.Error()})
-\t\t\treturn
-\t\t}
-\t\tdeleted := 0
-\t\tfor _, name := range names {
-\t\t\tif _, status, errDelete := h.deleteAuthFileByName(ctx, name); errDelete != nil {
-\t\t\t\tc.JSON(status, gin.H{"error": errDelete.Error(), "deleted": deleted})
-\t\t\t\treturn
-\t\t\t}
-\t\t\tdeleted++
-\t\t}
-\t\tc.JSON(http.StatusOK, gin.H{"status": "ok", "deleted": deleted})
-\t\treturn
-\t}
+    '''\t\t\t\tdeleted++
+\t\t\t\th.removeAuth(ctx, full)
+\t\t\t\t_ = embeddedusage.DeleteAuthRuntimeState(ctx, "", "", name)
 ''',
-    'names, errNames := h.authFileNamesForDeleteAll()',
-)
-insert_before(
-    auth_files_crud_handler,
-    'func (h *Handler) multipartAuthFileHeaders(c *gin.Context) ([]*multipart.FileHeader, error) {\n',
-    '''func (h *Handler) authFileNamesForDeleteAll() ([]string, error) {
-\tnames := make(map[string]struct{})
-\taddName := func(name string) {
-\t\tname = strings.TrimSpace(filepath.Base(name))
-\t\tif isUnsafeAuthFileName(name) || !strings.HasSuffix(strings.ToLower(name), ".json") {
-\t\t\treturn
-\t\t}
-\t\tnames[name] = struct{}{}
-\t}
-
-\tentries, err := os.ReadDir(h.cfg.AuthDir)
-\tif err != nil && !os.IsNotExist(err) {
-\t\treturn nil, fmt.Errorf("failed to read auth dir: %w", err)
-\t}
-\tfor _, entry := range entries {
-\t\tif !entry.IsDir() {
-\t\t\taddName(entry.Name())
-\t\t}
-\t}
-
-\tif h.authManager != nil {
-\t\tfor _, auth := range h.authManager.List() {
-\t\t\tif auth == nil || isRuntimeOnlyAuth(auth) {
-\t\t\t\tcontinue
-\t\t\t}
-\t\t\tpath := strings.TrimSpace(authAttribute(auth, "path"))
-\t\t\tif sourcePath := strings.TrimSpace(authAttribute(auth, coreauth.AttributeVirtualSource)); sourcePath != "" {
-\t\t\t\tpath = sourcePath
-\t\t\t}
-\t\t\tif path != "" {
-\t\t\t\taddName(path)
-\t\t\t\tcontinue
-\t\t\t}
-\t\t\taddName(auth.FileName)
-\t\t}
-\t}
-
-\tout := make([]string, 0, len(names))
-\tfor name := range names {
-\t\tout = append(out, name)
-\t}
-\tsort.Strings(out)
-\treturn out, nil
-}
-
-''',
-    'func (h *Handler) authFileNamesForDeleteAll()',
-)
-replace_once(
-    auth_files_crud_handler,
-    '''\tif errRemove := os.Remove(targetPath); errRemove != nil {
-\t\tif os.IsNotExist(errRemove) {
-\t\t\treturn filepath.Base(name), http.StatusNotFound, errAuthFileNotFound
-\t\t}
-\t\treturn filepath.Base(name), http.StatusInternalServerError, fmt.Errorf("failed to remove file: %w", errRemove)
-\t}
-''',
-    '''\tif errRemove := os.Remove(targetPath); errRemove != nil && !os.IsNotExist(errRemove) {
-\t\treturn filepath.Base(name), http.StatusInternalServerError, fmt.Errorf("failed to remove file: %w", errRemove)
-\t}
-''',
-    'errRemove != nil && !os.IsNotExist(errRemove)',
+    'DeleteAuthRuntimeState(ctx, "", "", name)',
 )
 replace_once(
     auth_files_crud_handler,
@@ -3405,8 +5385,6 @@ replace_once(
 )
 
 auth_scheduler = ROOT / 'sdk/cliproxy/auth/scheduler.go'
-add_go_import(auth_scheduler, '"context"\n', '\t"fmt"\n')
-add_go_import(auth_scheduler, '"time"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
 replace_once(
     auth_scheduler,
     '''\tmixedCursors        map[string]int
@@ -3436,21 +5414,20 @@ replace_once(
 \tproviderKey     string
 \tmodelKey        string
 \tpersistedCursors map[string]string''',
-    'type modelScheduler struct {\n\tproviderKey',
+    'providerKey     string\n\tmodelKey',
 )
 replace_once(
     auth_scheduler,
     '''type readyView struct {
 \tflat          []*scheduledAuth
-\tcursor        int
+\tlastPicked    string
 \tweightedState smoothWeightedState
 }''',
     '''type readyView struct {
 \tflat          []*scheduledAuth
-\tcursor        int
+\tlastPicked    string
 \tweightedState smoothWeightedState
 \tcursorKey     string
-\tlastAuthID    string
 \tpersisted     map[string]string
 }''',
     'cursorKey  string',
@@ -3462,58 +5439,25 @@ replace_once(
 \t\tstrategy:            selectorStrategy(selector),
 \t\tproviders:           make(map[string]*providerScheduler),
 \t\tauthProviders:       make(map[string]string),
+\t\tauthGenerations:     make(map[string]scheduledGenerationMeta),
 \t\tmixedCursors:        make(map[string]int),
 \t\tmixedWeightedStates: make(map[string]*smoothWeightedState),
 \t}
 }''',
     '''func newAuthScheduler(selector Selector) *authScheduler {
-\tpersistedCursors := make(map[string]string)
-\tif states, err := embeddedusage.ListRoutingCursorStates(context.Background()); err == nil {
-\t\tfor _, state := range states {
-\t\t\tpersistedCursors[state.CursorKey] = state.LastAuthID
-\t\t}
-\t}
+\tpersistedCursors := loadRoutingCursorStates()
 \treturn &authScheduler{
 \t\tstrategy:            selectorStrategy(selector),
 \t\tproviders:           make(map[string]*providerScheduler),
 \t\tauthProviders:       make(map[string]string),
+\t\tauthGenerations:     make(map[string]scheduledGenerationMeta),
 \t\tmixedCursors:        make(map[string]int),
 \t\tmixedWeightedStates: make(map[string]*smoothWeightedState),
 \t\tmixedRestored:       make(map[string]bool),
 \t\tpersistedCursors:    persistedCursors,
 \t}
 }''',
-    'persistedCursors := make(map[string]string)',
-)
-insert_before(
-    auth_scheduler,
-    '// selectorStrategy maps a selector implementation to the scheduler semantics it should emulate.\n',
-    '''func (s *authScheduler) applyImportedRuntimeState(states []embeddedusage.RoutingCursorState, auths []*Auth) {
-\tif s == nil {
-\t\treturn
-\t}
-\tpersistedCursors := make(map[string]string, len(states))
-\tfor _, state := range states {
-\t\tif state.CursorKey != "" && state.LastAuthID != "" {
-\t\t\tpersistedCursors[state.CursorKey] = state.LastAuthID
-\t\t}
-\t}
-\ts.mu.Lock()
-\tdefer s.mu.Unlock()
-\ts.persistedCursors = persistedCursors
-\ts.providers = make(map[string]*providerScheduler)
-\ts.authProviders = make(map[string]string)
-\ts.mixedCursors = make(map[string]int)
-\ts.mixedWeightedStates = make(map[string]*smoothWeightedState)
-\ts.mixedRestored = make(map[string]bool)
-\tnow := time.Now()
-\tfor _, auth := range auths {
-\t\ts.upsertAuthLocked(auth, now)
-\t}
-}
-
-''',
-    'func (s *authScheduler) applyImportedRuntimeState',
+    'persistedCursors := loadRoutingCursorStates()',
 )
 replace_once(
     auth_scheduler,
@@ -3572,15 +5516,6 @@ replace_once(
 )
 replace_once(
     auth_scheduler,
-    '''\t\tbucket := buildReadyBucket(entries)
-''',
-    '''\t\tcursorPrefix := fmt.Sprintf("single|%s|%s|%d", m.providerKey, m.modelKey, priority)
-\t\tbucket := buildReadyBucket(entries, cursorPrefix, m.persistedCursors)
-''',
-    'cursorPrefix := fmt.Sprintf("single|%s|%s|%d"',
-)
-replace_once(
-    auth_scheduler,
     '''\t\tif cursorState, ok := cursorStates[priority]; ok && bucket != nil {
 \t\t\trestoreReadyViewCursors(&bucket.all, cursorState.all)
 \t\t\trestoreReadyViewCursors(&bucket.ws, cursorState.ws)
@@ -3591,183 +5526,101 @@ replace_once(
 \t\t\trestoreReadyViewCursors(&bucket.all, cursorState.all)
 \t\t\trestoreReadyViewCursors(&bucket.ws, cursorState.ws)
 \t\t}
-\t\tif bucket != nil {
-\t\t\tbucket.all.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|all"])
-\t\t\tbucket.ws.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|ws"])
-\t\t}
+\t\tm.configurePersistedReadyBucket(bucket, priority)
 \t\tm.readyByPriority[priority] = bucket
 ''',
-    'bucket.all.restoreAfterAuthID(m.persistedCursors[cursorPrefix+"|all"])',
+    'm.configurePersistedReadyBucket(bucket, priority)',
 )
 replace_once(
     auth_scheduler,
-    '''func buildReadyBucket(entries []*scheduledAuth) *readyBucket {
-\tbucket := &readyBucket{}
-\tbucket.all = buildReadyView(entries)''',
-    '''func buildReadyBucket(entries []*scheduledAuth, cursorPrefix string, persisted map[string]string) *readyBucket {
-\tbucket := &readyBucket{}
-\tbucket.all = buildReadyView(entries, cursorPrefix+"|all", persisted)''',
-    'func buildReadyBucket(entries []*scheduledAuth, cursorPrefix string',
-)
-replace_once(
-    auth_scheduler,
-    '''\tbucket.ws = buildReadyView(wsEntries)
+    '''\t\tv.lastPicked = entry.auth.ID
+\t\treturn entry
 ''',
-    '''\tbucket.ws = buildReadyView(wsEntries, cursorPrefix+"|ws", persisted)
+    '''\t\tv.lastPicked = entry.auth.ID
+\t\tv.persistSelection(entry)
+\t\treturn entry
 ''',
-    'buildReadyView(wsEntries, cursorPrefix+"|ws"',
+    'v.persistSelection(entry)',
 )
 replace_once(
     auth_scheduler,
-    '''func buildReadyView(entries []*scheduledAuth) readyView {
-\treturn readyView{flat: append([]*scheduledAuth(nil), entries...)}
-}''',
-    '''func buildReadyView(entries []*scheduledAuth, cursorKey string, persisted map[string]string) readyView {
-\tview := readyView{flat: append([]*scheduledAuth(nil), entries...), cursorKey: cursorKey, persisted: persisted}
-\tview.restoreAfterAuthID(persisted[cursorKey])
-\treturn view
+    '''\tstartSlot := s.mixedCursors[cursorKey] % totalWeight
+''',
+    '''\tstartSlot := s.mixedCursors[cursorKey] % totalWeight
+\tstartSlot, persistedCursorKey := s.restoreMixedCursor(
+\t\tcursorKey, bestPriority, startSlot, candidateShards, weights, segmentStarts,
+\t)
+''',
+    'startSlot, persistedCursorKey := s.restoreMixedCursor(',
+)
+replace_once(
+    auth_scheduler,
+    '''\t\ts.mixedCursors[cursorKey] = slot + 1
+\t\treturn picked, providerKey, nil
+''',
+    '''\t\ts.mixedCursors[cursorKey] = slot + 1
+\t\ts.persistMixedCursor(persistedCursorKey, picked.ID)
+\t\treturn picked, providerKey, nil
+''',
+    's.persistMixedCursor(persistedCursorKey, picked.ID)',
+)
+
+# Account policy fields are execution-only overlays. Every Manager-driven
+# incremental scheduler refresh must therefore go through RefreshSchedulerEntry,
+# whose single low-level upsert resolves the latest cached account policy.
+auth_package = ROOT / 'sdk/cliproxy/auth'
+auth_go_paths = set(auth_package.glob('*.go'))
+auth_go_paths.update(
+    path for path in _writes
+    if path.parent == auth_package and path.suffix == '.go'
+)
+direct_scheduler_upserts = {
+    path.relative_to(ROOT).as_posix(): read(path).count('m.scheduler.upsertAuth(')
+    for path in auth_go_paths
+    if read(path).count('m.scheduler.upsertAuth(') > 0
 }
+expected_direct_scheduler_upserts = {'sdk/cliproxy/auth/conductor_selection.go': 1}
+if direct_scheduler_upserts != expected_direct_scheduler_upserts:
+    raise SystemExit(
+        'Manager scheduler upserts must be centralized in RefreshSchedulerEntry: '
+        f'found {direct_scheduler_upserts}'
+    )
 
-func (v *readyView) restoreAfterAuthID(lastAuthID string) {
-\tlastAuthID = strings.TrimSpace(lastAuthID)
-\tif lastAuthID == "" || len(v.flat) == 0 {
-\t\treturn
-\t}
-\tv.lastAuthID = lastAuthID
-\tfor index, entry := range v.flat {
-\t\tif entry == nil || entry.auth == nil {
-\t\t\tcontinue
-\t\t}
-\t\tif entry.auth.ID == lastAuthID {
-\t\t\tv.cursor = index + 1
-\t\t\treturn
-\t\t}
-\t\tif entry.auth.ID > lastAuthID {
-\t\t\tv.cursor = index
-\t\t\treturn
-\t\t}
-\t}
-\tv.cursor = 0
-}''',
-    'func (v *readyView) restoreAfterAuthID',
-)
-replace_once(
-    auth_scheduler,
-    '''\t\tv.cursor = index + 1
-\t\treturn entry
-''',
-    '''\t\tv.cursor = index + 1
-\t\tv.lastAuthID = entry.auth.ID
-\t\tif v.persisted != nil {
-\t\t\tv.persisted[v.cursorKey] = entry.auth.ID
-\t\t}
-\t\tembeddedusage.QueueRoutingCursorState(embeddedusage.RoutingCursorState{
-\t\t\tCursorKey: v.cursorKey, LastAuthID: entry.auth.ID, UpdatedAtMS: time.Now().UnixMilli(),
-\t\t})
-\t\treturn entry
-''',
-    'v.persisted[v.cursorKey] = entry.auth.ID',
-)
-replace_once(
-    auth_scheduler,
-    '''\tstartSlot := s.mixedCursors[cursorKey] % totalWeight
-''',
-    '''\tstartSlot := s.mixedCursors[cursorKey] % totalWeight
-\tpersistedCursorKey := fmt.Sprintf("mixed|%s|%d", cursorKey, bestPriority)
-\tif !s.mixedRestored[cursorKey] {
-\t\ts.mixedRestored[cursorKey] = true
-\t\tif lastAuthID := s.persistedCursors[persistedCursorKey]; lastAuthID != "" {
-\t\t\tfor providerIndex, shard := range candidateShards {
-\t\t\t\tif shard != nil {
-\t\t\t\t\tif _, ok := shard.entries[lastAuthID]; ok && weights[providerIndex] > 0 {
-\t\t\t\t\t\tstartSlot = segmentStarts[providerIndex]
-\t\t\t\t\t\tbreak
-\t\t\t\t\t}
-\t\t\t\t}
-\t\t\t}
-\t\t}
-\t}
-''',
-    'persistedCursorKey := fmt.Sprintf("mixed|%s|%d"',
-)
-replace_once(
-    auth_scheduler,
-    '''\t\ts.mixedCursors[cursorKey] = slot + 1
-\t\treturn picked, providerKey, nil
-''',
-    '''\t\ts.mixedCursors[cursorKey] = slot + 1
-\t\ts.persistedCursors[persistedCursorKey] = picked.ID
-\t\tembeddedusage.QueueRoutingCursorState(embeddedusage.RoutingCursorState{
-\t\t\tCursorKey: persistedCursorKey, LastAuthID: picked.ID, UpdatedAtMS: time.Now().UnixMilli(),
-\t\t})
-\t\treturn picked, providerKey, nil
-''',
-    's.persistedCursors[persistedCursorKey] = picked.ID',
-)
-
-# Harden flaky upstream debounce test under high CI package parallelism (esp. arm64).
-watcher_test = ROOT / 'internal/watcher/watcher_test.go'
-replace_once(
-    watcher_test,
-    '''\tw.scheduleConfigReload()
-\tw.scheduleConfigReload()
-
-\ttime.Sleep(400 * time.Millisecond)
-
-\tif atomic.LoadInt32(&reloads) != 1 {
-\t\tt.Fatalf("expected single debounced reload, got %d", reloads)
-\t}
-''',
-    '''\tw.scheduleConfigReload()
-\tw.scheduleConfigReload()
-
-\tdeadline := time.Now().Add(2 * time.Second)
-\tfor atomic.LoadInt32(&reloads) == 0 && time.Now().Before(deadline) {
-\t\ttime.Sleep(20 * time.Millisecond)
-\t}
-\tif got := atomic.LoadInt32(&reloads); got != 1 {
-\t\tt.Fatalf("expected single debounced reload, got %d", got)
-\t}
-''',
-    'deadline := time.Now().Add(2 * time.Second)',
-)
-
-flush_writes()
-subprocess.run([
-    'gofmt',
-    '-w',
+format_go_writes([
     'cmd/server/main.go',
     'internal/api/server.go',
-    'internal/api/server_test.go',
+    'internal/api/api_key_policy_middleware_test.go',
+    'internal/api/server_middleware.go',
     'internal/api/server_options.go',
+    'internal/api/server_routes.go',
+	'internal/api/server_model_policy.go',
+    'internal/api/server_test.go',
     *[
         f'internal/api/handlers/management/{name}'
         for name in ACCOUNT_INSPECTION_SOURCE_FILES
     ],
     'internal/api/handlers/management/account_inspection_host.go',
+    'internal/api/handlers/management/api_key_policy.go',
+    'internal/api/handlers/management/auth_file_connection.go',
+    'internal/api/handlers/management/auth_file_connection_test.go',
+    'internal/api/handlers/management/auth_file_metadata.go',
     'internal/api/handlers/management/auth_files_fields.go',
     'internal/api/handlers/management/auth_files.go',
-    'internal/api/handlers/management/auth_files_delete_missing_test.go',
     'internal/api/handlers/management/handler.go',
     'internal/api/handlers/management/management_panel.go',
     'internal/api/handlers/management/management_panel_test.go',
     'internal/managementasset/updater.go',
     'internal/managementasset/gitstore_token_test.go',
+    'internal/client/codex/live/client_secret.go',
+	'internal/client/codex/live/live.go',
+	'internal/client/codex/live/sideband.go',
+    'internal/client/codex/live/websocket.go',
+    'internal/client/codex/live/api_key_quota_relay_test.go',
     'internal/api/handlers/management/plugin_quota.go',
     'internal/api/handlers/management/plugin_quota_test.go',
     'internal/api/handlers/management/pro_auth_mutation.go',
     'internal/api/handlers/management/pro_features.go',
     'internal/api/handlers/management/pro_management_runtime.go',
-    'internal/client/claude/models/models.go',
-    'internal/client/claude/models/models_test.go',
-    'internal/auth/codex/filename.go',
-    'internal/auth/codex/filename_test.go',
-    'internal/config/sdk_config.go',
-    'internal/logging/requestid.go',
-    'internal/logging/requestmeta.go',
-    'internal/util/claude_model.go',
-    'internal/util/claude_model_test.go',
-    'internal/watcher/diff/config_diff.go',
     'internal/api/handlers/management/routing_policy.go',
     'internal/api/handlers/management/routing_policy_test.go',
     'internal/config/config_existing_updates.go',
@@ -3784,32 +5637,50 @@ subprocess.run([
     'internal/pluginhost/rpc_client.go',
     'internal/pluginhost/rpc_schema.go',
     'internal/pluginhost/snapshot.go',
+    'internal/pluginhost/executor_route.go',
+    'internal/pluginhost/adapters_executors.go',
+	'internal/pluginhost/plugin_executor_usage.go',
+    'internal/pluginhost/plugin_executor_usage_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
     'internal/pluginstore/auth.go',
     'internal/pluginstore/gitstore_auth_test.go',
     'internal/redisqueue/plugin.go',
-    'internal/redisqueue/plugin_test.go',
-    'internal/requestmeta/client.go',
-    'internal/requestmeta/client_test.go',
-    'internal/requestmeta/requestid.go',
-    'internal/requestmeta/response.go',
-    'internal/pro/modelpolicy/config/config.go',
-    'internal/pro/modelpolicy/config/config_test.go',
-    'internal/pro/modelpolicy/policy/engine.go',
-    'internal/pro/modelpolicy/policy/engine_test.go',
+    'internal/redisqueue/speed_test.go',
+	'internal/redisqueue/api_key_policy_usage_test.go',
+    'internal/requestmeta/observer.go',
+    'internal/requestmeta/observer_test.go',
+    'internal/runtime/executor/helps/logging_helpers.go',
+	'internal/runtime/executor/helps/quota_settlement_test.go',
+	'internal/runtime/executor/helps/usage_pro_extensions.go',
+    'internal/runtime/executor/helps/response_observer_test.go',
+    'internal/runtime/executor/helps/usage_helpers.go',
+    'internal/runtime/executor/helps/usage_speed_test.go',
+    'internal/runtime/executor/claude_usage_speed_test.go',
+    'internal/runtime/executor/claude_executor_execute.go',
+    'internal/runtime/executor/claude_executor_stream.go',
+    'internal/runtime/executor/claude_stream_terminal.go',
+    'internal/pro/oauthpolicy/config/config.go',
+    'internal/pro/oauthpolicy/config/config_test.go',
+    'internal/pro/oauthpolicy/policy/engine.go',
+    'internal/pro/oauthpolicy/policy/engine_test.go',
     'internal/pro/app/migration.go',
     'internal/pro/app/migration_test.go',
     'internal/pro/app/app.go',
     'internal/pro/app/app_test.go',
+	'internal/pro/apikeypolicy/service.go',
+	'internal/pro/apikeypolicy/service_test.go',
+	'internal/pro/apikeypolicy/store.go',
+	'internal/pro/apikeypolicy/types.go',
     'internal/pro/backup/coordinator.go',
     'internal/pro/backup/coordinator_test.go',
-    'internal/pro/host/model_policy.go',
+    'internal/pro/host/oauth_policy.go',
     'internal/pro/host/proxy.go',
-    'internal/pro/modelpolicy/service.go',
-    'internal/pro/modelpolicy/management.go',
+    'internal/pro/oauthpolicy/service.go',
+    'internal/pro/oauthpolicy/management.go',
     'internal/pro/proxypool/management.go',
     'internal/pro/proxypool/service.go',
+    'internal/pro/proxypool/service_test.go',
     'internal/pro/settings/store.go',
     'internal/pro/state/types.go',
     'internal/pro/state/writer.go',
@@ -3832,6 +5703,8 @@ subprocess.run([
     'internal/pro/inspection/lifecycle_test.go',
     'internal/pro/inspection/confirmations.go',
     'internal/pro/inspection/confirmations_test.go',
+    'internal/pro/inspection/persistence.go',
+    'internal/pro/inspection/persistence_test.go',
     'internal/pro/inspection/policy.go',
     'internal/pro/inspection/policy_test.go',
     'internal/pro/inspection/ports.go',
@@ -3855,7 +5728,11 @@ subprocess.run([
     'internal/pro/inspection/selection_test.go',
     'internal/pro/observability/module.go',
     'internal/pro/observability/module_test.go',
+	'internal/pro/observability/backup_crypto.go',
     'internal/pro/observability/config.go',
+	'internal/pro/observability/config_test.go',
+	'internal/pro/observability/data_management.go',
+	'internal/pro/observability/data_management_test.go',
     'internal/pro/observability/global.go',
     'internal/pro/observability/pricing.go',
     'internal/pro/observability/pricing_sync.go',
@@ -3880,16 +5757,38 @@ subprocess.run([
     'internal/pro/proxypool/pool/pool_test.go',
     'internal/pro/proxypool/socks5/server.go',
     'internal/runtime/executor/xai_executor.go',
+    'internal/runtime/executor/xai_executor_execute.go',
+    'internal/runtime/executor/xai_executor_stream.go',
     'internal/runtime/executor/xai_quota_observer.go',
     'internal/runtime/executor/xai_websockets_executor.go',
-    'sdk/api/handlers/claude/code_handlers.go',
-    'sdk/api/handlers/claude/code_handlers_model_test.go',
+    'internal/translator/codex/openai/chat-completions/codex_fast_service_tier_test.go',
+    'internal/translator/codex/openai/chat-completions/codex_openai_request.go',
+    'internal/translator/codex/openai/responses/codex_fast_service_tier_test.go',
+    'internal/translator/codex/openai/responses/codex_openai-responses_request.go',
     'sdk/auth/codex_device.go',
     'sdk/auth/filestore.go',
-    'sdk/auth/filestore_test.go',
+	'sdk/auth/filestore_identity.go',
+	'sdk/auth/filestore_identity_test.go',
+    'sdk/api/handlers/handlers.go',
+    'sdk/api/handlers/api_key_policy_test.go',
+	'sdk/api/handlers/api_key_policy_context_test.go',
+    'sdk/api/handlers/handlers_context.go',
+    'sdk/api/handlers/handlers_execution.go',
+    'sdk/api/handlers/handlers_routing.go',
+    'sdk/api/handlers/handlers_stream.go',
+    'sdk/api/handlers/openai/openai_handlers.go',
+    'sdk/api/handlers/claude/code_handlers.go',
+    'sdk/api/handlers/gemini/gemini_handlers.go',
+    'sdk/api/handlers/handlers_speed_test.go',
     'sdk/cliproxy/auth/auth_runtime_state.go',
     'sdk/cliproxy/auth/auth_runtime_state_test.go',
+	'sdk/cliproxy/auth/auth_account_policy.go',
+	'sdk/cliproxy/auth/auth_account_policy_test.go',
+	'sdk/cliproxy/auth/scheduler_runtime_state.go',
+    'sdk/cliproxy/auth/pinned_execution.go',
     'sdk/cliproxy/auth/conductor.go',
+    'sdk/cliproxy/auth/conductor_execution.go',
+    'sdk/cliproxy/auth/conductor_speed_test.go',
     'sdk/cliproxy/auth/scheduler.go',
     'sdk/cliproxy/auth/types.go',
     'sdk/cliproxy/builder.go',
@@ -3898,12 +5797,16 @@ subprocess.run([
     'sdk/cliproxy/service_executors.go',
     'sdk/cliproxy/service_lifecycle.go',
     'sdk/cliproxy/service_models.go',
+    'sdk/cliproxy/executor/speed.go',
     'sdk/cliproxy/usage/manager.go',
-    'sdk/cliproxy/usage/manager_test.go',
+	'sdk/cliproxy/usage/manager_extensions.go',
+	'sdk/cliproxy/usage/manager_pro_test.go',
+    'sdk/cliproxy/usage/speed.go',
+    'sdk/cliproxy/usage/speed_test.go',
     'sdk/pluginabi/types.go',
     'sdk/pluginapi/types.go',
     'sdk/proxyutil/proxy.go',
     'sdk/proxyutil/runtime_override.go',
     'sdk/proxyutil/runtime_override_test.go',
-], cwd=ROOT, check=True)
-subprocess.run(['go', 'mod', 'tidy'], cwd=ROOT, check=True)
+])
+flush_writes()

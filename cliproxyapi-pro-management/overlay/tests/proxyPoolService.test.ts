@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import {
   isProxyPoolListenerUrl,
+  normalizeProxyPoolInteger,
   normalizeProxyPoolConfig,
+  normalizeProxyPoolStatus,
   parseProxyPoolImport,
   serializeProxyPoolConfig,
 } from '../src/pro/modules/proxyPool/proxyPool';
 import {
   formatProxyPoolSuccessRate,
+  hasProxyCredentials,
   proxyPoolDurationValue,
+  resolveProxyPoolEndpoint,
   serializeProxyPoolDuration,
 } from '../src/pro/modules/proxyPool/features/proxyPoolUi';
 
@@ -41,6 +45,21 @@ describe('proxy pool service model', () => {
         order: 30,
       },
     ]);
+  });
+
+  test('normalizes integer settings before sending them to the backend', () => {
+    expect(normalizeProxyPoolInteger('3.9')).toBe(3);
+    expect(normalizeProxyPoolInteger('0')).toBe(1);
+    const serialized = serializeProxyPoolConfig({
+      ...normalizeProxyPoolConfig({}),
+      maxFailoverAttempts: 2.8,
+      healthCheck: {
+        ...normalizeProxyPoolConfig({}).healthCheck,
+        isolationThreshold: 4.7,
+      },
+    });
+    expect(serialized['max-failover-attempts']).toBe(2);
+    expect(serialized['health-check']).toMatchObject({ 'isolation-threshold': 4 });
   });
 
   test('parses batch import formats and skips existing or repeated URLs', () => {
@@ -97,5 +116,32 @@ describe('proxy pool service model', () => {
     expect(proxyPoolDurationValue('90s', 'm')).toBe(1.5);
     expect(proxyPoolDurationValue('invalid', 's')).toBeNull();
     expect(serializeProxyPoolDuration(1.5, 'm')).toBe('1.5m');
+  });
+
+  test('keeps credential detection stable after the URL is revealed', () => {
+    const value = 'socks5://alice:secret@proxy.example:1080';
+    expect(hasProxyCredentials(value)).toBe(true);
+    expect(hasProxyCredentials('socks5://proxy.example:1080')).toBe(false);
+  });
+
+  test('falls back from an uninitialized runtime endpoint to the configured listener', () => {
+    expect(resolveProxyPoolEndpoint('socks5://', '127.0.0.1:8318')).toBe(
+      'socks5://127.0.0.1:8318'
+    );
+    expect(resolveProxyPoolEndpoint('', '127.0.0.1:8318')).toBe('socks5://127.0.0.1:8318');
+    expect(resolveProxyPoolEndpoint('socks5://127.0.0.1:9000', '127.0.0.1:8318')).toBe(
+      'socks5://127.0.0.1:9000'
+    );
+  });
+
+  test('normalizes eligible node counts while remaining compatible with older cores', () => {
+    expect(
+      normalizeProxyPoolStatus({
+        healthy_nodes: 1,
+        eligible_nodes: 3,
+        nodes: [],
+      }).eligibleNodes
+    ).toBe(3);
+    expect(normalizeProxyPoolStatus({ healthy_nodes: 1, nodes: [] }).eligibleNodes).toBeUndefined();
   });
 });

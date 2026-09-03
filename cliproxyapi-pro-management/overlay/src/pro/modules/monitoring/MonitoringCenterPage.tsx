@@ -1,10 +1,9 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import {
   IconSearch,
@@ -12,17 +11,18 @@ import {
 } from '@/components/ui/icons';
 import {
   buildLocalDayKey,
-  getRangeStartMs,
   useMonitoringEventRows,
   type MonitoringEventRow,
-  type MonitoringTimeRange,
 } from '@/pro/modules/monitoring/features/hooks/useMonitoringData';
 import { useRealtimeLogData } from '@/pro/modules/monitoring/features/hooks/useRealtimeLogData';
 import { useUsageData, type UsageEventPageFilters, type UsagePayload } from '@/pro/modules/monitoring/features/hooks/useUsageData';
 import { useUsageAggregates, type UsageAggregateBucket } from '@/pro/modules/monitoring/features/hooks/useUsageAggregates';
 import { findMonitoringAuthIndexes } from '@/pro/modules/monitoring/features/monitoringAuthSearch';
+import {
+  buildProfileFilterOptions,
+  resolveUsageProfileSnapshot,
+} from '@/pro/modules/monitoring/features/profileUsage';
 import { ModelPriceManagerModal } from '@/pro/modules/monitoring/features/components/ModelPriceManagerModal';
-import { MonitoringSettingsModal } from '@/pro/modules/monitoring/features/components/MonitoringSettingsModal';
 import {
   RealtimeRequestDetailsPanel,
   RecentPattern,
@@ -42,7 +42,6 @@ import {
 } from '@/pro/modules/monitoring/features/components/UsageAnalyticsPanels';
 import { buildAggregateSummary } from '@/pro/modules/monitoring/features/monitoringAggregates';
 import {
-  quotaPersistenceMiddleware,
   resolveAccountPlanLabel,
   type AccountPlanQuotaStore,
 } from '@/pro/modules/quota';
@@ -54,9 +53,17 @@ import {
   finalizeMonitoringSummary,
   formatPercent,
   getRankingMetricValue,
+  hasCompleteUsageAnalyticsSource,
   type RankingMetric,
 } from '@/pro/modules/monitoring/features/monitoringAnalytics';
-import { TIME_RANGE_OPTIONS } from '@/pro/modules/monitoring/features/monitoringOptions';
+import {
+  DEFAULT_TIME_RANGE,
+  TimeRangeSelector,
+  createCustomTimeRange,
+  getTimeRangeKey,
+  resolveTimeRange,
+  type TimeRangeSelection,
+} from '@/pro/modules/monitoring/features/timeRange';
 import {
   buildMonitoringSettingsFromDraft,
   createMonitoringSettingsDraft,
@@ -64,13 +71,18 @@ import {
   type MonitoringSettingsDraft,
 } from '@/pro/modules/monitoring/features/monitoringSettings';
 import {
+  buildModelPriceRule,
+  createSpeedDraft,
+  createServiceTierDraft,
   createPriceDraft,
   formatDeltaPercent,
-  parsePriceContextSize,
-  parsePriceValue,
+  validatePriceDraft,
   type PriceDraft,
   type PriceManagementView,
+  type PriceRateDraft,
   type PriceRuleTarget,
+  type ServiceTierDraft,
+  type SpeedDraft,
   type PriceSyncChangeFilter,
   type PriceTierDraft,
 } from '@/pro/modules/monitoring/features/modelPricePresentation';
@@ -96,13 +108,16 @@ import {
   translateRealtimeErrorText,
   type RealtimeLogRow,
 } from '@/pro/modules/monitoring/features/realtimeLogPresentation';
-import { hasUsageBackupManifest } from '@/pro/modules/monitoring/features/usageBackup';
+import { apiKeyPolicyApi } from '@/pro/modules/apiKeyPolicy';
+import { readMonitoringUsageLocationState } from '@/pro/shared/monitoringNavigation';
 import {
   DEFAULT_PRO_PAGE_SIZE,
   PRO_PAGE_SIZE_OPTIONS,
   normalizeProPageSize,
   resolveProPaginationCopy,
 } from '@/pro/shared/pagination';
+import { ProDetailDialog } from '@/pro/shared/ProSurface';
+import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { apiClient } from '@/services/api/client';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
@@ -130,6 +145,7 @@ import styles from '@/pro/modules/monitoring/features/monitoring.module.scss';
 
 type StatusFilter = 'all' | 'success' | 'failed';
 type LinkedRequestLogScope = { authIndex: string; fromMs: number; toMs: number };
+const PROFILE_CATALOG_REFRESH_MS = 30_000;
 
 type RealtimeLogDisplayRow = RealtimeLogRow & { accountPlan: string };
 
@@ -155,9 +171,10 @@ const getSuccessRateClassName = (rate: number) => (
 const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: RealtimeLogDisplayRow) => {
   switch (key) {
     case 'type':
-      return [row.provider, row.account || row.authLabel || row.accountMasked || '-'];
-    case 'accountPlan':
-      return [row.accountPlan];
+      return [
+        row.accountPlan === '-' ? row.provider : `${row.provider} · ${row.accountPlan}`,
+        row.account || row.authLabel || row.accountMasked || '-',
+      ];
     case 'model':
       return [row.model, row.modelAlias && row.modelAlias !== row.model ? row.modelAlias : buildRealtimeMetaText(row)];
     case 'reasoningEffort':
@@ -174,10 +191,11 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
       return [formatPercent(row.successRate)];
     case 'calls':
       return [formatCompactNumber(row.requestCount)];
-    case 'ttft':
-      return [formatDurationMs(row.ttftMs)];
     case 'latency':
-      return [formatDurationMs(row.latencyMs)];
+      return [
+        `First ${formatDurationMs(row.ttftMs)}`,
+        `Total ${formatDurationMs(row.latencyMs)}`,
+      ];
     case 'tokens':
       return [
         formatTokenCount(row.totalTokens),
@@ -220,64 +238,52 @@ const estimateRealtimeLogHeaderWidth = (key: RealtimeLogColumnKey, label: string
   return clampRealtimeLogColumnWidth(key, textWidth + 42);
 };
 
-type UsageImportResult = {
-  added?: number;
-  skipped?: number;
-  total?: number;
-  failed?: number;
-  modelPrices?: number;
-  modelPriceRecords?: number;
-  modelPriceRules?: number;
-  quotaCache?: number;
-  quotaCacheRecords?: number;
-  routingCursors?: number;
-  routingCursorRecords?: number;
-  authRuntimeStats?: number;
-  authRuntimeStatsRecords?: number;
-  proSettings?: number;
-  proSettingsRecords?: number;
-  accountInspectionSchedule?: boolean;
-  accountInspectionScheduleRecords?: number;
-  accountInspectionSnapshot?: boolean;
-  accountInspectionSnapshotRecords?: number;
-  monitoringSettings?: boolean;
-  monitoringSettingsRecords?: number;
-  legacyBackup?: boolean;
-};
-
-type UsageResetResult = {
-  deletedEvents: number;
-  generation: number;
-  resetAtMs: number;
-};
-
 export function MonitoringCenterPage() {
   const { t, i18n } = useTranslation();
   const location = useLocation();
+  const navigate = useNavigate();
   const config = useConfigStore((state) => state.config);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
-  const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
   const claudeQuota = useQuotaStore((state) => state.claudeQuota);
   const codexQuota = useQuotaStore((state) => state.codexQuota);
   const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);
   const kimiQuota = useQuotaStore((state) => state.kimiQuota);
   const xaiQuota = useQuotaStore((state) => state.xaiQuota);
-  const [timeRange, setTimeRange] = useState<MonitoringTimeRange>('today');
+  const [timeRange, setTimeRange] = useState<TimeRangeSelection>(DEFAULT_TIME_RANGE);
   const [searchInput, setSearchInput] = useState('');
   const [selectedProvider, setSelectedProvider] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
   const [selectedApiKey, setSelectedApiKey] = useState('all');
+  const [selectedApiKeyFallbackLabel, setSelectedApiKeyFallbackLabel] = useState('');
+  const [selectedProfile, setSelectedProfile] = useState('all');
+  const [selectedProfileFallbackName, setSelectedProfileFallbackName] = useState('');
+  const [currentProfileCatalog, setCurrentProfileCatalog] = useState<{
+    loaded: boolean;
+    names: Map<string, string>;
+  }>({ loaded: false, names: new Map() });
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
   const [linkedRequestLogScope, setLinkedRequestLogScope] = useState<LinkedRequestLogScope | null>(null);
-  const [selectedRealtimeErrorRow, setSelectedRealtimeErrorRow] = useState<RealtimeLogRow | null>(null);
-  const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
-  const [isMonitoringSettingsOpen, setIsMonitoringSettingsOpen] = useState(false);
+  const [selectedRealtimeErrorRow, setSelectedRealtimeErrorRowState] = useState<RealtimeLogRow | null>(null);
+  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'realtime-detail' | 'price-management'>();
+  const setSelectedRealtimeErrorRow = useCallback((row: RealtimeLogRow | null) => {
+    if (row) {
+      setSelectedRealtimeErrorRowState(row);
+      openSurface('realtime-detail');
+    } else if (activeSurface === 'realtime-detail') {
+      closeSurface();
+    }
+  }, [activeSurface, closeSurface, openSurface]);
+  const isPriceModalOpen = activeSurface === 'price-management';
+  const setIsPriceModalOpen = useCallback((open: boolean) => {
+    if (open) openSurface('price-management');
+    else if (activeSurface === 'price-management') closeSurface();
+  }, [activeSurface, closeSurface, openSurface]);
   const [isMonitoringSettingsLoading, setIsMonitoringSettingsLoading] = useState(false);
   const [isMonitoringSettingsSaving, setIsMonitoringSettingsSaving] = useState(false);
-  const [isMonitoringStatisticsResetting, setIsMonitoringStatisticsResetting] = useState(false);
   const [monitoringSettingsDraft, setMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
+  const [savedMonitoringSettingsDraft, setSavedMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
   const [priceManagementView, setPriceManagementView] = useState<PriceManagementView>('rules');
   const [priceRuleSearch, setPriceRuleSearch] = useState('');
   const [priceSyncChangeFilter, setPriceSyncChangeFilter] = useState<PriceSyncChangeFilter>('all');
@@ -291,8 +297,10 @@ export function MonitoringCenterPage() {
   const [isPriceLoading, setIsPriceLoading] = useState(false);
   const [isPriceSaving, setIsPriceSaving] = useState(false);
   const [isPriceSyncing, setIsPriceSyncing] = useState(false);
-  const [isImportingUsage, setIsImportingUsage] = useState(false);
-  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const priceManagementRequestRef = useRef<Promise<void> | null>(null);
+  const profileCatalogRequestRef = useRef<Promise<void> | null>(null);
+  const profileCatalogFetchedAtRef = useRef(0);
+  const profileCatalogGenerationRef = useRef<number | null>(null);
   const [isUsageTrendHidden, setIsUsageTrendHidden] = useState(false);
   const [modelRankingMetric, setModelRankingMetric] = useState<RankingMetric>('requests');
   const [apiKeyRankingMetric, setApiKeyRankingMetric] = useState<RankingMetric>('requests');
@@ -307,22 +315,101 @@ export function MonitoringCenterPage() {
   const deferredSearchInput = useDeferredValue(searchInput);
   const [deferredSearch, setDeferredSearch] = useState(searchInput);
   const paginationCopy = resolveProPaginationCopy(i18n.resolvedLanguage ?? i18n.language);
+  const timeRangeKey = getTimeRangeKey(timeRange);
+  const handleTimeRangeChange = useCallback((nextRange: TimeRangeSelection) => {
+    setLinkedRequestLogScope(null);
+    setTimeRange(nextRange);
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const authIndex = params.get('auth_index')?.trim() ?? '';
+    const linkedUsage = readMonitoringUsageLocationState(location.state);
+    const profileId = linkedUsage?.profileId ?? params.get('profile_id')?.trim() ?? '';
     const fromMs = Number(params.get('from_ms'));
     const toMs = Number(params.get('to_ms'));
+    if (linkedUsage || profileId) {
+      setSelectedApiKey(linkedUsage?.apiKeyHash || 'all');
+      setSelectedApiKeyFallbackLabel(linkedUsage?.apiKeyLabel || '');
+      setSelectedProfile(profileId || 'all');
+      setSelectedProfileFallbackName(linkedUsage?.profileName || '');
+      setLinkedRequestLogScope(null);
+      window.requestAnimationFrame(() => {
+        document.getElementById('request-events')?.scrollIntoView({ block: 'start' });
+      });
+      return;
+    }
     if (!authIndex || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs < 0 || toMs <= 0 || fromMs > toMs) {
       setLinkedRequestLogScope(null);
       return;
     }
     setLinkedRequestLogScope({ authIndex, fromMs, toMs });
+    const linkedTimeRange = createCustomTimeRange(fromMs, toMs);
+    if (linkedTimeRange) setTimeRange(linkedTimeRange);
     setSearchInput(authIndex);
     window.requestAnimationFrame(() => {
       document.getElementById('request-events')?.scrollIntoView({ block: 'start' });
     });
-  }, [location.search]);
+  }, [location.search, location.state]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (connectionStatus !== 'connected') {
+      profileCatalogRequestRef.current = null;
+      profileCatalogFetchedAtRef.current = 0;
+      profileCatalogGenerationRef.current = null;
+      setCurrentProfileCatalog({ loaded: false, names: new Map() });
+      return () => {
+        cancelled = true;
+      };
+    }
+    const refreshProfileCatalog = (force = false): Promise<void> => {
+      const fetchedAt = profileCatalogFetchedAtRef.current;
+      if (!force && fetchedAt > 0 && Date.now() - fetchedAt < PROFILE_CATALOG_REFRESH_MS) {
+        return Promise.resolve();
+      }
+      if (profileCatalogRequestRef.current) return profileCatalogRequestRef.current;
+      const request = apiKeyPolicyApi.profileCatalog()
+        .then((catalog) => {
+          if (cancelled) return;
+          profileCatalogFetchedAtRef.current = Date.now();
+          if (profileCatalogGenerationRef.current === catalog.policyGeneration) return;
+          profileCatalogGenerationRef.current = catalog.policyGeneration;
+          setCurrentProfileCatalog({
+            loaded: true,
+            names: new Map(catalog.items.map((profile) => [profile.id, profile.name])),
+          });
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setCurrentProfileCatalog((current) => current.loaded
+              ? current
+              : { loaded: false, names: new Map() });
+          }
+        });
+      profileCatalogRequestRef.current = request;
+      void request.then(() => {
+        if (profileCatalogRequestRef.current === request) {
+          profileCatalogRequestRef.current = null;
+        }
+      });
+      return request;
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshProfileCatalog();
+    };
+    void refreshProfileCatalog(true);
+    const interval = window.setInterval(refreshWhenVisible, PROFILE_CATALOG_REFRESH_MS);
+    const refreshWhenFocused = () => void refreshProfileCatalog();
+    window.addEventListener('focus', refreshWhenFocused);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshWhenFocused);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [connectionStatus]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDeferredSearch(deferredSearchInput), 300);
@@ -357,7 +444,9 @@ export function MonitoringCenterPage() {
 
   const {
     data: usageAggregates,
-    error: aggregatesError,
+    loading: usageAggregatesLoading,
+    refreshing: usageAggregatesRefreshing,
+    error: usageAggregatesError,
     refresh: refreshAggregates,
   } = useUsageAggregates({
     latestId,
@@ -372,25 +461,27 @@ export function MonitoringCenterPage() {
 
   const buildRealtimeLogFilters = useCallback((): UsageEventPageFilters => {
     const nowMs = Date.now();
-    const fromMs = linkedRequestLogScope?.fromMs ?? getRangeStartMs(timeRange, nowMs);
+    const resolvedRange = resolveTimeRange(timeRange, nowMs);
+    const fromMs = linkedRequestLogScope?.fromMs ?? resolvedRange.fromMs;
     return {
       fromMs: Number.isFinite(fromMs) && fromMs > 0 ? fromMs : undefined,
-      toMs: linkedRequestLogScope?.toMs ?? nowMs,
+      toMs: linkedRequestLogScope?.toMs ?? resolvedRange.toMs,
       provider: selectedProvider === 'all' ? undefined : selectedProvider,
       model: selectedModel === 'all' ? undefined : selectedModel,
       authIndex: linkedRequestLogScope?.authIndex,
       searchAuthIndexes: linkedRequestLogScope ? undefined : (searchMatchedAuthIndexFilter || undefined),
       apiKeyHash: selectedApiKey === 'all' ? undefined : selectedApiKey,
+      profileId: selectedProfile === 'all' ? undefined : selectedProfile,
       status: selectedStatus,
       search: linkedRequestLogScope ? undefined : deferredSearch,
       limit: realtimeLogPageSize,
     };
-  }, [deferredSearch, linkedRequestLogScope, realtimeLogPageSize, searchMatchedAuthIndexFilter, selectedApiKey, selectedModel, selectedProvider, selectedStatus, timeRange]);
+  }, [deferredSearch, linkedRequestLogScope, realtimeLogPageSize, searchMatchedAuthIndexFilter, selectedApiKey, selectedModel, selectedProfile, selectedProvider, selectedStatus, timeRange]);
 
   const handleRealtimeLogGenerationChange = useCallback(() => {
     setSelectedRealtimeErrorRow(null);
     void refreshAggregates();
-  }, [refreshAggregates]);
+  }, [refreshAggregates, setSelectedRealtimeErrorRow]);
 
   const {
     page: realtimeLogPage,
@@ -426,37 +517,25 @@ export function MonitoringCenterPage() {
 
   const fetchMonitoringSettings = useCallback(async () => {
     const response = await apiClient.get<{ settings: MonitoringSettings }>('/usage/settings');
-    setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
+    const nextDraft = createMonitoringSettingsDraft(response.settings);
+    setMonitoringSettingsDraft(nextDraft);
+    setSavedMonitoringSettingsDraft(nextDraft);
     return response.settings;
   }, []);
 
-  const loadMonitoringSettings = useCallback(async () => {
-    if (connectionStatus !== 'connected') {
-      showNotification(t('notification.connection_required'), 'warning');
-      return;
-    }
-    setIsMonitoringSettingsLoading(true);
-    try {
-      await fetchMonitoringSettings();
-      setIsMonitoringSettingsOpen(true);
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    } finally {
-      setIsMonitoringSettingsLoading(false);
-    }
-  }, [connectionStatus, fetchMonitoringSettings, showNotification, t]);
-
-  const handleSaveMonitoringSettings = useCallback(async (closeModal = true) => {
+  const handleSaveMonitoringSettings = useCallback(async () => {
     const settings = buildMonitoringSettingsFromDraft(monitoringSettingsDraft);
-    if (settings.webdav.enabled && !settings.webdav.url) {
-      showNotification(t('usage_stats.monitoring_settings_webdav_url_required'), 'warning');
-      return;
-    }
+    const expectedSettings = buildMonitoringSettingsFromDraft(savedMonitoringSettingsDraft);
     setIsMonitoringSettingsSaving(true);
     try {
-      const response = await apiClient.put<{ settings: MonitoringSettings }>('/usage/settings', { settings });
-      setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
-      if (closeModal) setIsMonitoringSettingsOpen(false);
+      const response = await apiClient.put<{ settings: MonitoringSettings }>('/usage/settings', {
+        settings,
+        expectedSettings,
+        sections: ['modelPriceSync'],
+      });
+      const nextDraft = createMonitoringSettingsDraft(response.settings);
+      setMonitoringSettingsDraft(nextDraft);
+      setSavedMonitoringSettingsDraft(nextDraft);
       showNotification(t('usage_stats.monitoring_settings_saved'), 'success');
       await refreshAll();
     } catch (error) {
@@ -464,140 +543,7 @@ export function MonitoringCenterPage() {
     } finally {
       setIsMonitoringSettingsSaving(false);
     }
-  }, [monitoringSettingsDraft, refreshAll, showNotification, t]);
-
-  const executeMonitoringStatisticsReset = useCallback(async () => {
-    setIsMonitoringStatisticsResetting(true);
-    try {
-      const result = await apiClient.post<UsageResetResult>('/usage/reset', { confirm: true });
-      setSelectedRealtimeErrorRow(null);
-      resetRealtimeLogs();
-      await Promise.all([refreshUsage(), refreshRealtimeLogs(), refreshAggregates()]);
-      showNotification(t('usage_stats.monitoring_settings_reset_success', { count: result.deletedEvents }), 'success');
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    } finally {
-      setIsMonitoringStatisticsResetting(false);
-    }
-  }, [refreshAggregates, refreshRealtimeLogs, refreshUsage, resetRealtimeLogs, showNotification, t]);
-
-  const handleMonitoringStatisticsReset = useCallback(() => {
-    if (connectionStatus !== 'connected') {
-      showNotification(t('notification.connection_required'), 'warning');
-      return;
-    }
-    showConfirmation({
-      title: t('usage_stats.monitoring_settings_reset_confirm_title'),
-      message: t('usage_stats.monitoring_settings_reset_confirm_message', {
-        count: Number(usage?.total_requests) || 0,
-      }),
-      confirmText: t('usage_stats.monitoring_settings_reset_confirm_button'),
-      cancelText: t('common.cancel'),
-      variant: 'danger',
-      onConfirm: executeMonitoringStatisticsReset,
-    });
-  }, [connectionStatus, executeMonitoringStatisticsReset, showConfirmation, showNotification, t, usage?.total_requests]);
-  const handleExportUsage = useCallback(async () => {
-    if (connectionStatus !== 'connected') {
-      showNotification(t('notification.connection_required'), 'warning');
-      return;
-    }
-
-    try {
-      const response = await apiClient.getRaw('/usage/export', { responseType: 'blob' });
-      const blob = response.data instanceof Blob ? response.data : new Blob([response.data], { type: 'application/x-ndjson' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      link.href = url;
-      link.download = `usage-export-${timestamp}.jsonl`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      showNotification(t('usage_stats.export_success'), 'success');
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    }
-  }, [connectionStatus, showNotification, t]);
-
-  const handleImportUsageClick = useCallback(() => {
-    if (connectionStatus !== 'connected') {
-      showNotification(t('notification.connection_required'), 'warning');
-      return;
-    }
-    importInputRef.current?.click();
-  }, [connectionStatus, showNotification, t]);
-
-  const executeUsageImport = useCallback(async (content: string, allowLegacy: boolean) => {
-    setIsImportingUsage(true);
-    try {
-      const result = await apiClient.post<UsageImportResult>('/usage/import', content, {
-        headers: { 'Content-Type': 'application/x-ndjson' },
-        params: allowLegacy ? { allow_legacy: 1 } : undefined,
-      });
-      const importedExtras = [
-        (result.modelPriceRecords ?? 0) > 0 ? t('usage_stats.import_model_prices_restored', { count: Math.max(result.modelPrices ?? 0, result.modelPriceRules ?? 0) }) : '',
-        (result.quotaCacheRecords ?? 0) > 0 ? t('usage_stats.import_quota_cache_restored', { count: result.quotaCache ?? 0 }) : '',
-        (result.routingCursorRecords ?? 0) > 0 ? t('usage_stats.import_routing_cursors_restored', { count: result.routingCursors ?? 0 }) : '',
-        (result.authRuntimeStatsRecords ?? 0) > 0 ? t('usage_stats.import_auth_runtime_stats_restored', { count: result.authRuntimeStats ?? 0 }) : '',
-        (result.proSettingsRecords ?? 0) > 0 ? t('usage_stats.import_pro_settings_restored', { count: result.proSettings ?? 0 }) : '',
-        result.accountInspectionSchedule ? t('usage_stats.import_account_inspection_schedule_restored') : '',
-        result.accountInspectionSnapshot ? t('usage_stats.import_account_inspection_snapshot_restored') : '',
-        result.monitoringSettings ? t('usage_stats.import_monitoring_settings_restored') : '',
-      ].filter(Boolean).join(' · ');
-      showNotification(
-        [
-          t('usage_stats.import_success', {
-            added: result.added ?? 0,
-            skipped: result.skipped ?? 0,
-            total: result.total ?? 0,
-            failed: result.failed ?? 0,
-          }),
-          importedExtras,
-        ].filter(Boolean).join(' · '),
-        (result.failed ?? 0) > 0 ? 'warning' : 'success'
-      );
-      quotaPersistenceMiddleware.markStale();
-      await quotaPersistenceMiddleware.ensureFresh();
-      await refreshAll();
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-    } finally {
-      setIsImportingUsage(false);
-    }
-  }, [refreshAll, showNotification, t]);
-
-  const handleImportUsageFile = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      event.target.value = '';
-      if (!file) return;
-
-      try {
-        const content = await file.text();
-        if (!content.trim()) {
-          showNotification(t('usage_stats.import_invalid'), 'error');
-          return;
-        }
-        if (!hasUsageBackupManifest(content)) {
-          showConfirmation({
-            title: t('usage_stats.import_legacy_confirm_title'),
-            message: t('usage_stats.import_legacy_confirm_message'),
-            confirmText: t('usage_stats.import_legacy_confirm_button'),
-            cancelText: t('common.cancel'),
-            variant: 'danger',
-            onConfirm: () => executeUsageImport(content, true),
-          });
-          return;
-        }
-        await executeUsageImport(content, false);
-      } catch (error) {
-        showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
-      }
-    },
-    [executeUsageImport, showConfirmation, showNotification, t]
-  );
+  }, [monitoringSettingsDraft, refreshAll, savedMonitoringSettingsDraft, showNotification, t]);
 
   const handleCopyRealtimeDiagnostic = useCallback((row: RealtimeLogRow) => {
     const text = buildRealtimeDiagnosticClipboardText(row, t, i18n.language);
@@ -644,6 +590,13 @@ export function MonitoringCenterPage() {
         apiKeys.set(bucket.apiKeyHash, maskSensitiveText(bucket.apiKeyHash));
       }
     });
+    if (selectedApiKey !== 'all') {
+      if (selectedApiKeyFallbackLabel) {
+        apiKeys.set(selectedApiKey, selectedApiKeyFallbackLabel);
+      } else if (!apiKeys.has(selectedApiKey)) {
+        apiKeys.set(selectedApiKey, maskSensitiveText(selectedApiKey));
+      }
+    }
 
     const sortedModels = Array.from(models).filter(Boolean).sort((left, right) => left.localeCompare(right));
 
@@ -666,7 +619,7 @@ export function MonitoringCenterPage() {
           .map(([value, label]) => ({ value, label })),
       ],
     };
-  }, [allRows, t, usageAggregates]);
+  }, [allRows, selectedApiKey, selectedApiKeyFallbackLabel, t, usageAggregates]);
   const {
     providerOptions,
     modelOptions,
@@ -681,6 +634,22 @@ export function MonitoringCenterPage() {
     ],
     [t]
   );
+
+  const profileFilterObservations = useMemo(
+    () => [...allRows, ...filteredRows],
+    [allRows, filteredRows],
+  );
+  const profileFilterOptions = useMemo(() => buildProfileFilterOptions({
+    observations: profileFilterObservations,
+    currentNames: currentProfileCatalog.names,
+    currentNamesLoaded: currentProfileCatalog.loaded,
+    selectedProfileId: selectedProfile,
+    selectedProfileName: selectedProfileFallbackName,
+    copy: {
+      allProfiles: t('monitoring.filter_all_profiles'),
+      deleted: (name) => t('monitoring.profile_filter_deleted', { name }),
+    },
+  }), [currentProfileCatalog, profileFilterObservations, selectedProfile, selectedProfileFallbackName, t]);
 
   useEffect(() => {
     if (selectedProvider !== 'all' && !providerOptions.some((option) => option.value === selectedProvider)) {
@@ -713,7 +682,7 @@ export function MonitoringCenterPage() {
     tomorrowStart.setDate(tomorrowStart.getDate() + 1);
     const yesterdayStart = new Date(todayStart);
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-    const trendStartMs = getRangeStartMs(timeRange, nowMs);
+    const resolvedRange = resolveTimeRange(timeRange, nowMs);
     const trendStatsRows: MonitoringEventRow[] = [];
     const topSummaryAccumulator = createMonitoringSummaryAccumulator();
     const todaySummaryAccumulator = createMonitoringSummaryAccumulator();
@@ -730,7 +699,7 @@ export function MonitoringCenterPage() {
       } else if (row.timestampMs >= yesterdayStart.getTime() && row.timestampMs < todayStart.getTime()) {
         yesterdayCost += row.totalCost;
       }
-      if (row.timestampMs >= trendStartMs && row.timestampMs <= nowMs) {
+      if (row.timestampMs >= resolvedRange.fromMs && row.timestampMs <= resolvedRange.toMs) {
         trendStatsRows.push(row);
         addMonitoringSummaryRow(trendSummaryAccumulator, row, summaryWindowStartMs, nowMs);
       }
@@ -769,11 +738,16 @@ export function MonitoringCenterPage() {
   );
   const aggregateTrendScopeMatches = Boolean(
     usageAggregates
-      && usageAggregates.scopeTimeRange === timeRange
+      && usageAggregates.scopeTimeRangeKey === timeRangeKey
       && usageAggregates.scopeApiKeyHash === usageTrendApiKey
   );
-  const usageTrendAnalytics = useMemo(() => {
-    if (!serverUsageTrendAnalytics || (aggregatesError && !aggregateTrendScopeMatches)) {
+  const usageTrendDataReady = hasCompleteUsageAnalyticsSource(
+    aggregateTrendScopeMatches,
+    Boolean(usage),
+    usage?.details_limited === true
+  );
+  const currentUsageTrendAnalytics = useMemo(() => {
+    if (!serverUsageTrendAnalytics || !aggregateTrendScopeMatches) {
       return clientUsageTrendAnalytics;
     }
     if (serverUsageTrendAnalytics.apiKeyRows.length > 0 || clientUsageTrendAnalytics.apiKeyRows.length === 0) {
@@ -783,15 +757,28 @@ export function MonitoringCenterPage() {
       ...serverUsageTrendAnalytics,
       apiKeyRows: clientUsageTrendAnalytics.apiKeyRows,
     };
-  }, [aggregateTrendScopeMatches, aggregatesError, clientUsageTrendAnalytics, serverUsageTrendAnalytics]);
+  }, [aggregateTrendScopeMatches, clientUsageTrendAnalytics, serverUsageTrendAnalytics]);
+  const staleUsageTrendAnalytics = !aggregateTrendScopeMatches
+    ? serverUsageTrendAnalytics
+    : null;
+  const usageTrendAnalytics = usageTrendDataReady
+    ? currentUsageTrendAnalytics
+    : staleUsageTrendAnalytics ?? currentUsageTrendAnalytics;
+  const usageTrendHasDisplayData = usageTrendDataReady || Boolean(staleUsageTrendAnalytics);
+  const usageTrendDataRefreshing = usageTrendHasDisplayData
+    && (usageAggregatesRefreshing || !usageTrendDataReady);
+  const usageTrendDataStale = usageTrendHasDisplayData && !usageTrendDataReady;
+  const usageTrendStatusText = usageAggregatesError
+    || (!usageTrendDataReady ? t('common.loading') : undefined);
   const usageTrendApiKeyOptions = usageTrendAnalytics.apiKeyOptions;
   const usageTrendPoints = usageTrendAnalytics.trendPoints;
   const tokenDistributionPoints = usageTrendAnalytics.tokenDistributionPoints;
   useEffect(() => {
+    if (!usageTrendDataReady) return;
     if (usageTrendApiKey !== 'all' && !usageTrendApiKeyOptions.some((option) => option.value === usageTrendApiKey)) {
       setUsageTrendApiKey('all');
     }
-  }, [usageTrendApiKey, usageTrendApiKeyOptions]);
+  }, [usageTrendApiKey, usageTrendApiKeyOptions, usageTrendDataReady]);
 
   const modelRankingRows = useMemo(
     () => [...usageTrendAnalytics.modelRows]
@@ -896,21 +883,15 @@ export function MonitoringCenterPage() {
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.type,
       render: (row) => (
         <div className={styles.primaryCell}>
-          <span>{row.provider}</span>
+          <span
+            className={styles.realtimeAccountTypeLine}
+            title={row.accountPlan === '-' ? row.provider : `${row.provider} · ${row.accountPlan}`}
+          >
+            <strong>{row.provider}{row.accountPlan === '-' ? '' : ' · '}</strong>
+            {row.accountPlan === '-' ? null : row.accountPlan}
+          </span>
           <small>{row.account || row.authLabel || row.accountMasked || '-'}</small>
         </div>
-      ),
-    },
-    accountPlan: {
-      key: 'accountPlan',
-      label: t('monitoring.column_account_plan'),
-      colClassName: styles.realtimePlanCol,
-      cellClassName: () => styles.realtimeNowrapCell,
-      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.accountPlan,
-      render: (row) => row.accountPlan === '-' ? (
-        <span className={styles.mutedText}>-</span>
-      ) : (
-        <span title={row.accountPlan}>{row.accountPlan}</span>
       ),
     },
     model: {
@@ -968,7 +949,15 @@ export function MonitoringCenterPage() {
       label: t('monitoring.api_key_label'),
       colClassName: styles.realtimeApiKeyCol,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.apiKey,
-      render: (row) => <span className={styles.monoCell}>{row.clientApiKey.masked}</span>,
+      render: (row) => {
+        const profileSnapshot = resolveUsageProfileSnapshot(row.profileName, row.profileId, '');
+        return (
+          <div className={`${styles.primaryCell} ${styles.realtimeApiKeyCell}`}>
+            <span className={styles.monoCell} title={row.clientApiKey.masked}>{row.clientApiKey.masked}</span>
+            {profileSnapshot ? <small title={profileSnapshot}>{profileSnapshot}</small> : null}
+          </div>
+        );
+      },
     },
     recent: {
       key: 'recent',
@@ -1034,46 +1023,40 @@ export function MonitoringCenterPage() {
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.calls,
       render: (row) => formatCompactNumber(row.requestCount),
     },
-    ttft: {
-      key: 'ttft',
-      label: t('monitoring.column_ttft'),
-      colClassName: styles.realtimeTtftCol,
-      headerClassName: styles.realtimeMetricHeader,
-      cellClassName: () => styles.realtimeMetricCell,
-      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.ttft,
-      render: (row) => (
-        <span
-          className={
-            row.ttftMs !== null && row.ttftMs >= 15000
-              ? styles.badText
-              : row.ttftMs !== null && row.ttftMs >= 8000
-                ? styles.warnText
-                : undefined
-          }
-        >
-          {formatDurationMs(row.ttftMs, { locale: i18n.language })}
-        </span>
-      ),
-    },
     latency: {
       key: 'latency',
       label: t('monitoring.column_latency'),
       colClassName: styles.realtimeLatencyCol,
       headerClassName: styles.realtimeMetricHeader,
-      cellClassName: () => styles.realtimeMetricCell,
+      cellClassName: () => styles.realtimeDurationTableCell,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.latency,
       render: (row) => (
-        <span
-          className={
-            row.latencyMs !== null && row.latencyMs >= 30000
-              ? styles.badText
-              : row.latencyMs !== null && row.latencyMs >= 15000
-                ? styles.warnText
-                : undefined
-          }
-        >
-          {formatDurationMs(row.latencyMs, { locale: i18n.language })}
-        </span>
+        <div className={styles.realtimeDurationCell}>
+          <span>
+            <small>{t('monitoring.realtime_duration_ttft')}</small>
+            <strong className={
+              row.ttftMs !== null && row.ttftMs >= 15000
+                ? styles.badText
+                : row.ttftMs !== null && row.ttftMs >= 8000
+                  ? styles.warnText
+                  : undefined
+            }>
+              {formatDurationMs(row.ttftMs, { locale: i18n.language })}
+            </strong>
+          </span>
+          <span>
+            <small>{t('monitoring.realtime_duration_total')}</small>
+            <small className={
+              row.latencyMs !== null && row.latencyMs >= 30000
+                ? styles.badText
+                : row.latencyMs !== null && row.latencyMs >= 15000
+                  ? styles.warnText
+                  : undefined
+            }>
+              {formatDurationMs(row.latencyMs, { locale: i18n.language })}
+            </small>
+          </span>
+        </div>
       ),
     },
     tokens: {
@@ -1131,7 +1114,7 @@ export function MonitoringCenterPage() {
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.time,
       render: (row) => new Date(row.timestampMs).toLocaleString(i18n.language),
     },
-  }), [hasPrices, i18n.language, t]);
+  }), [hasPrices, i18n.language, setSelectedRealtimeErrorRow, t]);
   const visibleRealtimeLogColumns = useMemo(
     () => realtimeLogColumns
       .filter((column) => column.visible)
@@ -1189,7 +1172,7 @@ export function MonitoringCenterPage() {
   }, [observedPriceModels, priceRules]);
 
   const selectedFiltersCount =
-    [selectedProvider, selectedModel, selectedApiKey, selectedStatus].filter(
+    [selectedProvider, selectedModel, selectedApiKey, selectedStatus, selectedProfile].filter(
       (value) => value !== 'all'
     ).length + (deferredSearch.trim() ? 1 : 0);
 
@@ -1246,7 +1229,10 @@ export function MonitoringCenterPage() {
     setSelectedProvider('all');
     setSelectedModel('all');
     setSelectedApiKey('all');
+    setSelectedApiKeyFallbackLabel('');
     setSelectedStatus('all');
+    setSelectedProfile('all');
+    setSelectedProfileFallbackName('');
   }, []);
 
   const updateRealtimeLogColumns = useCallback((updater: (columns: RealtimeLogColumnPreference[]) => RealtimeLogColumnPreference[]) => {
@@ -1362,43 +1348,49 @@ export function MonitoringCenterPage() {
     setPriceDraft(createPriceDraft(rules.find((rule) => rule.model === model)));
   }, [priceRules]);
 
-  const openPriceManagement = useCallback(async () => {
+  const openPriceManagement = useCallback(() => {
     if (connectionStatus !== 'connected') {
       showNotification(t('notification.connection_required'), 'warning');
-      return;
+      return Promise.resolve();
     }
     setIsPriceModalOpen(true);
+    if (priceManagementRequestRef.current) return priceManagementRequestRef.current;
     setPriceManagementView('rules');
     setPriceRuleSearch('');
     setPriceSyncLockedOverrides([]);
     setIsPriceLoading(true);
     setIsMonitoringSettingsLoading(true);
-    try {
-      const [payload] = await Promise.all([refreshPriceManagement(), fetchMonitoringSettings()]);
-      const selectedStillExists = payload.observedModels.some((item) => item.model === priceModel)
-        || payload.rules.some((rule) => rule.model === priceModel);
-      if (selectedStillExists) {
-        selectPriceTarget(priceModel, payload.rules);
-      } else {
-        const nextTarget = payload.observedModels.find((item) => !payload.rules.some((rule) => rule.model === item.model))
-          ?? payload.observedModels[0]
-          ?? payload.rules[0];
-        if (nextTarget) {
-          selectPriceTarget(nextTarget.model, payload.rules);
+    const request = Promise.all([refreshPriceManagement(), fetchMonitoringSettings()])
+      .then(([payload]) => {
+        const selectedStillExists = payload.observedModels.some((item) => item.model === priceModel)
+          || payload.rules.some((rule) => rule.model === priceModel);
+        if (selectedStillExists) {
+          selectPriceTarget(priceModel, payload.rules);
         } else {
-          setPriceModel('');
-          setPriceDraft(createPriceDraft());
+          const nextTarget = payload.observedModels.find((item) => !payload.rules.some((rule) => rule.model === item.model))
+            ?? payload.observedModels[0]
+            ?? payload.rules[0];
+          if (nextTarget) {
+            selectPriceTarget(nextTarget.model, payload.rules);
+          } else {
+            setPriceModel('');
+            setPriceDraft(createPriceDraft());
+          }
         }
-      }
-    } catch (error) {
-      showNotification(error instanceof Error ? error.message : String(error), 'error');
-    } finally {
-      setIsPriceLoading(false);
-      setIsMonitoringSettingsLoading(false);
-    }
-  }, [connectionStatus, fetchMonitoringSettings, priceModel, refreshPriceManagement, selectPriceTarget, showNotification, t]);
+      })
+      .catch((error) => {
+        showNotification(error instanceof Error ? error.message : String(error), 'error');
+      })
+      .finally(() => {
+        priceManagementRequestRef.current = null;
+        setIsPriceLoading(false);
+        setIsMonitoringSettingsLoading(false);
+      });
+    priceManagementRequestRef.current = request;
+    return request;
+  }, [connectionStatus, fetchMonitoringSettings, priceModel, refreshPriceManagement, selectPriceTarget, setIsPriceModalOpen, showNotification, t]);
 
-  const handlePriceDraftChange = useCallback((field: Exclude<keyof PriceDraft, 'tiers'>, value: string) => {
+  const handlePriceDraftChange = useCallback((field: keyof PriceRateDraft, value: string) => {
     setPriceDraft((previous) => ({ ...previous, [field]: value }));
   }, []);
 
@@ -1412,12 +1404,54 @@ export function MonitoringCenterPage() {
 	const addPriceTier = useCallback(() => {
 		setPriceDraft((previous) => ({
 			...previous,
-			tiers: [...previous.tiers, { contextSize: '', input: '', output: '', cacheRead: '', cacheWrite: '' }],
+			tiers: [...previous.tiers, { contextSize: '', input: '', output: '', cacheRead: '', cacheWrite: '', reasoning: '' }],
 		}));
 	}, []);
 
 	const removePriceTier = useCallback((index: number) => {
 		setPriceDraft((previous) => ({ ...previous, tiers: previous.tiers.filter((_, tierIndex) => tierIndex !== index) }));
+	}, []);
+
+	const handleServiceTierChange = useCallback((index: number, field: keyof ServiceTierDraft, value: string) => {
+		setPriceDraft((previous) => ({
+			...previous,
+			serviceTiers: previous.serviceTiers.map((tier, tierIndex) => tierIndex === index ? { ...tier, [field]: value } : tier),
+		}));
+	}, []);
+
+	const addServiceTier = useCallback(() => {
+		setPriceDraft((previous) => ({
+			...previous,
+			serviceTiers: [...previous.serviceTiers, createServiceTierDraft()],
+		}));
+	}, []);
+
+	const removeServiceTier = useCallback((index: number) => {
+		setPriceDraft((previous) => ({
+			...previous,
+			serviceTiers: previous.serviceTiers.filter((_, tierIndex) => tierIndex !== index),
+		}));
+	}, []);
+
+	const handleSpeedChange = useCallback((index: number, field: keyof SpeedDraft, value: string) => {
+		setPriceDraft((previous) => ({
+			...previous,
+			speeds: previous.speeds.map((speed, speedIndex) => speedIndex === index ? { ...speed, [field]: value } : speed),
+		}));
+	}, []);
+
+	const addSpeed = useCallback(() => {
+		setPriceDraft((previous) => ({
+			...previous,
+			speeds: [...previous.speeds, createSpeedDraft()],
+		}));
+	}, []);
+
+	const removeSpeed = useCallback((index: number) => {
+		setPriceDraft((previous) => ({
+			...previous,
+			speeds: previous.speeds.filter((_, speedIndex) => speedIndex !== index),
+		}));
 	}, []);
 
 	const resetPriceEditor = useCallback(() => {
@@ -1429,28 +1463,16 @@ export function MonitoringCenterPage() {
 		if (!priceModel) {
 			return;
 		}
-		const rule: ModelPriceRule = {
-			provider: '',
-			model: priceModel,
-			base: {
-				input: parsePriceValue(priceDraft.input),
-				output: parsePriceValue(priceDraft.output),
-				cacheRead: parsePriceValue(priceDraft.cacheRead),
-				cacheWrite: parsePriceValue(priceDraft.cacheWrite),
-			},
-			tiers: priceDraft.tiers
-				.map((tier) => ({
-					contextSize: parsePriceContextSize(tier.contextSize),
-					input: parsePriceValue(tier.input),
-					output: parsePriceValue(tier.output),
-					cacheRead: parsePriceValue(tier.cacheRead),
-					cacheWrite: parsePriceValue(tier.cacheWrite),
-				}))
-				.filter((tier) => tier.contextSize > 0),
-		};
+		const validationError = validatePriceDraft(priceDraft);
+		if (validationError) {
+			showNotification(t(`usage_stats.model_price_validation_${validationError}`), 'warning');
+			return;
+		}
+		const rule = buildModelPriceRule(priceModel, priceDraft);
 		setIsPriceSaving(true);
 		try {
-			await saveModelPriceRule(rule);
+			const savedRule = await saveModelPriceRule(rule);
+			setPriceDraft(createPriceDraft(savedRule));
 			await recalculateModelPriceHistory(false);
 			await refreshPriceManagement();
 			await refreshAll();
@@ -1525,41 +1547,19 @@ export function MonitoringCenterPage() {
               <button
                 type="button"
                 className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
-                onClick={() => void handleExportUsage()}
-              >
-                {t('usage_stats.export')}
-              </button>
-              <button
-                type="button"
-                className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
-                onClick={handleImportUsageClick}
-                disabled={isImportingUsage}
-              >
-                {isImportingUsage ? t('common.loading') : t('usage_stats.import')}
-              </button>
-              <button
-                type="button"
-                className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
-				onClick={() => void openPriceManagement()}
+                onClick={() => void openPriceManagement()}
+                disabled={isPriceLoading}
+                aria-busy={isPriceLoading}
               >
                 {t('usage_stats.model_price_settings')}
               </button>
               <button
                 type="button"
                 className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
-                onClick={() => void loadMonitoringSettings()}
-                disabled={isMonitoringSettingsLoading}
-                aria-busy={isMonitoringSettingsLoading}
+                onClick={() => navigate('/data-management')}
               >
-                {t('usage_stats.monitoring_settings')}
+                {t('nav.data_management', { defaultValue: 'Data Management' })}
               </button>
-              <input
-                ref={importInputRef}
-                type="file"
-                accept=".jsonl,.ndjson,.json,application/x-ndjson,application/json"
-                className={styles.hiddenFileInput}
-                onChange={handleImportUsageFile}
-              />
             </div>
           </div>
           <p className={styles.subtitle}>{t('monitoring.console_subtitle')}</p>
@@ -1575,51 +1575,84 @@ export function MonitoringCenterPage() {
           <UsageTrendHeader
             range={timeRange}
             totalCalls={usageTrendAnalytics.scopedTotals.requests}
+            statusText={usageTrendStatusText}
             apiKeyFilter={usageTrendApiKey}
             apiKeyOptions={usageTrendApiKeyOptions}
-            onRangeChange={setTimeRange}
+            onRangeChange={handleTimeRangeChange}
             onApiKeyFilterChange={setUsageTrendApiKey}
             onHide={() => setIsUsageTrendHidden(true)}
             t={t}
           />
-          <div className={styles.usageTrendInsightsGrid}>
-            <UsageTrendPanel
-              points={usageTrendPoints}
-              hasPrices={hasPrices}
-              emptyText={t('monitoring.no_data')}
-              t={t}
-            />
-            <ApiKeyRankingPanel
-              title={t('monitoring.api_key_ranking_title')}
-              subtitle={t('monitoring.api_key_ranking_desc')}
-              rows={apiKeyRankingRows}
-              metric={apiKeyRankingMetric}
-              metricTotal={apiKeyRankingMetricTotal}
-              onMetricChange={setApiKeyRankingMetric}
-              emptyText={t('monitoring.no_data')}
-              hasPrices={hasPrices}
-              t={t}
-            />
-          </div>
-          <div className={styles.rankingGrid}>
-            <ModelStatsPanel
-              title={t('monitoring.model_stats_title')}
-              subtitle={t('monitoring.model_stats_desc')}
-              rows={modelRankingRows}
-              metric={modelRankingMetric}
-              metricTotal={modelRankingMetricTotal}
-              onMetricChange={setModelRankingMetric}
-              emptyText={t('monitoring.no_data')}
-              hasPrices={hasPrices}
-              t={t}
-            />
-            <TokenDistributionPanel
-              points={tokenDistributionPoints}
-              emptyText={t('monitoring.no_data')}
-              hasPrices={hasPrices}
-              t={t}
-            />
-          </div>
+          {usageTrendHasDisplayData ? (
+            <>
+              <div
+                className={`${styles.usageTrendData} ${usageTrendDataStale ? styles.usageTrendDataStale : ''}`.trim()}
+                aria-busy={usageTrendDataRefreshing}
+              >
+                <div className={styles.usageTrendInsightsGrid}>
+                  <UsageTrendPanel
+                    points={usageTrendPoints}
+                    durationMinutes={usageTrendAnalytics.durationMinutes}
+                    hasPrices={hasPrices}
+                    emptyText={t('monitoring.no_data')}
+                    t={t}
+                  />
+                  <ApiKeyRankingPanel
+                    title={t('monitoring.api_key_ranking_title')}
+                    subtitle={t('monitoring.api_key_ranking_desc')}
+                    rows={apiKeyRankingRows}
+                    metric={apiKeyRankingMetric}
+                    metricTotal={apiKeyRankingMetricTotal}
+                    onMetricChange={setApiKeyRankingMetric}
+                    emptyText={t('monitoring.no_data')}
+                    hasPrices={hasPrices}
+                    t={t}
+                  />
+                </div>
+                <div className={styles.rankingGrid}>
+                  <ModelStatsPanel
+                    title={t('monitoring.model_stats_title')}
+                    subtitle={t('monitoring.model_stats_desc')}
+                    rows={modelRankingRows}
+                    metric={modelRankingMetric}
+                    metricTotal={modelRankingMetricTotal}
+                    onMetricChange={setModelRankingMetric}
+                    emptyText={t('monitoring.no_data')}
+                    hasPrices={hasPrices}
+                    t={t}
+                  />
+                  <TokenDistributionPanel
+                    points={tokenDistributionPoints}
+                    durationMinutes={usageTrendAnalytics.durationMinutes}
+                    emptyText={t('monitoring.no_data')}
+                    hasPrices={hasPrices}
+                    t={t}
+                  />
+                </div>
+              </div>
+              {usageAggregatesError ? (
+                <div className={`${styles.errorBox} ${styles.usageTrendState}`} role="alert">
+                  <span>{usageAggregatesError}</span>
+                  <Button variant="secondary" size="sm" onClick={() => void refreshAggregates()}>
+                    {t('common.retry')}
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div
+              className={`${usageAggregatesError ? styles.errorBox : styles.callout} ${styles.usageTrendState}`}
+              role={usageAggregatesError ? 'alert' : 'status'}
+              aria-busy={usageAggregatesLoading || usageAggregatesRefreshing}
+            >
+              <span>{usageTrendStatusText}</span>
+              {usageAggregatesError ? (
+                <Button variant="secondary" size="sm" onClick={() => void refreshAggregates()}>
+                  {t('common.retry')}
+                </Button>
+              ) : null}
+            </div>
+          )}
         </section>
       ) : (
         <section className={styles.usageTrendCollapsed}>
@@ -1644,18 +1677,7 @@ export function MonitoringCenterPage() {
             </p>
           </div>
           <div className={styles.usageTrendActions}>
-            <div className={`${styles.rankingMetricSwitch} ${styles.timeRangeControl}`}>
-              {TIME_RANGE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`${styles.rankingMetricButton} ${styles.timeRangeButton} ${timeRange === option.value ? styles.rankingMetricButtonActive : ''}`}
-                  onClick={() => setTimeRange(option.value)}
-                >
-                  {t(option.labelKey)}
-                </button>
-              ))}
-            </div>
+            <TimeRangeSelector value={timeRange} onChange={handleTimeRangeChange} panelAlign="end" />
           </div>
         </div>
 
@@ -1675,7 +1697,10 @@ export function MonitoringCenterPage() {
           <Select
             value={selectedApiKey}
             options={apiKeyOptions}
-            onChange={setSelectedApiKey}
+            onChange={(value) => {
+              setSelectedApiKey(value);
+              setSelectedApiKeyFallbackLabel('');
+            }}
             ariaLabel={t('monitoring.filter_api_key')}
           />
           <Select
@@ -1689,12 +1714,25 @@ export function MonitoringCenterPage() {
             options={modelOptions}
             onChange={setSelectedModel}
             ariaLabel={t('monitoring.filter_model')}
+            triggerClassName={styles.realtimeFilterSelectTrigger}
+            dropdownClassName={styles.realtimeFilterSelectDropdown}
           />
           <Select
             value={selectedStatus}
             options={statusOptions}
             onChange={(value) => setSelectedStatus(value as StatusFilter)}
             ariaLabel={t('monitoring.filter_status')}
+          />
+          <Select
+            value={selectedProfile}
+            options={profileFilterOptions}
+            onChange={(value) => {
+              setSelectedProfile(value);
+              setSelectedProfileFallbackName('');
+            }}
+            ariaLabel={t('monitoring.filter_profile')}
+            triggerClassName={styles.realtimeFilterSelectTrigger}
+            dropdownClassName={styles.realtimeFilterSelectDropdown}
           />
           <button type="button" className={styles.clearButton} onClick={clearFilters}>
             <IconSlidersHorizontal size={16} />
@@ -1925,12 +1963,11 @@ export function MonitoringCenterPage() {
         </Card>
       </section>
 
-      <Modal
-        open={Boolean(selectedRealtimeErrorRow)}
+      <ProDetailDialog
+        open={activeSurface === 'realtime-detail' && Boolean(selectedRealtimeErrorRow)}
         onClose={() => setSelectedRealtimeErrorRow(null)}
+        onAfterClose={() => setSelectedRealtimeErrorRowState(null)}
         title={translateRealtimeErrorText('request_details', t, i18n.language)}
-        width={720}
-        className={styles.monitorModal}
         footer={selectedRealtimeErrorRow ? (
           <div className={styles.monitorModalActions}>
             <Button variant="secondary" size="sm" onClick={() => handleCopyRealtimeDiagnostic(selectedRealtimeErrorRow)}>
@@ -1945,20 +1982,7 @@ export function MonitoringCenterPage() {
         {selectedRealtimeErrorRow ? (
           <RealtimeRequestDetailsPanel row={selectedRealtimeErrorRow} t={t} language={i18n.language} />
         ) : null}
-      </Modal>
-
-      <MonitoringSettingsModal
-        isMonitoringSettingsOpen={isMonitoringSettingsOpen}
-        setIsMonitoringSettingsOpen={setIsMonitoringSettingsOpen}
-        monitoringSettingsDraft={monitoringSettingsDraft}
-        setMonitoringSettingsDraft={setMonitoringSettingsDraft}
-        usageTotalRequests={Number(usage?.total_requests) || 0}
-        isMonitoringStatisticsResetting={isMonitoringStatisticsResetting}
-        isMonitoringSettingsSaving={isMonitoringSettingsSaving}
-        handleMonitoringStatisticsReset={handleMonitoringStatisticsReset}
-        handleSaveMonitoringSettings={handleSaveMonitoringSettings}
-        t={t}
-      />
+      </ProDetailDialog>
 
       <ModelPriceManagerModal
         isPriceModalOpen={isPriceModalOpen}
@@ -1977,6 +2001,12 @@ export function MonitoringCenterPage() {
         handlePriceTierChange={handlePriceTierChange}
         addPriceTier={addPriceTier}
         removePriceTier={removePriceTier}
+        handleServiceTierChange={handleServiceTierChange}
+        addServiceTier={addServiceTier}
+        removeServiceTier={removeServiceTier}
+        handleSpeedChange={handleSpeedChange}
+        addSpeed={addSpeed}
+        removeSpeed={removeSpeed}
         handleDeletePrice={handleDeletePrice}
         handleSavePrice={handleSavePrice}
         isPriceSaving={isPriceSaving}
@@ -1989,6 +2019,7 @@ export function MonitoringCenterPage() {
         priceSyncChangeFilter={priceSyncChangeFilter}
         setPriceSyncChangeFilter={setPriceSyncChangeFilter}
         monitoringSettingsDraft={monitoringSettingsDraft}
+        savedMonitoringSettingsDraft={savedMonitoringSettingsDraft}
         setMonitoringSettingsDraft={setMonitoringSettingsDraft}
         handleSaveMonitoringSettings={handleSaveMonitoringSettings}
         isMonitoringSettingsLoading={isMonitoringSettingsLoading}

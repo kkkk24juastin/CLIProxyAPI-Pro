@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildZipArchive,
   mapWithConcurrency,
+  mapWithKeyedConcurrency,
 } from '../src/pro/modules/inspection/features/accountInspectionExport';
 
 const readZipEntryNames = async (archive: Blob) => {
@@ -40,6 +41,52 @@ describe('account inspection export helpers', () => {
 
     expect(output).toEqual([30, 10, 20, 0]);
     expect(maximumActive).toBe(2);
+  });
+
+  test('dispatches unrelated providers without keyed head-of-line blocking', async () => {
+    const items = [
+      ...Array.from({ length: 8 }, (_, index) => ({ id: `xai-${index}`, provider: 'xai' })),
+      ...Array.from({ length: 2 }, (_, index) => ({ id: `codex-${index}`, provider: 'codex' })),
+    ];
+    let releaseGate = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const started: string[] = [];
+    let active = 0;
+    let maximumActive = 0;
+    const activeByProvider = new Map<string, number>();
+    const maximumByProvider = new Map<string, number>();
+
+    const running = mapWithKeyedConcurrency(
+      items,
+      4,
+      1,
+      (item) => item.provider,
+      async (item) => {
+        started.push(item.provider);
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        const providerActive = (activeByProvider.get(item.provider) ?? 0) + 1;
+        activeByProvider.set(item.provider, providerActive);
+        maximumByProvider.set(item.provider, Math.max(maximumByProvider.get(item.provider) ?? 0, providerActive));
+        await gate;
+        active -= 1;
+        activeByProvider.set(item.provider, providerActive - 1);
+        return item.id;
+      }
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    const initiallyStarted = [...started];
+    releaseGate();
+    const output = await running;
+
+    expect(initiallyStarted.sort()).toEqual(['codex', 'xai']);
+    expect(maximumActive).toBe(2);
+    expect(maximumByProvider).toEqual(new Map([['xai', 1], ['codex', 1]]));
+    expect(output).toEqual(items.map((item) => item.id));
   });
 
   test('sanitizes and de-duplicates exported credential paths', async () => {

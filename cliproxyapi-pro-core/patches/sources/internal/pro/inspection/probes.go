@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const xaiDeepProbeMinAttempts = 2
@@ -267,23 +269,76 @@ func SummarizeHTTPBody(body string) string {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(body), &payload); err == nil {
 		if message := nestedString(nestedMap(payload, "error"), "message", ""); message != "" {
-			return message
+			return redactSensitiveText(strings.TrimSpace(message))
 		}
 		if message := stringFromProviderValue(payload["error"]); message != "" {
-			return message
+			return redactSensitiveText(strings.TrimSpace(message))
 		}
 		if message := stringFromProviderValue(payload["message"]); message != "" {
-			return message
+			return redactSensitiveText(strings.TrimSpace(message))
 		}
 	}
-	if len(body) > 240 {
-		return body[:240]
+	return truncateSensitiveSummary(body)
+}
+
+func truncateSensitiveSummary(value string) string {
+	const maxSummaryBytes = 240
+	value = redactSensitiveText(strings.TrimSpace(value))
+	if len(value) <= maxSummaryBytes {
+		return value
 	}
-	return body
+	cut := maxSummaryBytes
+	for cut > 0 && !utf8.ValidString(value[:cut]) {
+		cut--
+	}
+	return value[:cut]
 }
 
 func HTTPErrorDetail(body string) string {
-	return strings.TrimSpace(body)
+	const maxErrorDetailBytes = 16 * 1024
+	detail := strings.TrimSpace(body)
+	if detail == "" {
+		return ""
+	}
+	var payload any
+	if json.Unmarshal([]byte(detail), &payload) == nil {
+		redactSensitiveJSON(payload)
+		if encoded, err := json.Marshal(payload); err == nil {
+			detail = string(encoded)
+		}
+	}
+	detail = redactSensitiveText(detail)
+	if len(detail) <= maxErrorDetailBytes {
+		return detail
+	}
+	cut := maxErrorDetailBytes
+	for cut > 0 && !utf8.ValidString(detail[:cut]) {
+		cut--
+	}
+	return detail[:cut] + "\n[truncated]"
+}
+
+func redactSensitiveJSON(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), " ", "_"))
+			if strings.Contains(normalized, "token") || strings.Contains(normalized, "secret") || strings.Contains(normalized, "password") || strings.Contains(normalized, "credential") || normalized == "authorization" || normalized == "api_key" || normalized == "apikey" || normalized == "cookie" || normalized == "set_cookie" {
+				typed[key] = "[REDACTED]"
+				continue
+			}
+			redactSensitiveJSON(child)
+		}
+	case []any:
+		for _, child := range typed {
+			redactSensitiveJSON(child)
+		}
+	}
+}
+
+func redactSensitiveText(value string) string {
+	value = regexp.MustCompile(`(?i)bearer\s+[a-z0-9._~+/=-]+`).ReplaceAllString(value, "Bearer [REDACTED]")
+	return regexp.MustCompile(`(?i)("?(?:authorization|api[_-]?key|(?:[a-z0-9]+[_-])*token|password|secret|credential|cookie)"?)(\s*[:=]\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;&}]+)`).ReplaceAllString(value, "${1}${2}[REDACTED]")
 }
 
 func WithHTTPErrorDetail(decision Decision, body string) Decision {

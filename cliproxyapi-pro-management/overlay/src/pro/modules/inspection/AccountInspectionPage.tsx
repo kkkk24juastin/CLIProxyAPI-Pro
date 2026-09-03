@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { Modal } from '@/components/ui/Modal';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   IconChevronDown,
@@ -20,7 +19,6 @@ import {
   accountInspectionBackendResultToItem,
   buildAccountInspectionBackendViewState,
   buildExecutionFailureMessage,
-  clearAccountInspectionConfigurableSettings,
   DEFAULT_ACCOUNT_INSPECTION_SETTINGS,
   hasAccountInspectionAutoExecutePolicies,
   isAccountInspectionBackendResponse,
@@ -32,18 +30,21 @@ import {
   type AccountInspectionLogLevel,
   type AccountInspectionResultItem,
 } from '@/pro/modules/inspection/features/accountInspection';
+import { ProDetailDialog, ProSettingsSheet } from '@/pro/shared/ProSurface';
+import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
 import {
   ACCOUNT_INSPECTION_ACTION_PAGE_SIZE,
   ACCOUNT_INSPECTION_AUTH_FILES_IDLE_DELAY_MS,
-  ACCOUNT_INSPECTION_DETAILS_IDLE_DELAY_MS,
   ACCOUNT_INSPECTION_EXPORT_DOWNLOAD_CONCURRENCY,
   ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
   ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET,
   ANTIGRAVITY_QUOTA_MODE_OPTIONS,
   AUTO_ERROR_ACTION_OPTIONS,
+  AUTO_EXECUTE_CONFIRMATION_LIMITS,
   DELETE_WORKER_LIMITS,
   INSPECTION_TARGET_OPTIONS,
   InspectionErrorDetailsPanel,
+  PROVIDER_WORKER_LIMITS,
   RETRY_LIMITS,
   SAMPLE_SIZE_LIMITS,
   SCHEDULE_INTERVAL_LIMITS,
@@ -61,6 +62,7 @@ import {
   createEmptyAuthFileAccountStats,
   createInspectionBackendState,
   formatActionLabel,
+  formatAccountInspectionDuration,
   formatCurrentStateLabel,
   formatInspectionInterval,
   formatInspectionResultToast,
@@ -79,11 +81,9 @@ import {
   levelClassMap,
   resolveAccountInspectionAccountLabel,
   resolveAccountInspectionPlanLabel,
-  resolveAssetInspectionHealthCounts,
   scheduleAuthFileAccountStats,
   summaryToneClass,
   toAccountInspectionApiItem,
-  toSettingsDraft,
   tokenRefreshToneClass,
   type AccountInspectionIdleCallback,
   type AuthFileAccountStats,
@@ -94,7 +94,6 @@ import {
   type ResolvedTheme,
   type ResultReasonFilter,
   type ResultStatusFilter,
-  type SettingsSectionKey,
   type SummaryCard,
 } from '@/pro/modules/inspection/features/accountInspectionPageModel';
 import {
@@ -118,20 +117,21 @@ import {
   type AccountInspectionScheduleResponse,
 } from './api';
 import { apiClient } from '@/services/api/client';
+import type { ApiError } from '@/types';
 import { authFilesApi } from '@/services/api/authFiles';
 import { quotaPersistenceMiddleware } from '@/pro/modules/quota';
-import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
+import { useAuthStore, useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { resolveAuthProvider } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
 import quotaStyles from '@/features/quota/QuotaPage.module.scss';
 import styles from '@/pro/modules/inspection/features/accountInspection.module.scss';
+import { useInspectionDetailsLoader } from '@/pro/modules/inspection/hooks/useInspectionDetailsLoader';
 
 type ResultBulkAction = 'suggested' | 'recheck' | ManualAccountInspectionAction;
 
 export function AccountInspectionPage() {
   const { t, i18n } = useTranslation();
-  const config = useConfigStore((state) => state.config);
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
@@ -144,13 +144,13 @@ export function AccountInspectionPage() {
   const kimiQuota = useQuotaStore((state) => state.kimiQuota);
   const xaiQuota = useQuotaStore((state) => state.xaiQuota);
   const initialAutoExecutionPolicy = useRef(
-    hasAccountInspectionAutoExecutePolicies(loadAccountInspectionConfigurableSettings(config))
+    hasAccountInspectionAutoExecutePolicies(loadAccountInspectionConfigurableSettings())
   ).current;
 
   const [backendState, dispatchBackendState] = useReducer(
     inspectionBackendReducer,
-    config,
-    (initialConfig) => createInspectionBackendState(loadAccountInspectionConfigurableSettings(initialConfig))
+    undefined,
+    () => createInspectionBackendState(loadAccountInspectionConfigurableSettings())
   );
   const {
     inspectionSettings,
@@ -164,9 +164,25 @@ export function AccountInspectionPage() {
     result,
     autoExecutionCounts,
     restoredSnapshot,
+    lastError,
+    persistenceError,
+    settingsDirty,
   } = backendState;
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [selectedDetailResult, setSelectedDetailResult] = useState<AccountInspectionResultItem | null>(null);
+  const [selectedDetailResult, setSelectedDetailResultState] = useState<AccountInspectionResultItem | null>(null);
+  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'settings' | 'detail'>();
+  const isSettingsModalOpen = activeSurface === 'settings';
+  const setIsSettingsModalOpen = useCallback((open: boolean) => {
+    if (open) openSurface('settings');
+    else if (activeSurface === 'settings') closeSurface();
+  }, [activeSurface, closeSurface, openSurface]);
+  const setSelectedDetailResult = useCallback((item: AccountInspectionResultItem | null) => {
+    if (item) {
+      setSelectedDetailResultState(item);
+      openSurface('detail');
+    } else if (activeSurface === 'detail') {
+      closeSurface();
+    }
+  }, [activeSurface, closeSurface, openSurface]);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
   const [resultStatusFilter, setResultStatusFilter] = useState<ResultStatusFilter>(
@@ -192,6 +208,9 @@ export function AccountInspectionPage() {
   const [selectedResultKeys, setSelectedResultKeys] = useState<Set<string>>(() => new Set());
   const [resultBulkAction, setResultBulkAction] = useState<ResultBulkAction>('suggested');
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [bulkRecheckFailures, setBulkRecheckFailures] = useState<Array<{ item: AccountInspectionResultItem; error: string }>>([]);
+  const [detailsLoadError, setDetailsLoadError] = useState('');
+  const [detailsRetryNonce, setDetailsRetryNonce] = useState(0);
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
   const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
@@ -201,14 +220,6 @@ export function AccountInspectionPage() {
   const resultsPanelRef = useRef<HTMLDivElement | null>(null);
   const resultsTableViewportRef = useRef<HTMLDivElement | null>(null);
   const selectAllResultsRef = useRef<HTMLInputElement | null>(null);
-  const settingsMainRef = useRef<HTMLDivElement | null>(null);
-  const settingsSectionRefs = useRef<Record<SettingsSectionKey, HTMLElement | null>>({
-    plan: null,
-    scope: null,
-    runtime: null,
-    antigravity: null,
-    auto: null,
-  });
   const refreshedBackendFinishedAtRef = useRef(0);
   const loadedBackendDetailsKeyRef = useRef('');
   const backendScheduleRequestIdRef = useRef(0);
@@ -220,14 +231,6 @@ export function AccountInspectionPage() {
     observer.observe(root, { attributes: true, attributeFilter: ['class', 'data-theme'] });
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    dispatchBackendState({
-      type: 'configChanged',
-      settings: loadAccountInspectionConfigurableSettings(config),
-      syncDraft: !isSettingsModalOpen,
-    });
-  }, [config, isSettingsModalOpen]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setResultSearch(deferredResultSearchInput.trim()), 300);
@@ -310,7 +313,7 @@ export function AccountInspectionPage() {
     }
   }, [loadAuthFiles]);
 
-  const loadInspectionDetailsPage = useCallback(async () => {
+  const loadInspectionDetailsPage = useCallback(async (signal?: AbortSignal) => {
     const response = await accountInspectionApi.getStatus({
       includeDetails: true,
       resultPage,
@@ -322,7 +325,10 @@ export function AccountInspectionPage() {
       logPage,
       logPageSize: ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
       logLevel: logLevelFilter,
-    });
+    }, signal);
+    if (signal?.aborted) {
+      throw signal.reason ?? new DOMException('Account inspection details request aborted', 'AbortError');
+    }
     applyBackendResponse(response, true);
     return response;
   }, [activeResultFilter, applyBackendResponse, logLevelFilter, logPage, resultPage, resultPageSize, resultPendingOnly, resultSearch, selectedResultProvider]);
@@ -457,67 +463,16 @@ export function AccountInspectionPage() {
     };
   }, [apiBase, applyBackendResponse, connectionStatus, loadBackendSchedule, managementKey]);
 
-  useEffect(() => {
-    if (connectionStatus !== 'connected') return;
-    if (progress.status === 'running' || progress.status === 'paused') return;
-    if (progress.startedAt <= 0 || (progress.total <= 0 && progress.summary.totalFiles <= 0)) return;
-    const detailKey = [
-      progress.startedAt,
-      activeResultFilter,
-      resultPendingOnly,
-      selectedResultProvider,
-      resultSearch,
-      resultPage,
-      resultPageSize,
-      logLevelFilter,
-      logPage,
-    ].join(':');
-    if (loadedBackendDetailsKeyRef.current === detailKey) return;
-
-    let cancelled = false;
-    const loadDetails = async () => {
-      try {
-        await loadInspectionDetailsPage();
-        if (cancelled) return;
-        loadedBackendDetailsKeyRef.current = detailKey;
-      } catch {
-        // Keep the detail fetch retryable; a transient miss should not leave the table empty.
-      }
-    };
-    const windowWithIdleCallback = window as Window & {
-      requestIdleCallback?: (callback: AccountInspectionIdleCallback, options?: { timeout?: number }) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    };
-    if (windowWithIdleCallback.requestIdleCallback) {
-      const idleHandle = windowWithIdleCallback.requestIdleCallback(() => void loadDetails(), {
-        timeout: 1500,
-      });
-      return () => {
-        cancelled = true;
-        windowWithIdleCallback.cancelIdleCallback?.(idleHandle);
-      };
-    }
-    const timeoutId = window.setTimeout(() => void loadDetails(), ACCOUNT_INSPECTION_DETAILS_IDLE_DELAY_MS);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    connectionStatus,
-    loadInspectionDetailsPage,
-    logLevelFilter,
-    logPage,
-    progress.startedAt,
-    progress.status,
-    progress.summary.totalFiles,
-    progress.total,
-    activeResultFilter,
-    resultPage,
-    resultPageSize,
-    resultPendingOnly,
-    resultSearch,
-    selectedResultProvider,
-  ]);
+  const inspectionDetailsKey = [progress.startedAt, activeResultFilter, resultPendingOnly, selectedResultProvider, resultSearch, resultPage, resultPageSize, logLevelFilter, logPage].join(':');
+  const handleDetailsLoadError = useCallback((message: string) => setDetailsLoadError(message), []);
+  useInspectionDetailsLoader({
+    enabled: connectionStatus === 'connected' && progress.status !== 'running' && progress.status !== 'paused' && progress.startedAt > 0 && (progress.total > 0 || progress.summary.totalFiles > 0),
+    detailKey: inspectionDetailsKey,
+    retryNonce: detailsRetryNonce,
+    load: loadInspectionDetailsPage,
+    loadedKeyRef: loadedBackendDetailsKeyRef,
+    onError: handleDetailsLoadError,
+  });
 
   useEffect(() => {
     setResultPage(1);
@@ -786,6 +741,7 @@ export function AccountInspectionPage() {
     const confirmTargets = (targets: AccountInspectionResultItem[]) => {
       const counts = countActions(targets);
       showConfirmation({
+        dedupeKey: `account-inspection:execute:${targets.map((item) => `${item.key}:${item.action}`).sort().join('|')}`,
         title: t('monitoring.account_inspection_execute_confirm_title'),
         message: buildExecuteConfirmationMessage(
           targets,
@@ -842,6 +798,7 @@ export function AccountInspectionPage() {
       const actionLabel = formatActionLabel(target.action, t);
       const isDelete = target.action === 'delete';
       showConfirmation({
+        dedupeKey: `account-inspection:execute:${target.key}:${target.action}`,
         title: isDelete
           ? t('monitoring.account_inspection_delete_single_title')
           : t('monitoring.account_inspection_execute_single_title'),
@@ -920,19 +877,16 @@ export function AccountInspectionPage() {
     setLogsCollapsed(false);
     appendLog('info', t('monitoring.account_inspection_recheck_selected_started', { count: items.length }));
     try {
-      const outcomes = await mapWithConcurrency(items, 4, async (item) => {
-        try {
-          const response = await accountInspectionApi.inspectOne(toAccountInspectionApiItem(item), currentInspectionDetailOptions);
-          return { success: Boolean(response.result?.key), response };
-        } catch {
-          return { success: false, response: null };
-        }
-      });
-      outcomes.forEach((outcome) => {
-        if (outcome.response) applyBackendResponse(outcome.response);
+      const response = await accountInspectionApi.inspectMany(items.map(toAccountInspectionApiItem), currentInspectionDetailOptions);
+      applyBackendResponse(response);
+      const itemByKey = new Map(items.map((item) => [item.key, item]));
+      const outcomes = response.outcomes.flatMap((outcome) => {
+        const item = itemByKey.get(outcome.key) ?? items.find((candidate) => candidate.fileName === outcome.fileName && candidate.authIndex === outcome.authIndex);
+        return item ? [{ success: outcome.success, item, error: outcome.error }] : [];
       });
       const success = outcomes.filter((outcome) => outcome.success).length;
       const failed = outcomes.length - success;
+      setBulkRecheckFailures(outcomes.filter((outcome) => !outcome.success).map((outcome) => ({ item: outcome.item, error: outcome.error })));
       showNotification(
         t('monitoring.account_inspection_recheck_selected_summary', {
           total: outcomes.length,
@@ -942,11 +896,28 @@ export function AccountInspectionPage() {
         failed > 0 ? 'warning' : 'success'
       );
       setSelectedResultKeys(new Set());
-      void loadInspectionDetailsPage();
+    } catch (error) {
+      const response = (error as ApiError | undefined)?.data;
+      if (isAccountInspectionBackendResponse(response)) {
+        applyBackendResponse(response);
+        const itemByKey = new Map(items.map((item) => [item.key, item]));
+        const responseWithOutcomes = response as AccountInspectionScheduleResponse & {
+          outcomes?: Array<{ key?: string; fileName?: string; authIndex?: string; success?: boolean; error?: string }>;
+        };
+        const failures = Array.isArray(responseWithOutcomes.outcomes)
+          ? responseWithOutcomes.outcomes.flatMap((outcome) => {
+              if (outcome.success) return [];
+              const item = itemByKey.get(outcome.key ?? '') ?? items.find((candidate) => candidate.fileName === outcome.fileName && candidate.authIndex === outcome.authIndex);
+              return item ? [{ item, error: outcome.error || t('common.unknown_error') }] : [];
+            })
+          : [];
+        setBulkRecheckFailures(failures);
+      }
+      handleAccountInspectionControlError(error, appendLog, showNotification, t('common.unknown_error'));
     } finally {
       setBulkActionLoading(false);
     }
-  }, [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, loadInspectionDetailsPage, restoredSnapshot, showNotification, t]);
+  }, [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, restoredSnapshot, showNotification, t]);
 
   const handleExecuteSelectedResults = useCallback(() => {
     const items = selectedVisibleResultRows.map(({ item }) => item);
@@ -973,6 +944,7 @@ export function AccountInspectionPage() {
     }
     const counts = countActions(targets);
     showConfirmation({
+      dedupeKey: `account-inspection:execute:${targets.map((item) => `${item.key}:${item.action}`).sort().join('|')}`,
       title: t('monitoring.account_inspection_execute_confirm_title'),
       message: buildExecuteConfirmationMessage(
         targets,
@@ -1037,15 +1009,6 @@ export function AccountInspectionPage() {
     return authFileStats.providers.find((provider) => provider.provider === selectedAssetProvider) ?? authFileStats;
   }, [authFileStats, selectedAssetProvider]);
 
-  const selectedInspectionHealthCounts = useMemo(() => {
-    return resolveAssetInspectionHealthCounts(
-      result?.healthCounts,
-      result?.providerHealthCounts,
-      selectedAssetProvider,
-      selectedAssetStats.total
-    );
-  }, [result?.healthCounts, result?.providerHealthCounts, selectedAssetProvider, selectedAssetStats.total]);
-
   const selectedAssetLabel = selectedAssetProvider === 'all'
     ? t('monitoring.filter_all_accounts')
     : resolveProviderDisplayLabel(selectedAssetProvider);
@@ -1056,46 +1019,30 @@ export function AccountInspectionPage() {
   const accountAssetCards = useMemo<SummaryCard[]>(() => [
     {
       key: 'total',
-      label: t('monitoring.account_inspection_account_total'),
+      label: t('auth_files.problem_filter_all'),
       value: authFileStatsReady ? String(selectedAssetStats.total) : '--',
       description: selectedAssetLabel,
     },
     {
       key: 'enabled',
-      label: t('monitoring.account_inspection_account_enabled'),
+      label: t('auth_files.problem_filter_enabled'),
       value: authFileStatsReady ? String(selectedAssetStats.enabled) : '--',
-      description: t('monitoring.account_inspection_inventory_health'),
-      tone: authFileStatsReady && selectedAssetStats.enabled > 0 ? 'good' : 'neutral',
+      description: t('monitoring.account_inspection_account_enabled_desc'),
     },
     {
       key: 'disabled',
-      label: t('monitoring.account_inspection_account_disabled'),
+      label: t('auth_files.problem_filter_disabled'),
       value: authFileStatsReady ? String(selectedAssetStats.disabled) : '--',
-      description: t('monitoring.account_inspection_blast_radius'),
-      tone: authFileStatsReady && selectedAssetStats.disabled > 0 ? 'warn' : 'neutral',
+      description: t('monitoring.account_inspection_account_disabled_desc'),
     },
     {
-      key: 'quotaLow',
-      label: t('monitoring.account_inspection_account_quota_low'),
-      value: authFileStatsReady ? String(selectedInspectionHealthCounts?.quotaExhausted ?? selectedAssetStats.quotaLow) : '--',
-      description: t('monitoring.account_inspection_settings_auto_execute_quota_limit_disable_label'),
-      tone: authFileStatsReady && (selectedInspectionHealthCounts?.quotaExhausted ?? selectedAssetStats.quotaLow) > 0 ? 'bad' : 'neutral',
+      key: 'problem',
+      label: t('auth_files.problem_filter_problem'),
+      value: authFileStatsReady ? String(selectedAssetStats.problem) : '--',
+      description: t('monitoring.account_inspection_account_problem_desc'),
+      tone: authFileStatsReady && selectedAssetStats.problem > 0 ? 'bad' : 'neutral',
     },
-    {
-      key: 'accountInvalid',
-      label: t('monitoring.account_inspection_account_invalid'),
-      value: authFileStatsReady ? String(selectedInspectionHealthCounts?.authInvalid ?? selectedAssetStats.accountInvalid) : '--',
-      description: t('monitoring.account_inspection_settings_auto_execute_account_invalid_action_label'),
-      tone: authFileStatsReady && (selectedInspectionHealthCounts?.authInvalid ?? selectedAssetStats.accountInvalid) > 0 ? 'bad' : 'neutral',
-    },
-    {
-      key: 'requestError',
-      label: t('monitoring.account_inspection_account_request_error'),
-      value: authFileStatsReady ? String(selectedInspectionHealthCounts?.inspectionError ?? selectedAssetStats.requestError) : '--',
-      description: t('monitoring.account_inspection_settings_auto_execute_request_error_action_label'),
-      tone: authFileStatsReady && (selectedInspectionHealthCounts?.inspectionError ?? selectedAssetStats.requestError) > 0 ? 'bad' : 'neutral',
-    },
-  ], [authFileStatsReady, selectedAssetLabel, selectedAssetStats, selectedInspectionHealthCounts, t]);
+  ], [authFileStatsReady, selectedAssetLabel, selectedAssetStats, t]);
 
   const actionStats = useMemo(() => {
     const autoTotal = autoExecutionCounts.delete + autoExecutionCounts.disable + autoExecutionCounts.enable;
@@ -1166,7 +1113,9 @@ export function AccountInspectionPage() {
       }
       return t('monitoring.account_inspection_phase_probing');
     }
-    if (runStatus === 'error') return t('monitoring.account_inspection_phase_failed');
+    if (runStatus === 'failed') return t('monitoring.account_inspection_phase_failed');
+    if (runStatus === 'partial') return t('monitoring.account_inspection_phase_partial');
+    if (runStatus === 'stopped') return t('monitoring.account_inspection_phase_stopped');
     if (result && pendingActionCount > 0) return t('monitoring.account_inspection_phase_review');
     if (result) return t('monitoring.account_inspection_phase_completed');
     return t('monitoring.account_inspection_phase_idle');
@@ -1174,7 +1123,7 @@ export function AccountInspectionPage() {
 
   const resultEmptyMessage = runStatus === 'running'
     ? t('monitoring.account_inspection_results_generating')
-    : runStatus === 'error'
+    : runStatus === 'failed'
       ? t('monitoring.account_inspection_results_error_empty')
       : t('monitoring.account_inspection_empty');
   const accountIssueResultCount = displayedHealthCounts.authInvalid + displayedHealthCounts.inspectionError;
@@ -1238,27 +1187,16 @@ export function AccountInspectionPage() {
           percent: progress.percent,
         })
       : t('monitoring.account_inspection_progress_idle');
-  const setSettingsSectionRef = useCallback(
-    (section: SettingsSectionKey) => (element: HTMLElement | null) => {
-      settingsSectionRefs.current[section] = element;
-    },
-    []
-  );
-
-  const scrollToSettingsSection = useCallback((section: SettingsSectionKey) => {
-    const container = settingsMainRef.current;
-    const target = settingsSectionRefs.current[section];
-    if (!container || !target) return;
-    container.scrollTo({
-      top: target.offsetTop - container.offsetTop,
-      behavior: 'smooth',
-    });
-  }, []);
-
+  const completedDuration = result && ['completed', 'partial', 'stopped', 'failed'].includes(result.state)
+    ? formatAccountInspectionDuration(result.startedAt, result.finishedAt, t)
+    : null;
+  const completedProgressLabel = completedDuration
+    ? t(result?.state === 'completed' ? 'monitoring.account_inspection_completed_with_duration' : 'monitoring.account_inspection_ended_with_duration', { duration: completedDuration })
+    : t('monitoring.account_inspection_phase_completed');
   const openSettingsModal = useCallback(() => {
-    dispatchBackendState({ type: 'setSettingsDraft', draft: toSettingsDraft(inspectionSettings) });
+    dispatchBackendState({ type: 'discardSettingsDraft' });
     setIsSettingsModalOpen(true);
-  }, [inspectionSettings]);
+  }, [setIsSettingsModalOpen]);
 
   const handleSettingsDraftChange = useCallback(
     (field: InspectionSettingsDraftField, value: string) => {
@@ -1346,13 +1284,19 @@ export function AccountInspectionPage() {
     }
 
     try {
-      const nextSettings = saveAccountInspectionConfigurableSettings({
+      const nextSettings = {
         targetType,
         workers: parseIntegerInRange(
           settingsDraft.workers,
           t('monitoring.account_inspection_settings_workers_label'),
           WORKER_LIMITS.min,
           WORKER_LIMITS.max
+        ),
+        providerWorkers: parseIntegerInRange(
+          settingsDraft.providerWorkers,
+          t('monitoring.account_inspection_settings_provider_workers_label'),
+          PROVIDER_WORKER_LIMITS.min,
+          PROVIDER_WORKER_LIMITS.max
         ),
         deleteWorkers: parseIntegerInRange(
           settingsDraft.deleteWorkers,
@@ -1397,8 +1341,13 @@ export function AccountInspectionPage() {
         autoExecuteQuotaRecoveryEnable: settingsDraft.autoExecuteQuotaRecoveryEnable,
         autoExecuteAccountInvalidAction: settingsDraft.autoExecuteAccountInvalidAction,
         autoExecuteRequestErrorAction: settingsDraft.autoExecuteRequestErrorAction,
-        autoExecuteConfirmations: inspectionSettings.autoExecuteConfirmations,
-      });
+        autoExecuteConfirmations: parseIntegerInRange(
+          settingsDraft.autoExecuteConfirmations,
+          t('monitoring.account_inspection_settings_auto_execute_confirmations_label'),
+          AUTO_EXECUTE_CONFIRMATION_LIMITS.min,
+          AUTO_EXECUTE_CONFIRMATION_LIMITS.max
+        ),
+      };
 
       const intervalMinutes = parseIntegerInRange(
         scheduleDraft.intervalMinutes,
@@ -1414,6 +1363,7 @@ export function AccountInspectionPage() {
           : 0,
         settings: nextSettings,
       });
+      saveAccountInspectionConfigurableSettings(nextSettings);
       applyBackendResponse(response);
       setIsSettingsModalOpen(false);
       showNotification(t('monitoring.account_inspection_settings_saved'), 'success');
@@ -1422,18 +1372,36 @@ export function AccountInspectionPage() {
     } finally {
       setScheduleLoading(false);
     }
-  }, [applyBackendResponse, inspectionSettings.autoExecuteConfirmations, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, settingsDraft, showNotification, t]);
+  }, [applyBackendResponse, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, setIsSettingsModalOpen, settingsDraft, showNotification, t]);
 
   const handleResetSettings = useCallback(() => {
-    clearAccountInspectionConfigurableSettings();
-    const nextSettings = saveAccountInspectionConfigurableSettings(DEFAULT_ACCOUNT_INSPECTION_SETTINGS);
-    dispatchBackendState({ type: 'resetSettings', settings: nextSettings });
-    showNotification(t('monitoring.account_inspection_settings_reset'), 'success');
+    dispatchBackendState({ type: 'resetSettings', settings: DEFAULT_ACCOUNT_INSPECTION_SETTINGS });
+    showNotification(t('monitoring.account_inspection_settings_reset_draft'), 'info');
   }, [showNotification, t]);
 
-  const draftInspectionScopeLabel = settingsDraft.targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
-    ? t('monitoring.filter_all_providers')
-    : resolveProviderDisplayLabel(settingsDraft.targetType);
+  const confirmSettingsModalClose = useCallback((): Promise<boolean> => {
+    if (!settingsDirty) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      const accepted = showConfirmation({
+        dedupeKey: 'account-inspection-settings:close-workspace',
+        title: t('monitoring.account_inspection_settings_unsaved_title'),
+        message: t('monitoring.account_inspection_settings_unsaved_desc'),
+        confirmText: t('monitoring.account_inspection_settings_discard'),
+        cancelText: t('common.stay'),
+        variant: 'danger',
+        onConfirm: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+      if (!accepted) resolve(false);
+    });
+  }, [settingsDirty, showConfirmation, t]);
+  const discardSettingsModalDraft = useCallback(() => {
+    dispatchBackendState({ type: 'discardSettingsDraft' });
+  }, []);
+  const closeSettingsModal = useCallback(() => {
+    setIsSettingsModalOpen(false);
+  }, [setIsSettingsModalOpen]);
+
   const draftScheduleStatusLabel = scheduleDraft.enabled
     ? formatInspectionInterval(Number(scheduleDraft.intervalMinutes) || 0, i18n.language)
     : settingDisabledLabel;
@@ -1441,21 +1409,6 @@ export function AccountInspectionPage() {
     ANTIGRAVITY_QUOTA_MODE_OPTIONS.find((option) => option.value === settingsDraft.antigravityQuotaMode)?.labelKey
       ?? 'monitoring.account_inspection_settings_antigravity_quota_mode_claude_gpt'
   );
-  const draftAccountInvalidActionLabel = t(
-    AUTO_ERROR_ACTION_OPTIONS.find((option) => option.value === settingsDraft.autoExecuteAccountInvalidAction)?.labelKey
-      ?? 'monitoring.account_inspection_settings_account_error_action_none'
-  );
-  const draftRequestErrorActionLabel = t(
-    AUTO_ERROR_ACTION_OPTIONS.find((option) => option.value === settingsDraft.autoExecuteRequestErrorAction)?.labelKey
-      ?? 'monitoring.account_inspection_settings_account_error_action_none'
-  );
-  const draftAutoPolicyLabel = [
-    settingsDraft.autoExecuteQuotaLimitDisable ? t('monitoring.account_inspection_settings_auto_execute_quota_limit_disable_label') : '',
-    settingsDraft.autoExecuteQuotaRecoveryEnable ? t('monitoring.account_inspection_settings_auto_execute_quota_recovery_enable_label') : '',
-    settingsDraft.autoExecuteAccountInvalidAction !== 'none' ? `${t('monitoring.account_inspection_account_invalid')}: ${draftAccountInvalidActionLabel}` : '',
-    settingsDraft.autoExecuteRequestErrorAction !== 'none' ? `${t('monitoring.account_inspection_account_request_error')}: ${draftRequestErrorActionLabel}` : '',
-  ].filter(Boolean).join(' · ') || settingDisabledLabel;
-
   return (
     <div className={styles.page}>
       <Card className={styles.heroCard}>
@@ -1563,6 +1516,13 @@ export function AccountInspectionPage() {
         </div>
       ) : null}
 
+      {persistenceError ? (
+        <div className={styles.inspectionAlert} role="alert">
+          <strong>{t('monitoring.account_inspection_persistence_error_title')}</strong>
+          <span>{persistenceError}</span>
+        </div>
+      ) : null}
+
       <section className={styles.operationSection}>
         <div className={styles.operationModuleHeader}>
           <div>
@@ -1590,22 +1550,23 @@ export function AccountInspectionPage() {
                   </div>
                   <div className={styles.inspectionStatusCopy}>
                     <strong>{operationPhase}</strong>
-                    <span>{progress.percent >= 100 ? t('monitoring.account_inspection_phase_completed') : progressLabel}</span>
+                    <span>{result && ['completed', 'partial', 'stopped', 'failed'].includes(result.state) ? completedProgressLabel : progressLabel}</span>
                     <small>{`${t('monitoring.last_sync')}: ${result?.finishedAt ? formatTimestamp(result.finishedAt, i18n.language) : '--'}`}</small>
+                    {lastError ? <small className={styles.inspectionStatusError}>{lastError}</small> : null}
                   </div>
                 </div>
                 <div className={styles.inspectionConfigGrid}>
                   <span>
                     <small>{t('monitoring.account_inspection_detection_scope')}</small>
-                    <strong>{inspectionScopeLabel}</strong>
+                    <strong>{result ? (result.settings.targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE ? t('monitoring.filter_all_providers') : resolveProviderDisplayLabel(result.settings.targetType)) : inspectionScopeLabel}</strong>
                   </span>
                   <span>
                     <small>{t('monitoring.account_inspection_quota_threshold_short')}</small>
-                    <strong>{`${inspectionSettings.usedPercentThreshold}%`}</strong>
+                    <strong>{`${result?.settings.usedPercentThreshold ?? inspectionSettings.usedPercentThreshold}%`}</strong>
                   </span>
                   <span>
                     <small>{t('monitoring.account_inspection_sample_size')}</small>
-                    <strong>{inspectionSettings.sampleSize || t('monitoring.account_inspection_all_accounts')}</strong>
+                    <strong>{result?.settings.sampleSize || inspectionSettings.sampleSize || t('monitoring.account_inspection_all_accounts')}</strong>
                   </span>
                   <span>
                     <small>{t('monitoring.account_inspection_scheduled_inspection_short')}</small>
@@ -1762,6 +1723,25 @@ export function AccountInspectionPage() {
           ) : null}
         </div>
         <Card className={styles.panel}>
+
+        {detailsLoadError ? (
+          <div className={styles.inspectionInlineError} role="alert">
+            <span>{t('monitoring.account_inspection_details_load_failed', { error: detailsLoadError })}</span>
+            <Button size="sm" variant="secondary" onClick={() => setDetailsRetryNonce((value) => value + 1)}>
+              {t('monitoring.account_inspection_retry_load')}
+            </Button>
+          </div>
+        ) : null}
+
+        {bulkRecheckFailures.length > 0 ? (
+          <div className={styles.bulkFailurePanel} role="alert">
+            <strong>{t('monitoring.account_inspection_recheck_failures_title', { count: bulkRecheckFailures.length })}</strong>
+            {bulkRecheckFailures.slice(0, 10).map(({ item, error }) => <span key={item.key}>{`${resolveAccountInspectionAccountLabel(item)}：${error}`}</span>)}
+            <Button size="sm" variant="secondary" onClick={() => void recheckSelectedResults(bulkRecheckFailures.map(({ item }) => item))}>
+              {t('monitoring.account_inspection_retry_failed')}
+            </Button>
+          </div>
+        ) : null}
 
         {result ? (
           <>
@@ -2127,12 +2107,11 @@ export function AccountInspectionPage() {
         </Card>
       </div>
 
-      <Modal
-        open={Boolean(selectedDetailResult)}
+      <ProDetailDialog
+        open={activeSurface === 'detail' && Boolean(selectedDetailResult)}
         onClose={() => setSelectedDetailResult(null)}
+        onAfterClose={() => setSelectedDetailResultState(null)}
         title={t('monitoring.account_inspection_result_details')}
-        width={720}
-        className={styles.errorModal}
         footer={(
           <div className={styles.errorModalActions}>
             <Button variant="primary" size="sm" onClick={() => setSelectedDetailResult(null)}>
@@ -2144,82 +2123,30 @@ export function AccountInspectionPage() {
         {selectedDetailResult ? (
           <InspectionErrorDetailsPanel item={selectedDetailResult} t={t} />
         ) : null}
-      </Modal>
+      </ProDetailDialog>
 
-      <Modal
+      <ProSettingsSheet
         open={isSettingsModalOpen}
-        onClose={() => setIsSettingsModalOpen(false)}
+        onClose={closeSettingsModal}
+        confirmClose={confirmSettingsModalClose}
+        onDiscard={discardSettingsModalDraft}
         title={t('monitoring.account_inspection_settings_title')}
-        width={1120}
         className={styles.settingsModal}
+        dirty={settingsDirty}
+        saving={scheduleLoading}
+        cancelLabel={t('common.cancel')}
+        saveLabel={t('common.save')}
+        dirtyLabel={t('common.unsaved_changes_title')}
+        onSave={handleSaveSettings}
+        footerStart={(
+          <Button variant="secondary" onClick={handleResetSettings} disabled={scheduleLoading}>
+            {t('monitoring.account_inspection_settings_reset_button')}
+          </Button>
+        )}
       >
         <div className={styles.settingsWorkbench}>
-          <aside className={styles.settingsSidebar}>
-            <div className={styles.settingsSidebarIntro}>
-              <strong>{t('monitoring.account_inspection_settings_title')}</strong>
-              <span>{t('monitoring.account_inspection_settings_desc')}</span>
-            </div>
-            <div className={styles.settingsSidebarNav}>
-              {[
-                { key: 'plan' as const, label: t('monitoring.account_inspection_schedule_section_title'), meta: draftScheduleStatusLabel },
-                { key: 'scope' as const, label: t('monitoring.account_inspection_settings_basic_section_title'), meta: draftInspectionScopeLabel },
-                { key: 'runtime' as const, label: t('monitoring.account_inspection_settings_runtime_section_title'), meta: `${settingsDraft.workers} / ${settingsDraft.timeout}ms` },
-                { key: 'antigravity' as const, label: t('monitoring.account_inspection_settings_advanced_section_title'), meta: draftQuotaModeLabel },
-                { key: 'auto' as const, label: t('monitoring.account_inspection_settings_auto_section_title'), meta: draftAutoPolicyLabel },
-              ].map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => scrollToSettingsSection(item.key)}
-                >
-                  <strong>{item.label}</strong>
-                  <span>{item.meta}</span>
-                </button>
-              ))}
-            </div>
-            <div className={styles.settingsSidebarStatus}>
-              <span>
-                <small>{t('monitoring.account_inspection_quota_threshold_short')}</small>
-                <strong>{`${settingsDraft.usedPercentThreshold || '--'}%`}</strong>
-              </span>
-              <span>
-                <small>{t('monitoring.account_inspection_account_invalid_action_short')}</small>
-                <strong>{draftAccountInvalidActionLabel}</strong>
-              </span>
-              <span>
-                <small>{t('monitoring.account_inspection_request_error_action_short')}</small>
-                <strong>{draftRequestErrorActionLabel}</strong>
-              </span>
-            </div>
-          </aside>
-
-          <div ref={settingsMainRef} className={styles.settingsWorkbenchMain}>
-            <section className={styles.settingsHeroPanel}>
-              <div>
-                <strong>{t('monitoring.account_inspection_settings_overview_title')}</strong>
-                <span>{t('monitoring.account_inspection_settings_overview_desc')}</span>
-              </div>
-              <div className={styles.settingsSummaryGrid}>
-                <span>
-                  <small>{t('monitoring.account_inspection_detection_scope')}</small>
-                  <strong>{draftInspectionScopeLabel}</strong>
-                </span>
-                <span>
-                  <small>{t('monitoring.account_inspection_scheduled_inspection_short')}</small>
-                  <strong>{draftScheduleStatusLabel}</strong>
-                </span>
-                <span>
-                  <small>{t('monitoring.account_inspection_settings_antigravity_quota_mode_label')}</small>
-                  <strong>{draftQuotaModeLabel}</strong>
-                </span>
-                <span>
-                  <small>{t('monitoring.account_inspection_settings_auto_section_title')}</small>
-                  <strong>{draftAutoPolicyLabel}</strong>
-                </span>
-              </div>
-            </section>
-
-            <section ref={setSettingsSectionRef('plan')} className={styles.settingsWorkbenchSection}>
+          <div className={styles.settingsWorkbenchMain}>
+            <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>
                   <small>01</small>
@@ -2252,7 +2179,7 @@ export function AccountInspectionPage() {
               </div>
             </section>
 
-            <section ref={setSettingsSectionRef('scope')} className={styles.settingsWorkbenchSection}>
+            <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>
                   <small>02</small>
@@ -2297,7 +2224,7 @@ export function AccountInspectionPage() {
               </div>
             </section>
 
-            <section ref={setSettingsSectionRef('runtime')} className={styles.settingsWorkbenchSection}>
+            <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>
                   <small>03</small>
@@ -2314,6 +2241,16 @@ export function AccountInspectionPage() {
                   onChange={(event) => handleSettingsDraftChange('workers', event.target.value)}
                   min={WORKER_LIMITS.min}
                   max={WORKER_LIMITS.max}
+                  step={1}
+                />
+                <Input
+                  label={t('monitoring.account_inspection_settings_provider_workers_label')}
+                  hint={t('monitoring.account_inspection_settings_provider_workers_hint', { min: PROVIDER_WORKER_LIMITS.min, max: PROVIDER_WORKER_LIMITS.max })}
+                  type="number"
+                  value={settingsDraft.providerWorkers}
+                  onChange={(event) => handleSettingsDraftChange('providerWorkers', event.target.value)}
+                  min={PROVIDER_WORKER_LIMITS.min}
+                  max={PROVIDER_WORKER_LIMITS.max}
                   step={1}
                 />
                 <Input
@@ -2349,7 +2286,7 @@ export function AccountInspectionPage() {
               </div>
             </section>
 
-            <section ref={setSettingsSectionRef('antigravity')} className={styles.settingsWorkbenchSection}>
+            <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>
                   <small>04</small>
@@ -2414,7 +2351,7 @@ export function AccountInspectionPage() {
               </div>
             </section>
 
-            <section ref={setSettingsSectionRef('auto')} className={styles.settingsWorkbenchSection}>
+            <section className={styles.settingsWorkbenchSection}>
               <div className={styles.settingsWorkbenchHeader}>
                 <div>
                   <small>05</small>
@@ -2475,25 +2412,27 @@ export function AccountInspectionPage() {
                     </div>
                   ) : null}
                 </div>
+                <div className={styles.settingsFormPanel}>
+                  <Input
+                    label={t('monitoring.account_inspection_settings_auto_execute_confirmations_label')}
+                    hint={t('monitoring.account_inspection_settings_auto_execute_confirmations_hint', {
+                      min: AUTO_EXECUTE_CONFIRMATION_LIMITS.min,
+                      max: AUTO_EXECUTE_CONFIRMATION_LIMITS.max,
+                    })}
+                    type="number"
+                    value={settingsDraft.autoExecuteConfirmations}
+                    onChange={(event) => handleSettingsDraftChange('autoExecuteConfirmations', event.target.value)}
+                    min={AUTO_EXECUTE_CONFIRMATION_LIMITS.min}
+                    max={AUTO_EXECUTE_CONFIRMATION_LIMITS.max}
+                    step={1}
+                  />
+                </div>
               </div>
             </section>
           </div>
         </div>
 
-        <div className={styles.settingsActionsBar}>
-          <Button variant="secondary" onClick={handleResetSettings}>
-            {t('monitoring.account_inspection_settings_reset_button')}
-          </Button>
-          <div className={styles.settingsActionsRight}>
-            <Button variant="secondary" onClick={() => setIsSettingsModalOpen(false)}>
-              {t('common.cancel')}
-            </Button>
-            <Button variant="primary" onClick={() => void handleSaveSettings()} loading={scheduleLoading}>
-              {t('common.save')}
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      </ProSettingsSheet>
     </div>
   );
 }

@@ -127,6 +127,69 @@ export const mapWithConcurrency = async <Input, Output>(
   return results;
 };
 
+export const mapWithKeyedConcurrency = async <Input, Output>(
+  items: Input[],
+  concurrency: number,
+  keyConcurrency: number,
+  keyOf: (item: Input, index: number) => string,
+  mapper: (item: Input, index: number) => Promise<Output>
+) => {
+  if (items.length === 0) return [] as Output[];
+
+  const globalLimit = Math.max(1, Math.min(Math.trunc(concurrency) || 1, items.length));
+  const perKeyLimit = Math.max(1, Math.trunc(keyConcurrency) || 1);
+  const results = new Array<Output>(items.length);
+  const groups = new Map<string, number[]>();
+
+  items.forEach((item, index) => {
+    const key = keyOf(item, index);
+    const indices = groups.get(key);
+    if (indices) indices.push(index);
+    else groups.set(key, [index]);
+  });
+
+  let active = 0;
+  const waiters: Array<() => void> = [];
+  const acquire = async () => {
+    if (active < globalLimit) {
+      active += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => waiters.push(resolve));
+  };
+  const release = () => {
+    const next = waiters.shift();
+    if (next) {
+      next();
+      return;
+    }
+    active -= 1;
+  };
+
+  const workers: Array<Promise<void>> = [];
+  groups.forEach((indices) => {
+    let cursor = 0;
+    const workerCount = Math.min(perKeyLimit, indices.length);
+    for (let worker = 0; worker < workerCount; worker += 1) {
+      workers.push((async () => {
+        while (cursor < indices.length) {
+          const index = indices[cursor];
+          cursor += 1;
+          await acquire();
+          try {
+            results[index] = await mapper(items[index], index);
+          } finally {
+            release();
+          }
+        }
+      })());
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+};
+
 export const buildZipArchive = async (entries: AuthFileExportEntry[]) => {
   const encoder = new TextEncoder();
   const usedPaths = new Set<string>();

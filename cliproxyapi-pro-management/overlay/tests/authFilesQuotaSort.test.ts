@@ -152,7 +152,7 @@ describe('auth-file available-quota sorting', () => {
           status: 'success',
           cachedAt: Date.now(),
           billing: {
-            planType: 'x-premium-plus',
+            planType: 'paid',
             freeQuota: { exhausted: true },
             usagePercent: 10,
           },

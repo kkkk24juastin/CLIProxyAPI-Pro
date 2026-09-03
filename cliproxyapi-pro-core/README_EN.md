@@ -4,7 +4,7 @@ Customized Docker build layer for upstream `router-for-me/CLIProxyAPI`.
 
 This directory does not maintain a full fork of upstream. During Docker build it downloads an upstream release, copies in the local `embeddedusage/` package, applies the patch script in `patches/`, and builds a multi-arch image for the Pro deployment.
 
-The proxy pool and OAuth model policy are linked directly into Core. Every Pro build, including `_no-plugin` assets, includes both features. Their settings are stored in the usage SQLite `pro_settings` table and are never written to `config.yaml`.
+The proxy pool and OAuth account policy are linked directly into Core. Every Pro build, including `_no-plugin` assets, includes both features. Their settings are stored in the usage SQLite `pro_settings` table and are never written to `config.yaml` or auth files.
 
 ## What this customization adds
 
@@ -33,7 +33,7 @@ The image declares `/CLIProxyAPI/usage` as a Docker volume so usage data, quota 
 At service startup the patch layer forces the upstream config values required by Pro:
 
 - `usage-statistics-enabled: true`
-- `remote-management.panel-github-repository: https://github.com/kkkk24juastin/CLIProxyAPI-Pro`
+- `remote-management.panel-github-repository: https://github.com/ssfun/CLIProxyAPI-Pro`
 
 The loaded in-memory config is always corrected. Runtime writes may only update keys that already exist in `config.yaml`; Pro never adds a missing key.
 
@@ -48,7 +48,10 @@ The embedded service exposes these management routes:
 - `GET /v0/management/usage/stream` — SSE stream for live usage updates.
 - `GET /v0/management/usage/export` — JSONL/NDJSON export.
 - `POST /v0/management/usage/import` — JSONL/NDJSON import.
-- `POST /v0/management/usage/reset` — atomically clear request events and derived statistics while preserving monitoring settings, model prices, quota cache, and backups.
+- `GET /v0/management/usage/webdav/backups` — list known `usage-export-*.jsonl` backups from the configured WebDAV directory.
+- `POST /v0/management/usage/webdav/preview` — download one listed backup and run the same verified import preview used for local files.
+- `POST /v0/management/usage/webdav/restore` — restore one listed backup through the same JSONL parser and atomic import pipeline.
+- `POST /v0/management/usage/reset` — clear request events, derived statistics, and account scheduling/success/failure counters behind an exclusive runtime-state barrier while preserving routing cursors, monitoring settings, model prices, quota cache, and backups.
 - `GET /v0/management/usage/status` — service status and record counts.
 - `GET /v0/management/usage/quota-cache` — read quota cache entries or stats.
 - `PUT /v0/management/usage/quota-cache` — write a quota cache entry.
@@ -81,13 +84,15 @@ The export contains usage events and may also include metadata records:
 - `model_prices` — legacy base prices plus complete global per-model pricing rules.
 - `quota_cache` — SQLite-backed quota snapshots used by quota cards and account-scoped refresh.
 - `monitoring_settings` — retention, WebDAV backup, and scheduled models.dev synchronization settings.
-- `pro_settings` — Pro-owned settings, currently including request-state protection, proxy-pool settings, and OAuth model policy.
+- `pro_settings` — Pro-owned settings, currently including request-state protection, proxy-pool settings, and the `oauth-policy` account policy.
 - `routing_cursor_state` — account-routing rotation cursors.
 - `auth_runtime_stats` — account selection, success/failure, and recent-request-bucket statistics.
 - `account_inspection_schedule` — persisted backend account-inspection schedule.
 - `account_inspection_snapshot` — the latest finished inspection result, including run settings, summary, health counts, complete results, and raw error details, but excluding inspection logs.
 
 `/usage/import` accepts the same JSONL format. It reads and verifies the complete request before writing, then imports usage events, model prices, quota cache entries, routing runtime state, monitoring settings, and Pro settings in one SQLite transaction. Imported Pro settings are applied to live configuration before commit, so an apply failure rolls back the database and a commit failure restores the pre-import configuration. After commit, the remaining runtime state, account-inspection schedule, and latest inspection-result snapshot are restored in a fixed order. An exclusive write barrier covers the complete import: synchronous management writes wait, while high-frequency routing and auth-runtime snapshots are dropped during the import window so stale state cannot overwrite the restore. A restored result snapshot is read-only until a new full inspection runs. Manifest-free event-only and mixed JSONL files are rejected by default because they cannot receive file-level integrity verification. A trusted legacy backup can be imported explicitly with `?allow_legacy=1` or the `X-CLIProxy-Allow-Legacy-Backup: true` header; the management UI asks for confirmation before using this compatibility mode.
+
+API-key policy backup records include stable SHA-256 key fingerprints, Profile rules, active Profile state, and policy audit history. They never include or restore `config.yaml api-keys`. Treat the fingerprints as sensitive identifiers: protect JSONL and WebDAV backups with the same access control, transport security, and storage retention used for other sensitive configuration exports. WebDAV restore accepts only listed `usage-export-*.jsonl` file names and reuses the local import preview and atomic restore pipeline.
 
 Example import response fields:
 
@@ -138,9 +143,15 @@ changes: Core adapts its existing `Executor.HttpRequest`; a future native implem
 priority automatically. See [QUOTA_PROVIDER.md](QUOTA_PROVIDER.md) for the schema and compatibility
 rules.
 
-### Built-in proxy pool and OAuth plan model policy
+### Auth-file connection test
 
-Core includes a loopback SOCKS5 proxy pool and OAuth plan policies for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi. Proxy takeover changes only the runtime global transport path; it does not rewrite `config.yaml`, credential-level proxies, or explicit `direct` settings. Model processing order is upstream `excluded_models`, built-in plan filtering, OAuth alias/prefix, then model registration. The result constrains both `/v1/models` aggregation and scheduler candidates.
+- `POST /v0/management/auth-files/test` — accepts `name`, optional `auth_index`, and `model`, then pins one minimal real OpenAI Chat-format text-generation request to that auth record.
+
+Pro extends upstream `GET /v0/management/auth-files/models`: it prefers models registered for the selected auth, then uses the matching provider's static definitions when upstream unregisters a disabled credential; Codex fallback models are selected by account plan. The model viewer and connection test therefore share the same endpoint. The test reuses upstream request translation, credential proxying, 401 refresh, model aliasing, and result accounting, but does not write a request-monitoring event. Diagnostic execution bypasses normal disabled, cooldown, and unavailable eligibility gates so an unhealthy credential can be rechecked, while preserving the operator-controlled `disabled` switch. The response contains `success`, `model`, `latency_ms`, and model `output`, or `error`, `error_code`, and `http_status`.
+
+### Built-in proxy pool and OAuth plan account policy
+
+Core includes a loopback SOCKS5 proxy pool and OAuth account policies for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi. Plan detection reuses auth-bound upstream execution, reads plugin-quota and account-inspection snapshots from SQLite in time order, and selects the newest evidence containing a usable plan. Plan rules support `excluded-models`, `prefix`, `priority`, and `weight` as runtime-only overlays; neither `config.yaml` nor auth files are rewritten. The result constrains both `/v1/models` aggregation and scheduler candidates.
 
 On first startup, Core reads legacy `plugins.configs.proxy-pool` and `plugins.configs.oauth-model-policy`, validates and stores them in SQLite, verifies the stored bytes, and only then atomically removes the old YAML. If legacy takeover was active, the root `proxy-url` is restored from the old `restore-proxy-url`; unrelated third-party plugin configuration is preserved.
 
@@ -148,16 +159,16 @@ On first startup, Core reads legacy `plugins.configs.proxy-pool` and `plugins.co
 
 The patch layer adds backend account-inspection routes under the management API:
 
-Request monitoring also stores TTFT, HTTP status code, structured error, reasoning effort, and service tier. `/usage/status` returns recent dead-letter samples with sensitive fields redacted. Account-inspection automatic actions support consecutive-confirmation gating, and quota cache entries include parser version plus response-shape hashes.
+Request monitoring also stores TTFT, HTTP status code, structured error, reasoning effort, the requested service tier, and the effective tier reported by upstream. Fast pricing treats `priority` as a compatibility alias for `fast` and prefers the response tier for billing, so requests downgraded to `default` do not use Fast rates. `/usage/status` returns recent dead-letter samples with sensitive fields redacted. Account-inspection automatic actions support consecutive-confirmation gating, and quota cache entries include parser version plus response-shape hashes.
 
 - `GET /v0/management/account-inspection/schedule`
 - `GET /v0/management/account-inspection/status`
 - `GET /v0/management/account-inspection/logs` (WebSocket/WSS log and status stream)
 - `PUT|PATCH /v0/management/account-inspection/schedule`
 - `POST /v0/management/account-inspection/run`
-- `POST /v0/management/account-inspection/quota-refresh` — start a quota-only job for one provider.
 - `POST /v0/management/account-inspection/inspect-one`
 - `POST /v0/management/account-inspection/refresh-token`
+- `POST /v0/management/account-inspection/inspect-many` — backend-limited bulk recheck with per-account outcomes.
 - `POST /v0/management/account-inspection/pause`
 - `POST /v0/management/account-inspection/resume`
 - `POST /v0/management/account-inspection/stop`
@@ -172,9 +183,9 @@ The scheduler can inspect accounts for:
 - Kimi
 - xAI
 
-It supports provider filtering, worker limits, retry/timeout settings, sampling, usage-threshold decisions, progress/status/log/result snapshots, pause/resume/stop controls, manual actions, and optional automatic actions for quota exhaustion, quota recovery, and account errors. Antigravity and xAI also support optional deep probes.
+It supports provider filtering, two-level probe concurrency, retry/timeout settings, sampling, usage-threshold decisions, progress/status/log/result snapshots, pause/resume/stop controls, manual actions, and optional automatic actions for quota exhaustion, quota recovery, and account errors. Antigravity and xAI also support optional deep probes.
 
-Quota-refresh jobs reuse the scheduler with 25 workers and include only enabled credentials for the requested provider, with sampling, deep probes, and automatic account actions disabled. They may run for up to six hours. Transient network failures and HTTP 408/425/429/5xx responses use jittered exponential backoff; an Antigravity subscription lookup failure does not overwrite an existing cache entry with an unknown plan.
+In the inspection settings, `workers` is the global probe concurrency across all providers (`1–8`, default `4`), while `providerWorkers` is the per-provider probe concurrency (`1–4`, default `2`). Regular probes, deep probes, xAI probes, and pre-probe token refreshes share these two limits and have no separate serialization gate. `deleteWorkers` (`1–4`, default `4`) limits both automatic actions and manual bulk actions from the management UI. These settings are stored in the account-inspection schedule JSON; they neither read nor modify `config.yaml`.
 
 Before probing an account, the scheduler can refresh its auth record when it is already in the normal upstream refresh window. This inspection refresh path reuses upstream provider refresh logic and persistence, allows disabled accounts, skips API-key accounts, skips accounts not yet due, and respects `NextRefreshAfter`. If refresh succeeds, probing uses the refreshed auth; if refresh fails, the scheduler keeps the account and skips probing it for that run.
 
@@ -188,17 +199,16 @@ Override it with `ACCOUNT_INSPECTION_SCHEDULE_PATH` if needed.
 
 The latest finished inspection result is persisted separately at `/CLIProxyAPI/usage/account-inspection-snapshot.json` with mode `0600`. A snapshot restored after process restart or usage import is read-only and is replaced when the next full inspection finishes. Override its path with `ACCOUNT_INSPECTION_SNAPSHOT_PATH` if needed.
 
-### Routing policy and request-state protection
+### Request-state protection
 
-The patch layer exposes a unified routing-policy API under the management prefix:
+The patch layer exposes request-state protection under the management prefix:
 
 - `GET /v0/management/routing-policy`
-- `PATCH /v0/management/routing-policy/upstream`
 - `PUT /v0/management/routing-policy/request-protection`
-- `PUT|PATCH /v0/management/routing-policy` (legacy management-client compatibility)
+- `PUT|PATCH /v0/management/routing-policy` (legacy compatibility; only `requestProtection` is handled)
 - `POST /v0/management/routing-policy/release`
 
-The API combines upstream routing mode, session stickiness, request retry, account switching, cooldown, quota fallback, and Codex identity-cloaking settings with Pro request protection. Upstream values can only update keys already present in `config.yaml`; request protection is stored in the `pro_settings` table in `usage.sqlite`. A legacy `routing.request-protection` node is migrated to SQLite and removed from YAML on first startup. Built-in protection supports Antigravity, xAI, Codex, Gemini CLI, Gemini, Gemini Interactions, Vertex AI, AI Studio, Claude, and Kimi.
+The API manages only Pro request-state protection and never reads or edits global routing values in `config.yaml`. Protection is stored in the `pro_settings` table in `usage.sqlite`. When SQLite has no setting yet, a legacy `routing.request-protection` node can be used as a one-time migration source; SQLite takes precedence afterward and the original YAML remains unchanged. Built-in protection supports Antigravity, xAI, Codex, Gemini CLI, Gemini, Gemini Interactions, Vertex AI, AI Studio, Claude, and Kimi.
 
 Protection is disabled by default and starts in `observe` mode. Per-provider settings cover HTTP statuses, consecutive-confirmation thresholds, confirmation windows, 429 quota evidence, automatic release, and fallback disable duration. `enforce` can disable matching auth records and records `request_protection` ownership; automatic or manual release affects only records owned by this policy, never user-disabled or differently owned accounts.
 
@@ -216,14 +226,14 @@ The patch layer also changes upstream API behavior:
 The patch layer changes upstream's default remote management panel repository to:
 
 ```text
-https://github.com/kkkk24juastin/CLIProxyAPI-Pro
+https://github.com/ssfun/CLIProxyAPI-Pro
 ```
 
 This affects the built-in default config, `config.example.yaml`, and the management asset updater's default latest-release API URL.
 
 The release workflow places the Pro `management.html` produced by the same build at `/CLIProxyAPI/static/management.html` in the Docker image and pins it with `MANAGEMENT_STATIC_PATH`. If the GitHub Release API or asset download fails, upstream's updater keeps using this local file. Core binaries and non-Docker archives no longer embed management or change upstream's fallback implementation.
 
-When `GITSTORE_GIT_TOKEN` is set, it is automatically used for management and plugin GitHub Release metadata, authenticated API asset downloads, and startup plugin auto-install. Matching is restricted to HTTPS GitHub API release paths. Explicit `plugins.store-auth` rules take precedence, and a matching `type: none` rule can suppress this environment fallback.
+When `GITSTORE_GIT_TOKEN` is set, it is automatically used for management and plugin GitHub Release metadata, authenticated API asset downloads, and startup plugin auto-install. Matching is restricted to HTTPS GitHub API release paths. Explicit `plugins.store-auth` rules take precedence, and a matching `type: none` rule can suppress this environment fallback. Startup auto-install and its HTTP requests are bounded to two minutes, so an unhealthy registry or asset service cannot block process startup indefinitely.
 
 The Management Center's “Check for updates” action calls `POST /v0/management/management-panel/check-update`. The endpoint keeps the updater's 30-second throttle, remote digest verification, and local SHA-256 comparison; it atomically replaces `management.html` only when the latest-release asset differs. This covers both a new release and a same-release asset replacement without re-downloading identical content.
 
@@ -234,7 +244,7 @@ The Management Center's “Check for updates” action calls `POST /v0/managemen
 - `KOMARI_SERVER`
 - `KOMARI_SECRET`
 
-It then starts `CLIProxyAPI` and optionally restores the latest usage backup from WebDAV.
+It then starts `CLIProxyAPI` and optionally restores the latest usage backup from WebDAV. On `TERM` or `INT`, the entrypoint forwards the signal to the main process and Komari agent, waits for both, and preserves the main process exit status.
 
 ## Repository layout
 
@@ -244,14 +254,14 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `patches/sources/internal/pro/app/` — composition root, lifecycle, and legacy configuration migration for static Pro modules.
 - `patches/sources/internal/pro/host/` — adapters around volatile upstream transport, model-registration, and auth boundaries.
 - `patches/sources/internal/pro/proxypool/` — independent proxy-pool configuration, runtime service, node pool, and SOCKS5 implementation.
-- `patches/sources/internal/pro/modelpolicy/` — independent OAuth plan detection, model filtering, and configuration service.
+- `patches/sources/internal/pro/oauthpolicy/` — independent OAuth plan detection, model filtering, and configuration service.
 - `patches/sources/internal/pro/settings/` — versioned settings persistence port consumed by modules.
 - `patches/sources/internal/pro/storage/` — single SQLite lifecycle, idempotent schema, domain repositories, and transaction boundary.
 - `patches/sources/internal/pro/state/` — stable routing/runtime contracts and the coalescing state writer.
 - `patches/sources/internal/pro/observability/` — backup-coordination adapters for usage, retention, price sync, WebDAV jobs, and ordinary state writes.
 - `patches/sources/internal/pro/quota/` — quota snapshot normalization/max-use calculation, cache success state and response-shape fingerprints, plus Gemini CLI/xAI billing, plan, request-path parsing, and merge policy.
 - `patches/sources/internal/pro/routing/` — durable selection cursors and request-protection ownership policy.
-- `patches/sources/internal/pro/inspection/` — inspection configuration, candidate filtering/sampling/worker policy, status/log/stream/manual-action DTOs, result classification/filtering/pagination/summaries and merge transitions, provider decisions/error codes, action deduplication/summaries, result-snapshot schema/codec, automatic-action decisions, Antigravity/Claude/Codex/Kimi response parsing, and Antigravity/xAI deep-probe request/response protocols; provider probe transport, concurrency gates, Gin/WebSocket, snapshot/quota-cache/observation I/O, and Auth mutation remain Management host adapters.
+- `patches/sources/internal/pro/inspection/` — inspection configuration, candidate filtering/sampling/two-level worker policy, status/log/stream/manual-action DTOs, result classification/filtering/pagination/summaries and merge transitions, provider decisions/error codes, action deduplication/summaries, result-snapshot schema/codec, automatic-action decisions, Antigravity/Claude/Codex/Kimi response parsing, and Antigravity/xAI deep-probe request/response protocols; provider probe transport, Gin/WebSocket, snapshot/quota-cache/observation I/O, and Auth mutation remain Management host adapters.
 - `patches/sources/internal/pro/backup/` — JSONL export, the import-exclusive/ordinary-write shared barrier, and the cross-module pause, flush, import, live-state restore, inspection restore, legacy cleanup, and resume sequence.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
 - `embeddedusage/` — thin compatibility façade preserving upstream import paths, public types, and function signatures; implementation lives in `pro/observability`.
@@ -261,10 +271,11 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `patches/pro_management_runtime.go` — composes inspection and routing background lifecycles owned by one Management Handler.
 - The generated API Server shuts down its management Handler from `Stop`; embedders that create a Handler directly through the SDK must also call `Shutdown()` to release inspection, routing-protection, login-cleanup, and global callback ownership.
 - `patches/routing_policy.go` — unified routing configuration, request-state-protection handlers, usage plugin, and automatic release task.
-Static modules follow their actual host lifecycles: `pro/app` owns the proxy-pool and model-policy services on the request path; `pro/observability` follows the process context; inspection and routing controllers follow the Management Handler. Cross-lifecycle backup ports use owner-scoped registration and reverse-order unregistration, so stopping an older Handler or Service cannot clear callbacks owned by a newer instance. `internal/embeddedusage` is restricted to upstream/SDK compatibility boundaries; `internal/pro` business modules do not depend back on that façade.
+
+Static modules follow their actual host lifecycles: `pro/app` owns the proxy-pool and oauth-policy services on the request path; `pro/observability` follows the process context; inspection and routing controllers follow the Management Handler. OAuth plan detection reuses auth-bound upstream execution and the newest usable SQLite plugin-quota or inspection snapshot. Quota updates trigger auth-generation-safe model re-registration, while `POST /v0/management/pro/oauth-policy/refresh` starts an explicit re-detection. Cross-lifecycle backup ports use owner-scoped registration and reverse-order unregistration, so stopping an older Handler or Service cannot clear callbacks owned by a newer instance. `internal/embeddedusage` is restricted to upstream/SDK compatibility boundaries; `internal/pro` business modules do not depend back on that façade.
 - Core invariants: account inspection takes precedence over request protection; imported `routing_cursor_state` and `auth_runtime_stats` are applied to the live manager immediately; existing DB tables, JSONL record types, and `/v0/management/usage*` APIs remain compatible.
 - `patches/config_existing_updates.go` — existing-scalar-only YAML updates that never create missing keys.
-- `.github/workflows/release-core.yml` — multi-architecture image and `management.html` publishing, test gates, and run cleanup.
+- `.github/workflows/release-core.yml` — image publish, Pro binary assets, `management.html` publish, usage backup, Render deployment trigger, Telegram notification, and run cleanup.
 
 ## Docker build
 
@@ -341,6 +352,8 @@ usage-export-YYYYMMDD_HHMMSS.jsonl
 
 During the compatibility transition, Docker WebDAV restore always calls `/usage/import?allow_legacy=1`. Manifest-backed backups are still verified strictly; manifest-free legacy backups are imported with an explicit warning that integrity cannot be verified. Normal management API imports still reject manifest-free files by default.
 
+The service's scheduled WebDAV upload, directory listing, and retention deletion requests have a two-minute total timeout, preventing an unhealthy endpoint from permanently holding the backup lifecycle or the usage-import pause barrier.
+
 The import request uses:
 
 ```text
@@ -360,26 +373,85 @@ Workflow:
 .github/workflows/release-core.yml
 ```
 
-The workflow checks upstream on a schedule and supports manual dispatch. A push to `cliproxyapi-pro-core/**` or the workflow itself on `main` forces a new publish even when the upstream version is unchanged.
-
 The workflow:
 
 1. Checks the latest upstream CLIProxyAPI release and computes the Pro release tag, for example `v<core-version>-pro`.
 2. Checks the latest upstream management release.
-3. Applies the core patches, runs the full Go test suite, and builds and pushes `linux/amd64` and `linux/arm64` Docker images tagged with `latest` and the Pro release tag.
-4. Applies the management customization layer, runs customization tests, frontend tests, and lint, then builds `management.html`.
-5. Creates or updates the current repository GitHub Release and uploads `management.html`; standalone platform binaries are not published.
-6. Writes core upstream, management upstream, and customization revision mappings into the GitHub Release notes.
-7. Deletes old workflow runs.
+3. Builds Pro binary assets with the same platform matrix and archive formats as upstream, with the `CLIProxyAPI` asset prefix; default desktop/Linux archives enable CGO for dynamic-library plugin support, while `_no-plugin` archives remain CGO-free portable builds.
+4. Reuses the Linux amd64/arm64 assets to assemble and push a multi-architecture image through `Dockerfile.runtime`, tagged with `latest` and the Pro release tag.
+5. Applies the management customization layer and builds `management.html`.
+6. Creates or updates the current repository GitHub Release, then uploads binary assets, `checksums.txt`, and `management.html`.
+7. Writes core upstream and management upstream version mappings plus release notes into the GitHub Release notes.
+8. Requests complete Pro WebDAV backups through the data-management pipeline on one or more running CPA instances, with a legacy usage-export fallback for old Cores returning 404.
+9. Triggers one or more Render deployments.
+10. Sends a Telegram notification.
+11. Deletes old workflow runs.
 
 ### Required Docker secrets
 
 - `DOCKER_USERNAME`
 - `DOCKER_PASSWORD`
 
+### Multi-instance Pro data backup
+
+The workflow uses one optional JSON secret for all backup targets. The primary path on a current Core requires only `api_url` and `management_password`; the `webdav_*` fields in the example are used only for the 404 fallback when an old Core does not expose the data-management backup endpoint:
+
+```text
+CLIPROXY_USAGE_BACKUP_TARGETS
+```
+
+Example:
+
+```json
+[
+  {
+    "name": "cpa-main",
+    "api_url": "https://cpa-main.example.com",
+    "management_password": "management-password-1",
+    "webdav_url": "https://webdav.example.com/cpa-main",
+    "webdav_username": "webdav-user-1",
+    "webdav_password": "webdav-password-1"
+  }
+]
+```
+
+Each target first calls `/v0/management/data/backups/now`. The CPA instance's data-management settings own the WebDAV URL, credentials, file naming, retention, and operation record. Complete backups are named:
+
+```text
+cliproxy-pro-backup-YYYYMMDD_HHMMSS_000.jsonl
+```
+
+Only when the target returns 404 does the workflow use the target's `webdav_*` fields to fall back to `/v0/management/usage/export`, producing `usage-export-YYYYMMDD_HHMMSS.jsonl` and retaining the latest 7 legacy backups. If the secret is missing or invalid, an old Core lacks fallback fields, or a target fails, the workflow logs a warning and continues.
+
+### Multi-target Render deploy hooks
+
+The workflow uses one optional JSON secret for all Render deploy hooks:
+
+```text
+CLIPROXY_RENDER_DEPLOY_HOOKS
+```
+
+Example:
+
+```json
+[
+  {
+    "name": "cpa-main",
+    "hook_url": "https://api.render.com/deploy/srv-xxx?key=xxx"
+  }
+]
+```
+
+`url` is also accepted as an alias for `hook_url`. If the secret is missing, invalid, or a target fails, the workflow logs a warning and continues.
+
+### Telegram notification secrets
+
+- `TELEGRAM_CHAT_ID`
+- `TELEGRAM_BOT_TOKEN`
+
 ## Local validation
 
-Validate a clean upstream checkout with the repository script. It checks guarded-source preflight, rejected reapplication, the relevant Go packages, and the server build:
+Validate a clean upstream checkout with the repository script. It checks guarded-source preflight, rejected reapplication, `go vet` for `internal/pluginhost`, the relevant Go packages, and the server build:
 
 ```bash
 bash scripts/validation/core.sh /path/to/clean/CLIProxyAPI

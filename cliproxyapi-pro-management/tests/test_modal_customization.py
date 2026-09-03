@@ -9,6 +9,7 @@ SPEC = importlib.util.spec_from_file_location('apply_customizations', MODULE_PAT
 assert SPEC and SPEC.loader
 CUSTOMIZATIONS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CUSTOMIZATIONS)
+PRO_ROOT = MODULE_PATH.parent / 'overlay/src/pro'
 
 
 MODAL_SOURCE = """import { useEffect, useRef } from 'react';
@@ -48,24 +49,280 @@ export function unlockScroll(): void {
 export const FOCUSABLE_SELECTOR = 'button';
 """
 
-GLOBAL_STYLE_SOURCE = """@use './layout.scss';
-
-html.modal-open,
-body.modal-open {
-  overflow: hidden;
+MODAL_LIFECYCLE_SOURCE = """import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react';
+import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from './scrollLock';
+interface ModalProps {
+  open: boolean;
+  onClose: () => void;
 }
-
-body.modal-open .content {
-  overflow: hidden;
-}
-
-body {
-  color: var(--text-primary);
+export function Modal({
+  open,
+  onClose,
+  footer,
+  closeDisabled = false,
+}) {
+  const titleId = 'modal-test';
+  const [isVisible, setIsVisible] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const getFocusableElements = useCallback(() => {
+    return [];
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    const focusTimer = window.setTimeout(() => {
+    }, 0);
+    return () => window.clearTimeout(focusTimer);
+  }, [getFocusableElements, open]);
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [closeDisabled, getFocusableElements, handleClose, open]);
+  const startClose = useCallback(
+    (notifyParent: boolean) => {
+      if (closeTimerRef.current !== null) return;
+      setIsClosing(true);
+      closeTimerRef.current = window.setTimeout(() => {
+        setIsVisible(false);
+        setIsClosing(false);
+        closeTimerRef.current = null;
+        if (notifyParent) {
+          onClose();
+        }
+      }, CLOSE_ANIMATION_DURATION);
+    },
+    [onClose]
+  );
+  useEffect(() => {
+    let cancelled = false;
+    if (open) {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+      queueMicrotask(() => {
+        if (cancelled) return;
+        setIsVisible(true);
+        setIsClosing(false);
+      });
+    } else if (isVisible) {
+      queueMicrotask(() => {
+        if (cancelled) return;
+        startClose(false);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isVisible, startClose]);
+  const handleClose = useCallback(() => {
+    startClose(true);
+  }, [startClose]);
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+    />
+  );
 }
 """
 
+SHEET_LIFECYCLE_SOURCE = """import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from '../scrollLock';
+interface SheetProps {
+  open: boolean;
+  onClose: () => void;
+}
+export function Sheet({
+  open,
+  onClose,
+  size = 'md',
+  closeDisabled = false,
+  confirmClose,
+}) {
+  const titleId = 'sheet-test';
+  const [isVisible, setIsVisible] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  const getFocusableElements = useCallback(() => {
+    if (!sheetRef.current) return [] as HTMLElement[];
+    return Array.from(sheetRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+      (el) => !el.hasAttribute('disabled') && el.tabIndex !== -1
+    );
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => {
+      const first = getFocusableElements()[0];
+      (first ?? closeBtnRef.current ?? sheetRef.current)?.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [getFocusableElements, open]);
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (event: KeyboardEvent) => {
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [closeDisabled, getFocusableElements, handleClose, open]);
+  const startClose = useCallback(
+    (notifyParent: boolean) => {
+      if (closeTimerRef.current !== null) return;
+      setIsClosing(true);
+      closeTimerRef.current = window.setTimeout(() => {
+        setIsVisible(false);
+        setIsClosing(false);
+        closeTimerRef.current = null;
+        if (notifyParent) onClose();
+      }, CLOSE_ANIMATION_DURATION);
+    },
+    [onClose]
+  );
+  useEffect(() => {
+    if (open) setIsVisible(true);
+    else if (isVisible) startClose(false);
+  }, [open, isVisible, startClose]);
+  const handleClose = useCallback(async () => {
+    if (confirmClose) {
+      const ok = await confirmClose();
+      if (ok === false) return;
+    }
+    startClose(true);
+  }, [confirmClose, startClose]);
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (open || isVisible) return;
+    previouslyFocusedRef.current?.focus();
+  }, [isVisible, open]);
+  return (
+    <div onMouseDown={(e) => {
+        if (closeDisabled) return;
+        if (e.target === e.currentTarget) handleClose();
+      }}>
+      <div
+        role="dialog"
+        aria-modal="true"
+      />
+    </div>
+  );
+}
+"""
+
+CONFIRMATION_STORE_SOURCE = """import { create } from 'zustand';
+import type { ReactNode } from 'react';
+import { generateId } from '@/utils/helpers';
+interface ConfirmationOptions {
+  title?: string;
+  message: ReactNode;
+  confirmText?: string;
+  cancelText?: string;
+  onConfirm: () => void | Promise<void>;
+}
+interface NotificationState {
+  confirmation: { isOpen: boolean; isLoading: boolean; options: ConfirmationOptions | null };
+  showConfirmation: (options: ConfirmationOptions) => void;
+  hideConfirmation: () => void;
+  setConfirmationLoading: (loading: boolean) => void;
+}
+export const useNotificationStore = create<NotificationState>((set) => ({
+  confirmation: { isOpen: false, isLoading: false, options: null },
+  showConfirmation: (options) => {
+    set({ confirmation: { isOpen: true, isLoading: false, options } });
+  },
+  hideConfirmation: () => {
+    set((state) => ({ confirmation: { ...state.confirmation, isOpen: false, options: null } }));
+  },
+  setConfirmationLoading: (loading) => {
+    set((state) => ({ confirmation: { ...state.confirmation, isLoading: loading } }));
+  },
+}));
+"""
+
+CONFIRMATION_MODAL_SOURCE = """import { useTranslation } from 'react-i18next';
+export function ConfirmationModal() {
+  const setConfirmationLoading = useNotificationStore((state) => state.setConfirmationLoading);
+  const { isOpen, isLoading, options } = confirmation;
+  if (!isOpen || !options) {
+    return null;
+  }
+  const handleConfirm = async () => {
+    try {
+      setConfirmationLoading(true);
+      await onConfirm();
+      hideConfirmation();
+    } finally {
+      setConfirmationLoading(false);
+    }
+  };
+  return (
+    <Modal open={isOpen} onClose={handleCancel} title={title} closeDisabled={isLoading}>
+      content
+    </Modal>
+  );
+}
+"""
 
 class ModalCustomizationTest(unittest.TestCase):
+    def test_global_reduced_motion_rules_are_owned_by_pro_overlay(self) -> None:
+        bootstrap = (PRO_ROOT / 'ProBootstrap.tsx').read_text()
+        styles = (PRO_ROOT / 'global.scss').read_text()
+
+        self.assertIn("import '@/pro/global.scss';", bootstrap)
+        self.assertIn('@media (prefers-reduced-motion: reduce)', styles)
+        self.assertIn('.modal-overlay-entering,', styles)
+        self.assertIn('.modal-closing {', styles)
+        self.assertIn('animation: none !important;', styles)
+        self.assertIn("body > [role='presentation']", styles)
+        self.assertIn(
+            'body.modal-open .content:not(.content-logs):not(.content-plugin-resource) {\n'
+            '  overflow: auto;',
+            styles,
+        )
+        self.assertNotIn('body.modal-open .content {\n', styles)
+
+    def test_shared_overlay_lifecycle_owns_only_common_close_state(self) -> None:
+        lifecycle = (PRO_ROOT / 'shared/useOverlayLifecycle.ts').read_text()
+
+        self.assertIn('const [isVisible, setIsVisible] = useState(false);', lifecycle)
+        self.assertIn('const [isClosing, setIsClosing] = useState(false);', lifecycle)
+        self.assertIn('const closeRequestedRef = useRef(false);', lifecycle)
+        self.assertIn('onAfterCloseRef.current?.();', lifecycle)
+        self.assertIn("window.matchMedia('(prefers-reduced-motion: reduce)').matches", lifecycle)
+        self.assertIn('if (cancelled) return;', lifecycle)
+        self.assertIn('window.clearTimeout(closeTimerRef.current);', lifecycle)
+        self.assertNotIn('confirmClose', lifecycle)
+        self.assertNotIn('registerOverlayLayer', lifecycle)
+        self.assertNotIn('lockScroll', lifecycle)
+
     def setUp(self) -> None:
         CUSTOMIZATIONS._writes.clear()
 
@@ -115,25 +372,98 @@ class ModalCustomizationTest(unittest.TestCase):
             CUSTOMIZATIONS.flush_writes()
             self.assertEqual(patched, scroll_lock_path.read_text())
 
-    def test_modal_keeps_the_content_scrollbar_layout(self) -> None:
+    def test_modal_close_is_parent_controlled_and_rerender_safe(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             target = Path(temp_dir)
-            styles_dir = target / 'src/styles'
-            styles_dir.mkdir(parents=True)
-            global_style_path = styles_dir / 'global.scss'
-            global_style_path.write_text(GLOBAL_STYLE_SOURCE)
+            modal_dir = target / 'src/components/ui'
+            modal_dir.mkdir(parents=True)
+            modal_path = modal_dir / 'Modal.tsx'
+            modal_path.write_text(MODAL_LIFECYCLE_SOURCE)
 
-            CUSTOMIZATIONS.patch_modal_content_scrollbar_layout(target)
+            CUSTOMIZATIONS.patch_modal_lifecycle(target)
             CUSTOMIZATIONS.flush_writes()
 
-            patched = global_style_path.read_text()
-            self.assertIn('html.modal-open,\nbody.modal-open {\n  overflow: hidden;\n}', patched)
-            self.assertNotIn('body.modal-open .content', patched)
+            patched = modal_path.read_text()
+            self.assertIn("import { useOverlayLifecycle } from '@/pro/shared/useOverlayLifecycle';", patched)
+            self.assertIn('const { isVisible, isClosing, requestClose } = useOverlayLifecycle({', patched)
+            self.assertIn('closeAnimationDuration: CLOSE_ANIMATION_DURATION,', patched)
+            self.assertIn('registerOverlayLayer(titleId)', patched)
+            self.assertIn('if (!isTopOverlayLayer(titleId)) return;', patched)
+            self.assertIn('void requestClose().catch(() => {', patched)
+            self.assertNotIn('const closeRequestedRef', patched)
+            self.assertNotIn('window.matchMedia', patched)
+            self.assertIn("role={open ? 'dialog' : undefined}", patched)
+            self.assertNotIn('if (notifyParent)', patched)
 
-            CUSTOMIZATIONS.patch_modal_content_scrollbar_layout(target)
+    def test_sheet_close_confirmation_is_single_flight(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir)
+            sheet_dir = target / 'src/components/ui/Sheet'
+            sheet_dir.mkdir(parents=True)
+            sheet_path = sheet_dir / 'Sheet.tsx'
+            sheet_path.write_text(SHEET_LIFECYCLE_SOURCE)
+
+            CUSTOMIZATIONS.patch_sheet_lifecycle(target)
             CUSTOMIZATIONS.flush_writes()
-            self.assertEqual(patched, global_style_path.read_text())
 
+            patched = sheet_path.read_text()
+            self.assertIn("import { useOverlayLifecycle } from '@/pro/shared/useOverlayLifecycle';", patched)
+            self.assertIn('const { isVisible, isClosing, requestClose } = useOverlayLifecycle({', patched)
+            self.assertIn('closeAnimationDuration: CLOSE_ANIMATION_DURATION,', patched)
+            self.assertIn('registerOverlayLayer(titleId)', patched)
+            self.assertIn('const shouldRegisterOverlay = open || isVisible;', patched)
+            self.assertIn('}, [shouldRegisterOverlay, titleId]);', patched)
+            self.assertNotIn('}, [isVisible, open, titleId]);', patched)
+            self.assertIn('if (!isVisible) return;', patched)
+            self.assertIn('}, [getFocusableElements, isVisible, open, titleId]);', patched)
+            self.assertIn("!el.matches(':disabled')", patched)
+            self.assertIn('const fallback = closeBtnRef.current?.disabled ? sheetRef.current : closeBtnRef.current;', patched)
+            self.assertIn('if (!isTopOverlayLayer(titleId)) return;', patched)
+            self.assertIn('void requestClose(confirmClose);', patched)
+            self.assertNotIn('const closeRequestedRef', patched)
+            self.assertNotIn('window.matchMedia', patched)
+            self.assertIn("aria-hidden={open ? undefined : true}", patched)
+            self.assertIn('previouslyFocused?.isConnected', patched)
+
+    def test_confirmation_requests_are_deduplicated_and_queued(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir)
+            store_dir = target / 'src/stores'
+            common_dir = target / 'src/components/common'
+            store_dir.mkdir(parents=True)
+            common_dir.mkdir(parents=True)
+            store_path = store_dir / 'useNotificationStore.ts'
+            modal_path = common_dir / 'ConfirmationModal.tsx'
+            store_path.write_text(CONFIRMATION_STORE_SOURCE)
+            modal_path.write_text(CONFIRMATION_MODAL_SOURCE)
+
+            CUSTOMIZATIONS.patch_confirmation_queue(target)
+            CUSTOMIZATIONS.flush_writes()
+
+            store = store_path.read_text()
+            confirmation = modal_path.read_text()
+            self.assertIn('dedupeKey?: string;', store)
+            self.assertIn('confirmationQueue:', store)
+            self.assertIn('state.confirmationQueue.some', store)
+            self.assertIn('showConfirmation: (options: ConfirmationOptions) => boolean;', store)
+            self.assertIn('let accepted = false;', store)
+            self.assertIn('accepted = true;', store)
+            self.assertIn('return accepted;', store)
+            self.assertIn("typeof confirmationOptions.message === 'string'", store)
+            self.assertIn(": 'react-node'", store)
+            self.assertLess(store.index('const confirmationDedupeKey'), store.index('interface NotificationState'))
+            self.assertIn('const dedupeKey = confirmationDedupeKey(options);', store)
+            self.assertIn('confirmationDedupeKey(state.confirmation.options)', store)
+            self.assertIn('if (state.confirmation.id && currentKey === dedupeKey)', store)
+            self.assertIn('confirmationDedupeKey(item.options) === dedupeKey', store)
+            self.assertIn('const [next, ...remaining]', store)
+            self.assertIn('advanceConfirmation:', store)
+            self.assertIn('if (state.confirmation.id)', store)
+            self.assertIn('if (!options)', confirmation)
+            self.assertNotIn('if (!isOpen || !options)', confirmation)
+            self.assertIn('onAfterClose={advanceConfirmation}', confirmation)
+            self.assertIn('const submittingRef = useRef(false);', confirmation)
+            self.assertIn('if (submittingRef.current || isLoading) return;', confirmation)
 
 if __name__ == '__main__':
     unittest.main()

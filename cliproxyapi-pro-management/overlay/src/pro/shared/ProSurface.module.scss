@@ -1,0 +1,161 @@
+.surface {
+  --pro-surface-body-padding: 20px 24px 24px;
+}
+
+.surface :global(.modal-body) {
+  min-height: 0;
+  padding: var(--pro-surface-body-padding);
+  overscroll-behavior: contain;
+}
+
+.detail {
+  width: min(800px, calc(100vw - 32px)) !important;
+  max-height: min(90dvh, 860px) !important;
+}
+
+.detail :global(.modal-header) {
+  min-height: 58px;
+  padding: 17px 64px 17px 24px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 76%, var(--bg-primary)), var(--bg-primary));
+}
+
+.detail :global(.modal-title) {
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.detail :global(.modal-body) {
+  max-height: min(72dvh, 720px);
+}
+
+.detail :global(.modal-footer) {
+  padding: 13px 24px 15px;
+  background: color-mix(in srgb, var(--bg-secondary) 54%, var(--bg-primary));
+}
+
+.form {
+  width: min(760px, calc(100vw - 32px)) !important;
+}
+
+.task {
+  width: min(680px, calc(100vw - 32px)) !important;
+}
+
+.workspace {
+  width: min(1200px, calc(100vw - 32px)) !important;
+  max-height: min(92dvh, 900px) !important;
+}
+
+.workspace :global(.modal-body) {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
+.sheet {
+  --pro-surface-body-padding: 24px;
+  container: pro-workspace-sheet / inline-size;
+}
+
+.settingsFields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settingsFooter {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settingsFooterStart,
+.settingsFooterActions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.settingsFooterStart {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.dirtyStatus {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface,
+  .sheet {
+    scroll-behavior: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  :global(.modal-overlay):has(.workspace) {
+    padding: 0;
+  }
+
+  .surface {
+    --pro-surface-body-padding: 16px;
+  }
+
+  .detail {
+    width: calc(100vw - 24px) !important;
+    max-height: calc(100dvh - 24px) !important;
+  }
+
+  .detail :global(.modal-header) {
+    min-height: 54px;
+    padding: 15px 54px 15px 16px;
+  }
+
+  .detail :global(.modal-body) {
+    max-height: none;
+  }
+
+  .detail :global(.modal-footer) {
+    padding: 12px 16px 16px;
+  }
+
+  .workspace {
+    width: 100vw !important;
+    height: 100dvh;
+    max-height: 100dvh !important;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .workspace :global(.modal-body) {
+    max-height: none;
+  }
+
+  .sheet {
+    --pro-surface-body-padding: 16px;
+    width: 100vw !important;
+    height: 100dvh;
+    max-width: none;
+    border-left: 0;
+  }
+
+  .settingsFooter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settingsFooterActions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .settingsFooterActions :global(.btn) {
+    width: 100%;
+  }
+}

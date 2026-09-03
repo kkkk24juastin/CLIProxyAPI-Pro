@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import type { TFunction } from 'i18next';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
-import type { MonitoringAccountRow, MonitoringTimeRange } from '../hooks/useMonitoringData';
+import type { MonitoringAccountRow } from '../hooks/useMonitoringData';
 import {
+  aggregateTrendPointsForDisplay,
   formatPercent,
   formatRankingMetricValue,
   getChartAxisLabels,
@@ -15,7 +16,8 @@ import {
   type TokenDistributionPoint,
   type TrendPoint,
 } from '../monitoringAnalytics';
-import { RANKING_METRIC_OPTIONS, TIME_RANGE_OPTIONS } from '../monitoringOptions';
+import { RANKING_METRIC_OPTIONS } from '../monitoringOptions';
+import { TimeRangeSelector, type TimeRangeSelection } from '../timeRange';
 import { formatCompactNumber, formatUsd } from '@/pro/modules/monitoring/features/usage';
 import styles from '../monitoring.module.scss';
 
@@ -61,6 +63,7 @@ const RankingMetricSwitch = ({
 export function UsageTrendHeader({
   range,
   totalCalls,
+  statusText,
   apiKeyFilter,
   apiKeyOptions,
   onRangeChange,
@@ -68,11 +71,12 @@ export function UsageTrendHeader({
   onHide,
   t,
 }: {
-  range: MonitoringTimeRange;
+  range: TimeRangeSelection;
   totalCalls: number;
+  statusText?: string;
   apiKeyFilter: string;
   apiKeyOptions: Array<{ value: string; label: string }>;
-  onRangeChange: (range: MonitoringTimeRange) => void;
+  onRangeChange: (range: TimeRangeSelection) => void;
   onApiKeyFilterChange: (value: string) => void;
   onHide: () => void;
   t: TFunction;
@@ -81,24 +85,13 @@ export function UsageTrendHeader({
     <div className={styles.usageTrendHeader}>
       <div className={styles.usageTrendCopy}>
         <h2>{t('monitoring.usage_stats_title')}</h2>
-        <p>{t('monitoring.usage_stats_desc', { value: formatCompactNumber(totalCalls) })}</p>
+        <p>{statusText ?? t('monitoring.usage_stats_desc', { value: formatCompactNumber(totalCalls) })}</p>
       </div>
       <button type="button" className={`${styles.rankingMetricButton} ${styles.usageTrendHideButton} ${styles.mobileHeaderHideButton}`} onClick={onHide}>
         {t('monitoring.hide_analysis')}
       </button>
       <div className={styles.usageTrendActions}>
-        <div className={`${styles.rankingMetricSwitch} ${styles.timeRangeControl}`}>
-          {TIME_RANGE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`${styles.rankingMetricButton} ${styles.timeRangeButton} ${range === option.value ? styles.rankingMetricButtonActive : ''}`}
-              onClick={() => onRangeChange(option.value)}
-            >
-              {t(option.labelKey)}
-            </button>
-          ))}
-        </div>
+        <TimeRangeSelector value={range} onChange={onRangeChange} panelAlign="end" />
         <Select
           className={styles.usageTrendApiKeySelect}
           value={apiKeyFilter}
@@ -144,16 +137,18 @@ export function TopUsageStats({ cards }: { cards: UsageMetricCard[] }) {
 
 export function UsageTrendPanel({
   points,
+  durationMinutes,
   hasPrices,
   emptyText,
   t,
 }: {
   points: TrendPoint[];
+  durationMinutes: number;
   hasPrices: boolean;
   emptyText: string;
   t: TFunction;
 }) {
-  const chartPoints = points.slice(-30);
+  const chartPoints = aggregateTrendPointsForDisplay(points);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const chartViewBoxHeight = 310;
@@ -210,7 +205,7 @@ export function UsageTrendPanel({
     }),
     { requests: 0, failures: 0, tokens: 0, cost: 0 }
   );
-  const peakTokenPoint = chartPoints.reduce<TrendPoint | null>(
+  const peakTokenPoint = points.reduce<TrendPoint | null>(
     (peak, point) => (!peak || point.tokens > peak.tokens ? point : peak),
     null
   );
@@ -220,7 +215,7 @@ export function UsageTrendPanel({
     ...(hasPrices ? [{ key: 'cost', label: t('monitoring.total_cost_label'), value: formatUsd(totals.cost), color: '#059669' }] : []),
     { key: 'peak', label: t('monitoring.peak_period'), value: peakTokenPoint?.label ?? '--', color: '#f97316' },
   ];
-  const trendMinutes = Math.max(chartPoints.length * 60, 1);
+  const trendMinutes = Math.max(durationMinutes, 1);
   const headerStats = [
     { key: 'rpm', label: 'RPM', value: (totals.requests / trendMinutes).toFixed(2) },
     { key: 'tpm', label: 'TPM', value: formatCompactNumber(totals.tokens / trendMinutes) },
@@ -304,7 +299,27 @@ export function UsageTrendPanel({
               </div>
             ))}
           </div>
-          <svg ref={svgRef} className={styles.usageTrendSvg} viewBox={`0 0 ${chartViewBoxWidth} ${chartViewBoxHeight}`} role="img" aria-label={t('monitoring.usage_trend_chart_aria')}>
+          <svg
+            ref={svgRef}
+            className={styles.usageTrendSvg}
+            viewBox={`0 0 ${chartViewBoxWidth} ${chartViewBoxHeight}`}
+            role="img"
+            aria-label={t('monitoring.usage_trend_chart_aria')}
+            aria-keyshortcuts="ArrowLeft ArrowRight Home End"
+            tabIndex={0}
+            onFocus={() => setHoveredIndex((current) => current ?? 0)}
+            onBlur={() => setHoveredIndex(null)}
+            onKeyDown={(event) => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              event.preventDefault();
+              setHoveredIndex((current) => {
+                if (event.key === 'Home') return 0;
+                if (event.key === 'End') return chartPoints.length - 1;
+                const direction = event.key === 'ArrowRight' ? 1 : -1;
+                return Math.min(Math.max((current ?? 0) + direction, 0), chartPoints.length - 1);
+              });
+            }}
+          >
             <defs>
               <linearGradient id="usageTrendTokensFill" x1="0" x2="0" y1="0" y2="1">
                 <stop offset="5%" stopColor="#7c3aed" stopOpacity="0.24" />
@@ -367,9 +382,6 @@ export function UsageTrendPanel({
                   className={styles.trendHoverTarget}
                   onMouseEnter={() => setHoveredIndex(index)}
                   onMouseLeave={() => setHoveredIndex(null)}
-                  onFocus={() => setHoveredIndex(index)}
-                  onBlur={() => setHoveredIndex(null)}
-                  tabIndex={0}
                 >
                   <rect x={Math.max(plot.left, x - 14)} y={plot.top - 10} width="28" height={plot.bottom - plot.top + 26} fill="transparent" />
                   {isHovered ? <line className={styles.trendHoverGuide} x1={x} x2={x} y1={plot.top} y2={plot.bottom} /> : null}
@@ -415,11 +427,13 @@ export function UsageTrendPanel({
 
 export function TokenDistributionPanel({
   points,
+  durationMinutes,
   emptyText,
   hasPrices,
   t,
 }: {
   points: TokenDistributionPoint[];
+  durationMinutes: number;
   emptyText: string;
   hasPrices: boolean;
   t: TFunction;
@@ -436,7 +450,7 @@ export function TokenDistributionPanel({
     }),
     { requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cachedTokens: 0, totalCost: 0 }
   );
-  const tokenMinutes = Math.max(points.length * 60, 1);
+  const tokenMinutes = Math.max(durationMinutes, 1);
   const rpm = totals.requests / tokenMinutes;
   const tpm = totals.totalTokens / tokenMinutes;
   const rows = [

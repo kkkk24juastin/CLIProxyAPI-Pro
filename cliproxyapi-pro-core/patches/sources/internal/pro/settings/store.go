@@ -10,7 +10,8 @@ const (
 
 	NamespaceRoutingRequestProtection = "routing.request-protection"
 	NamespaceProxyPool                = "proxy.pool"
-	NamespaceOAuthModelPolicy         = "model.oauth-policy"
+	NamespaceOAuthPolicy              = "oauth-policy"
+	LegacyNamespaceOAuthModelPolicy   = "model.oauth-policy"
 )
 
 // Item is the module-facing representation of one versioned Pro setting.
@@ -23,9 +24,24 @@ type Item struct {
 	UpdatedAtMS   int64
 }
 
+// PlanSnapshot is the preferred provider plan evidence selected from the
+// persistence sources shared with Management auth cards.
+type PlanSnapshot struct {
+	Data         []byte
+	ObservedAtMS int64
+}
+
 // Store is the persistence port consumed by static Pro business modules.
 type Store interface {
 	Get(context.Context, string) (Item, bool, error)
 	Put(context.Context, Item) error
+	Delete(context.Context, string) error
 	Subscribe(string, func(context.Context, Item) error) func()
+}
+
+// WriteCoordinator keeps a persisted setting and its in-memory application
+// inside the same backup write barrier. The Store passed to operation performs
+// uncoordinated writes because the outer barrier is already held.
+type WriteCoordinator interface {
+	ExecuteWrite(context.Context, func(context.Context, Store) error) error
 }

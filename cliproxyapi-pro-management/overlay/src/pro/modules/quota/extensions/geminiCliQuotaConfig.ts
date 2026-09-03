@@ -7,14 +7,13 @@ import type {
 import { apiClient } from '@/services/api/client';
 import {
   isDisabledAuthFile,
-  isGeminiCliFile,
-  isRuntimeOnlyAuthFile,
   normalizeNumberValue,
   normalizeQuotaFraction,
   normalizeStringValue,
 } from '@/utils/quota';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import type { QuotaProviderData } from '@/features/quota/providers/types';
+import { isGeminiCliFile, isRuntimeOnlyAuthFile } from '../quotaFile';
 import { resolveGeminiCliTierDisplayLabel } from './geminiCliTierLabels';
 
 export type GeminiCliQuotaData = {
@@ -123,7 +122,6 @@ export const GEMINI_CLI_CONFIG: QuotaProviderData<GeminiCliQuotaState, GeminiCli
     tierId: data.tierId,
     creditBalance: data.creditBalance,
     quotaProviderSnapshot: true,
-    cachedAt: Date.now(),
   }),
   buildErrorState: (message: string, status?: number) => ({
     status: 'error',

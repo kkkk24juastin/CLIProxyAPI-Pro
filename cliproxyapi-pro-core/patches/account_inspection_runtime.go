@@ -20,28 +20,22 @@ import (
 )
 
 const (
-	accountInspectionProviderAll            = proinspection.ProviderAll
-	accountInspectionDefaultIntervalMin     = proinspection.DefaultIntervalMin
-	accountInspectionDefaultTimeoutMS       = proinspection.DefaultTimeoutMS
-	accountInspectionMinTimeoutMS           = proinspection.MinTimeoutMS
-	accountInspectionMaxTimeoutMS           = proinspection.MaxTimeoutMS
-	accountInspectionMaxWorkers             = proinspection.MaxWorkers
-	accountInspectionMaxDeleteWorkers       = proinspection.MaxDeleteWorkers
-	accountInspectionMaxRetries             = proinspection.MaxRetries
-	accountInspectionMaxRunDuration         = 30 * time.Minute
-	accountQuotaRefreshMaxRunDuration       = 6 * time.Hour
-	accountQuotaRefreshRetries              = 3
-	accountQuotaRefreshConcurrency          = 25
-	accountInspectionMaxProviderConcurrency = 2
-	accountInspectionMaxRefreshConcurrency  = 2
-	accountInspectionXAIRetryDelay          = 300 * time.Millisecond
-	accountInspectionWebSocketWriteTimeout  = 5 * time.Second
-	accountInspectionWebSocketPongWait      = 60 * time.Second
-	accountInspectionWebSocketPingPeriod    = 54 * time.Second
-	accountInspectionProgressBroadcastGap   = 500 * time.Millisecond
-	accountInspectionMaxResultPageSize      = 500
-	accountInspectionMaxLogPageSize         = 500
-	accountInspectionQuotaParserVersion     = proquota.CacheParserVersion
+	accountInspectionProviderAll           = proinspection.ProviderAll
+	accountInspectionDefaultIntervalMin    = proinspection.DefaultIntervalMin
+	accountInspectionDefaultTimeoutMS      = proinspection.DefaultTimeoutMS
+	accountInspectionMinTimeoutMS          = proinspection.MinTimeoutMS
+	accountInspectionMaxTimeoutMS          = proinspection.MaxTimeoutMS
+	accountInspectionMaxWorkers            = proinspection.MaxWorkers
+	accountInspectionMaxRetries            = proinspection.MaxRetries
+	accountInspectionMaxRunDuration        = 30 * time.Minute
+	accountInspectionXAIRetryDelay         = 300 * time.Millisecond
+	accountInspectionWebSocketWriteTimeout = 5 * time.Second
+	accountInspectionWebSocketPongWait     = 60 * time.Second
+	accountInspectionWebSocketPingPeriod   = 54 * time.Second
+	accountInspectionProgressBroadcastGap  = 500 * time.Millisecond
+	accountInspectionMaxResultPageSize     = 500
+	accountInspectionMaxLogPageSize        = 500
+	accountInspectionQuotaParserVersion    = proquota.CacheParserVersion
 )
 
 var accountInspectionSupportedProviders = proinspection.SupportedProviderSet()
@@ -105,16 +99,12 @@ const (
 	accountInspectionStateFailed    = proinspection.RunStateFailed
 )
 
-const (
-	accountInspectionRunKindInspection   = "inspection"
-	accountInspectionRunKindQuotaRefresh = "quota-refresh"
-)
-
 const accountInspectionResultSnapshotVersion = proinspection.ResultSnapshotVersion
 
 var errAccountInspectionRestoredSnapshotReadOnly = errors.New("restored account inspection snapshot is read-only; run a new inspection first")
 var errAccountInspectionResultStale = errors.New("account inspection result is stale or no longer available")
 var errAccountInspectionSharedSourceDelete = errors.New("cannot delete one plugin virtual auth from a shared source file")
+var errAccountInspectionAlreadyRunning = errors.New("account inspection already running")
 
 type accountInspectionProgress = proinspection.Progress
 type accountInspectionStatus = proinspection.Status
@@ -139,7 +129,10 @@ type accountInspectionScheduler struct {
 	snapshotPath            string
 	trigger                 chan struct{}
 	mu                      sync.Mutex
-	actionMu                sync.Mutex
+	fullRunStartMu          sync.Mutex
+	fullRunMu               sync.RWMutex
+	probeLimiter            proinspection.KeyedLimiter
+	actionLimiter           proinspection.KeyedLimiter
 	pause                   *sync.Cond
 	cancel                  context.CancelFunc
 	schedule                accountInspectionSchedule
@@ -149,8 +142,7 @@ type accountInspectionScheduler struct {
 	autoActionConfirmations *proinspection.ConfirmationCounter
 	subscribers             map[chan accountInspectionLogStreamMessage]struct{}
 	lastProgressBroadcastAt int64
-	xaiDeepProbeOnce        sync.Once
-	xaiDeepProbeGate        chan struct{}
+	policyRefreshPending    bool
 	runWG                   sync.WaitGroup
 	stopped                 bool
 	lifecycle               *proinspection.Lifecycle
@@ -159,15 +151,17 @@ type accountInspectionScheduler struct {
 }
 
 type accountInspectionAccount struct {
-	Auth        *coreauth.Auth
-	Key         string
-	Provider    string
-	FileName    string
-	DisplayName string
-	Email       string
-	Name        string
-	AuthIndex   string
-	Disabled    bool
+	Auth              *coreauth.Auth
+	AuthID            string
+	Key               string
+	Provider          string
+	FileName          string
+	DisplayName       string
+	Email             string
+	Name              string
+	AuthIndex         string
+	AccessTokenSHA256 string
+	Disabled          bool
 }
 
 type accountInspectionDecision = proinspection.Decision
@@ -175,10 +169,9 @@ type accountInspectionDecision = proinspection.Decision
 type accountInspectionActionItem = proinspection.ActionItem
 type accountInspectionActionRequest = proinspection.ActionRequest
 type accountInspectionOneRequest = proinspection.OneRequest
+type accountInspectionManyRequest = proinspection.ManyRequest
+type accountInspectionOutcome = proinspection.InspectionOutcome
 type accountInspectionRefreshTokenRequest = proinspection.RefreshTokenRequest
-type accountQuotaRefreshRequest struct {
-	Provider string `json:"provider"`
-}
 type accountInspectionActionOutcome = proinspection.ActionOutcome
 
 func (h *Handler) startAccountInspectionScheduler(quota proinspection.QuotaGateway) {
@@ -295,14 +288,18 @@ func (s *accountInspectionScheduler) load() {
 }
 
 func (s *accountInspectionScheduler) saveLocked() error {
+	return s.saveScheduleLocked(s.schedule)
+}
+
+func (s *accountInspectionScheduler) saveScheduleLocked(schedule accountInspectionSchedule) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(s.schedule, "", "  ")
+	raw, err := json.MarshalIndent(schedule, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, append(raw, '\n'), 0o600)
+	return proinspection.AtomicWriteFile(s.path, append(raw, '\n'), 0o600)
 }
 
 func decodeAccountInspectionResultSnapshot(raw []byte) (accountInspectionResultSnapshot, error) {
@@ -327,10 +324,11 @@ func (s *accountInspectionScheduler) resultSnapshotLocked() (accountInspectionRe
 		Summary:        s.status.Summary,
 		HealthCounts:   s.healthCountsLocked(),
 		Results:        append([]accountInspectionResult(nil), s.status.Results...),
+		Confirmations:  s.autoActionConfirmations.State(),
 	}, true
 }
 
-func (s *accountInspectionScheduler) applyResultSnapshotLocked(snapshot accountInspectionResultSnapshot, restored bool) {
+func (s *accountInspectionScheduler) applyResultSnapshotLocked(snapshot accountInspectionResultSnapshot, restored bool, restoreConfirmations bool) {
 	s.lastRunSettings = snapshot.Settings
 	s.status.State = snapshot.State
 	s.status.LastStartedAt = snapshot.LastStartedAt
@@ -345,6 +343,14 @@ func (s *accountInspectionScheduler) applyResultSnapshotLocked(snapshot accountI
 	s.status.Results = append([]accountInspectionResult(nil), snapshot.Results...)
 	s.status.RestoredSnapshot = restored
 	s.healthCounts = snapshot.HealthCounts
+	if s.autoActionConfirmations == nil {
+		s.autoActionConfirmations = proinspection.NewConfirmationCounter()
+	}
+	if restoreConfirmations {
+		s.autoActionConfirmations.Restore(snapshot.Confirmations)
+	} else {
+		s.autoActionConfirmations.Reset()
+	}
 }
 
 func (s *accountInspectionScheduler) saveResultSnapshotLocked() error {
@@ -352,6 +358,10 @@ func (s *accountInspectionScheduler) saveResultSnapshotLocked() error {
 	if !ok {
 		return nil
 	}
+	return s.writeResultSnapshotLocked(snapshot)
+}
+
+func (s *accountInspectionScheduler) writeResultSnapshotLocked(snapshot accountInspectionResultSnapshot) error {
 	if err := os.MkdirAll(filepath.Dir(s.snapshotPath), 0o755); err != nil {
 		return err
 	}
@@ -359,10 +369,10 @@ func (s *accountInspectionScheduler) saveResultSnapshotLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.snapshotPath, append(raw, '\n'), 0o600); err != nil {
+	if err := proinspection.AtomicWriteFile(s.snapshotPath, append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
-	return os.Chmod(s.snapshotPath, 0o600)
+	return nil
 }
 
 func (s *accountInspectionScheduler) loadResultSnapshot() error {
@@ -380,7 +390,13 @@ func (s *accountInspectionScheduler) loadResultSnapshot() error {
 	if err != nil {
 		return err
 	}
-	s.applyResultSnapshotLocked(snapshot, true)
+	// The schedule and result snapshot are separate atomic files. If a settings
+	// update persisted its schedule but failed while clearing the snapshot's
+	// confirmation state, never reuse confirmations accumulated under the old
+	// settings after restart.
+	currentSettings := normalizeAccountInspectionSchedule(accountInspectionSchedule{Settings: s.schedule.Settings}).Settings
+	restoreConfirmations := snapshot.Settings == currentSettings
+	s.applyResultSnapshotLocked(snapshot, true, restoreConfirmations)
 	return nil
 }
 
@@ -404,6 +420,10 @@ func (s *accountInspectionScheduler) exportResultSnapshot() ([]byte, bool, error
 			return nil, false, err
 		}
 	}
+	// Consecutive automatic-action confirmation state is local runtime state.
+	// It must survive a restart, but must not travel to another instance in a
+	// portable backup where it could immediately trigger a destructive action.
+	snapshot.Confirmations = proinspection.ConfirmationState{}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, false, err
@@ -415,6 +435,25 @@ func (s *accountInspectionScheduler) importResultSnapshot(raw []byte) error {
 	if s == nil {
 		return nil
 	}
+	if strings.TrimSpace(string(raw)) == "null" {
+		s.mu.Lock()
+		if s.isRunningLocked() {
+			s.mu.Unlock()
+			return fmt.Errorf("account inspection is running")
+		}
+		s.status = accountInspectionStatus{State: accountInspectionStateIdle}
+		s.healthCounts = accountInspectionHealthCounts{}
+		s.lastRunSettings = s.schedule.Settings
+		s.autoActionConfirmations.Reset()
+		err := os.Remove(s.snapshotPath)
+		if os.IsNotExist(err) {
+			err = nil
+		}
+		broadcast := s.statusBroadcastLocked()
+		s.mu.Unlock()
+		broadcast.send()
+		return err
+	}
 	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
 	if err != nil {
 		return err
@@ -424,7 +463,7 @@ func (s *accountInspectionScheduler) importResultSnapshot(raw []byte) error {
 		s.mu.Unlock()
 		return fmt.Errorf("account inspection is running")
 	}
-	s.applyResultSnapshotLocked(snapshot, true)
+	s.applyResultSnapshotLocked(snapshot, true, false)
 	err = s.saveResultSnapshotLocked()
 	broadcast := s.statusBroadcastLocked()
 	s.mu.Unlock()
@@ -480,13 +519,42 @@ func (s *accountInspectionScheduler) update(schedule accountInspectionSchedule) 
 	if s.stopped {
 		return fmt.Errorf("account inspection scheduler is shut down")
 	}
-	previousNextRunAt := s.schedule.NextRunAt
-	s.schedule = normalizeAccountInspectionSchedule(schedule)
-	if s.schedule.Enabled && previousNextRunAt > 0 && schedule.NextRunAt == 0 {
-		s.schedule.NextRunAt = previousNextRunAt
+	previousSchedule := s.schedule
+	nextSchedule := normalizeAccountInspectionSchedule(schedule)
+	if nextSchedule.Enabled && previousSchedule.NextRunAt > 0 && schedule.NextRunAt == 0 {
+		nextSchedule.NextRunAt = previousSchedule.NextRunAt
 	}
-	if err := s.saveLocked(); err != nil {
+	settingsChanged := previousSchedule.Settings != nextSchedule.Settings
+	if settingsChanged && s.isRunningLocked() {
+		return errAccountInspectionAlreadyRunning
+	}
+	var previousSnapshot accountInspectionResultSnapshot
+	var hasSnapshot bool
+	if settingsChanged {
+		previousSnapshot, hasSnapshot = s.resultSnapshotLocked()
+		if hasSnapshot {
+			clearedSnapshot := previousSnapshot
+			clearedSnapshot.Confirmations = proinspection.ConfirmationState{}
+			if err := s.writeResultSnapshotLocked(clearedSnapshot); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.saveScheduleLocked(nextSchedule); err != nil {
+		if hasSnapshot {
+			if restoreErr := s.writeResultSnapshotLocked(previousSnapshot); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf("restore account inspection confirmation snapshot: %w", restoreErr))
+			}
+		}
 		return err
+	}
+	s.schedule = nextSchedule
+	if settingsChanged {
+		if s.autoActionConfirmations == nil {
+			s.autoActionConfirmations = proinspection.NewConfirmationCounter()
+		} else {
+			s.autoActionConfirmations.Reset()
+		}
 	}
 	select {
 	case s.trigger <- struct{}{}:
@@ -536,72 +604,42 @@ func (s *accountInspectionScheduler) pauseForBackup(ctx context.Context) error {
 }
 
 func (s *accountInspectionScheduler) startRun(manual bool) error {
-	s.mu.Lock()
-	schedule := s.schedule
-	s.mu.Unlock()
-	return s.startRunWithSchedule(
-		manual,
-		schedule,
-		accountInspectionRunKindInspection,
-		strings.TrimSpace(schedule.Settings.TargetType),
-		accountInspectionMaxRunDuration,
-	)
-}
-
-func (s *accountInspectionScheduler) startQuotaRefresh(provider string) error {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	if _, ok := accountInspectionSupportedProviders[provider]; !ok {
-		return fmt.Errorf("unsupported quota provider %q", provider)
-	}
-
-	s.mu.Lock()
-	schedule := s.schedule
-	s.mu.Unlock()
-	schedule = buildAccountQuotaRefreshSchedule(schedule, provider)
-	return s.startRunWithSchedule(
-		true,
-		schedule,
-		accountInspectionRunKindQuotaRefresh,
-		provider,
-		accountQuotaRefreshMaxRunDuration,
-	)
-}
-
-func buildAccountQuotaRefreshSchedule(schedule accountInspectionSchedule, provider string) accountInspectionSchedule {
-	settings := schedule.Settings
-	settings.TargetType = strings.ToLower(strings.TrimSpace(provider))
-	settings.Workers = accountQuotaRefreshConcurrency
-	settings.SampleSize = 0
-	settings.Retries = accountQuotaRefreshRetries
-	settings.AntigravityDeepProbeEnabled = false
-	settings.XAIDeepProbeEnabled = false
-	settings.AutoExecuteQuotaLimitDisable = false
-	settings.AutoExecuteQuotaRecoveryEnable = false
-	settings.AutoExecuteAccountInvalidAction = accountInspectionActionNone
-	settings.AutoExecuteRequestErrorAction = accountInspectionActionNone
-	settings.AutoExecuteConfirmations = 1
-	settings.EnabledOnly = true
-	settings.QuotaOnly = true
-	schedule.Settings = settings
-	return schedule
-}
-
-func (s *accountInspectionScheduler) startRunWithSchedule(
-	manual bool,
-	schedule accountInspectionSchedule,
-	runKind string,
-	targetProvider string,
-	maxDuration time.Duration,
-) error {
 	release, err := s.beginLifecycle()
 	if err != nil {
 		return err
 	}
+	s.fullRunStartMu.Lock()
+	defer s.fullRunStartMu.Unlock()
+
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		release()
+		return fmt.Errorf("account inspection scheduler is shut down")
+	}
+	if s.isRunningLocked() {
+		s.mu.Unlock()
+		release()
+		return errAccountInspectionAlreadyRunning
+	}
+	s.mu.Unlock()
+
+	// Reserve the exclusive full-run slot before publishing running state or
+	// clearing the current snapshot. Existing single-account probes and manual
+	// actions can finish and merge their results while this acquisition waits.
+	s.fullRunMu.Lock()
+	fullRunOwned := true
+	defer func() {
+		if fullRunOwned {
+			s.fullRunMu.Unlock()
+		}
+	}()
+
 	baseContext := context.Background()
 	if s != nil && s.h != nil && s.h.lifecycleContext != nil {
 		baseContext = s.h.lifecycleContext
 	}
-	ctx, cancel := context.WithTimeout(baseContext, maxDuration)
+	ctx, cancel := context.WithTimeout(baseContext, accountInspectionMaxRunDuration)
 	s.mu.Lock()
 	if s.stopped {
 		s.mu.Unlock()
@@ -613,13 +651,15 @@ func (s *accountInspectionScheduler) startRunWithSchedule(
 		s.mu.Unlock()
 		cancel()
 		release()
-		return fmt.Errorf("account inspection already running")
+		return errAccountInspectionAlreadyRunning
 	}
 	s.cancel = cancel
-	s.lastRunSettings = schedule.Settings
+	s.lastRunSettings = s.schedule.Settings
+	if s.autoActionConfirmations == nil {
+		s.autoActionConfirmations = proinspection.NewConfirmationCounter()
+	}
+	s.autoActionConfirmations.BeginRun()
 	s.setRunStateLocked(accountInspectionStateRunning)
-	s.status.RunKind = runKind
-	s.status.TargetProvider = targetProvider
 	s.status.RestoredSnapshot = false
 	s.status.LastStartedAt = time.Now().UnixMilli()
 	s.status.LastFinishedAt = 0
@@ -629,8 +669,10 @@ func (s *accountInspectionScheduler) startRunWithSchedule(
 	s.status.Logs = nil
 	s.status.Results = nil
 	s.healthCounts = accountInspectionHealthCounts{}
+	schedule := s.schedule
 	s.runWG.Add(2)
 	s.mu.Unlock()
+	fullRunOwned = false
 
 	go func() {
 		defer s.runWG.Done()
@@ -642,7 +684,8 @@ func (s *accountInspectionScheduler) startRunWithSchedule(
 	go func() {
 		defer s.runWG.Done()
 		defer release()
-		s.run(ctx, cancel, schedule, manual, runKind, targetProvider)
+		defer s.fullRunMu.Unlock()
+		s.run(ctx, cancel, schedule, manual)
 	}()
 	return nil
 }
@@ -755,6 +798,7 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 		return accountInspectionResult{}, err
 	}
 	defer release()
+	defer s.refreshAccountPoliciesIfQuotaChanged()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -767,7 +811,15 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 	}
 	if s.isRunningLocked() {
 		s.mu.Unlock()
-		return accountInspectionResult{}, fmt.Errorf("account inspection already running")
+		return accountInspectionResult{}, errAccountInspectionAlreadyRunning
+	}
+	s.mu.Unlock()
+	s.fullRunMu.RLock()
+	defer s.fullRunMu.RUnlock()
+	s.mu.Lock()
+	if s.isRunningLocked() {
+		s.mu.Unlock()
+		return accountInspectionResult{}, errAccountInspectionAlreadyRunning
 	}
 	schedule := s.schedule
 	s.mu.Unlock()
@@ -796,6 +848,108 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 		return result, fmt.Errorf("failed to save account inspection snapshot: %w", saveErr)
 	}
 	return result, nil
+}
+
+func (s *accountInspectionScheduler) inspectMany(ctx context.Context, items []accountInspectionActionItem) ([]accountInspectionOutcome, error) {
+	release, err := s.beginLifecycle()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	defer s.refreshAccountPoliciesIfQuotaChanged()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, accountInspectionMaxRunDuration)
+	defer cancel()
+	s.mu.Lock()
+	if s.status.RestoredSnapshot {
+		s.mu.Unlock()
+		return nil, errAccountInspectionRestoredSnapshotReadOnly
+	}
+	if s.isRunningLocked() {
+		s.mu.Unlock()
+		return nil, errAccountInspectionAlreadyRunning
+	}
+	s.mu.Unlock()
+	s.fullRunMu.RLock()
+	defer s.fullRunMu.RUnlock()
+	s.mu.Lock()
+	if s.isRunningLocked() {
+		s.mu.Unlock()
+		return nil, errAccountInspectionAlreadyRunning
+	}
+	settings := s.schedule.Settings
+	s.mu.Unlock()
+
+	boundItems := make([]accountInspectionActionItem, 0, len(items))
+	outcomes := make([]accountInspectionOutcome, 0, len(items))
+	workOutcomeIndexes := make([]int, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		outcome := accountInspectionOutcome{Key: item.Key, FileName: item.FileName, DisplayName: item.DisplayName, Email: item.Email, Name: item.Name, Provider: item.Provider, AuthIndex: item.AuthIndex}
+		bound, bindErr := s.bindActionItemToSnapshot(item)
+		if bindErr != nil {
+			outcome.Error = bindErr.Error()
+			outcomes = append(outcomes, outcome)
+			continue
+		}
+		if _, ok := seen[bound.Key]; ok {
+			continue
+		}
+		seen[bound.Key] = struct{}{}
+		outcome = accountInspectionOutcome{Key: bound.Key, FileName: bound.FileName, DisplayName: bound.DisplayName, Email: bound.Email, Name: bound.Name, Provider: bound.Provider, AuthIndex: bound.AuthIndex}
+		workOutcomeIndexes = append(workOutcomeIndexes, len(outcomes))
+		outcomes = append(outcomes, outcome)
+		boundItems = append(boundItems, bound)
+	}
+	processed := make([]bool, len(boundItems))
+	runAccountInspectionProviderWorkers(len(boundItems), settings.Workers, settings.ProviderWorkers, func(index int) string {
+		return boundItems[index].Provider
+	}, nil, func(index int) bool {
+		item := boundItems[index]
+		outcomeIndex := workOutcomeIndexes[index]
+		outcome := outcomes[outcomeIndex]
+		result, _, inspectErr := s.executeSingleInspection(ctx, settings, item)
+		if inspectErr != nil {
+			outcome.Error = inspectErr.Error()
+			s.appendLog("error", fmt.Sprintf("%s 重新检查失败：%s", item.FileName, inspectErr.Error()))
+		} else {
+			outcome.Success = true
+			outcome.Result = &result
+		}
+		outcomes[outcomeIndex] = outcome
+		processed[index] = true
+		return ctx.Err() == nil
+	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		for index, wasProcessed := range processed {
+			if wasProcessed {
+				continue
+			}
+			outcomeIndex := workOutcomeIndexes[index]
+			outcomes[outcomeIndex].Error = fmt.Sprintf("recheck canceled before execution: %v", ctxErr)
+		}
+	}
+
+	s.mu.Lock()
+	for _, outcome := range outcomes {
+		if outcome.Success && outcome.Result != nil {
+			s.mergeSingleInspectionResultLocked(*outcome.Result)
+		}
+	}
+	s.status.Results = proinspection.SortResults(s.status.Results)
+	saveErr := s.saveResultSnapshotLocked()
+	broadcast := s.statusBroadcastLocked()
+	s.mu.Unlock()
+	broadcast.send()
+	if saveErr != nil {
+		return outcomes, fmt.Errorf("failed to save account inspection snapshot: %w", saveErr)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return outcomes, ctxErr
+	}
+	return outcomes, nil
 }
 
 func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item accountInspectionActionItem) (accountInspectionResult, error) {
@@ -933,26 +1087,21 @@ func (s *accountInspectionScheduler) executeSingleInspection(ctx context.Context
 			return accountInspectionResult{}, accountInspectionSummary{}, fmt.Errorf("unsupported provider")
 		}
 		s.appendLog("info", fmt.Sprintf("重新检查 %s", account.identity()))
-		result := s.inspectAccount(ctx, account, settings, make(chan struct{}, accountInspectionMaxRefreshConcurrency))
+		release, err := s.probeLimiter.Acquire(ctx, settings.Workers, settings.ProviderWorkers, account.Provider)
+		if err != nil {
+			return accountInspectionResult{}, accountInspectionSummary{}, err
+		}
+		defer release()
+		result := s.inspectAccount(ctx, account, settings)
 		return result, summarizeAccountInspection(len(auths), 1, []accountInspectionAccount{account}, []accountInspectionResult{result}), nil
 	}
 	return accountInspectionResult{}, accountInspectionSummary{}, fmt.Errorf("account not found")
 }
 
-func (s *accountInspectionScheduler) run(
-	ctx context.Context,
-	cancel context.CancelFunc,
-	schedule accountInspectionSchedule,
-	manual bool,
-	runKind string,
-	targetProvider string,
-) {
+func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.CancelFunc, schedule accountInspectionSchedule, manual bool) {
 	defer cancel()
-	if runKind == accountInspectionRunKindQuotaRefresh {
-		s.appendLog("info", fmt.Sprintf("后端配额刷新开始：%s", targetProvider))
-	} else {
-		s.appendLog("info", "后端账号巡检开始")
-	}
+	defer s.refreshAccountPoliciesIfQuotaChanged()
+	s.appendLog("info", "后端账号巡检开始")
 	results, summary, runErr := s.executeInspection(ctx, schedule.Settings)
 	finishedAt := time.Now().UnixMilli()
 	state := accountInspectionStateCompleted
@@ -988,16 +1137,21 @@ func (s *accountInspectionScheduler) run(
 		s.status.LastError = ""
 	}
 	s.cancel = nil
-	broadcast := s.statusBroadcastLocked()
-	if s.schedule.Enabled && !manual {
+	s.status.PersistenceError = ""
+	if s.schedule.Enabled && (!manual || state == accountInspectionStateCompleted) {
 		s.schedule.NextRunAt = time.Now().Add(time.Duration(s.schedule.IntervalMinutes) * time.Minute).UnixMilli()
 		if err := s.saveLocked(); err != nil {
+			s.status.PersistenceError = fmt.Sprintf("保存下次巡检时间失败：%v", err)
 			log.WithError(err).Warn("failed to save next account inspection run time")
 		}
 	}
 	if err := s.saveResultSnapshotLocked(); err != nil {
+		s.status.PersistenceError = fmt.Sprintf("保存巡检结果失败：%v", err)
 		log.WithError(err).Warn("failed to save account inspection snapshot")
+	} else if s.status.PersistenceError == "" || strings.HasPrefix(s.status.PersistenceError, "保存巡检结果失败：") {
+		s.status.PersistenceError = ""
 	}
+	broadcast := s.statusBroadcastLocked()
 	s.mu.Unlock()
 	broadcast.send()
 }

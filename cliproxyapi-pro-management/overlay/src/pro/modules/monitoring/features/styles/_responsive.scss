@@ -1,43 +1,4 @@
-@media (max-width: 900px) {
-  .priceManagerModal :global(.modal-body) {
-    max-height: min(76vh, 680px);
-  }
-
-  .priceRuleWorkspace {
-    grid-template-columns: 1fr;
-    grid-template-rows: 154px minmax(0, 1fr);
-    height: min(70vh, 620px);
-  }
-
-  .priceRuleSidebar {
-    grid-template-rows: auto minmax(0, 1fr);
-    border-right: 0;
-    border-bottom: 1px solid var(--monitor-line);
-  }
-
-  .priceRuleSearch {
-    padding: 10px 14px;
-  }
-
-  .priceRuleList {
-    display: flex;
-    gap: 7px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 7px 10px 10px;
-  }
-
-  .priceRuleListItem {
-    flex: 0 0 220px;
-    min-height: 58px;
-    padding: 8px 10px;
-  }
-
-  .priceRuleListEmpty {
-    flex: 1 1 100%;
-    min-height: 58px;
-  }
-
+@container pro-workspace-sheet (max-width: 1020px) {
   .priceSyncHeader {
     align-items: flex-start;
     flex-direction: column;
@@ -85,6 +46,12 @@
   }
 }
 
+@container pro-workspace-sheet (max-width: 720px) {
+  .monitoringSettingsEditor .settingsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 760px) {
   .paginationBar {
     display: flex;
@@ -107,49 +74,60 @@
 }
 
 @media (max-width: 680px) {
-  .priceManagerModal :global(.modal-body) {
-    max-height: min(72vh, calc(100dvh - 150px));
-  }
-
   .priceManagerTabs {
-    padding-inline: 10px 46px;
+    gap: 3px;
+    padding: 3px;
   }
 
   .priceManagerTab {
     min-width: 0;
-    flex: 1 1 0;
-    justify-content: center;
     padding-inline: 8px;
   }
 
-  .priceRuleWorkspace {
-    grid-template-rows: 150px minmax(0, 1fr);
-    height: min(66vh, calc(100dvh - 160px));
+  .priceRuleSearch {
+    grid-template-columns: 1fr;
+    gap: 10px;
   }
 
+  .priceRulePicker,
   .priceRuleEditorHeader,
-  .priceRuleSection,
-  .priceRuleEditorFooter,
-  .priceSyncView {
-    padding-inline: 14px;
+  .priceRuleSection {
+    padding: 14px;
+  }
+
+  .priceRuleCollectionSection {
+    padding: 0;
+  }
+
+  .priceRuleCollectionSection > .priceRuleSectionHeader {
+    padding: 12px 14px;
+  }
+
+  .priceRuleCollectionContent {
+    padding: 12px 14px 14px;
+  }
+
+  .priceRuleListItem {
+    min-height: 50px;
   }
 
   .priceRuleEditorHeader {
-    min-height: 66px;
+    grid-template-columns: 1fr;
   }
 
-  .priceRuleEditorBadges > span:not(:first-child) {
-    display: none;
+  .priceRuleEditorBadges {
+    justify-content: flex-start;
   }
 
   .priceBaseGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
 
   .priceTierCompactRow {
     position: relative;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
     padding: 34px 10px 10px;
   }
 
@@ -159,6 +137,8 @@
 
   .priceTierIndex {
     position: absolute;
+    grid-column: auto;
+    grid-row: auto;
     top: 8px;
     left: 10px;
     width: 24px;
@@ -167,27 +147,20 @@
 
   .priceTierRemoveButton {
     position: absolute;
+    grid-column: auto;
+    grid-row: auto;
     top: 6px;
     right: 8px;
     width: 30px;
     height: 26px;
   }
 
-  .priceRuleEditorFooter {
-    align-items: stretch;
-    flex-direction: column-reverse;
+  .priceRuleEditorActions {
+    justify-content: stretch;
   }
 
-  .priceRuleEditorFooter > div {
-    width: 100%;
-  }
-
-  .priceRuleEditorFooter > div:last-child :global(.btn) {
+  .priceRuleEditorActions :global(.btn) {
     flex: 1 1 0;
-  }
-
-  .priceSyncView {
-    padding-block: 18px;
   }
 
   .priceSyncActions :global(.btn) {
@@ -236,5 +209,86 @@
 
   .priceUnmatchedList > div:not(.priceTierEmpty) {
     align-items: flex-start;
+  }
+
+  .modelsDevSearchResults > button {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .modelsDevSearchRates {
+    display: none !important;
+  }
+
+  .priceSyncChangeUnmatchedActions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+@media (min-width: 540px) and (max-width: 680px) {
+  .priceTierCompactRow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .priceTierCompactRow label:first-of-type {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 440px) {
+  .priceRuleSearch input {
+    font-size: 12px;
+  }
+
+  .priceBaseGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .priceRuleEditorActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid var(--monitor-line);
+    border-radius: 10px;
+    background: var(--monitor-surface-muted);
+  }
+
+  .priceRuleEditorActions :global(.btn) {
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    padding-inline: 10px;
+    font-size: 12px;
+  }
+
+  .priceRuleEditorActions :global(.btn:only-child) {
+    grid-column: 1 / -1;
+  }
+
+  .modelsDevSearchForm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .modelsDevSearchForm :global(.btn) {
+    width: 100%;
+  }
+
+  .priceUnmatchedActions {
+    align-items: flex-end;
+  }
+
+  .priceUnmatchedActions > small {
+    display: none;
+  }
+
+  .priceSyncChangeUnmatchedActions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .priceSyncChangeUnmatchedActions > * {
+    flex: 1 1 100%;
   }
 }

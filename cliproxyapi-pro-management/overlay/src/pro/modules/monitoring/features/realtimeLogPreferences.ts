@@ -3,7 +3,6 @@ const REALTIME_LOG_FOLLOW_STORAGE_KEY = 'cli-proxy-realtime-log-follow-v1';
 
 const REALTIME_LOG_COLUMN_KEYS = [
   'type',
-  'accountPlan',
   'model',
   'reasoningEffort',
   'stream',
@@ -12,7 +11,6 @@ const REALTIME_LOG_COLUMN_KEYS = [
   'status',
   'successRate',
   'calls',
-  'ttft',
   'latency',
   'tokens',
   'cacheRead',
@@ -29,18 +27,16 @@ export type RealtimeLogColumnPreference = {
 };
 
 export const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, number> = {
-  type: 170,
-  accountPlan: 132,
+  type: 240,
   model: 230,
   reasoningEffort: 116,
   stream: 108,
-  apiKey: 145,
+  apiKey: 180,
   recent: 86,
   status: 180,
   successRate: 86,
   calls: 76,
-  ttft: 92,
-  latency: 96,
+  latency: 132,
   tokens: 196,
   cacheRead: 126,
   cost: 132,
@@ -48,18 +44,16 @@ export const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, nu
 };
 
 const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
-  type: 96,
-  accountPlan: 104,
+  type: 160,
   model: 132,
   reasoningEffort: 96,
   stream: 92,
-  apiKey: 104,
+  apiKey: 168,
   recent: 76,
   status: 120,
   successRate: 76,
   calls: 68,
-  ttft: 76,
-  latency: 76,
+  latency: 116,
   tokens: 164,
   cacheRead: 108,
   cost: 112,
@@ -68,7 +62,7 @@ const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
 
 const REALTIME_LOG_COLUMN_MAX_WIDTH = 420;
 const REALTIME_LOG_COLUMN_MAX_WIDTHS: Partial<Record<RealtimeLogColumnKey, number>> = {
-  type: 240,
+  type: 320,
 };
 const REALTIME_LOG_COLUMN_KEY_SET = new Set<RealtimeLogColumnKey>(REALTIME_LOG_COLUMN_KEYS);
 
@@ -113,6 +107,24 @@ export const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPr
         });
         return;
       }
+      if (key === 'ttft' || key === 'latency') {
+        const visible = (item as { visible?: unknown }).visible !== false;
+        const width = key === 'latency'
+          ? normalizeRealtimeLogColumnWidth('latency', (item as { width?: unknown }).width)
+          : undefined;
+        const existingIndex = next.findIndex((column) => column.key === 'latency');
+        if (existingIndex >= 0) {
+          next[existingIndex] = {
+            ...next[existingIndex],
+            visible: next[existingIndex].visible || visible,
+            width: width ?? next[existingIndex].width,
+          };
+        } else {
+          next.push({ key: 'latency', visible, width });
+          seen.add('latency');
+        }
+        return;
+      }
       if (!isRealtimeLogColumnKey(key) || seen.has(key)) return;
       next.push({
         key,
@@ -125,7 +137,6 @@ export const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPr
 
   const shouldMigrateReasoningEffort = next.length > 0 && !seen.has('reasoningEffort');
   const shouldMigrateStream = next.length > 0 && !seen.has('stream');
-  const shouldMigrateAccountPlan = next.length > 0 && !seen.has('accountPlan');
 
   REALTIME_LOG_DEFAULT_COLUMNS.forEach((item) => {
     if (!seen.has(item.key)) next.push({ ...item });
@@ -138,16 +149,6 @@ export const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPr
       const [reasoningEffortColumn] = next.splice(reasoningEffortIndex, 1);
       const migratedModelIndex = next.findIndex((item) => item.key === 'model');
       next.splice(migratedModelIndex + 1, 0, reasoningEffortColumn);
-    }
-  }
-
-  if (shouldMigrateAccountPlan) {
-    const accountPlanIndex = next.findIndex((item) => item.key === 'accountPlan');
-    const typeIndex = next.findIndex((item) => item.key === 'type');
-    if (accountPlanIndex >= 0 && typeIndex >= 0) {
-      const [accountPlanColumn] = next.splice(accountPlanIndex, 1);
-      const migratedTypeIndex = next.findIndex((item) => item.key === 'type');
-      next.splice(migratedTypeIndex + 1, 0, accountPlanColumn);
     }
   }
 

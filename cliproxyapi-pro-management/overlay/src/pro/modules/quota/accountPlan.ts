@@ -101,8 +101,11 @@ const formatXaiPlanLabel = (billingValue: unknown, fallbackValue: unknown, t: TF
   const labels: Record<string, string> = {
     free: 'Free',
     supergrok: translatedPlanLabel(t, 'xai_quota.plan_supergrok', 'SuperGrok'),
+    'x-basic': translatedPlanLabel(t, 'xai_quota.plan_x_basic', 'X Basic'),
+    'x-premium': translatedPlanLabel(t, 'xai_quota.plan_x_premium', 'X Premium'),
     'x-premium-plus': translatedPlanLabel(t, 'xai_quota.plan_x_premium_plus', 'X Premium+'),
     'supergrok-heavy': translatedPlanLabel(t, 'xai_quota.plan_supergrok_heavy', 'SuperGrok Heavy'),
+    'supergrok-lite': translatedPlanLabel(t, 'xai_quota.plan_supergrok_lite', 'SuperGrok Lite'),
     paid: translatedPlanLabel(t, 'xai_quota.plan_paid', 'Paid'),
     'paid-unknown': translatedPlanLabel(t, 'xai_quota.plan_paid_unknown', 'Paid'),
   };

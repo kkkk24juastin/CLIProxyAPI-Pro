@@ -12,6 +12,7 @@ const (
 	MinTimeoutMS       = 3000
 	MaxTimeoutMS       = 30000
 	MaxWorkers         = 8
+	MaxProviderWorkers = 4
 	MaxDeleteWorkers   = 4
 	MaxRetries         = 1
 )
@@ -28,10 +29,11 @@ const (
 type Settings struct {
 	TargetType                      string               `json:"targetType"`
 	Workers                         int                  `json:"workers"`
+	ProviderWorkers                 int                  `json:"providerWorkers"`
 	DeleteWorkers                   int                  `json:"deleteWorkers"`
 	Timeout                         int                  `json:"timeout"`
 	Retries                         int                  `json:"retries"`
-	UsedPercentThreshold            int                  `json:"usedPercentThreshold"`
+	UsedPercentThreshold            float64              `json:"usedPercentThreshold"`
 	SampleSize                      int                  `json:"sampleSize"`
 	AntigravityDeepProbeEnabled     bool                 `json:"antigravityDeepProbeEnabled"`
 	AntigravityDeepProbeModel       string               `json:"antigravityDeepProbeModel"`
@@ -66,6 +68,7 @@ func DefaultSettings() Settings {
 	return Settings{
 		TargetType:                      ProviderAll,
 		Workers:                         4,
+		ProviderWorkers:                 2,
 		DeleteWorkers:                   4,
 		Timeout:                         DefaultTimeoutMS,
 		UsedPercentThreshold:            100,
@@ -90,6 +93,12 @@ func NormalizeSchedule(input Schedule, now time.Time) Schedule {
 	}
 	if settings.Workers > MaxWorkers {
 		settings.Workers = MaxWorkers
+	}
+	if settings.ProviderWorkers <= 0 {
+		settings.ProviderWorkers = defaults.ProviderWorkers
+	}
+	if settings.ProviderWorkers > MaxProviderWorkers {
+		settings.ProviderWorkers = MaxProviderWorkers
 	}
 	if settings.DeleteWorkers <= 0 {
 		settings.DeleteWorkers = settings.Workers

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
+import { ProTaskDialog } from '@/pro/shared/ProSurface';
 import { IconAlertTriangle, IconCheckCircle2, IconInfo } from '@/components/ui/icons';
 import { parseProxyPoolImport, type ProxyPoolNodeConfig } from '@/pro/modules/proxyPool/proxyPool';
 import { maskProxyCredentials } from './proxyPoolUi';
@@ -37,10 +37,9 @@ export function ProxyPoolImportModal({
   };
 
   return (
-    <Modal
+    <ProTaskDialog
       open={open}
       onClose={close}
-      width={720}
       title={t('proxy_pool.import_title', { defaultValue: 'Import proxy nodes' })}
       footer={
         <>
@@ -154,6 +153,6 @@ export function ProxyPoolImportModal({
             )}
         </div>
       )}
-    </Modal>
+    </ProTaskDialog>
   );
 }

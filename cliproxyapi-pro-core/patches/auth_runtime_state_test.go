@@ -2,15 +2,47 @@ package auth
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/embeddedusage"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/pluginapi"
 )
 
 type runtimeStateTestStore struct {
 	saved *Auth
+}
+
+type runtimeStateTestExecutor struct{}
+
+type runtimeStatePassthroughScheduler struct{}
+
+func (*runtimeStatePassthroughScheduler) PickAuth(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, bool, error) {
+	return pluginapi.SchedulerPickResponse{}, false, nil
+}
+
+func (*runtimeStateTestExecutor) Identifier() string { return "gemini" }
+
+func (*runtimeStateTestExecutor) Execute(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{}, nil
+}
+
+func (*runtimeStateTestExecutor) ExecuteStream(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	return nil, nil
+}
+
+func (*runtimeStateTestExecutor) Refresh(_ context.Context, auth *Auth) (*Auth, error) {
+	return auth, nil
+}
+
+func (*runtimeStateTestExecutor) CountTokens(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{}, nil
+}
+
+func (*runtimeStateTestExecutor) HttpRequest(context.Context, *Auth, *http.Request) (*http.Response, error) {
+	return nil, nil
 }
 
 func (s *runtimeStateTestStore) List(context.Context) ([]*Auth, error) {
@@ -35,10 +67,113 @@ func runtimeStateTestEntries(ids ...string) []*scheduledAuth {
 	return entries
 }
 
+func TestAuthRuntimeStatsSnapshotUsesObservationTime(t *testing.T) {
+	auth := &Auth{ID: "observed-auth", Provider: "codex", Index: "observed-index"}
+	observedAt := time.UnixMilli(1_725_000_000_123)
+
+	stats := authRuntimeStatsSnapshot(auth, observedAt)
+	if stats.UpdatedAtMS != observedAt.UnixMilli() {
+		t.Fatalf("UpdatedAtMS = %d, want %d", stats.UpdatedAtMS, observedAt.UnixMilli())
+	}
+}
+
+func TestPickNextMixedFastPathRecordsSelectedAuth(t *testing.T) {
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	manager.RegisterExecutor(&runtimeStateTestExecutor{})
+	if _, err := manager.Register(context.Background(), &Auth{ID: "auth-a", Provider: "gemini"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	selected, _, provider, err := manager.pickNextMixed(
+		context.Background(),
+		[]string{"gemini"},
+		"",
+		cliproxyexecutor.Options{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("pickNextMixed() error = %v", err)
+	}
+	if selected == nil || selected.ID != "auth-a" || provider != "gemini" {
+		t.Fatalf("pickNextMixed() = auth:%#v provider:%q, want auth-a/gemini", selected, provider)
+	}
+
+	runtimeAuth, ok := manager.GetByID("auth-a")
+	if !ok || runtimeAuth == nil {
+		t.Fatal("selected auth missing from manager")
+	}
+	if runtimeAuth.Selected != 1 {
+		t.Fatalf("runtime selected count = %d, want 1", runtimeAuth.Selected)
+	}
+}
+
+func TestPickNextMixedLegacyPathRecordsSelectedAuthOnce(t *testing.T) {
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	manager.RegisterExecutor(&runtimeStateTestExecutor{})
+	manager.SetPluginScheduler(&runtimeStatePassthroughScheduler{})
+	if _, err := manager.Register(context.Background(), &Auth{ID: "auth-a", Provider: "gemini"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	selected, _, provider, err := manager.pickNextMixed(
+		context.Background(),
+		[]string{"gemini"},
+		"",
+		cliproxyexecutor.Options{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("pickNextMixed() error = %v", err)
+	}
+	if selected == nil || selected.ID != "auth-a" || provider != "gemini" {
+		t.Fatalf("pickNextMixed() = auth:%#v provider:%q, want auth-a/gemini", selected, provider)
+	}
+
+	runtimeAuth, ok := manager.GetByID("auth-a")
+	if !ok || runtimeAuth == nil {
+		t.Fatal("selected auth missing from manager")
+	}
+	if runtimeAuth.Selected != 1 {
+		t.Fatalf("legacy selected count = %d, want 1", runtimeAuth.Selected)
+	}
+}
+
+func TestPickNextLegacyPathRecordsSelectedAuthOnce(t *testing.T) {
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	manager.RegisterExecutor(&runtimeStateTestExecutor{})
+	manager.SetPluginScheduler(&runtimeStatePassthroughScheduler{})
+	if _, err := manager.Register(context.Background(), &Auth{ID: "auth-a", Provider: "gemini"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	selected, _, err := manager.pickNext(
+		context.Background(),
+		"gemini",
+		"",
+		cliproxyexecutor.Options{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("pickNext() error = %v", err)
+	}
+	if selected == nil || selected.ID != "auth-a" {
+		t.Fatalf("pickNext() auth = %#v, want auth-a", selected)
+	}
+
+	runtimeAuth, ok := manager.GetByID("auth-a")
+	if !ok || runtimeAuth == nil {
+		t.Fatal("selected auth missing from manager")
+	}
+	if runtimeAuth.Selected != 1 {
+		t.Fatalf("legacy selected count = %d, want 1", runtimeAuth.Selected)
+	}
+}
+
 func TestReadyViewRestoresSuccessorOfLastSelectedAuth(t *testing.T) {
 	const key = "single|codex|gpt-5|0|all"
 	persisted := map[string]string{key: "auth-b"}
-	view := buildReadyView(runtimeStateTestEntries("auth-a", "auth-b", "auth-c"), key, persisted)
+	view := buildReadyView(runtimeStateTestEntries("auth-a", "auth-b", "auth-c"))
+	configurePersistedReadyView(&view, key, persisted)
 	picked := view.pickRoundRobin(nil)
 	if picked == nil || picked.auth == nil || picked.auth.ID != "auth-c" {
 		t.Fatalf("restored pick = %#v, want auth-c", picked)
@@ -48,7 +183,8 @@ func TestReadyViewRestoresSuccessorOfLastSelectedAuth(t *testing.T) {
 func TestReadyViewRestoresNextSortedAuthWhenSavedAuthIsMissing(t *testing.T) {
 	const key = "single|codex|gpt-5|0|all"
 	persisted := map[string]string{key: "auth-b"}
-	view := buildReadyView(runtimeStateTestEntries("auth-a", "auth-c", "auth-d"), key, persisted)
+	view := buildReadyView(runtimeStateTestEntries("auth-a", "auth-c", "auth-d"))
+	configurePersistedReadyView(&view, key, persisted)
 	picked := view.pickRoundRobin(nil)
 	if picked == nil || picked.auth == nil || picked.auth.ID != "auth-c" {
 		t.Fatalf("restored missing-auth pick = %#v, want auth-c", picked)
@@ -139,6 +275,37 @@ func TestApplyImportedRuntimeStateUpdatesRunningManager(t *testing.T) {
 	manager.scheduler.mu.Unlock()
 	if lastAuthID != registered.ID {
 		t.Fatalf("persisted cursor = %q, want %q", lastAuthID, registered.ID)
+	}
+}
+
+func TestApplyImportedRuntimeStateResetsOmittedStatsAndPreservesCursor(t *testing.T) {
+	manager := NewManager(nil, nil, nil)
+	registered, err := manager.Register(context.Background(), &Auth{
+		ID: "auth-reset", Provider: "codex", FileName: "auth-reset.json",
+		Selected: 9, Success: 7, Failed: 2,
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	key := legacyRoundRobinCursorKey("codex", "gpt-5")
+	cursors := []embeddedusage.RoutingCursorState{{
+		CursorKey: key, LastAuthID: registered.ID, UpdatedAtMS: time.Now().UnixMilli(),
+	}}
+	if err := manager.ApplyImportedRuntimeState(cursors, nil); err != nil {
+		t.Fatalf("ApplyImportedRuntimeState() error = %v", err)
+	}
+	got, ok := manager.GetByID(registered.ID)
+	if !ok || got == nil {
+		t.Fatal("reset auth not found")
+	}
+	if got.Selected != 0 || got.Success != 0 || got.Failed != 0 {
+		t.Fatalf("runtime totals after reset = selected:%d success:%d failed:%d, want zeros", got.Selected, got.Success, got.Failed)
+	}
+	manager.scheduler.mu.Lock()
+	lastAuthID := manager.scheduler.persistedCursors[key]
+	manager.scheduler.mu.Unlock()
+	if lastAuthID != registered.ID {
+		t.Fatalf("persisted cursor after reset = %q, want %q", lastAuthID, registered.ID)
 	}
 }
 

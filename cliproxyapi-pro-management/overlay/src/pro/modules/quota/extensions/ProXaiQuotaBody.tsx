@@ -3,6 +3,7 @@ import type { XaiQuotaState } from '@/types';
 import { XaiQuotaBody } from '@/features/quota/providers/xai/XaiQuotaBody';
 import { QuotaMeter } from '@/features/quota/components/QuotaMeter';
 import type { QuotaBodyProps } from '@/features/quota/types';
+import { XAI_PAID_HEALTH_MODEL } from '@/utils/quota';
 import {
   isXaiMonthlyBillingKnown,
   resolveXaiPlanType,
@@ -13,9 +14,16 @@ export function ProXaiQuotaBody(props: QuotaBodyProps<XaiQuotaState>) {
   const { quota, classes } = props;
   const { t } = useTranslation();
   const billing = quota.billing;
-  const planType = billing
-    ? billing.planType ?? resolveXaiPlanType(billing.monthlyLimitCents, isXaiMonthlyBillingKnown(billing))
+  const monthlyPlanType = billing
+    ? resolveXaiPlanType(billing.monthlyLimitCents, isXaiMonthlyBillingKnown(billing))
     : undefined;
+  const planType = billing?.planType ?? monthlyPlanType;
+  const nativePlanRendered =
+    (planType === 'supergrok' && billing?.monthlyLimitCents === 15_000) ||
+    (planType === 'supergrok-heavy' && billing?.monthlyLimitCents === 150_000);
+  const showProPlan = Boolean(
+    planType && billing?.mode !== 'paid-health' && planType !== 'free' && !nativePlanRendered
+  );
   const freeQuota = planType === 'free' ? billing?.freeQuota : undefined;
   const remaining = freeQuota ? xaiFreeQuotaRemainingPercent(billing) : null;
 
@@ -27,17 +35,31 @@ export function ProXaiQuotaBody(props: QuotaBodyProps<XaiQuotaState>) {
           <span className={classes.codexPlanValue}>{t('xai_quota.plan_free')}</span>
         </div>
       )}
-      {freeQuota && (
+      {showProPlan && planType && (
+        <div className={classes.codexPlan}>
+          <span className={classes.codexPlanLabel}>{t('xai_quota.plan_label')}</span>
+          <span
+            className={
+              planType === 'supergrok-heavy' || planType === 'x-premium-plus'
+                ? classes.premiumPlanValue
+                : classes.codexPlanValue
+            }
+          >
+            {t(`xai_quota.plan_${planType.replace(/-/g, '_')}`)}
+          </span>
+        </div>
+      )}
+      {planType === 'free' && (
         <div className={classes.quotaRow}>
           <div className={classes.quotaRowHeader}>
             <span className={classes.quotaModel}>
-              {freeQuota.model
-                ? `${t('xai_quota.free_quota')} · ${freeQuota.model}`
-                : t('xai_quota.free_quota')}
+              {`${t('xai_quota.free_quota')} · ${freeQuota?.model || XAI_PAID_HEALTH_MODEL}`}
             </span>
             <div className={classes.quotaMeta}>
               <span className={classes.quotaPercent}>
-                {freeQuota.exhausted
+                {!freeQuota
+                  ? t('xai_quota.free_quota_pending')
+                  : freeQuota.exhausted
                   ? t('xai_quota.free_quota_exhausted')
                   : remaining === null
                     ? '--'

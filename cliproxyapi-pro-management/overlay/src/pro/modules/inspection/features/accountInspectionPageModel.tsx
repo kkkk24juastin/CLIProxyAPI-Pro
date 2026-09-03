@@ -24,20 +24,47 @@ import type {
   AccountInspectionInspectOneItem,
   AccountInspectionScheduleResponse,
 } from '../api';
+import { isProblemAuthFile } from '@/features/authFiles/constants';
 import type { AuthFileItem } from '@/types';
 import {
   isDisabledAuthFile,
-  isQuotaLowState,
-  isRecordValue,
   normalizeNumberValue,
-  readStringValue,
   resolveAuthProvider,
 } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
+import { ProInformationDetails, type ProInformationDetailsTone } from '@/pro/shared/ProInformationDetails';
+import { isRecordValue, readStringValue } from '@/pro/shared/value';
 import { resolveAccountPlanLabel, type AccountPlanQuotaStore } from '@/pro/modules/quota';
+import { isQuotaLowState } from './quotaHealth';
 import styles from './accountInspection.module.scss';
 
-export type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
+export type RunStatus = 'idle' | 'running' | 'paused' | 'completed' | 'partial' | 'stopped' | 'failed';
+
+export const formatAccountInspectionDuration = (
+  startedAt: number,
+  finishedAt: number,
+  t: TFunction
+): string | null => {
+  if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt) || startedAt <= 0 || finishedAt < startedAt) {
+    return null;
+  }
+
+  let remainingSeconds = Math.floor((finishedAt - startedAt) / 1000);
+  const days = Math.floor(remainingSeconds / 86_400);
+  remainingSeconds -= days * 86_400;
+  const hours = Math.floor(remainingSeconds / 3_600);
+  remainingSeconds -= hours * 3_600;
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = remainingSeconds - minutes * 60;
+  const parts = [
+    { value: days, key: 'monitoring.account_inspection_duration_day' },
+    { value: hours, key: 'monitoring.account_inspection_duration_hour' },
+    { value: minutes, key: 'monitoring.account_inspection_duration_minute' },
+    { value: seconds, key: 'monitoring.account_inspection_duration_second' },
+  ].filter((part, index) => part.value > 0 || (index === 3 && days === 0 && hours === 0 && minutes === 0));
+
+  return parts.map((part) => t(part.key, { count: part.value })).join('');
+};
 
 export type ResultHealthStatus = 'healthy' | 'disabled' | 'authInvalid' | 'quotaExhausted' | 'inspectionError' | 'recoverable';
 
@@ -47,7 +74,6 @@ export type ResultReasonFilter = 'accountInvalid' | 'requestError' | 'quotaExhau
 
 export type ResultFilter = ResultStatusFilter | ResultReasonFilter | 'pending';
 
-export type SettingsSectionKey = 'plan' | 'scope' | 'runtime' | 'antigravity' | 'auto';
 
 export type ManualAccountInspectionAction = Exclude<AccountInspectionAction, 'keep'>;
 
@@ -93,6 +119,7 @@ export type SummaryCard = {
 export type InspectionSettingsDraft = {
   targetType: string;
   workers: string;
+  providerWorkers: string;
   deleteWorkers: string;
   timeout: string;
   retries: string;
@@ -107,6 +134,7 @@ export type InspectionSettingsDraft = {
   autoExecuteQuotaRecoveryEnable: boolean;
   autoExecuteAccountInvalidAction: AccountInspectionAutoErrorAction;
   autoExecuteRequestErrorAction: AccountInspectionAutoErrorAction;
+  autoExecuteConfirmations: string;
 };
 
 export type InspectionSettingsDraftField = Exclude<
@@ -123,6 +151,7 @@ export type ProviderAccountStats = {
   provider: string;
   total: number;
   enabled: number;
+  problem: number;
   highAvailable: number;
   disabled: number;
   quotaLow: number;
@@ -136,6 +165,7 @@ export type AuthFileAccountStats = {
   total: number;
   providerCount: number;
   enabled: number;
+  problem: number;
   highAvailable: number;
   disabled: number;
   quotaLow: number;
@@ -358,7 +388,7 @@ export function InspectionErrorDetailsPanel({
   const healthStatus = resolveResultHealthStatus(item);
   const httpStatusCode = extractHealthHttpStatusCode(item);
   const errorPresentation = buildInspectionErrorPresentation(item);
-  const detailItems = [
+  const accountItems = [
     { label: t('monitoring.account_label'), value: resolveAccountInspectionAccountLabel(item) },
     { label: t('monitoring.account_inspection_file_name'), value: item.fileName },
     { label: t('monitoring.filter_provider'), value: item.provider },
@@ -368,33 +398,42 @@ export function InspectionErrorDetailsPanel({
         ? t('monitoring.account_inspection_state_disabled')
         : t('monitoring.account_inspection_state_enabled'),
     },
+  ].filter((detail) => detail.value);
+  const inspectionItems = [
     { label: t('monitoring.account_inspection_http_status'), value: httpStatusCode !== null ? String(httpStatusCode) : '' },
     { label: t('monitoring.account_inspection_error_code'), value: item.errorCode?.trim() || '' },
+    { label: t('monitoring.account_inspection_used_percent'), value: item.usedPercent !== null ? `${item.usedPercent}%` : '' },
+    { label: t('monitoring.account_inspection_token_status'), value: formatTokenRefreshLabel(item, t) },
+    { label: t('monitoring.account_inspection_next_action'), value: formatActionLabel(item.action, t) },
+    { label: t('monitoring.account_inspection_reason'), value: item.actionReason?.trim() || '' },
   ].filter((detail) => detail.value);
+  const toneByHealth: Record<ResultHealthStatus, ProInformationDetailsTone> = {
+    healthy: 'good',
+    recoverable: 'good',
+    disabled: 'neutral',
+    quotaExhausted: 'warning',
+    authInvalid: 'danger',
+    inspectionError: 'danger',
+  };
 
   return (
-    <div className={styles.errorDetailsPanel}>
-      <div className={styles.errorOverview}>
+    <ProInformationDetails
+      className={styles.informationDetailsTheme}
+      tone={toneByHealth[healthStatus]}
+      status={(
         <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>
           {buildHealthStatusLabel(item, healthStatus, t)}
         </span>
-        {errorPresentation.summary ? <strong>{errorPresentation.summary}</strong> : null}
-      </div>
-      <div className={styles.errorDetailsGrid}>
-        {detailItems.map((detail) => (
-          <div key={detail.label} className={styles.errorDetailItem}>
-            <span>{detail.label}</span>
-            <strong>{detail.value}</strong>
-          </div>
-        ))}
-      </div>
-      {errorPresentation.detail ? (
-        <div className={styles.errorMessageBlock}>
-          <span>{t('monitoring.account_inspection_raw_error_response')}</span>
-          <pre className={styles.errorMessage}>{errorPresentation.detail}</pre>
-        </div>
-      ) : null}
-    </div>
+      )}
+      context={resolveProviderDisplayLabel(item.provider)}
+      summary={errorPresentation.summary || formatInspectionVerdictPrimary(item, healthStatus, t)}
+      groups={[
+        { title: t('monitoring.account_inspection_account_summary_title'), items: accountItems },
+        { title: t('monitoring.account_inspection_inspection_summary_title'), items: inspectionItems },
+      ]}
+      detailLabel={errorPresentation.detail ? t('monitoring.account_inspection_raw_error_response') : undefined}
+      detail={errorPresentation.detail ? <pre>{errorPresentation.detail}</pre> : undefined}
+    />
   );
 }
 
@@ -446,13 +485,14 @@ export const isAuthFileRequestError = (file: AuthFileItem) => {
     || code === 'token_refresh_error';
 };
 
-const incrementProviderStats = (stats: ProviderAccountStats, disabled: boolean, highAvailable: boolean, quotaLow: boolean, accountInvalid: boolean, requestError: boolean) => {
+const incrementProviderStats = (stats: ProviderAccountStats, disabled: boolean, problem: boolean, highAvailable: boolean, quotaLow: boolean, accountInvalid: boolean, requestError: boolean) => {
   stats.total += 1;
   if (disabled) {
     stats.disabled += 1;
   } else {
     stats.enabled += 1;
   }
+  if (problem) stats.problem += 1;
   if (highAvailable) stats.highAvailable += 1;
   if (quotaLow) stats.quotaLow += 1;
   if (accountInvalid) stats.accountInvalid += 1;
@@ -463,6 +503,7 @@ const emptyProviderAccountStats = (provider: string): ProviderAccountStats => ({
   provider,
   total: 0,
   enabled: 0,
+  problem: 0,
   highAvailable: 0,
   disabled: 0,
   quotaLow: 0,
@@ -474,6 +515,7 @@ export const createEmptyAuthFileAccountStats = (): AuthFileAccountStats => ({
   total: 0,
   providerCount: 0,
   enabled: 0,
+  problem: 0,
   highAvailable: 0,
   disabled: 0,
   quotaLow: 0,
@@ -620,7 +662,11 @@ const accumulateAuthFileAccountStats = (
   if (!isInspectableAccountInspectionAuthFile(file)) return;
 
   const provider = resolveAuthProvider(file) || 'unknown';
-  const disabled = isDisabledAuthFile(file);
+  // Keep these three status dimensions identical to the auth-files page filters.
+  const disabled = file.disabled === true;
+  const problem = isProblemAuthFile(file);
+  // Preserve the existing boolean-compatible disabled handling for ancillary availability metrics.
+  const unavailableForQuota = isDisabledAuthFile(file);
   const quotaLow = isProviderQuotaLow(
     provider,
     quotaStore,
@@ -630,7 +676,7 @@ const accumulateAuthFileAccountStats = (
   );
   const accountInvalid = isAuthFileAccountInvalid(file);
   const requestError = isAuthFileRequestError(file);
-  const highAvailable = !disabled && !quotaLow && !accountInvalid && !requestError;
+  const highAvailable = !unavailableForQuota && !quotaLow && !accountInvalid && !requestError;
 
   stats.total += 1;
   if (disabled) {
@@ -638,14 +684,36 @@ const accumulateAuthFileAccountStats = (
   } else {
     stats.enabled += 1;
   }
+  if (problem) stats.problem += 1;
   if (highAvailable) stats.highAvailable += 1;
   if (accountInvalid) stats.accountInvalid += 1;
   if (requestError) stats.requestError += 1;
   if (quotaLow) stats.quotaLow += 1;
 
   const providerEntry = providerStats.get(provider) ?? emptyProviderAccountStats(provider);
-  incrementProviderStats(providerEntry, disabled, highAvailable, quotaLow, accountInvalid, requestError);
+  incrementProviderStats(providerEntry, disabled, problem, highAvailable, quotaLow, accountInvalid, requestError);
   providerStats.set(provider, providerEntry);
+};
+
+export const buildAuthFileAccountStats = (
+  files: AuthFileItem[],
+  quotaStore: QuotaAccountStatsState,
+  usedPercentThreshold: number,
+  antigravityQuotaMode: AccountInspectionAntigravityQuotaMode
+): AuthFileAccountStats => {
+  const providerStats = new Map<string, ProviderAccountStats>();
+  const stats = createEmptyAuthFileAccountStats();
+  files.forEach((file) => {
+    accumulateAuthFileAccountStats(
+      stats,
+      providerStats,
+      file,
+      quotaStore,
+      usedPercentThreshold,
+      antigravityQuotaMode
+    );
+  });
+  return finalizeAuthFileAccountStats(stats, providerStats);
 };
 
 export type AuthFileAccountStatsJob = {
@@ -880,12 +948,14 @@ export const ANTIGRAVITY_QUOTA_MODE_OPTIONS: Array<{ value: AccountInspectionAnt
 ];
 
 export const WORKER_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.workers;
+export const PROVIDER_WORKER_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.providerWorkers;
 export const DELETE_WORKER_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.deleteWorkers;
 export const TIMEOUT_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.timeout;
 export const RETRY_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.retries;
 export const THRESHOLD_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.usedPercentThreshold;
 export const SAMPLE_SIZE_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.sampleSize;
 export const SCHEDULE_INTERVAL_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.scheduleIntervalMinutes;
+export const AUTO_EXECUTE_CONFIRMATION_LIMITS = ACCOUNT_INSPECTION_SETTING_LIMITS.autoExecuteConfirmations;
 
 export const formatTimestamp = (value: number, locale: string) => new Date(value).toLocaleString(locale);
 
@@ -903,6 +973,7 @@ export const buildHighAvailabilityBarStyle = (highAvailable: number, total: numb
 export const toSettingsDraft = (settings: AccountInspectionConfigurableSettings): InspectionSettingsDraft => ({
   targetType: settings.targetType,
   workers: String(settings.workers),
+  providerWorkers: String(settings.providerWorkers),
   deleteWorkers: String(settings.deleteWorkers),
   timeout: String(settings.timeout),
   retries: String(settings.retries),
@@ -917,6 +988,7 @@ export const toSettingsDraft = (settings: AccountInspectionConfigurableSettings)
   autoExecuteQuotaRecoveryEnable: settings.autoExecuteQuotaRecoveryEnable,
   autoExecuteAccountInvalidAction: settings.autoExecuteAccountInvalidAction,
   autoExecuteRequestErrorAction: settings.autoExecuteRequestErrorAction,
+  autoExecuteConfirmations: String(settings.autoExecuteConfirmations),
 });
 
 export const formatActionLabel = (action: AccountInspectionAction, t: TFunction) => {
@@ -1070,16 +1142,14 @@ export const toAccountInspectionApiItem = (item: AccountInspectionResultItem): A
 });
 
 export const buildActionPreview = (items: AccountInspectionResultItem[], t: TFunction) =>
-  items
-    .slice(0, 5)
-    .map((item) => ({
-      key: item.key,
-      account: item.fileName,
-      provider: resolveProviderDisplayLabel(item.provider),
-      action: formatActionLabel(item.action, t),
-      reason: item.actionReason || item.error || '-',
-      dangerous: item.action === 'delete',
-    }));
+  items.map((item) => ({
+    key: item.key,
+    account: item.fileName,
+    provider: resolveProviderDisplayLabel(item.provider),
+    action: formatActionLabel(item.action, t),
+    reason: item.actionReason || item.error || '-',
+    dangerous: item.action === 'delete',
+  }));
 
 export const buildExecuteConfirmationMessage = (
   items: AccountInspectionResultItem[],
@@ -1091,7 +1161,14 @@ export const buildExecuteConfirmationMessage = (
   const isBatch = items.length > 1;
 
   return (
-    <div className={`${styles.confirmationBody} ${isBatch ? styles.confirmationBatchBody : ''}`}>
+    <div
+      className={[
+        styles.confirmationBody,
+        styles.confirmationDecisionBody,
+        isBatch ? styles.confirmationBatchBody : '',
+        hasDelete ? styles.confirmationDecisionDanger : '',
+      ].filter(Boolean).join(' ')}
+    >
       <div className={styles.confirmationBatchLead}>
         <strong>{t('monitoring.account_inspection_execute_confirm_summary', { total: items.length })}</strong>
         <span>
@@ -1121,7 +1198,7 @@ export const buildExecuteConfirmationMessage = (
         <div className={styles.confirmationPreview}>
           <div className={styles.confirmationPreviewHeading}>
             <strong>{t('monitoring.account_inspection_preview_title')}</strong>
-            <span>{t('monitoring.account_inspection_preview_count', { shown: preview.length, total: items.length })}</span>
+            <span>{t('monitoring.account_inspection_preview_count', { total: preview.length })}</span>
           </div>
           <div className={styles.confirmationPreviewHeader} aria-hidden="true">
             <span>{t('monitoring.account_label')}</span>
@@ -1135,7 +1212,7 @@ export const buildExecuteConfirmationMessage = (
                 <span className={styles.confirmationPreviewAccount} title={item.account}>{item.account}</span>
                 <small>{item.provider}</small>
                 <strong className={item.dangerous ? styles.errorText : undefined}>{item.action}</strong>
-                <em title={item.reason}>{item.reason}</em>
+                <em>{item.reason}</em>
               </div>
             ))}
           </div>
@@ -1171,7 +1248,13 @@ export const buildDeleteConfirmationMessage = (
   item: AccountInspectionResultItem,
   t: TFunction
 ) => (
-  <div className={styles.confirmationBody}>
+  <div
+    className={[
+      styles.confirmationBody,
+      styles.confirmationDecisionBody,
+      styles.confirmationDecisionDanger,
+    ].join(' ')}
+  >
     <div className={`${styles.confirmationLead} ${styles.confirmationLeadDanger}`}>
       <strong>{t('monitoring.account_inspection_delete_single_title')}</strong>
       <span>
@@ -1219,6 +1302,7 @@ const sameProgressSnapshot = (left: AccountInspectionProgressSnapshot, right: Ac
 const INSPECTION_SETTINGS_DRAFT_KEYS = [
   'targetType',
   'workers',
+  'providerWorkers',
   'deleteWorkers',
   'timeout',
   'retries',
@@ -1233,6 +1317,7 @@ const INSPECTION_SETTINGS_DRAFT_KEYS = [
   'autoExecuteQuotaRecoveryEnable',
   'autoExecuteAccountInvalidAction',
   'autoExecuteRequestErrorAction',
+  'autoExecuteConfirmations',
 ] as const satisfies readonly (keyof InspectionSettingsDraft)[];
 
 const sameSelectedFields = <T extends object>(
@@ -1242,8 +1327,7 @@ const sameSelectedFields = <T extends object>(
 ) => keys.every((key) => left[key] === right[key]);
 
 const sameInspectionSettings = (left: AccountInspectionConfigurableSettings, right: AccountInspectionConfigurableSettings) =>
-  sameSelectedFields(left, right, INSPECTION_SETTINGS_DRAFT_KEYS) &&
-  left.autoExecuteConfirmations === right.autoExecuteConfirmations;
+  sameSelectedFields(left, right, INSPECTION_SETTINGS_DRAFT_KEYS);
 
 const sameSettingsDraft = (left: InspectionSettingsDraft, right: InspectionSettingsDraft) =>
   sameSelectedFields(left, right, INSPECTION_SETTINGS_DRAFT_KEYS);
@@ -1295,10 +1379,12 @@ export type InspectionBackendState = {
   result: AccountInspectionRunResult | null;
   autoExecutionCounts: AutoExecutionCounts;
   restoredSnapshot: boolean;
+  lastError: string;
+  persistenceError: string;
+  settingsDirty: boolean;
 };
 
 export type InspectionBackendAction =
-  | { type: 'configChanged'; settings: AccountInspectionConfigurableSettings; syncDraft: boolean }
   | { type: 'backendResponseReceived'; response: AccountInspectionScheduleResponse }
   | { type: 'clearSchedule' }
   | { type: 'appendLog'; level: AccountInspectionLogLevel; message: string; timestamp: number }
@@ -1308,7 +1394,7 @@ export type InspectionBackendAction =
   | { type: 'clearAutoExecutionCounts' }
   | { type: 'setResult'; result: AccountInspectionRunResult | null }
   | { type: 'resetSettings'; settings: AccountInspectionConfigurableSettings }
-  | { type: 'setSettingsDraft'; draft: InspectionSettingsDraft }
+  | { type: 'discardSettingsDraft' }
   | { type: 'updateSettingsDraft'; values: Partial<InspectionSettingsDraft> }
   | { type: 'updateScheduleDraft'; values: Partial<ScheduleDraft> };
 
@@ -1324,6 +1410,9 @@ export const createInspectionBackendState = (settings: AccountInspectionConfigur
   result: null,
   autoExecutionCounts: emptyAutoExecutionCounts(),
   restoredSnapshot: false,
+  lastError: '',
+  persistenceError: '',
+  settingsDirty: false,
 });
 
 const applyBackendViewState = (
@@ -1333,13 +1422,22 @@ const applyBackendViewState = (
 ) => {
   let nextState = state;
   nextState = withChanged(nextState, 'inspectionSettings', viewState.settings, sameInspectionSettings);
-  nextState = withChanged(nextState, 'settingsDraft', toSettingsDraft(viewState.settings), sameSettingsDraft);
-  nextState = withChanged(nextState, 'scheduleDraft', viewState.scheduleDraft, sameScheduleDraft);
+  if (!state.settingsDirty) {
+    nextState = withChanged(nextState, 'settingsDraft', toSettingsDraft(viewState.settings), sameSettingsDraft);
+    nextState = withChanged(nextState, 'scheduleDraft', viewState.scheduleDraft, sameScheduleDraft);
+  }
   nextState = withChanged(nextState, 'schedule', response.schedule, sameScheduleSnapshot);
   nextState = withChanged(nextState, 'autoExecutionCounts', viewState.autoExecutionCounts, sameAutoExecutionCounts);
   nextState = withChanged(nextState, 'progress', viewState.progress, sameProgressSnapshot);
   nextState = withChanged(nextState, 'runStatus', viewState.runStatus, sameRunStatus);
   nextState = withChanged(nextState, 'restoredSnapshot', viewState.restoredSnapshot, Object.is);
+  nextState = withChanged(nextState, 'lastError', viewState.lastError, Object.is);
+  nextState = withChanged(nextState, 'persistenceError', viewState.persistenceError, Object.is);
+  if (state.settingsDirty &&
+    sameSettingsDraft(toSettingsDraft(viewState.settings), state.settingsDraft) &&
+    sameScheduleDraft(viewState.scheduleDraft, state.scheduleDraft)) {
+    nextState = withChanged(nextState, 'settingsDirty', false, Object.is);
+  }
   if (viewState.logs) {
     nextState = withChanged(nextState, 'logs', viewState.logs, Object.is);
   }
@@ -1357,13 +1455,6 @@ export const inspectionBackendReducer = (
   action: InspectionBackendAction
 ): InspectionBackendState => {
   switch (action.type) {
-    case 'configChanged': {
-      let nextState = withChanged(state, 'inspectionSettings', action.settings, sameInspectionSettings);
-      if (action.syncDraft) {
-        nextState = withChanged(nextState, 'settingsDraft', toSettingsDraft(action.settings), sameSettingsDraft);
-      }
-      return nextState;
-    }
     case 'backendResponseReceived':
       if (!isAccountInspectionBackendResponse(action.response)) return state;
       return applyBackendViewState(state, action.response, buildAccountInspectionBackendViewState(action.response));
@@ -1396,7 +1487,7 @@ export const inspectionBackendReducer = (
         },
       };
     case 'runFailed':
-      return state.runStatus === 'error' ? state : { ...state, runStatus: 'error' };
+      return state.runStatus === 'failed' ? state : { ...state, runStatus: 'failed' };
     case 'clearAutoExecutionCounts':
       return withChanged(state, 'autoExecutionCounts', emptyAutoExecutionCounts(), sameAutoExecutionCounts);
     case 'setResult':
@@ -1404,15 +1495,23 @@ export const inspectionBackendReducer = (
     case 'resetSettings':
       return {
         ...state,
-        inspectionSettings: action.settings,
         settingsDraft: toSettingsDraft(action.settings),
+        settingsDirty: true,
       };
-    case 'setSettingsDraft':
-      return withChanged(state, 'settingsDraft', action.draft, sameSettingsDraft);
+    case 'discardSettingsDraft':
+      return {
+        ...state,
+        settingsDraft: toSettingsDraft(state.inspectionSettings),
+        scheduleDraft: {
+          enabled: state.schedule?.enabled ?? false,
+          intervalMinutes: String(state.schedule?.intervalMinutes ?? 360),
+        },
+        settingsDirty: false,
+      };
     case 'updateSettingsDraft':
-      return { ...state, settingsDraft: { ...state.settingsDraft, ...action.values } };
+      return { ...state, settingsDraft: { ...state.settingsDraft, ...action.values }, settingsDirty: true };
     case 'updateScheduleDraft':
-      return { ...state, scheduleDraft: { ...state.scheduleDraft, ...action.values } };
+      return { ...state, scheduleDraft: { ...state.scheduleDraft, ...action.values }, settingsDirty: true };
     default:
       return state;
   }

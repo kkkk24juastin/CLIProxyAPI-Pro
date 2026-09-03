@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
 import { monitoringModule } from '@/pro/modules/monitoring';
+import { dataManagementModule } from '@/pro/modules/dataManagement';
 import { inspectionModule } from '@/pro/modules/inspection';
+import { apiKeyPolicyModule } from '@/pro/modules/apiKeyPolicy';
+import { oauthPolicyModule } from '@/pro/modules/oauthPolicy';
 import { routingModule } from '@/pro/modules/routing';
 import { proxyPoolModule } from '@/pro/modules/proxyPool';
-import { modelPolicyModule } from '@/pro/modules/modelPolicy';
 import { quotaModule } from '@/pro/modules/quota';
 
 export interface ProRouteEntry {
@@ -29,14 +31,16 @@ export interface ProNavigationGroup {
 const proModules = [
   monitoringModule,
   inspectionModule,
+  apiKeyPolicyModule,
+  oauthPolicyModule,
   routingModule,
-  modelPolicyModule,
   proxyPoolModule,
+  dataManagementModule,
   quotaModule,
 ];
 
 export const proRoutes: ProRouteEntry[] = proModules.flatMap((module) =>
-  module.route ? [module.route] : []
+  [...(module.route ? [module.route] : []), ...(module.routes ?? [])]
 );
 
 const navigationGroups = new Map<string, ProNavigationGroup>();

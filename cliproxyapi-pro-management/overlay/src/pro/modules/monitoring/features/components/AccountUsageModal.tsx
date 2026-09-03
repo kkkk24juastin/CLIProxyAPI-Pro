@@ -2,22 +2,20 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
+import { ProWorkspaceDialog } from '@/pro/shared/ProSurface';
 import {
-  IconChartColumnIncreasing,
   IconInfo,
   IconKey,
   IconModelCluster,
   IconRefreshCw,
   IconScrollText,
-  IconSidebarMonitor,
   IconTimer,
 } from '@/components/ui/icons';
+import { IconChartColumnIncreasing, IconSidebarMonitor } from '@/pro/icons';
 import type {
   AccountUsageAPIKeyStat,
   AccountUsageDayStat,
   AccountUsageModelStat,
-  AccountUsageRangeDays,
 } from '@/pro/modules/monitoring/api';
 import { useConfigStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
@@ -33,6 +31,13 @@ import {
   resolveConfiguredApiKeyLabel,
 } from '../apiKeyIdentity';
 import { useAccountUsage } from '../hooks/useAccountUsage';
+import {
+  TimeRangeSelector,
+  createPresetTimeRange,
+  formatCustomTimeRange,
+  timeRangeCoversElapsedLocalToday,
+  type TimeRangeSelection,
+} from '../timeRange';
 import styles from './AccountUsageModal.module.scss';
 
 type AccountUsageTab = 'overview' | 'detail' | 'quality';
@@ -44,7 +49,6 @@ type AccountUsageModalProps = {
   onClose: () => void;
 };
 
-const RANGE_OPTIONS: AccountUsageRangeDays[] = [7, 30, 90, 0];
 const TAB_OPTIONS: AccountUsageTab[] = ['overview', 'detail', 'quality'];
 const DISTRIBUTION_OPTIONS: DistributionMetric[] = ['requests', 'tokens', 'cost'];
 const MODEL_COLORS = ['#0f8a7c', '#2563eb', '#f59e0b', '#8b5cf6', '#dc2626'];
@@ -82,18 +86,33 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const configuredApiKeyValues = useConfigStore((state) => state.config?.apiKeys);
-  const [rangeDays, setRangeDays] = useState<AccountUsageRangeDays>(30);
+  const [timeRange, setTimeRange] = useState<TimeRangeSelection>(() => createPresetTimeRange('30d'));
   const [activeTab, setActiveTab] = useState<AccountUsageTab>('overview');
   const [modelMetric, setModelMetric] = useState<DistributionMetric>('requests');
   const [apiKeyMetric, setApiKeyMetric] = useState<DistributionMetric>('requests');
-  const authIndex = normalizeAuthIndex(file?.['auth_index'] ?? file?.authIndex);
-  const accountLabel = resolveAccountUsageLabel(file, authIndex);
-  const { data, loading, error, refresh } = useAccountUsage(authIndex, rangeDays, Boolean(file));
+  const [displayFile, setDisplayFile] = useState(file);
+  const activeFile = file ?? displayFile;
+  const authIndex = normalizeAuthIndex(activeFile?.['auth_index'] ?? activeFile?.authIndex);
+  const accountLabel = resolveAccountUsageLabel(activeFile, authIndex);
+  const {
+    data,
+    dataTimeRange,
+    scopeMatches,
+    loading,
+    refreshing,
+    error,
+    refresh,
+  } = useAccountUsage(authIndex, timeRange, Boolean(activeFile));
   const detail = data?.detail ?? null;
+  const displayTimeRange = dataTimeRange ?? timeRange;
   const configuredApiKeys = useMemo(
     () => buildConfiguredApiKeyMap(configuredApiKeyValues),
     [configuredApiKeyValues]
   );
+
+  useEffect(() => {
+    if (file) setDisplayFile(file);
+  }, [file]);
 
   useEffect(() => {
     setActiveTab('overview');
@@ -118,15 +137,23 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   const cacheHitRate = ratio(detail?.cacheHitRequests ?? 0, detail?.totalRequests ?? 0);
   const modelTotal = detail?.models.reduce((sum, item) => sum + distributionValue(item, modelMetric), 0) ?? 0;
   const apiKeyTotal = detail?.apiKeys.reduce((sum, item) => sum + distributionValue(item, apiKeyMetric), 0) ?? 0;
-  const rangeLabel = t(rangeDays === 0 ? 'account_usage.range_all' : `account_usage.range_${rangeDays}d`);
-  const statusKey = file?.unavailable
+  const rangeLabel = displayTimeRange.type === 'custom'
+    ? formatCustomTimeRange(displayTimeRange, i18n.resolvedLanguage || i18n.language)
+    : t(`time_range.${displayTimeRange.preset === '7d' ? 'days_7' : displayTimeRange.preset === '30d' ? 'days_30' : displayTimeRange.preset}`);
+  const rangeSummary = displayTimeRange.type === 'custom'
+    ? t('account_usage.range_summary_custom', { range: rangeLabel })
+    : displayTimeRange.preset === 'today'
+      ? t('account_usage.range_summary_today')
+      : t('account_usage.range_summary', { range: rangeLabel });
+  const rangeCoversToday = timeRangeCoversElapsedLocalToday(displayTimeRange);
+  const statusKey = activeFile?.unavailable
     ? 'account_usage.status_unavailable'
-    : file?.disabled
+    : activeFile?.disabled
       ? 'account_usage.status_disabled'
       : 'account_usage.status_active';
 
   const openRequestLogs = () => {
-    if (!detail || !authIndex) return;
+    if (!detail || !authIndex || !scopeMatches) return;
     const path = buildAccountUsageLogPath(authIndex, detail.fromMs, detail.toMs);
     onClose();
     navigate(path);
@@ -164,11 +191,11 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
   );
 
   return (
-    <Modal
+    <ProWorkspaceDialog
       open={Boolean(file)}
       title={title}
       onClose={onClose}
-      width={960}
+      onAfterClose={() => setDisplayFile(null)}
       className={styles.modal}
     >
       <div className={styles.accountHeader}>
@@ -176,11 +203,11 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
           <span className={styles.accountIcon}><IconChartColumnIncreasing size={23} /></span>
           <div>
             <strong title={accountLabel}>{accountLabel}</strong>
-            <p>{t('account_usage.range_summary', { range: rangeLabel })}</p>
+            <p>{rangeSummary}</p>
           </div>
         </div>
         <div className={styles.accountActions}>
-          <span className={`${styles.statusBadge} ${file?.disabled || file?.unavailable ? styles.statusMuted : ''}`}>
+          <span className={`${styles.statusBadge} ${activeFile?.disabled || activeFile?.unavailable ? styles.statusMuted : ''}`}>
             {t(statusKey)}
           </span>
           <Button
@@ -188,7 +215,7 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
             size="sm"
             className={styles.logButton}
             onClick={openRequestLogs}
-            disabled={!detail || !authIndex}
+            disabled={!detail || !authIndex || !scopeMatches}
           >
             <IconScrollText size={15} />
             {t('account_usage.view_logs')}
@@ -220,25 +247,20 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
 
       <div className={styles.rangeRow}>
         <span>{t('account_usage.range_short')}</span>
-        <div className={styles.segmented} role="group" aria-label={t('account_usage.range_label')}>
-          {RANGE_OPTIONS.map((days) => (
-            <button
-              key={days}
-              type="button"
-              className={rangeDays === days ? styles.segmentActive : undefined}
-              onClick={() => setRangeDays(days)}
-            >
-              {t(days === 0 ? 'account_usage.range_all' : `account_usage.range_${days}d`)}
-            </button>
-          ))}
-        </div>
+        <TimeRangeSelector
+          value={timeRange}
+          onChange={setTimeRange}
+          disabled={!authIndex}
+          className={styles.timeRangeSelector}
+        />
         <button
           type="button"
           className={styles.refreshButton}
           onClick={refresh}
-          disabled={loading || !authIndex}
+          disabled={!authIndex}
           title={t('common.refresh')}
           aria-label={t('common.refresh')}
+          aria-busy={refreshing}
         >
           <IconRefreshCw size={16} />
         </button>
@@ -253,9 +275,15 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
           <Button variant="secondary" size="sm" onClick={refresh}>{t('common.retry')}</Button>
         </div>
       ) : null}
+      {authIndex && error && detail ? (
+        <div className={styles.inlineError} role="alert">
+          <span>{t('account_usage.load_failed')}: {error}</span>
+          <Button variant="secondary" size="sm" onClick={refresh}>{t('common.retry')}</Button>
+        </div>
+      ) : null}
 
       {detail ? (
-        <div className={styles.content} aria-busy={loading}>
+        <div className={styles.content} aria-busy={loading || refreshing}>
           {activeTab === 'overview' ? (
             <>
               <div className={styles.overviewGrid}>
@@ -296,14 +324,16 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
                 </section>
 
                 <div className={styles.overviewSide}>
-                  <section className={`${styles.panel} ${styles.summaryPanel}`}>
-                    <div className={styles.panelTitle}><span><IconSidebarMonitor size={18} /></span><h3>{t('account_usage.today')}</h3></div>
-                    <dl className={styles.definitionList}>
-                      <div><dt>{t('account_usage.requests')}</dt><dd>{formatCompactNumber(detail.today.requests)}</dd></div>
-                      <div><dt>{t('account_usage.tokens')}</dt><dd>{formatCompactNumber(detail.today.tokens)}</dd></div>
-                      <div><dt>{t('account_usage.estimated_cost')}</dt><dd>{formatUsd(detail.today.estimatedCost)}</dd></div>
-                    </dl>
-                  </section>
+                  {rangeCoversToday ? (
+                    <section className={`${styles.panel} ${styles.summaryPanel}`}>
+                      <div className={styles.panelTitle}><span><IconSidebarMonitor size={18} /></span><h3>{t('account_usage.today')}</h3></div>
+                      <dl className={styles.definitionList}>
+                        <div><dt>{t('account_usage.requests')}</dt><dd>{formatCompactNumber(detail.today.requests)}</dd></div>
+                        <div><dt>{t('account_usage.tokens')}</dt><dd>{formatCompactNumber(detail.today.tokens)}</dd></div>
+                        <div><dt>{t('account_usage.estimated_cost')}</dt><dd>{formatUsd(detail.today.estimatedCost)}</dd></div>
+                      </dl>
+                    </section>
+                  ) : null}
                   <section className={`${styles.panel} ${styles.summaryPanel}`}>
                     <div className={styles.panelTitle}><span><IconTimer size={18} /></span><h3>{t('account_usage.active_day_average')}</h3></div>
                     <dl className={styles.definitionList}>
@@ -469,6 +499,6 @@ export function AccountUsageModal({ file, onClose }: AccountUsageModalProps) {
           ) : null}
         </div>
       ) : null}
-    </Modal>
+    </ProWorkspaceDialog>
   );
 }

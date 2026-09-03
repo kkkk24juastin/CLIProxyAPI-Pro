@@ -212,6 +212,36 @@ func TestSyncInspectionAuthErrorPersistsLastErrorMetadata(t *testing.T) {
 	}
 }
 
+func TestSyncInspectionAuthErrorRejectsReauthenticatedAccount(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	registered, err := manager.Register(context.Background(), &coreauth.Auth{
+		Provider: "codex",
+		ID:       "reauthenticated-inspection-error",
+		FileName: "reauthenticated-inspection-error.json",
+		Metadata: map[string]any{"access_token": "old-token"},
+	})
+	if err != nil {
+		t.Fatalf("Register auth error = %v", err)
+	}
+	observed := accountFromAuth(registered)
+	current := registered.Clone()
+	current.Metadata["access_token"] = "new-token"
+	if _, err = manager.Update(context.Background(), current); err != nil {
+		t.Fatalf("Update auth error = %v", err)
+	}
+
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	scheduler.syncInspectionAuthError(context.Background(), observed, "token_refresh_error", "stale refresh failed", 0)
+
+	got, _ := manager.GetByID(registered.ID)
+	if got == nil {
+		t.Fatal("reauthenticated auth not found")
+	}
+	if got.Status == coreauth.StatusError || got.Unavailable || got.StatusMessage != "" || got.LastError != nil {
+		t.Fatalf("reauthenticated auth mutated by stale observation = %#v", got)
+	}
+}
+
 func TestClearInspectionAuthErrorClearsMetadataOnlyError(t *testing.T) {
 	manager := coreauth.NewManager(nil, nil, nil)
 	registered, err := manager.Register(context.Background(), &coreauth.Auth{
@@ -277,11 +307,13 @@ func TestAutoActionConfirmationDelaysExecution(t *testing.T) {
 	if confirmed || count != 1 || required != 2 {
 		t.Fatalf("first confirmation = confirmed:%v count:%d required:%d, want false/1/2", confirmed, count, required)
 	}
+	scheduler.autoActionConfirmations.BeginRun()
 	confirmed, count, required = scheduler.confirmAutoAction(result, action, settings.AutoExecuteConfirmations)
 	if !confirmed || count != 2 || required != 2 {
 		t.Fatalf("second confirmation = confirmed:%v count:%d required:%d, want true/2/2", confirmed, count, required)
 	}
 	scheduler.clearAutoActionConfirmation(result)
+	scheduler.autoActionConfirmations.BeginRun()
 	confirmed, count, required = scheduler.confirmAutoAction(result, action, settings.AutoExecuteConfirmations)
 	if confirmed || count != 1 || required != 2 {
 		t.Fatalf("confirmation after clear = confirmed:%v count:%d required:%d, want false/1/2", confirmed, count, required)
@@ -423,6 +455,34 @@ func TestExecuteActionRejectsStaleRuntimeIdentity(t *testing.T) {
 	gotB, _ := manager.GetByID(registeredB.ID)
 	if gotA.Disabled || gotB.Disabled {
 		t.Fatalf("auths mutated after stale action: a=%v b=%v", gotA.Disabled, gotB.Disabled)
+	}
+}
+
+func TestExecuteActionRejectsReauthenticatedAccount(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	registered, err := manager.Register(context.Background(), &coreauth.Auth{
+		Provider: "codex",
+		ID:       "reauthenticated-inspection-action",
+		FileName: "reauthenticated-inspection-action.json",
+		Metadata: map[string]any{"access_token": "old-token"},
+	})
+	if err != nil {
+		t.Fatalf("Register auth error = %v", err)
+	}
+	result := accountFromAuth(registered).baseResult()
+	current := registered.Clone()
+	current.Metadata["access_token"] = "new-token"
+	if _, err = manager.Update(context.Background(), current); err != nil {
+		t.Fatalf("Update auth error = %v", err)
+	}
+
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	if err = scheduler.executeAction(context.Background(), result, accountInspectionActionDisable); !errors.Is(err, errAccountInspectionResultStale) {
+		t.Fatalf("executeAction() error = %v, want stale result", err)
+	}
+	got, _ := manager.GetByID(registered.ID)
+	if got == nil || got.Disabled {
+		t.Fatalf("reauthenticated auth mutated by stale action = %#v", got)
 	}
 }
 

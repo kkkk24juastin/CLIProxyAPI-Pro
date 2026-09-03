@@ -22,6 +22,10 @@ func runAccountInspectionWorkers(total int, workers int, beforeNext func() bool,
 	proinspection.RunWorkers(total, workers, beforeNext, run)
 }
 
+func runAccountInspectionProviderWorkers(total int, workers int, providerWorkers int, provider func(index int) string, beforeNext func() bool, run func(index int) bool) {
+	proinspection.RunKeyedWorkers(total, workers, providerWorkers, provider, beforeNext, run)
+}
+
 func (s *accountInspectionScheduler) executeInspection(ctx context.Context, settings accountInspectionSettings) ([]accountInspectionResult, accountInspectionSummary, error) {
 	auths, err := s.auths()
 	if err != nil {
@@ -33,7 +37,7 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 	for _, auth := range auths {
 		liveAuths = append(liveAuths, auth)
 		account := accountFromAuth(auth)
-		if shouldInspectAccount(account, settings.TargetType) && (!settings.EnabledOnly || !account.Disabled) {
+		if shouldInspectAccount(account, settings.TargetType) {
 			accounts = append(accounts, account)
 		}
 	}
@@ -49,14 +53,6 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 	s.appendLog("info", fmt.Sprintf("巡检集合 %d 个账号，本次探测 %d 个账号", probeSetCount, len(accounts)))
 
 	results := make([]accountInspectionResult, len(accounts))
-	providerConcurrency := accountInspectionMaxProviderConcurrency
-	refreshConcurrency := accountInspectionMaxRefreshConcurrency
-	if settings.QuotaOnly {
-		providerConcurrency = accountQuotaRefreshConcurrency
-		refreshConcurrency = accountQuotaRefreshConcurrency
-	}
-	providerLimiters := accountInspectionProviderLimiters(providerConcurrency)
-	refreshLimiter := make(chan struct{}, refreshConcurrency)
 	completed := 0
 	inFlight := 0
 	var progressMu sync.Mutex
@@ -69,9 +65,12 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 		runErrOnce.Do(func() { runErr = err })
 	}
 	s.updateProgress(len(accounts), 0, 0, true)
-	runAccountInspectionWorkers(
+	s.appendLog("info", fmt.Sprintf("巡检并发：总任务 %d，单提供商 %d，操作执行 %d", settings.Workers, settings.ProviderWorkers, settings.DeleteWorkers))
+	runAccountInspectionProviderWorkers(
 		len(accounts),
 		settings.Workers,
+		settings.ProviderWorkers,
+		func(index int) string { return accounts[index].Provider },
 		func() bool {
 			if err := s.waitIfPaused(ctx); err != nil {
 				setRunErr(err)
@@ -81,22 +80,11 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 		},
 		func(index int) bool {
 			account := accounts[index]
-			limiter := providerLimiters[account.Provider]
-			if limiter == nil {
-				limiter = make(chan struct{}, accountInspectionMaxProviderConcurrency)
-			}
-			select {
-			case limiter <- struct{}{}:
-			case <-ctx.Done():
-				setRunErr(ctx.Err())
-				return false
-			}
 			progressMu.Lock()
 			inFlight++
 			s.updateProgress(len(accounts), completed, inFlight, false)
 			progressMu.Unlock()
-			results[index] = s.inspectAccount(ctx, account, settings, refreshLimiter)
-			<-limiter
+			results[index] = s.inspectAccount(ctx, account, settings)
 			progressMu.Lock()
 			inFlight--
 			completed++
@@ -116,10 +104,6 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 
 	s.applyAutomaticActions(ctx, results, settings)
 	return results, summarizeAccountInspection(len(liveAuths), probeSetCount, accounts, results), nil
-}
-
-func accountInspectionProviderLimiters(concurrency int) map[string]chan struct{} {
-	return proinspection.ProviderLimiters(accountInspectionSupportedProviders, concurrency)
 }
 
 func (s *accountInspectionScheduler) auths() ([]*coreauth.Auth, error) {
@@ -185,15 +169,17 @@ func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 	email := accountInspectionAuthEmail(auth)
 	displayName := firstNonEmptyStringValue(email, fileName)
 	return accountInspectionAccount{
-		Auth:        auth,
-		Key:         proinspection.AccountKey(fileName, auth.Index),
-		Provider:    provider,
-		FileName:    fileName,
-		DisplayName: displayName,
-		Email:       email,
-		Name:        name,
-		AuthIndex:   auth.Index,
-		Disabled:    auth.Disabled,
+		Auth:              auth,
+		AuthID:            strings.TrimSpace(auth.ID),
+		Key:               proinspection.AccountKey(fileName, auth.Index),
+		Provider:          provider,
+		FileName:          fileName,
+		DisplayName:       displayName,
+		Email:             email,
+		Name:              name,
+		AuthIndex:         auth.Index,
+		AccessTokenSHA256: coreauth.AccessTokenSHA256(auth),
+		Disabled:          auth.Disabled,
 	}
 }
 
@@ -301,7 +287,7 @@ func sampleAccounts(accounts []accountInspectionAccount, sampleSize int) []accou
 	return proinspection.Sample(accounts, sampleSize, time.Now().UnixNano())
 }
 
-func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, refreshLimiter chan struct{}) accountInspectionResult {
+func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) accountInspectionResult {
 	result := account.baseResult()
 	if account.AuthIndex == "" {
 		result.ActionReason = "缺少 auth_index，保留账号"
@@ -309,7 +295,7 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		result.ErrorCode = "missing_auth_index"
 		return result
 	}
-	if refreshed, refreshTriggered, refreshErr := s.refreshAccountIfDue(ctx, account, refreshLimiter); refreshErr != nil {
+	if refreshed, refreshTriggered, refreshErr := s.refreshAccountIfDue(ctx, account); refreshErr != nil {
 		result.TokenRefreshTriggered = refreshTriggered
 		result.NextRefreshAt = account.nextRefreshAtMillis()
 		if errors.Is(refreshErr, context.Canceled) || errors.Is(refreshErr, context.DeadlineExceeded) {
@@ -322,9 +308,7 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		result.Error = refreshErr.Error()
 		result.ErrorCode = "token_refresh_error"
 		result.ActionReason = "刷新令牌失败，保留账号"
-		if !settings.QuotaOnly {
-			s.syncInspectionAuthError(ctx, account, "token_refresh_error", refreshErr.Error(), 0)
-		}
+		s.syncInspectionAuthError(ctx, account, "token_refresh_error", refreshErr.Error(), 0)
 		s.appendLog("warning", fmt.Sprintf("%s 刷新令牌失败，保留账号：%s", account.identity(), refreshErr.Error()))
 		return result
 	} else if refreshTriggered {
@@ -363,12 +347,10 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		result.Error = err.Error()
 		result.ErrorCode = proinspection.ErrorCode(statusCode, "inspection_probe_error")
 		result.ActionReason = "探测异常，保留账号"
-		if !settings.QuotaOnly {
-			if statusCode != nil && proinspection.IsAccountErrorStatus(*statusCode) {
-				s.syncInspectionAuthStatus(ctx, account, *statusCode)
-			} else {
-				s.syncInspectionAuthError(ctx, account, "inspection_probe_error", err.Error(), 0)
-			}
+		if statusCode != nil && proinspection.IsAccountErrorStatus(*statusCode) {
+			s.syncInspectionAuthStatus(ctx, account, *statusCode)
+		} else {
+			s.syncInspectionAuthError(ctx, account, "inspection_probe_error", err.Error(), 0)
 		}
 		s.appendLog("warning", fmt.Sprintf("%s 探测异常，保留账号：%s", account.identity(), err.Error()))
 		return result
@@ -386,9 +368,9 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		result.DeepProbeStatus = string(decision.DeepProbeStatus)
 		result.DeepProbeError = decision.DeepProbeError
 	}
-	if !settings.QuotaOnly && decision.IsQuota {
+	if decision.IsQuota {
 		s.clearInspectionAuthError(ctx, account)
-	} else if !settings.QuotaOnly && statusCode != nil && decision.DeepProbeStatus != accountInspectionDeepProbeTransientError {
+	} else if statusCode != nil && decision.DeepProbeStatus != accountInspectionDeepProbeTransientError {
 		s.syncInspectionAuthStatus(ctx, account, *statusCode)
 	}
 	level := "info"
@@ -407,17 +389,9 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 	return result
 }
 
-func (s *accountInspectionScheduler) refreshAccountIfDue(ctx context.Context, account accountInspectionAccount, refreshLimiter chan struct{}) (accountInspectionAccount, bool, error) {
+func (s *accountInspectionScheduler) refreshAccountIfDue(ctx context.Context, account accountInspectionAccount) (accountInspectionAccount, bool, error) {
 	if account.Auth == nil || account.Auth.ID == "" || s == nil || s.h == nil || s.h.authManager == nil {
 		return account, false, nil
-	}
-	if refreshLimiter != nil {
-		select {
-		case refreshLimiter <- struct{}{}:
-			defer func() { <-refreshLimiter }()
-		case <-ctx.Done():
-			return account, false, ctx.Err()
-		}
 	}
 	updated, refreshed, err := s.h.authManager.RefreshIfDueForInspection(ctx, account.Auth.ID)
 	if err != nil {
@@ -442,17 +416,64 @@ func (account accountInspectionAccount) nextRefreshAtMillis() int64 {
 
 func (account accountInspectionAccount) baseResult() accountInspectionResult {
 	return accountInspectionResult{
-		Key:          account.Key,
-		Provider:     account.Provider,
-		FileName:     account.FileName,
-		DisplayName:  account.DisplayName,
-		Email:        account.Email,
-		Name:         account.Name,
-		AuthIndex:    account.AuthIndex,
-		Disabled:     account.Disabled,
-		Action:       accountInspectionActionKeep,
-		ActionReason: "无需处理",
+		AuthID:            account.AuthID,
+		Key:               account.Key,
+		Provider:          account.Provider,
+		FileName:          account.FileName,
+		DisplayName:       account.DisplayName,
+		Email:             account.Email,
+		Name:              account.Name,
+		AuthIndex:         account.AuthIndex,
+		AccessTokenSHA256: account.AccessTokenSHA256,
+		Disabled:          account.Disabled,
+		Action:            accountInspectionActionKeep,
+		ActionReason:      "无需处理",
 	}
+}
+
+func accountInspectionObservationMatchesAuth(authID, authIndex, provider, fileName, accessTokenSHA256 string, auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	current := accountFromAuth(auth)
+	if authID != "" && strings.TrimSpace(authID) != current.AuthID {
+		return false
+	}
+	if authIndex != "" && strings.TrimSpace(authIndex) != current.AuthIndex {
+		return false
+	}
+	if provider != "" && !strings.EqualFold(strings.TrimSpace(provider), current.Provider) {
+		return false
+	}
+	if fileName != "" && strings.TrimSpace(fileName) != current.FileName {
+		return false
+	}
+	if accessTokenSHA256 != "" && strings.TrimSpace(accessTokenSHA256) != current.AccessTokenSHA256 {
+		return false
+	}
+	return true
+}
+
+func accountInspectionAccountMatchesAuth(account accountInspectionAccount, auth *coreauth.Auth) bool {
+	return accountInspectionObservationMatchesAuth(
+		account.AuthID,
+		account.AuthIndex,
+		account.Provider,
+		account.FileName,
+		account.AccessTokenSHA256,
+		auth,
+	)
+}
+
+func accountInspectionResultMatchesAuth(result accountInspectionResult, auth *coreauth.Auth) bool {
+	return accountInspectionObservationMatchesAuth(
+		result.AuthID,
+		result.AuthIndex,
+		result.Provider,
+		result.FileName,
+		result.AccessTokenSHA256,
+		auth,
+	)
 }
 
 func formatAccountInspectionIdentity(fileName string, email string, name string, displayName string) string {
@@ -482,6 +503,9 @@ func (s *accountInspectionScheduler) syncInspectionAuthError(ctx context.Context
 	if s == nil || s.h == nil || s.h.authManager == nil || account.AuthIndex == "" {
 		return
 	}
+	if !accountInspectionAccountMatchesAuth(account, s.h.authByIndex(account.AuthIndex)) {
+		return
+	}
 	err := s.h.updateProErrorAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
 		auth.Status = coreauth.StatusError
 		auth.StatusMessage = message
@@ -499,7 +523,7 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 		return
 	}
 	auth := s.h.authByIndex(account.AuthIndex)
-	if auth == nil {
+	if !accountInspectionAccountMatchesAuth(account, auth) {
 		return
 	}
 	if !isInspectionAuthErrorCode(authInspectionLastErrorCode(auth)) {
@@ -540,7 +564,7 @@ func healthyDecision(account accountInspectionAccount) accountInspectionDecision
 	return proinspection.HealthyDecision(account.Disabled)
 }
 
-func quotaDecision(account accountInspectionAccount, used *float64, hasQuotaData bool, threshold int) accountInspectionDecision {
+func quotaDecision(account accountInspectionAccount, used *float64, hasQuotaData bool, threshold float64) accountInspectionDecision {
 	return proinspection.QuotaDecision(account.Disabled, used, hasQuotaData, threshold)
 }
 
@@ -548,7 +572,7 @@ func quotaUnavailableDecision(account accountInspectionAccount, reason string, b
 	return proinspection.QuotaUnavailableDecision(account.Disabled, reason, proinspection.HTTPErrorDetail(body))
 }
 
-func codexDecision(account accountInspectionAccount, status int, used *float64, isQuota bool, threshold int) accountInspectionDecision {
+func codexDecision(account accountInspectionAccount, status int, used *float64, isQuota bool, threshold float64) accountInspectionDecision {
 	return proinspection.CodexDecision(account.Disabled, status, used, isQuota, threshold)
 }
 
@@ -605,9 +629,26 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 	defer release()
 	s.mu.Lock()
 	restoredSnapshot := s.status.RestoredSnapshot
+	running := s.isRunningLocked()
 	s.mu.Unlock()
 	if restoredSnapshot {
 		return nil, errAccountInspectionRestoredSnapshotReadOnly
+	}
+	if running {
+		return nil, errAccountInspectionAlreadyRunning
+	}
+	s.fullRunMu.RLock()
+	defer s.fullRunMu.RUnlock()
+	s.mu.Lock()
+	restoredSnapshot = s.status.RestoredSnapshot
+	running = s.isRunningLocked()
+	workers := s.schedule.Settings.DeleteWorkers
+	s.mu.Unlock()
+	if restoredSnapshot {
+		return nil, errAccountInspectionRestoredSnapshotReadOnly
+	}
+	if running {
+		return nil, errAccountInspectionAlreadyRunning
 	}
 	boundItems := make([]accountInspectionActionItem, 0, len(items))
 	for _, item := range items {
@@ -623,12 +664,15 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 	executableItems := proinspection.DedupeActionItems(boundItems)
 	outcomes := make([]accountInspectionActionOutcome, len(executableItems))
 	executedResults := make([]accountInspectionResult, len(executableItems))
-	runAccountInspectionWorkers(len(executableItems), accountInspectionMaxDeleteWorkers, nil, func(index int) bool {
+	if workers <= 0 {
+		workers = proinspection.DefaultSettings().DeleteWorkers
+	}
+	runAccountInspectionWorkers(len(executableItems), workers, nil, func(index int) bool {
 		item := executableItems[index]
 		result := item.ToResult()
 		action := item.Action
 		outcome := accountInspectionActionOutcome{Action: action, FileName: item.FileName, DisplayName: item.DisplayName, Email: item.Email, Name: item.Name, Provider: item.Provider, AuthIndex: item.AuthIndex}
-		if err := s.executeAction(ctx, result, action); err != nil {
+		if err := s.executeActionWithLimit(ctx, result, action, workers); err != nil {
 			outcome.Error = err.Error()
 			result.ExecuteError = err.Error()
 			s.appendLog("error", fmt.Sprintf("%s -> %s 执行失败：%s", proinspection.ResultIdentity(result), action, err.Error()))
@@ -698,7 +742,7 @@ func (s *accountInspectionScheduler) applyAutomaticActions(ctx context.Context, 
 			deletedFiles[results[index].FileName] = struct{}{}
 			mu.Unlock()
 		}
-		err := s.executeAction(ctx, results[index], action)
+		err := s.executeActionWithLimit(ctx, results[index], action, workers)
 		mu.Lock()
 		if err != nil {
 			results[index].ExecuteError = err.Error()
@@ -756,8 +800,6 @@ func (s *accountInspectionScheduler) executeAction(ctx context.Context, result a
 	if s.h == nil || s.h.authManager == nil {
 		return fmt.Errorf("core auth manager unavailable")
 	}
-	s.actionMu.Lock()
-	defer s.actionMu.Unlock()
 	auth, err := s.actionAuthForResult(result)
 	if err != nil {
 		return err
@@ -778,22 +820,33 @@ func (s *accountInspectionScheduler) executeAction(ctx context.Context, result a
 	}
 }
 
+func (s *accountInspectionScheduler) executeActionWithLimit(ctx context.Context, result accountInspectionResult, action accountInspectionAction, workers int) error {
+	auth, err := s.actionAuthForResult(result)
+	if err != nil {
+		return err
+	}
+	key := strings.TrimSpace(auth.ID)
+	if sourcePath := pluginVirtualSourcePath(auth); sourcePath != "" {
+		key = "source:" + sourcePath
+	}
+	release, err := s.actionLimiter.Acquire(ctx, workers, 1, key)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.executeAction(ctx, result, action)
+}
+
 func (s *accountInspectionScheduler) actionAuthForResult(result accountInspectionResult) (*coreauth.Auth, error) {
 	if s == nil || s.h == nil || s.h.authManager == nil || strings.TrimSpace(result.AuthIndex) == "" {
 		return nil, errAccountInspectionResultStale
 	}
 	auth := s.h.authByIndex(result.AuthIndex)
-	if auth == nil {
+	if !accountInspectionResultMatchesAuth(result, auth) {
 		return nil, errAccountInspectionResultStale
 	}
 	account := accountFromAuth(auth)
 	if result.Key != "" && result.Key != account.Key {
-		return nil, errAccountInspectionResultStale
-	}
-	if result.FileName != "" && result.FileName != account.FileName {
-		return nil, errAccountInspectionResultStale
-	}
-	if result.Provider != "" && !strings.EqualFold(strings.TrimSpace(result.Provider), account.Provider) {
 		return nil, errAccountInspectionResultStale
 	}
 	return auth, nil

@@ -520,139 +520,10 @@
   gap: 16px;
 }
 
-.settingsModal :global(.modal-body) {
-  display: grid;
-  gap: 0;
-  max-height: min(78vh, 820px);
-  overflow: hidden;
-  padding: 0;
-}
-
 .settingsWorkbench {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  min-height: 620px;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--inspect-line) 74%, transparent);
-  border-radius: 18px;
-  background: var(--inspect-surface);
-}
-
-.settingsSidebar {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
-  padding: 18px;
-  border-right: 1px solid color-mix(in srgb, var(--inspect-line) 74%, transparent);
-  background:
-    radial-gradient(circle at top left, color-mix(in srgb, var(--inspect-accent) 12%, transparent), transparent 34%),
-    color-mix(in srgb, var(--inspect-surface-muted) 64%, var(--inspect-surface));
-}
-
-.settingsSidebarIntro {
-  display: grid;
-  gap: 8px;
-}
-
-.settingsSidebarIntro strong {
-  color: var(--inspect-ink);
-  font-size: 16px;
-  font-weight: 780;
-  line-height: 1.35;
-}
-
-.settingsSidebarIntro span {
-  color: var(--inspect-muted);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.settingsSidebarNav {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-height: 0;
-  overflow: auto;
-  padding-right: 2px;
-}
-
-.settingsSidebarNav button {
-  display: grid;
-  gap: 5px;
-  width: 100%;
-  padding: 12px;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
-}
-
-.settingsSidebarNav button:hover {
-  border-color: color-mix(in srgb, var(--inspect-accent) 18%, var(--inspect-line));
-  background: color-mix(in srgb, var(--inspect-accent) 7%, var(--inspect-surface));
-  transform: translateX(2px);
-}
-
-.settingsSidebarNav strong {
-  color: var(--inspect-ink);
-  font-size: 13px;
-  font-weight: 730;
-  line-height: 1.35;
-}
-
-.settingsSidebarNav span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--inspect-muted);
-  font-size: 11px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settingsSidebarStatus {
-  display: grid;
-  gap: 8px;
-  padding-top: 14px;
-  border-top: 1px solid color-mix(in srgb, var(--inspect-line) 72%, transparent);
-}
-
-.settingsSidebarStatus span,
-.settingsSummaryGrid span {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  padding: 11px 12px;
-  border: 1px solid color-mix(in srgb, var(--inspect-line) 72%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--inspect-surface) 86%, var(--inspect-surface-muted));
-}
-
-.settingsSidebarStatus small,
-.settingsSummaryGrid small {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--inspect-muted);
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settingsSidebarStatus strong,
-.settingsSummaryGrid strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--inspect-ink);
-  font-size: 13px;
-  font-weight: 760;
-  line-height: 1.35;
-  text-overflow: ellipsis;
 }
 
 .settingsWorkbenchMain {
@@ -660,13 +531,8 @@
   align-content: start;
   gap: 14px;
   min-width: 0;
-  max-height: 620px;
-  overflow: auto;
-  padding: 18px;
-  scroll-behavior: smooth;
 }
 
-.settingsHeroPanel,
 .settingsWorkbenchSection {
   display: grid;
   gap: 16px;
@@ -677,37 +543,10 @@
   box-shadow: 0 10px 28px color-mix(in srgb, var(--inspect-shadow) 6%, transparent);
 }
 
-.settingsHeroPanel {
-  padding: 16px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--inspect-accent) 8%, var(--inspect-surface-elevated)), var(--inspect-surface-elevated) 52%),
-    var(--inspect-surface-elevated);
-}
-
-.settingsHeroPanel > div:first-child,
 .settingsWorkbenchHeader > div {
   display: grid;
   gap: 5px;
   min-width: 0;
-}
-
-.settingsHeroPanel > div:first-child strong {
-  color: var(--inspect-ink);
-  font-size: 17px;
-  font-weight: 780;
-  line-height: 1.35;
-}
-
-.settingsHeroPanel > div:first-child span {
-  color: var(--inspect-muted);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.settingsSummaryGrid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
 }
 
 .settingsWorkbenchSection {

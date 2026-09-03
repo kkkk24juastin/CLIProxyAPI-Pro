@@ -75,18 +75,26 @@ describe('auth-file plan sorting', () => {
   test('maps xAI monthly limits to all known tiers', () => {
     const items = [
       file('free.json', 'xai'),
+      file('lite.json', 'xai'),
+      file('basic.json', 'xai'),
       file('supergrok.json', 'xai'),
+      file('premium.json', 'xai'),
       file('premium-plus.json', 'xai'),
       file('heavy.json', 'xai'),
       file('paid.json', 'xai'),
+      file('unknown-paid.json', 'xai'),
     ];
     const store = quotaStore({
       xaiQuota: {
         'free.json': { billing: { monthlyLimitCents: null, planType: 'free' } },
+        'lite.json': { billing: { monthlyLimitCents: 0, planType: 'supergrok-lite' } },
+        'basic.json': { billing: { monthlyLimitCents: 0, planType: 'x-basic' } },
         'supergrok.json': { billing: { monthlyLimitCents: 15_000 } },
-        'premium-plus.json': { billing: { monthlyLimitCents: 20_000 } },
+        'premium.json': { billing: { monthlyLimitCents: 0, planType: 'x-premium' } },
+        'premium-plus.json': { billing: { monthlyLimitCents: 0, planType: 'x-premium-plus' } },
         'heavy.json': { billing: { monthlyLimitCents: 150_000 } },
         'paid.json': { billing: { monthlyLimitCents: null, planType: 'paid' } },
+        'unknown-paid.json': { billing: { monthlyLimitCents: 20_000 } },
       },
     } as unknown as Partial<PlanSortQuotaStore>);
 
@@ -95,8 +103,12 @@ describe('auth-file plan sorting', () => {
     expect(items.map((item) => item.name)).toEqual([
       'heavy.json',
       'premium-plus.json',
+      'premium.json',
       'supergrok.json',
+      'basic.json',
+      'lite.json',
       'paid.json',
+      'unknown-paid.json',
       'free.json',
     ]);
   });

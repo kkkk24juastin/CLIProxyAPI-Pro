@@ -101,7 +101,25 @@ class ProModuleBoundaryTests(unittest.TestCase):
         self.assertIn("import { proBootstraps } from '@/pro/registry'", bootstrap)
         self.assertNotIn('QuotaPersistenceBootstrap', bootstrap)
 
-        for module in ('monitoring', 'inspection', 'routing', 'proxyPool', 'modelPolicy', 'quota'):
+        module_list_start = registry.index('const proModules = [')
+        module_list = registry[
+            module_list_start:registry.index('];', module_list_start)
+        ]
+        self.assertEqual(
+            [
+                'monitoringModule',
+                'inspectionModule',
+                'apiKeyPolicyModule',
+                'oauthPolicyModule',
+                'routingModule',
+                'proxyPoolModule',
+                'dataManagementModule',
+                'quotaModule',
+            ],
+            re.findall(r'^\s{2}(\w+Module),$', module_list, re.MULTILINE),
+        )
+
+        for module in ('monitoring', 'inspection', 'routing', 'proxyPool', 'oauthPolicy', 'dataManagement', 'quota'):
             index = (MODULES / module / 'index.ts').read_text(encoding='utf-8')
             self.assertIn("from './manifest'", index)
 

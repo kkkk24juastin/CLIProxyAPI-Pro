@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconInfo, IconNetwork, IconSettings } from '@/components/ui/icons';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { ProxyPoolDiagnostics } from '@/pro/modules/proxyPool/features/ProxyPoolDiagnostics';
 import { ProxyPoolHeader } from '@/pro/modules/proxyPool/features/ProxyPoolHeader';
 import { ProxyPoolImportModal } from '@/pro/modules/proxyPool/features/ProxyPoolImportModal';
@@ -20,12 +22,16 @@ import {
 } from '@/pro/modules/proxyPool/features/proxyPoolUi';
 import {
   defaultProxyPoolConfig,
+  normalizeProxyPoolInteger,
+  PROXY_POOL_TEST_CONCURRENCY_LIMITS,
   proxyPoolApi,
   type ProxyPoolConfig,
   type ProxyPoolNodeConfig,
   type ProxyPoolProbeResult,
   type ProxyPoolSnapshot,
 } from '@/pro/modules/proxyPool/proxyPool';
+import { useProSurfaceState } from '@/pro/shared/useProSurfaceState';
+import { ProFeatureTabs } from '@/pro/shared/ProFeatureTabs';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import styles from '@/pro/modules/proxyPool/features/ProxyPool.module.scss';
 
@@ -126,6 +132,8 @@ const validateProxyPoolConfig = (config: ProxyPoolConfig): ValidationError | nul
 
 export function ProxyPoolPage() {
   const { t, i18n } = useTranslation();
+  const pageTransitionLayer = usePageTransitionLayer();
+  const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.isCurrentLayer : true;
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
@@ -134,9 +142,19 @@ export function ProxyPoolPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testConcurrency, setTestConcurrency] = useState<number>(
+    PROXY_POOL_TEST_CONCURRENCY_LIMITS.default
+  );
   const [testingNode, setTestingNode] = useState('');
   const [recoveringNode, setRecoveringNode] = useState('');
   const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
+  const draftRevisionRef = useRef(0);
+  const loadSequenceRef = useRef(0);
+  const appliedLoadSequenceRef = useRef(0);
+  const pollInFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+  const automaticLocationAttemptsRef = useRef(new Set<string>());
   const [loadError, setLoadError] = useState('');
   const [probeResults, setProbeResults] = useState<Record<string, ProxyPoolProbeResult>>({});
   const [activeView, setActiveView] = useState<ProxyPoolView>('nodes');
@@ -145,36 +163,88 @@ export function ProxyPoolPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [pendingNode, setPendingNode] = useState<ProxyPoolNodeConfig | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
-  const [takeoverOpen, setTakeoverOpen] = useState(false);
+  const { activeSurface, openSurface, closeSurface } = useProSurfaceState<'node' | 'import' | 'takeover'>();
+  const importOpen = activeSurface === 'import';
+  const takeoverOpen = activeSurface === 'takeover';
+  const unsavedChangesDialog = useMemo(
+    () => ({
+      title: t('common.unsaved_changes_title'),
+      message: t('common.unsaved_changes_message'),
+      confirmText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+    }),
+    [t]
+  );
+
+  useUnsavedChangesGuard({
+    enabled: isCurrentLayer,
+    shouldBlock: dirty,
+    dialog: unsavedChangesDialog,
+  });
+
+  const setImportOpen = useCallback((open: boolean) => {
+    if (open) openSurface('import');
+    else if (activeSurface === 'import') closeSurface();
+  }, [activeSurface, closeSurface, openSurface]);
+  const setTakeoverOpen = useCallback((open: boolean) => {
+    if (open) openSurface('takeover');
+    else if (activeSurface === 'takeover') closeSurface();
+  }, [activeSurface, closeSurface, openSurface]);
 
   const load = useCallback(
-    async (silent = false, replaceDraft = false) => {
+    async (silent = false, replaceDraftRevision?: number): Promise<boolean> => {
+      const loadSequence = ++loadSequenceRef.current;
       if (connectionStatus !== 'connected') {
+        appliedLoadSequenceRef.current = loadSequence;
         setLoading(false);
-        return;
+        return false;
       }
       if (!silent) setLoading(true);
       try {
         const next = await proxyPoolApi.load();
+        if (loadSequence < appliedLoadSequenceRef.current) return false;
+        appliedLoadSequenceRef.current = loadSequence;
         setSnapshot(next);
-        if (!dirty || replaceDraft) setDraft(next.config);
+        const canReplaceSavedDraft =
+          replaceDraftRevision !== undefined &&
+          draftRevisionRef.current === replaceDraftRevision;
+        if (!dirtyRef.current || canReplaceSavedDraft) setDraft(next.config);
+        if (canReplaceSavedDraft) {
+          setDirty(false);
+          dirtyRef.current = false;
+        }
         setLoadError('');
+        return canReplaceSavedDraft;
       } catch (error) {
+        if (loadSequence < appliedLoadSequenceRef.current) return false;
+        appliedLoadSequenceRef.current = loadSequence;
         setLoadError(errorMessage(error));
+        return false;
       } finally {
-        if (!silent) setLoading(false);
+        if (loadSequence === loadSequenceRef.current) setLoading(false);
       }
     },
-    [connectionStatus, dirty]
+    [connectionStatus]
   );
 
   useEffect(() => {
     void load();
   }, [load]);
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  useEffect(() => {
     if (connectionStatus !== 'connected') return;
-    const timer = window.setInterval(() => void load(true), 10_000);
+    const timer = window.setInterval(() => {
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      void load(true).finally(() => {
+        pollInFlightRef.current = false;
+      });
+    }, 10_000);
     return () => window.clearInterval(timer);
   }, [connectionStatus, load]);
 
@@ -182,6 +252,50 @@ export function ProxyPoolPage() {
     () => new Map((snapshot?.status?.nodes ?? []).map((node) => [node.id, node])),
     [snapshot?.status?.nodes]
   );
+  useEffect(() => {
+    if (connectionStatus !== 'connected' || !snapshot || dirtyRef.current) return;
+    const runtimeByID = new Map((snapshot.status?.nodes ?? []).map((node) => [node.id, node]));
+    const candidates = snapshot.config.nodes
+      .map((node, index) => ({
+        node,
+        key: proxyNodeKey(node, index),
+        attemptKey: `${node.id}\n${node.url}\n${snapshot.config.healthCheck.testUrl}`,
+      }))
+      .filter(({ node, attemptKey }) => {
+        if (!node.enabled || !node.url.trim() || runtimeByID.get(node.id)?.location) return false;
+        if (automaticLocationAttemptsRef.current.has(attemptKey)) return false;
+        automaticLocationAttemptsRef.current.add(attemptKey);
+        return true;
+      });
+    if (candidates.length === 0) return;
+
+    void (async () => {
+      for (let offset = 0; offset < candidates.length; offset += testConcurrency) {
+        const results = await Promise.all(
+          candidates.slice(offset, offset + testConcurrency).map(async ({ node, key }) => {
+            try {
+              const result = await proxyPoolApi.testNode(
+                node.id,
+                node.url,
+                snapshot.config.healthCheck.testUrl
+              );
+              return { key, result };
+            } catch {
+              return null;
+            }
+          })
+        );
+        if (!mountedRef.current) return;
+        setProbeResults((current) => {
+          const next = { ...current };
+          results.forEach((item) => {
+            if (item?.result.success) next[item.key] = item.result;
+          });
+          return next;
+        });
+      }
+    })();
+  }, [connectionStatus, snapshot, testConcurrency]);
   const editingNode =
     pendingNode ?? (editingIndex === null ? null : (draft.nodes[editingIndex] ?? null));
   const editingNodeIndex = pendingNode ? draft.nodes.length : editingIndex;
@@ -191,6 +305,10 @@ export function ProxyPoolPage() {
       : '';
 
   const closeNodeSheet = () => {
+    if (activeSurface === 'node') closeSurface();
+  };
+
+  const clearClosedNodeSheet = () => {
     setEditingIndex(null);
     setPendingNode(null);
   };
@@ -198,17 +316,21 @@ export function ProxyPoolPage() {
   const editNode = (index: number) => {
     setPendingNode(null);
     setEditingIndex(index);
+    openSurface('node');
   };
 
   const beginAddNode = () => {
     setEditingIndex(null);
     setPendingNode(createProxyPoolNode(draft.nodes.length));
+    openSurface('node');
   };
 
   const updateDraft = useCallback(
     (next: ProxyPoolConfig | ((current: ProxyPoolConfig) => ProxyPoolConfig)) => {
       setDraft((current) => (typeof next === 'function' ? next(current) : next));
+      draftRevisionRef.current += 1;
       setDirty(true);
+      dirtyRef.current = true;
     },
     []
   );
@@ -221,20 +343,25 @@ export function ProxyPoolPage() {
   };
 
   const save = async (): Promise<boolean> => {
-    const validation = validateProxyPoolConfig(draft);
+    const configToSave = draft;
+    const savedRevision = draftRevisionRef.current;
+    const validation = validateProxyPoolConfig(configToSave);
     if (validation) {
       notifyValidation(validation);
       return false;
     }
     setSaving(true);
     try {
-      await proxyPoolApi.save(draft);
-      setDirty(false);
+      await proxyPoolApi.save(configToSave);
+      if (draftRevisionRef.current === savedRevision) {
+        setDirty(false);
+        dirtyRef.current = false;
+      }
       showNotification(
         t('proxy_pool.save_success', { defaultValue: 'Proxy pool saved' }),
         'success'
       );
-      await load(true, true);
+      await load(true, savedRevision);
       return true;
     } catch (error) {
       showNotification(
@@ -250,7 +377,9 @@ export function ProxyPoolPage() {
   const confirmTakeover = async () => {
     if (!snapshot) return;
     const activating = !snapshot.takeoverActive;
-    const validation = validateProxyPoolConfig(draft);
+    const configToApply = draft;
+    const savedRevision = draftRevisionRef.current;
+    const validation = validateProxyPoolConfig(configToApply);
     if (activating && validation) {
       notifyValidation(validation);
       setTakeoverOpen(false);
@@ -259,16 +388,20 @@ export function ProxyPoolPage() {
     setSaving(true);
     try {
       if (activating) {
-        const activationDraft = { ...draft, enabled: true, takeoverEnabled: true };
+        const activationDraft = { ...configToApply, enabled: true, takeoverEnabled: true };
         await proxyPoolApi.activate(activationDraft);
-        setDraft(activationDraft);
       } else {
-        await proxyPoolApi.deactivate(draft);
-        setDraft({ ...draft, takeoverEnabled: false });
+        await proxyPoolApi.deactivate(configToApply);
       }
-      setDirty(false);
+      if (draftRevisionRef.current === savedRevision) {
+        setDirty(false);
+        dirtyRef.current = false;
+      }
       setTakeoverOpen(false);
-      await load(true, true);
+      const replacedDraft = await load(true, savedRevision);
+      if (!replacedDraft) {
+        setDraft((current) => ({ ...current, takeoverEnabled: activating }));
+      }
       showNotification(
         activating
           ? t('proxy_pool.takeover_enabled', { defaultValue: 'Global proxy takeover enabled' })
@@ -312,9 +445,9 @@ export function ProxyPoolPage() {
     setTesting(true);
     try {
       const results: ProxyPoolProbeResult[] = [];
-      for (let offset = 0; offset < items.length; offset += 4) {
+      for (let offset = 0; offset < items.length; offset += testConcurrency) {
         const batch = await Promise.all(
-          items.slice(offset, offset + 4).map(({ node, index }) => runNodeTest(node, index, false))
+          items.slice(offset, offset + testConcurrency).map(({ node, index }) => runNodeTest(node, index, false))
         );
         results.push(...batch.filter((result): result is ProxyPoolProbeResult => result !== null));
       }
@@ -408,6 +541,7 @@ export function ProxyPoolPage() {
       onConfirm: async () => {
         try {
           await proxyPoolApi.resetStats();
+          automaticLocationAttemptsRef.current.clear();
           setProbeResults({});
           await load(true);
           showNotification(
@@ -451,7 +585,9 @@ export function ProxyPoolPage() {
   const discard = () => {
     if (!snapshot) return;
     setDraft(snapshot.config);
+    draftRevisionRef.current += 1;
     setDirty(false);
+    dirtyRef.current = false;
     setSelected(new Set());
     setProbeResults({});
     showNotification(
@@ -492,37 +628,28 @@ export function ProxyPoolPage() {
       ) : (
           <>
             <ProxyPoolStatusOverview snapshot={snapshot} draft={draft} />
-            <nav
-              className={styles.viewTabs}
-              aria-label={t('proxy_pool.views', { defaultValue: 'Proxy pool views' })}
-            >
-              <button
-                type="button"
-                className={activeView === 'nodes' ? styles.viewTabActive : ''}
-                onClick={() => setActiveView('nodes')}
-              >
-                <IconNetwork size={17} />
-                <span>{t('proxy_pool.node_management', { defaultValue: 'Node management' })}</span>
-              </button>
-              <button
-                type="button"
-                className={activeView === 'diagnostics' ? styles.viewTabActive : ''}
-                onClick={() => setActiveView('diagnostics')}
-              >
-                <IconInfo size={17} />
-                <span>{t('proxy_pool.diagnostics', { defaultValue: 'Runtime diagnostics' })}</span>
-              </button>
-              <button
-                type="button"
-                className={activeView === 'settings' ? styles.viewTabActive : ''}
-                onClick={() => setActiveView('settings')}
-              >
-                <IconSettings size={17} />
-                <span>
-                  {t('proxy_pool.advanced_settings', { defaultValue: 'Advanced settings' })}
-                </span>
-              </button>
-            </nav>
+            <ProFeatureTabs
+              ariaLabel={t('proxy_pool.views', { defaultValue: 'Proxy pool views' })}
+              activeKey={activeView}
+              onChange={(key) => setActiveView(key as ProxyPoolView)}
+              items={[
+                {
+                  key: 'nodes',
+                  icon: <IconNetwork size={17} />,
+                  label: t('proxy_pool.node_management', { defaultValue: 'Node management' }),
+                },
+                {
+                  key: 'diagnostics',
+                  icon: <IconInfo size={17} />,
+                  label: t('proxy_pool.diagnostics', { defaultValue: 'Runtime diagnostics' }),
+                },
+                {
+                  key: 'settings',
+                  icon: <IconSettings size={17} />,
+                  label: t('proxy_pool.advanced_settings', { defaultValue: 'Advanced settings' }),
+                },
+              ]}
+            />
 
             {activeView === 'nodes' && (
               <>
@@ -619,6 +746,12 @@ export function ProxyPoolPage() {
                 draft={draft}
                 language={i18n.language}
                 testing={testing}
+                testConcurrency={testConcurrency}
+                onTestConcurrencyChange={(value) => setTestConcurrency(normalizeProxyPoolInteger(
+                  value,
+                  PROXY_POOL_TEST_CONCURRENCY_LIMITS.min,
+                  PROXY_POOL_TEST_CONCURRENCY_LIMITS.max
+                ))}
                 onTestAll={() => void testAll()}
                 onResetStats={resetStats}
                 onCopy={(value) => void copyDiagnostics(value)}
@@ -649,7 +782,7 @@ export function ProxyPoolPage() {
             )}
 
             <ProxyPoolNodeSheet
-              open={editingNode !== null}
+              open={activeSurface === 'node' && editingNode !== null}
               node={editingNode}
               strategy={draft.strategy}
               runtime={!pendingNode && editingNode ? statusByID.get(editingNode.id) : undefined}
@@ -658,6 +791,7 @@ export function ProxyPoolPage() {
               testing={testingNode === editingKey}
               recovering={recoveringNode === editingNode?.id}
               onClose={closeNodeSheet}
+              onAfterClose={clearClosedNodeSheet}
               onApply={(node) => {
                 if (pendingNode) {
                   updateDraft((current) => ({ ...current, nodes: [...current.nodes, node] }));
@@ -692,7 +826,7 @@ export function ProxyPoolPage() {
               onConfirm={() => void confirmTakeover()}
             />
             <ProxyPoolSaveBar
-              visible={dirty}
+              visible={isCurrentLayer && dirty}
               saving={saving}
               onDiscard={discard}
               onSave={() => void save()}

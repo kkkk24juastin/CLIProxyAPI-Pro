@@ -1,7 +1,6 @@
 import type { AxiosRequestConfig } from 'axios';
 import { apiClient } from '@/services/api/client';
-
-export type AccountUsageRangeDays = 7 | 30 | 90 | 0;
+import { resolveTimeRange, type TimeRangeSelection } from './features/timeRange';
 
 export type AccountUsageDayStat = {
   bucketStartMs: number;
@@ -69,19 +68,31 @@ export type AccountUsageResponse = {
   snapshot_at_ms: number;
 };
 
+export function buildAccountUsageRangeParams(timeRange: TimeRangeSelection, nowMs = Date.now()) {
+  if (timeRange.type === 'preset' && timeRange.preset === 'all') return { days: 0 as const };
+  const resolvedRange = resolveTimeRange(timeRange, nowMs);
+  return {
+    from_ms: resolvedRange.fromMs,
+    to_ms: resolvedRange.toMs,
+  };
+}
+
 export async function getAccountUsage(
   authIndex: string,
-  days: AccountUsageRangeDays,
+  timeRange: TimeRangeSelection,
   timezoneOffsetMinutes: number,
+  timezone: string,
   config?: AxiosRequestConfig
 ): Promise<AccountUsageResponse> {
+  const rangeParams = buildAccountUsageRangeParams(timeRange);
   return apiClient.get<AccountUsageResponse>('/usage/account', {
     ...config,
     params: {
       ...(config?.params ?? {}),
       auth_index: authIndex,
-      days,
+      ...rangeParams,
       timezone_offset_minutes: timezoneOffsetMinutes,
+      timezone: timezone || undefined,
     },
   });
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -36,6 +37,85 @@ MANAGEMENT_UPDATE_LOCALE_KEYS = {
     },
 }
 
+AUTH_FILE_CONNECTION_TEST_LOCALE_KEYS = {
+    'en.json': {
+        'connection_test_button': 'Test connection',
+        'connection_test_title': 'Test connection - {{account}}',
+        'connection_test_hint': 'Sends one minimal real text-generation request through this exact credential. The request may consume a small amount of quota.',
+        'connection_test_model': 'Test model',
+        'connection_test_select_model': 'Select a text model',
+        'connection_test_loading_models': 'Loading available models...',
+        'connection_test_load_models_failed': 'Failed to load available models',
+        'connection_test_no_models': 'This credential has no available text model to test.',
+        'connection_test_ready': 'Ready to test',
+        'connection_test_running': 'Sending test request...',
+        'connection_test_success': 'Connection test passed',
+        'connection_test_failed': 'Connection test failed',
+        'connection_test_start': 'Start test',
+        'connection_test_retry': 'Test again',
+        'connection_test_latency': '{{count}} ms',
+        'connection_test_output': 'Model output',
+        'connection_test_error_detail': 'Failure details',
+    },
+    'ru.json': {
+        'connection_test_button': 'Проверить подключение',
+        'connection_test_title': 'Проверка подключения - {{account}}',
+        'connection_test_hint': 'Отправляет один минимальный реальный запрос генерации текста через выбранные учётные данные. Запрос может израсходовать небольшую часть квоты.',
+        'connection_test_model': 'Тестовая модель',
+        'connection_test_select_model': 'Выберите текстовую модель',
+        'connection_test_loading_models': 'Загрузка доступных моделей...',
+        'connection_test_load_models_failed': 'Не удалось загрузить доступные модели',
+        'connection_test_no_models': 'Для этих учётных данных нет доступной текстовой модели.',
+        'connection_test_ready': 'Готово к проверке',
+        'connection_test_running': 'Отправка тестового запроса...',
+        'connection_test_success': 'Проверка подключения пройдена',
+        'connection_test_failed': 'Проверка подключения не пройдена',
+        'connection_test_start': 'Начать проверку',
+        'connection_test_retry': 'Проверить снова',
+        'connection_test_latency': '{{count}} мс',
+        'connection_test_output': 'Ответ модели',
+        'connection_test_error_detail': 'Сведения об ошибке',
+    },
+    'zh-CN.json': {
+        'connection_test_button': '测试连接',
+        'connection_test_title': '测试连接 - {{account}}',
+        'connection_test_hint': '使用当前选中的认证文件发送一次最小真实文本生成请求，测试会消耗少量额度。',
+        'connection_test_model': '测试模型',
+        'connection_test_select_model': '选择文本模型',
+        'connection_test_loading_models': '正在加载可用模型...',
+        'connection_test_load_models_failed': '加载可用模型失败',
+        'connection_test_no_models': '当前认证文件没有可用于测试的文本模型。',
+        'connection_test_ready': '等待开始测试',
+        'connection_test_running': '正在发送测试请求...',
+        'connection_test_success': '连接测试成功',
+        'connection_test_failed': '连接测试失败',
+        'connection_test_start': '开始测试',
+        'connection_test_retry': '重新测试',
+        'connection_test_latency': '{{count}} 毫秒',
+        'connection_test_output': '模型输出',
+        'connection_test_error_detail': '失败详情',
+    },
+    'zh-TW.json': {
+        'connection_test_button': '測試連線',
+        'connection_test_title': '測試連線 - {{account}}',
+        'connection_test_hint': '使用目前選取的驗證檔案傳送一次最小真實文字生成請求，測試會消耗少量配額。',
+        'connection_test_model': '測試模型',
+        'connection_test_select_model': '選擇文字模型',
+        'connection_test_loading_models': '正在載入可用模型...',
+        'connection_test_load_models_failed': '載入可用模型失敗',
+        'connection_test_no_models': '目前驗證檔案沒有可用於測試的文字模型。',
+        'connection_test_ready': '等待開始測試',
+        'connection_test_running': '正在傳送測試請求...',
+        'connection_test_success': '連線測試成功',
+        'connection_test_failed': '連線測試失敗',
+        'connection_test_start': '開始測試',
+        'connection_test_retry': '重新測試',
+        'connection_test_latency': '{{count}} 毫秒',
+        'connection_test_output': '模型輸出',
+        'connection_test_error_detail': '失敗詳情',
+    },
+}
+
 QUOTA_LOCALE_KEYS = {
     'en.json': {
         'cached_at': 'Updated',
@@ -47,15 +127,9 @@ QUOTA_LOCALE_KEYS = {
         'days_ago': '{{count}} day ago',
         'days_ago_plural': '{{count}} days ago',
         'search_label': 'Search quota credentials',
-        'search_placeholder': 'Search name, auth_index, type, provider, note, or plan. Use * as a wildcard',
+        'search_placeholder': 'Search name, email, note, or plan',
         'no_search_results': 'No matching quota credentials',
         'no_search_results_desc': 'No quota credential matches the current search.',
-        'refresh_progress': 'Refreshing {{completed}} / {{total}}',
-        'refresh_job_started': 'Backend quota refresh started',
-        'refresh_job_completed': 'Quota refresh finished: {{completed}} / {{total}}, {{failed}} failed',
-        'refresh_job_incomplete': 'Quota refresh stopped at {{completed}} / {{total}}: {{message}}',
-        'refresh_job_failed': 'Failed to start quota refresh: {{message}}',
-        'refresh_job_conflict': 'Another account inspection or quota refresh is already running',
     },
     'ru.json': {
         'cached_at': 'Обновлено',
@@ -67,15 +141,9 @@ QUOTA_LOCALE_KEYS = {
         'days_ago': '{{count}} день назад',
         'days_ago_plural': '{{count}} дней назад',
         'search_label': 'Поиск конфигураций квот',
-        'search_placeholder': 'Поиск по имени, auth_index, типу, провайдеру, заметке или тарифу; поддерживается *',
+        'search_placeholder': 'Поиск по имени, почте, заметке или тарифу',
         'no_search_results': 'Подходящие конфигурации квот не найдены',
         'no_search_results_desc': 'Текущему запросу не соответствует ни одна конфигурация квот.',
-        'refresh_progress': 'Обновление {{completed}} / {{total}}',
-        'refresh_job_started': 'Фоновое обновление квот запущено',
-        'refresh_job_completed': 'Обновление квот завершено: {{completed}} / {{total}}, ошибок: {{failed}}',
-        'refresh_job_incomplete': 'Обновление остановлено на {{completed}} / {{total}}: {{message}}',
-        'refresh_job_failed': 'Не удалось запустить обновление квот: {{message}}',
-        'refresh_job_conflict': 'Уже выполняется проверка аккаунтов или обновление квот',
     },
     'zh-CN.json': {
         'cached_at': '更新于',
@@ -84,15 +152,9 @@ QUOTA_LOCALE_KEYS = {
         'hours_ago': '{{count}} 小时前',
         'days_ago': '{{count}} 天前',
         'search_label': '搜索配额配置文件',
-        'search_placeholder': '搜索名称、auth_index、类型、提供商、备注或套餐，支持 * 通配',
+        'search_placeholder': '搜索名称、邮箱、备注或套餐',
         'no_search_results': '没有匹配的配额配置文件',
         'no_search_results_desc': '当前搜索条件下没有可显示的配额配置文件。',
-        'refresh_progress': '正在刷新 {{completed}} / {{total}}',
-        'refresh_job_started': '后端配额刷新任务已启动',
-        'refresh_job_completed': '配额刷新完成：{{completed}} / {{total}}，失败 {{failed}} 个',
-        'refresh_job_incomplete': '配额刷新在 {{completed}} / {{total}} 时停止：{{message}}',
-        'refresh_job_failed': '启动配额刷新失败：{{message}}',
-        'refresh_job_conflict': '已有账号检查或配额刷新任务正在运行',
     },
     'zh-TW.json': {
         'cached_at': '更新於',
@@ -101,15 +163,9 @@ QUOTA_LOCALE_KEYS = {
         'hours_ago': '{{count}} 小時前',
         'days_ago': '{{count}} 天前',
         'search_label': '搜尋配額設定檔',
-        'search_placeholder': '搜尋名稱、auth_index、類型、供應商、備註或套餐，支援 * 萬用字元',
+        'search_placeholder': '搜尋名稱、電子郵件、備註或套餐',
         'no_search_results': '沒有符合的配額設定檔',
         'no_search_results_desc': '目前搜尋條件下沒有可顯示的配額設定檔。',
-        'refresh_progress': '正在重新整理 {{completed}} / {{total}}',
-        'refresh_job_started': '後端配額重新整理工作已啟動',
-        'refresh_job_completed': '配額重新整理完成：{{completed}} / {{total}}，失敗 {{failed}} 個',
-        'refresh_job_incomplete': '配額重新整理在 {{completed}} / {{total}} 時停止：{{message}}',
-        'refresh_job_failed': '啟動配額重新整理失敗：{{message}}',
-        'refresh_job_conflict': '已有帳號檢查或配額重新整理工作正在執行',
     },
 }
 
@@ -211,43 +267,59 @@ GEMINI_CLI_LOCALE_KEYS = {
 XAI_QUOTA_LOCALE_KEYS = {
     'en.json': {
         'plan_free': 'Free',
+        'plan_x_basic': 'X Basic',
+        'plan_x_premium': 'X Premium',
         'plan_x_premium_plus': 'X Premium+',
+        'plan_supergrok_lite': 'SuperGrok Lite',
         'plan_paid_unknown': 'Paid (unknown tier)',
         'free_quota': 'Free token quota',
         'free_quota_exhausted': 'Exhausted',
+        'free_quota_pending': 'Pending probe',
         'free_quota_window': 'Rolling 24 hours',
     },
     'ru.json': {
         'plan_free': 'Бесплатный',
+        'plan_x_basic': 'X Basic',
+        'plan_x_premium': 'X Premium',
         'plan_x_premium_plus': 'X Premium+',
+        'plan_supergrok_lite': 'SuperGrok Lite',
         'plan_paid_unknown': 'Платный (неизвестный уровень)',
         'free_quota': 'Бесплатная квота токенов',
         'free_quota_exhausted': 'Исчерпана',
+        'free_quota_pending': 'Ожидает проверки',
         'free_quota_window': 'Скользящие 24 часа',
     },
     'zh-CN.json': {
         'plan_free': '免费套餐',
+        'plan_x_basic': 'X Basic',
+        'plan_x_premium': 'X Premium',
         'plan_x_premium_plus': 'X Premium+',
+        'plan_supergrok_lite': 'SuperGrok Lite',
         'plan_paid_unknown': '付费版（未知档位）',
         'free_quota': '免费 Token 额度',
         'free_quota_exhausted': '已耗尽',
+        'free_quota_pending': '待探测',
         'free_quota_window': '滚动 24 小时',
     },
     'zh-TW.json': {
         'plan_free': '免費套餐',
+        'plan_x_basic': 'X Basic',
+        'plan_x_premium': 'X Premium',
         'plan_x_premium_plus': 'X Premium+',
+        'plan_supergrok_lite': 'SuperGrok Lite',
         'plan_paid_unknown': '付費版（未知級別）',
         'free_quota': '免費 Token 配額',
         'free_quota_exhausted': '已用盡',
+        'free_quota_pending': '待探測',
         'free_quota_window': '滾動 24 小時',
     },
 }
 
 AUTH_FILES_SEARCH_PLACEHOLDER_KEYS = {
-    'en.json': 'Filter by name, auth_index, type, provider, note, or plan. Use * as a wildcard',
-    'ru.json': 'Фильтр по имени, auth_index, типу, провайдеру, заметке или тарифу; поддерживается *',
-    'zh-CN.json': '输入名称、auth_index、类型、提供方、备注或套餐关键字，支持 * 通配',
-    'zh-TW.json': '輸入名稱、auth_index、類型、供應方、備註或套餐關鍵字，支援 * 萬用字元',
+    'en.json': 'Search name, email, note, or plan',
+    'ru.json': 'Поиск по имени, почте, заметке или тарифу',
+    'zh-CN.json': '搜索名称、邮箱、备注或套餐',
+    'zh-TW.json': '搜尋名稱、電子郵件、備註或套餐',
 }
 
 AUTH_FILES_PLAN_SORT_LABEL_KEYS = {
@@ -271,129 +343,6 @@ AUTH_FILES_SELECTED_COUNT_LABEL_KEYS = {
     'zh-TW.json': '調度',
 }
 
-AUTH_FILES_BATCH_LOCALE_KEYS = {
-    'en.json': {
-        'batch_test': 'Test Selected', 'batch_clear_errors': 'Clear Errors',
-        'batch_test_title': 'Batch Test Results', 'batch_clear_errors_title': 'Clear Errors Results',
-        'batch_test_running': 'Testing...', 'batch_clear_errors_running': 'Clearing errors...',
-        'batch_no_auth_index': 'Missing auth_index',
-        'batch_unsupported_provider': 'Unsupported provider: {{provider}}',
-        'batch_clear_errors_failed': 'Failed to clear errors',
-        'batch_result_success': 'Success {{count}}', 'batch_result_failed': 'Failed {{count}}',
-        'batch_result_skipped': 'Skipped {{count}}', 'batch_result_total': 'Total {{count}}',
-        'batch_result_col_name': 'Name', 'batch_result_col_provider': 'Provider',
-        'batch_result_col_result': 'Result', 'batch_result_col_error': 'Error',
-        'batch_result_badge_success': 'Success', 'batch_result_badge_failed': 'Failed',
-        'batch_result_badge_skipped': 'Skipped',
-    },
-    'ru.json': {
-        'batch_test': 'Проверить выбранные', 'batch_clear_errors': 'Очистить ошибки',
-        'batch_test_title': 'Результаты проверки', 'batch_clear_errors_title': 'Результаты очистки ошибок',
-        'batch_test_running': 'Проверка...', 'batch_clear_errors_running': 'Очистка ошибок...',
-        'batch_no_auth_index': 'Отсутствует auth_index',
-        'batch_unsupported_provider': 'Неподдерживаемый провайдер: {{provider}}',
-        'batch_clear_errors_failed': 'Не удалось очистить ошибки',
-        'batch_result_success': 'Успешно {{count}}', 'batch_result_failed': 'Ошибка {{count}}',
-        'batch_result_skipped': 'Пропущено {{count}}', 'batch_result_total': 'Всего {{count}}',
-        'batch_result_col_name': 'Имя', 'batch_result_col_provider': 'Провайдер',
-        'batch_result_col_result': 'Результат', 'batch_result_col_error': 'Ошибка',
-        'batch_result_badge_success': 'Успешно', 'batch_result_badge_failed': 'Ошибка',
-        'batch_result_badge_skipped': 'Пропущено',
-    },
-    'zh-CN.json': {
-        'batch_test': '测试选中', 'batch_clear_errors': '清除错误',
-        'batch_test_title': '批量测试结果', 'batch_clear_errors_title': '清除错误结果',
-        'batch_test_running': '正在测试...', 'batch_clear_errors_running': '正在清除错误...',
-        'batch_no_auth_index': '缺少 auth_index',
-        'batch_unsupported_provider': '不支持的提供方：{{provider}}',
-        'batch_clear_errors_failed': '清除错误失败',
-        'batch_result_success': '成功 {{count}} 项', 'batch_result_failed': '失败 {{count}} 项',
-        'batch_result_skipped': '跳过 {{count}} 项', 'batch_result_total': '共 {{count}} 项',
-        'batch_result_col_name': '名称', 'batch_result_col_provider': '提供方',
-        'batch_result_col_result': '结果', 'batch_result_col_error': '错误',
-        'batch_result_badge_success': '成功', 'batch_result_badge_failed': '失败',
-        'batch_result_badge_skipped': '跳过',
-    },
-    'zh-TW.json': {
-        'batch_test': '測試選中', 'batch_clear_errors': '清除錯誤',
-        'batch_test_title': '批量測試結果', 'batch_clear_errors_title': '清除錯誤結果',
-        'batch_test_running': '正在測試...', 'batch_clear_errors_running': '正在清除錯誤...',
-        'batch_no_auth_index': '缺少 auth_index',
-        'batch_unsupported_provider': '不支援的供應方：{{provider}}',
-        'batch_clear_errors_failed': '清除錯誤失敗',
-        'batch_result_success': '成功 {{count}} 項', 'batch_result_failed': '失敗 {{count}} 項',
-        'batch_result_skipped': '跳過 {{count}} 項', 'batch_result_total': '共 {{count}} 項',
-        'batch_result_col_name': '名稱', 'batch_result_col_provider': '供應方',
-        'batch_result_col_result': '結果', 'batch_result_col_error': '錯誤',
-        'batch_result_badge_success': '成功', 'batch_result_badge_failed': '失敗',
-        'batch_result_badge_skipped': '跳過',
-    },
-}
-
-QUOTA_DELETE_LOCALE_KEYS = {
-    'en.json': {
-        'select_all': 'Select All', 'select_credential': 'Select {{name}}', 'delete_one': 'Delete',
-        'delete_one_title': 'Delete Credential',
-        'delete_one_confirm': 'Delete credential "{{name}}"? This action cannot be undone.',
-        'delete_selected': 'Delete Selected ({{count}})',
-        'delete_selected_title': 'Delete Selected Credentials',
-        'delete_selected_confirm': 'Delete {{count}} selected credential(s)? This action cannot be undone.',
-        'delete_success': 'Credentials deleted', 'delete_partial': 'Succeeded {{success}}, failed {{failed}}',
-    },
-    'ru.json': {
-        'select_all': 'Выбрать все', 'select_credential': 'Выбрать {{name}}', 'delete_one': 'Удалить',
-        'delete_one_title': 'Удалить учётные данные',
-        'delete_one_confirm': 'Удалить учётные данные «{{name}}»? Это действие нельзя отменить.',
-        'delete_selected': 'Удалить выбранные ({{count}})',
-        'delete_selected_title': 'Удалить выбранные учётные данные',
-        'delete_selected_confirm': 'Удалить {{count}} выбранных учётных данных? Это действие нельзя отменить.',
-        'delete_success': 'Учётные данные удалены', 'delete_partial': 'Успешно {{success}}, не удалось {{failed}}',
-    },
-    'zh-CN.json': {
-        'select_all': '全选', 'select_credential': '选择 {{name}}', 'delete_one': '删除',
-        'delete_one_title': '删除凭证', 'delete_one_confirm': '确定删除凭证 "{{name}}"？此操作不可撤销。',
-        'delete_selected': '删除已选（{{count}}）', 'delete_selected_title': '删除所选凭证',
-        'delete_selected_confirm': '确定删除选中的 {{count}} 个凭证？此操作不可撤销。',
-        'delete_success': '凭证已删除', 'delete_partial': '成功 {{success}}，失败 {{failed}}',
-    },
-    'zh-TW.json': {
-        'select_all': '全選', 'select_credential': '選擇 {{name}}', 'delete_one': '刪除',
-        'delete_one_title': '刪除憑證', 'delete_one_confirm': '確定刪除憑證 "{{name}}"？此操作無法復原。',
-        'delete_selected': '刪除已選（{{count}}）', 'delete_selected_title': '刪除所選憑證',
-        'delete_selected_confirm': '確定刪除選取的 {{count}} 個憑證？此操作無法復原。',
-        'delete_success': '憑證已刪除', 'delete_partial': '成功 {{success}}，失敗 {{failed}}',
-    },
-}
-
-CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS = {
-    'en.json': {
-        'title': 'Anthropic Client Compatibility',
-        'description': 'Control how non-Claude model IDs are exposed to Anthropic-compatible clients.',
-        'label': 'Anthropic model ID compatibility mode',
-        'hint': 'Only changes non-Claude IDs returned by /v1/models. Auto cloaks IDs for identified Claude Desktop clients.',
-        'auto': 'Auto (Claude Desktop only)', 'always': 'Always cloak IDs', 'never': 'Keep original IDs',
-    },
-    'ru.json': {
-        'title': 'Совместимость клиентов Anthropic',
-        'description': 'Управление отображением идентификаторов моделей не-Claude.',
-        'label': 'Режим совместимости идентификаторов моделей Anthropic',
-        'hint': 'Изменяет только идентификаторы моделей не-Claude в ответе /v1/models.',
-        'auto': 'Авто (только Claude Desktop)', 'always': 'Всегда маскировать', 'never': 'Сохранять исходные ID',
-    },
-    'zh-CN.json': {
-        'title': 'Anthropic 客户端兼容性', 'description': '控制非 Claude 模型 ID 的展示方式。',
-        'label': 'Anthropic 模型 ID 兼容模式',
-        'hint': '仅影响 /v1/models 返回的非 Claude 模型 ID；自动模式仅对 Claude Desktop 伪装。',
-        'auto': '自动（仅 Claude Desktop）', 'always': '始终伪装 ID', 'never': '保留原始 ID',
-    },
-    'zh-TW.json': {
-        'title': 'Anthropic 用戶端相容性', 'description': '控制非 Claude 模型 ID 的顯示方式。',
-        'label': 'Anthropic 模型 ID 相容模式',
-        'hint': '僅影響 /v1/models 回傳的非 Claude 模型 ID；自動模式只對 Claude Desktop 偽裝。',
-        'auto': '自動（僅 Claude Desktop）', 'always': '一律偽裝 ID', 'never': '保留原始 ID',
-    },
-}
-
 PROXY_POOL_NAV_LOCALE_KEYS = {
     'en.json': {'label': 'Proxy Management', 'meta': 'Rotating upstream proxy gateway'},
     'ru.json': {'label': 'Управление прокси', 'meta': 'Шлюз ротации внешних прокси'},
@@ -401,11 +350,11 @@ PROXY_POOL_NAV_LOCALE_KEYS = {
     'zh-TW.json': {'label': '代理管理', 'meta': '多節點輪詢與故障轉移'},
 }
 
-OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS = {
-    'en.json': {'label': 'Model Policy', 'meta': 'Per-plan model availability rules'},
-    'ru.json': {'label': 'Политика моделей', 'meta': 'Правила доступности моделей по тарифам'},
-    'zh-CN.json': {'label': '模型策略', 'meta': '按账号套餐配置模型可用范围'},
-    'zh-TW.json': {'label': '模型策略', 'meta': '依帳號套餐設定模型可用範圍'},
+OAUTH_POLICY_NAV_LOCALE_KEYS = {
+    'en.json': {'label': 'Account Policy', 'meta': 'Per-plan OAuth account routing rules'},
+    'ru.json': {'label': 'Политика аккаунтов', 'meta': 'Правила маршрутизации OAuth по тарифам'},
+    'zh-CN.json': {'label': '账号策略', 'meta': '按套餐配置 OAuth 账号路由规则'},
+    'zh-TW.json': {'label': '帳號策略', 'meta': '依套餐設定 OAuth 帳號路由規則'},
 }
 
 def load_overlay_replacement_manifest(path: Path) -> dict[str, set[str]]:
@@ -467,71 +416,21 @@ def replace_once(path: Path, old: str, new: str) -> None:
     write(path, text.replace(old, new, 1))
 
 
-def replace_once_if_present(path: Path, old: str, new: str) -> None:
+def remove_once(path: Path, old: str, present: str) -> None:
     text = read(path)
-    if new in text:
+    if present in text:
         return
     match_count = text.count(old)
-    if match_count == 0:
-        return
     if match_count != 1:
-        raise RuntimeError(f'Expected at most one pattern in {path}, found {match_count}: {old[:120]!r}')
-    write(path, text.replace(old, new, 1))
-
-
-def replace_all(path: Path, old: str, new: str) -> None:
-    text = read(path)
-    if old not in text:
-        return
-    write(path, text.replace(old, new))
-
-
-def ensure_cached_at_in_quota_success_state(path: Path, store_setter: str) -> None:
-    text = read(path)
-    marker = f"  storeSetter: '{store_setter}',"
-    marker_start = text.find(marker)
-    if marker_start == -1:
-        raise RuntimeError(f'Pattern not found in {path}: {marker!r}')
-
-    success_start = text.find('  buildSuccessState:', marker_start)
-    error_start = text.find('  buildErrorState:', success_start)
-    if success_start == -1 or error_start == -1:
-        raise RuntimeError(f'Pattern not found in {path}: buildSuccessState block for {store_setter}')
-
-    block = text[success_start:error_start]
-    if 'cachedAt:' in block:
-        return
-
-    multiline_end = '\n  }),'
-    if multiline_end in block:
-        updated = block.replace(multiline_end, '\n    cachedAt: Date.now(),\n  }),', 1)
-    else:
-        inline_end = '}),'
-        inline_end_start = block.rfind(inline_end)
-        if inline_end_start == -1:
-            raise RuntimeError(f'Pattern not found in {path}: buildSuccessState return end for {store_setter}')
-        updated = f'{block[:inline_end_start].rstrip()}, cachedAt: Date.now() {block[inline_end_start:]}'
-
-    write(path, f'{text[:success_start]}{updated}{text[error_start:]}')
+        raise RuntimeError(f'Expected one pattern in {path}, found {match_count}: {old[:120]!r}')
+    write(path, text.replace(old, '', 1))
 
 
 def auth_files_page_path(target: Path) -> Path:
-    for relative in ('src/features/authFiles/AuthFilesPage.tsx', 'src/pages/AuthFilesPage.tsx'):
-        path = target / relative
-        if path.is_file():
-            return path
-    raise RuntimeError(f'AuthFilesPage.tsx not found under {target}')
-
-
-def auth_files_styles_path(target: Path) -> Path:
-    for relative in (
-        'src/features/authFiles/AuthFilesPage.module.scss',
-        'src/pages/AuthFilesPage.module.scss',
-    ):
-        path = target / relative
-        if path.is_file():
-            return path
-    raise RuntimeError(f'AuthFilesPage.module.scss not found under {target}')
+    path = target / 'src/features/authFiles/AuthFilesPage.tsx'
+    if not path.is_file():
+        raise RuntimeError(f'AuthFilesPage.tsx not found at latest upstream path: {path}')
+    return path
 
 
 def insert_once(path: Path, marker: str, insertion: str, present: str) -> None:
@@ -591,6 +490,423 @@ def patch_modal_focus_restore(target: Path) -> None:
         "    previouslyFocusedRef.current = null;\n"
         "  }, [isVisible, open]);\n",
     )
+
+
+def patch_modal_lifecycle(target: Path) -> None:
+    path = target / 'src/components/ui/Modal.tsx'
+    text = read(path)
+    if 'registerOverlayLayer(titleId)' in text:
+        return
+
+    replacements = (
+        (
+            "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from './scrollLock';\n",
+            "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from './scrollLock';\n"
+            "import { isTopOverlayLayer, registerOverlayLayer } from './overlayStack';\n"
+            "import { useOverlayLifecycle } from '@/pro/shared/useOverlayLifecycle';\n",
+            'modal overlay stack import',
+        ),
+        (
+            "  onClose: () => void;\n",
+            "  onClose: () => void | boolean | Promise<void | boolean>;\n"
+            "  onAfterClose?: () => void;\n",
+            'modal close contract',
+        ),
+        (
+            "  useRef,\n  useState,\n  type PropsWithChildren,\n",
+            "  useRef,\n  type PropsWithChildren,\n",
+            'modal lifecycle state import',
+        ),
+        (
+            "  const [isVisible, setIsVisible] = useState(false);\n"
+            "  const [isClosing, setIsClosing] = useState(false);\n"
+            "  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);\n",
+            "  const { isVisible, isClosing, requestClose } = useOverlayLifecycle({\n"
+            "    open,\n"
+            "    closeDisabled,\n"
+            "    closeAnimationDuration: CLOSE_ANIMATION_DURATION,\n"
+            "    onClose,\n"
+            "    onAfterClose,\n"
+            "  });\n",
+            'modal lifecycle hook',
+        ),
+    )
+    for old, new, label in replacements:
+        count = text.count(old)
+        if count != 1:
+            raise RuntimeError(f'Expected one pattern in {path}, found {count}: {label}')
+        text = text.replace(old, new, 1)
+
+    destructure_old = "  onClose,\n  footer,\n"
+    if text.count(destructure_old) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {text.count(destructure_old)}: modal props')
+    text = text.replace(destructure_old, "  onClose,\n  onAfterClose,\n  footer,\n", 1)
+    focusable_marker = "  const getFocusableElements = useCallback(() => {\n"
+    if text.count(focusable_marker) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {text.count(focusable_marker)}: modal callbacks')
+    text = text.replace(
+        focusable_marker,
+        "  useEffect(() => {\n"
+        "    if (!open && !isVisible) return;\n"
+        "    return registerOverlayLayer(titleId);\n"
+        "  }, [isVisible, open, titleId]);\n\n"
+        + focusable_marker,
+        1,
+    )
+
+    start = text.find('  const startClose = useCallback(')
+    cleanup_start = text.find('  useEffect(() => {\n    return () => {', start)
+    end = text.find('  }, []);\n', cleanup_start)
+    if start == -1 or cleanup_start == -1 or end == -1:
+        raise RuntimeError(f'Pattern not found in {path}: modal close lifecycle')
+    end += len('  }, []);\n')
+    if text[end:end + 1] == '\n':
+        end += 1
+    replacement = (
+        "  const handleClose = useCallback(() => {\n"
+        "    void requestClose().catch(() => {\n"
+        "      // The parent owns the open state; a rejected close keeps the surface open.\n"
+        "    });\n"
+        "  }, [requestClose]);\n\n"
+    )
+    text = text[:start] + replacement + text[end:]
+    text = text.replace(
+        "    const focusTimer = window.setTimeout(() => {\n",
+        "    const focusTimer = window.setTimeout(() => {\n"
+        "      if (!isTopOverlayLayer(titleId)) return;\n",
+        1,
+    )
+    text = text.replace(
+        "  }, [getFocusableElements, open]);\n",
+        "  }, [getFocusableElements, open, titleId]);\n",
+        1,
+    )
+    text = text.replace(
+        "    const handleKeyDown = (event: KeyboardEvent) => {\n",
+        "    const handleKeyDown = (event: KeyboardEvent) => {\n"
+        "      if (!isTopOverlayLayer(titleId)) return;\n",
+        1,
+    )
+    text = text.replace(
+        "  }, [closeDisabled, getFocusableElements, handleClose, open]);\n",
+        "  }, [closeDisabled, getFocusableElements, handleClose, open, titleId]);\n",
+        1,
+    )
+    aria_pattern = re.compile(r'(?P<indent>\s+)role="dialog"\n(?P=indent)aria-modal="true"\n')
+    matches = list(aria_pattern.finditer(text))
+    if len(matches) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {len(matches)}: modal aria state')
+    match = matches[0]
+    indent = match.group('indent')
+    text = text[:match.start()] + (
+        f"{indent}role={{open ? 'dialog' : undefined}}\n"
+        f"{indent}aria-modal={{open ? 'true' : undefined}}\n"
+        f"{indent}aria-hidden={{open ? undefined : true}}\n"
+        f"{indent}inert={{open ? undefined : true}}\n"
+    ) + text[match.end():]
+    write(path, text)
+
+
+def patch_sheet_lifecycle(target: Path) -> None:
+    path = target / 'src/components/ui/Sheet/Sheet.tsx'
+    text = read(path)
+    if 'registerOverlayLayer(titleId)' in text:
+        return
+
+    replacements = (
+        (
+            "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from '../scrollLock';\n",
+            "import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from '../scrollLock';\n"
+            "import { isTopOverlayLayer, registerOverlayLayer } from '../overlayStack';\n"
+            "import { useOverlayLifecycle } from '@/pro/shared/useOverlayLifecycle';\n",
+            'sheet overlay stack import',
+        ),
+        (
+            "  onClose: () => void;\n",
+            "  onClose: () => void | boolean | Promise<void | boolean>;\n"
+            "  onAfterClose?: () => void;\n",
+            'sheet close contract',
+        ),
+        (
+            "  useRef,\n  useState,\n  type ReactNode,\n",
+            "  useRef,\n  type ReactNode,\n",
+            'sheet lifecycle state import',
+        ),
+    )
+    for old, new, label in replacements:
+        count = text.count(old)
+        if count != 1:
+            raise RuntimeError(f'Expected one pattern in {path}, found {count}: {label}')
+        text = text.replace(old, new, 1)
+
+    if text.count("  onClose,\n  size = 'md',\n") != 1:
+        raise RuntimeError(f'Expected one pattern in {path}: sheet props')
+    text = text.replace("  onClose,\n  size = 'md',\n", "  onClose,\n  onAfterClose,\n  size = 'md',\n", 1)
+
+    old_lifecycle = (
+        "  const [isVisible, setIsVisible] = useState(false);\n"
+        "  const [isClosing, setIsClosing] = useState(false);\n"
+        "  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);\n"
+    )
+    if text.count(old_lifecycle) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {text.count(old_lifecycle)}: sheet lifecycle')
+    text = text.replace(
+        old_lifecycle,
+        "  const { isVisible, isClosing, requestClose } = useOverlayLifecycle({\n"
+        "    open,\n"
+        "    closeDisabled,\n"
+        "    closeAnimationDuration: CLOSE_ANIMATION_DURATION,\n"
+        "    onClose,\n"
+        "    onAfterClose,\n"
+        "  });\n",
+        1,
+    )
+    focusable_marker = "  const getFocusableElements = useCallback(() => {\n"
+    if text.count(focusable_marker) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {text.count(focusable_marker)}: sheet callbacks')
+    text = text.replace(
+        focusable_marker,
+        "  const shouldRegisterOverlay = open || isVisible;\n\n"
+        "  useEffect(() => {\n"
+        "    if (!shouldRegisterOverlay) return;\n"
+        "    return registerOverlayLayer(titleId);\n"
+        "  }, [shouldRegisterOverlay, titleId]);\n\n"
+        + focusable_marker,
+        1,
+    )
+    start = text.find('  const startClose = useCallback(')
+    cleanup_start = text.find('  useEffect(() => {\n    return () => {', start)
+    end = text.find('  }, []);\n', cleanup_start)
+    if start == -1 or cleanup_start == -1 or end == -1:
+        raise RuntimeError(f'Pattern not found in {path}: sheet close lifecycle')
+    end += len('  }, []);\n')
+    if text[end:end + 1] == '\n':
+        end += 1
+    replacement = (
+        "  const handleClose = useCallback(() => {\n"
+        "    void requestClose(confirmClose);\n"
+        "  }, [confirmClose, requestClose]);\n\n"
+    )
+    text = text[:start] + replacement + text[end:]
+    text = text.replace(
+        "    const t = window.setTimeout(() => {\n",
+        "    if (!isVisible) return;\n"
+        "    const t = window.setTimeout(() => {\n"
+        "      if (!isTopOverlayLayer(titleId)) return;\n",
+        1,
+    )
+    text = text.replace(
+        "      (el) => !el.hasAttribute('disabled') && el.tabIndex !== -1\n",
+        "      (el) => !el.matches(':disabled') && el.tabIndex !== -1\n",
+        1,
+    )
+    text = text.replace(
+        "      (first ?? closeBtnRef.current ?? sheetRef.current)?.focus({ preventScroll: true });\n",
+        "      const fallback = closeBtnRef.current?.disabled ? sheetRef.current : closeBtnRef.current;\n"
+        "      (first ?? fallback ?? sheetRef.current)?.focus({ preventScroll: true });\n",
+        1,
+    )
+    text = text.replace(
+        "  }, [getFocusableElements, open]);\n",
+        "  }, [getFocusableElements, isVisible, open, titleId]);\n",
+        1,
+    )
+    text = text.replace(
+        "    const handleKey = (event: KeyboardEvent) => {\n",
+        "    const handleKey = (event: KeyboardEvent) => {\n"
+        "      if (!isTopOverlayLayer(titleId)) return;\n",
+        1,
+    )
+    text = text.replace(
+        "  }, [closeDisabled, getFocusableElements, handleClose, open]);\n",
+        "  }, [closeDisabled, getFocusableElements, handleClose, open, titleId]);\n",
+        1,
+    )
+    text = text.replace(
+        "        if (closeDisabled) return;\n"
+        "        if (e.target === e.currentTarget) handleClose();\n",
+        "        if (closeDisabled || !isTopOverlayLayer(titleId)) return;\n"
+        "        if (e.target === e.currentTarget) handleClose();\n",
+        1,
+    )
+    aria_pattern = re.compile(r'(?P<indent>\s+)role="dialog"\n(?P=indent)aria-modal="true"\n')
+    matches = list(aria_pattern.finditer(text))
+    if len(matches) != 1:
+        raise RuntimeError(f'Expected one pattern in {path}, found {len(matches)}: sheet aria state')
+    match = matches[0]
+    indent = match.group('indent')
+    text = text[:match.start()] + (
+        f"{indent}role={{open ? 'dialog' : undefined}}\n"
+        f"{indent}aria-modal={{open ? 'true' : undefined}}\n"
+        f"{indent}aria-hidden={{open ? undefined : true}}\n"
+        f"{indent}inert={{open ? undefined : true}}\n"
+    ) + text[match.end():]
+    text = text.replace(
+        '    previouslyFocusedRef.current?.focus();\n',
+        "    const previouslyFocused = previouslyFocusedRef.current;\n"
+        "    if (previouslyFocused?.isConnected) {\n"
+        "      previouslyFocused.focus({ preventScroll: true });\n"
+        "    }\n",
+        1,
+    )
+    write(path, text)
+
+
+def patch_confirmation_queue(target: Path) -> None:
+    store_path = target / 'src/stores/useNotificationStore.ts'
+    text = read(store_path)
+    if 'confirmationQueue:' not in text:
+        text = text.replace(
+            "interface ConfirmationOptions {\n",
+            "interface ConfirmationOptions {\n  dedupeKey?: string;\n",
+            1,
+        )
+        text = text.replace(
+            "  confirmation: {\n    isOpen: boolean;\n    isLoading: boolean;\n    options: ConfirmationOptions | null;\n  };\n",
+            "  confirmation: {\n"
+            "    id: string;\n"
+            "    isOpen: boolean;\n"
+            "    isLoading: boolean;\n"
+            "    options: ConfirmationOptions | null;\n"
+            "  };\n"
+            "  confirmationQueue: Array<{ id: string; options: ConfirmationOptions }>;\n",
+            1,
+        )
+        text = text.replace(
+            "  hideConfirmation: () => void;\n",
+            "  hideConfirmation: () => void;\n  advanceConfirmation: () => void;\n",
+            1,
+        )
+        text = text.replace(
+            "  showConfirmation: (options: ConfirmationOptions) => void;\n",
+            "  showConfirmation: (options: ConfirmationOptions) => boolean;\n",
+            1,
+        )
+        text = text.replace(
+            "  confirmation: {\n    isOpen: false,\n    isLoading: false,\n    options: null,\n  },\n",
+            "  confirmation: {\n"
+            "    id: '',\n"
+            "    isOpen: false,\n"
+            "    isLoading: false,\n"
+            "    options: null,\n"
+            "  },\n"
+            "  confirmationQueue: [],\n",
+            1,
+        )
+        start = text.find('  showConfirmation: (options) => {')
+        end = text.find('  setConfirmationLoading: (loading) => {', start)
+        if start == -1 or end == -1:
+            raise RuntimeError(f'Pattern not found in {store_path}: confirmation actions')
+        actions = (
+            "  showConfirmation: (options) => {\n"
+            "    let accepted = false;\n"
+            "    set((state) => {\n"
+            "      const dedupeKey = confirmationDedupeKey(options);\n"
+            "      const currentKey = state.confirmation.options\n"
+            "        ? confirmationDedupeKey(state.confirmation.options)\n"
+            "        : '';\n"
+            "      if (state.confirmation.id && currentKey === dedupeKey) return state;\n"
+            "      if (state.confirmationQueue.some((item) => confirmationDedupeKey(item.options) === dedupeKey)) return state;\n"
+            "      accepted = true;\n"
+            "      const item = { id: generateId(), options: { ...options, dedupeKey } };\n"
+            "      if (state.confirmation.id) {\n"
+            "        return { confirmationQueue: [...state.confirmationQueue, item] };\n"
+            "      }\n"
+            "      return {\n"
+            "        confirmation: { id: item.id, isOpen: true, isLoading: false, options: item.options },\n"
+            "      };\n"
+            "    });\n"
+            "    return accepted;\n"
+            "  },\n\n"
+            "  hideConfirmation: () => {\n"
+            "    set((state) => ({\n"
+            "      confirmation: { ...state.confirmation, isOpen: false, isLoading: false },\n"
+            "    }));\n"
+            "  },\n\n"
+            "  advanceConfirmation: () => {\n"
+            "    set((state) => {\n"
+            "      if (state.confirmation.isOpen) return state;\n"
+            "      const [next, ...remaining] = state.confirmationQueue;\n"
+            "      return {\n"
+            "        confirmation: next\n"
+            "          ? { id: next.id, isOpen: true, isLoading: false, options: next.options }\n"
+            "          : { id: '', isOpen: false, isLoading: false, options: null },\n"
+            "        confirmationQueue: remaining,\n"
+            "      };\n"
+            "    });\n"
+            "  },\n\n"
+        )
+        text = text[:start] + actions + text[end:]
+        helper_marker = "interface NotificationState {\n"
+        helper = (
+            "const confirmationDedupeKey = (confirmationOptions: ConfirmationOptions) =>\n"
+            "  confirmationOptions.dedupeKey\n"
+            "    ?? `${confirmationOptions.title ?? ''}|${confirmationOptions.confirmText ?? ''}|${confirmationOptions.cancelText ?? ''}|${\n"
+            "      typeof confirmationOptions.message === 'string' ? confirmationOptions.message : 'react-node'\n"
+            "    }`;\n\n"
+        )
+        if text.count(helper_marker) != 1:
+            raise RuntimeError(f'Expected one pattern in {store_path}: confirmation helper marker')
+        text = text.replace(helper_marker, helper + helper_marker, 1)
+        write(store_path, text)
+
+    modal_path = target / 'src/components/common/ConfirmationModal.tsx'
+    text = read(modal_path)
+    if 'const submittingRef = useRef(false);' not in text:
+        text = text.replace(
+            "import { useTranslation } from 'react-i18next';\n",
+            "import { useEffect, useRef } from 'react';\n"
+            "import { useTranslation } from 'react-i18next';\n",
+            1,
+        )
+        text = text.replace(
+            "  const setConfirmationLoading = useNotificationStore((state) => state.setConfirmationLoading);\n",
+            "  const setConfirmationLoading = useNotificationStore((state) => state.setConfirmationLoading);\n"
+            "  const advanceConfirmation = useNotificationStore((state) => state.advanceConfirmation);\n",
+            1,
+        )
+        text = text.replace(
+            "  const { isOpen, isLoading, options } = confirmation;\n",
+            "  const { id, isOpen, isLoading, options } = confirmation;\n"
+            "  const submittingRef = useRef(false);\n\n"
+            "  useEffect(() => {\n"
+            "    submittingRef.current = false;\n"
+            "  }, [id]);\n",
+            1,
+        )
+        text = text.replace(
+            "  if (!isOpen || !options) {\n    return null;\n  }\n",
+            "  if (!options) {\n    return null;\n  }\n",
+            1,
+        )
+        text = text.replace(
+            "  const handleConfirm = async () => {\n    try {\n",
+            "  const handleConfirm = async () => {\n"
+            "    if (submittingRef.current || isLoading) return;\n"
+            "    submittingRef.current = true;\n"
+            "    try {\n",
+            1,
+        )
+        text = text.replace(
+            "    } finally {\n      setConfirmationLoading(false);\n    }\n",
+            "    } finally {\n"
+            "      submittingRef.current = false;\n"
+            "      setConfirmationLoading(false);\n"
+            "    }\n",
+            1,
+        )
+        text = text.replace(
+            "    <Modal open={isOpen} onClose={handleCancel} title={title} closeDisabled={isLoading}>\n",
+            "    <Modal\n"
+            "      open={isOpen}\n"
+            "      onClose={handleCancel}\n"
+            "      onAfterClose={advanceConfirmation}\n"
+            "      title={title}\n"
+            "      closeDisabled={isLoading}\n"
+            "    >\n",
+            1,
+        )
+        write(modal_path, text)
 
 
 def patch_modal_scroll_lock(target: Path) -> None:
@@ -701,17 +1017,6 @@ def patch_modal_scroll_lock(target: Path) -> None:
     write(path, f'{text[:start]}{replacement}{text[end:]}')
 
 
-def patch_modal_content_scrollbar_layout(target: Path) -> None:
-    path = target / 'src/styles/global.scss'
-    text = read(path)
-    content_lock = "body.modal-open .content {\n  overflow: hidden;\n}\n\n"
-    if content_lock in text:
-        write(path, text.replace(content_lock, '', 1))
-        return
-    if 'body.modal-open .content' in text:
-        raise RuntimeError(f'Pattern not found in {path}: modal content scroll lock')
-
-
 def patch_api_client_connection_isolation(target: Path) -> None:
     client = target / 'src/services/api/client.ts'
     insert_once(
@@ -722,37 +1027,31 @@ def patch_api_client_connection_isolation(target: Path) -> None:
         "  private connectionAbortController = new AbortController();\n",
         "private connectionGeneration: number",
     )
-    replace_once_if_present(
-        client,
-        "    this.apiBase = computeApiUrl(config.apiBase);\n"
-        "    this.managementKey = config.managementKey;\n"
-        "\n"
-        "    if (config.timeout) {\n",
-        "    const nextApiBase = computeApiUrl(config.apiBase);\n"
-        "    const connectionChanged =\n"
-        "      this.apiBase !== nextApiBase || this.managementKey !== config.managementKey;\n"
-        "    this.apiBase = nextApiBase;\n"
-        "    this.managementKey = config.managementKey;\n"
-        "    if (connectionChanged) {\n"
-        "      this.connectionAbortController.abort();\n"
-        "      this.connectionAbortController = new AbortController();\n"
-        "      this.connectionGeneration += 1;\n"
-        "    }\n"
-        "\n"
-        "    if (config.timeout) {\n",
-    )
-    replace_once_if_present(
-        client,
-        "    if (connectionChanged) {\n"
-        "      this.runtimeKind = 'unknown';\n"
-        "    }\n",
-        "    if (connectionChanged) {\n"
-        "      this.connectionAbortController.abort();\n"
-        "      this.connectionAbortController = new AbortController();\n"
-        "      this.connectionGeneration += 1;\n"
-        "      this.runtimeKind = 'unknown';\n"
-        "    }\n",
-    )
+    text = read(client)
+    if 'this.connectionGeneration += 1;' not in text:
+        old = (
+            "    this.apiBase = computeApiUrl(config.apiBase);\n"
+            "    this.managementKey = config.managementKey;\n"
+            "\n"
+            "    if (config.timeout) {\n"
+        )
+        new = (
+            "    const nextApiBase = computeApiUrl(config.apiBase);\n"
+            "    const connectionChanged =\n"
+            "      this.apiBase !== nextApiBase || this.managementKey !== config.managementKey;\n"
+            "    this.apiBase = nextApiBase;\n"
+            "    this.managementKey = config.managementKey;\n"
+            "    if (connectionChanged) {\n"
+            "      this.connectionAbortController.abort();\n"
+            "      this.connectionAbortController = new AbortController();\n"
+            "      this.connectionGeneration += 1;\n"
+            "    }\n"
+            "\n"
+            "    if (config.timeout) {\n"
+        )
+        if text.count(old) != 1:
+            raise RuntimeError(f'Expected latest connection-change shape in {client}')
+        write(client, text.replace(old, new, 1))
     if 'this.connectionGeneration += 1;' not in read(client):
         raise RuntimeError(f'Pattern not found in {client}: connection change handling')
     insert_once(
@@ -873,94 +1172,6 @@ def patch_layout(target: Path) -> None:
         "            <ProBootstrap />\n            <PageTransition\n",
     )
 
-def patch_icons(target: Path) -> None:
-    path = target / 'src/components/ui/icons.tsx'
-    text = read(path)
-
-    if "baseSvgProps" in text:
-        svg_props = "baseSvgProps"
-    elif "sidebarSvgProps" in text:
-        svg_props = "sidebarSvgProps"
-    else:
-        raise RuntimeError(f'Pattern not found in {path}: svg props constant')
-
-    monitor_icon = (
-        "export function IconSidebarMonitor({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <path d=\"M3 12h3l2.2-4.5 4.2 9 2.4-5h6.2\" />\n"
-        "      <path d=\"M4 19h16\" />\n"
-        "      <path d=\"M4 5h16\" fill=\"currentColor\" fillOpacity=\"0.08\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    account_inspection_icon = (
-        "export function IconSidebarAccountInspection({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <rect x=\"5\" y=\"3\" width=\"11\" height=\"16\" rx=\"2\" />\n"
-        "      <path d=\"M9 7h3\" />\n"
-        "      <path d=\"m8.5 11 1.4 1.4 2.6-2.8\" />\n"
-        "      <circle cx=\"16.5\" cy=\"16.5\" r=\"3\" />\n"
-        "      <path d=\"m19 19 2 2\" />\n"
-        "      <path d=\"M8 3.5h5\" fill=\"currentColor\" fillOpacity=\"0.08\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    routing_icon = (
-        "export function IconSidebarRouting({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <circle cx=\"6\" cy=\"6\" r=\"2\" />\n"
-        "      <circle cx=\"18\" cy=\"6\" r=\"2\" />\n"
-        "      <circle cx=\"12\" cy=\"18\" r=\"2\" />\n"
-        "      <path d=\"M8 6h8\" />\n"
-        "      <path d=\"m7.5 7.5 3.2 7.2\" />\n"
-        "      <path d=\"m16.5 7.5-3.2 7.2\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    proxy_pool_icon = (
-        "export function IconSidebarProxyPool({ size = 20, ...props }: IconProps) {\n"
-        "  return (\n"
-        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
-        "      <circle cx=\"6\" cy=\"7\" r=\"2.5\" />\n"
-        "      <circle cx=\"18\" cy=\"7\" r=\"2.5\" />\n"
-        "      <circle cx=\"12\" cy=\"18\" r=\"2.5\" />\n"
-        "      <path d=\"M8.5 7h7\" />\n"
-        "      <path d=\"m7.4 9 3.2 6.6\" />\n"
-        "      <path d=\"m16.6 9-3.2 6.6\" />\n"
-        "      <path d=\"m12.5 4.5 2 2.5-2 2.5\" />\n"
-        "    </svg>\n"
-        "  );\n"
-        "}\n\n"
-    )
-    icons_to_insert = ""
-    if "export function IconSidebarMonitor" not in text:
-        icons_to_insert += monitor_icon
-    if "export function IconSidebarAccountInspection" not in text:
-        icons_to_insert += account_inspection_icon
-    if "export function IconSidebarRouting" not in text:
-        icons_to_insert += routing_icon
-    if "export function IconSidebarProxyPool" not in text:
-        icons_to_insert += proxy_pool_icon
-    if not icons_to_insert:
-        return
-    for marker in (
-        "export function IconSidebarLogs({ size = 20, ...props }: IconProps) {\n",
-        "export const IconSidebarLogs = ",
-        "export function IconSidebarSystem({ size = 20, ...props }: IconProps) {\n",
-    ):
-        if marker in text:
-            write(path, text.replace(marker, icons_to_insert + marker, 1))
-            return
-
-    write(path, text.rstrip() + "\n\n" + icons_to_insert)
-
-
 def patch_quota_store(target: Path) -> None:
     path = target / 'src/stores/useQuotaStore.ts'
     replace_once(
@@ -1005,6 +1216,89 @@ def patch_quota_constants(target: Path) -> None:
     )
 
 
+def patch_api_call_executor_contract(target: Path) -> None:
+    path = target / 'src/services/api/apiCall.ts'
+    replace_once(
+        path,
+        "  data?: string;\n}",
+        "  data?: string;\n  useExecutor?: boolean;\n  use_executor?: boolean;\n}",
+    )
+    replace_once(
+        path,
+        "export interface ApiCallResult<T = unknown> {\n  statusCode: number;\n",
+        "export interface ApiCallResult<T = unknown> {\n  statusCode: number;\n  hasStatusCode: boolean;\n",
+    )
+    replace_once(
+        path,
+        "    const statusCode = Number(response?.status_code ?? 0);\n"
+        "    const header = (response?.header ?? {}) as Record<string, string[]>;\n",
+        "    const rawStatusCode = response?.status_code ?? response?.statusCode;\n"
+        "    const hasStatusCode =\n"
+        "      rawStatusCode !== undefined &&\n"
+        "      rawStatusCode !== null &&\n"
+        "      String(rawStatusCode).trim() !== '';\n"
+        "    const statusCode = Number(rawStatusCode ?? 0);\n"
+        "    const header = (response?.header ?? response?.headers ?? {}) as Record<string, string[]>;\n",
+    )
+    replace_once(
+        path,
+        "    return {\n      statusCode,\n      header,\n",
+        "    return {\n      statusCode,\n      hasStatusCode,\n      header,\n",
+    )
+
+
+def patch_codex_account_id_resolver(target: Path) -> None:
+    path = target / 'src/utils/quota/resolvers.ts'
+    insert_once(
+        path,
+        'export function extractCodexChatgptAccountId(value: unknown): string | null {\n',
+        "const resolveAccountIdCandidate = (value: unknown): string | null => {\n"
+        "  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;\n"
+        "  const record = value as Record<string, unknown>;\n"
+        "  const candidates = [\n"
+        "    record.chatgpt_account_id,\n"
+        "    record.chatgptAccountId,\n"
+        "    record.account_id,\n"
+        "    record.accountId,\n"
+        "  ];\n"
+        "  for (const candidate of candidates) {\n"
+        "    const accountId = normalizeStringValue(candidate);\n"
+        "    if (accountId) return accountId;\n"
+        "  }\n"
+        "  return null;\n"
+        "};\n\n"
+        'export function extractCodexChatgptAccountId(value: unknown): string | null {\n',
+        'const resolveAccountIdCandidate',
+    )
+    replace_once(
+        path,
+        "export function extractCodexChatgptAccountId(value: unknown): string | null {\n"
+        "  const payload = parseIdTokenPayload(value);\n"
+        "  if (!payload) return null;\n"
+        "  return normalizeStringValue(payload.chatgpt_account_id ?? payload.chatgptAccountId);\n"
+        "}\n",
+        "export function extractCodexChatgptAccountId(value: unknown): string | null {\n"
+        "  const direct = resolveAccountIdCandidate(value);\n"
+        "  if (direct) return direct;\n\n"
+        "  const payload = parseIdTokenPayload(value);\n"
+        "  if (!payload) return null;\n"
+        "  return resolveAccountIdCandidate(payload);\n"
+        "}\n",
+    )
+    replace_once(
+        path,
+        "  const candidates = [file.id_token, metadata?.id_token, attributes?.id_token];\n",
+        "  const candidates = [\n"
+        "    file,\n"
+        "    metadata,\n"
+        "    attributes,\n"
+        "    file.id_token,\n"
+        "    metadata?.id_token,\n"
+        "    attributes?.id_token,\n"
+        "  ];\n",
+    )
+
+
 def patch_antigravity_quota_builders(target: Path) -> None:
     path = target / 'src/utils/quota/builders.ts'
     insert_once(
@@ -1030,24 +1324,9 @@ def patch_antigravity_quota_builders(target: Path) -> None:
     )
 
 
-def patch_account_inspection_page(target: Path) -> None:
-    path = target / 'src/pro/modules/inspection/AccountInspectionPage.tsx'
-    replace_once_if_present(
-        path,
-        "  const used = normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent);\n"
-        "  return used !== null && used >= usedPercentThreshold;\n",
-        "  const used =\n"
-        "    normalizeNumberValue(quota.billing.usagePercent ?? quota.billing.usage_percent)\n"
-        "    ?? normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent)\n"
-        "    ?? maxAntigravityGroupUsedPercent(Array.isArray(quota.billing.productUsage) ? quota.billing.productUsage : []);\n"
-        "  return used !== null && used >= usedPercentThreshold;\n",
-    )
-
-
 def patch_auth_files_runtime_state(target: Path) -> None:
     type_path = target / 'src/types/authFile.ts'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
-    page_path = auth_files_page_path(target)
 
     insert_once(
         type_path,
@@ -1056,32 +1335,7 @@ def patch_auth_files_runtime_state(target: Path) -> None:
         "selected?: unknown;",
     )
     card_text = read(card_path)
-    legacy_stats = (
-        "  const fileStats = {\n    success: normalizeUsageTotal(file.success),\n"
-        "    failure: normalizeUsageTotal(file.failed),\n  };\n"
-    )
-    if legacy_stats in card_text:
-        write(
-            card_path,
-            card_text.replace(
-                legacy_stats,
-                "  const fileStats = {\n    selected: normalizeUsageTotal(file.selected),\n"
-                "    success: normalizeUsageTotal(file.success),\n"
-                "    failure: normalizeUsageTotal(file.failed),\n  };\n",
-                1,
-            ),
-        )
-        insert_once(
-            card_path,
-            "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n",
-            "            <div className={`${styles.cardStats} ${compact ? styles.cardStatsCompact : ''}`}>\n"
-            "              <div className={styles.statPill}>\n"
-            "                <span className={styles.statLabel}>{t('auth_files.selected_count')}</span>\n"
-            "                <span className={styles.statValue}>{fileStats.selected}</span>\n"
-            "              </div>\n",
-            "t('auth_files.selected_count')",
-        )
-    elif 'const selectedCount =' not in card_text and 'const successCount = file.successCount ?? 0;' in card_text:
+    if 'const selectedCount =' not in card_text:
         write(
             card_path,
             card_text.replace(
@@ -1100,130 +1354,23 @@ def patch_auth_files_runtime_state(target: Path) -> None:
             "            </span>\n",
             "{t('auth_files.selected_count')} {selectedCount}",
         )
-    elif "t('auth_files.selected_count')" not in card_text:
-        raise RuntimeError(f'Pattern not found in {card_path}: auth runtime counters')
-
-    insert_once(
-        page_path,
-        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n",
-        "import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';\n"
-        "import { quotaPersistenceMiddleware } from '@/pro/modules/quota';\n",
-        "quotaPersistenceMiddleware } from '@/pro/modules/quota'",
-    )
-    text = read(page_path)
-    if 'quotaPersistenceMiddleware.ensureFresh()' not in text:
-        refresh_variants = (
-            "    await Promise.all([loadFiles(), loadExcluded(), loadModelAlias()]);\n",
-            "    await Promise.all([loadFiles({ background: true }), loadExcluded(), loadModelAlias()]);\n",
-        )
-        for refresh in refresh_variants:
-            if refresh in text:
-                replacement = refresh.replace(']);\n', ', quotaPersistenceMiddleware.ensureFresh()]);\n')
-                write(page_path, text.replace(refresh, replacement, 1))
-                break
-        else:
-            raise RuntimeError(f'Pattern not found in {page_path}: header refresh')
-
 
 def patch_account_usage_feature(target: Path) -> None:
-    icons_path = target / 'src/components/ui/icons.tsx'
     card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
     page_path = auth_files_page_path(target)
-    styles_path = auth_files_styles_path(target)
 
     insert_once(
-        icons_path,
-        'export function IconModelCluster({ size = 20, ...props }: IconProps) {\n',
-        '''export function IconChartColumnIncreasing({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...baseSvgProps} width={size} height={size} {...props}>
-      <path d="M3 3v18h18" />
-      <path d="M7 16v1" />
-      <path d="M11 12v5" />
-      <path d="M15 8v9" />
-      <path d="M19 4v13" />
-    </svg>
-  );
-}
-
-export function IconModelCluster({ size = 20, ...props }: IconProps) {
-''',
-        'export function IconChartColumnIncreasing',
-    )
-
-    replace_once(
         card_path,
-        '  IconDownload,\n  IconInfo,\n',
-        '  IconChartColumnIncreasing,\n  IconDownload,\n  IconInfo,\n',
-    )
-    replace_once(
-        card_path,
-        '  onShowModels: (file: AuthFileItem) => void;\n',
-        '  onShowModels: (file: AuthFileItem) => void;\n  onShowUsage: (file: AuthFileItem) => void;\n',
-    )
-    replace_once(
-        card_path,
-        '    onShowModels,\n    onDownload,\n',
-        '    onShowModels,\n    onShowUsage,\n    onDownload,\n',
+        "} from '@/components/ui/icons';\n",
+        "} from '@/components/ui/icons';\n"
+        "import {\n"
+        "  AuthFileConnectionActionExtension,\n"
+        "  AuthFileUsageActionExtension,\n"
+        "} from '@/pro/authFiles/AuthFileExtensions';\n",
+        "AuthFileUsageActionExtension,",
     )
     card_text = read(card_path)
-    legacy_usage_marker = '            </div>\n          </div>\n\n          <div className={`${styles.cardMeta}'
-    if "onClick={() => onShowUsage(file)}" not in card_text and legacy_usage_marker in card_text:
-        write(card_path, card_text.replace(legacy_usage_marker, '''            </div>
-            {authIndexKey && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => onShowUsage(file)}
-                className={styles.usageCornerButton}
-                title={t('account_usage.card_action')}
-                aria-label={t('account_usage.card_action')}
-                disabled={disableControls}
-              >
-                <IconChartColumnIncreasing className={styles.actionIcon} size={17} />
-              </Button>
-            )}
-          </div>
-
-          <div className={`${styles.cardMeta}''',
-        1))
-        insert_once(
-            styles_path,
-            '.modelsActionButton:global(.btn.btn-sm) {\n',
-            '''.usageCornerButton:global(.btn.btn-sm) {
-  flex: 0 0 auto;
-  align-self: flex-start;
-  width: 34px;
-  height: 34px;
-  min-width: 34px;
-  padding: 0;
-  background: color-mix(in srgb, #0f766e 9%, var(--bg-secondary));
-  border-color: color-mix(in srgb, #0f766e 22%, var(--border-color));
-  color: color-mix(in srgb, #0f766e 78%, var(--text-primary));
-}
-
-.usageCornerButton:global(.btn.btn-sm):hover {
-  background: color-mix(in srgb, #0f766e 14%, var(--bg-secondary));
-  border-color: color-mix(in srgb, #0f766e 38%, var(--border-color));
-}
-
-.usageCornerButton:global(.btn.btn-sm) > span {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.fileCardCompact .usageCornerButton:global(.btn.btn-sm) {
-  width: 30px;
-  height: 30px;
-  min-width: 30px;
-}
-
-.modelsActionButton:global(.btn.btn-sm) {
-''',
-            '.usageCornerButton:global(.btn.btn-sm)',
-        )
-    elif "onClick={() => onShowUsage(file)}" not in card_text:
+    if '<AuthFileUsageActionExtension' not in card_text:
         actions_marker = '        <div className={styles.actionsMain}>\n'
         if actions_marker not in card_text:
             raise RuntimeError(f'Pattern not found in {card_path}: auth file actions')
@@ -1232,13 +1379,7 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
             card_text.replace(
                 actions_marker,
                 actions_marker
-                + "          {authIndexKey && (\n"
-                + "            <Button variant=\"secondary\" size=\"sm\" onClick={() => onShowUsage(file)}\n"
-                + "              title={t('account_usage.card_action')} disabled={disableControls}>\n"
-                + "              <IconChartColumnIncreasing size={14} />\n"
-                + "              {t('account_usage.card_action')}\n"
-                + "            </Button>\n"
-                + "          )}\n",
+                + "          <AuthFileUsageActionExtension file={file} disabled={disableControls} />\n",
                 1,
             ),
         )
@@ -1247,205 +1388,95 @@ export function IconModelCluster({ size = 20, ...props }: IconProps) {
         page_path,
         "import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';\n",
         "import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';\n"
-        "import { AccountUsageModal } from '@/pro/modules/monitoring';\n",
-        "AccountUsageModal } from '@/pro/modules/monitoring'",
+        "import { AuthFileSurfaceExtensions } from '@/pro/authFiles/AuthFileExtensions';\n",
+        "AuthFileSurfaceExtensions } from '@/pro/authFiles/AuthFileExtensions'",
     )
-    insert_once(
-        page_path,
-        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
-        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n"
-        "import type { AuthFileItem } from '@/types';\n",
-        "import type { AuthFileItem } from '@/types';",
-    )
-    page_text = read(page_path)
-    if 'const [accountUsageFile, setAccountUsageFile]' not in page_text:
-        state_markers = (
-            "  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);\n",
-            "  const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');\n",
-        )
-        for marker in state_markers:
-            if marker in page_text:
-                write(
-                    page_path,
-                    page_text.replace(
-                        marker,
-                        marker
-                        + "  const [accountUsageFile, setAccountUsageFile] = useState<AuthFileItem | null>(null);\n",
-                        1,
-                    ),
-                )
-                break
-        else:
-            raise RuntimeError(f'Pattern not found in {page_path}: account usage state')
-    page_text = read(page_path)
-    if 'onShowUsage={setAccountUsageFile}' not in page_text:
-        for indent in ('                  ', '                '):
-            marker = f'{indent}onShowModels={{showModels}}\n{indent}onDownload={{handleDownload}}\n'
-            if marker in page_text:
-                write(
-                    page_path,
-                    page_text.replace(
-                        marker,
-                        f'{indent}onShowModels={{showModels}}\n'
-                        f'{indent}onShowUsage={{setAccountUsageFile}}\n'
-                        f'{indent}onDownload={{handleDownload}}\n',
-                        1,
-                    ),
-                )
-                break
-        else:
-            raise RuntimeError(f'Pattern not found in {page_path}: auth card usage callback')
     insert_once(
         page_path,
         "      <AuthFileModelsModal\n",
-        "      <AccountUsageModal file={accountUsageFile} onClose={() => setAccountUsageFile(null)} />\n\n"
+        "      <AuthFileSurfaceExtensions />\n\n"
         "      <AuthFileModelsModal\n",
-        '<AccountUsageModal file={accountUsageFile}',
+        '<AuthFileSurfaceExtensions />',
+    )
+
+def patch_auth_file_connection_test(target: Path) -> None:
+    api_path = target / 'src/services/api/authFiles.ts'
+    card_path = target / 'src/features/authFiles/components/AuthFileCard.tsx'
+
+    insert_once(
+        api_path,
+        "type AuthFileStatusResponse = { status: string; disabled: boolean };\n",
+        "type AuthFileStatusResponse = { status: string; disabled: boolean };\n"
+        "export type AuthFileConnectionTestResponse = {\n"
+        "  success: boolean;\n"
+        "  model?: string;\n"
+        "  latency_ms: number;\n"
+        "  output?: string;\n"
+        "  error?: string;\n"
+        "  error_code?: string;\n"
+        "  http_status?: number;\n"
+        "};\n"
+        "export type AuthFileConnectionTestRequest = {\n"
+        "  name: string;\n"
+        "  auth_index?: string;\n"
+        "  model: string;\n"
+        "};\n",
+        'export type AuthFileConnectionTestResponse',
+    )
+    insert_once(
+        api_path,
+        "  uploadFiles: async (files: File[]): Promise<AuthFileBatchUploadResult> => {\n",
+        "  testConnection: (payload: AuthFileConnectionTestRequest, signal?: AbortSignal) =>\n"
+        "    apiClient.post<AuthFileConnectionTestResponse>('/auth-files/test', payload, { signal }),\n\n"
+        "  uploadFiles: async (files: File[]): Promise<AuthFileBatchUploadResult> => {\n",
+        "testConnection: (payload: AuthFileConnectionTestRequest, signal?: AbortSignal)",
+    )
+
+    replace_once(
+        api_path,
+        "  async getModelsForAuthFile(\n"
+        "    name: string\n"
+        "  ): Promise<{ id: string; display_name?: string; type?: string; owned_by?: string }[]> {\n"
+        "    const data = await apiClient.get<Record<string, unknown>>(\n"
+        "      `/auth-files/models?name=${encodeURIComponent(name)}`\n"
+        "    );\n",
+        "  async getModelsForAuthFile(\n"
+        "    name: string,\n"
+        "    authIndex?: string\n"
+        "  ): Promise<{ id: string; display_name?: string; type?: string; owned_by?: string }[]> {\n"
+        "    const normalizedAuthIndex = authIndex?.trim();\n"
+        "    const authIndexQuery = normalizedAuthIndex\n"
+        "      ? `&auth_index=${encodeURIComponent(normalizedAuthIndex)}`\n"
+        "      : '';\n"
+        "    const data = await apiClient.get<Record<string, unknown>>(\n"
+        "      `/auth-files/models?name=${encodeURIComponent(name)}${authIndexQuery}`\n"
+        "    );\n",
     )
 
     insert_once(
-        page_path,
-        "  const existingTypes = useMemo(() => {\n",
-        "  useEffect(() => {\n"
-        "    if (!isCurrentLayer) return;\n"
-        "    void quotaPersistenceMiddleware.ensureFresh();\n"
-        "  }, [files, isCurrentLayer]);\n\n"
-        "  const existingTypes = useMemo(() => {\n",
-        "}, [files, isCurrentLayer]);",
-    )
-
-
-def patch_runtime_detection(target: Path) -> None:
-    version_path = target / 'src/services/api/version.ts'
-    if "apiClient.get('/nodes')" not in read(version_path):
-        return
-
-    client_path = target / 'src/services/api/client.ts'
-    insert_once(
-        client_path,
-        "  private managementKey: string = '';\n",
-        "  private managementKey: string = '';\n  private runtimeKind: ServerRuntimeKind = 'unknown';\n",
-        "private runtimeKind: ServerRuntimeKind",
-    )
-    replace_once(
-        client_path,
-        "    this.apiBase = computeApiUrl(config.apiBase);\n"
-        "    this.managementKey = config.managementKey;\n"
-        "\n"
-        "    if (config.timeout) {\n",
-        "    const nextApiBase = computeApiUrl(config.apiBase);\n"
-        "    const connectionChanged =\n"
-        "      this.apiBase !== nextApiBase || this.managementKey !== config.managementKey;\n"
-        "    this.apiBase = nextApiBase;\n"
-        "    this.managementKey = config.managementKey;\n"
-        "    if (connectionChanged) {\n"
-        "      this.runtimeKind = 'unknown';\n"
-        "    }\n"
-        "\n"
-        "    if (config.timeout) {\n",
-    )
-    insert_once(
-        client_path,
-        "  private readHeader(headers: Record<string, unknown> | undefined, keys: string[]): string | null {\n",
-        "  getRuntimeKind(): ServerRuntimeKind {\n"
-        "    return this.runtimeKind;\n"
-        "  }\n"
-        "\n"
-        "  private readHeader(headers: Record<string, unknown> | undefined, keys: string[]): string | null {\n",
-        "getRuntimeKind(): ServerRuntimeKind",
-    )
-    replace_once(
-        client_path,
-        "        const runtimeKind: ServerRuntimeKind | null =\n"
-        "          homeVersion || homeBuildDate ? 'home' : cpaVersion || cpaBuildDate ? 'cpa' : null;\n"
-        "\n"
-        "        // 触发版本更新事件（后续通过 store 处理）\n",
-        "        const runtimeKind: ServerRuntimeKind | null =\n"
-        "          homeVersion || homeBuildDate ? 'home' : cpaVersion || cpaBuildDate ? 'cpa' : null;\n"
-        "        if (runtimeKind) {\n"
-        "          this.runtimeKind = runtimeKind;\n"
-        "        }\n"
-        "\n"
-        "        // 触发版本更新事件（后续通过 store 处理）\n",
-    )
-
-    replace_all(
-        version_path,
-        "import { isRecord } from '@/utils/helpers';\n",
-        "",
-    )
-    replace_once(
-        version_path,
-        "  async detectRuntimeKind(): Promise<ServerRuntimeKind> {\n"
-        "    try {\n"
-        "      const data = await apiClient.get('/nodes');\n"
-        "      return isRecord(data) && Array.isArray(data.nodes) ? 'home' : 'unknown';\n"
-        "    } catch (error: unknown) {\n"
-        "      const status = isRecord(error) ? error.status : undefined;\n"
-        "      if (status === 404 || status === 405) {\n"
-        "        return 'cpa';\n"
-        "      }\n"
-        "      return 'unknown';\n"
-        "    }\n"
-        "  },\n",
-        "  async detectRuntimeKind(): Promise<ServerRuntimeKind> {\n"
-        "    const runtimeKind = apiClient.getRuntimeKind();\n"
-        "    return runtimeKind === 'unknown' ? 'cpa' : runtimeKind;\n"
-        "  },\n",
+        card_path,
+        "              {showManualRefreshButton && (\n",
+        "              <AuthFileConnectionActionExtension\n"
+        "                file={file}\n"
+        "                disabled={\n"
+        "                  disableControls ||\n"
+        "                  statusUpdating[file.name] === true ||\n"
+        "                  isManualRefreshing\n"
+        "                }\n"
+        "              />\n"
+        "              {showManualRefreshButton && (\n",
+        '<AuthFileConnectionActionExtension',
     )
 
 
 def patch_management_update_check(target: Path) -> None:
-    version_path = target / 'src/services/api/version.ts'
-    insert_once(
-        version_path,
-        "  checkLatest: () => apiClient.get<Record<string, unknown>>('/latest-version'),\n",
-        "  checkLatest: () => apiClient.get<Record<string, unknown>>('/latest-version'),\n"
-        "  checkManagementPanelUpdate: () =>\n"
-        "    apiClient.post<{ status: string; updated: boolean; sha256: string }>(\n"
-        "      '/management-panel/check-update'\n"
-        "    ),\n",
-        'checkManagementPanelUpdate:',
-    )
-
     page_path = target / 'src/pages/SystemPage.tsx'
     insert_once(
         page_path,
-        "  const [checkingVersion, setCheckingVersion] = useState(false);\n",
-        "  const [checkingVersion, setCheckingVersion] = useState(false);\n"
-        "  const [checkingManagementUpdate, setCheckingManagementUpdate] = useState(false);\n",
-        'const [checkingManagementUpdate, setCheckingManagementUpdate]',
-    )
-    insert_once(
-        page_path,
-        "  useEffect(() => {\n    fetchConfig().catch(() => {\n",
-        "  const handleManagementUpdateCheck = useCallback(async () => {\n"
-        "    setCheckingManagementUpdate(true);\n"
-        "    try {\n"
-        "      const result = await versionApi.checkManagementPanelUpdate();\n"
-        "      if (result.updated) {\n"
-        "        showNotification(t('system_info.management_check_update_updated'), 'success');\n"
-        "        window.setTimeout(() => {\n"
-        "          const nextUrl = new URL(window.location.href);\n"
-        "          nextUrl.searchParams.set('_management_updated', Date.now().toString());\n"
-        "          window.location.replace(nextUrl.toString());\n"
-        "        }, 500);\n"
-        "      } else {\n"
-        "        showNotification(t('system_info.management_check_update_unchanged'), 'success');\n"
-        "      }\n"
-        "    } catch (error: unknown) {\n"
-        "      const message =\n"
-        "        error instanceof Error ? error.message : typeof error === 'string' ? error : '';\n"
-        "      showNotification(\n"
-        "        `${t('system_info.management_check_update_error')}${message ? `: ${message}` : ''}`,\n"
-        "        'error'\n"
-        "      );\n"
-        "    } finally {\n"
-        "      setCheckingManagementUpdate(false);\n"
-        "    }\n"
-        "  }, [showNotification, t]);\n\n"
-        "  useEffect(() => {\n    fetchConfig().catch(() => {\n",
-        'const handleManagementUpdateCheck = useCallback',
+        "import { configApi, versionApi } from '@/services/api';\n",
+        "import { configApi, versionApi } from '@/services/api';\n"
+        "import { ManagementVersionTileExtension } from '@/pro/system/ManagementVersionTileExtension';\n",
+        "ManagementVersionTileExtension } from '@/pro/system/ManagementVersionTileExtension'",
     )
     replace_once(
         page_path,
@@ -1459,51 +1490,14 @@ def patch_management_update_check(target: Path) -> None:
         "              </div>\n"
         "              <div className={styles.tileValue}>{appVersion}</div>\n"
         "            </button>\n",
-        "            <div\n"
-        "              className={`${styles.infoTile} ${styles.tapTile}`}\n"
-        "              onClick={handleInfoVersionTap}\n"
-        "            >\n"
-        "              <div className={styles.tileHeader}>\n"
-        "                <div className={styles.tileLabel}>{t('footer.version')}</div>\n"
-        "                <Button\n"
-        "                  type=\"button\"\n"
-        "                  variant=\"ghost\"\n"
-        "                  size=\"sm\"\n"
-        "                  className={styles.tileAction}\n"
-        "                  onClick={(event) => {\n"
-        "                    event.stopPropagation();\n"
-        "                    void handleManagementUpdateCheck();\n"
-        "                  }}\n"
-        "                  loading={checkingManagementUpdate}\n"
-        "                  title={t('system_info.management_check_update_button')}\n"
-        "                  aria-label={t('system_info.management_check_update_button')}\n"
-        "                >\n"
-        "                  {t('system_info.management_check_update_button')}\n"
-        "                </Button>\n"
-        "              </div>\n"
-        "              <div className={styles.tileValue}>{appVersion}</div>\n"
-        "            </div>\n",
+        "            <ManagementVersionTileExtension\n"
+        "              appVersion={appVersion}\n"
+        "              onVersionTap={handleInfoVersionTap}\n"
+        "            />\n",
     )
 
 
 def patch_supporting_api_and_types(target: Path) -> None:
-    config_path = target / 'src/types/config.ts'
-    replace_once(
-        config_path,
-        "export interface Config {\n  debug?: boolean;\n",
-        "export interface AuthPoolCleanConfig {\n  baseUrl?: string;\n  token?: string;\n  targetType?: string;\n  workers?: number;\n  deleteWorkers?: number;\n  timeout?: number;\n  retries?: number;\n  usedPercentThreshold?: number;\n  sampleSize?: number;\n}\n\nexport interface Config {\n  debug?: boolean;\n",
-    )
-    replace_once(
-        config_path,
-        "  quotaExceeded?: QuotaExceededConfig;\n  requestLog?: boolean;\n",
-        "  quotaExceeded?: QuotaExceededConfig;\n  clean?: AuthPoolCleanConfig;\n  usageStatisticsEnabled?: boolean;\n  requestLog?: boolean;\n",
-    )
-    replace_once(
-        config_path,
-        "  | 'quota-exceeded'\n  | 'request-log'\n",
-        "  | 'quota-exceeded'\n  | 'usage-statistics-enabled'\n  | 'request-log'\n",
-    )
-
     auth_file_type_path = target / 'src/types/authFile.ts'
     replace_once(
         auth_file_type_path,
@@ -1524,51 +1518,27 @@ def patch_supporting_api_and_types(target: Path) -> None:
     )
 
     auth_files_path = target / 'src/services/api/authFiles.ts'
-    auth_files_normalizer = (
-        'normalizeAuthFilesResponse'
-        if 'normalizeAuthFilesResponse' in read(auth_files_path)
-        else 'dedupeAuthFilesResponse'
-    )
-    replace_once(
-        auth_files_path,
-        "type AuthFileStatusResponse = { status: string; disabled: boolean };\n",
-        "type AuthFileStatusResponse = { status: string; disabled: boolean };\ntype AuthFilePatchPayload = { name: string; disabled?: boolean; [key: string]: unknown };\n",
-    )
     insert_once(
         auth_files_path,
         "export const authFilesApi = {\n",
-        "const AUTH_FILES_LIST_CACHE_TTL_MS = 2000;\nlet authFilesListCache: { expiresAt: number; response: AuthFilesResponse } | null = null;\nlet authFilesListRequest: Promise<AuthFilesResponse> | null = null;\nlet authFilesListVersion = 0;\n\nconst cloneAuthFilesResponse = (response: AuthFilesResponse): AuthFilesResponse => ({\n  ...response,\n  files: Array.isArray(response.files) ? [...response.files] : [],\n});\n\nconst invalidateAuthFilesListCache = () => {\n  authFilesListVersion += 1;\n  authFilesListCache = null;\n  authFilesListRequest = null;\n};\n\nconst fetchAuthFilesList = async (): Promise<AuthFilesResponse> => {\n  const now = Date.now();\n  if (authFilesListCache && authFilesListCache.expiresAt > now) {\n    return cloneAuthFilesResponse(authFilesListCache.response);\n  }\n  if (!authFilesListRequest) {\n    const requestVersion = authFilesListVersion;\n    authFilesListRequest = apiClient.get<AuthFilesResponse>('/auth-files')\n      .then(dedupeAuthFilesResponse)\n      .then((response) => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListCache = {\n            expiresAt: Date.now() + AUTH_FILES_LIST_CACHE_TTL_MS,\n            response: cloneAuthFilesResponse(response),\n          };\n        }\n        return response;\n      })\n      .finally(() => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListRequest = null;\n        }\n      });\n  }\n  return cloneAuthFilesResponse(await authFilesListRequest);\n};\n\nexport const authFilesApi = {\n",
+        "const AUTH_FILES_LIST_CACHE_TTL_MS = 2000;\nlet authFilesListCache: { expiresAt: number; response: AuthFilesResponse } | null = null;\nlet authFilesListRequest: Promise<AuthFilesResponse> | null = null;\nlet authFilesListVersion = 0;\n\nconst cloneAuthFilesResponse = (response: AuthFilesResponse): AuthFilesResponse => ({\n  ...response,\n  files: Array.isArray(response.files) ? [...response.files] : [],\n});\n\nconst invalidateAuthFilesListCache = () => {\n  authFilesListVersion += 1;\n  authFilesListCache = null;\n  authFilesListRequest = null;\n};\n\nconst fetchAuthFilesList = async (): Promise<AuthFilesResponse> => {\n  const now = Date.now();\n  if (authFilesListCache && authFilesListCache.expiresAt > now) {\n    return cloneAuthFilesResponse(authFilesListCache.response);\n  }\n  if (!authFilesListRequest) {\n    const requestVersion = authFilesListVersion;\n    authFilesListRequest = apiClient.get<AuthFilesResponse>('/auth-files')\n      .then(normalizeAuthFilesResponse)\n      .then((response) => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListCache = {\n            expiresAt: Date.now() + AUTH_FILES_LIST_CACHE_TTL_MS,\n            response: cloneAuthFilesResponse(response),\n          };\n        }\n        return response;\n      })\n      .finally(() => {\n        if (requestVersion === authFilesListVersion) {\n          authFilesListRequest = null;\n        }\n      });\n  }\n  return cloneAuthFilesResponse(await authFilesListRequest);\n};\n\nexport const authFilesApi = {\n",
         "AUTH_FILES_LIST_CACHE_TTL_MS",
     )
-    replace_once_if_present(
-        auth_files_path,
-        '      .then(dedupeAuthFilesResponse)\n',
-        f'      .then({auth_files_normalizer})\n',
+    list_replacement = (
+        "  list: fetchAuthFilesList,\n\n  setStatus: async (name: string, disabled: boolean) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n"
     )
-    text = read(auth_files_path)
-    list_variants = (
-        "  list: async () => dedupeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),\n\n"
-        "  setStatus: (name: string, disabled: boolean) =>\n"
-        "    apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),\n\n",
+    replace_once(
+        auth_files_path,
         "  list: async () =>\n"
         "    normalizeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),\n\n"
         "  setStatus: (name: string, disabled: boolean) =>\n"
         "    apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),\n\n",
+        list_replacement,
     )
-    list_replacement = (
-        "  list: fetchAuthFilesList,\n\n  patchFile: async (payload: AuthFilePatchPayload) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files', payload);\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n  setStatus: async (name: string, disabled: boolean) => {\n    const response = await apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n"
-    )
-    if '  list: fetchAuthFilesList,\n' not in text:
-        for list_variant in list_variants:
-            if list_variant in text:
-                write(auth_files_path, text.replace(list_variant, list_replacement, 1))
-                break
-        else:
-            raise RuntimeError(f'Pattern not found in {auth_files_path}: auth files list method')
     replace_once(
         auth_files_path,
         "  patchFields: (name: string, fields: AuthFileFieldsPatch) =>\n    apiClient.patch('/auth-files/fields', { name, ...fields }),\n\n",
-        "  setStatusWithFallback: async (name: string, disabled: boolean) => {\n    try {\n      return await authFilesApi.patchFile({ name, disabled });\n    } catch {\n      return authFilesApi.setStatus(name, disabled);\n    }\n  },\n\n  patchFields: async (name: string, fields: AuthFileFieldsPatch) => {\n    const response = await apiClient.patch('/auth-files/fields', { name, ...fields });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n",
+        "  patchFields: async (name: string, fields: AuthFileFieldsPatch) => {\n    const response = await apiClient.patch('/auth-files/fields', { name, ...fields });\n    invalidateAuthFilesListCache();\n    return response;\n  },\n\n",
     )
     replace_once(
         auth_files_path,
@@ -1609,65 +1579,40 @@ def patch_supporting_api_and_types(target: Path) -> None:
         )
     if 'dropdownClassName].filter(Boolean).join' not in read(select_path):
         text = read(select_path)
-        dropdown_class_replacements = [
-            (
-                "            className={styles.dropdown}\n",
-                "            className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n",
-            ),
-            (
-                "        className={styles.dropdown}\n",
-                "        className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n",
-            ),
-        ]
-        for old, new in dropdown_class_replacements:
-            if old in text:
-                write(select_path, text.replace(old, new, 1))
-                break
-        else:
-            raise RuntimeError(f'Pattern not found in {select_path}: Select dropdown className')
+        old = "        className={styles.dropdown}\n"
+        new = "        className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n"
+        if text.count(old) != 1:
+            raise RuntimeError(f'Latest upstream Select dropdown className not found in {select_path}')
+        write(select_path, text.replace(old, new, 1))
     if 'triggerClassName].filter(Boolean).join' not in read(select_path):
         text = read(select_path)
-        old_simple = "          className={styles.trigger}\n"
-        old_sized = "          className={`${styles.trigger} ${size === 'sm' ? styles.triggerSm : ''}`.trim()}\n"
-        if old_simple in text:
-            write(
-                select_path,
-                text.replace(
-                    old_simple,
-                    "          className={[styles.trigger, triggerClassName].filter(Boolean).join(' ')}\n",
-                    1,
-                ),
-            )
-        elif old_sized in text:
-            write(
-                select_path,
-                text.replace(
-                    old_sized,
-                    "          className={[styles.trigger, size === 'sm' ? styles.triggerSm : '', triggerClassName].filter(Boolean).join(' ')}\n",
-                    1,
-                ),
-            )
-        else:
-            raise RuntimeError(f'Pattern not found in {select_path}: Select trigger className')
+        old = "          className={`${styles.trigger} ${size === 'sm' ? styles.triggerSm : ''}`.trim()}\n"
+        new = "          className={[styles.trigger, size === 'sm' ? styles.triggerSm : '', triggerClassName].filter(Boolean).join(' ')}\n"
+        if text.count(old) != 1:
+            raise RuntimeError(f'Latest upstream Select trigger className not found in {select_path}')
+        write(select_path, text.replace(old, new, 1))
 
 
 def patch_locales(target: Path) -> None:
     monitoring = json.loads(LOCALES_FILE.read_text())
-    locales_dir = target / 'src/i18n/locales'
-    for locale_path in sorted(locales_dir.glob('*.json')):
-        data = json.loads(read(locale_path))
-        additions = monitoring.get(locale_path.name, {})
-        data.setdefault('nav', {}).update(additions.get('nav', {}))
+    generated = {}
+    for locale_name in ('en.json', 'ru.json', 'zh-CN.json', 'zh-TW.json'):
+        additions = json.loads(json.dumps(monitoring.get(locale_name, {})))
+        data = additions
         proxy_pool_nav = PROXY_POOL_NAV_LOCALE_KEYS.get(
-            locale_path.name,
+            locale_name,
             PROXY_POOL_NAV_LOCALE_KEYS['en.json'],
         )
         data.setdefault('nav', {})['proxy_pool'] = proxy_pool_nav['label']
-        oauth_model_policy_nav = OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS.get(
-            locale_path.name,
-            OAUTH_MODEL_POLICY_NAV_LOCALE_KEYS['en.json'],
+        oauth_policy_nav = OAUTH_POLICY_NAV_LOCALE_KEYS.get(
+            locale_name,
+            OAUTH_POLICY_NAV_LOCALE_KEYS['en.json'],
         )
-        data.setdefault('nav', {})['oauth_model_policy'] = oauth_model_policy_nav['label']
+        data.setdefault('nav', {})['oauth_policy'] = oauth_policy_nav['label']
+        data.setdefault('nav_meta', {}).setdefault(
+            'data_management',
+            'Pro data storage, backup, restore, retention, and maintenance',
+        )
         data.setdefault('nav_groups', {})['pro'] = 'PRO'
         nav_additions = additions.get('nav', {})
         data.setdefault('nav_meta', {}).update(
@@ -1676,90 +1621,70 @@ def patch_locales(target: Path) -> None:
                 {
                     'monitoring_center': nav_additions.get('monitoring_center', 'Request Monitoring'),
                     'account_inspection': nav_additions.get('account_inspection', 'Account Inspection'),
-                    'routing_policy': nav_additions.get('routing_policy', 'Routing Policy'),
+                    'routing_policy': nav_additions.get('routing_policy', 'Scheduling Policy'),
                 },
             )
         )
         data.setdefault('nav_meta', {})['proxy_pool'] = proxy_pool_nav['meta']
-        data.setdefault('nav_meta', {})['oauth_model_policy'] = oauth_model_policy_nav['meta']
-        data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
-        data['account_usage'] = additions.get('account_usage', data.get('account_usage', {}))
-        data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
-        data['routing_policy'] = additions.get('routing_policy', data.get('routing_policy', {}))
-        data['proxy_pool'] = additions.get(
-            'proxy_pool',
-            monitoring.get('en.json', {}).get('proxy_pool', data.get('proxy_pool', {})),
+        data.setdefault('nav_meta', {})['oauth_policy'] = oauth_policy_nav['meta']
+        proxy_pool = json.loads(
+            json.dumps(monitoring.get('en.json', {}).get('proxy_pool', {}))
         )
-        data['oauth_model_policy'] = additions.get(
-            'oauth_model_policy',
-            monitoring.get('en.json', {}).get(
-                'oauth_model_policy',
-                data.get('oauth_model_policy', {}),
-            ),
+        proxy_pool.update(additions.get('proxy_pool', {}))
+        data['proxy_pool'] = proxy_pool
+        pro_feature_header = json.loads(
+            json.dumps(monitoring.get('en.json', {}).get('pro_feature_header', {}))
         )
-        data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
-        gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(locale_path.name, GEMINI_CLI_LOCALE_KEYS['en.json'])
+        pro_feature_header.update(additions.get('pro_feature_header', {}))
+        data['pro_feature_header'] = pro_feature_header
+        oauth_policy = json.loads(
+            json.dumps(monitoring.get('en.json', {}).get('oauth_policy', {}))
+        )
+        oauth_policy.update(additions.get('oauth_policy', {}))
+        data['oauth_policy'] = oauth_policy
+        data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_name, {}))
+        gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(
+            locale_name,
+            GEMINI_CLI_LOCALE_KEYS['en.json'],
+        )
         data.setdefault('auth_files', {})['filter_gemini-cli'] = gemini_cli_locale['auth_filter']
         data.setdefault('auth_files', {})['search_placeholder'] = AUTH_FILES_SEARCH_PLACEHOLDER_KEYS.get(
-            locale_path.name,
+            locale_name,
             AUTH_FILES_SEARCH_PLACEHOLDER_KEYS['en.json'],
         )
         data.setdefault('auth_files', {})['sort_plan_desc'] = AUTH_FILES_PLAN_SORT_LABEL_KEYS.get(
-            locale_path.name,
+            locale_name,
             AUTH_FILES_PLAN_SORT_LABEL_KEYS['en.json'],
         )
         data.setdefault('auth_files', {})['sort_quota_desc'] = AUTH_FILES_QUOTA_SORT_LABEL_KEYS.get(
-            locale_path.name,
+            locale_name,
             AUTH_FILES_QUOTA_SORT_LABEL_KEYS['en.json'],
         )
         data.setdefault('auth_files', {})['selected_count'] = AUTH_FILES_SELECTED_COUNT_LABEL_KEYS.get(
-            locale_path.name,
+            locale_name,
             AUTH_FILES_SELECTED_COUNT_LABEL_KEYS['en.json'],
         )
         data.setdefault('auth_files', {}).update(
-            AUTH_FILES_BATCH_LOCALE_KEYS.get(
-                locale_path.name,
-                AUTH_FILES_BATCH_LOCALE_KEYS['en.json'],
-            )
-        )
-        data.setdefault('quota_management', {}).update(
-            QUOTA_DELETE_LOCALE_KEYS.get(
-                locale_path.name,
-                QUOTA_DELETE_LOCALE_KEYS['en.json'],
+            AUTH_FILE_CONNECTION_TEST_LOCALE_KEYS.get(
+                locale_name,
+                AUTH_FILE_CONNECTION_TEST_LOCALE_KEYS['en.json'],
             )
         )
         data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
         data.setdefault('xai_quota', {}).update(
-            XAI_QUOTA_LOCALE_KEYS.get(locale_path.name, XAI_QUOTA_LOCALE_KEYS['en.json'])
+            XAI_QUOTA_LOCALE_KEYS.get(locale_name, XAI_QUOTA_LOCALE_KEYS['en.json'])
         )
         data.setdefault('system_info', {}).update(
             MANAGEMENT_UPDATE_LOCALE_KEYS.get(
-                locale_path.name,
+                locale_name,
                 MANAGEMENT_UPDATE_LOCALE_KEYS['en.json'],
             )
         )
-        cloak_locale = CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS.get(
-            locale_path.name,
-            CLAUDE_MODEL_ID_CLOAK_LOCALE_KEYS['en.json'],
-        )
-        advanced_locale = (
-            data.setdefault('config_management', {})
-            .setdefault('visual', {})
-            .setdefault('sections', {})
-            .setdefault('advanced', {})
-        )
-        advanced_locale.update(
-            {
-                'claude_model_id_cloak_title': cloak_locale['title'],
-                'claude_model_id_cloak_description': cloak_locale['description'],
-                'claude_model_id_cloak_label': cloak_locale['label'],
-                'claude_model_id_cloak_hint': cloak_locale['hint'],
-                'claude_model_id_cloak_auto': cloak_locale['auto'],
-                'claude_model_id_cloak_always': cloak_locale['always'],
-                'claude_model_id_cloak_never': cloak_locale['never'],
-            }
-        )
-        write(locale_path, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+        generated[locale_name.removesuffix('.json')] = data
+    write(
+        target / 'src/pro/locales.generated.json',
+        json.dumps(generated, ensure_ascii=False, indent=2) + '\n',
+    )
 
 
 def _ensure_interface_field(path: Path, interface_name: str, field: str) -> None:
@@ -1787,7 +1712,7 @@ def patch_quota_types_latest(target: Path) -> None:
     insert_once(
         path,
         'export interface CodexQuotaWindow',
-        "export interface GeminiCliQuotaBucketState {\n  id: string;\n  label: string;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n  tokenType: string | null;\n  modelIds?: string[];\n  resetAtMs?: number | null;\n  periodHours?: number | null;\n}\n\nexport interface GeminiCliQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  buckets: GeminiCliQuotaBucketState[];\n  projectId?: string;\n  project_id?: string;\n  tierLabel?: string | null;\n  tierId?: string | null;\n  creditBalance?: number | null;\n  quotaProviderSnapshot?: boolean;\n  error?: string;\n  errorStatus?: number;\n  cachedAt?: number;\n}\n\nexport interface CodexQuotaWindow",
+        "export interface GeminiCliQuotaBucketState {\n  id: string;\n  label: string;\n  remainingFraction: number | null;\n  remainingAmount: number | null;\n  resetTime: string | undefined;\n  tokenType: string | null;\n  modelIds?: string[];\n  resetAtMs?: number | null;\n  periodHours?: number | null;\n}\n\nexport interface GeminiCliQuotaState {\n  status: 'idle' | 'loading' | 'success' | 'error';\n  buckets: GeminiCliQuotaBucketState[];\n  projectId?: string;\n  project_id?: string;\n  tierLabel?: string | null;\n  tierId?: string | null;\n  creditBalance?: number | null;\n  quotaProviderSnapshot?: boolean;\n  error?: string;\n  errorStatus?: number;\n}\n\nexport interface CodexQuotaWindow",
         'export interface GeminiCliQuotaState',
     )
     insert_once(
@@ -1799,15 +1724,9 @@ def patch_quota_types_latest(target: Path) -> None:
     replace_once(
         path,
         "  planType?: 'paid';\n",
-        "  planType?: 'free' | 'supergrok' | 'x-premium-plus' | 'supergrok-heavy' | 'paid' | 'paid-unknown';\n",
+        "  planType?: 'free' | 'supergrok' | 'x-basic' | 'x-premium' | 'x-premium-plus' | 'supergrok-heavy' | 'supergrok-lite' | 'paid' | 'paid-unknown';\n",
     )
     _ensure_interface_field(path, 'XaiBillingSummary', '  freeQuota?: XaiFreeQuotaSummary;')
-    for interface_name in (
-        'ClaudeQuotaState', 'AntigravityQuotaState', 'CodexQuotaState', 'KimiQuotaState', 'XaiQuotaState'
-    ):
-        _ensure_interface_field(path, interface_name, '  cachedAt?: number;')
-
-
 def patch_quota_provider_model_latest(target: Path) -> None:
     types_path = target / 'src/features/quota/providers/types.ts'
     replace_once(types_path, '  CodexQuotaState,\n  KimiQuotaState,', '  CodexQuotaState,\n  GeminiCliQuotaState,\n  KimiQuotaState,')
@@ -1916,7 +1835,7 @@ def patch_quota_page_latest(target: Path) -> None:
     path = target / 'src/features/quota/QuotaPage.tsx'
     patch_quota_page_cache_refresh(target)
     insert_once(path, "import { EmptyState } from '@/components/ui/EmptyState';\n", "import { EmptyState } from '@/components/ui/EmptyState';\nimport { Input } from '@/components/ui/Input';\nimport { IconSearch } from '@/components/ui/icons';\n", 'quota_management.search_label')
-    insert_once(path, "import { readQuotaUiState, writeQuotaUiState } from './uiState';\n", "import { readQuotaUiState, writeQuotaUiState } from './uiState';\nimport { buildQuotaSearchValues, matchesQuotaSearch, useBackendQuotaRefresh, useQuotaSelection } from '@/pro/modules/quota';\n", 'matchesQuotaSearch')
+    insert_once(path, "import { readQuotaUiState, writeQuotaUiState } from './uiState';\n", "import { readQuotaUiState, writeQuotaUiState } from './uiState';\nimport { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';\n", 'matchesQuotaSearch')
     replace_once(path, '  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const kimiQuota', '  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n  const kimiQuota')
     replace_once(path, "        codex: codexQuota,\n        kimi:", "        codex: codexQuota,\n        'gemini-cli': geminiCliQuota,\n        kimi:")
     replace_once(path, '[antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota]', '[antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]')
@@ -1936,77 +1855,6 @@ def patch_quota_page_latest(target: Path) -> None:
         '  const filteredEntries = useMemo(() => filterEntriesByTab(entries, tab), [entries, tab]);',
         '  const filteredEntries = useMemo(() => filterEntriesByTab(searchedEntries, tab), [searchedEntries, tab]);',
     )
-    insert_once(
-        path,
-        "  const handleRefreshAll = useCallback(() => {\n",
-        "  const backendRefresh = useBackendQuotaRefresh(tab === 'all' ? '' : tab);\n"
-        "  const selection = useQuotaSelection(loadFiles);\n"
-        "  const pageNames = useMemo(() => pageItems.map(({ file }) => file.name), [pageItems]);\n"
-        "  const selectedPageCount = selection.selectedCountIn(pageNames);\n\n"
-        "  const handleRefreshAll = useCallback(() => {\n",
-        'const backendRefresh = useBackendQuotaRefresh',
-    )
-    replace_once(
-        path,
-        "  const handleRefreshAll = useCallback(() => {\n"
-        "    if (disableControls) return;\n"
-        "    pendingRefreshRef.current = true;\n"
-        "    void loadFiles();\n"
-        "  }, [disableControls, loadFiles]);\n",
-        "  const handleRefreshAll = useCallback(() => {\n"
-        "    if (disableControls) return;\n"
-        "    if (tab !== 'all') {\n"
-        "      void backendRefresh.start();\n"
-        "      return;\n"
-        "    }\n"
-        "    pendingRefreshRef.current = true;\n"
-        "    void loadFiles();\n"
-        "  }, [backendRefresh, disableControls, loadFiles, tab]);\n",
-    )
-    replace_once(
-        path,
-        "        refreshing={loading || batchLoading}\n",
-        "        refreshing={loading || batchLoading || backendRefresh.isRefreshing}\n"
-        "        refreshProgress={backendRefresh.isRefreshing && backendRefresh.total > 0\n"
-        "          ? t('quota_management.refresh_progress', { completed: backendRefresh.completed, total: backendRefresh.total })\n"
-        "          : undefined}\n",
-    )
-    insert_once(
-        path,
-        "        {error && (\n",
-        "        {pageNames.length > 0 && (\n"
-        "          <div className={styles.selectionBar}>\n"
-        "            <label className={styles.selectAllLabel}>\n"
-        "              <input\n"
-        "                type=\"checkbox\"\n"
-        "                checked={selection.areAllSelected(pageNames)}\n"
-        "                onChange={() => selection.toggleSelectAll(pageNames)}\n"
-        "              />\n"
-        "              {t('quota_management.select_all')}\n"
-        "            </label>\n"
-        "            {selectedPageCount > 0 && (\n"
-        "              <Button\n"
-        "                variant=\"danger\"\n"
-        "                size=\"sm\"\n"
-        "                onClick={() => selection.deleteSelected(pageNames)}\n"
-        "                disabled={disableControls}\n"
-        "              >\n"
-        "                {t('quota_management.delete_selected', { count: selectedPageCount })}\n"
-        "              </Button>\n"
-        "            )}\n"
-        "          </div>\n"
-        "        )}\n\n"
-        "        {error && (\n",
-        'className={styles.selectionBar}',
-    )
-    replace_once(
-        path,
-        "                onReset={() => resetQuota(entry.file, QUOTA_ADAPTERS[entry.type])}\n",
-        "                selected={selection.selectedNames.has(entry.file.name)}\n"
-        "                onSelect={() => selection.toggleSelect(entry.file.name)}\n"
-        "                onDelete={() => selection.deleteOne(entry.file.name)}\n"
-        "                onReset={() => resetQuota(entry.file, QUOTA_ADAPTERS[entry.type])}\n",
-    )
     insert_once(path, "        {error && (\n", "        <Input\n          type=\"search\"\n          value={search}\n          onChange={(event) => { setSearch(event.target.value); setPage(1); }}\n          placeholder={t('quota_management.search_placeholder')}\n          aria-label={t('quota_management.search_label')}\n          rightElement={<IconSearch size={18} />}\n        />\n\n        {error && (\n", 'rightElement={<IconSearch')
 
 
@@ -2014,103 +1862,45 @@ def patch_quota_cards_latest(target: Path) -> None:
     card_path = target / 'src/features/quota/components/QuotaCard.tsx'
     insert_once(card_path, "import { resolveQuotaErrorMessage } from '@/utils/quota';\n", "import { resolveQuotaErrorMessage } from '@/utils/quota';\nimport { QuotaCachedTime } from '@/pro/modules/quota';\n", 'import { QuotaCachedTime }')
     replace_once(card_path, "        ) : quota ? (\n          <adapter.Body quota={quota} classes={quotaClasses} />\n        ) : (", "        ) : quota ? (\n          <>\n            <adapter.Body quota={quota} classes={quotaClasses} />\n            <QuotaCachedTime quotaStatus={status} cachedAt={quota.cachedAt} />\n          </>\n        ) : (")
-    replace_once(card_path, "import { IconRefreshCw } from '@/components/ui/icons';", "import { IconRefreshCw, IconTrash2 } from '@/components/ui/icons';")
-    replace_once(
-        card_path,
-        "  resetting: boolean;\n  /** 首屏级联入场延迟；null = 不入场（切 tab / 翻页 / 刷新新挂载的卡片）。 */\n",
-        "  resetting: boolean;\n  selected: boolean;\n  onSelect: () => void;\n  onDelete?: () => void;\n  /** 首屏级联入场延迟；null = 不入场（切 tab / 翻页 / 刷新新挂载的卡片）。 */\n",
-    )
-    replace_once(
-        card_path,
-        "    resetting,\n    entranceDelayMs,\n",
-        "    resetting,\n    selected,\n    onSelect,\n    onDelete,\n    entranceDelayMs,\n",
-    )
-    replace_once(
-        card_path,
-        "        <span className={styles.fileName} title={file.name}>\n",
-        "        <input\n"
-        "          type=\"checkbox\"\n"
-        "          className={styles.selectCheckbox}\n"
-        "          checked={selected}\n"
-        "          onChange={onSelect}\n"
-        "          aria-label={t('quota_management.select_credential', { name: file.name })}\n"
-        "        />\n"
-        "        <span className={styles.fileName} title={file.name}>\n",
-    )
-    replace_once(card_path, "      {status !== 'idle' && (", "      {(status !== 'idle' || onDelete) && (")
-    replace_once(
-        card_path,
-        "        <footer className={styles.actionRow}>\n",
-        "        <footer className={styles.actionRow}>\n"
-        "          <button\n"
-        "            type=\"button\"\n"
-        "            className={styles.actionPill}\n"
-        "            onClick={onDelete}\n"
-        "            title={t('quota_management.delete_one')}\n"
-        "          >\n"
-        "            <IconTrash2 size={13} />\n"
-        "            {t('quota_management.delete_one')}\n"
-        "          </button>\n",
-    )
-
-    page_styles = target / 'src/features/quota/QuotaPage.module.scss'
-    insert_once(
-        page_styles,
-        ".errorBanner {\n",
-        ".selectionBar {\n"
-        "  display: flex;\n"
-        "  align-items: center;\n"
-        "  justify-content: space-between;\n"
-        "  gap: 12px;\n"
-        "  min-height: 36px;\n"
-        "}\n\n"
-        ".selectAllLabel {\n"
-        "  display: inline-flex;\n"
-        "  align-items: center;\n"
-        "  gap: 8px;\n"
-        "  color: var(--text-secondary);\n"
-        "  font-size: 13px;\n"
-        "  cursor: pointer;\n"
-        "}\n\n"
-        ".errorBanner {\n",
-        '.selectionBar {',
-    )
-    card_styles = target / 'src/features/quota/components/QuotaCard.module.scss'
-    insert_once(
-        card_styles,
-        ".fileName {\n",
-        ".selectCheckbox {\n"
-        "  flex: 0 0 auto;\n"
-        "  width: 16px;\n"
-        "  height: 16px;\n"
-        "  cursor: pointer;\n"
-        "}\n\n"
-        ".fileName {\n",
-        '.selectCheckbox {',
-    )
-
-    header_path = target / 'src/features/quota/components/QuotaHeader.tsx'
-    replace_once(header_path, "  refreshing: boolean;\n  disableControls: boolean;", "  refreshing: boolean;\n  refreshProgress?: string;\n  disableControls: boolean;")
-    replace_once(
-        header_path,
-        "  const { totalCount, loadedCount, attentionCount, refreshing, disableControls, onRefreshAll } =\n    props;\n",
-        "  const { totalCount, loadedCount, attentionCount, refreshing, refreshProgress, disableControls, onRefreshAll } =\n    props;\n",
-    )
-    replace_once(header_path, "          {t('quota_management.refresh_all_credentials')}\n", "          {refreshProgress || t('quota_management.refresh_all_credentials')}\n")
 
     auth_path = target / 'src/features/authFiles/components/AuthFileQuotaSection.tsx'
     insert_once(auth_path, "import { bindQuotaClasses } from '@/features/quota/types';\n", "import { bindQuotaClasses } from '@/features/quota/types';\nimport { QuotaCachedTime } from '@/pro/modules/quota';\n", 'import { QuotaCachedTime }')
     replace_once(auth_path, "      ) : quota ? (\n        <adapter.Body quota={quota} classes={compactQuotaClasses} />\n      ) : (", "      ) : quota ? (\n        <>\n          <adapter.Body quota={quota} classes={compactQuotaClasses} />\n          <QuotaCachedTime quotaStatus={quotaStatus} cachedAt={quota.cachedAt} />\n        </>\n      ) : (")
 
 
-def patch_quota_provider_timestamps_latest(target: Path) -> None:
-    for provider, setter in (
-        ('antigravity', 'setAntigravityQuota'), ('claude', 'setClaudeQuota'),
-        ('codex', 'setCodexQuota'), ('kimi', 'setKimiQuota')
-    ):
-        ensure_cached_at_in_quota_success_state(
-            target / f'src/features/quota/providers/{provider}/data.ts', setter
-        )
+def patch_quota_success_timestamps(target: Path) -> None:
+    actions_path = target / 'src/features/quota/hooks/useQuotaActions.ts'
+    insert_once(
+        actions_path,
+        "import { getStatusFromError } from '@/utils/quota';\n",
+        "import { withQuotaCachedAt } from '@/pro/shared/quotaState';\n"
+        "import { getStatusFromError } from '@/utils/quota';\n",
+        "from '@/pro/shared/quotaState'",
+    )
+    actions_text = read(actions_path)
+    old_action = 'adapter.buildSuccessState(data)'
+    new_action = 'withQuotaCachedAt(adapter.buildSuccessState(data))'
+    if new_action not in actions_text:
+        if actions_text.count(old_action) != 2:
+            raise RuntimeError(
+                f'Expected two quota success commits in {actions_path}, '
+                f'found {actions_text.count(old_action)}'
+            )
+        write(actions_path, actions_text.replace(old_action, new_action))
+
+    batch_path = target / 'src/features/quota/hooks/useQuotaBatchLoader.ts'
+    insert_once(
+        batch_path,
+        "import { getStatusFromError } from '@/utils/quota';\n",
+        "import { withQuotaCachedAt } from '@/pro/shared/quotaState';\n"
+        "import { getStatusFromError } from '@/utils/quota';\n",
+        "from '@/pro/shared/quotaState'",
+    )
+    replace_once(
+        batch_path,
+        'adapter.buildSuccessState(result.data)',
+        'withQuotaCachedAt(adapter.buildSuccessState(result.data))',
+    )
 
 
 def patch_auth_files_gemini_quota_latest(target: Path) -> None:
@@ -2140,60 +1930,71 @@ def patch_auth_files_gemini_quota_latest(target: Path) -> None:
 
 def patch_auth_files_page_search_latest(target: Path) -> None:
     path = target / 'src/features/authFiles/AuthFilesPage.tsx'
-    replace_once(path, "import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';", "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';")
-    insert_once(path, "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n", "import { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';\nimport { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n", 'buildQuotaSearchValues')
     insert_once(
         path,
-        '  const statusBarCache = useAuthFilesStatusBarCache(files);\n',
-        "  const statusBarCache = useAuthFilesStatusBarCache(files);\n\n  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);\n  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n  const codexQuota = useQuotaStore((state) => state.codexQuota);\n  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n  const kimiQuota = useQuotaStore((state) => state.kimiQuota);\n  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n  const quotaSearchStore = useMemo(\n    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),\n    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]\n  );\n",
-        'const quotaSearchStore',
+        "} from '@/features/authFiles/uiState';\n",
+        "} from '@/features/authFiles/uiState';\n"
+        "import { useAuthFilesQuotaExtensions } from '@/pro/authFiles/useAuthFilesQuotaExtensions';\n",
+        "useAuthFilesQuotaExtensions } from '@/pro/authFiles/useAuthFilesQuotaExtensions'",
+    )
+    insert_once(
+        path,
+        "  const enabledOnly = statusFilterMode === 'enabled';\n",
+        "  const enabledOnly = statusFilterMode === 'enabled';\n"
+        "  const resetPage = useCallback(() => setPage(1), []);\n"
+        "  const {\n"
+        "    effectiveSortMode,\n"
+        "    ensureFresh: ensureQuotaFresh,\n"
+        "    matchesQuotaMetadata,\n"
+        "    sortFiles: sortFilesWithQuota,\n"
+        "    sortOptions: quotaSortOptions,\n"
+        "  } = useAuthFilesQuotaExtensions({\n"
+        "    files,\n"
+        "    isCurrentLayer,\n"
+        "    normalizedFilter,\n"
+        "    search,\n"
+        "    sortMode,\n"
+        "    setSortMode,\n"
+        "    resetPage,\n"
+        "    t,\n"
+        "  });\n",
+        'useAuthFilesQuotaExtensions({',
+    )
+    replace_once(
+        path,
+        "    await Promise.all([loadFiles({ background: true }), loadExcluded(), loadModelAlias()]);\n",
+        "    await Promise.all([\n"
+        "      loadFiles({ background: true }),\n"
+        "      loadExcluded(),\n"
+        "      loadModelAlias(),\n"
+        "      ensureQuotaFresh(),\n"
+        "    ]);\n",
+    )
+    replace_once(
+        path,
+        '  }, [loadFiles, loadExcluded, loadModelAlias]);',
+        '  }, [ensureQuotaFresh, loadFiles, loadExcluded, loadModelAlias]);',
     )
     replace_once(
         path,
         '        return matchType && matchesAuthFileSearch(item, normalizedSearch, wildcardSearch);',
-        '        return matchType && (\n          matchesAuthFileSearch(item, normalizedSearch, wildcardSearch) ||\n          matchesQuotaSearch(buildQuotaSearchValues(item, quotaSearchStore, t), normalizedSearch)\n        );',
+        '        return matchType && (\n          matchesAuthFileSearch(item, normalizedSearch, wildcardSearch) ||\n          matchesQuotaMetadata(item)\n        );',
     )
-    replace_once(path, '[filesMatchingStatusFilters, normalizedFilter, normalizedSearch, wildcardSearch]', '[filesMatchingStatusFilters, normalizedFilter, normalizedSearch, quotaSearchStore, t, wildcardSearch]')
+    replace_once(
+        path,
+        '[filesMatchingStatusFilters, normalizedFilter, normalizedSearch, wildcardSearch]',
+        '[filesMatchingStatusFilters, matchesQuotaMetadata, normalizedFilter, normalizedSearch, wildcardSearch]',
+    )
 
 
 def patch_auth_files_page_sorting_latest(target: Path) -> None:
     page_path = target / 'src/features/authFiles/AuthFilesPage.tsx'
     ui_state_path = target / 'src/features/authFiles/uiState.ts'
     replace_once(ui_state_path, "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority'] as const;", "export const AUTH_FILES_SORT_MODES = ['default', 'az', 'priority', 'plan', 'quota'] as const;")
-    insert_once(
+    remove_once(
         page_path,
-        "import { buildQuotaSearchValues, matchesQuotaSearch } from '@/pro/modules/quota';\n",
-        "import {\n"
-        "  buildQuotaSearchValues,\n"
-        "  compareAuthFilesByAvailableQuotaDescending,\n"
-        "  compareAuthFilesByPlanDescending,\n"
-        "  isAuthFilePlanSortProvider,\n"
-        "  isAuthFileQuotaSortProvider,\n"
-        "  matchesQuotaSearch,\n"
-        "} from '@/pro/modules/quota';\n",
-        'compareAuthFilesByPlanDescending',
-    )
-    insert_once(
-        page_path,
-        "  const enabledOnly = statusFilterMode === 'enabled';\n",
-        "  const enabledOnly = statusFilterMode === 'enabled';\n"
-        "  const planSortAvailable = isAuthFilePlanSortProvider(normalizedFilter);\n"
-        "  const quotaSortAvailable = isAuthFileQuotaSortProvider(normalizedFilter);\n"
-        "  const selectedSortModeAvailable =\n"
-        "    (sortMode !== 'plan' || planSortAvailable) &&\n"
-        "    (sortMode !== 'quota' || quotaSortAvailable);\n",
-        'const planSortAvailable',
-    )
-    insert_once(
-        page_path,
-        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
-        "  useEffect(() => {\n"
-        "    if (selectedSortModeAvailable) return;\n"
-        "    setSortMode('default');\n"
-        "    setPage(1);\n"
-        "  }, [selectedSortModeAvailable]);\n\n"
-        "  const handleStatusFilterModeChange = useCallback((nextMode: AuthFilesStatusFilterMode) => {\n",
-        'if (selectedSortModeAvailable) return;',
+        "  sortAuthFiles,\n",
+        'sortFilesWithQuota(filtered)',
     )
     replace_once(
         page_path,
@@ -2205,306 +2006,14 @@ def patch_auth_files_page_sorting_latest(target: Path) -> None:
         "    ],\n"
         "    [t]\n"
         "  );\n",
-        "  const sortOptions = useMemo(() => {\n"
-        "    const options: Array<{ value: AuthFilesSortMode; label: string }> = [\n"
-        "      { value: 'default', label: t('auth_files.sort_default') },\n"
-        "      { value: 'az', label: t('auth_files.sort_az') },\n"
-        "      { value: 'priority', label: t('auth_files.sort_priority') },\n"
-        "    ];\n"
-        "    if (planSortAvailable) {\n"
-        "      options.push({ value: 'plan', label: t('auth_files.sort_plan_desc') });\n"
-        "    }\n"
-        "    if (quotaSortAvailable) {\n"
-        "      options.push({ value: 'quota', label: t('auth_files.sort_quota_desc') });\n"
-        "    }\n"
-        "    return options;\n"
-        "  }, [planSortAvailable, quotaSortAvailable, t]);\n",
+        "  const sortOptions = quotaSortOptions;\n",
     )
-    insert_once(
+    replace_once(
         page_path,
         '  const sorted = useMemo(() => sortAuthFiles(filtered, sortMode), [filtered, sortMode]);\n',
-        "  const effectiveSortMode: AuthFilesSortMode =\n    selectedSortModeAvailable ? sortMode : 'default';\n  const sorted = useMemo(() => {\n    if (effectiveSortMode === 'plan') {\n      return [...filtered].sort((a, b) => compareAuthFilesByPlanDescending(a, b, quotaSearchStore));\n    }\n    if (effectiveSortMode === 'quota') {\n      return [...filtered].sort((a, b) => compareAuthFilesByAvailableQuotaDescending(a, b, quotaSearchStore));\n    }\n    return sortAuthFiles(filtered, effectiveSortMode);\n  }, [effectiveSortMode, filtered, quotaSearchStore]);\n",
-        'const effectiveSortMode',
+        '  const sorted = useMemo(() => sortFilesWithQuota(filtered), [filtered, sortFilesWithQuota]);\n',
     )
     replace_once(page_path, '          sortMode={sortMode}\n', '          sortMode={effectiveSortMode}\n')
-
-
-def patch_auth_files_batch_actions_latest(target: Path) -> None:
-    hook_path = target / 'src/features/authFiles/hooks/useAuthFilesData.ts'
-    replace_once(
-        hook_path,
-        "  batchDownload: (names: string[]) => Promise<void>;\n"
-        "  batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;\n"
-        "  batchDelete: (names: string[]) => void;\n"
-        "};\n",
-        "  batchDownload: (names: string[]) => Promise<void>;\n"
-        "  batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;\n"
-        "  batchDelete: (names: string[]) => void;\n"
-        "  batchTest: (files: AuthFileItem[]) => Promise<import('./useAuthFilesBatchActions').BatchActionSummary>;\n"
-        "  batchClearErrors: (files: AuthFileItem[]) => Promise<import('./useAuthFilesBatchActions').BatchActionSummary>;\n"
-        "  batchTestRunning: boolean;\n"
-        "  batchClearErrorsRunning: boolean;\n"
-        "  batchResultType: 'test' | 'clear' | null;\n"
-        "  batchResult: import('./useAuthFilesBatchActions').BatchActionSummary | null;\n"
-        "  clearBatchResult: () => void;\n"
-        "};\n",
-    )
-    insert_once(
-        hook_path,
-        "import { notifyAuthFilesChanged } from '@/features/authFiles/authFilesEvents';\n",
-        "import { notifyAuthFilesChanged } from '@/features/authFiles/authFilesEvents';\n"
-        "import { useAuthFilesBatchActions } from './useAuthFilesBatchActions';\n",
-        "import { useAuthFilesBatchActions } from './useAuthFilesBatchActions';",
-    )
-    replace_once(
-        hook_path,
-        "  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());\n",
-        "  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());\n"
-        "  const batchActions = useAuthFilesBatchActions();\n",
-    )
-    replace_once(
-        hook_path,
-        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n  };\n}\n",
-        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n"
-        "    batchTest: batchActions.batchTest,\n"
-        "    batchClearErrors: batchActions.batchClearErrors,\n"
-        "    batchTestRunning: batchActions.batchTestRunning,\n"
-        "    batchClearErrorsRunning: batchActions.batchClearErrorsRunning,\n"
-        "    batchResultType: batchActions.batchResultType,\n"
-        "    batchResult: batchActions.batchResult,\n"
-        "    clearBatchResult: batchActions.clearBatchResult,\n"
-        "  };\n}\n",
-    )
-
-    page_path = auth_files_page_path(target)
-    insert_once(
-        page_path,
-        "import { BatchActionBar } from '@/features/authFiles/components/BatchActionBar';\n",
-        "import { BatchActionBar } from '@/features/authFiles/components/BatchActionBar';\n"
-        "import { BatchActionResultDialog } from '@/features/authFiles/components/BatchActionResultDialog';\n",
-        'BatchActionResultDialog',
-    )
-    replace_once(
-        page_path,
-        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n  } = useAuthFilesData({ onFilesMutated: invalidateDerivedCaches });\n",
-        "    batchDownload,\n    batchSetStatus,\n    batchDelete,\n"
-        "    batchTest,\n    batchClearErrors,\n"
-        "    batchTestRunning,\n    batchClearErrorsRunning,\n"
-        "    batchResultType,\n    batchResult,\n    clearBatchResult,\n"
-        "  } = useAuthFilesData({ onFilesMutated: invalidateDerivedCaches });\n",
-    )
-    replace_once(
-        page_path,
-        "  const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);\n",
-        "  const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);\n"
-        "  const selectedFileItems = useMemo(\n"
-        "    () => files.filter((file) => selectedFiles.has(file.name)),\n"
-        "    [files, selectedFiles]\n"
-        "  );\n",
-    )
-    replace_once(
-        page_path,
-        "      <BatchActionBar\n",
-        "      <BatchActionResultDialog\n"
-        "        open={batchResult !== null}\n"
-        "        title={batchResultType === 'clear'\n"
-        "          ? t('auth_files.batch_clear_errors_title')\n"
-        "          : t('auth_files.batch_test_title')}\n"
-        "        summary={batchResult}\n"
-        "        onClose={clearBatchResult}\n"
-        "      />\n\n"
-        "      <BatchActionBar\n",
-    )
-    replace_once(
-        page_path,
-        "        onDownload={() => void batchDownload(selectedNames)}\n",
-        "        onTest={() => void batchTest(selectedFileItems)}\n"
-        "        onClearErrors={() => void batchClearErrors(selectedFileItems).then(() => loadFiles({ background: true }))}\n"
-        "        testRunning={batchTestRunning}\n"
-        "        clearErrorsRunning={batchClearErrorsRunning}\n"
-        "        onDownload={() => void batchDownload(selectedNames)}\n",
-    )
-
-    bar_path = target / 'src/features/authFiles/components/BatchActionBar.tsx'
-    replace_once(
-        bar_path,
-        "  onDownload: () => void;\n",
-        "  onTest: () => void;\n"
-        "  onClearErrors: () => void;\n"
-        "  testRunning: boolean;\n"
-        "  clearErrorsRunning: boolean;\n"
-        "  onDownload: () => void;\n",
-    )
-    replace_once(
-        bar_path,
-        "    onDownload,\n",
-        "    onTest,\n"
-        "    onClearErrors,\n"
-        "    testRunning,\n"
-        "    clearErrorsRunning,\n"
-        "    onDownload,\n",
-    )
-    replace_once(
-        bar_path,
-        "        <div className={styles.right}>\n"
-        "          <Button\n"
-        "            variant=\"secondary\"\n"
-        "            size=\"sm\"\n"
-        "            onClick={onDownload}\n",
-        "        <div className={styles.right}>\n"
-        "          <Button variant=\"secondary\" size=\"sm\" onClick={onTest} disabled={disableControls || testRunning}>\n"
-        "            {testRunning ? t('auth_files.batch_test_running') : t('auth_files.batch_test')}\n"
-        "          </Button>\n"
-        "          <Button variant=\"secondary\" size=\"sm\" onClick={onClearErrors} disabled={disableControls || clearErrorsRunning}>\n"
-        "            {clearErrorsRunning ? t('auth_files.batch_clear_errors_running') : t('auth_files.batch_clear_errors')}\n"
-        "          </Button>\n"
-        "          <Button\n"
-        "            variant=\"secondary\"\n"
-        "            size=\"sm\"\n"
-        "            onClick={onDownload}\n",
-    )
-
-
-def patch_claude_model_id_cloak_setting(target: Path) -> None:
-    visual_types = target / 'src/types/visualConfig.ts'
-    replace_once(
-        visual_types,
-        "export type DisableImageGenerationMode = 'false' | 'true' | 'chat' | 'passthrough';\n",
-        "export type DisableImageGenerationMode = 'false' | 'true' | 'chat' | 'passthrough';\n"
-        "export type ClaudeModelIDCloakMode = 'auto' | 'always' | 'never';\n",
-    )
-    replace_once(
-        visual_types,
-        "  forceModelPrefix: boolean;\n  passthroughHeaders: boolean;\n",
-        "  forceModelPrefix: boolean;\n  claudeModelIDCloakMode: ClaudeModelIDCloakMode;\n  passthroughHeaders: boolean;\n",
-    )
-    replace_once(
-        visual_types,
-        "  forceModelPrefix: false,\n  passthroughHeaders: false,\n",
-        "  forceModelPrefix: false,\n  claudeModelIDCloakMode: 'auto',\n  passthroughHeaders: false,\n",
-    )
-
-    visual_hook = target / 'src/hooks/useVisualConfig.ts'
-    replace_once(
-        visual_hook,
-        "  DisableImageGenerationMode,\n",
-        "  ClaudeModelIDCloakMode,\n  DisableImageGenerationMode,\n",
-    )
-    replace_once(
-        visual_hook,
-        "export function parseDisableImageGenerationMode(raw: unknown): DisableImageGenerationMode {\n",
-        "export function parseClaudeModelIDCloakMode(raw: unknown): ClaudeModelIDCloakMode {\n"
-        "  if (typeof raw === 'string') {\n"
-        "    const normalized = raw.trim().toLowerCase();\n"
-        "    if (normalized === 'always' || normalized === 'never') return normalized;\n"
-        "  }\n"
-        "  return 'auto';\n"
-        "}\n\n"
-        "export function parseDisableImageGenerationMode(raw: unknown): DisableImageGenerationMode {\n",
-    )
-    replace_once(
-        visual_hook,
-        "      'forceModelPrefix',\n      'requestRetry',\n",
-        "      'forceModelPrefix',\n      'claudeModelIDCloakMode',\n      'requestRetry',\n",
-    )
-    replace_once(
-        visual_hook,
-        "        forceModelPrefix: Boolean(parsed['force-model-prefix']),\n"
-        "        passthroughHeaders: Boolean(parsed['passthrough-headers']),\n",
-        "        forceModelPrefix: Boolean(parsed['force-model-prefix']),\n"
-        "        claudeModelIDCloakMode: parseClaudeModelIDCloakMode(\n"
-        "          parsed['claude-model-id-cloak-mode']\n"
-        "        ),\n"
-        "        passthroughHeaders: Boolean(parsed['passthrough-headers']),\n",
-    )
-    replace_once(
-        visual_hook,
-        "        if (dirtyFields.has('forceModelPrefix')) {\n"
-        "          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
-        "        }\n"
-        "        if (dirtyFields.has('passthroughHeaders')) {\n",
-        "        if (dirtyFields.has('forceModelPrefix')) {\n"
-        "          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);\n"
-        "        }\n"
-        "        if (dirtyFields.has('claudeModelIDCloakMode')) {\n"
-        "          setStringInDoc(doc, ['claude-model-id-cloak-mode'], values.claudeModelIDCloakMode);\n"
-        "        }\n"
-        "        if (dirtyFields.has('passthroughHeaders')) {\n",
-    )
-
-    visual_editor = target / 'src/components/config/VisualConfigEditor.tsx'
-    replace_once(
-        visual_editor,
-        "  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;\n"
-        "  const keepaliveInputId = useId();\n",
-        "  const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;\n"
-        "  const claudeModelIDCloakModeLabelId = useId();\n"
-        "  const claudeModelIDCloakModeHintId = `${claudeModelIDCloakModeLabelId}-hint`;\n"
-        "  const keepaliveInputId = useId();\n",
-    )
-    replace_once(
-        visual_editor,
-        "  const countErrors = useCallback(\n",
-        "  const claudeModelIDCloakModeOptions = useMemo(\n"
-        "    () => [\n"
-        "      { value: 'auto', label: t('config_management.visual.sections.advanced.claude_model_id_cloak_auto') },\n"
-        "      { value: 'always', label: t('config_management.visual.sections.advanced.claude_model_id_cloak_always') },\n"
-        "      { value: 'never', label: t('config_management.visual.sections.advanced.claude_model_id_cloak_never') },\n"
-        "    ],\n"
-        "    [t]\n"
-        "  );\n\n"
-        "  const countErrors = useCallback(\n",
-    )
-    replace_once(
-        visual_editor,
-        "                <Collapsible\n"
-        "                  label={t('config_management.visual.sections.headers.title')}\n",
-        "                <Collapsible\n"
-        "                  label={t('config_management.visual.sections.advanced.claude_model_id_cloak_title')}\n"
-        "                  hint={t('config_management.visual.sections.advanced.claude_model_id_cloak_description')}\n"
-        "                  defaultOpen={false}\n"
-        "                >\n"
-        "                  <SectionGrid>\n"
-        "                    <FieldAnchor fieldId=\"claudeModelIDCloakMode\">\n"
-        "                      <FieldShell\n"
-        "                        label={t('config_management.visual.sections.advanced.claude_model_id_cloak_label')}\n"
-        "                        labelId={claudeModelIDCloakModeLabelId}\n"
-        "                        hint={t('config_management.visual.sections.advanced.claude_model_id_cloak_hint')}\n"
-        "                        hintId={claudeModelIDCloakModeHintId}\n"
-        "                      >\n"
-        "                        <Select\n"
-        "                          value={values.claudeModelIDCloakMode}\n"
-        "                          options={claudeModelIDCloakModeOptions}\n"
-        "                          id={`${claudeModelIDCloakModeLabelId}-select`}\n"
-        "                          disabled={disabled}\n"
-        "                          ariaLabelledBy={claudeModelIDCloakModeLabelId}\n"
-        "                          ariaDescribedBy={claudeModelIDCloakModeHintId}\n"
-        "                          onChange={(nextValue) => onChange({\n"
-        "                            claudeModelIDCloakMode: nextValue as VisualConfigValues['claudeModelIDCloakMode'],\n"
-        "                          })}\n"
-        "                        />\n"
-        "                      </FieldShell>\n"
-        "                    </FieldAnchor>\n"
-        "                  </SectionGrid>\n"
-        "                </Collapsible>\n\n"
-        "                <Collapsible\n"
-        "                  label={t('config_management.visual.sections.headers.title')}\n",
-    )
-
-    search_index = target / 'src/components/config/configSearchIndex.ts'
-    replace_once(
-        search_index,
-        '  // Claude header defaults — qualifierKey disambiguates the shared "User-Agent" label.\n',
-        "  {\n"
-        "    fieldId: 'claudeModelIDCloakMode',\n"
-        "    sectionId: 'advanced',\n"
-        "    labelKey: L('sections.advanced.claude_model_id_cloak_label'),\n"
-        "    hintKey: L('sections.advanced.claude_model_id_cloak_hint'),\n"
-        "    yamlKeys: ['claude-model-id-cloak-mode'],\n"
-        "    keywords: ['anthropic', 'claude desktop', 'claude code', 'model id', 'cloak'],\n"
-        "  },\n"
-        '  // Claude header defaults — qualifierKey disambiguates the shared "User-Agent" label.\n',
-    )
 
 
 def main() -> None:
@@ -2518,31 +2027,31 @@ def main() -> None:
 
     copy_overlay(target)
     patch_modal_focus_restore(target)
+    patch_modal_lifecycle(target)
+    patch_sheet_lifecycle(target)
+    patch_confirmation_queue(target)
     patch_modal_scroll_lock(target)
-    patch_modal_content_scrollbar_layout(target)
     patch_routes(target)
     patch_layout(target)
-    patch_icons(target)
     patch_quota_types_latest(target)
     patch_quota_store(target)
     patch_quota_constants(target)
+    patch_api_call_executor_contract(target)
+    patch_codex_account_id_resolver(target)
     patch_quota_provider_model_latest(target)
-    patch_quota_provider_timestamps_latest(target)
+    patch_quota_success_timestamps(target)
     patch_antigravity_quota_builders(target)
     patch_quota_page_latest(target)
     patch_quota_cards_latest(target)
-    patch_account_inspection_page(target)
     patch_auth_files_page_search_latest(target)
     patch_auth_files_page_sorting_latest(target)
-    patch_auth_files_batch_actions_latest(target)
     patch_auth_files_gemini_quota_latest(target)
     patch_auth_files_runtime_state(target)
     patch_account_usage_feature(target)
-    patch_runtime_detection(target)
+    patch_auth_file_connection_test(target)
     patch_management_update_check(target)
     patch_api_client_connection_isolation(target)
     patch_supporting_api_and_types(target)
-    patch_claude_model_id_cloak_setting(target)
     patch_locales(target)
     flush_writes()
     print(f'OK: CPA-Management customization applied to {target}')

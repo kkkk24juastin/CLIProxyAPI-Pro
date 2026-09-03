@@ -1,29 +1,19 @@
-import type { Config, AuthFileItem } from '@/types';
-import { isRecordValue, normalizeNumberValue, readBooleanValue, readStringValue } from '@/utils/quota';
+import type { AuthFileItem } from '@/types';
+import { normalizeNumberValue } from '@/utils/quota';
+import { isRecordValue, readBooleanValue, readStringValue } from '@/pro/shared/value';
 
 export type AccountInspectionLogLevel = 'info' | 'success' | 'warning' | 'error';
 export type AccountInspectionAction = 'keep' | 'delete' | 'disable' | 'enable';
 export type AccountInspectionExecutionAction = Exclude<AccountInspectionAction, 'keep'>;
-export type AccountInspectionProgressStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'completed' | 'failed';
+export type AccountInspectionProgressStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'completed' | 'partial' | 'failed';
 export type AccountInspectionDeepProbeStatus = 'success' | 'quota' | 'auth_error' | 'transient_error' | 'skipped' | '';
 export type AccountInspectionAutoErrorAction = 'none' | 'disable' | 'delete';
-export type AccountInspectionAntigravityQuotaMode = 'max-used' | 'claude-gpt' | 'any-group';
-
-export interface AccountInspectionSettings {
-  baseUrl: string;
-  token: string;
-  targetType: string;
-  workers: number;
-  deleteWorkers: number;
-  timeout: number;
-  retries: number;
-  usedPercentThreshold: number;
-  sampleSize: number;
-}
+export type AccountInspectionAntigravityQuotaMode = 'max-used' | 'claude-gpt';
 
 export interface AccountInspectionConfigurableSettings {
   targetType: string;
   workers: number;
+  providerWorkers: number;
   deleteWorkers: number;
   timeout: number;
   retries: number;
@@ -131,6 +121,9 @@ export interface AccountInspectionRunResult {
   providerHealthCounts?: Record<string, AccountInspectionHealthCounts>;
   resultsPage?: AccountInspectionPageInfo;
   resultsLimited?: boolean;
+  settings: AccountInspectionConfigurableSettings;
+  state: AccountInspectionBackendRunState;
+  lastError: string;
 }
 
 export interface AccountInspectionProgressSnapshot {
@@ -170,11 +163,11 @@ export type AccountInspectionBackendResultItem = Omit<AccountInspectionResultIte
 
 export type AccountInspectionBackendStatus = {
   state: AccountInspectionBackendRunState;
-  runKind?: 'inspection' | 'quota-refresh';
-  targetProvider?: string;
+  runSettings: AccountInspectionConfigurableSettings;
   lastStartedAt: number;
   lastFinishedAt: number;
   lastError: string;
+  persistenceError?: string;
   progress?: AccountInspectionBackendProgress;
   summary: AccountInspectionSummary & {
     executedDeleteCount?: number;
@@ -211,10 +204,11 @@ export const isAccountInspectionBackendResponse = (value: unknown): value is Acc
   return isRecordValue(schedule)
     && isRecordValue(schedule.settings)
     && isRecordValue(status)
-    && isRecordValue(status.summary);
+    && isRecordValue(status.summary)
+    && (!('runSettings' in status) || isRecordValue(status.runSettings));
 };
 
-export type AccountInspectionDisplayRunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
+export type AccountInspectionDisplayRunStatus = 'idle' | 'running' | 'paused' | 'completed' | 'partial' | 'stopped' | 'failed';
 
 export interface AccountInspectionExecutionOutcome {
   action: AccountInspectionExecutionAction;
@@ -245,6 +239,7 @@ export type AccountInspectionSupportedProvider = typeof ACCOUNT_INSPECTION_SUPPO
 
 export const ACCOUNT_INSPECTION_SETTING_LIMITS = {
   workers: { min: 1, max: 8 },
+  providerWorkers: { min: 1, max: 4 },
   deleteWorkers: { min: 1, max: 4 },
   timeout: { min: 3000, max: 30000, step: 1000 },
   retries: { min: 0, max: 1 },
@@ -259,6 +254,7 @@ const ACCOUNT_INSPECTION_SETTINGS_STORAGE_KEY = 'cli-proxy-account-inspection-se
 export const DEFAULT_ACCOUNT_INSPECTION_SETTINGS: AccountInspectionConfigurableSettings = {
   targetType: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE,
   workers: 4,
+  providerWorkers: 2,
   deleteWorkers: 4,
   timeout: 15000,
   retries: 0,
@@ -299,9 +295,6 @@ const clampInteger = (
 
 const normalizeThreshold = (value: number | undefined) => {
   if (!Number.isFinite(value) || value === undefined || value < 0) return NaN;
-  if (value > 0 && value <= 1) {
-    return value * 100;
-  }
   return value;
 };
 
@@ -312,8 +305,7 @@ export const normalizeAutoErrorAction = (value: unknown): AccountInspectionAutoE
 
 export const normalizeAntigravityQuotaMode = (value: unknown): AccountInspectionAntigravityQuotaMode => {
   const normalized = readStringValue(value).toLowerCase();
-  if (normalized === 'max-used' || normalized === 'any-group') return normalized;
-  return 'claude-gpt';
+  return normalized === 'max-used' ? 'max-used' : 'claude-gpt';
 };
 
 const formatAccountInspectionIdentity = (
@@ -324,31 +316,6 @@ const formatAccountInspectionIdentity = (
     return item.fileName ? `${label}[${item.fileName}]` : label;
   }
   return item.fileName;
-};
-
-const readConfigurableSettingsFromConfig = (
-  config?: Config | null
-): Partial<AccountInspectionConfigurableSettings> => {
-  const clean = config?.clean ?? null;
-  return {
-    targetType: readStringValue(clean?.targetType),
-    workers: normalizeNumberValue(clean?.workers) ?? undefined,
-    deleteWorkers: normalizeNumberValue(clean?.deleteWorkers) ?? undefined,
-    timeout: normalizeNumberValue(clean?.timeout) ?? undefined,
-    retries: normalizeNumberValue(clean?.retries) ?? undefined,
-    usedPercentThreshold: normalizeNumberValue(clean?.usedPercentThreshold) ?? undefined,
-    sampleSize: normalizeNumberValue(clean?.sampleSize) ?? undefined,
-    autoExecuteQuotaLimitDisable: undefined,
-    autoExecuteQuotaRecoveryEnable: undefined,
-    autoExecuteAccountInvalidAction: undefined,
-    autoExecuteRequestErrorAction: undefined,
-    autoExecuteConfirmations: undefined,
-    antigravityDeepProbeEnabled: undefined,
-    antigravityDeepProbeModel: undefined,
-    antigravityQuotaMode: undefined,
-    xaiDeepProbeEnabled: undefined,
-    xaiDeepProbeModel: undefined,
-  };
 };
 
 const normalizeInspectionTargetType = (value: unknown) => {
@@ -377,6 +344,11 @@ const normalizeConfigurableSettings = (
   return {
     targetType: normalizeInspectionTargetType(merged.targetType),
     workers,
+    providerWorkers: clampInteger(
+      normalizeNumberValue(merged.providerWorkers),
+      DEFAULT_ACCOUNT_INSPECTION_SETTINGS.providerWorkers,
+      ACCOUNT_INSPECTION_SETTING_LIMITS.providerWorkers
+    ),
     deleteWorkers: clampInteger(
       normalizeNumberValue(merged.deleteWorkers),
       workers,
@@ -436,29 +408,22 @@ const normalizeConfigurableSettings = (
   };
 };
 
-export const loadAccountInspectionConfigurableSettings = (
-  config?: Config | null
-): AccountInspectionConfigurableSettings => {
-  const configSettings = readConfigurableSettingsFromConfig(config);
-
+export const loadAccountInspectionConfigurableSettings = (): AccountInspectionConfigurableSettings => {
   try {
     if (typeof localStorage === 'undefined') {
-      return normalizeConfigurableSettings(configSettings);
+      return normalizeConfigurableSettings();
     }
     const raw = localStorage.getItem(ACCOUNT_INSPECTION_SETTINGS_STORAGE_KEY);
     if (!raw) {
-      return normalizeConfigurableSettings(configSettings);
+      return normalizeConfigurableSettings();
     }
     const parsed: unknown = JSON.parse(raw);
     if (!isRecordValue(parsed)) {
-      return normalizeConfigurableSettings(configSettings);
+      return normalizeConfigurableSettings();
     }
-    return normalizeConfigurableSettings({
-      ...configSettings,
-      ...parsed,
-    });
+    return normalizeConfigurableSettings(parsed);
   } catch {
-    return normalizeConfigurableSettings(configSettings);
+    return normalizeConfigurableSettings();
   }
 };
 
@@ -476,16 +441,6 @@ export const saveAccountInspectionConfigurableSettings = (
   }
 
   return normalized;
-};
-
-export const clearAccountInspectionConfigurableSettings = () => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(ACCOUNT_INSPECTION_SETTINGS_STORAGE_KEY);
-    }
-  } catch {
-    console.warn('清除 账号巡检配置失败');
-  }
 };
 
 const buildPlannedActionPreview = (results: AccountInspectionResultItem[]) => {
@@ -566,8 +521,9 @@ const accountInspectionBackendProgressStatus = (
   if (status.state === 'paused') return 'paused';
   if (status.state === 'running' || status.state === 'stopping') return 'running';
   if (status.state === 'failed') return 'failed';
+  if (status.state === 'partial') return 'partial';
   if (status.state === 'stopped') return 'stopped';
-  if (status.state === 'completed' || status.state === 'partial' || status.lastFinishedAt > 0) return 'completed';
+  if (status.state === 'completed' || status.lastFinishedAt > 0) return 'completed';
   return 'idle';
 };
 
@@ -576,11 +532,10 @@ const accountInspectionBackendRunStatus = (
 ): AccountInspectionDisplayRunStatus => {
   if (status.state === 'paused') return 'paused';
   if (status.state === 'running' || status.state === 'stopping') return 'running';
-  if (status.state === 'failed') return 'error';
-  if (status.state === 'stopped') return 'idle';
-  if (status.state === 'completed' || status.state === 'partial' || status.lastFinishedAt > 0) {
-    return status.lastError ? 'error' : 'success';
-  }
+  if (status.state === 'failed') return 'failed';
+  if (status.state === 'stopped') return 'stopped';
+  if (status.state === 'partial') return 'partial';
+  if (status.state === 'completed') return 'completed';
   return 'idle';
 };
 
@@ -592,7 +547,7 @@ const buildAccountInspectionBackendRunResult = (
 ): AccountInspectionRunResult | null => {
   if (results.length === 0 && response.status.lastFinishedAt <= 0) return null;
 
-  const settings = normalizeConfigurableSettings(response.schedule.settings);
+  const settings = normalizeConfigurableSettings(response.status.runSettings ?? response.schedule.settings);
   return {
     results,
     summary: {
@@ -607,6 +562,9 @@ const buildAccountInspectionBackendRunResult = (
     providerHealthCounts: response.status.providerHealthCounts,
     resultsPage: response.status.resultsPage,
     resultsLimited: response.status.resultsLimited ?? false,
+    settings,
+    state: response.status.state,
+    lastError: response.status.lastError || response.status.persistenceError || '',
   };
 };
 
@@ -648,6 +606,8 @@ export const buildAccountInspectionBackendViewState = (
       enable: response.status.summary.executedEnableCount ?? 0,
     },
     restoredSnapshot: response.status.restoredSnapshot ?? false,
+    lastError: response.status.lastError || '',
+    persistenceError: response.status.persistenceError || '',
     result: hasSnapshot
       ? buildAccountInspectionBackendRunResult(response, results, startedAt, finishedAt)
       : undefined,

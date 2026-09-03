@@ -66,6 +66,36 @@ func TestListAuthFilesFromDiskIncludesInspectionAndCodexPlanMetadata(t *testing.
 	}
 }
 
+func TestListAuthFilesExposesXAIJWTPlanWithoutAccessToken(t *testing.T) {
+	authDir := t.TempDir()
+	token := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":4}`)) + ".signature"
+	raw, err := json.Marshal(map[string]any{
+		"type": "xai", "email": "xai@example.com", "access_token": token,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(authDir, "xai-user.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, nil)
+	entry := firstAuthFileEntry(t, h)
+	if entry["plan_type"] != "x-premium-plus" {
+		t.Fatalf("plan_type = %#v, want x-premium-plus", entry["plan_type"])
+	}
+	if _, exposed := entry["access_token"]; exposed {
+		t.Fatalf("auth file entry exposed access_token: %#v", entry)
+	}
+
+	liteToken := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"tier":6}`)) + ".signature"
+	if plan := xaiAuthFilePlanType(&coreauth.Auth{
+		Provider: "xai", Attributes: map[string]string{"access_token": liteToken},
+	}); plan != "supergrok-lite" {
+		t.Fatalf("xaiAuthFilePlanType() = %q, want supergrok-lite", plan)
+	}
+}
+
 func TestQuotaSuccessStateIncludesParserMetadata(t *testing.T) {
 	state := quotaSuccessState(map[string]any{"rawShapeHash": proquota.JSONShapeHash(`{"a":1,"items":[{"b":true}]}`)})
 	if state["schemaVersion"] != 2 || state["parserVersion"] != accountInspectionQuotaParserVersion || state["status"] != "success" {
@@ -578,7 +608,7 @@ func TestXAIPlanTypeFromMonthlyBilling(t *testing.T) {
 		{name: "free ignores on demand cap", body: `{"config": {"onDemandCap": {"val": 20000}}}`, want: "free"},
 		{name: "free zero limit", body: `{"config": {"monthlyLimit": {"val": 0}}}`, want: "free"},
 		{name: "supergrok", body: `{"config": {"monthlyLimit": {"val": 15000}}}`, want: "supergrok"},
-		{name: "x premium plus", body: `{"config": {"monthlyLimit": {"val": 20000}}}`, want: "x-premium-plus"},
+		{name: "unknown paid 20000", body: `{"config": {"monthlyLimit": {"val": 20000}}}`, want: "paid-unknown"},
 		{name: "supergrok heavy", body: `{"config": {"monthlyLimit": {"val": 150000}}}`, want: "supergrok-heavy"},
 		{name: "unknown paid", body: `{"config": {"monthlyLimit": {"val": 99000}}}`, want: "paid-unknown"},
 	}
@@ -604,7 +634,7 @@ func TestXAISummaryUsedPercentUsesFreeQuotaOnlyForFreePlan(t *testing.T) {
 		t.Fatalf("free used percent = %v, want 75", got)
 	}
 	paid := proquota.EmptyXAIBillingSummary()
-	paid["planType"] = "x-premium-plus"
+	paid["planType"] = "paid-unknown"
 	paid["freeQuota"] = map[string]any{"exhausted": true}
 	if got := proquota.XAISummaryUsedPercent(paid); got != nil {
 		t.Fatalf("paid free-model exhaustion used percent = %v, want nil", got)

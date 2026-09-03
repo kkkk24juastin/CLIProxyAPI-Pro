@@ -2,13 +2,18 @@ package observability
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +26,14 @@ import (
 const accountInspectionScheduleExportRecordType = "account_inspection_schedule"
 const accountInspectionSnapshotExportRecordType = "account_inspection_snapshot"
 const backupManifestRecordType = "backup_manifest"
+
+type stagedDataDomainBackupRecord struct {
+	domainID   string
+	recordType string
+	raw        []byte
+	importer   DataDomainBackupImporter
+}
+
 const usageHistoryStartCursorValue = int64(1<<63 - 1)
 
 type usageStreamEvent = internalusage.Payload
@@ -37,6 +50,9 @@ type usageHistoryCursor struct {
 	AuthIndex         string `json:"auth_index,omitempty"`
 	SearchAuthIndexes string `json:"search_auth_indexes,omitempty"`
 	APIKeyHash        string `json:"api_key_hash,omitempty"`
+	APIKeyPolicyID    string `json:"api_key_policy_id,omitempty"`
+	ProfileID         string `json:"profile_id,omitempty"`
+	PolicyMode        string `json:"policy_mode,omitempty"`
 	Status            string `json:"status,omitempty"`
 	Search            string `json:"search,omitempty"`
 }
@@ -64,8 +80,9 @@ type backupManifestRecord struct {
 }
 
 type Server struct {
-	cfg   Config
-	store *Store
+	cfg          Config
+	store        *Store
+	webDAVClient *http.Client
 }
 
 func NewServer(cfg Config, store *Store) *Server {
@@ -132,6 +149,9 @@ func RegisterGinRoutes(group *gin.RouterGroup) {
 		group.GET("/model-prices/sync-status", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
+		group.GET("/model-prices/models-dev/search", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
 		group.POST("/model-prices/recalculate", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
@@ -147,10 +167,18 @@ func RegisterGinRoutes(group *gin.RouterGroup) {
 }
 
 func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
+	if s == nil || !s.cfg.Enabled {
+		registerUsageUnavailableRoutes(group)
+		return
+	}
 	group.GET("", s.handleUsage)
 	group.GET("/export", s.handleUsageExport)
+	group.POST("/import/preview", s.handleUsageImportPreview)
 	group.POST("/import", s.handleUsageImport)
-	group.POST("/reset", withBackupWriteBarrier(s.handleUsageReset))
+	group.GET("/webdav/backups", s.handleWebDAVBackups)
+	group.POST("/webdav/preview", s.handleWebDAVImportPreview)
+	group.POST("/webdav/restore", s.handleWebDAVImport)
+	group.POST("/reset", s.handleUsageReset)
 	group.GET("/status", s.handleStatus)
 	group.GET("/events", s.handleUsageEvents)
 	group.GET("/aggregates", s.handleUsageAggregates)
@@ -166,9 +194,148 @@ func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
 	group.DELETE("/model-price-rules", withBackupWriteBarrier(s.handleModelPriceRulesDelete))
 	group.POST("/model-prices/sync", withBackupWriteBarrier(s.handleModelPricesSync))
 	group.GET("/model-prices/sync-status", s.handleModelPricesSyncStatus)
+	group.GET("/model-prices/models-dev/search", s.handleModelsDevPriceSearch)
 	group.POST("/model-prices/recalculate", withBackupWriteBarrier(s.handleModelPricesRecalculate))
 	group.GET("/settings", s.handleMonitoringSettingsGet)
 	group.PUT("/settings", withBackupWriteBarrier(s.handleMonitoringSettingsPut))
+}
+
+func registerUsageUnavailableRoutes(group *gin.RouterGroup) {
+	unavailable := func(c *gin.Context) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is disabled"})
+	}
+	for _, path := range []string{"", "/export", "/webdav/backups", "/status", "/events", "/aggregates", "/account", "/stream", "/quota-cache", "/model-prices", "/model-price-rules", "/model-prices/sync-status", "/model-prices/models-dev/search", "/settings"} {
+		group.GET(path, unavailable)
+	}
+	for _, path := range []string{"/import", "/import/preview", "/webdav/preview", "/webdav/restore", "/reset", "/model-prices/sync", "/model-prices/recalculate"} {
+		group.POST(path, unavailable)
+	}
+	for _, path := range []string{"/quota-cache", "/model-prices", "/model-price-rules", "/settings"} {
+		group.PUT(path, unavailable)
+	}
+	for _, path := range []string{"/quota-cache", "/model-price-rules"} {
+		group.DELETE(path, unavailable)
+	}
+}
+
+func (s *Server) handleWebDAVBackups(c *gin.Context) {
+	settings, err := s.store.GetMonitoringSettings(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	cfg := normalizeMonitoringSettings(settings).WebDAV
+	if cfg.URL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "WebDAV backup URL is not configured"})
+		return
+	}
+	ctx, cancel := webDAVContext(c.Request.Context())
+	defer cancel()
+	backups, err := listWebDAVBackups(ctx, s.webDAVClient, cfg.URL, cfg)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"backups": backups})
+}
+
+func (s *Server) fetchWebDAVBackup(ctx context.Context, fileName string) ([]byte, error) {
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" || path.Base(fileName) != fileName || !isKnownWebDAVBackupFileName(fileName) {
+		return nil, fmt.Errorf("invalid WebDAV backup file name")
+	}
+	settings, err := s.store.GetMonitoringSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cfg := normalizeMonitoringSettings(settings).WebDAV
+	if cfg.URL == "" {
+		return nil, fmt.Errorf("WebDAV backup URL is not configured")
+	}
+	requestURL := strings.TrimRight(cfg.URL, "/") + "/" + url.PathEscape(fileName)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	setWebDAVAuth(request, cfg)
+	client := s.webDAVClient
+	if client == nil {
+		client = newWebDAVHTTPClient()
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("webdav download failed with status %d", response.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 64*1024*1024+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 64*1024*1024 {
+		return nil, fmt.Errorf("WebDAV backup exceeds 64 MiB restore limit")
+	}
+	return data, nil
+}
+
+func webDAVImportFileName(c *gin.Context) (string, error) {
+	var request struct {
+		FileName string `json:"fileName"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		return "", fmt.Errorf("invalid WebDAV restore request")
+	}
+	return request.FileName, nil
+}
+
+func (s *Server) handleWebDAVImportPreview(c *gin.Context) {
+	fileName, err := webDAVImportFileName(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	data, err := s.fetchWebDAVBackup(c.Request.Context(), fileName)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(data))
+	s.handleUsageImportPreview(c)
+}
+
+func (s *Server) handleWebDAVImport(c *gin.Context) {
+	fileName, err := webDAVImportFileName(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	data, err := s.fetchWebDAVBackup(c.Request.Context(), fileName)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(data))
+	s.handleUsageImport(c)
+}
+
+func (s *Server) handleUsageImportPreview(c *gin.Context) {
+	data, err := io.ReadAll(io.LimitReader(c.Request.Body, 64*1024*1024+1))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(data) > 64*1024*1024 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "backup exceeds 64 MiB preview limit"})
+		return
+	}
+	preview, err := s.previewBackupData(c.Request.Context(), data, allowLegacyUsageImport(c), false, nil)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, preview)
 }
 
 func withBackupWriteBarrier(handler gin.HandlerFunc) gin.HandlerFunc {
@@ -300,6 +467,9 @@ func usageEventQueryOptionsFromCursor(cursor usageHistoryCursor, limit int) Usag
 		AuthIndex:         cursor.AuthIndex,
 		SearchAuthIndexes: cursor.SearchAuthIndexes,
 		APIKeyHash:        cursor.APIKeyHash,
+		APIKeyPolicyID:    cursor.APIKeyPolicyID,
+		ProfileID:         cursor.ProfileID,
+		PolicyMode:        cursor.PolicyMode,
 		Failed:            failed,
 		Search:            cursor.Search,
 		Limit:             limit,
@@ -321,6 +491,9 @@ func usageHistoryCursorFromOptions(options UsageEventQueryOptions, status string
 		AuthIndex:         options.AuthIndex,
 		SearchAuthIndexes: options.SearchAuthIndexes,
 		APIKeyHash:        options.APIKeyHash,
+		APIKeyPolicyID:    options.APIKeyPolicyID,
+		ProfileID:         options.ProfileID,
+		PolicyMode:        options.PolicyMode,
 		Status:            status,
 		Search:            options.Search,
 	}
@@ -413,6 +586,9 @@ func (s *Server) handleUsageHistoryEvents(c *gin.Context) {
 			AuthIndex:         strings.TrimSpace(c.Query("auth_index")),
 			SearchAuthIndexes: strings.TrimSpace(c.Query("search_auth_indexes")),
 			APIKeyHash:        strings.TrimSpace(c.Query("api_key_hash")),
+			APIKeyPolicyID:    strings.TrimSpace(c.Query("api_key_policy_id")),
+			ProfileID:         strings.TrimSpace(c.Query("profile_id")),
+			PolicyMode:        strings.TrimSpace(c.Query("policy_mode")),
 			Failed:            failed,
 			Search:            strings.TrimSpace(c.Query("search")),
 			Limit:             limit,
@@ -511,6 +687,13 @@ func (s *Server) handleUsageAggregates(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	timezoneName := strings.TrimSpace(c.Query("timezone"))
+	if timezoneName != "" {
+		if _, err = time.LoadLocation(timezoneName); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "timezone is invalid"})
+			return
+		}
+	}
 	options := UsageAggregateOptions{
 		FromMS:                parseQueryInt64(c, "from_ms", 0),
 		ToMS:                  parseQueryInt64(c, "to_ms", 0),
@@ -518,7 +701,11 @@ func (s *Server) handleUsageAggregates(c *gin.Context) {
 		GroupBy:               parseCSVQuery(c.Query("group_by")),
 		Limit:                 parseQueryInt(c, "limit", 1000),
 		APIKeyHash:            strings.TrimSpace(c.Query("api_key_hash")),
+		APIKeyPolicyID:        strings.TrimSpace(c.Query("api_key_policy_id")),
+		ProfileID:             strings.TrimSpace(c.Query("profile_id")),
+		PolicyMode:            strings.TrimSpace(c.Query("policy_mode")),
 		TimezoneOffsetMinutes: parseQueryInt(c, "timezone_offset_minutes", 0),
+		TimezoneName:          timezoneName,
 	}
 	buckets, err := s.store.UsageAggregates(c.Request.Context(), options)
 	if err != nil {
@@ -546,10 +733,23 @@ func (s *Server) handleAccountUsage(c *gin.Context) {
 		return
 	}
 	days := 30
-	if rawDays := strings.TrimSpace(c.Query("days")); rawDays != "" {
+	fromMS := int64(0)
+	toMS := int64(0)
+	rawFromMS := strings.TrimSpace(c.Query("from_ms"))
+	rawToMS := strings.TrimSpace(c.Query("to_ms"))
+	if rawFromMS != "" || rawToMS != "" {
+		parsedFromMS, fromErr := strconv.ParseInt(rawFromMS, 10, 64)
+		parsedToMS, toErr := strconv.ParseInt(rawToMS, 10, 64)
+		if fromErr != nil || toErr != nil || parsedFromMS < 0 || parsedToMS <= 0 || parsedFromMS > parsedToMS {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "from_ms and to_ms must define a valid range"})
+			return
+		}
+		fromMS = parsedFromMS
+		toMS = parsedToMS
+	} else if rawDays := strings.TrimSpace(c.Query("days")); rawDays != "" {
 		parsed, err := strconv.Atoi(rawDays)
-		if err != nil || (parsed != 0 && parsed != 7 && parsed != 30 && parsed != 90) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "days must be one of 0, 7, 30, or 90"})
+		if err != nil || (parsed != 0 && parsed != 1 && parsed != 7 && parsed != 30 && parsed != 90) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "days must be one of 0, 1, 7, 30, or 90"})
 			return
 		}
 		days = parsed
@@ -563,10 +763,20 @@ func (s *Server) handleAccountUsage(c *gin.Context) {
 		}
 		timezoneOffset = parsed
 	}
+	timezoneName := strings.TrimSpace(c.Query("timezone"))
+	if timezoneName != "" {
+		if _, err := time.LoadLocation(timezoneName); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "timezone is invalid"})
+			return
+		}
+	}
 	detail, err := s.store.AccountUsage(c.Request.Context(), AccountUsageOptions{
 		AuthIndex:             authIndex,
 		Days:                  days,
+		FromMS:                fromMS,
+		ToMS:                  toMS,
 		TimezoneOffsetMinutes: timezoneOffset,
+		TimezoneName:          timezoneName,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -745,12 +955,16 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 	authRuntimeStatsRecords := 0
 	var proSettings []ProSetting
 	proSettingsRecords := 0
+	var apiKeyPolicies json.RawMessage
+	apiKeyPoliciesRecords := 0
 	var accountInspectionSchedule json.RawMessage
 	accountInspectionScheduleRecords := 0
 	var accountInspectionSnapshot json.RawMessage
 	accountInspectionSnapshotRecords := 0
 	var monitoringSettings *MonitoringSettings
 	monitoringSettingsRecords := 0
+	contributors := allDataDomainContributors()
+	var pluginBackupRecords []stagedDataDomainBackupRecord
 	failed := 0
 	var manifest *backupManifestRecord
 	hashedRecords := 0
@@ -794,6 +1008,18 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			hashedRecords++
 		}
 		switch recordType {
+		case "api_key_policies":
+			var record struct {
+				Version  int             `json:"version"`
+				Policies json.RawMessage `json:"policies"`
+			}
+			if err := json.Unmarshal(raw, &record); err != nil || (record.Version != 1 && record.Version != 2) || !json.Valid(record.Policies) {
+				failed++
+				continue
+			}
+			apiKeyPolicies = append(apiKeyPolicies[:0], record.Policies...)
+			apiKeyPoliciesRecords++
+			continue
 		case accountInspectionScheduleExportRecordType:
 			schedule, err := parseAccountInspectionScheduleImportRecord(raw)
 			if err != nil {
@@ -869,7 +1095,14 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			continue
 		}
 		if recordType != "" {
-			failed++
+			domainID, importer, importerErr := backupRecordImporterFor(c.Request.Context(), s.store, contributors, recordType, raw)
+			if importerErr != nil {
+				failed++
+				continue
+			}
+			pluginBackupRecords = append(pluginBackupRecords, stagedDataDomainBackupRecord{
+				domainID: domainID, recordType: recordType, raw: append([]byte(nil), raw...), importer: importer,
+			})
 			continue
 		}
 		if _, err := internalusage.NormalizeRaw(raw); err != nil {
@@ -903,6 +1136,7 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			return
 		}
 	}
+	proSettings = normalizeOAuthPolicySettings(proSettings)
 	result := InsertResult{}
 	batchSize := s.cfg.BatchSize
 	if batchSize <= 0 {
@@ -912,25 +1146,96 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 	var importedRoutingCursors int
 	var importedAuthRuntimeStats int
 	var importedProSettings int
+	var previousAPIKeyPolicies []byte
+	policyImportApplied := false
+	var previousRuntimeCursors []RoutingCursorState
+	var previousRuntimeStats []AuthRuntimeStats
+	var previousInspectionSchedule []byte
+	var previousInspectionSnapshot []byte
+	previousInspectionSchedulePresent := false
+	previousInspectionSnapshotPresent := false
+	var importPreview probackup.PolicyBackupPreview
 	err = probackup.Default.ExecuteImport(c.Request.Context(), probackup.ImportPlan{
 		FlushQueues: func(ctx context.Context) error {
-			return flushRuntimeStateWrites(ctx, s.store)
+			if err := flushRuntimeStateWrites(ctx, s.store); err != nil {
+				return err
+			}
+			// Credential-file cleanup is deliberately excluded from restore. It is
+			// external filesystem state and cannot participate in the shared SQLite
+			// transaction or compensation path; normal auth registration owns that
+			// maintenance independently.
+			var err error
+			previousRuntimeCursors, err = s.store.ListRoutingCursorStates(ctx)
+			if err != nil {
+				return err
+			}
+			previousRuntimeStats, err = s.store.ListAuthRuntimeStats(ctx)
+			if err != nil {
+				return err
+			}
+			previousInspectionSchedule, previousInspectionSchedulePresent, err = probackup.Default.ExportInspectionSchedule()
+			if err != nil {
+				return err
+			}
+			previousInspectionSnapshot, previousInspectionSnapshotPresent, err = probackup.Default.ExportInspectionSnapshot()
+			return err
 		},
 		ImportDatabase: func(ctx context.Context) error {
+			if apiKeyPoliciesRecords > 1 {
+				return fmt.Errorf("backup contains multiple API key policy records")
+			}
+			if apiKeyPoliciesRecords == 1 {
+				var errPrevious error
+				previousAPIKeyPolicies, _, errPrevious = probackup.Default.ExportAPIKeyPolicies()
+				if errPrevious != nil {
+					return errPrevious
+				}
+				var errPreview error
+				importPreview, errPreview = probackup.Default.PreviewAPIKeyPolicies(ctx, apiKeyPolicies)
+				if errPreview != nil {
+					return errPreview
+				}
+			} else {
+				currentPolicies, ok, errCurrent := probackup.Default.ExportAPIKeyPolicies()
+				if errCurrent != nil {
+					return errCurrent
+				}
+				if ok {
+					currentPreview, errPreview := probackup.Default.PreviewAPIKeyPolicies(ctx, currentPolicies)
+					if errPreview != nil {
+						return errPreview
+					}
+					importPreview.PreservePolicies = currentPreview.TargetPolicies
+					importPreview.PreserveProfiles = currentPreview.TargetProfiles
+					importPreview.CurrentTakeoverEnabled = currentPreview.CurrentTakeoverEnabled
+					importPreview.TargetTakeoverEnabled = currentPreview.CurrentTakeoverEnabled
+				}
+			}
 			previousProSettings, errPrevious := s.store.ListProSettings(ctx)
 			if errPrevious != nil {
 				return errPrevious
 			}
-			previousProSettings = proSettingRollbackSnapshot(previousProSettings, proSettings)
+			proSettingsToApply := proSettings
+			proSettingsToRollback := proSettingRollbackSnapshot(previousProSettings, proSettings)
+			if proSettingsRecords > 0 {
+				proSettingsToApply = proSettingReplacementTransition(previousProSettings, proSettings)
+				proSettingsToRollback = proSettingReplacementTransition(proSettings, previousProSettings)
+			}
 			configurationApplied := false
 			rollbackConfiguration := func() error {
 				if !configurationApplied {
 					return nil
 				}
 				configurationApplied = false
-				return ApplyImportedProSettings(context.WithoutCancel(ctx), previousProSettings)
+				return ApplyImportedProSettings(context.WithoutCancel(ctx), proSettingsToRollback)
 			}
 			errImport := s.store.RunImportTransaction(ctx, func(ctx context.Context) error {
+				if apiKeyPoliciesRecords == 1 {
+					if err := probackup.Default.ImportAPIKeyPolicies(ctx, apiKeyPolicies); err != nil {
+						return err
+					}
+					policyImportApplied = true
+				}
 				if _, err := eventStage.Seek(0, 0); err != nil {
 					return err
 				}
@@ -988,7 +1293,9 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 				if err != nil {
 					return err
 				}
-				importedRoutingCursors, importedAuthRuntimeStats, err = s.store.ImportRuntimeState(ctx, routingCursors, authRuntimeStats)
+				importedRoutingCursors, importedAuthRuntimeStats, err = s.store.ReplaceRuntimeState(
+					ctx, routingCursors, authRuntimeStats, routingCursorRecords > 0, authRuntimeStatsRecords > 0,
+				)
 				if err != nil {
 					return err
 				}
@@ -997,16 +1304,51 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 						return err
 					}
 				}
-				importedProSettings, err = s.store.ImportProSettings(ctx, proSettings)
-				if err != nil || importedProSettings == 0 {
+				if proSettingsRecords > 0 {
+					importedProSettings, err = s.store.ReplaceProSettings(ctx, proSettings)
+				} else {
+					importedProSettings, err = s.store.ImportProSettings(ctx, proSettings)
+				}
+				if err != nil {
 					return err
 				}
-				configurationApplied = true
-				if err := ApplyImportedProSettings(ctx, proSettings); err != nil {
+				for _, record := range pluginBackupRecords {
+					if err := record.importer.ImportBackupRecord(ctx, s.store, record.recordType, record.raw); err != nil {
+						return fmt.Errorf("restore data domain %q: %w", record.domainID, err)
+					}
+				}
+				configurationApplied = len(proSettingsToApply) > 0
+				if err := ApplyImportedProSettings(ctx, proSettingsToApply); err != nil {
 					if rollbackErr := rollbackConfiguration(); rollbackErr != nil {
 						return fmt.Errorf("apply imported Pro settings: %w (rollback failed: %v)", err, rollbackErr)
 					}
 					return err
+				}
+				// All fallible runtime and inspection work happens before the one
+				// SQLite commit. A failure rolls the database transaction back and
+				// the coordinator restores the captured external snapshots.
+				if probackup.Default.HasRuntimeStateImporter() && (routingCursorRecords > 0 || authRuntimeStatsRecords > 0) {
+					currentRoutingCursors, err := s.store.ListRoutingCursorStates(ctx)
+					if err != nil {
+						return err
+					}
+					currentAuthRuntimeStats, err := s.store.ListAuthRuntimeStats(ctx)
+					if err != nil {
+						return err
+					}
+					if err := probackup.Default.ImportRuntimeState(currentRoutingCursors, currentAuthRuntimeStats); err != nil {
+						return err
+					}
+				}
+				if accountInspectionSchedule != nil {
+					if err := probackup.Default.ImportInspectionSchedule(accountInspectionSchedule); err != nil {
+						return err
+					}
+				}
+				if accountInspectionSnapshot != nil {
+					if err := probackup.Default.ImportInspectionSnapshot(accountInspectionSnapshot); err != nil {
+						return err
+					}
 				}
 				return nil
 			})
@@ -1018,32 +1360,35 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 			}
 			return nil
 		},
-		ApplyRuntimeState: func(ctx context.Context) error {
-			if !probackup.Default.HasRuntimeStateImporter() || (importedRoutingCursors == 0 && importedAuthRuntimeStats == 0) {
-				return nil
-			}
-			currentRoutingCursors, err := s.store.ListRoutingCursorStates(ctx)
-			if err != nil {
-				return err
-			}
-			currentAuthRuntimeStats, err := s.store.ListAuthRuntimeStats(ctx)
-			if err != nil {
-				return err
-			}
-			return probackup.Default.ImportRuntimeState(currentRoutingCursors, currentAuthRuntimeStats)
-		},
-		RestoreInspection: func(context.Context) error {
-			if accountInspectionSchedule != nil {
-				if err := probackup.Default.ImportInspectionSchedule(accountInspectionSchedule); err != nil {
-					return err
+		Rollback: func(ctx context.Context) error {
+			var rollbackErrors []error
+			if policyImportApplied && len(previousAPIKeyPolicies) > 0 {
+				policyImportApplied = false
+				if err := probackup.Default.ImportAPIKeyPolicies(ctx, previousAPIKeyPolicies); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("API key policies: %w", err))
 				}
 			}
-			if accountInspectionSnapshot != nil {
-				return probackup.Default.ImportInspectionSnapshot(accountInspectionSnapshot)
+			if probackup.Default.HasRuntimeStateImporter() {
+				if err := probackup.Default.ImportRuntimeState(previousRuntimeCursors, previousRuntimeStats); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("runtime state: %w", err))
+				}
 			}
-			return nil
+			if previousInspectionSchedulePresent {
+				if err := probackup.Default.ImportInspectionSchedule(previousInspectionSchedule); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("inspection schedule: %w", err))
+				}
+			}
+			if previousInspectionSnapshotPresent {
+				if err := probackup.Default.ImportInspectionSnapshot(previousInspectionSnapshot); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("inspection snapshot: %w", err))
+				}
+			} else if accountInspectionSnapshot != nil {
+				if err := probackup.Default.ImportInspectionSnapshot([]byte("null")); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("clear inspection snapshot: %w", err))
+				}
+			}
+			return errors.Join(rollbackErrors...)
 		},
-		CleanupLegacy: probackup.Default.CleanupLegacy,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1065,12 +1410,15 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 		"authRuntimeStatsRecords":          authRuntimeStatsRecords,
 		"proSettings":                      importedProSettings,
 		"proSettingsRecords":               proSettingsRecords,
+		"apiKeyPolicies":                   apiKeyPoliciesRecords,
+		"policyBackup":                     importPreview,
 		"accountInspectionSchedule":        accountInspectionSchedule != nil,
 		"accountInspectionScheduleRecords": accountInspectionScheduleRecords,
 		"accountInspectionSnapshot":        accountInspectionSnapshot != nil,
 		"accountInspectionSnapshotRecords": accountInspectionSnapshotRecords,
 		"monitoringSettings":               monitoringSettings != nil,
 		"monitoringSettingsRecords":        monitoringSettingsRecords,
+		"pluginDataRecords":                len(pluginBackupRecords),
 		"legacyBackup":                     manifest == nil,
 	})
 }
@@ -1087,7 +1435,29 @@ func (s *Server) handleUsageReset(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "reset confirmation is required"})
 		return
 	}
-	result, err := s.store.ResetUsageStatistics(c.Request.Context())
+	var result UsageResetResult
+	var preservedRoutingCursors []RoutingCursorState
+	err := probackup.Default.ExecuteImport(c.Request.Context(), probackup.ImportPlan{
+		FlushQueues: func(ctx context.Context) error {
+			if err := flushRuntimeStateWrites(ctx, s.store); err != nil {
+				return err
+			}
+			var err error
+			preservedRoutingCursors, err = s.store.ListRoutingCursorStates(ctx)
+			return err
+		},
+		ImportDatabase: func(ctx context.Context) error {
+			var err error
+			result, err = s.store.ResetUsageStatistics(ctx)
+			return err
+		},
+		ApplyRuntimeState: func(context.Context) error {
+			if !probackup.Default.HasRuntimeStateImporter() {
+				return nil
+			}
+			return probackup.Default.ImportRuntimeState(preservedRoutingCursors, nil)
+		},
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1111,6 +1481,24 @@ func proSettingRollbackSnapshot(previous, imported []ProSetting) []ProSetting {
 		})
 	}
 	return rollback
+}
+
+func proSettingReplacementTransition(previous, target []ProSetting) []ProSetting {
+	target = normalizeOAuthPolicySettings(target)
+	targetNamespaces := make(map[string]struct{}, len(target))
+	transition := append([]ProSetting(nil), target...)
+	for _, item := range target {
+		targetNamespaces[item.Namespace] = struct{}{}
+	}
+	for _, item := range normalizeOAuthPolicySettings(previous) {
+		if _, exists := targetNamespaces[item.Namespace]; exists {
+			continue
+		}
+		transition = append(transition, ProSetting{
+			Namespace: item.Namespace, SchemaVersion: item.SchemaVersion, Settings: json.RawMessage(`{}`),
+		})
+	}
+	return transition
 }
 
 func readImportRecordType(raw []byte) (string, error) {
@@ -1417,13 +1805,12 @@ func (s *Server) handleModelPriceRulesPut(c *gin.Context) {
 }
 
 func (s *Server) handleModelPriceRulesDelete(c *gin.Context) {
-	provider := strings.TrimSpace(c.Query("provider"))
 	model := strings.TrimSpace(c.Query("model"))
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
-	if err := s.store.DeleteModelPriceRule(c.Request.Context(), provider, model); err != nil {
+	if err := s.store.DeleteModelPriceRule(c.Request.Context(), model); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1459,6 +1846,33 @@ func (s *Server) handleModelPricesSyncStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"state": state})
 }
 
+func (s *Server) handleModelsDevPriceSearch(c *gin.Context) {
+	query := strings.TrimSpace(c.Query("q"))
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "q is required"})
+		return
+	}
+	if len(query) > 200 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "q is too long"})
+		return
+	}
+	limit := 20
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a positive integer"})
+			return
+		}
+		limit = parsed
+	}
+	items, err := s.store.SearchModelsDevPrices(c.Request.Context(), query, c.Query("provider"), limit)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
 func (s *Server) handleModelPricesRecalculate(c *gin.Context) {
 	var payload struct {
 		All bool `json:"all"`
@@ -1488,24 +1902,38 @@ func (s *Server) handleMonitoringSettingsGet(c *gin.Context) {
 
 func (s *Server) handleMonitoringSettingsPut(c *gin.Context) {
 	var payload struct {
-		Settings MonitoringSettings `json:"settings"`
+		Settings         MonitoringSettings  `json:"settings"`
+		ExpectedSettings *MonitoringSettings `json:"expectedSettings,omitempty"`
+		Sections         []string            `json:"sections,omitempty"`
 	}
 	if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	settings := normalizeMonitoringSettings(payload.Settings)
-	if settings.WebDAV.Enabled && strings.TrimSpace(settings.WebDAV.URL) == "" {
+	updatesWebDAV := len(payload.Sections) == 0
+	for _, section := range payload.Sections {
+		if strings.TrimSpace(section) == "webdav" {
+			updatesWebDAV = true
+			break
+		}
+	}
+	if updatesWebDAV && settings.WebDAV.Enabled && strings.TrimSpace(settings.WebDAV.URL) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "webdav url is required"})
 		return
 	}
-	if err := s.store.SetMonitoringSettings(c.Request.Context(), settings); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	updated, err := s.store.UpdateMonitoringSettings(c.Request.Context(), settings, payload.ExpectedSettings, payload.Sections)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrMonitoringSettingsConflict) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	if _, err := s.store.ApplyRetention(c.Request.Context(), time.Now()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"settings": settings})
+	c.JSON(http.StatusOK, gin.H{"settings": updated})
 }

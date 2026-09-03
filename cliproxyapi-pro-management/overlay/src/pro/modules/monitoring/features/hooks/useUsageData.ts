@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import { apiClient } from '@/services/api/client';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { computeApiUrl } from '@/utils/connection';
-import { isRecordValue } from '@/utils/quota';
+import { isRecordValue } from '@/pro/shared/value';
 import {
   loadLegacyModelPrices,
   loadModelPricesFromSqlite,
@@ -58,6 +58,7 @@ export type UsageEventPageFilters = {
   authIndex?: string;
   searchAuthIndexes?: string;
   apiKeyHash?: string;
+  profileId?: string;
   status?: UsageEventStatusFilter;
   search?: string;
   limit?: number;
@@ -388,6 +389,7 @@ const loadUsageEventPage = async (filters: UsageEventPageFilters): Promise<Usage
           auth_index: filters.authIndex?.trim() || undefined,
           search_auth_indexes: filters.searchAuthIndexes?.trim() || undefined,
           api_key_hash: filters.apiKeyHash?.trim() || undefined,
+          profile_id: filters.profileId?.trim() || undefined,
           status: filters.status && filters.status !== 'all' ? filters.status : undefined,
           search: filters.search?.trim() || undefined,
         },

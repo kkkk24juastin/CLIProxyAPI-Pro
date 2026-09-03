@@ -25,8 +25,35 @@ func (s *accountInspectionScheduler) persistQuotaState(ctx context.Context, acco
 		s.appendLog("warning", fmt.Sprintf("%s 配额缓存写入失败：%s", account.identity(), err.Error()))
 		return
 	}
+	s.markAccountPoliciesForRefresh()
 	if err := s.cleanupLegacyQuotaCacheFromAuth(ctx, account); err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 旧认证文件配额缓存清理失败：%s", account.identity(), err.Error()))
+	}
+}
+
+func (s *accountInspectionScheduler) markAccountPoliciesForRefresh() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.policyRefreshPending = true
+	s.mu.Unlock()
+}
+
+func (s *accountInspectionScheduler) refreshAccountPoliciesIfQuotaChanged() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	pending := s.policyRefreshPending
+	s.policyRefreshPending = false
+	handler := s.h
+	s.mu.Unlock()
+	if !pending || handler == nil {
+		return
+	}
+	if application := handler.proApplication(); application != nil {
+		application.RefreshAccountPolicies()
 	}
 }
 
@@ -124,7 +151,8 @@ func mergeCachedXAIFreeQuota(ctx context.Context, account accountInspectionAccou
 	return billing
 }
 
-func observeAccountXAIQuota(ctx context.Context, account accountInspectionAccount, model string, result accountInspectionHTTPResult) {
+func observeAccountXAIQuota(ctx context.Context, account accountInspectionAccount, model string, result accountInspectionHTTPResult) map[string]any {
+	observedAt := time.Now()
 	_ = embeddedusage.ObserveXAIQuotaResponse(ctx, embeddedusage.XAIQuotaObservation{
 		FileName:   account.FileName,
 		AuthIndex:  account.AuthIndex,
@@ -134,8 +162,23 @@ func observeAccountXAIQuota(ctx context.Context, account accountInspectionAccoun
 		Status:     result.StatusCode,
 		Header:     result.Header,
 		Body:       []byte(result.Body),
-		ObservedAt: time.Now(),
+		ObservedAt: observedAt,
 	})
+	var freeQuota map[string]any
+	if proquota.XAIHeadersStatus(result.StatusCode) {
+		freeQuota = proquota.XAIRateLimitSnapshot(result.Header, model, observedAt)
+	}
+	if proquota.XAIFreeQuotaExhausted([]byte(result.Body)) {
+		freeQuota = proquota.XAIExhaustedQuotaSnapshot([]byte(result.Body), model, observedAt)
+	}
+	return freeQuota
+}
+
+func xaiPlanTypeFromAccessToken(auth *coreauth.Auth) (string, bool) {
+	if auth == nil {
+		return "", false
+	}
+	return proquota.XAIPlanTypeFromAccessToken(firstNonEmptyAuthValue(auth, "access_token", "accessToken"))
 }
 
 func intFromAny(value any) (int, bool) {

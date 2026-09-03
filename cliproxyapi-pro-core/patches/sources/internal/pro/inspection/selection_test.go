@@ -41,10 +41,3 @@ func TestSampleUsesCopyAndStableSeed(t *testing.T) {
 		t.Fatal("unbounded sample unexpectedly copied source")
 	}
 }
-
-func TestProviderLimiters(t *testing.T) {
-	limiters := ProviderLimiters(map[string]struct{}{"codex": {}, "xai": {}}, 2)
-	if len(limiters) != 2 || cap(limiters["codex"]) != 2 || cap(limiters["xai"]) != 2 {
-		t.Fatalf("limiters = %#v", limiters)
-	}
-}

@@ -14,7 +14,11 @@ var globalService *Service
 var proSettingConsumers = make(map[string][]proSettingConsumerRegistration)
 var proSettingConsumerGeneration uint64
 var globalStateMu sync.RWMutex
+var proSettingApplyMu sync.Mutex
 var globalStateWriter *prostate.Writer
+var legacyInspectionDomainMu sync.Mutex
+var legacyInspectionScheduleDomainUnregister func()
+var legacyInspectionSnapshotDomainUnregister func()
 
 func SetDefaultService(service *Service) {
 	globalStateMu.Lock()
@@ -27,6 +31,19 @@ func SetDefaultService(service *Service) {
 		globalStateWriter = prostate.NewWriter(service.store)
 	}
 	globalStateMu.Unlock()
+}
+
+// EstimateUsageCostMicros prices one terminal usage record against the active
+// model-price snapshot. A missing service or rule is an error so cost quotas
+// fail closed instead of silently treating unknown usage as free.
+func EstimateUsageCostMicros(ctx context.Context, input UsageCostInput) (int64, error) {
+	globalStateMu.RLock()
+	service := globalService
+	globalStateMu.RUnlock()
+	if service == nil || service.store == nil {
+		return 0, fmt.Errorf("model price service is unavailable")
+	}
+	return service.store.EstimateUsageCostMicros(ctx, input)
 }
 
 func stopRuntimeStateWriter(service *Service) {
@@ -61,18 +78,84 @@ func flushRuntimeStateWrites(ctx context.Context, store *Store) error {
 
 func SetAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
 	probackup.Default.SetInspectionSchedule(exporter, importer)
+	legacyInspectionDomainMu.Lock()
+	defer legacyInspectionDomainMu.Unlock()
+	if legacyInspectionScheduleDomainUnregister != nil {
+		legacyInspectionScheduleDomainUnregister()
+		legacyInspectionScheduleDomainUnregister = nil
+	}
+	if exporter != nil {
+		legacyInspectionScheduleDomainUnregister = RegisterDataDomainContributor("account-inspection-schedule", accountInspectionScheduleDataDomain(exporter))
+	}
 }
 
 func RegisterAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) func() {
-	return probackup.Default.RegisterInspectionSchedule(exporter, importer)
+	backupUnregister := probackup.Default.RegisterInspectionSchedule(exporter, importer)
+	domainUnregister := RegisterDataDomainContributor("account-inspection-schedule", accountInspectionScheduleDataDomain(exporter))
+	return func() {
+		domainUnregister()
+		backupUnregister()
+	}
+}
+
+func accountInspectionScheduleDataDomain(exporter func() ([]byte, bool, error)) DataDomainContribution {
+	return DataDomainContribution{
+		InventoryFunc: func(_ context.Context, _ *Store) DataDomainInventory {
+			domain := DataDomainInventory{Owner: "inspection", SchemaVersion: 1, BackupIncluded: true, RestoreMode: "replace", Sensitivity: "internal", Available: true}
+			if exporter == nil {
+				domain.Available, domain.Error = false, "schedule contributor is unavailable"
+				return domain
+			}
+			if raw, ok, err := exporter(); err != nil {
+				domain.Available, domain.Error = false, err.Error()
+			} else if ok && len(raw) > 0 {
+				domain.Records = 1
+			}
+			return domain
+		},
+		BackupRecordTypes: []string{accountInspectionScheduleExportRecordType},
+	}
 }
 
 func SetAccountInspectionSnapshotHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
 	probackup.Default.SetInspectionSnapshot(exporter, importer)
+	legacyInspectionDomainMu.Lock()
+	defer legacyInspectionDomainMu.Unlock()
+	if legacyInspectionSnapshotDomainUnregister != nil {
+		legacyInspectionSnapshotDomainUnregister()
+		legacyInspectionSnapshotDomainUnregister = nil
+	}
+	if exporter != nil {
+		legacyInspectionSnapshotDomainUnregister = RegisterDataDomainContributor("account-inspection-snapshot", accountInspectionSnapshotDataDomain(exporter))
+	}
 }
 
 func RegisterAccountInspectionSnapshotHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) func() {
-	return probackup.Default.RegisterInspectionSnapshot(exporter, importer)
+	backupUnregister := probackup.Default.RegisterInspectionSnapshot(exporter, importer)
+	domainUnregister := RegisterDataDomainContributor("account-inspection-snapshot", accountInspectionSnapshotDataDomain(exporter))
+	return func() {
+		domainUnregister()
+		backupUnregister()
+	}
+}
+
+func accountInspectionSnapshotDataDomain(exporter func() ([]byte, bool, error)) DataDomainContribution {
+	return DataDomainContribution{
+		InventoryFunc: func(_ context.Context, _ *Store) DataDomainInventory {
+			domain := DataDomainInventory{Owner: "inspection", SchemaVersion: 1, BackupIncluded: true, RestoreMode: "replace", Sensitivity: "sensitive", SecretClasses: []string{"account_metadata"}, Available: true}
+			if exporter == nil {
+				domain.Available, domain.Error = false, "snapshot contributor is unavailable"
+				return domain
+			}
+			if raw, ok, err := exporter(); err != nil {
+				domain.Available, domain.Error = false, err.Error()
+			} else if ok && len(raw) > 0 && string(raw) != "null" {
+				domain.Records = 1
+			}
+			return domain
+		},
+		BackupRecordTypes: []string{accountInspectionSnapshotExportRecordType},
+	}
 }
 
 func SetAuthRuntimeStateImportHandler(importer func([]RoutingCursorState, []AuthRuntimeStats) error) {
@@ -130,6 +213,7 @@ func RegisterProSettingConsumer(namespace string, apply func(context.Context, Pr
 }
 
 func ApplyImportedProSettings(ctx context.Context, settings []ProSetting) error {
+	settings = normalizeOAuthPolicySettings(settings)
 	for _, item := range settings {
 		globalStateMu.RLock()
 		registrations := proSettingConsumers[item.Namespace]
@@ -188,13 +272,57 @@ func GetProSetting(ctx context.Context, namespace string) (ProSetting, bool, err
 
 func SetProSetting(ctx context.Context, item ProSetting) error {
 	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
-		globalStateMu.RLock()
-		defer globalStateMu.RUnlock()
-		if globalService == nil || globalService.store == nil {
-			return fmt.Errorf("usage service is not available")
-		}
-		return globalService.store.SetProSetting(ctx, item)
+		return setProSetting(ctx, item)
 	})
+}
+
+// SetProSettingAndApplyLatest keeps a live settings update inside the backup
+// write barrier until the latest committed value has been applied. Concurrent
+// live writers may still overlap, so each caller re-reads the durable winner
+// instead of applying its own possibly stale draft.
+func SetProSettingAndApplyLatest(ctx context.Context, item ProSetting, apply func(context.Context, ProSetting) error) error {
+	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		if err := setProSetting(ctx, item); err != nil {
+			return err
+		}
+		if apply == nil {
+			return nil
+		}
+		proSettingApplyMu.Lock()
+		defer proSettingApplyMu.Unlock()
+		latest, found, err := GetProSetting(ctx, item.Namespace)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("pro setting %q was not persisted", item.Namespace)
+		}
+		return apply(ctx, latest)
+	})
+}
+
+func setProSetting(ctx context.Context, item ProSetting) error {
+	globalStateMu.RLock()
+	defer globalStateMu.RUnlock()
+	if globalService == nil || globalService.store == nil {
+		return fmt.Errorf("usage service is not available")
+	}
+	return globalService.store.SetProSetting(ctx, item)
+}
+
+func DeleteProSetting(ctx context.Context, namespace string) error {
+	return probackup.Default.ExecuteWrite(ctx, func(ctx context.Context) error {
+		return deleteProSetting(ctx, namespace)
+	})
+}
+
+func deleteProSetting(ctx context.Context, namespace string) error {
+	globalStateMu.RLock()
+	defer globalStateMu.RUnlock()
+	if globalService == nil || globalService.store == nil {
+		return fmt.Errorf("usage service is not available")
+	}
+	return globalService.store.DeleteProSetting(ctx, namespace)
 }
 
 func QueueRoutingCursorState(state RoutingCursorState) {

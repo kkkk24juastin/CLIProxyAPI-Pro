@@ -58,6 +58,24 @@ export type AccountInspectionInspectOneResponse = AccountInspectionBackendRespon
   error?: string;
 };
 
+export type AccountInspectionInspectManyOutcome = {
+  key: string;
+  fileName: string;
+  displayName: string;
+  email?: string;
+  name?: string;
+  provider: string;
+  authIndex: string;
+  success: boolean;
+  error: string;
+  result?: AccountInspectionBackendResultItem;
+};
+
+export type AccountInspectionInspectManyResponse = AccountInspectionBackendResponse & {
+  outcomes: AccountInspectionInspectManyOutcome[];
+  error?: string;
+};
+
 export type AccountInspectionScheduleResponse = AccountInspectionBackendResponse;
 
 export type AccountInspectionDetailsOptions = {
@@ -74,6 +92,11 @@ export type AccountInspectionDetailsOptions = {
   logPageSize?: number;
   logLevel?: string;
 };
+
+// Bulk rechecks are bounded by the backend's 30-minute run context. Keep a
+// small transport grace period so Axios does not cancel an otherwise healthy
+// batch before the backend can return its per-account outcomes.
+export const ACCOUNT_INSPECTION_BULK_RECHECK_TIMEOUT_MS = 31 * 60 * 1000;
 
 const buildAccountInspectionDetailParams = (options: boolean | AccountInspectionDetailsOptions = false) => {
   const normalized = typeof options === 'boolean' ? { includeDetails: options } : options;
@@ -118,9 +141,10 @@ export const accountInspectionApi = {
     apiClient.get<AccountInspectionScheduleResponse>('/account-inspection/schedule', {
       params: { details: includeDetails ? 1 : 0 },
     }),
-  getStatus: (options: boolean | AccountInspectionDetailsOptions = false) =>
+  getStatus: (options: boolean | AccountInspectionDetailsOptions = false, signal?: AbortSignal) =>
     apiClient.get<AccountInspectionScheduleResponse>('/account-inspection/status', {
       params: buildAccountInspectionDetailParams(options),
+      signal,
     }),
   updateSchedule: (schedule: AccountInspectionSchedule) =>
     apiClient.put<AccountInspectionScheduleResponse>('/account-inspection/schedule', schedule, {
@@ -138,6 +162,11 @@ export const accountInspectionApi = {
   inspectOne: (item: AccountInspectionInspectOneItem, options: boolean | AccountInspectionDetailsOptions = true) =>
     apiClient.post<AccountInspectionInspectOneResponse>('/account-inspection/inspect-one', { item }, {
       params: buildAccountInspectionDetailParams(options),
+    }),
+  inspectMany: (items: AccountInspectionInspectOneItem[], options: boolean | AccountInspectionDetailsOptions = true) =>
+    apiClient.post<AccountInspectionInspectManyResponse>('/account-inspection/inspect-many', { items }, {
+      params: buildAccountInspectionDetailParams(options),
+      timeout: ACCOUNT_INSPECTION_BULK_RECHECK_TIMEOUT_MS,
     }),
   pause: () => apiClient.post<AccountInspectionScheduleResponse>('/account-inspection/pause', {}, {
     params: { details: 0 },

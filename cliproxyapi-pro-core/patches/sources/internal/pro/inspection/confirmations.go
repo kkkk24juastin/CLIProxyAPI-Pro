@@ -7,12 +7,34 @@ import (
 
 // ConfirmationCounter owns consecutive auto-action confirmation state.
 type ConfirmationCounter struct {
-	mu     sync.Mutex
-	counts map[string]int
+	mu       sync.Mutex
+	sequence int64
+	entries  map[string]ConfirmationEntry
+}
+
+type ConfirmationEntry struct {
+	Count        int   `json:"count"`
+	LastSequence int64 `json:"lastSequence"`
+}
+
+type ConfirmationState struct {
+	Sequence int64                        `json:"sequence"`
+	Entries  map[string]ConfirmationEntry `json:"entries"`
 }
 
 func NewConfirmationCounter() *ConfirmationCounter {
-	return &ConfirmationCounter{counts: make(map[string]int)}
+	return &ConfirmationCounter{sequence: 1, entries: make(map[string]ConfirmationEntry)}
+}
+
+func (c *ConfirmationCounter) BeginRun() int64 {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	c.sequence++
+	sequence := c.sequence
+	c.mu.Unlock()
+	return sequence
 }
 
 func (c *ConfirmationCounter) Confirm(key string, required int) (bool, int, int) {
@@ -24,11 +46,20 @@ func (c *ConfirmationCounter) Confirm(key string, required int) (bool, int, int)
 		return true, 1, required
 	}
 	c.mu.Lock()
-	if c.counts == nil {
-		c.counts = make(map[string]int)
+	if c.entries == nil {
+		c.entries = make(map[string]ConfirmationEntry)
 	}
-	count := c.counts[key] + 1
-	c.counts[key] = count
+	entry := c.entries[key]
+	if entry.LastSequence == c.sequence {
+		count := entry.Count
+		c.mu.Unlock()
+		return count >= required, count, required
+	}
+	count := 1
+	if entry.LastSequence == c.sequence-1 {
+		count = entry.Count + 1
+	}
+	c.entries[key] = ConfirmationEntry{Count: count, LastSequence: c.sequence}
 	c.mu.Unlock()
 	return count >= required, count, required
 }
@@ -38,9 +69,47 @@ func (c *ConfirmationCounter) ClearPrefix(prefix string) {
 		return
 	}
 	c.mu.Lock()
-	for key := range c.counts {
+	for key := range c.entries {
 		if strings.HasPrefix(key, prefix) {
-			delete(c.counts, key)
+			delete(c.entries, key)
+		}
+	}
+	c.mu.Unlock()
+}
+
+func (c *ConfirmationCounter) Reset() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.sequence = 1
+	c.entries = make(map[string]ConfirmationEntry)
+	c.mu.Unlock()
+}
+
+func (c *ConfirmationCounter) State() ConfirmationState {
+	if c == nil {
+		return ConfirmationState{Entries: map[string]ConfirmationEntry{}}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entries := make(map[string]ConfirmationEntry, len(c.entries))
+	for key, entry := range c.entries {
+		entries[key] = entry
+	}
+	return ConfirmationState{Sequence: c.sequence, Entries: entries}
+}
+
+func (c *ConfirmationCounter) Restore(state ConfirmationState) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.sequence = state.Sequence
+	c.entries = make(map[string]ConfirmationEntry, len(state.Entries))
+	for key, entry := range state.Entries {
+		if strings.TrimSpace(key) != "" && entry.Count > 0 && entry.LastSequence > 0 {
+			c.entries[key] = entry
 		}
 	}
 	c.mu.Unlock()

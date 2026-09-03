@@ -195,6 +195,15 @@
   font-weight: 600;
 }
 
+.primaryCell .realtimeAccountTypeLine {
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.realtimeAccountTypeLine strong {
+  font-weight: 650;
+}
+
 .realtimeTimeCell {
   white-space: normal;
   line-height: 1.35;
@@ -423,12 +432,59 @@
   white-space: nowrap;
 }
 
+.realtimeLatencyCol {
+  min-width: 116px;
+}
+
+.realtimeDurationTableCell {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.realtimeDurationCell {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-height: 46px;
+  font-variant-numeric: tabular-nums;
+}
+
+.realtimeDurationCell > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.realtimeDurationCell small {
+  flex: 0 0 auto;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.realtimeDurationCell strong {
+  min-width: 0;
+  color: var(--monitor-ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.realtimeDurationCell :is(strong, small).warnText {
+  color: var(--monitor-amber);
+}
+
+.realtimeDurationCell :is(strong, small).badText {
+  color: var(--monitor-red);
+}
+
 .realtimeReasoningCol {
   min-width: 96px;
 }
 
-.realtimePlanCol {
-  min-width: 104px;
+.realtimeTypeCol {
+  min-width: 160px;
 }
 
 .realtimeStreamCol {
@@ -478,27 +534,11 @@
   width: 100%;
 }
 
-.realtimeErrorDetailsPanel {
-  display: grid;
-  gap: 14px;
-  padding: 2px 0 4px;
-}
-
 .monitorModalActions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-}
-
-.realtimeErrorOverview {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--monitor-red) 24%, var(--monitor-line));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--monitor-red) 7%, var(--monitor-surface));
 }
 
 .realtimeErrorOverviewTop {
@@ -511,90 +551,6 @@
 
 .realtimeErrorOverviewTop .statusBadge {
   width: auto;
-}
-
-.realtimeErrorOverviewTop span {
-  color: var(--monitor-red);
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.35;
-}
-
-.realtimeErrorOverview strong {
-  color: var(--monitor-ink);
-  font-size: 15px;
-  font-weight: 650;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.realtimeErrorMessageBlock {
-  display: grid;
-  gap: 6px;
-}
-
-.realtimeErrorMessageBlock > span {
-  color: var(--monitor-muted);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.35;
-}
-
-.realtimeErrorMessage {
-  max-height: 180px;
-  overflow: auto;
-  margin: 0;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--monitor-line) 86%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--monitor-surface-muted) 58%, var(--monitor-surface));
-  color: var(--monitor-ink);
-  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-.realtimeErrorDetailsGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-  border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.realtimeErrorDetailItem {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
-  padding: 9px 12px;
-  background: var(--monitor-surface);
-}
-
-.realtimeErrorDetailItem + .realtimeErrorDetailItem {
-  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
-}
-
-.realtimeErrorDetailItem span {
-  flex: 0 0 auto;
-  color: var(--monitor-muted);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.realtimeErrorDetailItem strong {
-  min-width: 0;
-  max-width: 72%;
-  text-align: right;
-  overflow-wrap: anywhere;
-  color: var(--monitor-ink);
-  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.35;
 }
 
 .realtimeTokenCell {
@@ -814,6 +770,17 @@
   white-space: normal;
   overflow-wrap: anywhere;
   line-height: 1.45;
+}
+
+.realtimeTable .realtimeApiKeyCell > span,
+.realtimeTable .realtimeApiKeyCell > small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  -webkit-box-orient: initial;
+  -webkit-line-clamp: unset;
 }
 
 .realtimeTokenCell > span,

@@ -15,6 +15,14 @@ export const maskProxyCredentials = (value: string): string => {
   return `${value.slice(0, schemeEnd + 2)}***@${value.slice(credentialsEnd + 1)}`;
 };
 
+export const hasProxyCredentials = (value: string): boolean =>
+  maskProxyCredentials(value) !== value;
+
+export const resolveProxyPoolEndpoint = (proxyUrl: string | undefined, listen: string): string => {
+  const endpoint = proxyUrl?.trim() ?? '';
+  return endpoint && endpoint !== 'socks5://' ? endpoint : `socks5://${listen}`;
+};
+
 export const formatProxyPoolTime = (value: string, language: string): string => {
   if (!value || value.startsWith('0001-')) return '-';
   const date = new Date(value);

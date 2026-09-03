@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Sheet } from '@/components/ui/Sheet';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconEye, IconEyeOff, IconRefreshCw } from '@/components/ui/icons';
 import type {
@@ -11,9 +10,11 @@ import type {
   ProxyPoolProbeResult,
   ProxyPoolStrategy,
 } from '@/pro/modules/proxyPool/proxyPool';
+import { ProWorkspaceSheet } from '@/pro/shared/ProSurface';
 import {
   formatProxyPoolSuccessRate,
   formatProxyPoolTime,
+  hasProxyCredentials,
   maskProxyCredentials,
   proxyPoolStateLabel,
 } from './proxyPoolUi';
@@ -29,6 +30,7 @@ interface ProxyPoolNodeSheetProps {
   testing: boolean;
   recovering: boolean;
   onClose: () => void;
+  onAfterClose?: () => void;
   onApply: (node: ProxyPoolNodeConfig) => void;
   onTest: (node: ProxyPoolNodeConfig) => void;
   onRecover: (nodeId: string) => void;
@@ -44,6 +46,7 @@ export function ProxyPoolNodeSheet({
   testing,
   recovering,
   onClose,
+  onAfterClose,
   onApply,
   onTest,
   onRecover,
@@ -62,12 +65,13 @@ export function ProxyPoolNodeSheet({
   if (!value) return null;
   const state = runtime?.state ?? (value.enabled ? 'unknown' : 'disabled');
   const displayUrl = showCredentials ? value.url : maskProxyCredentials(value.url);
-  const hasCredentials = displayUrl !== value.url;
+  const hasCredentials = hasProxyCredentials(value.url);
 
   return (
-    <Sheet
+    <ProWorkspaceSheet
       open={open}
       onClose={onClose}
+      onAfterClose={onAfterClose}
       size="lg"
       eyebrow={t('proxy_pool.node_details', { defaultValue: 'Node details' })}
       title={
@@ -278,6 +282,6 @@ export function ProxyPoolNodeSheet({
           </div>
         </details>
       </div>
-    </Sheet>
+    </ProWorkspaceSheet>
   );
 }

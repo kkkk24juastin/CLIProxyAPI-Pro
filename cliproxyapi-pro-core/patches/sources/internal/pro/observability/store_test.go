@@ -10,10 +10,43 @@ import (
 	"testing"
 	"time"
 
+	probackup "github.com/router-for-me/CLIProxyAPI/v6/internal/pro/backup"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/pro/observability/internalusage"
 )
 
 var errTestParse = errors.New("parse failed")
+
+func TestUpdateMonitoringSettingsMergesSectionsAndDetectsConflicts(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	base := normalizeMonitoringSettings(MonitoringSettings{
+		RetentionDays:  30,
+		WebDAV:         MonitoringWebDAVBackupConfig{URL: "https://example.test/old", IntervalMinutes: 60},
+		ModelPriceSync: ModelPriceSyncConfig{Enabled: false, IntervalMinutes: 1440},
+	})
+	if err := store.SetMonitoringSettings(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+	webDAVPatch := base
+	webDAVPatch.WebDAV.URL = "https://example.test/new"
+	if _, err := store.UpdateMonitoringSettings(ctx, webDAVPatch, &base, []string{"webdav"}); err != nil {
+		t.Fatal(err)
+	}
+	pricePatch := base
+	pricePatch.ModelPriceSync.Enabled = true
+	merged, err := store.UpdateMonitoringSettings(ctx, pricePatch, &base, []string{"modelPriceSync"})
+	if err != nil {
+		t.Fatalf("disjoint stale section update failed: %v", err)
+	}
+	if merged.WebDAV.URL != webDAVPatch.WebDAV.URL || !merged.ModelPriceSync.Enabled {
+		t.Fatalf("merged settings = %+v", merged)
+	}
+	conflicting := base
+	conflicting.WebDAV.Username = "stale-writer"
+	if _, err := store.UpdateMonitoringSettings(ctx, conflicting, &base, []string{"webdav"}); !errors.Is(err, ErrMonitoringSettingsConflict) {
+		t.Fatalf("same-section conflict error = %v", err)
+	}
+}
 
 func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Event {
 	timestamp := time.Unix(1_700_000_000+int64(index), 0).UTC()
@@ -24,33 +57,94 @@ func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Eve
 		status = 429
 	}
 	return internalusage.Event{
-		RequestID:         "request-" + string(rune('a'+index)),
-		EventHash:         "event-hash-" + string(rune('a'+index)),
-		TimestampMS:       timestamp.UnixMilli(),
-		Timestamp:         timestamp.Format(time.RFC3339Nano),
-		Provider:          "test",
-		ExecutorType:      "TestExecutor",
-		Model:             "model",
-		Alias:             "client-model",
-		Endpoint:          "POST /v1/test",
-		Method:            "POST",
-		Path:              "/v1/test",
-		ClientIP:          "192.0.2.10",
-		XForwardedFor:     "203.0.113.5, 198.51.100.8",
-		UserAgent:         "test-client/1.0",
-		TotalTokens:       totalTokens,
-		InputTokens:       totalTokens / 2,
-		OutputTokens:      totalTokens - totalTokens/2,
-		LatencyMS:         &latency,
-		TTFTMS:            &ttft,
-		StatusCode:        &status,
-		UpstreamRequestID: "upstream-request",
-		RetryAfter:        "30",
-		Stream:            index%2 == 0,
-		ReasoningEffort:   "medium",
-		ServiceTier:       "default",
-		Failed:            failed,
-		CreatedAtMS:       timestamp.UnixMilli(),
+		RequestID:            "request-" + string(rune('a'+index)),
+		EventHash:            "event-hash-" + string(rune('a'+index)),
+		TimestampMS:          timestamp.UnixMilli(),
+		Timestamp:            timestamp.Format(time.RFC3339Nano),
+		Provider:             "test",
+		ExecutorType:         "TestExecutor",
+		Model:                "model",
+		Alias:                "client-model",
+		Endpoint:             "POST /v1/test",
+		Method:               "POST",
+		Path:                 "/v1/test",
+		APIKeyPolicyID:       "policy-a",
+		ProfileID:            "profile-a",
+		ProfileNameSnapshot:  "Production",
+		PolicyMode:           "profile",
+		RequestedModel:       "smart",
+		EffectiveModel:       "model",
+		ClientIP:             "192.0.2.10",
+		XForwardedFor:        "203.0.113.5, 198.51.100.8",
+		UserAgent:            "test-client/1.0",
+		TotalTokens:          totalTokens,
+		InputTokens:          totalTokens / 2,
+		OutputTokens:         totalTokens - totalTokens/2,
+		LatencyMS:            &latency,
+		TTFTMS:               &ttft,
+		StatusCode:           &status,
+		UpstreamRequestID:    "upstream-request",
+		RetryAfter:           "30",
+		Stream:               index%2 == 0,
+		ReasoningEffort:      "medium",
+		ServiceTier:          "fast",
+		EffectiveServiceTier: "default",
+		Failed:               failed,
+		CreatedAtMS:          timestamp.UnixMilli(),
+	}
+}
+
+func TestUsagePolicyAttributionRoundTripAndFilters(t *testing.T) {
+	store := openTestStore(t)
+	profile := testUsageEvent(0, false, 10)
+	passthrough := testUsageEvent(1, false, 20)
+	passthrough.APIKeyPolicyID = ""
+	passthrough.ProfileID = ""
+	passthrough.ProfileNameSnapshot = ""
+	passthrough.PolicyMode = "passthrough"
+	passthrough.RequestedModel = "model"
+	passthrough.EffectiveModel = "model"
+	insertTestUsageEvents(t, store, profile, passthrough)
+
+	page, err := store.QueryEvents(context.Background(), UsageEventQueryOptions{APIKeyPolicyID: "policy-a", ProfileID: "profile-a", PolicyMode: "profile", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Events) != 1 || page.Events[0].ProfileNameSnapshot != "Production" || page.Events[0].RequestedModel != "smart" || page.Events[0].EffectiveModel != "model" {
+		t.Fatalf("profile events = %#v", page.Events)
+	}
+	passthroughPage, err := store.QueryEvents(context.Background(), UsageEventQueryOptions{PolicyMode: "passthrough", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(passthroughPage.Events) != 1 || passthroughPage.Events[0].ProfileID != "" {
+		t.Fatalf("passthrough events = %#v", passthroughPage.Events)
+	}
+	buckets, err := store.UsageAggregates(context.Background(), UsageAggregateOptions{Interval: "all", GroupBy: []string{"api_key_policy_id", "profile_id", "policy_mode"}, APIKeyPolicyID: "policy-a", ProfileID: "profile-a", PolicyMode: "profile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(buckets) != 1 || buckets[0].APIKeyPolicyID != "policy-a" || buckets[0].ProfileID != "profile-a" || buckets[0].PolicyMode != "profile" {
+		t.Fatalf("policy buckets = %#v", buckets)
+	}
+}
+
+func TestUsageUnknownPolicyModeMatchesOnlyPreMigrationRows(t *testing.T) {
+	store := openTestStore(t)
+	legacy := testUsageEvent(0, false, 10)
+	legacy.PolicyMode = ""
+	legacy.APIKeyPolicyID = ""
+	legacy.ProfileID = ""
+	profile := testUsageEvent(1, false, 20)
+	insertTestUsageEvents(t, store, legacy, profile)
+
+	page, err := store.QueryEvents(context.Background(), UsageEventQueryOptions{PolicyMode: "unknown", Limit: 10})
+	if err != nil || len(page.Events) != 1 || page.Events[0].RequestID != legacy.RequestID {
+		t.Fatalf("unknown events = %#v, %v", page.Events, err)
+	}
+	buckets, err := store.UsageAggregates(context.Background(), UsageAggregateOptions{Interval: "all", GroupBy: []string{"policy_mode"}, PolicyMode: "unknown", Limit: 10})
+	if err != nil || len(buckets) != 1 || buckets[0].TotalRequests != 1 || buckets[0].PolicyMode != "" {
+		t.Fatalf("unknown buckets = %#v, %v", buckets, err)
 	}
 }
 
@@ -304,7 +398,7 @@ func TestUsageSummaryUpdatesAfterDeleteEventsBefore(t *testing.T) {
 	}
 }
 
-func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
+func TestResetUsageStatisticsClearsUsageAndAuthRuntimeStats(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	settings := MonitoringSettings{RetentionDays: 30}
@@ -318,6 +412,17 @@ func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
 		testUsageEvent(0, false, 10),
 		testUsageEvent(1, true, 20),
 	)
+	if err := store.SetRoutingCursorState(ctx, RoutingCursorState{
+		CursorKey: "single|codex|gpt-5|0|all", LastAuthID: "auth-reset", UpdatedAtMS: time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("SetRoutingCursorState() error = %v", err)
+	}
+	if err := store.SetAuthRuntimeStats(ctx, AuthRuntimeStats{
+		AuthIndex: "idx-reset", AuthID: "auth-reset", FileName: "reset.json",
+		SelectedCount: 9, SuccessCount: 7, FailureCount: 2, UpdatedAtMS: time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("SetAuthRuntimeStats() error = %v", err)
+	}
 	latestIDBefore, _, err := store.LatestCursor(ctx)
 	if err != nil {
 		t.Fatalf("LatestCursor() before reset error = %v", err)
@@ -334,6 +439,9 @@ func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
 	}
 	if result.DeletedEvents != 2 {
 		t.Fatalf("deleted events = %d, want 2", result.DeletedEvents)
+	}
+	if result.DeletedAuthRuntimeStats != 1 {
+		t.Fatalf("deleted auth runtime stats = %d, want 1", result.DeletedAuthRuntimeStats)
 	}
 	if result.Generation != stateBefore.Generation+1 || result.ResetAtMS <= 0 {
 		t.Fatalf("reset state = %+v, want generation %d and reset timestamp", result, stateBefore.Generation+1)
@@ -365,6 +473,13 @@ func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
 	if storedSettings.RetentionDays != settings.RetentionDays {
 		t.Fatalf("retention days after reset = %d, want %d", storedSettings.RetentionDays, settings.RetentionDays)
 	}
+	if stats, err := store.ListAuthRuntimeStats(ctx); err != nil || len(stats) != 0 {
+		t.Fatalf("auth runtime stats after reset = %+v err:%v, want empty", stats, err)
+	}
+	cursors, err := store.ListRoutingCursorStates(ctx)
+	if err != nil || len(cursors) != 1 || cursors[0].LastAuthID != "auth-reset" {
+		t.Fatalf("routing cursors after reset = %+v err:%v, want preserved auth-reset cursor", cursors, err)
+	}
 
 	insertTestUsageEvents(t, store, testUsageEvent(2, false, 30))
 	newEvents, err := store.EventsAfter(ctx, 0, 10)
@@ -380,6 +495,30 @@ func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
 	}
 	if stateAfter.Generation != result.Generation {
 		t.Fatalf("generation after new insert = %d, want %d", stateAfter.Generation, result.Generation)
+	}
+}
+
+func TestResetUsageStatisticsClearsAuthStatsWithoutUsageEvents(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.SetAuthRuntimeStats(ctx, AuthRuntimeStats{
+		AuthIndex: "idx-only", AuthID: "auth-only", SelectedCount: 3, UpdatedAtMS: time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("SetAuthRuntimeStats() error = %v", err)
+	}
+	stateBefore, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() error = %v", err)
+	}
+	result, err := store.ResetUsageStatistics(ctx)
+	if err != nil {
+		t.Fatalf("ResetUsageStatistics() error = %v", err)
+	}
+	if result.DeletedEvents != 0 || result.DeletedAuthRuntimeStats != 1 || result.Generation != stateBefore.Generation+1 {
+		t.Fatalf("reset result = %+v, want auth-only reset and advanced generation", result)
+	}
+	if stats, err := store.ListAuthRuntimeStats(ctx); err != nil || len(stats) != 0 {
+		t.Fatalf("auth runtime stats after reset = %+v err:%v, want empty", stats, err)
 	}
 }
 
@@ -534,7 +673,7 @@ func TestUsageDiagnosticsRoundTripAndAggregates(t *testing.T) {
 	if got.TTFTMS == nil || *got.TTFTMS != 20 || got.StatusCode == nil || *got.StatusCode != 429 {
 		t.Fatalf("diagnostics = ttft:%v status:%v, want 20/429", got.TTFTMS, got.StatusCode)
 	}
-	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || !got.Stream || got.ReasoningEffort != "medium" || got.ServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
+	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || !got.Stream || got.ReasoningEffort != "medium" || got.ServiceTier != "fast" || got.EffectiveServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
 		t.Fatalf("diagnostic strings = %+v", got)
 	}
 	if got.ClientIP != "192.0.2.10" || got.XForwardedFor != "203.0.113.5, 198.51.100.8" || got.UserAgent != "test-client/1.0" {
@@ -685,6 +824,71 @@ func TestOpenStoreMigratesLegacyTokenAccountingFromRawPayload(t *testing.T) {
 	}
 }
 
+func TestOpenStoreMigratesAPIKeyPolicyColumnsBeforeIndexes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v7.2.130-usage.sqlite")
+	legacy, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore(seed) error = %v", err)
+	}
+	for _, statement := range []string{
+		`drop index idx_usage_events_policy_recent`,
+		`drop index idx_usage_events_profile_recent`,
+		`drop index idx_usage_events_policy_mode_recent`,
+		`alter table usage_events drop column api_key_policy_id`,
+		`alter table usage_events drop column profile_id`,
+		`alter table usage_events drop column profile_name_snapshot`,
+		`alter table usage_events drop column policy_mode`,
+		`alter table usage_events drop column requested_model`,
+		`alter table usage_events drop column effective_model`,
+	} {
+		if _, err = legacy.db.Exec(statement); err != nil {
+			t.Fatalf("prepare legacy schema with %q: %v", statement, err)
+		}
+	}
+	if err = legacy.Close(); err != nil {
+		t.Fatalf("Close(legacy) error = %v", err)
+	}
+
+	migrated, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore(migrate v7.2.130 schema) error = %v", err)
+	}
+	defer func() { _ = migrated.Close() }()
+
+	columns := map[string]bool{}
+	rows, err := migrated.db.Query(`pragma table_info(usage_events)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue any
+		if err = rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			t.Fatal(err)
+		}
+		columns[name] = true
+	}
+	if err = rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"api_key_policy_id", "profile_id", "profile_name_snapshot", "policy_mode", "requested_model", "effective_model"} {
+		if !columns[name] {
+			t.Errorf("usage_events column %q was not migrated", name)
+		}
+	}
+	for _, name := range []string{"idx_usage_events_policy_recent", "idx_usage_events_profile_recent", "idx_usage_events_policy_mode_recent"} {
+		var count int
+		if err = migrated.db.QueryRow(`select count(*) from sqlite_master where type = 'index' and name = ?`, name).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Errorf("usage_events index %q count = %d, want 1", name, count)
+		}
+	}
+}
+
 func TestUsageAggregatesIncludesUnattributedAPIKeyBucket(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -736,6 +940,50 @@ func TestUsageAggregatesSupportsAuthIndexGroupingAndLastSeen(t *testing.T) {
 	bucket := buckets[0]
 	if bucket.AuthIndex != "auth-a" || bucket.TotalRequests != 2 || bucket.LastSeenAtMS != second.TimestampMS {
 		t.Fatalf("aggregate bucket = %+v, want auth-a total=2 last_seen=%d", bucket, second.TimestampMS)
+	}
+}
+
+func TestUsageAggregatesUsesIANATimezoneAcrossDST(t *testing.T) {
+	store := openTestStore(t)
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+	eventTimes := []time.Time{
+		time.Date(2026, 3, 8, 0, 30, 0, 0, location),
+		time.Date(2026, 3, 9, 0, 30, 0, 0, location),
+	}
+	events := make([]internalusage.Event, 0, len(eventTimes))
+	for index, eventTime := range eventTimes {
+		event := testUsageEvent(index, false, 10)
+		event.EventHash = fmt.Sprintf("dst-aggregate-%d", index)
+		event.TimestampMS = eventTime.UnixMilli()
+		event.Timestamp = eventTime.UTC().Format(time.RFC3339Nano)
+		event.CreatedAtMS = event.TimestampMS
+		events = append(events, event)
+	}
+	insertTestUsageEvents(t, store, events...)
+
+	buckets, err := store.UsageAggregates(context.Background(), UsageAggregateOptions{
+		FromMS:       eventTimes[0].Add(-time.Minute).UnixMilli(),
+		ToMS:         eventTimes[1].Add(time.Minute).UnixMilli(),
+		Interval:     "day",
+		Limit:        10,
+		TimezoneName: "America/New_York",
+	})
+	if err != nil {
+		t.Fatalf("UsageAggregates() error = %v", err)
+	}
+	if len(buckets) != 2 {
+		t.Fatalf("UsageAggregates() len = %d, want 2", len(buckets))
+	}
+	firstStart := time.Date(2026, 3, 8, 0, 0, 0, 0, location).UnixMilli()
+	secondStart := time.Date(2026, 3, 9, 0, 0, 0, 0, location).UnixMilli()
+	if buckets[0].BucketStartMS != firstStart || buckets[1].BucketStartMS != secondStart {
+		t.Fatalf("DST bucket starts = %d, %d; want %d, %d", buckets[0].BucketStartMS, buckets[1].BucketStartMS, firstStart, secondStart)
+	}
+	if buckets[1].BucketStartMS-buckets[0].BucketStartMS != int64(23*time.Hour/time.Millisecond) {
+		t.Fatalf("DST bucket distance = %d, want 23 hours", buckets[1].BucketStartMS-buckets[0].BucketStartMS)
 	}
 }
 
@@ -810,6 +1058,101 @@ func TestAccountUsageAggregatesExactAuthIndexAndQualityMetrics(t *testing.T) {
 	}
 	if detail.HighestCostDay == nil || detail.HighestCostDay.EstimatedCost != 6.25 || detail.HighestRequestDay == nil || detail.HighestRequestDay.Requests != 2 {
 		t.Fatalf("highlights = cost:%+v requests:%+v", detail.HighestCostDay, detail.HighestRequestDay)
+	}
+
+	todayDetail, err := store.AccountUsage(context.Background(), AccountUsageOptions{
+		AuthIndex:             "codex:account-a",
+		Days:                  1,
+		TimezoneOffsetMinutes: 480,
+		NowMS:                 now.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("AccountUsage(today) error = %v", err)
+	}
+	if todayDetail.TotalRequests != 1 || todayDetail.Today.Requests != 1 || todayDetail.PeriodDays != 1 {
+		t.Fatalf("today detail = requests:%d today:%+v days:%d", todayDetail.TotalRequests, todayDetail.Today, todayDetail.PeriodDays)
+	}
+}
+
+func TestAccountUsageCustomRangeUsesExactMillisecondBounds(t *testing.T) {
+	store := openTestStore(t)
+	base := time.Date(2026, 8, 31, 8, 0, 0, 0, time.UTC).UnixMilli()
+	events := make([]internalusage.Event, 0, 3)
+	for index, timestampMS := range []int64{base + 999, base + 1000, base + 2000} {
+		event := testUsageEvent(index, false, int64(index+1))
+		event.EventHash = fmt.Sprintf("custom-range-event-%d", index)
+		event.AuthIndex = "codex:custom-range"
+		event.TimestampMS = timestampMS
+		event.Timestamp = time.UnixMilli(timestampMS).UTC().Format(time.RFC3339Nano)
+		event.CreatedAtMS = timestampMS
+		events = append(events, event)
+	}
+	insertTestUsageEvents(t, store, events...)
+
+	detail, err := store.AccountUsage(context.Background(), AccountUsageOptions{
+		AuthIndex: "codex:custom-range",
+		FromMS:    base + 1000,
+		ToMS:      base + 1999,
+		NowMS:     base + 5000,
+	})
+	if err != nil {
+		t.Fatalf("AccountUsage() error = %v", err)
+	}
+	if detail.TotalRequests != 1 || detail.TotalTokens != 2 {
+		t.Fatalf("custom range totals = requests:%d tokens:%d", detail.TotalRequests, detail.TotalTokens)
+	}
+	if detail.FromMS != base+1000 || detail.ToMS != base+1999 || detail.PeriodDays != 1 {
+		t.Fatalf("custom range metadata = from:%d to:%d days:%d", detail.FromMS, detail.ToMS, detail.PeriodDays)
+	}
+}
+
+func TestAccountUsageTodayUsesIANATimezoneAcrossDST(t *testing.T) {
+	store := openTestStore(t)
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+	previousDay := time.Date(2026, 3, 7, 23, 30, 0, 0, location)
+	today := time.Date(2026, 3, 8, 0, 30, 0, 0, location)
+	events := make([]internalusage.Event, 0, 2)
+	for index, eventTime := range []time.Time{previousDay, today} {
+		event := testUsageEvent(index, false, 10)
+		event.EventHash = fmt.Sprintf("dst-account-%d", index)
+		event.AuthIndex = "codex:dst-account"
+		event.TimestampMS = eventTime.UnixMilli()
+		event.Timestamp = eventTime.UTC().Format(time.RFC3339Nano)
+		event.CreatedAtMS = event.TimestampMS
+		events = append(events, event)
+	}
+	insertTestUsageEvents(t, store, events...)
+
+	detail, err := store.AccountUsage(context.Background(), AccountUsageOptions{
+		AuthIndex:             "codex:dst-account",
+		Days:                  1,
+		TimezoneOffsetMinutes: -4 * 60,
+		TimezoneName:          "America/New_York",
+		NowMS:                 time.Date(2026, 3, 8, 12, 0, 0, 0, location).UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("AccountUsage() error = %v", err)
+	}
+	wantStart := time.Date(2026, 3, 8, 0, 0, 0, 0, location).UnixMilli()
+	if detail.FromMS != wantStart || detail.TotalRequests != 1 || detail.Today.Requests != 1 {
+		t.Fatalf("DST today detail = from:%d total:%d today:%+v; want from:%d total=1", detail.FromMS, detail.TotalRequests, detail.Today, wantStart)
+	}
+
+	customDetail, err := store.AccountUsage(context.Background(), AccountUsageOptions{
+		AuthIndex:             "codex:dst-account",
+		FromMS:                time.Date(2026, 3, 7, 0, 0, 0, 0, location).UnixMilli(),
+		ToMS:                  time.Date(2026, 3, 9, 23, 59, 59, 999_000_000, location).UnixMilli(),
+		TimezoneOffsetMinutes: -4 * 60,
+		TimezoneName:          "America/New_York",
+	})
+	if err != nil {
+		t.Fatalf("AccountUsage(custom DST range) error = %v", err)
+	}
+	if customDetail.PeriodDays != 3 {
+		t.Fatalf("custom DST period days = %d, want 3", customDetail.PeriodDays)
 	}
 }
 
@@ -1138,7 +1481,7 @@ func TestServerExportFlushesQueuedRuntimeState(t *testing.T) {
 		AuthIndex: "idx-a", AuthID: "auth-a", SelectedCount: 7, SuccessCount: 5, FailureCount: 2, UpdatedAtMS: 456,
 	})
 
-	server := NewServer(Config{}, store)
+	server := NewServer(Config{Enabled: true}, store)
 	exported, err := server.exportJSONL(ctx)
 	if err != nil {
 		t.Fatalf("exportJSONL() error = %v", err)
@@ -1276,5 +1619,59 @@ func TestRunImportTransactionRollsBackAllDomains(t *testing.T) {
 	}
 	if _, ok, err := store.GetProSetting(ctx, "test.atomic"); err != nil || ok {
 		t.Fatalf("pro setting after rollback = _, %v, %v; want missing", ok, err)
+	}
+}
+
+func TestSetProSettingAndApplyLatestBlocksBackupImportUntilRuntimeApplied(t *testing.T) {
+	store := openTestStore(t)
+	service := &Service{ctx: context.Background(), store: store}
+	SetDefaultService(service)
+	t.Cleanup(func() { SetDefaultService(nil) })
+
+	liveApplied := make(chan struct{})
+	releaseLiveApply := make(chan struct{})
+	liveDone := make(chan error, 1)
+	go func() {
+		liveDone <- SetProSettingAndApplyLatest(context.Background(), ProSetting{
+			Namespace: "test.live-apply", SchemaVersion: 1, Settings: json.RawMessage(`{"value":"live"}`),
+		}, func(_ context.Context, item ProSetting) error {
+			if string(item.Settings) != `{"value":"live"}` {
+				return fmt.Errorf("applied setting = %s", item.Settings)
+			}
+			close(liveApplied)
+			<-releaseLiveApply
+			return nil
+		})
+	}()
+	<-liveApplied
+
+	importStarted := make(chan struct{})
+	importDone := make(chan error, 1)
+	go func() {
+		importDone <- probackup.Default.ExecuteImport(context.Background(), probackup.ImportPlan{
+			ImportDatabase: func(context.Context) error {
+				close(importStarted)
+				return nil
+			},
+		})
+	}()
+	select {
+	case <-importStarted:
+		t.Fatal("backup import entered while live runtime apply still held the write barrier")
+	case err := <-importDone:
+		t.Fatalf("backup import completed while live runtime apply was blocked: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseLiveApply)
+	if err := <-liveDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-importStarted:
+	case <-time.After(time.Second):
+		t.Fatal("backup import did not start after live runtime apply completed")
+	}
+	if err := <-importDone; err != nil {
+		t.Fatal(err)
 	}
 }

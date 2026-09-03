@@ -6,6 +6,7 @@ import {
   IconShield,
 } from '@/components/ui/icons';
 import type { ProxyPoolConfig, ProxyPoolSnapshot } from '@/pro/modules/proxyPool/proxyPool';
+import { resolveProxyPoolEndpoint } from './proxyPoolUi';
 import styles from './ProxyPool.module.scss';
 
 interface ProxyPoolStatusOverviewProps {
@@ -16,9 +17,9 @@ interface ProxyPoolStatusOverviewProps {
 export function ProxyPoolStatusOverview({ snapshot, draft }: ProxyPoolStatusOverviewProps) {
   const { t } = useTranslation();
   const status = snapshot.status;
-  const healthy = status?.healthyNodes ?? 0;
+  const available = status?.eligibleNodes ?? status?.healthyNodes ?? 0;
   const total = status?.totalNodes ?? draft.nodes.length;
-  const endpoint = status?.proxyUrl || `socks5://${draft.listen}`;
+  const endpoint = resolveProxyPoolEndpoint(status?.proxyUrl, draft.listen);
   const ready = status?.ready === true;
 
   return (
@@ -49,13 +50,13 @@ export function ProxyPoolStatusOverview({ snapshot, draft }: ProxyPoolStatusOver
         </div>
       </div>
       <div className={styles.overviewItem}>
-        <span className={healthy > 0 ? styles.overviewGood : styles.overviewMuted}>
+        <span className={available > 0 ? styles.overviewGood : styles.overviewMuted}>
           <IconShield size={18} />
         </span>
         <div>
           <small>{t('proxy_pool.available_nodes', { defaultValue: 'Available nodes' })}</small>
           <strong>
-            {healthy} / {total}
+            {available} / {total}
           </strong>
         </div>
       </div>

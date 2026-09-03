@@ -180,6 +180,26 @@
   z-index: 3;
 }
 
+.usageTrendState {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 0;
+}
+
+.usageTrendData {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  transition: opacity 160ms ease;
+}
+
+.usageTrendDataStale {
+  opacity: 0.72;
+}
+
 .usageTrendHeader,
 .usageTrendCollapsed {
   display: grid;

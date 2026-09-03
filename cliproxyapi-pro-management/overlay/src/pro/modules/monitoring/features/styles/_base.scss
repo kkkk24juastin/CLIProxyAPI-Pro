@@ -1,5 +1,8 @@
 .page,
-.monitorModal {
+.monitoringWorkspaceSheet,
+.webdavRestoreSurface,
+.priceManagerSheet,
+.informationDetailsTheme {
   --monitor-bg: var(--bg-secondary);
   --monitor-surface: var(--bg-primary);
   --monitor-surface-elevated: color-mix(in srgb, var(--bg-primary) 88%, var(--bg-secondary));
@@ -38,6 +41,7 @@
 
 .masthead {
   display: block;
+  overflow: visible;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -80,7 +84,7 @@
   gap: 8px;
   min-width: 0;
   max-width: 100%;
-  overflow-x: auto;
+  overflow: visible;
   padding: 4px;
   border: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
   border-radius: 14px;
@@ -95,6 +99,69 @@
 
 .hiddenFileInput {
   display: none;
+}
+
+.importMenu {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.importMenuTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.importMenuChevron {
+  width: 7px;
+  height: 7px;
+  margin-top: -3px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.importMenuTrigger[aria-expanded='true'] .importMenuChevron {
+  margin-top: 3px;
+  transform: rotate(225deg);
+}
+
+.importMenuDropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  display: grid;
+  min-width: 180px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
+  border-radius: 10px;
+  background: var(--monitor-surface);
+  box-shadow: var(--shadow);
+}
+
+.importMenuDropdown button {
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.importMenuDropdown button:hover,
+.importMenuDropdown button:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--monitor-accent) 9%, var(--monitor-surface));
+  color: var(--monitor-accent-strong);
 }
 
 .paginationBar {
@@ -502,9 +569,26 @@
 
 .filterGrid {
   display: grid;
-  grid-template-columns: minmax(260px, 1.4fr) repeat(4, minmax(128px, 1fr)) auto auto;
+  grid-template-columns: minmax(260px, 1.4fr) repeat(5, minmax(0, 1fr)) auto auto;
   gap: 10px;
   align-items: center;
+}
+
+.realtimeFilterSelectTrigger {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.realtimeFilterSelectTrigger > span:first-child,
+.realtimeFilterSelectDropdown > button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.realtimeFilterSelectTrigger > span:first-child {
+  flex: 1 1 auto;
 }
 
 .filterGrid :global(.form-group) {

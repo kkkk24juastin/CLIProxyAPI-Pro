@@ -1,6 +1,7 @@
 package quota
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -394,7 +395,6 @@ func XAISummaryUsedPercent(summary map[string]any) *float64 {
 
 const (
 	xaiSuperGrokLimitCents      = 15_000
-	xaiXPremiumPlusLimitCents   = 20_000
 	xaiSuperGrokHeavyLimitCents = 150_000
 )
 
@@ -438,6 +438,46 @@ func XAIPlanTypeFromBillingBody(status int, body string) (string, bool) {
 	return XAIPlanTypeFromMonthlyLimit(limit, hasLimit)
 }
 
+// XAIPlanTypeFromAccessToken resolves the subscription tier carried by an
+// xAI access-token JWT. The tier claim is authoritative when present; callers
+// should only fall back to billing data when this function returns known=false.
+func XAIPlanTypeFromAccessToken(token string) (plan string, known bool) {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) < 2 {
+		return "", false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", false
+	}
+	claims := map[string]any{}
+	if json.Unmarshal(payload, &claims) != nil {
+		return "", false
+	}
+	tier, ok := xaiCentValue(claims["tier"])
+	if !ok || tier < 0 || tier != math.Trunc(tier) {
+		return "", false
+	}
+	switch int64(tier) {
+	case 0:
+		return "free", true
+	case 1:
+		return "supergrok", true
+	case 2:
+		return "x-basic", true
+	case 3:
+		return "x-premium", true
+	case 4:
+		return "x-premium-plus", true
+	case 5:
+		return "supergrok-heavy", true
+	case 6:
+		return "supergrok-lite", true
+	default:
+		return "paid-unknown", true
+	}
+}
+
 func XAIPlanTypeFromMonthlyLimit(limit float64, hasLimit bool) (string, bool) {
 	if !hasLimit || math.Round(limit) == 0 {
 		return "free", true
@@ -445,8 +485,6 @@ func XAIPlanTypeFromMonthlyLimit(limit float64, hasLimit bool) (string, bool) {
 	switch int64(math.Round(limit)) {
 	case xaiSuperGrokLimitCents:
 		return "supergrok", true
-	case xaiXPremiumPlusLimitCents:
-		return "x-premium-plus", true
 	case xaiSuperGrokHeavyLimitCents:
 		return "supergrok-heavy", true
 	default:

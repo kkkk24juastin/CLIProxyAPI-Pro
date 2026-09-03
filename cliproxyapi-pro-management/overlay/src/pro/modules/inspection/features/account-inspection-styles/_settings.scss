@@ -168,35 +168,6 @@
   min-height: 42px;
 }
 
-.settingsActionsBar {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 0;
-  padding: 14px 18px;
-  border: 1px solid color-mix(in srgb, var(--inspect-line) 74%, transparent);
-  border-top: 0;
-  border-radius: 0 0 18px 18px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--inspect-surface-elevated) 78%, transparent),
-      var(--inspect-surface-elevated) 38%
-    );
-}
-
-.settingsActionsRight {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
 .resultsHeaderActions {
   display: flex;
   align-items: center;

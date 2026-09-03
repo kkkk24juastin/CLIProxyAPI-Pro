@@ -1,0 +1,1 @@
+export { oauthPolicyModule } from './manifest';

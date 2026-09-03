@@ -30,6 +30,7 @@ type Status struct {
 	ActiveTunnels int64               `json:"active_tunnels"`
 	TotalNodes    int                 `json:"total_nodes"`
 	HealthyNodes  int                 `json:"healthy_nodes"`
+	EligibleNodes int                 `json:"eligible_nodes"`
 	IsolatedNodes int                 `json:"isolated_nodes"`
 	LastError     string              `json:"last_error,omitempty"`
 	StartedAt     time.Time           `json:"started_at,omitempty"`
@@ -154,10 +155,14 @@ func (e *Engine) Status() Status {
 	lastAppliedAt := e.lastAppliedAt
 	lastHealthAt := e.lastHealthAt
 	e.mu.RUnlock()
+	proxyURL := ""
+	if cfg.Listen != "" {
+		proxyURL = "socks5://" + cfg.Listen
+	}
 	status := Status{
 		Ready:         server != nil,
 		Listen:        cfg.Listen,
-		ProxyURL:      "socks5://" + cfg.Listen,
+		ProxyURL:      proxyURL,
 		Strategy:      cfg.Strategy,
 		Generation:    e.generation.Load(),
 		LastError:     lastError,
@@ -171,6 +176,7 @@ func (e *Engine) Status() Status {
 	}
 	status.Nodes = poolRef.Snapshots()
 	status.TotalNodes = len(status.Nodes)
+	status.EligibleNodes = poolRef.EligibleCount(time.Now())
 	for _, node := range status.Nodes {
 		status.ActiveTunnels += node.ActiveTunnels
 		switch node.State {
@@ -308,6 +314,21 @@ func probeProxyURL(ctx context.Context, result ProbeResult, rawProxyURL, rawTest
 	return result
 }
 
+const (
+	DefaultProbeConcurrency = 4
+	MaxProbeConcurrency     = 8
+)
+
+func NormalizeProbeConcurrency(concurrency int) int {
+	if concurrency <= 0 {
+		return DefaultProbeConcurrency
+	}
+	if concurrency > MaxProbeConcurrency {
+		return MaxProbeConcurrency
+	}
+	return concurrency
+}
+
 func (e *Engine) ProbeAll(ctx context.Context, concurrency int) []ProbeResult {
 	e.mu.RLock()
 	poolRef := e.pool
@@ -316,9 +337,7 @@ func (e *Engine) ProbeAll(ctx context.Context, concurrency int) []ProbeResult {
 		return []ProbeResult{}
 	}
 	snapshots := poolRef.Snapshots()
-	if concurrency <= 0 {
-		concurrency = 4
-	}
+	concurrency = NormalizeProbeConcurrency(concurrency)
 	semaphore := make(chan struct{}, concurrency)
 	results := make([]ProbeResult, len(snapshots))
 	var wg sync.WaitGroup

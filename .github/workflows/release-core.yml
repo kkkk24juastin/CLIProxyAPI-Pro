@@ -1,19 +1,9 @@
-name: Publish CLIProxyAPI Pro Docker and Management
+name: Publish CLIProxyAPI Pro Release
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - 'cliproxyapi-pro-core/**'
-      - '.github/workflows/release-core.yml'
   schedule:
     - cron: '0 */3 * * *'
-
-concurrency:
-  group: cli-proxyapi-pro-release
-  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -28,20 +18,24 @@ jobs:
     outputs:
       should_release: ${{ steps.compare.outputs.should_release }}
       core_tag: ${{ steps.compare.outputs.core_tag }}
+      core_sha: ${{ steps.compare.outputs.core_sha }}
       core_version: ${{ steps.compare.outputs.core_version }}
       release_tag: ${{ steps.compare.outputs.release_tag }}
       release_version: ${{ steps.compare.outputs.release_version }}
       management_tag: ${{ steps.compare.outputs.management_tag }}
+      management_sha: ${{ steps.compare.outputs.management_sha }}
       management_version: ${{ steps.compare.outputs.management_version }}
+      models_sha: ${{ steps.compare.outputs.models_sha }}
 
     steps:
-      - name: Compare latest upstream releases
+      - name: Compare latest core release
         id: compare
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT_REPO: ${{ github.repository }}
           CORE_UPSTREAM_REPO: router-for-me/CLIProxyAPI
           MANAGEMENT_UPSTREAM_REPO: router-for-me/Cli-Proxy-API-Management-Center
+          MODELS_REPO: router-for-me/models
         run: |
           set -euo pipefail
 
@@ -66,6 +60,9 @@ jobs:
 
           core_tag="$(gh release view --repo "${CORE_UPSTREAM_REPO}" --json tagName --jq '.tagName')"
           management_tag="$(gh release view --repo "${MANAGEMENT_UPSTREAM_REPO}" --json tagName --jq '.tagName')"
+          models_sha="$(gh api "repos/${MODELS_REPO}/commits/main" --jq '.sha')"
+          core_sha="$(gh api "repos/${CORE_UPSTREAM_REPO}/commits/${core_tag}" --jq '.sha')"
+          management_sha="$(gh api "repos/${MANAGEMENT_UPSTREAM_REPO}/commits/${management_tag}" --jq '.sha')"
           current_tag="$(gh release view --repo "${CURRENT_REPO}" --json tagName --jq '.tagName' 2>/dev/null || true)"
 
           core_version="$(normalize_version "${core_tag}")"
@@ -79,18 +76,14 @@ jobs:
           fi
 
           target_exists="false"
-          has_management_asset="false"
           if gh release view "${release_tag}" --repo "${CURRENT_REPO}" >/dev/null 2>&1; then
             target_exists="true"
-            has_management_asset="$(gh release view "${release_tag}" --repo "${CURRENT_REPO}" --json assets --jq 'any(.assets[]; .name == "management.html")')"
           fi
 
           should_release="false"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] || [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             should_release="true"
           elif [ "${target_exists}" = "false" ]; then
-            should_release="true"
-          elif [ "${has_management_asset}" != "true" ]; then
             should_release="true"
           elif version_gt "${core_version}" "${current_version}"; then
             should_release="true"
@@ -100,39 +93,66 @@ jobs:
           echo "current_version=${current_version}"
           echo "core_tag=${core_tag}"
           echo "core_version=${core_version}"
+          echo "core_sha=${core_sha}"
           echo "management_tag=${management_tag}"
           echo "management_version=${management_version}"
+          echo "management_sha=${management_sha}"
+          echo "models_sha=${models_sha}"
           echo "release_tag=${release_tag}"
           echo "release_version=${release_version}"
-          echo "target_exists=${target_exists}"
-          echo "has_management_asset=${has_management_asset}"
           echo "should_release=${should_release}"
 
           echo "core_tag=${core_tag}" >> "${GITHUB_OUTPUT}"
+          echo "core_sha=${core_sha}" >> "${GITHUB_OUTPUT}"
           echo "core_version=${core_version}" >> "${GITHUB_OUTPUT}"
           echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
           echo "release_version=${release_version}" >> "${GITHUB_OUTPUT}"
           echo "management_tag=${management_tag}" >> "${GITHUB_OUTPUT}"
+          echo "management_sha=${management_sha}" >> "${GITHUB_OUTPUT}"
           echo "management_version=${management_version}" >> "${GITHUB_OUTPUT}"
+          echo "models_sha=${models_sha}" >> "${GITHUB_OUTPUT}"
           echo "should_release=${should_release}" >> "${GITHUB_OUTPUT}"
 
-  build-docker-image:
-    needs:
-      - check-version
-      - build-management-html
+  validate-repository:
+    needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            arch: amd64
-            runner: ubuntu-latest
-          - platform: linux/arm64
-            arch: arm64
-            runner: ubuntu-24.04-arm
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout customizations
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.x'
+
+      - name: Set up Go for actionlint
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install actionlint
+        env:
+          GOBIN: ${{ runner.temp }}/validation-bin
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          echo "${GOBIN}" >> "${GITHUB_PATH}"
+
+      - name: Validate repository sources
+        env:
+          VALIDATION_REQUIRE_TOOLS: "1"
+        run: bash scripts/validation/repo.sh
+
+  validate-core:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     permissions:
       contents: read
@@ -141,110 +161,103 @@ jobs:
       - name: Checkout customizations
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
+          path: customizations-repo
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+      - name: Checkout Core upstream release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          repository: router-for-me/CLIProxyAPI
+          ref: ${{ needs.check-version.outputs.core_sha }}
+          path: upstream-core
 
-      - name: Download management artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Checkout release models data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: management-html
-          path: cliproxyapi-pro-management/.ci-artifacts
+          repository: router-for-me/models
+          ref: ${{ needs.check-version.outputs.models_sha }}
+          path: upstream-models
 
-      - name: Verify management artifact
-        run: test -s cliproxyapi-pro-management/.ci-artifacts/management.html
-
-      - name: Build and push Docker image
-        id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          context: .
-          file: ./cliproxyapi-pro-core/Dockerfile
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro,push-by-digest=true,name-canonical=true,push=true
-          build-args: |
-            CLIPROXY_VERSION=${{ needs.check-version.outputs.core_tag }}
-            CLIPROXY_BUILD_VERSION=${{ needs.check-version.outputs.release_tag }}
+          go-version-file: upstream-core/go.mod
+          cache-dependency-path: upstream-core/go.sum
 
-      - name: Export Docker digest
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.x'
+
+      - name: Validate Core customization against release models data
+        env:
+          MODELS_SHA: ${{ needs.check-version.outputs.models_sha }}
         run: |
           set -euo pipefail
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          if [ -z "${digest}" ]; then
-            echo "Docker build did not produce a digest." >&2
-            exit 1
-          fi
-          touch "/tmp/digests/${digest#sha256:}"
+          test "$(git -C upstream-models rev-parse HEAD)" = "${MODELS_SHA}"
+          bash customizations-repo/scripts/validation/core.sh \
+            upstream-core \
+            upstream-models/models.json
 
-      - name: Upload Docker digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: docker-digest-${{ matrix.arch }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-  merge-docker-manifest:
-    needs:
-      - check-version
-      - build-docker-image
+  validate-management:
+    needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     permissions:
       contents: read
 
     steps:
-      - name: Download Docker digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Checkout customizations
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          pattern: docker-digest-*
-          path: /tmp/digests
-          merge-multiple: true
+          path: customizations-repo
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+      - name: Checkout Management upstream release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          repository: router-for-me/Cli-Proxy-API-Management-Center
+          ref: ${{ needs.check-version.outputs.management_sha }}
+          path: upstream-management
 
-      - name: Create and push Docker manifest
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: upstream-management/package.json
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('upstream-management/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Validate Management customization
         env:
-          DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro
-          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
+          VERSION: v${{ needs.check-version.outputs.management_version }}-pro
+        run: bash customizations-repo/scripts/validation/management.sh upstream-management
+
+      - name: Prepare validated management asset
+        working-directory: upstream-management
         run: |
           set -euo pipefail
+          mv dist/index.html dist/management.html
+          ls -lh dist/management.html
 
-          refs=()
-          for digest_file in /tmp/digests/*; do
-            refs+=("${DOCKER_IMAGE}@sha256:$(basename "${digest_file}")")
-          done
+      - name: Upload validated management asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: management-release-asset
+          path: upstream-management/dist/management.html
+          if-no-files-found: error
+          retention-days: 7
 
-          if [ "${#refs[@]}" -eq 0 ]; then
-            echo "No Docker digests found." >&2
-            exit 1
-          fi
-
-          docker buildx imagetools create \
-            -t "${DOCKER_IMAGE}:latest" \
-            -t "${DOCKER_IMAGE}:${RELEASE_TAG}" \
-            "${refs[@]}"
-
-          docker buildx imagetools inspect "${DOCKER_IMAGE}:${RELEASE_TAG}"
-
-  build-management-html:
-    needs: check-version
+  build-docker-image:
+    needs:
+      - check-version
+      - build-core-binaries
+      - validate-management
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 
@@ -258,72 +271,527 @@ jobs:
           path: customizations-repo
           fetch-depth: 1
 
-      - name: Checkout management upstream release
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download Linux amd64 core asset
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          repository: router-for-me/Cli-Proxy-API-Management-Center
-          ref: ${{ needs.check-version.outputs.management_tag }}
-          path: upstream-management
-          fetch-depth: 1
+          name: core-release-assets-linux-amd64
+          path: docker-assets/linux-amd64
 
-      - name: Test management customizations
-        run: python3 -m unittest discover -s customizations-repo/cliproxyapi-pro-management/tests -p 'test_*.py'
-
-      - name: Apply Pro management customizations
-        run: bash customizations-repo/cliproxyapi-pro-management/apply.sh upstream-management
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Download Linux arm64 core asset
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          bun-version: 1.3.14
+          name: core-release-assets-linux-arm64
+          path: docker-assets/linux-arm64
 
-      - name: Cache Bun dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Download built Pro management panel
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('upstream-management/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
+          name: management-release-asset
+          path: docker-assets/management
 
-      - name: Install management dependencies
-        working-directory: upstream-management
-        run: bun install --frozen-lockfile
-
-      - name: Test management
-        working-directory: upstream-management
-        run: bun run test
-
-      - name: Lint management
-        working-directory: upstream-management
-        run: bun run lint
-
-      - name: Build management HTML
-        working-directory: upstream-management
+      - name: Prepare Docker runtime context
         env:
-          VERSION: v${{ needs.check-version.outputs.management_version }}-pro
-        run: bun run build
-
-      - name: Prepare management asset
-        working-directory: upstream-management
+          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
         run: |
           set -euo pipefail
-          cd dist
-          mv index.html management.html
-          ls -lh management.html
 
-      - name: Upload management artifact
+          context_dir="docker-runtime-context"
+          rm -rf "${context_dir}"
+          mkdir -p \
+            "${context_dir}/binaries/linux/amd64" \
+            "${context_dir}/binaries/linux/arm64"
+
+          amd64_archive="docker-assets/linux-amd64/CLIProxyAPI_${RELEASE_TAG#v}_linux_amd64.tar.gz"
+          arm64_archive="docker-assets/linux-arm64/CLIProxyAPI_${RELEASE_TAG#v}_linux_aarch64.tar.gz"
+          test -f "${amd64_archive}"
+          test -f "${arm64_archive}"
+
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+
+          mkdir -p "${tmp_dir}/amd64" "${tmp_dir}/arm64"
+          tar -xzf "${amd64_archive}" -C "${tmp_dir}/amd64"
+          tar -xzf "${arm64_archive}" -C "${tmp_dir}/arm64"
+
+          cp "${tmp_dir}/amd64/cli-proxy-api" "${context_dir}/binaries/linux/amd64/CLIProxyAPI"
+          cp "${tmp_dir}/arm64/cli-proxy-api" "${context_dir}/binaries/linux/arm64/CLIProxyAPI"
+          cp "${tmp_dir}/amd64/config.example.yaml" "${context_dir}/config.example.yaml"
+          cp docker-assets/management/management.html "${context_dir}/management.html"
+          cp customizations-repo/cliproxyapi-pro-core/entrypoint.sh "${context_dir}/entrypoint.sh"
+          cp customizations-repo/cliproxyapi-pro-core/Dockerfile.runtime "${context_dir}/Dockerfile.runtime"
+
+          chmod +x \
+            "${context_dir}/binaries/linux/amd64/CLIProxyAPI" \
+            "${context_dir}/binaries/linux/arm64/CLIProxyAPI"
+          ls -lh \
+            "${context_dir}/binaries/linux/amd64/CLIProxyAPI" \
+            "${context_dir}/binaries/linux/arm64/CLIProxyAPI" \
+            "${context_dir}/management.html"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./docker-runtime-context
+          file: ./docker-runtime-context/Dockerfile.runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro:latest
+            ${{ secrets.DOCKER_USERNAME }}/cliproxyapi-pro:${{ needs.check-version.outputs.release_tag }}
+
+  build-core-binaries:
+    needs:
+      - check-version
+      - validate-repository
+      - validate-core
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: bash
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-amd64
+            kind: hosted-plugin
+            runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            asset_arch: amd64
+            archive_format: tar.gz
+            asset_suffix: ""
+          - target: darwin-arm64
+            kind: hosted-plugin
+            runner: macos-15
+            goos: darwin
+            goarch: arm64
+            asset_arch: aarch64
+            archive_format: tar.gz
+            asset_suffix: ""
+          - target: windows-amd64
+            kind: hosted-plugin
+            runner: windows-latest
+            goos: windows
+            goarch: amd64
+            asset_arch: amd64
+            archive_format: zip
+            asset_suffix: ""
+          - target: windows-arm64-no-plugin
+            kind: no-plugin
+            runner: windows-11-arm
+            goos: windows
+            goarch: arm64
+            asset_arch: aarch64
+            archive_format: zip
+            asset_suffix: _no-plugin
+          - target: linux-amd64
+            kind: linux-glibc-plugin
+            runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            asset_arch: amd64
+            archive_format: tar.gz
+            asset_suffix: ""
+            manylinux_image: quay.io/pypa/manylinux2014_x86_64@sha256:0d25b049964b2549b83384036abdff06789a8c0b1e9ff003ec80f0d531f79e50
+          - target: linux-arm64
+            kind: linux-glibc-plugin
+            runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            asset_arch: aarch64
+            archive_format: tar.gz
+            asset_suffix: ""
+            manylinux_image: quay.io/pypa/manylinux2014_aarch64@sha256:ae34a6ceeefe0b535c525b2e96f297311c8f1e01cfd8b9be5f647eece5b5c60b
+          - target: linux-amd64-no-plugin
+            kind: no-plugin
+            runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            asset_arch: amd64
+            archive_format: tar.gz
+            asset_suffix: _no-plugin
+          - target: linux-arm64-no-plugin
+            kind: no-plugin
+            runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            asset_arch: aarch64
+            archive_format: tar.gz
+            asset_suffix: _no-plugin
+          - target: freebsd-amd64
+            kind: freebsd-plugin
+            runner: ubuntu-latest
+            goos: freebsd
+            goarch: amd64
+            asset_arch: amd64
+            archive_format: tar.gz
+            asset_suffix: ""
+          - target: freebsd-amd64-no-plugin
+            kind: no-plugin
+            runner: ubuntu-latest
+            goos: freebsd
+            goarch: amd64
+            asset_arch: amd64
+            archive_format: tar.gz
+            asset_suffix: _no-plugin
+          - target: freebsd-arm64-no-plugin
+            kind: no-plugin
+            runner: ubuntu-latest
+            goos: freebsd
+            goarch: arm64
+            asset_arch: aarch64
+            archive_format: tar.gz
+            asset_suffix: _no-plugin
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout customizations
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: customizations-repo
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Checkout core upstream release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: router-for-me/CLIProxyAPI
+          ref: ${{ needs.check-version.outputs.core_sha }}
+          path: upstream-core
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: upstream-core/go.mod
+          cache: true
+          cache-dependency-path: upstream-core/go.sum
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.x'
+
+      - name: Prepare Pro core source
+        id: prepare-core
+        env:
+          SRC_ROOT: ${{ github.workspace }}/upstream-core
+          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
+          CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
+          MODELS_SHA: ${{ needs.check-version.outputs.models_sha }}
+        run: |
+          set -euo pipefail
+          core_source_date_epoch="$(git -C upstream-core show -s --format=%ct HEAD)"
+          customization_source_date_epoch="$(git -C customizations-repo show -s --format=%ct HEAD)"
+          git -C upstream-core fetch --depth 1 https://github.com/router-for-me/models.git "${MODELS_SHA}"
+          test "$(git -C upstream-core rev-parse FETCH_HEAD)" = "${MODELS_SHA}"
+          models_source_date_epoch="$(git -C upstream-core show -s --format=%ct FETCH_HEAD)"
+          source_date_epoch="$(printf '%s\n' "${core_source_date_epoch}" "${customization_source_date_epoch}" "${models_source_date_epoch}" | sort -n | tail -n 1)"
+          build_date="$(SOURCE_DATE_EPOCH="${source_date_epoch}" python3 -c 'import datetime, os; print(datetime.datetime.fromtimestamp(int(os.environ["SOURCE_DATE_EPOCH"]), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
+          git -C upstream-core show FETCH_HEAD:models.json > upstream-core/internal/registry/models/models.json
+          python customizations-repo/cliproxyapi-pro-core/patches/apply_upstream_patches.py
+          cp customizations-repo/README.md upstream-core/README.md
+          cp customizations-repo/README_EN.md upstream-core/README_EN.md
+          cd upstream-core
+          go mod tidy
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git diff --cached --quiet || GIT_AUTHOR_DATE="${build_date}" GIT_COMMITTER_DATE="${build_date}" git commit -m "Apply CLIProxyAPI Pro release customizations"
+          git tag -f "${RELEASE_TAG}"
+          echo "GO_VERSION=$(go env GOVERSION | sed 's/^go//')" >> "${GITHUB_ENV}"
+          echo "BUILD_DATE=${build_date}" >> "${GITHUB_ENV}"
+          echo "SOURCE_DATE_EPOCH=${source_date_epoch}" >> "${GITHUB_ENV}"
+          echo "build_date=${build_date}" >> "${GITHUB_OUTPUT}"
+          echo "source_date_epoch=${source_date_epoch}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build hosted plugin-capable archive
+        if: matrix.kind == 'hosted-plugin'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
+          CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+          ARCHIVE_FORMAT: ${{ matrix.archive_format }}
+          BUILD_DATE: ${{ steps.prepare-core.outputs.build_date }}
+          SOURCE_DATE_EPOCH: ${{ steps.prepare-core.outputs.source_date_epoch }}
+        run: |
+          set -euo pipefail
+          cd upstream-core
+
+          binary_name="cli-proxy-api"
+          if [ "${GOOS}" = "windows" ]; then
+            binary_name="cli-proxy-api.exe"
+          fi
+
+          archive_dir="dist/${GOOS}-${GOARCH}/archive"
+          archive_name="CLIProxyAPI_${RELEASE_TAG#v}_${GOOS}_${ASSET_ARCH}.${ARCHIVE_FORMAT}"
+          rm -rf "dist/${GOOS}-${GOARCH}"
+          mkdir -p "${archive_dir}"
+
+          CGO_ENABLED=1 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -buildvcs=false -trimpath \
+            -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
+            -o "${archive_dir}/${binary_name}" ./cmd/server/
+
+          cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
+          python ../customizations-repo/scripts/build/create_reproducible_archive.py \
+            --format "${ARCHIVE_FORMAT}" \
+            --output "dist/${archive_name}" \
+            --root "${archive_dir}" \
+            --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+            "${binary_name}" LICENSE README.md README_EN.md config.example.yaml
+
+      - name: Build Linux glibc plugin-capable archive
+        if: matrix.kind == 'linux-glibc-plugin'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
+          CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
+          GOARCH: ${{ matrix.goarch }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+          MANYLINUX_IMAGE: ${{ matrix.manylinux_image }}
+          SOURCE_DATE_EPOCH: ${{ steps.prepare-core.outputs.source_date_epoch }}
+        run: |
+          set -euo pipefail
+          cd upstream-core
+
+          archive_dir="dist/linux-${GOARCH}/archive"
+          archive_name="CLIProxyAPI_${RELEASE_TAG#v}_linux_${ASSET_ARCH}.tar.gz"
+          rm -rf "dist/linux-${GOARCH}"
+          mkdir -p "${archive_dir}"
+
+          go_archive="go${GO_VERSION}.linux-${GOARCH}.tar.gz"
+          go_sha256="$(
+            curl -fsSL 'https://go.dev/dl/?mode=json&include=all' |
+              python3 -c 'import json, sys; filename = sys.argv[1]; print(next(item["sha256"] for release in json.load(sys.stdin) for item in release["files"] if item["filename"] == filename))' "${go_archive}"
+          )"
+          if [[ ! "${go_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+            printf 'Invalid SHA256 for %s: %s\n' "${go_archive}" "${go_sha256}" >&2
+            exit 1
+          fi
+
+          docker run --rm \
+            -v "${PWD}:/src" \
+            -w /src \
+            -e GO_VERSION \
+            -e GOARCH \
+            -e RELEASE_TAG \
+            -e CORE_TAG \
+            -e BUILD_DATE \
+            -e "GO_SHA256=${go_sha256}" \
+            "${MANYLINUX_IMAGE}" \
+            bash -euo pipefail -c '
+              go_archive="go${GO_VERSION}.linux-${GOARCH}.tar.gz"
+              curl -fsSL "https://go.dev/dl/${go_archive}" -o "/tmp/${go_archive}"
+              printf "%s  %s\n" "${GO_SHA256}" "/tmp/${go_archive}" | sha256sum -c -
+              rm -rf /usr/local/go
+              tar -C /usr/local -xzf "/tmp/${go_archive}"
+              export PATH="/usr/local/go/bin:${PATH}"
+
+              CGO_ENABLED=1 GOOS=linux GOARCH="${GOARCH}" go build -buildvcs=false -trimpath \
+                -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
+                -o "'"${archive_dir}"'/cli-proxy-api" ./cmd/server/
+
+              glibc_versions="$(readelf --version-info "'"${archive_dir}"'/cli-proxy-api" | sed -n "s/.*Name: GLIBC_\([0-9.]*\).*/\1/p" | sort -Vu)"
+              if [ -n "${glibc_versions}" ]; then
+                printf "GLIBC versions:\n%s\n" "${glibc_versions}"
+                max_glibc="$(printf "%s\n" "${glibc_versions}" | sort -V | tail -n 1)"
+                if [ "$(printf "2.17\n%s\n" "${max_glibc}" | sort -V | tail -n 1)" != "2.17" ]; then
+                  printf "linux %s binary requires GLIBC_%s, expected GLIBC_2.17 or older\n" "${GOARCH}" "${max_glibc}" >&2
+                  exit 1
+                fi
+              fi
+            '
+
+          cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
+          python ../customizations-repo/scripts/build/create_reproducible_archive.py \
+            --format tar.gz \
+            --output "dist/${archive_name}" \
+            --root "${archive_dir}" \
+            --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+            cli-proxy-api LICENSE README.md README_EN.md config.example.yaml
+
+      - name: Install FreeBSD plugin build dependencies
+        if: matrix.kind == 'freebsd-plugin'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clang lld wget
+
+      - name: Prepare workspace git metadata for FreeBSD plugin build
+        if: matrix.kind == 'freebsd-plugin'
+        env:
+          BUILD_DATE: ${{ steps.prepare-core.outputs.build_date }}
+        run: |
+          set -euo pipefail
+          git init .
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          GIT_AUTHOR_DATE="${BUILD_DATE}" GIT_COMMITTER_DATE="${BUILD_DATE}" git commit --allow-empty -m "Prepare workspace metadata for cgo action"
+
+      - name: Build FreeBSD plugin-capable binary
+        if: matrix.kind == 'freebsd-plugin'
+        uses: go-cross/cgo-actions@d0b8f2f2d67923ce9a42d92a7ef0ed1ebd905f0a # v1
+        env:
+          GOFLAGS: -buildvcs=false -trimpath
+        with:
+          dir: upstream-core
+          packages: ./cmd/server/
+          targets: ${{ matrix.goos }}-${{ matrix.goarch }}
+          out-dir: upstream-core/dist/${{ matrix.target }}/bin
+          output: cli-proxy-api
+          flags: -ldflags=-s -w
+          x-flags: |
+            main.Version=${{ needs.check-version.outputs.release_tag }}
+            main.Commit=release-${{ needs.check-version.outputs.core_tag }}
+            main.BuildDate=${{ steps.prepare-core.outputs.build_date }}
+
+      - name: Package FreeBSD plugin-capable archive
+        if: matrix.kind == 'freebsd-plugin'
+        env:
+          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
+          GOOS: ${{ matrix.goos }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+          SOURCE_DATE_EPOCH: ${{ steps.prepare-core.outputs.source_date_epoch }}
+        run: |
+          set -euo pipefail
+          cd upstream-core
+
+          archive_dir="dist/${{ matrix.target }}/archive"
+          archive_name="CLIProxyAPI_${RELEASE_TAG#v}_${GOOS}_${ASSET_ARCH}.tar.gz"
+          mkdir -p "${archive_dir}"
+          cp "dist/${{ matrix.target }}/bin/cli-proxy-api" "${archive_dir}/cli-proxy-api"
+          cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
+          python ../customizations-repo/scripts/build/create_reproducible_archive.py \
+            --format tar.gz \
+            --output "dist/${archive_name}" \
+            --root "${archive_dir}" \
+            --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+            cli-proxy-api LICENSE README.md README_EN.md config.example.yaml
+
+      - name: Build no-plugin archive
+        if: matrix.kind == 'no-plugin'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
+          CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+          ARCHIVE_FORMAT: ${{ matrix.archive_format }}
+          ASSET_SUFFIX: ${{ matrix.asset_suffix }}
+          BUILD_DATE: ${{ steps.prepare-core.outputs.build_date }}
+          SOURCE_DATE_EPOCH: ${{ steps.prepare-core.outputs.source_date_epoch }}
+        run: |
+          set -euo pipefail
+          cd upstream-core
+
+          binary_name="cli-proxy-api"
+          if [ "${GOOS}" = "windows" ]; then
+            binary_name="cli-proxy-api.exe"
+          fi
+
+          archive_dir="dist/${GOOS}-${GOARCH}${ASSET_SUFFIX}/archive"
+          archive_name="CLIProxyAPI_${RELEASE_TAG#v}_${GOOS}_${ASSET_ARCH}${ASSET_SUFFIX}.${ARCHIVE_FORMAT}"
+          rm -rf "dist/${GOOS}-${GOARCH}${ASSET_SUFFIX}"
+          mkdir -p "${archive_dir}"
+
+          CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -buildvcs=false -trimpath \
+            -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
+            -o "${archive_dir}/${binary_name}" ./cmd/server/
+
+          if [ "${GOOS}" = "linux" ] && readelf -l "${archive_dir}/${binary_name}" | grep -q 'Requesting program interpreter'; then
+            readelf -l "${archive_dir}/${binary_name}" >&2
+            echo "no-plugin linux binary must not require a dynamic interpreter" >&2
+            exit 1
+          fi
+
+          cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
+          python ../customizations-repo/scripts/build/create_reproducible_archive.py \
+            --format "${ARCHIVE_FORMAT}" \
+            --output "dist/${archive_name}" \
+            --root "${archive_dir}" \
+            --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+            "${binary_name}" LICENSE README.md README_EN.md config.example.yaml
+
+      - name: Upload core binary assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: management-html
-          path: upstream-management/dist/management.html
+          name: core-release-assets-${{ matrix.target }}
+          path: |
+            upstream-core/dist/*.tar.gz
+            upstream-core/dist/*.zip
           if-no-files-found: error
           retention-days: 7
 
-  publish-management-asset:
+  assemble-core-assets:
     needs:
       - check-version
-      - merge-docker-manifest
-      - build-management-html
+      - build-core-binaries
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download core binary assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: core-release-assets-*
+          path: core-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: core-assets
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "No core binary assets found" >&2
+            exit 1
+          fi
+          sha256sum "${archives[@]}" | sort -k2 > checksums.txt
+
+      - name: Upload assembled core assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-release-assets
+          path: |
+            core-assets/*.tar.gz
+            core-assets/*.zip
+            core-assets/checksums.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    needs:
+      - check-version
+      - build-docker-image
+      - assemble-core-assets
+      - validate-management
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 
@@ -331,49 +799,130 @@ jobs:
       contents: write
 
     steps:
-      - name: Download management artifact
+      - name: Checkout customizations
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: customizations-repo
+          fetch-depth: 1
+
+      - name: Checkout core upstream release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: router-for-me/CLIProxyAPI
+          ref: ${{ needs.check-version.outputs.core_sha }}
+          path: upstream-core
+          fetch-depth: 1
+
+      - name: Checkout management upstream release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: router-for-me/Cli-Proxy-API-Management-Center
+          ref: ${{ needs.check-version.outputs.management_sha }}
+          path: upstream-management
+          fetch-depth: 1
+
+      - name: Download core binary assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: management-html
-          path: release-assets
+          name: core-release-assets
+          path: release-assets/core
 
-      - name: Create release notes
+      - name: Download management asset
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: management-release-asset
+          path: release-assets/management
+
+      - name: Generate release notes
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORE_UPSTREAM_REPO: router-for-me/CLIProxyAPI
+          MANAGEMENT_UPSTREAM_REPO: router-for-me/Cli-Proxy-API-Management-Center
           RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
           RELEASE_VERSION: ${{ needs.check-version.outputs.release_version }}
           CORE_TAG: ${{ needs.check-version.outputs.core_tag }}
+          CORE_VERSION: ${{ needs.check-version.outputs.core_version }}
           MANAGEMENT_TAG: ${{ needs.check-version.outputs.management_tag }}
           MANAGEMENT_VERSION: ${{ needs.check-version.outputs.management_version }}
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          CUSTOMIZATION_SHA: ${{ github.sha }}
+          MODELS_SHA: ${{ needs.check-version.outputs.models_sha }}
         run: |
           set -euo pipefail
+          core_notes="$(gh release view "${CORE_TAG}" --repo "${CORE_UPSTREAM_REPO}" --json body --jq '.body // ""')"
+          management_notes="$(gh release view "${MANAGEMENT_TAG}" --repo "${MANAGEMENT_UPSTREAM_REPO}" --json body --jq '.body // ""')"
+          core_sha="$(git -C upstream-core rev-parse HEAD)"
+          management_sha="$(git -C upstream-management rev-parse HEAD)"
+          customization_sha="$(git -C customizations-repo rev-parse HEAD)"
 
-          cat > release-notes.md <<EOF
-          CLIProxyAPI Pro release built from upstream releases. This workflow publishes only the Docker image and the management frontend file.
+          format_upstream_notes() {
+            local repo="$1"
+            local notes="$2"
+            printf '%s\n' "${notes}" | REPO="${repo}" python3 -c '
+          import os
+          import re
+          import sys
 
-          ## Version mapping
+          repo = os.environ["REPO"]
+          commit_pattern = re.compile(r"^(\s*(?:[-*]\s+)?)?([0-9a-fA-F]{7,40})(\s+)")
+          pr_pattern = re.compile(r"(?<![\w/\]])#([0-9]+)\b")
 
-          - Release tag: ${RELEASE_TAG}
-          - Release version: ${RELEASE_VERSION}
-          - Core upstream release: ${CORE_TAG}
-          - Docker image: ${DOCKER_USERNAME}/cliproxyapi-pro:${RELEASE_TAG}
-          - Docker latest image: ${DOCKER_USERNAME}/cliproxyapi-pro:latest
-          - Management upstream release: ${MANAGEMENT_TAG}
-          - Management build version: v${MANAGEMENT_VERSION}-pro
-          - Customization commit: ${CUSTOMIZATION_SHA}
+          def format_commit(match):
+              prefix = match.group(1) or ""
+              full_hash = match.group(2)
+              return f"{prefix}[{full_hash[:7]}](https://github.com/{repo}/commit/{full_hash}){match.group(3)}"
 
-          ## Assets
+          for line in sys.stdin.read().splitlines():
+              line = commit_pattern.sub(format_commit, line, count=1)
+              line = pr_pattern.sub(
+                  lambda match: f"[#{match.group(1)}](https://github.com/{repo}/pull/{match.group(1)})",
+                  line,
+              )
+              print(line)
+          '
+          }
 
-          - Docker image: ${DOCKER_USERNAME}/cliproxyapi-pro:${RELEASE_TAG}
-          - Frontend file: management.html
-
-          <!-- cli-proxyapi-pro-management-start -->
-          ## Management upstream release notes
-
-          Management frontend was rebuilt from ${MANAGEMENT_TAG}.
-          <!-- cli-proxyapi-pro-management-end -->
-          EOF
+          : > release-notes.md
+          {
+            echo "CLIProxyAPI Pro release built from the latest core and management upstream releases."
+            echo
+            echo "## Version mapping"
+            echo
+            echo "- Release tag: ${RELEASE_TAG}"
+            echo "- Core upstream release: ${CORE_TAG}"
+            echo "- Core build version: ${RELEASE_TAG}"
+            echo "- Management upstream release: ${MANAGEMENT_TAG}"
+            echo "- Management build version: v${MANAGEMENT_VERSION}-pro"
+            echo "- Core upstream commit: ${core_sha}"
+            echo "- Management upstream commit: ${management_sha}"
+            echo "- Models data commit: ${MODELS_SHA}"
+            echo "- Customization commit: ${customization_sha}"
+            echo
+            echo "## Assets"
+            echo
+            echo "- Pro core default desktop/Linux binaries are built with CGO enabled and support dynamic library plugins when the target platform supports them."
+            echo "- Pro core \`_no-plugin\` binaries are CGO-free portable builds for static or constrained environments."
+            echo "- Pro Docker images follow upstream with CGO-enabled Debian builds and dynamic library plugin support."
+            echo "- Pro management panel is published as management.html for automatic panel updates."
+            echo
+            echo "<!-- cli-proxyapi-pro-core-start -->"
+            echo "## Core upstream release notes"
+            echo
+            if [ -n "${core_notes}" ]; then
+              format_upstream_notes "${CORE_UPSTREAM_REPO}" "${core_notes}"
+            else
+              echo "No core upstream release notes were provided."
+            fi
+            echo "<!-- cli-proxyapi-pro-core-end -->"
+            echo
+            echo "<!-- cli-proxyapi-pro-management-start -->"
+            echo "## Management upstream release notes"
+            echo
+            if [ -n "${management_notes}" ]; then
+              format_upstream_notes "${MANAGEMENT_UPSTREAM_REPO}" "${management_notes}"
+            else
+              echo "No management upstream release notes were provided."
+            fi
+            echo "<!-- cli-proxyapi-pro-management-end -->"
+          } >> release-notes.md
 
       - name: Create or update Release
         env:
@@ -381,7 +930,6 @@ jobs:
           RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
         run: |
           set -euo pipefail
-
           if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release edit "${RELEASE_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
@@ -394,14 +942,13 @@ jobs:
               --notes-file release-notes.md
           fi
 
-          old_binary_assets="$(
+          core_assets="$(
             gh release view "${RELEASE_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
               --json assets \
               --jq '.assets[].name' |
               grep -E '^(CLIProxyAPI_.*\.(tar\.gz|zip)|checksums\.txt)$' || true
           )"
-
           while IFS= read -r asset; do
             if [ -z "${asset}" ]; then
               continue
@@ -409,9 +956,277 @@ jobs:
             gh release delete-asset "${RELEASE_TAG}" "${asset}" \
               --repo "${GITHUB_REPOSITORY}" \
               --yes || true
-          done <<< "${old_binary_assets}"
+          done <<< "${core_assets}"
 
           gh release upload "${RELEASE_TAG}" \
-            release-assets/management.html \
+            release-assets/core/*.tar.gz \
+            release-assets/core/*.zip \
+            release-assets/core/checksums.txt \
+            release-assets/management/management.html \
             --repo "${GITHUB_REPOSITORY}" \
             --clobber
+
+  backup-pro-data:
+    needs:
+      - check-version
+      - publish-release
+    if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Create tracked Pro data backups
+        continue-on-error: true
+        env:
+          USAGE_BACKUP_TARGETS: ${{ secrets.CLIPROXY_USAGE_BACKUP_TARGETS }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$USAGE_BACKUP_TARGETS" ]; then
+            echo "⚠️ CLIPROXY_USAGE_BACKUP_TARGETS is not configured. Skipping Pro data backup."
+            exit 0
+          fi
+
+          backup_target() {
+            local name="$1"
+            local api_url="$2"
+            local management_password="$3"
+            local webdav_url="$4"
+            local webdav_username="$5"
+            local webdav_password="$6"
+            local response_file
+            local http_status
+            local backup_name
+            local legacy_file
+            local legacy_remote_name
+            local upload_status
+            local old_files
+            response_file="$(mktemp)"
+
+            if [ -z "$api_url" ] || [ -z "$management_password" ]; then
+              echo "⚠️ Pro data backup target '$name' is missing api_url or management_password. Skipping."
+              rm -f "$response_file"
+              return 0
+            fi
+
+            echo "Creating a tracked Pro data backup for $name..."
+            http_status="$(curl -sS -o "$response_file" -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer $management_password" \
+              -H "Content-Type: application/json" \
+              --data '{}' \
+              "${api_url%/}/v0/management/data/backups/now" || true)"
+            http_status="${http_status:-000}"
+
+            if [ "$http_status" -ge 200 ] && [ "$http_status" -lt 300 ]; then
+              backup_name="$(jq -r '.backup.fileName // "unknown"' "$response_file" 2>/dev/null || echo "unknown")"
+              echo "✅ Pro data backup uploaded successfully for $name: $backup_name"
+            elif [ "$http_status" = "404" ]; then
+              echo "⚠️ Pro data backup endpoint is not available for $name; trying the legacy usage-export compatibility path."
+              if [ -z "$webdav_url" ] || [ -z "$webdav_username" ] || [ -z "$webdav_password" ]; then
+                echo "⚠️ Legacy backup fallback for $name requires webdav_url, webdav_username, and webdav_password."
+                rm -f "$response_file"
+                return 0
+              fi
+              legacy_file="$(mktemp)"
+              legacy_remote_name="usage-export-$(date -u +"%Y%m%d_%H%M%S").jsonl"
+              if ! curl -sfS \
+                -H "Authorization: Bearer $management_password" \
+                "${api_url%/}/v0/management/usage/export" \
+                -o "$legacy_file"; then
+                echo "⚠️ Failed to export legacy usage statistics for $name."
+                rm -f "$legacy_file" "$response_file"
+                return 0
+              fi
+
+              upload_status="$(curl -sS -o /dev/null -w "%{http_code}" \
+                -T "$legacy_file" \
+                -u "$webdav_username:$webdav_password" \
+                "${webdav_url%/}/$legacy_remote_name" || true)"
+              upload_status="${upload_status:-000}"
+              if [ "$upload_status" -ge 200 ] && [ "$upload_status" -lt 300 ]; then
+                echo "✅ Legacy usage backup uploaded successfully for $name: $legacy_remote_name"
+                old_files="$(curl -sS -X PROPFIND \
+                  -u "$webdav_username:$webdav_password" \
+                  "${webdav_url%/}/" \
+                  -H "Depth: 1" | grep -oE 'usage-export-[0-9_]+\.(jsonl|json)' | sort -r | tail -n +8 || true)"
+                for old_file in $old_files; do
+                  curl -sS -X DELETE \
+                    -u "$webdav_username:$webdav_password" \
+                    "${webdav_url%/}/$old_file" >/dev/null || true
+                done
+              else
+                echo "⚠️ Failed to upload legacy usage backup for $name. HTTP Status: $upload_status"
+              fi
+              rm -f "$legacy_file"
+            else
+              echo "⚠️ Failed to create Pro data backup for $name. HTTP Status: $http_status"
+              cat "$response_file"
+            fi
+            rm -f "$response_file"
+          }
+
+          if ! echo "$USAGE_BACKUP_TARGETS" | jq -e 'type == "array"' >/dev/null; then
+            echo "⚠️ CLIPROXY_USAGE_BACKUP_TARGETS must be a JSON array. Skipping usage backup."
+            exit 0
+          fi
+
+          echo "$USAGE_BACKUP_TARGETS" | jq -c '.[]' | while IFS= read -r target; do
+            backup_target \
+              "$(echo "$target" | jq -r 'if type == "object" then (.name // "default") else "default" end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.api_url // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.management_password // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_url // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_username // empty) else empty end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_password // empty) else empty end')"
+          done
+
+          echo "✅ Pro data backup requests completed."
+
+  trigger-render-deployment:
+    needs:
+      - check-version
+      - publish-release
+      - backup-pro-data
+    if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Trigger Render Deployment
+        continue-on-error: true
+        env:
+          RENDER_DEPLOY_HOOKS: ${{ secrets.CLIPROXY_RENDER_DEPLOY_HOOKS }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$RENDER_DEPLOY_HOOKS" ]; then
+            echo "⚠️ CLIPROXY_RENDER_DEPLOY_HOOKS is not configured. Skipping Render deployment."
+            exit 0
+          fi
+
+          trigger_render_deploy() {
+            local name="$1"
+            local hook_url="$2"
+
+            if [ -z "$hook_url" ]; then
+              echo "⚠️ Render deployment target '$name' is missing hook URL. Skipping."
+              return 0
+            fi
+
+            echo "Triggering Render deployment for $name..."
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$hook_url" || echo "000")
+
+            if [ "$HTTP_STATUS" -eq 200 ]; then
+              echo "✅ Render deployment triggered successfully for $name."
+            else
+              echo "⚠️ Failed to trigger Render deployment for $name. HTTP Status: $HTTP_STATUS. Continuing."
+              return 0
+            fi
+          }
+
+          if ! echo "$RENDER_DEPLOY_HOOKS" | jq -e 'type == "array"' >/dev/null; then
+            echo "⚠️ CLIPROXY_RENDER_DEPLOY_HOOKS must be a JSON array. Skipping Render deployment."
+            exit 0
+          fi
+
+          echo "$RENDER_DEPLOY_HOOKS" | jq -c '.[]' | while IFS= read -r target; do
+            trigger_render_deploy \
+              "$(echo "$target" | jq -r 'if type == "object" then (.name // "default") else "default" end')" \
+              "$(echo "$target" | jq -r 'if type == "object" then (.hook_url // .url // empty) else empty end')"
+          done
+
+  send-telegram-notification:
+    needs:
+      - check-version
+      - publish-release
+      - trigger-render-deployment
+    if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Send Telegram notification
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
+          MANAGEMENT_VERSION: ${{ needs.check-version.outputs.management_version }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          cat << 'EOF' > telegram_notify.py
+          import os
+          import html
+          import json
+          import urllib.request
+
+          repo = os.environ.get('GITHUB_REPO', '')
+          tag = os.environ.get('RELEASE_TAG', 'Unknown')
+          core_version = tag
+          management_version = f"v{os.environ.get('MANAGEMENT_VERSION', 'Unknown')}-pro"
+          chat_id = os.environ.get('CHAT_ID')
+          bot_token = os.environ.get('BOT_TOKEN')
+          docker_username = os.environ.get('DOCKER_USERNAME', 'unknown')
+          docker_url = f'https://hub.docker.com/r/{docker_username}/cliproxyapi-pro/tags'
+          release_url = f'https://github.com/{repo}/releases/tag/{tag}'
+
+          full_text = (
+              '🚀 <b>New CLIProxyAPI Pro Release Published!</b>\n\n'
+              f'📦 <b>Release:</b> <code>{html.escape(tag)}</code>\n'
+              f'🧩 <b>Core:</b> <code>{html.escape(core_version)}</code>\n'
+              f'🖥️ <b>Management:</b> <code>{html.escape(management_version)}</code>\n'
+              f'🐳 <a href="{html.escape(docker_url)}">DockerHub</a>\n'
+              f'📝 <a href="{html.escape(release_url)}">Release notes</a>'
+          )
+
+          payload = {
+              'chat_id': chat_id,
+              'text': full_text,
+              'parse_mode': 'HTML',
+              'disable_web_page_preview': True,
+          }
+
+          req = urllib.request.Request(
+              f'https://api.telegram.org/bot{bot_token}/sendMessage',
+              data=json.dumps(payload).encode('utf-8'),
+              headers={'Content-Type': 'application/json'},
+          )
+
+          try:
+              if bot_token and chat_id:
+                  with urllib.request.urlopen(req):
+                      print('✅ Notification sent.')
+              else:
+                  print('⚠️ Telegram details missing.')
+          except Exception as e:
+              print(f'❌ Error: {e}')
+          EOF
+
+          python3 telegram_notify.py
+
+  cleanup-runs:
+    runs-on: ubuntu-latest
+    needs:
+      - publish-release
+      - backup-pro-data
+      - trigger-render-deployment
+      - send-telegram-notification
+    if: always() && needs.publish-release.result == 'success'
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@0cf693bc9909e5e867ee8f27b813224ba862939c # v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 7
+          keep_minimum_runs: 6

@@ -14,7 +14,8 @@ import (
 const (
 	ProSettingNamespaceRoutingRequestProtection = settings.NamespaceRoutingRequestProtection
 	ProSettingNamespaceProxyPool                = settings.NamespaceProxyPool
-	ProSettingNamespaceOAuthModelPolicy         = settings.NamespaceOAuthModelPolicy
+	ProSettingNamespaceOAuthPolicy              = settings.NamespaceOAuthPolicy
+	LegacyProSettingNamespaceOAuthModelPolicy   = settings.LegacyNamespaceOAuthModelPolicy
 )
 
 // ProSetting stores one versioned Pro-owned configuration document outside upstream config.yaml.
@@ -89,7 +90,7 @@ func listProSettingsFrom(ctx context.Context, queryer sqlQueryer) ([]ProSetting,
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return items, nil
+	return normalizeOAuthPolicySettings(items), nil
 }
 
 func setProSettingWith(ctx context.Context, execer interface {
@@ -117,8 +118,54 @@ func (s *Store) SetProSetting(ctx context.Context, item ProSetting) error {
 	return setProSettingWith(ctx, s.executor(ctx), item)
 }
 
-func (s *Store) ImportProSettings(ctx context.Context, items []ProSetting) (int, error) {
+func (s *Store) DeleteProSetting(ctx context.Context, namespace string) error {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return nil
+	}
+	_, err := s.executor(ctx).ExecContext(ctx, `delete from pro_settings where namespace = ?`, namespace)
+	return err
+}
+
+func normalizeOAuthPolicySettings(items []ProSetting) []ProSetting {
 	if len(items) == 0 {
+		return items
+	}
+	out := make([]ProSetting, 0, len(items))
+	hasCurrent := false
+	for _, item := range items {
+		if strings.TrimSpace(item.Namespace) == ProSettingNamespaceOAuthPolicy {
+			hasCurrent = true
+			break
+		}
+	}
+	for _, item := range items {
+		switch strings.TrimSpace(item.Namespace) {
+		case LegacyProSettingNamespaceOAuthModelPolicy:
+			if hasCurrent {
+				continue
+			}
+			item.Namespace = ProSettingNamespaceOAuthPolicy
+			hasCurrent = true
+		case ProSettingNamespaceOAuthPolicy:
+		default:
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func (s *Store) ImportProSettings(ctx context.Context, items []ProSetting) (int, error) {
+	return s.importProSettings(ctx, items, false)
+}
+
+func (s *Store) ReplaceProSettings(ctx context.Context, items []ProSetting) (int, error) {
+	return s.importProSettings(ctx, items, true)
+}
+
+func (s *Store) importProSettings(ctx context.Context, items []ProSetting, replace bool) (int, error) {
+	items = normalizeOAuthPolicySettings(items)
+	if len(items) == 0 && !replace {
 		return 0, nil
 	}
 	normalized := make([]ProSetting, 0, len(items))
@@ -139,6 +186,11 @@ func (s *Store) ImportProSettings(ctx context.Context, items []ProSetting) (int,
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if replace {
+		if _, err := tx.ExecContext(ctx, `delete from pro_settings`); err != nil {
+			return 0, err
+		}
+	}
 	for _, item := range normalized {
 		if err := setProSettingWith(ctx, tx, item); err != nil {
 			return 0, err

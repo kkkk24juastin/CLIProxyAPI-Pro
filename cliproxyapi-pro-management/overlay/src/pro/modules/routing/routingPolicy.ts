@@ -16,21 +16,16 @@ export const ROUTING_POLICY_PROVIDERS = [
 export type RoutingPolicyProvider = (typeof ROUTING_POLICY_PROVIDERS)[number];
 export type RoutingProtectionMode = 'observe' | 'enforce';
 
-export interface RoutingPolicyGlobalSettings {
-  strategy: 'round-robin' | 'fill-first';
-  sessionAffinity: boolean;
-  sessionAffinityTTL: string;
-  requestRetry: number;
-  maxRetryCredentials: number;
-  maxRetryInterval: number;
-  coolingEnabled: boolean;
-  saveCooldownStatus: boolean;
-  transientErrorCooldownSeconds: number;
-  quotaSwitchProject: boolean;
-  quotaSwitchPreviewModel: boolean;
-  quotaAntigravityCredits: boolean;
-  codexIdentityConfuse: boolean;
-}
+export const normalizeRoutingPolicyInteger = (
+  value: string | number,
+  min: number,
+  max: number,
+  fallback = min
+): number => {
+  const parsed = typeof value === 'string' && !value.trim() ? fallback : Number(value);
+  const integer = Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+  return Math.min(max, Math.max(min, integer));
+};
 
 export interface RoutingProtectionProviderPolicy {
   enabled: boolean;
@@ -76,7 +71,6 @@ export interface RoutingProtectionEvent {
 }
 
 export interface RoutingPolicyResponse {
-  global: RoutingPolicyGlobalSettings;
   requestProtection: RoutingRequestProtectionConfig;
   availableProviders: RoutingPolicyProvider[];
   active: RoutingProtectedAccount[];
@@ -110,11 +104,6 @@ export const routingPolicyApi = {
   async get(): Promise<RoutingPolicyResponse> {
     return normalizeRoutingPolicyResponse(
       await apiClient.get<RoutingPolicyRawResponse>('/routing-policy')
-    );
-  },
-  async updateUpstream(global: RoutingPolicyGlobalSettings): Promise<RoutingPolicyResponse> {
-    return normalizeRoutingPolicyResponse(
-      await apiClient.patch<RoutingPolicyRawResponse>('/routing-policy/upstream', { global })
     );
   },
   async updateRequestProtection(

@@ -12,11 +12,12 @@ This project does not maintain a full fork of either upstream project. Instead, 
 - Persistent request data with import, export, and WebDAV backup.
 - Account inspection for Codex, Claude, Antigravity, Gemini CLI, Kimi, and xAI.
 - Persistent inspection quota and account-error state for quota management and auth-file health views.
+- A real-model connection test pinned to the selected auth-file `auth_index`, with output, latency, and upstream error details.
 - Optional automatic enable, disable, delete, and token-refresh actions.
 - Optional deep probes for Antigravity soft bans and xAI availability anomalies.
 - A routing-policy page for upstream routing behavior and provider-scoped request-state protection.
 - A statically linked proxy pool that aggregates HTTP/SOCKS nodes behind one fixed loopback SOCKS5 endpoint with rotation, health isolation, and failover.
-- A statically linked OAuth model policy that removes unavailable models per provider and account plan, constraining both model listing and auth scheduling.
+- A statically linked OAuth account policy that controls model exclusions, prefixes, priorities, and scheduler weights per provider and account plan.
 
 ## Repository layout
 
@@ -52,7 +53,7 @@ Backend customization layer for building the Pro Docker image.
 Main capabilities:
 
 - Builds a multi-arch Docker image from an upstream CLIProxyAPI release.
-- Builds and publishes Pro Docker images for `linux/amd64` and `linux/arm64`.
+- Builds Pro binary release assets using the same platform matrix and archive formats as upstream.
 - Embeds a SQLite usage service.
 - Exposes `/v0/management/usage` API routes, including status, incremental event polling, and SSE streaming.
 - Supports usage JSONL/NDJSON import and export, including usage events, model prices, quota cache, Pro settings, routing runtime state, account-inspection schedules, and the latest inspection-result snapshot.
@@ -60,12 +61,12 @@ Main capabilities:
 - Supports SQLite-backed quota cache.
 - Supports model price persistence.
 - Supports the QuotaProvider plugin protocol and a Gemini CLI legacy adapter.
-- Includes an OAuth model policy for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi account plans.
+- Includes an OAuth account policy for xAI, Codex, Claude, Gemini CLI, Antigravity, and Kimi account plans.
 - Forces required upstream startup config: `usage-statistics-enabled=true` and the Pro management panel repository.
 - Adds a backend account-inspection scheduler and executor with token refresh before probing.
 - Adds unified routing-policy and request-state-protection APIs.
 - Optionally starts the Komari agent.
-- Links the proxy pool and OAuth model policy into every Pro binary, including `_no-plugin` assets; their settings live in the usage SQLite database and are never written to `config.yaml`.
+- Links the proxy pool and OAuth account policy into every Pro binary, including `_no-plugin` assets; settings live in usage SQLite and are never written to `config.yaml` or auth files.
 - Redirects `/` to `/management.html`.
 - Enhances the `/healthz` response.
 
@@ -84,13 +85,14 @@ Main capabilities:
 - Adds the `/account-inspection` account inspection page.
 - Adds the `/routing` routing-policy page.
 - Adds the `/proxy-pool` page for node configuration, connectivity tests, runtime statistics, and global-proxy takeover/restoration.
-- Adds the `/oauth-model-policy` visual editor for provider-specific OAuth plan rules, custom plans, fallback policies, and plan-discovery caching.
+- Adds the `/oauth-policy` visual editor for provider-specific OAuth account rules covering model exclusions, prefixes, priorities, weights, custom plans, fallbacks, and effective runtime previews; the legacy route redirects.
 - Shows request count, success rate, latency, token, and cost metrics.
 - Persists model prices through SQLite.
 - Persists quota cache through SQLite.
 - Shows quota-card cache timestamps and supports single-card refresh.
 - Integrates with backend account inspection for run control, polling, results, and actions.
 - Shows inspection-written `last_error` messages on the auth files page.
+- Adds a connection-test dialog to auth-file account cards.
 - Shows business-result toast messages for account-inspection refresh and recheck actions.
 - Supports suggested account disable, enable, and delete actions.
 - Adds locale patches.
@@ -148,7 +150,7 @@ The top-level Routing Policy page combines upstream routing, session stickiness,
 
 During backend inspection, eligible auth records are refreshed before quota/account probing when they are already in their normal refresh window. The inspection refresh path skips API-key accounts, accounts not yet due for refresh, and accounts still blocked by `NextRefreshAfter`; disabled accounts are allowed to refresh. If refresh succeeds, probing uses the refreshed auth. If refresh fails, the account is kept and probing is skipped for that account.
 
-The backend forces `usage-statistics-enabled=true` and `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro` in memory at startup. It only changes a YAML key when that key already exists and differs; missing keys are never added. Request-protection settings live in `usage.sqlite`, not upstream `config.yaml`.
+The backend forces `usage-statistics-enabled=true` and the Pro management-panel repository in memory at startup. It only changes a YAML key when that key already exists and differs; missing keys are never added. Request-protection settings live in `usage.sqlite`, not upstream `config.yaml`.
 
 If the management UI is used with the unmodified upstream backend, request monitoring, SQLite persistence, model prices, backend account inspection, and routing protection will show errors or empty data.
 
@@ -164,8 +166,6 @@ Workflow:
 
 The GitHub Release version is based on the upstream core version with a `-pro` suffix.
 
-In addition to scheduled checks and manual dispatches, this workflow runs when the core customization layer changes on `main`. A code push forces a rebuild even when the upstream core tag is unchanged.
-
 Example:
 
 ```text
@@ -177,11 +177,12 @@ Overview:
 1. Checks the latest upstream `router-for-me/CLIProxyAPI` release.
 2. Computes the Pro release tag, for example `v<core-version>-pro`.
 3. Checks out the latest upstream core and upstream management releases.
-4. Applies core patches, runs the full Go test suite, then builds and pushes the multi-architecture Docker image.
-5. Applies the management customization layer, runs customization tests, frontend tests, and lint, then builds the single-file `management.html`.
-6. Creates or updates the current repository GitHub Release and uploads `management.html`.
-7. Records the core upstream, management upstream, and customization revisions in the release notes.
-8. Deletes old workflow runs.
+4. Pins a `router-for-me/models` commit, installs the same `models.json` before applying core patches in both pre-release validation and release builds, then builds the Pro binary assets. Default desktop/Linux archives enable CGO for dynamic-library plugin support, while `_no-plugin` archives remain CGO-free portable builds.
+5. Reuses the built Linux assets to assemble and push the multi-architecture image through `Dockerfile.runtime`.
+6. Applies the management customization layer during the pre-release validation, runs tests, lint, type checking, and the single-file build, then reuses the validated `management.html` in later jobs.
+7. Creates or updates the current repository GitHub Release, then uploads binaries, `checksums.txt`, and `management.html`.
+8. Includes both core upstream and management upstream version mapping and release notes in the release notes.
+9. Runs WebDAV usage backup, Render deployment hooks, Telegram notification, and old workflow-run cleanup.
 
 Docker image tags use the Pro release tag:
 
@@ -190,7 +191,18 @@ latest
 v<core-version>-pro
 ```
 
-During Docker builds, `CLIPROXY_VERSION` selects the upstream core tag, while `CLIPROXY_BUILD_VERSION` sets the Pro runtime version, so the image reports `v<core-version>-pro` while still building from upstream `v<core-version>` source. Images use CGO-enabled Debian builds with dynamic-library plugin support. This project does not publish standalone platform binaries; the GitHub Release only carries the management panel asset `management.html`.
+During Docker builds, `CLIPROXY_VERSION` selects the upstream core tag, while `CLIPROXY_BUILD_VERSION` sets the Pro runtime version.
+
+Binary asset platforms and archive formats match upstream CLIProxyAPI. The version already carries the Pro release tag, so the asset prefix remains `CLIProxyAPI`. Default desktop/Linux archives support dynamic-library plugins; `_no-plugin` archives are for static or constrained environments. Docker images follow upstream with CGO-enabled Debian builds and dynamic-library plugin support:
+
+```text
+CLIProxyAPI_<core-version>-pro_<os>_<arch>.<archive>
+CLIProxyAPI_<core-version>-pro_<os>_<arch>_no-plugin.<archive>
+checksums.txt
+management.html
+```
+
+The binary archives include this repository's `README.md` and `README_EN.md`.
 
 ### Management asset update
 
@@ -200,20 +212,19 @@ Workflow:
 .github/workflows/release-management.yml
 ```
 
-This workflow no longer creates a separate release. It rebuilds `management.html` when management upstream changes, when the management customization layer is pushed to `main`, when the latest release is missing the asset, or when manually triggered, then uploads it to the current repository latest release.
+This workflow no longer creates a separate release. It rebuilds `management.html` when management upstream changes, when the latest release is missing the asset, or when manually triggered, then uploads it to the current repository latest release.
 
 Overview:
 
 1. Checks the latest upstream `router-for-me/Cli-Proxy-API-Management-Center` release.
 2. Reads the management upstream version recorded in the current repository latest release notes.
-3. If management upstream is newer, the management customization layer was pushed, or the latest release has no `management.html`, checks out the latest management upstream release.
-4. Applies the `cliproxyapi-pro-management` customization layer.
-5. Runs customization tests, `bun run test`, `bun run lint`, and `bun run build`; the Bun version comes from upstream `package.json`.
-6. Renames `dist/index.html` to `management.html`.
-7. Uploads and clobbers `management.html` on the current latest release.
-8. Updates the management version mapping and release notes section.
+3. If management upstream is newer, or the latest release has no `management.html`, checks out the latest management upstream release.
+4. Applies the `cliproxyapi-pro-management` customization layer and runs tests, lint, type checking, and the release-version build in the same validation job; the Bun version comes from upstream `package.json`.
+5. Renames the validated `dist/index.html` to `management.html` and stores it as a workflow artifact.
+6. Downloads that validated artifact in the release job and clobbers `management.html` on the current latest release without reinstalling dependencies or rebuilding it.
+7. Updates the management version mapping and release notes section.
 
-This keeps `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro` compatible with GitHub `/releases/latest`, because the latest release always carries `management.html`.
+This keeps `remote-management.panel-github-repository=https://github.com/ssfun/CLIProxyAPI-Pro` compatible with GitHub `/releases/latest`, because the latest release always carries `management.html`.
 
 ## Local build
 

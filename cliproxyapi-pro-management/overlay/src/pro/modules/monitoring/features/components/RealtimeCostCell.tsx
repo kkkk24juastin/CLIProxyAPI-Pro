@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 import type { TFunction } from 'i18next';
 import { IconInfo } from '@/components/ui/icons';
 import type { RealtimeLogRow } from '../realtimeLogPresentation';
+import { resolvePricingMode } from '../modelPricePresentation';
 import { formatCompactNumber, formatUsdPrecise } from '@/pro/modules/monitoring/features/usage';
 import styles from '../monitoring.module.scss';
 
@@ -49,7 +50,9 @@ export function RealtimeCostCell({ row, hasPrices, t }: {
     if (!element || typeof window === 'undefined') return;
     const rect = element.getBoundingClientRect();
     const detailRowCount = breakdown
-      ? 6 + [breakdown.cacheReadTokens, breakdown.cacheWriteTokens, breakdown.reasoningTokens].filter((tokens) => tokens > 0).length
+      ? 8 + [breakdown.cacheReadTokens, breakdown.cacheWriteTokens, breakdown.reasoningTokens].filter((tokens) => tokens > 0).length
+        + (breakdown.matchedServiceTier ? 1 : 0)
+        + (breakdown.requestedSpeed || breakdown.effectiveSpeed || breakdown.matchedSpeed ? 4 : 0)
       : 1;
     const estimatedHeight = Math.min(420, 70 + detailRowCount * 31);
     const placement = rect.left >= REALTIME_COST_TOOLTIP_WIDTH + REALTIME_COST_TOOLTIP_MARGIN * 2 ? 'left' : 'right';
@@ -82,15 +85,28 @@ export function RealtimeCostCell({ row, hasPrices, t }: {
     { key: 'cache-write', tokens: breakdown.cacheWriteTokens, label: t('monitoring.cost_detail_cache_write'), cost: breakdown.cacheWriteCost },
     { key: 'reasoning', tokens: breakdown.reasoningTokens, label: t('monitoring.cost_detail_reasoning'), cost: breakdown.reasoningCost },
   ].filter((item) => item.tokens > 0 || item.cost > 0) : [];
-  const actualTier = breakdown?.serviceTier || row.serviceTier;
-  const actualTierLabel = actualTier
-    ? formatCostTierLabel(actualTier)
+  const requestedTier = breakdown?.requestedServiceTier || breakdown?.serviceTier || row.serviceTier;
+  const effectiveTier = breakdown?.effectiveServiceTier || row.effectiveServiceTier;
+  const matchedTier = breakdown?.matchedServiceTier || '';
+  const requestedSpeed = breakdown?.requestedSpeed || breakdown?.speed || row.speed;
+  const effectiveSpeed = breakdown?.effectiveSpeed || row.effectiveSpeed;
+  const matchedSpeed = breakdown?.matchedSpeed || '';
+  const requestedTierLabel = requestedTier
+    ? formatCostTierLabel(requestedTier)
     : t('monitoring.cost_detail_standard');
-  const billingMode = breakdown?.serviceTier
+  const effectiveTierLabel = effectiveTier
+    ? formatCostTierLabel(effectiveTier)
+    : t('monitoring.cost_detail_tier_unavailable');
+  const resolvedPricingMode = breakdown ? resolvePricingMode(breakdown) : 'base';
+  const billingMode = resolvedPricingMode === 'service_tier'
     ? t('monitoring.cost_detail_service_tier_mode')
-    : breakdown && breakdown.contextTierSize > 0
-      ? t('monitoring.cost_detail_context_mode', { size: formatCompactNumber(breakdown.contextTierSize) })
-      : t('monitoring.cost_detail_standard');
+    : resolvedPricingMode === 'speed'
+      ? t('monitoring.cost_detail_speed_mode')
+      : resolvedPricingMode === 'context'
+      ? t('monitoring.cost_detail_context_mode', { size: formatCompactNumber(breakdown?.contextTierSize ?? 0) })
+      : resolvedPricingMode === 'legacy_unknown'
+        ? t('monitoring.cost_detail_legacy_unknown_mode')
+        : t('monitoring.cost_detail_standard');
 
   return (
     <span
@@ -133,7 +149,28 @@ export function RealtimeCostCell({ row, hasPrices, t }: {
               <div className={styles.realtimeCostTooltipDivider} aria-hidden="true" />
               <div><span>{t('monitoring.cost_detail_input_rate')}</span><strong className={styles.realtimeCostRateInput}>{formatMillionTokenRate(calculateMillionTokenRate(breakdown.inputCost, breakdown.inputTokens))}</strong></div>
               <div><span>{t('monitoring.cost_detail_output_rate')}</span><strong className={styles.realtimeCostRateOutput}>{formatMillionTokenRate(calculateMillionTokenRate(breakdown.outputCost, breakdown.outputTokens))}</strong></div>
-              <div><span>{t('monitoring.cost_detail_actual_tier')}</span><strong>{actualTierLabel}</strong></div>
+              <div><span>{t('monitoring.cost_detail_requested_tier')}</span><strong>{requestedTierLabel}</strong></div>
+              <div><span>{t('monitoring.cost_detail_actual_tier')}</span><strong>{effectiveTierLabel}</strong></div>
+              {matchedTier ? <div><span>{t('monitoring.cost_detail_matched_tier')}</span><strong>{formatCostTierLabel(matchedTier)}</strong></div> : null}
+              <div><span>{t('monitoring.cost_detail_tier_basis')}</span><strong>{breakdown.serviceTierSource === 'response'
+                ? t('monitoring.cost_detail_response_authoritative')
+                : breakdown.serviceTierSource === 'codex_oauth_request'
+                  ? t('monitoring.cost_detail_codex_oauth_request')
+                : breakdown.serviceTierSource === 'request_fallback'
+                  ? t('monitoring.cost_detail_request_fallback')
+                  : breakdown.serviceTierSource === 'none'
+                    ? t('monitoring.cost_detail_tier_not_applicable')
+                    : t('monitoring.cost_detail_legacy_unknown_mode')}</strong></div>
+              {requestedSpeed ? <div><span>{t('monitoring.cost_detail_requested_speed')}</span><strong>{formatCostTierLabel(requestedSpeed)}</strong></div> : null}
+              {effectiveSpeed ? <div><span>{t('monitoring.cost_detail_actual_speed')}</span><strong>{formatCostTierLabel(effectiveSpeed)}</strong></div> : null}
+              {matchedSpeed ? <div><span>{t('monitoring.cost_detail_matched_speed')}</span><strong>{formatCostTierLabel(matchedSpeed)}</strong></div> : null}
+              {requestedSpeed || effectiveSpeed ? <div><span>{t('monitoring.cost_detail_speed_basis')}</span><strong>{breakdown.speedSource === 'response'
+                ? t('monitoring.cost_detail_response_authoritative')
+                : breakdown.speedSource === 'request_fallback'
+                  ? t('monitoring.cost_detail_request_fallback')
+                  : breakdown.speedSource === 'none'
+                    ? t('monitoring.cost_detail_speed_not_applicable')
+                    : t('monitoring.cost_detail_legacy_unknown_mode')}</strong></div> : null}
               <div><span>{t('monitoring.cost_detail_billing_mode')}</span><strong>{billingMode}</strong></div>
             </div>
           ) : (

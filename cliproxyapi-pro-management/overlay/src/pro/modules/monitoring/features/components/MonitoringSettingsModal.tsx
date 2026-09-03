@@ -2,18 +2,24 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
-import { IconTrash2 } from '@/components/ui/icons';
+import { IconRefreshCw, IconScrollText } from '@/components/ui/icons';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { IconChartColumnIncreasing } from '@/pro/icons';
 import { formatCompactNumber } from '@/pro/modules/monitoring/features/usage';
+import { ProSettingsSheet } from '@/pro/shared/ProSurface';
 import type { MonitoringSettingsDraft } from '../monitoringSettings';
 import styles from '../monitoring.module.scss';
 
 export function MonitoringSettingsModal({
   isMonitoringSettingsOpen,
-  setIsMonitoringSettingsOpen,
+  closeMonitoringSettings,
+  confirmMonitoringSettingsClose,
+  discardMonitoringSettingsDraft,
+  monitoringSettingsDirty,
   monitoringSettingsDraft,
   setMonitoringSettingsDraft,
   usageTotalRequests,
+  isMonitoringSettingsLoading,
   isMonitoringStatisticsResetting,
   isMonitoringSettingsSaving,
   handleMonitoringStatisticsReset,
@@ -21,10 +27,14 @@ export function MonitoringSettingsModal({
   t,
 }: {
   isMonitoringSettingsOpen: boolean;
-  setIsMonitoringSettingsOpen: Dispatch<SetStateAction<boolean>>;
+  closeMonitoringSettings: () => void | boolean;
+  confirmMonitoringSettingsClose: () => Promise<boolean>;
+  discardMonitoringSettingsDraft: () => void;
+  monitoringSettingsDirty: boolean;
   monitoringSettingsDraft: MonitoringSettingsDraft;
   setMonitoringSettingsDraft: Dispatch<SetStateAction<MonitoringSettingsDraft>>;
   usageTotalRequests: number;
+  isMonitoringSettingsLoading: boolean;
   isMonitoringStatisticsResetting: boolean;
   isMonitoringSettingsSaving: boolean;
   handleMonitoringStatisticsReset: () => void;
@@ -32,20 +42,35 @@ export function MonitoringSettingsModal({
   t: TFunction;
 }) {
   return (
-      <Modal
+      <ProSettingsSheet
         open={isMonitoringSettingsOpen}
-        onClose={() => {
-          if (!isMonitoringStatisticsResetting) setIsMonitoringSettingsOpen(false);
-        }}
+        onClose={closeMonitoringSettings}
+        confirmClose={confirmMonitoringSettingsClose}
+        onDiscard={discardMonitoringSettingsDraft}
         title={t('usage_stats.monitoring_settings')}
-        width={760}
-        className={styles.monitorModal}
+        className={styles.monitoringWorkspaceSheet}
+        dirty={monitoringSettingsDirty}
+        loading={isMonitoringSettingsLoading}
+        saving={isMonitoringSettingsSaving || isMonitoringStatisticsResetting}
+        cancelLabel={t('common.cancel')}
+        saveLabel={isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
+        dirtyLabel={t('common.unsaved_changes_title')}
+        onSave={handleSaveMonitoringSettings}
       >
-        <div className={styles.monitoringSettingsEditor}>
-          <div className={styles.settingsSectionCard}>
+        <div className={styles.monitoringSettingsEditor} aria-busy={isMonitoringSettingsLoading}>
+          {isMonitoringSettingsLoading ? (
+            <div className={styles.surfaceLoadingStatus} role="status">
+              <LoadingSpinner size={16} />
+              {t('common.loading')}
+            </div>
+          ) : null}
+          <section className={`${styles.settingsSectionCard} ${styles.settingsRetentionSection}`}>
             <div className={styles.settingsSectionHeader}>
-              <strong>{t('usage_stats.monitoring_settings_retention_title')}</strong>
-              <span>{t('usage_stats.monitoring_settings_retention_desc')}</span>
+              <span className={styles.settingsSectionIcon}><IconScrollText size={18} /></span>
+              <div>
+                <strong>{t('usage_stats.monitoring_settings_retention_title')}</strong>
+                <span>{t('usage_stats.monitoring_settings_retention_desc')}</span>
+              </div>
             </div>
             <label className={styles.settingsField}>
               <span>{t('usage_stats.monitoring_settings_retention_days')}</span>
@@ -60,12 +85,15 @@ export function MonitoringSettingsModal({
               <small>{t('usage_stats.monitoring_settings_retention_hint')}</small>
               <div className={styles.settingsScheduleNote}>{t('usage_stats.monitoring_settings_retention_schedule')}</div>
             </label>
-          </div>
+          </section>
 
-          <div className={styles.settingsSectionCard}>
+          <section className={`${styles.settingsSectionCard} ${styles.settingsBackupSection}`}>
             <div className={styles.settingsSectionHeader}>
-              <strong>{t('usage_stats.monitoring_settings_webdav_title')}</strong>
-              <span>{t('usage_stats.monitoring_settings_webdav_desc')}</span>
+              <span className={styles.settingsSectionIcon}><IconRefreshCw size={18} /></span>
+              <div>
+                <strong>{t('usage_stats.monitoring_settings_webdav_title')}</strong>
+                <span>{t('usage_stats.monitoring_settings_webdav_desc')}</span>
+              </div>
             </div>
             <label className={styles.settingsCheckboxField}>
               <input
@@ -126,12 +154,15 @@ export function MonitoringSettingsModal({
               </label>
             </div>
             <small className={styles.settingsHint}>{t('usage_stats.monitoring_settings_webdav_hint')}</small>
-          </div>
+          </section>
 
-          <div className={`${styles.settingsSectionCard} ${styles.settingsDangerSection}`}>
+          <section className={`${styles.settingsSectionCard} ${styles.settingsDangerSection}`}>
             <div className={styles.settingsSectionHeader}>
-              <strong>{t('usage_stats.monitoring_settings_data_title')}</strong>
-              <span>{t('usage_stats.monitoring_settings_data_desc')}</span>
+              <span className={styles.settingsSectionIcon}><IconChartColumnIncreasing size={18} /></span>
+              <div>
+                <strong>{t('usage_stats.monitoring_settings_data_title')}</strong>
+                <span>{t('usage_stats.monitoring_settings_data_desc')}</span>
+              </div>
             </div>
             <div className={styles.settingsDangerAction}>
               <div>
@@ -143,25 +174,17 @@ export function MonitoringSettingsModal({
                 size="sm"
                 className={styles.resetStatisticsButton}
                 onClick={handleMonitoringStatisticsReset}
-                disabled={isMonitoringStatisticsResetting || isMonitoringSettingsSaving}
+                disabled={isMonitoringSettingsLoading || isMonitoringStatisticsResetting || isMonitoringSettingsSaving}
               >
-                <IconTrash2 size={15} />
+                <span className={styles.resetStatisticsIcon}><IconRefreshCw size={15} /></span>
                 {isMonitoringStatisticsResetting
                   ? t('usage_stats.monitoring_settings_resetting')
                   : t('usage_stats.monitoring_settings_reset_button')}
               </Button>
             </div>
-          </div>
+          </section>
 
-          <div className={styles.priceActionsBar}>
-            <Button variant="secondary" size="sm" onClick={() => setIsMonitoringSettingsOpen(false)} disabled={isMonitoringStatisticsResetting}>
-              {t('common.cancel')}
-            </Button>
-            <Button variant="primary" size="sm" onClick={() => void handleSaveMonitoringSettings()} disabled={isMonitoringSettingsSaving || isMonitoringStatisticsResetting}>
-              {isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
-            </Button>
-          </div>
         </div>
-      </Modal>
+      </ProSettingsSheet>
   );
 }

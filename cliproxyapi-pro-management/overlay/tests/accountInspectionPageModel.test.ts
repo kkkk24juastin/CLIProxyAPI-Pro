@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildAuthFileAccountStats,
   buildActionPreview,
   buildInspectionResultsViewState,
   createInspectionBackendState,
+  formatAccountInspectionDuration,
   getPaginationRange,
   inspectionBackendReducer,
   isAuthFileAccountInvalid,
@@ -18,8 +20,10 @@ import {
 } from '../src/pro/modules/inspection/features/accountInspectionPageModel';
 import type { TFunction } from 'i18next';
 import {
+  buildAccountInspectionBackendViewState,
   DEFAULT_ACCOUNT_INSPECTION_SETTINGS,
   isAccountInspectionBackendResponse,
+  saveAccountInspectionConfigurableSettings,
   type AccountInspectionResultItem,
 } from '../src/pro/modules/inspection/features/accountInspection';
 
@@ -44,6 +48,22 @@ const result = (overrides: Partial<AccountInspectionResultItem> = {}): AccountIn
 });
 
 describe('account inspection page model', () => {
+  test('formats the completed inspection duration from backend run timestamps', () => {
+    const labels: Record<string, string> = {
+      'monitoring.account_inspection_duration_day': '天',
+      'monitoring.account_inspection_duration_hour': '小时',
+      'monitoring.account_inspection_duration_minute': '分',
+      'monitoring.account_inspection_duration_second': '秒',
+    };
+    const t = ((key: string, options?: { count?: number }) => `${options?.count ?? ''}${labels[key] ?? key}`) as TFunction;
+    const startedAt = Date.UTC(2026, 7, 12, 9, 50, 50);
+
+    expect(formatAccountInspectionDuration(startedAt, startedAt + 4_332_000, t)).toBe('1小时12分12秒');
+    expect(formatAccountInspectionDuration(startedAt, startedAt + 12_000, t)).toBe('12秒');
+    expect(formatAccountInspectionDuration(startedAt, startedAt, t)).toBe('0秒');
+    expect(formatAccountInspectionDuration(startedAt, startedAt - 1, t)).toBeNull();
+  });
+
   test('ignores incomplete backend snapshots instead of crashing the page reducer', () => {
     const state = createInspectionBackendState(DEFAULT_ACCOUNT_INSPECTION_SETTINGS);
     const incompleteResponses = [
@@ -66,6 +86,50 @@ describe('account inspection page model', () => {
       schedule: { settings: DEFAULT_ACCOUNT_INSPECTION_SETTINGS },
       status: { summary: {} },
     })).toBe(true);
+  });
+
+  test('does not mark an unchanged settings dialog as dirty', () => {
+	let state = createInspectionBackendState(DEFAULT_ACCOUNT_INSPECTION_SETTINGS);
+	state = inspectionBackendReducer(state, { type: 'discardSettingsDraft' });
+	expect(state.settingsDirty).toBe(false);
+	state = inspectionBackendReducer(state, { type: 'updateSettingsDraft', values: { sampleSize: '10' } });
+	expect(state.settingsDirty).toBe(true);
+	state = inspectionBackendReducer(state, { type: 'discardSettingsDraft' });
+	expect(state.settingsDirty).toBe(false);
+  });
+
+  test('keeps historical run settings and terminal states separate from the current schedule', () => {
+    const runSettings = { ...DEFAULT_ACCOUNT_INSPECTION_SETTINGS, usedPercentThreshold: 80, sampleSize: 12 };
+    const response = {
+      schedule: { enabled: true, intervalMinutes: 360, nextRunAt: 99, settings: { ...DEFAULT_ACCOUNT_INSPECTION_SETTINGS, usedPercentThreshold: 95 } },
+      status: {
+        state: 'partial' as const,
+        runSettings,
+        lastStartedAt: 10,
+        lastFinishedAt: 20,
+        lastError: 'deadline exceeded',
+        summary: { totalFiles: 20, probeSetCount: 20, sampledCount: 12, disabledCount: 0, enabledCount: 12, deleteCount: 0, disableCount: 0, enableCount: 0, keepCount: 12, errorCount: 1 },
+        logs: [],
+        results: [],
+      },
+    };
+
+    const view = buildAccountInspectionBackendViewState(response);
+    expect(view.settings.usedPercentThreshold).toBe(95);
+    expect(view.result?.settings).toMatchObject({ usedPercentThreshold: 80, sampleSize: 12 });
+    expect(view.result?.state).toBe('partial');
+    expect(view.runStatus).toBe('partial');
+    expect(view.lastError).toBe('deadline exceeded');
+  });
+
+  test('tracks settings as dirty until saved or explicitly discarded', () => {
+    let state = createInspectionBackendState(DEFAULT_ACCOUNT_INSPECTION_SETTINGS);
+    state = inspectionBackendReducer(state, { type: 'updateSettingsDraft', values: { sampleSize: '10' } });
+    expect(state.settingsDirty).toBe(true);
+    expect(state.settingsDraft.sampleSize).toBe('10');
+    state = inspectionBackendReducer(state, { type: 'discardSettingsDraft' });
+    expect(state.settingsDirty).toBe(false);
+    expect(state.settingsDraft.sampleSize).toBe('0');
   });
 
   test('classifies result rows and pending actions in one pass', () => {
@@ -96,7 +160,7 @@ describe('account inspection page model', () => {
     }))).toBe('codex-account.json');
   });
 
-  test('builds a compact five-row action preview across every action type', () => {
+  test('builds a complete scrollable action preview across every action type', () => {
     const t = ((key: string) => ({
       'monitoring.account_inspection_action_delete': '删除',
       'monitoring.account_inspection_action_disable': '禁用',
@@ -110,10 +174,11 @@ describe('account inspection page model', () => {
       actionReason: `reason-${index}`,
     })), t);
 
-    expect(preview).toHaveLength(5);
-    expect(preview.map((item) => item.action)).toEqual(['删除', '禁用', '启用', '删除', '禁用']);
+    expect(preview).toHaveLength(6);
+    expect(preview.map((item) => item.action)).toEqual(['删除', '禁用', '启用', '删除', '禁用', '启用']);
     expect(preview[0]).toMatchObject({ account: 'account-0.json', reason: 'reason-0', dangerous: true });
     expect(preview[2]).toMatchObject({ account: 'account-2.json', dangerous: false });
+    expect(preview[5]).toMatchObject({ account: 'account-5.json', reason: 'reason-5', dangerous: false });
   });
 
   test('uses semantic evidence consistently across all providers', () => {
@@ -189,6 +254,44 @@ describe('account inspection page model', () => {
     })).toBe(false);
   });
 
+  test('uses the auth-files page semantics for all, enabled, disabled, and problem stats', () => {
+    const files = [
+      { name: 'healthy.json', type: 'codex', status_message: 'healthy' },
+      {
+        name: 'disabled-with-error.json',
+        type: 'codex',
+        disabled: true,
+        unavailable: true,
+        status: 'error',
+        last_error: { message: 'credential failed' },
+      },
+      { name: 'status-disabled.json', type: 'codex', status: 'disabled' },
+      { name: 'unavailable.json', type: 'claude', unavailable: true },
+      { name: 'error-status.json', type: 'claude', status: 'error' },
+      { name: 'healthy-message.json', type: 'claude', status_message: 'available' },
+      { name: 'warning-message.json', type: 'claude', last_error: { message: 'refresh failed' } },
+    ];
+    const stats = buildAuthFileAccountStats(
+      files,
+      {
+        antigravityQuota: {},
+        claudeQuota: {},
+        codexQuota: {},
+        geminiCliQuota: {},
+        kimiQuota: {},
+        xaiQuota: {},
+      },
+      90,
+      'claude-gpt'
+    );
+
+    expect(stats).toMatchObject({ total: 7, enabled: 6, disabled: 1, problem: 3 });
+    expect(stats.providers).toEqual([
+      expect.objectContaining({ provider: 'claude', total: 4, enabled: 4, disabled: 0, problem: 3 }),
+      expect.objectContaining({ provider: 'codex', total: 3, enabled: 2, disabled: 1, problem: 0 }),
+    ]);
+  });
+
   test('uses complete inspection health counts for aggregate and provider asset cards', () => {
     const allCounts = {
       total: 10,
@@ -218,8 +321,36 @@ describe('account inspection page model', () => {
 
     expect(toSettingsDraft(DEFAULT_ACCOUNT_INSPECTION_SETTINGS)).toMatchObject({
       workers: String(DEFAULT_ACCOUNT_INSPECTION_SETTINGS.workers),
+      providerWorkers: String(DEFAULT_ACCOUNT_INSPECTION_SETTINGS.providerWorkers),
+      autoExecuteConfirmations: String(DEFAULT_ACCOUNT_INSPECTION_SETTINGS.autoExecuteConfirmations),
       targetType: DEFAULT_ACCOUNT_INSPECTION_SETTINGS.targetType,
     });
+  });
+
+  test('normalizes total and per-provider worker limits independently', () => {
+    expect(saveAccountInspectionConfigurableSettings({
+      workers: 99,
+      providerWorkers: 99,
+    })).toMatchObject({
+      workers: 8,
+      providerWorkers: 4,
+    });
+    expect(saveAccountInspectionConfigurableSettings({
+      workers: 2,
+      providerWorkers: 4,
+    })).toMatchObject({
+      workers: 2,
+      providerWorkers: 4,
+    });
+  });
+
+  test('keeps quota thresholds in the backend 0-100 percentage unit', () => {
+    expect(saveAccountInspectionConfigurableSettings({
+      usedPercentThreshold: 0.5,
+    }).usedPercentThreshold).toBe(0.5);
+    expect(saveAccountInspectionConfigurableSettings({
+      usedPercentThreshold: 1,
+    }).usedPercentThreshold).toBe(1);
   });
 
   test('uses free-token exhaustion only for free xAI plans', () => {
@@ -230,7 +361,7 @@ describe('account inspection page model', () => {
     expect(isXaiQuotaLow({
       status: 'success',
       billing: {
-        planType: 'x-premium-plus',
+        planType: 'paid',
         usagePercent: 10,
         freeQuota: { exhausted: true },
       },
@@ -240,7 +371,8 @@ describe('account inspection page model', () => {
   test('resolves account plans from quota state with auth-file fallback', () => {
     const t = ((key: string) => ({
       'codex_quota.plan_pro': '专业版',
-      'xai_quota.plan_x_premium_plus': 'X Premium+',
+      'xai_quota.plan_paid_unknown': 'Paid (unknown tier)',
+      'xai_quota.plan_x_premium': 'X Premium',
     }[key] ?? key)) as TFunction;
     const quotaStore = {
       antigravityQuota: {},
@@ -268,6 +400,20 @@ describe('account inspection page model', () => {
         },
       } as Parameters<typeof resolveAccountInspectionPlanLabel>[2],
       t
-    )).toBe('X Premium+');
+    )).toBe('Paid (unknown tier)');
+    expect(resolveAccountInspectionPlanLabel(
+      result({ provider: 'xai' }),
+      undefined,
+      {
+        ...quotaStore,
+        xaiQuota: {
+          'account.json': {
+            status: 'success',
+            billing: { monthlyLimitCents: 0, planType: 'x-premium' },
+          },
+        },
+      } as Parameters<typeof resolveAccountInspectionPlanLabel>[2],
+      t
+    )).toBe('X Premium');
   });
 });

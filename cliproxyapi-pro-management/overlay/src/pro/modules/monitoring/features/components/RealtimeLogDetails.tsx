@@ -5,11 +5,13 @@ import {
   buildRealtimeMetaText,
   buildRealtimeStatusLabel,
   compactRealtimeErrorMessage,
+  formatRealtimeTokenBreakdown,
   translateRealtimeErrorCategory,
   translateRealtimeErrorText,
   type RealtimeLogRow,
 } from '../realtimeLogPresentation';
 import { maskSensitiveText } from '@/utils/format';
+import { ProInformationDetails, type ProInformationDetailsTone } from '@/pro/shared/ProInformationDetails';
 import styles from '../monitoring.module.scss';
 
 export function StatusBadge({ tone, children }: { tone: MonitoringStatusTone; children: ReactNode }) {
@@ -34,7 +36,7 @@ export function RealtimeRequestDetailsPanel({
       ? compactRealtimeErrorMessage(row.errorMessage, 220)
       : row.errorSummary || row.diagnosticText || categoryText
     : buildRealtimeMetaText(row);
-  const detailItems = [
+  const requestItems = [
     { label: translateRealtimeErrorText('client_ip', t, language), value: row.clientIP || '-' },
     { label: translateRealtimeErrorText('x_forwarded_for', t, language), value: row.xForwardedFor || '-' },
     { label: translateRealtimeErrorText('user_agent', t, language), value: row.userAgent || '-' },
@@ -42,34 +44,45 @@ export function RealtimeRequestDetailsPanel({
     { label: translateRealtimeErrorText('error_code', t, language), value: row.errorCode || '-' },
     { label: translateRealtimeErrorText('upstream_request_id', t, language), value: row.upstreamRequestId || '-' },
     { label: translateRealtimeErrorText('retry_after', t, language), value: row.retryAfter || '-' },
+    { label: translateRealtimeErrorText('attempt_index', t, language), value: row.attemptIndex !== null ? String(row.attemptIndex) : '-' },
   ].filter((item) => item.value !== '-');
+  const usageItems = [
+    { label: translateRealtimeErrorText('accounting_version', t, language), value: row.accountingVersion !== null ? String(row.accountingVersion) : '-' },
+    { label: translateRealtimeErrorText('accounting_quality', t, language), value: row.accountingQuality || '-' },
+    { label: translateRealtimeErrorText('token_breakdown', t, language), value: formatRealtimeTokenBreakdown(row.tokenBreakdown) || '-' },
+    { label: t('monitoring.cost_detail_requested_tier'), value: row.serviceTier || '-' },
+    { label: t('monitoring.cost_detail_actual_tier'), value: row.effectiveServiceTier || '-' },
+    { label: t('monitoring.cost_detail_requested_speed'), value: row.speed || '-' },
+    { label: t('monitoring.cost_detail_actual_speed'), value: row.effectiveSpeed || '-' },
+  ].filter((item) => item.value !== '-');
+  const tone: ProInformationDetailsTone = row.failed ? 'danger' : 'good';
 
   return (
-    <div className={styles.realtimeErrorDetailsPanel}>
-      <div className={styles.realtimeErrorOverview}>
+    <ProInformationDetails
+      className={styles.informationDetailsTheme}
+      tone={tone}
+      status={(
         <div className={styles.realtimeErrorOverviewTop}>
           <StatusBadge tone={row.failed ? 'bad' : 'good'}>{statusText}</StatusBadge>
-          {row.failed ? <span>{categoryText}</span> : null}
         </div>
-        <strong>{summaryText}</strong>
-      </div>
-      {row.failed && row.errorMessage ? (
-        <div className={styles.realtimeErrorMessageBlock}>
-          <span>{translateRealtimeErrorText('error_message', t, language)}</span>
-          <pre className={styles.realtimeErrorMessage}>{compactRealtimeErrorMessage(row.errorMessage, 1200)}</pre>
-        </div>
-      ) : null}
-      {detailItems.length > 0 ? (
-        <div className={styles.realtimeErrorDetailsGrid}>
-          {detailItems.map((item) => (
-            <div key={item.label} className={styles.realtimeErrorDetailItem}>
-              <span>{item.label}</span>
-              <strong>{maskSensitiveText(item.value)}</strong>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
+      )}
+      context={row.failed ? categoryText : undefined}
+      summary={summaryText}
+      groups={[
+        {
+          title: translateRealtimeErrorText('request_context', t, language),
+          items: requestItems.map((item) => ({ ...item, value: maskSensitiveText(item.value) })),
+        },
+        {
+          title: translateRealtimeErrorText('usage_context', t, language),
+          items: usageItems.map((item) => ({ ...item, value: maskSensitiveText(item.value) })),
+        },
+      ]}
+      detailLabel={row.failed && row.errorMessage ? translateRealtimeErrorText('error_message', t, language) : undefined}
+      detail={row.failed && row.errorMessage ? (
+        <pre>{compactRealtimeErrorMessage(row.errorMessage, 1200)}</pre>
+      ) : undefined}
+    />
   );
 }
 

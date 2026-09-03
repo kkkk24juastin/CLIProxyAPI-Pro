@@ -2,7 +2,9 @@ package management
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,10 +13,301 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/embeddedusage"
+	prorouting "github.com/router-for-me/CLIProxyAPI/v7/internal/pro/routing"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
+
+func TestUpdateProAuthSerializesInspectionPriority(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	registered, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "serialized-auth",
+		Provider: "xai",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{authManager: manager}
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- h.updateProAuth(context.Background(), registered.Index, func(auth *coreauth.Auth) {
+			close(firstEntered)
+			<-releaseFirst
+			setProAuthDisabledState(auth, true)
+			auth.Metadata[routingProtectionMetadataKey] = map[string]any{"owner": routingProtectionOwner}
+		})
+	}()
+	<-firstEntered
+	inspectionDone := make(chan error, 1)
+	go func() {
+		inspectionDone <- h.updateProAuth(context.Background(), registered.Index, func(auth *coreauth.Auth) {
+			setProAuthDisabledState(auth, false)
+		})
+	}()
+	select {
+	case err = <-inspectionDone:
+		t.Fatalf("inspection mutation bypassed serialization: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseFirst)
+	if err = <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if err = <-inspectionDone; err != nil {
+		t.Fatal(err)
+	}
+	updated, ok := manager.GetByID(registered.ID)
+	if !ok || updated == nil {
+		t.Fatal("updated auth missing")
+	}
+	if updated.Disabled || routingProtectionOwned(updated) {
+		t.Fatalf("inspection must win: disabled=%v metadata=%#v", updated.Disabled, updated.Metadata)
+	}
+}
+
+func TestRoutingProtectionNonMatchingFailureBreaksConfirmationSequence(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "confirmation-auth", Provider: "xai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{
+		h:             &Handler{authManager: manager},
+		confirmations: prorouting.NewConfirmationTracker(),
+		requestProtection: routingRequestProtectionConfig{
+			Enabled: true,
+			Mode:    routingProtectionModeObserve,
+			Providers: map[string]routingProtectionProviderPolicy{
+				"xai": {Enabled: true, StatusCodes: []int{429}, Confirmations: 2, ConfirmationWindowSeconds: 600},
+			},
+		},
+	}
+	for _, status := range []int{429, 500, 429} {
+		controller.HandleUsage(context.Background(), coreusage.Record{
+			Provider: "xai",
+			AuthID:   auth.ID,
+			Failed:   true,
+			Fail:     coreusage.Failure{StatusCode: status},
+		})
+	}
+	events := controller.recentEvents()
+	if len(events) != 2 || events[0].Count != 1 || events[0].Action != "pending" {
+		t.Fatalf("events = %#v, want restarted 1/2 confirmation", events)
+	}
+}
+
+func TestRoutingProtectionConfigChangeResetsConfirmationSequence(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "config-reset-auth", Provider: "xai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := routingProtectionProviderPolicy{
+		Enabled: true, StatusCodes: []int{429}, Confirmations: 2, ConfirmationWindowSeconds: 600,
+	}
+	controller := &routingPolicyController{
+		h:             &Handler{authManager: manager},
+		confirmations: prorouting.NewConfirmationTracker(),
+		requestProtection: routingRequestProtectionConfig{
+			Enabled: true,
+			Mode:    routingProtectionModeObserve,
+			Providers: map[string]routingProtectionProviderPolicy{
+				"xai": policy,
+			},
+		},
+	}
+	failure := coreusage.Record{
+		Provider: "xai", AuthID: auth.ID, Failed: true,
+		Fail: coreusage.Failure{StatusCode: http.StatusTooManyRequests},
+	}
+	controller.HandleUsage(context.Background(), failure)
+	controller.setRequestProtectionConfig(routingRequestProtectionConfig{Enabled: false})
+	controller.setRequestProtectionConfig(routingRequestProtectionConfig{
+		Enabled: true,
+		Mode:    routingProtectionModeObserve,
+		Providers: map[string]routingProtectionProviderPolicy{
+			"xai": policy,
+		},
+	})
+	controller.HandleUsage(context.Background(), failure)
+	events := controller.recentEvents()
+	if len(events) != 2 || events[0].Action != "pending" || events[0].Count != 1 {
+		t.Fatalf("events = %#v, want a new 1/2 confirmation after the config change", events)
+	}
+}
+
+func TestRoutingProtectionRequiresAllAvailableAuthIdentityFields(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "identity-auth",
+		Provider: "xai",
+		FileName: "identity.json",
+		Metadata: map[string]any{"email": "user@example.com", "access_token": "current-token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{h: &Handler{authManager: manager}}
+	matching := coreusage.Record{
+		Provider:          auth.Provider,
+		AuthID:            auth.ID,
+		AuthIndex:         auth.Index,
+		AccessTokenSHA256: coreauth.AccessTokenSHA256(auth),
+	}
+	if got := controller.authForRecord(matching); got == nil || got.ID != auth.ID {
+		t.Fatalf("matching record resolved auth = %#v", got)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*coreusage.Record)
+	}{
+		{name: "auth id", mutate: func(record *coreusage.Record) { record.AuthID = "other" }},
+		{name: "auth index", mutate: func(record *coreusage.Record) { record.AuthIndex = "other" }},
+		{name: "provider", mutate: func(record *coreusage.Record) { record.Provider = "codex" }},
+		{name: "access token", mutate: func(record *coreusage.Record) { record.AccessTokenSHA256 = strings.Repeat("0", 64) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			record := matching
+			tt.mutate(&record)
+			if got := controller.authForRecord(record); got != nil {
+				t.Fatalf("mismatched record resolved auth = %#v", got)
+			}
+		})
+	}
+}
+
+func TestRoutingProtectionDisableRechecksObservedToken(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "reauthenticated-routing-auth",
+		Provider: "xai",
+		FileName: "reauthenticated.json",
+		Metadata: map[string]any{"email": "user@example.com", "access_token": "old-token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := routingProtectionEvent{
+		Provider:          auth.Provider,
+		AuthID:            auth.ID,
+		AuthIndex:         auth.Index,
+		StatusCode:        http.StatusTooManyRequests,
+		accessTokenSHA256: coreauth.AccessTokenSHA256(auth),
+	}
+	reauthenticated := auth.Clone()
+	reauthenticated.Metadata["access_token"] = "new-token"
+	if _, err = manager.Update(context.Background(), reauthenticated); err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{h: &Handler{authManager: manager}}
+	disabled, err := controller.disableAuth(context.Background(), auth, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled {
+		t.Fatal("routing protection disabled an auth after its observed token changed")
+	}
+	current, _ := manager.GetByID(auth.ID)
+	if current == nil || current.Disabled {
+		t.Fatalf("reauthenticated auth mutated = %#v", current)
+	}
+}
+
+func TestRoutingProtectionSkippedDisableReportsActualOutcome(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "skipped-disable-auth", Provider: "xai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyAuthDisabledState(auth, true)
+	if _, err = manager.Update(context.Background(), auth); err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{h: &Handler{authManager: manager}}
+	disabled, err := controller.disableAuth(context.Background(), auth, routingProtectionEvent{
+		Provider: "xai", StatusCode: http.StatusTooManyRequests,
+	})
+	if err != nil {
+		t.Fatalf("disable auth: %v", err)
+	}
+	if disabled {
+		t.Fatal("routing protection reported a mutation after inspection/manual ownership took priority")
+	}
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil || !updated.Disabled || routingProtectionOwned(updated) {
+		t.Fatalf("unexpected auth state after skipped disable: %#v", updated)
+	}
+}
+
+func TestRoutingProtectionSkippedReleaseReportsActualOutcome(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "skipped-release-auth", Provider: "xai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyAuthDisabledState(auth, true)
+	if _, err = manager.Update(context.Background(), auth); err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{h: &Handler{authManager: manager}}
+	released, err := controller.releaseAuth(context.Background(), auth)
+	if err != nil {
+		t.Fatalf("release auth: %v", err)
+	}
+	if released {
+		t.Fatal("routing protection reported a release after ownership was lost")
+	}
+}
+
+func TestConcurrentRoutingPolicySavesApplyLatestStoredValue(t *testing.T) {
+	oldSetAndApply := setAndApplyLatestRoutingPolicyProSetting
+	defer func() { setAndApplyLatestRoutingPolicyProSetting = oldSetAndApply }()
+	var stored embeddedusage.ProSetting
+	firstStored := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	setAndApplyLatestRoutingPolicyProSetting = func(ctx context.Context, item embeddedusage.ProSetting, apply func(context.Context, embeddedusage.ProSetting) error) error {
+		var value routingRequestProtectionConfig
+		if err := json.Unmarshal(item.Settings, &value); err != nil {
+			return err
+		}
+		stored = item
+		if value.Mode == routingProtectionModeObserve {
+			close(firstStored)
+			<-releaseFirst
+		}
+		return apply(ctx, stored)
+	}
+	h := &Handler{}
+	controller := &routingPolicyController{requestProtection: defaultRoutingRequestProtectionConfig()}
+	routingPolicyControllers.Store(h, controller)
+	defer routingPolicyControllers.Delete(h)
+	save := func(mode string) bool {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/routing-policy", nil)
+		return h.persistRoutingRequestProtection(ctx, routingRequestProtectionConfig{Mode: mode})
+	}
+	firstDone := make(chan bool, 1)
+	go func() { firstDone <- save(routingProtectionModeObserve) }()
+	<-firstStored
+	if !save(routingProtectionModeEnforce) {
+		t.Fatal("second save failed")
+	}
+	close(releaseFirst)
+	if !<-firstDone {
+		t.Fatal("first save failed")
+	}
+	if got := controller.requestProtectionConfig().Mode; got != routingProtectionModeEnforce {
+		t.Fatalf("runtime mode = %q, want latest stored enforce", got)
+	}
+}
 
 func TestRoutingProtectionProviders(t *testing.T) {
 	want := []string{
@@ -111,7 +404,7 @@ func TestNormalizeRoutingRequestProtectionConfig(t *testing.T) {
 	}
 }
 
-func TestLegacyRoutingRequestProtectionMigrationRemovesOnlyProNode(t *testing.T) {
+func TestLegacyRoutingRequestProtectionReadLeavesConfigUnchanged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	original := "# keep\nrouting:\n  strategy: fill-first\n  request-protection:\n    enabled: true\n    mode: enforce\n    providers:\n      codex:\n        enabled: true\n        status-codes: [429]\n"
 	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
@@ -121,30 +414,12 @@ func TestLegacyRoutingRequestProtectionMigrationRemovesOnlyProNode(t *testing.T)
 	if err != nil || !found || !value.Enabled || value.Mode != "enforce" || !value.Providers["codex"].Enabled {
 		t.Fatalf("legacy config = %+v, %v, %v", value, found, err)
 	}
-	removed, err := removeLegacyRoutingRequestProtectionConfig(path)
-	if err != nil || !removed {
-		t.Fatalf("remove legacy config = %v, %v", removed, err)
-	}
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(got)
-	if strings.Contains(text, "request-protection") || !strings.Contains(text, "strategy: fill-first") || !strings.Contains(text, "# keep") {
-		t.Fatalf("unexpected migrated config:\n%s", text)
-	}
-}
-
-func TestRoutingPolicyExistingScalarUpdatesNeverIncludesUnchangedDefaults(t *testing.T) {
-	cfg := &config.Config{}
-	desired := routingPolicyGlobalSettingsFromConfig(cfg)
-	if updates := routingPolicyExistingScalarUpdates(cfg, desired); len(updates) != 0 {
-		t.Fatalf("default updates = %#v, want none", updates)
-	}
-	desired.Strategy = "fill-first"
-	updates := routingPolicyExistingScalarUpdates(cfg, desired)
-	if len(updates) != 1 || strings.Join(updates[0].Path, ".") != "routing.strategy" {
-		t.Fatalf("strategy updates = %#v", updates)
+	if string(got) != original {
+		t.Fatalf("legacy config was modified:\n%s", got)
 	}
 }
 
@@ -268,6 +543,45 @@ func TestRoutingProtectionReasonPreservesCompleteBody(t *testing.T) {
 	}
 }
 
+func TestRoutingProtectionRedactsReasonBeforeEventAndAuthPersistence(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{ID: "redacted-reason-auth", Provider: "xai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &routingPolicyController{
+		h:             &Handler{authManager: manager},
+		confirmations: prorouting.NewConfirmationTracker(),
+		requestProtection: routingRequestProtectionConfig{
+			Enabled: true,
+			Mode:    routingProtectionModeEnforce,
+			Providers: map[string]routingProtectionProviderPolicy{
+				"xai": {Enabled: true, StatusCodes: []int{429}, Confirmations: 1},
+			},
+		},
+	}
+	body := `{"error":"quota exceeded","access_token":"sk-secret","authorization":"Bearer private"}`
+	controller.HandleUsage(context.Background(), coreusage.Record{
+		Provider: "xai", AuthID: auth.ID, Failed: true,
+		Fail: coreusage.Failure{StatusCode: http.StatusTooManyRequests, Body: body},
+	})
+	events := controller.recentEvents()
+	if len(events) != 1 || events[0].Action != "disabled" {
+		t.Fatalf("events = %#v", events)
+	}
+	if strings.Contains(events[0].Reason, "sk-secret") || strings.Contains(events[0].Reason, "Bearer private") {
+		t.Fatalf("event exposed a secret: %q", events[0].Reason)
+	}
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatal("updated auth missing")
+	}
+	reason, _ := routingProtectionMetadata(updated)["reason"].(string)
+	if reason == "" || strings.Contains(reason, "sk-secret") || strings.Contains(reason, "Bearer private") {
+		t.Fatalf("persisted reason exposed a secret or was lost: %q", reason)
+	}
+}
+
 func TestRoutingProtectionReleaseAtPrefersLatestSignal(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	record := coreusage.Record{
@@ -352,7 +666,7 @@ func TestRoutingProtectionDisableRestoresOwnership(t *testing.T) {
 		t.Fatalf("register auth: %v", err)
 	}
 	controller := &routingPolicyController{h: &Handler{authManager: manager}}
-	err = controller.disableAuth(context.Background(), registered, routingProtectionEvent{
+	disabled, err := controller.disableAuth(context.Background(), registered, routingProtectionEvent{
 		Provider:    "xai",
 		StatusCode:  http.StatusTooManyRequests,
 		Reason:      "quota exhausted",
@@ -360,6 +674,9 @@ func TestRoutingProtectionDisableRestoresOwnership(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("disable auth: %v", err)
+	}
+	if !disabled {
+		t.Fatal("routing protection did not report the auth mutation")
 	}
 	updated, ok := manager.GetByID(registered.ID)
 	if !ok || updated == nil {

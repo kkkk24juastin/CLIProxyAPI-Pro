@@ -1,0 +1,234 @@
+.page {
+  --data-accent: #5b7cfa;
+  --data-cyan: #0ea5a8;
+  --data-green: #16a36a;
+  --data-amber: #d88708;
+  --data-red: #dc4c64;
+  width: 100%;
+  min-width: 0;
+  padding-bottom: 92px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+  padding: 22px 24px;
+  border: 1px solid var(--border-color);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 92% 5%, color-mix(in srgb, var(--data-accent) 16%, transparent), transparent 35%),
+    color-mix(in srgb, var(--bg-secondary) 94%, transparent);
+  box-shadow: var(--shadow-sm);
+}
+
+.headerIdentity { display: flex; align-items: flex-start; gap: 15px; min-width: 0; }
+.headerIdentity > div { min-width: 0; }
+.headerIcon, .metricIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--data-accent);
+  background: color-mix(in srgb, var(--data-accent) 12%, var(--bg-primary));
+  border: 1px solid color-mix(in srgb, var(--data-accent) 24%, var(--border-color));
+}
+.headerIcon { width: 46px; height: 46px; border-radius: 14px; }
+.headerTitleLine { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.header h1 { margin: 0; color: var(--text-primary); font-size: clamp(23px, 2vw, 30px); line-height: 1.15; }
+.header p { margin: 7px 0 0; max-width: 720px; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+.headerActions { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 auto; gap: 8px; flex-wrap: wrap; }
+.headerActions :global(.btn) > span { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
+
+.serviceState, .goodBadge, .neutralBadge, .sensitivityBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.serviceState { padding: 5px 9px; color: var(--data-green); background: color-mix(in srgb, var(--data-green) 10%, transparent); border: 1px solid color-mix(in srgb, var(--data-green) 26%, var(--border-color)); }
+.serviceState > span { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 15%, transparent); }
+.serviceStateError { color: var(--data-red); }
+
+.content { display: grid; gap: 16px; margin-top: 18px; }
+.statusGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.statusGrid article {
+  position: relative;
+  min-width: 0;
+  padding: 17px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-secondary);
+}
+.statusGrid article::after { content: ''; position: absolute; inset: auto -24px -36px auto; width: 92px; height: 92px; border-radius: 50%; background: color-mix(in srgb, var(--data-accent) 8%, transparent); }
+.metricIcon { width: 34px; height: 34px; border-radius: 10px; margin-bottom: 13px; }
+.statusGrid small, .statusGrid p { display: block; color: var(--text-secondary); }
+.statusGrid > article > small { font-size: 11px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
+.statusGrid strong { display: block; margin-top: 5px; color: var(--text-primary); font-size: 22px; line-height: 1.15; }
+.statusGrid p { margin: 8px 0 0; overflow: hidden; font-size: 11px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+
+.overviewColumns, .twoColumns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.panel {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 15px;
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+}
+.panelHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 17px; }
+.panelHeading > div { min-width: 0; }
+.panelHeading h2 { margin: 0; color: var(--text-primary); font-size: 16px; }
+.panelHeading p { margin: 5px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.goodBadge, .neutralBadge { padding: 4px 8px; }
+.goodBadge { color: var(--data-green); background: color-mix(in srgb, var(--data-green) 9%, transparent); border: 1px solid color-mix(in srgb, var(--data-green) 24%, var(--border-color)); }
+.neutralBadge { color: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 8%, transparent); border: 1px solid var(--border-color); }
+
+.summaryRows, .domainSnapshot, .backupList { display: grid; gap: 1px; overflow: hidden; border: 1px solid var(--border-color); border-radius: 11px; background: var(--border-color); }
+.summaryRows > div, .domainSnapshot > div, .backupList > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; padding: 11px 13px; background: var(--bg-primary); }
+.summaryRows span { color: var(--text-secondary); font-size: 12px; }
+.summaryRows strong, .domainSnapshot b, .backupList b { color: var(--text-primary); font-size: 12px; }
+.domainSnapshot span, .backupList span { display: grid; gap: 3px; min-width: 0; }
+.domainSnapshot strong, .backupList strong { overflow: hidden; color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.domainSnapshot small, .backupList small { color: var(--text-secondary); font-size: 10px; }
+.backupList .backupListActions { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 auto; gap: 10px; }
+.backupListActions :global(.btn) > span { display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+
+.securityNotice, .boundaryNotice, .integrityGood, .integrityWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.securityNotice, .integrityWarning { color: var(--warning-text); background: var(--warning-bg); border: 1px solid var(--warning-border); }
+.integrityGood { color: var(--data-green); background: color-mix(in srgb, var(--data-green) 8%, transparent); border: 1px solid color-mix(in srgb, var(--data-green) 24%, var(--border-color)); }
+.boundaryNotice { margin: 0; color: var(--text-secondary); background: color-mix(in srgb, var(--data-accent) 6%, var(--bg-secondary)); border: 1px solid color-mix(in srgb, var(--data-accent) 18%, var(--border-color)); }
+.boundaryNotice > div { display: grid; gap: 3px; }
+.boundaryNotice strong { color: var(--text-primary); }
+.securityNotice svg, .boundaryNotice svg, .integrityGood svg, .integrityWarning svg { flex: 0 0 auto; margin-top: 1px; }
+
+.actionGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.actionGrid button {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  border-radius: 13px;
+  background: var(--bg-secondary);
+  transition: border-color .15s ease, transform .15s ease, background .15s ease;
+}
+.actionGrid button:hover:not(:disabled) { transform: translateY(-1px); border-color: color-mix(in srgb, var(--data-accent) 45%, var(--border-color)); background: color-mix(in srgb, var(--data-accent) 5%, var(--bg-secondary)); }
+.actionGrid button:disabled { opacity: .5; cursor: not-allowed; }
+.actionGrid button > span { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 37px; height: 37px; color: var(--data-accent); border-radius: 10px; background: color-mix(in srgb, var(--data-accent) 10%, transparent); }
+.actionGrid button > div { display: grid; gap: 5px; min-width: 0; }
+.actionGrid strong { font-size: 13px; }
+.actionGrid small { color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
+
+.switchField { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
+.switchField input { accent-color: var(--data-accent); }
+.settingsGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.settingsGrid label, .dialogBody label { display: grid; gap: 7px; min-width: 0; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
+.fieldWide { grid-column: 1 / -1; }
+.passwordField { position: relative; }
+.passwordField input { padding-right: 42px; }
+.passwordField button { position: absolute; top: 50%; right: 7px; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; color: var(--text-secondary); cursor: pointer; border: 0; border-radius: 7px; background: transparent; transform: translateY(-50%); }
+.passwordField button:hover { color: var(--text-primary); background: var(--hover-bg); }
+.panelActions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.inlineLoading, .loadingState, .emptyState { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 110px; color: var(--text-secondary); font-size: 12px; }
+.loadingState { min-height: 260px; }
+.errorState { display: flex; align-items: center; gap: 14px; margin-top: 18px; padding: 18px; color: var(--error-color); border: 1px solid color-mix(in srgb, var(--error-color) 30%, var(--border-color)); border-radius: 13px; background: color-mix(in srgb, var(--error-color) 7%, var(--bg-secondary)); }
+.errorState > div { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.errorState strong { color: var(--text-primary); }
+.errorState span { overflow-wrap: anywhere; font-size: 12px; }
+
+.retentionField { display: grid; gap: 9px; color: var(--text-secondary); font-size: 12px; }
+.retentionField > div { display: grid; grid-template-columns: minmax(100px, 180px) auto; align-items: center; gap: 10px; }
+.retentionField b { color: var(--text-primary); font-size: 12px; }
+.retentionField small { color: var(--text-tertiary, var(--text-secondary)); font-size: 11px; }
+.cleanupDomains { display: grid; gap: 8px; margin-bottom: 16px; }
+.cleanupDomains label { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--bg-primary); }
+.cleanupDomains input { accent-color: var(--data-accent); }
+.cleanupDomains span { color: var(--text-primary); font-size: 12px; }
+.cleanupDomains b { color: var(--text-secondary); font-size: 11px; }
+.dangerPanel { border-color: color-mix(in srgb, var(--data-red) 25%, var(--border-color)); background: color-mix(in srgb, var(--data-red) 3%, var(--bg-secondary)); }
+.dangerPanel .panelHeading { align-items: center; }
+.dangerPanel .panelHeading > strong { color: var(--data-red); font-size: 13px; }
+
+.domainTableWrapper { width: 100%; overflow-x: auto; }
+.domainTable { width: 100%; min-width: 900px; border-collapse: collapse; }
+.domainTable th, .domainTable td { padding: 11px 10px; text-align: left; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+.domainTable th { color: var(--text-secondary); font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
+.domainTable td { color: var(--text-secondary); font-size: 11px; }
+.domainTable td:first-child { display: grid; gap: 3px; }
+.domainTable td:first-child strong { color: var(--text-primary); font-size: 12px; }
+.domainTable td:first-child small { color: var(--text-tertiary, var(--text-secondary)); }
+.sensitivityBadge { padding: 4px 8px; border: 1px solid var(--border-color); }
+.sensitivity_internal { color: var(--text-secondary); background: var(--bg-primary); }
+.sensitivity_sensitive { color: var(--data-amber); background: color-mix(in srgb, var(--data-amber) 8%, transparent); border-color: color-mix(in srgb, var(--data-amber) 25%, var(--border-color)); }
+.sensitivity_secret { color: var(--data-red); background: color-mix(in srgb, var(--data-red) 8%, transparent); border-color: color-mix(in srgb, var(--data-red) 25%, var(--border-color)); }
+.secretList { display: block; max-width: 220px; margin-top: 6px; overflow-wrap: anywhere; color: var(--text-tertiary, var(--text-secondary)); }
+
+.operationList { display: grid; gap: 9px; }
+.operationList article { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-primary); }
+.operationIcon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; }
+.toneGood { color: var(--data-green); background: color-mix(in srgb, var(--data-green) 9%, transparent); }
+.toneDanger { color: var(--data-red); background: color-mix(in srgb, var(--data-red) 9%, transparent); }
+.toneWarning { color: var(--data-amber); background: color-mix(in srgb, var(--data-amber) 9%, transparent); }
+.operationList article > div { display: grid; gap: 3px; min-width: 0; }
+.operationList strong { color: var(--text-primary); font-size: 12px; }
+.operationList small { overflow: hidden; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.operationList p { margin: 3px 0 0; color: var(--data-red); font-size: 10px; overflow-wrap: anywhere; }
+.operationList article > span:last-child { display: grid; gap: 3px; text-align: right; }
+.operationList article > span:last-child b { color: var(--text-primary); font-size: 10px; font-weight: 650; }
+
+.dialogBody { display: grid; gap: 14px; min-width: min(420px, 100%); }
+.dialogBody p { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.sheetFooter { display: flex; justify-content: flex-end; gap: 8px; width: 100%; }
+.restorePreview { display: grid; gap: 12px; }
+.restorePreview .integrityGood, .restorePreview .integrityWarning { margin: 0; }
+.restoreDomainList { display: grid; gap: 1px; overflow: hidden; border: 1px solid var(--border-color); border-radius: 11px; background: var(--border-color); }
+.restoreDomainList > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 13px; background: var(--bg-primary); }
+.restoreDomainList > div > span { display: grid; gap: 3px; }
+.restoreDomainList > div > span:last-child { text-align: right; }
+.restoreDomainList strong, .restoreDomainList b { color: var(--text-primary); font-size: 12px; }
+.restoreDomainList small { color: var(--text-secondary); font-size: 10px; }
+
+@media (max-width: 1100px) {
+  .statusGrid, .actionGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 780px) {
+  .header { align-items: stretch; flex-direction: column; padding: 18px; }
+  .headerActions { justify-content: flex-start; }
+  .overviewColumns, .twoColumns { grid-template-columns: 1fr; }
+  .statusGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .statusGrid, .actionGrid { grid-template-columns: 1fr; }
+  .headerActions > :global(.btn) { flex: 1 1 calc(50% - 8px); }
+  .settingsGrid { grid-template-columns: 1fr; }
+  .fieldWide { grid-column: auto; }
+  .panel { padding: 16px; }
+  .operationList article { grid-template-columns: auto minmax(0, 1fr); }
+  .operationList article > span:last-child { grid-column: 2; text-align: left; }
+  .restoreDomainList > div { align-items: flex-start; flex-direction: column; }
+  .restoreDomainList > div > span:last-child { text-align: left; }
+  .backupList > div { align-items: flex-start; }
+  .backupList .backupListActions { align-items: flex-end; flex-direction: column; }
+}

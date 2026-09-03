@@ -24,7 +24,10 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 		"attempt_index":1,
 		"stream":true,
 		"reasoning_effort":"high",
-		"service_tier":"priority",
+		"service_tier":"fast",
+		"response_service_tier":"priority",
+		"speed":"fast",
+		"response_speed":"standard",
 		"failed":true,
 		"fail":{"status_code":429,"body":"{\"error\":{\"message\":\"too many requests\"}}"},
 		"response_headers":{"set_cookie":"secret-cookie","X-Upstream-Request-Id":["upstream-req-1"],"Retry-After":["30"]}
@@ -38,8 +41,8 @@ func TestNormalizeRawExtractsDiagnosticsAndRedactsSecrets(t *testing.T) {
 	if event.ErrorCode != "" || event.ErrorMessage != "too many requests" {
 		t.Fatalf("error fields = %q/%q, want empty/too many requests", event.ErrorCode, event.ErrorMessage)
 	}
-	if !event.Stream || event.ReasoningEffort != "high" || event.ServiceTier != "priority" {
-		t.Fatalf("request fields = stream:%t reasoning:%q tier:%q, want true/high/priority", event.Stream, event.ReasoningEffort, event.ServiceTier)
+	if !event.Stream || event.ReasoningEffort != "high" || event.ServiceTier != "fast" || event.EffectiveServiceTier != "priority" || event.Speed != "fast" || event.EffectiveSpeed != "standard" {
+		t.Fatalf("request fields = stream:%t reasoning:%q tier:%q/%q speed:%q/%q", event.Stream, event.ReasoningEffort, event.ServiceTier, event.EffectiveServiceTier, event.Speed, event.EffectiveSpeed)
 	}
 	if event.AttemptIndex == nil || *event.AttemptIndex != 1 {
 		t.Fatalf("attempt index = %v, want 1", event.AttemptIndex)
@@ -188,6 +191,28 @@ func TestNormalizeRawPreservesExportedHashes(t *testing.T) {
 	}
 	if event.EstimatedCost == nil || *event.EstimatedCost != 0.125 || event.PriceRuleID != 9 || event.CacheReadTokens != 4 || event.CacheWriteTokens != 2 {
 		t.Fatalf("exported pricing fields were not preserved: %+v", event)
+	}
+}
+
+func TestNormalizeRawPreservesFrozenAPIKeyPolicyAttribution(t *testing.T) {
+	event, err := NormalizeRaw([]byte(`{
+		"event_hash":"policy-event",
+		"timestamp_ms":1781308800000,
+		"timestamp":"2026-06-13T00:00:00Z",
+		"model":"gpt-5",
+		"api_key_hash":"key-hash",
+		"api_key_policy_id":"policy-a",
+		"profile_id":"profile-a",
+		"profile_name_snapshot":"Production",
+		"policy_mode":"profile",
+		"requested_model":"smart",
+		"effective_model":"gpt-5"
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.APIKeyPolicyID != "policy-a" || event.ProfileID != "profile-a" || event.ProfileNameSnapshot != "Production" || event.PolicyMode != "profile" || event.RequestedModel != "smart" || event.EffectiveModel != "gpt-5" {
+		t.Fatalf("policy attribution = %#v", event)
 	}
 }
 

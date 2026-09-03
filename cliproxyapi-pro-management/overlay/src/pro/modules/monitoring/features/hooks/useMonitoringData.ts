@@ -5,8 +5,8 @@ import { useAuthStore } from '@/stores/useAuthStore';
 import type { AuthFileItem } from '@/types/authFile';
 import type { Config } from '@/types/config';
 import type { CredentialInfo } from '@/pro/modules/monitoring/features/sourceInfo';
-import { isRecordValue, readBooleanValue, readStringValue } from '@/utils/quota';
 import { resolveProviderDisplayLabel } from '@/pro/shared/provider';
+import { isRecordValue, readBooleanValue, readStringValue } from '@/pro/shared/value';
 import { buildSourceInfoMap, resolveSourceDisplay, type SourceInfoMapInput } from '@/pro/modules/monitoring/features/sourceResolver';
 import {
   calculateCost,
@@ -16,6 +16,7 @@ import {
   type ModelPrice,
   type UsageCostBreakdown,
   type UsageDetailWithEndpoint,
+  type UsageTokenBreakdown,
 } from '@/pro/modules/monitoring/features/usage';
 import {
   buildConfiguredApiKeyMap,
@@ -36,30 +37,6 @@ export const buildDayLabel = (dayKey: string) => dayKey.slice(5).replace('-', '/
 export const formatShortDateTime = (timestampMs: number) => {
   const date = new Date(timestampMs);
   return `${date.getMonth() + 1}/${date.getDate()} ${padNumber(date.getHours())}:${padNumber(date.getMinutes())}`;
-};
-
-const startOfTodayMs = (nowMs: number) => {
-  const now = new Date(nowMs);
-  now.setHours(0, 0, 0, 0);
-  return now.getTime();
-};
-
-export const getRangeStartMs = (range: MonitoringTimeRange, nowMs: number) => {
-  const todayStart = startOfTodayMs(nowMs);
-
-  switch (range) {
-    case 'today':
-      return todayStart;
-    case '7d':
-      return todayStart - 6 * 24 * 60 * 60 * 1000;
-    case '14d':
-      return todayStart - 13 * 24 * 60 * 60 * 1000;
-    case '30d':
-      return todayStart - 29 * 24 * 60 * 60 * 1000;
-    case 'all':
-    default:
-      return Number.NEGATIVE_INFINITY;
-  }
 };
 
 const DELETED_CREDENTIAL_FALLBACK_LABEL = 'Deleted credential';
@@ -133,8 +110,6 @@ type MonitoringAuthMeta = {
   updatedAt: string;
 };
 
-export type MonitoringTimeRange = 'today' | '7d' | '14d' | '30d' | 'all';
-
 export type MonitoringStatusTone = 'good' | 'warn' | 'bad';
 
 
@@ -157,6 +132,12 @@ export type MonitoringEventRow = {
   authIndex: string;
   authIndexMasked: string;
   clientApiKey: MonitoringApiKeyIdentity;
+  apiKeyPolicyId: string;
+  profileId: string;
+  profileName: string;
+  policyMode: string;
+  requestedModel: string;
+  effectiveModel: string;
   authLabel: string;
   provider: string;
   executorType: string;
@@ -174,12 +155,19 @@ export type MonitoringEventRow = {
   errorMessage: string;
   upstreamRequestId: string;
   retryAfter: string;
+  attemptIndex: number | null;
+  accountingVersion: number | null;
+  accountingQuality: string;
+  tokenBreakdown: UsageTokenBreakdown | null;
   clientIP: string;
   xForwardedFor: string;
   userAgent: string;
   stream: boolean;
   reasoningEffort: string;
   serviceTier: string;
+  effectiveServiceTier: string;
+  speed: string;
+  effectiveSpeed: string;
   costBreakdown: UsageCostBreakdown | null;
   inputTokens: number;
   outputTokens: number;
@@ -524,6 +512,12 @@ const buildEventRows = (
       authIndex,
       authIndexMasked: maskAuthIndex(authIndex),
       clientApiKey: clientApiKeyIdentity,
+      apiKeyPolicyId: detail.api_key_policy_id || '',
+      profileId: detail.profile_id || '',
+      profileName: detail.profile_name_snapshot || '',
+      policyMode: detail.policy_mode || '',
+      requestedModel: detail.requested_model || '',
+      effectiveModel: detail.effective_model || '',
       authLabel: isDeletedCredential ? deletedCredentialLabel : authMeta?.label || sourceMasked,
       provider: resolvedProvider,
       executorType,
@@ -541,12 +535,20 @@ const buildEventRows = (
       errorMessage: detail.error_message || '',
       upstreamRequestId: detail.upstream_request_id || '',
       retryAfter: detail.retry_after || '',
+      attemptIndex: typeof detail.attempt_index === 'number' ? detail.attempt_index : null,
+      accountingVersion:
+        typeof detail.accounting_version === 'number' ? detail.accounting_version : null,
+      accountingQuality: detail.accounting_quality || '',
+      tokenBreakdown: detail.token_breakdown ?? null,
       clientIP: detail.client_ip || '',
       xForwardedFor: detail.x_forwarded_for || '',
       userAgent: detail.user_agent || '',
       stream: detail.stream === true,
       reasoningEffort: detail.reasoning_effort || '',
       serviceTier: detail.service_tier || '',
+      effectiveServiceTier: detail.effective_service_tier || '',
+      speed: detail.speed || '',
+      effectiveSpeed: detail.effective_speed || '',
       costBreakdown: detail.cost_breakdown ?? null,
       inputTokens,
       outputTokens,
@@ -571,12 +573,25 @@ const buildEventRows = (
         executorType,
         detail.upstream_request_id,
         detail.retry_after,
+        detail.attempt_index,
+        detail.accounting_version,
+        detail.accounting_quality,
         detail.client_ip,
         detail.x_forwarded_for,
         detail.user_agent,
         detail.reasoning_effort,
+        detail.service_tier,
+        detail.effective_service_tier,
+        detail.speed,
+        detail.effective_speed,
         authMeta?.planType,
         clientApiKeyIdentity.masked
+        ,detail.api_key_policy_id,
+        detail.profile_id,
+        detail.profile_name_snapshot,
+        detail.policy_mode,
+        detail.requested_model,
+        detail.effective_model
       ),
     });
   });

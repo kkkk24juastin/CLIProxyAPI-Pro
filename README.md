@@ -14,9 +14,9 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 账号巡检结果（配额和账号异常状态）支持持久化到配额管理和认证文件
 - 账号巡检支持自动化启用、禁用、删除、主动刷新令牌
 - 账号巡检针对 Antigravity 软封禁和 xAI 可用性异常提供可选深度检测
-- 路由策略页面统一管理 upstream 路由行为与按 provider 配置的请求状态保护
+- 调度策略页面统一管理 upstream 路由行为与按 provider 配置的请求状态保护
 - 二进制内建代理池，把多个 HTTP/SOCKS 节点汇聚为固定的本地 SOCKS5 地址，支持轮询、加权、健康隔离与故障转移
-- 二进制内建 OAuth 模型策略，可按多个提供商的账号套餐分别排除不可用模型，并同步约束模型列表和账号调度
+- 二进制内建 OAuth 账号策略，可按多个提供商的账号套餐配置模型排除、前缀、优先级和调度权重，并同步约束模型列表和账号调度
 
 ## 项目结构
 
@@ -52,7 +52,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 主要能力：
 
 - 构建 upstream CLIProxyAPI release 的多架构 Docker 镜像。
-- 构建并发布 `linux/amd64` 和 `linux/arm64` Pro Docker 镜像。
+- 构建与 upstream 平台和打包格式一致的 Pro 二进制 release 资产。
 - 内嵌 SQLite usage service。
 - 暴露 `/v0/management/usage` 系列 API，包括状态、增量事件轮询和 SSE 流。
 - 支持 usage JSONL/NDJSON 导入导出，包含 usage events、模型价格、quota cache、Pro 设置、路由运行状态、账号巡检调度和最近一次巡检结果快照。
@@ -60,12 +60,12 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 支持 SQLite-backed quota cache。
 - 支持模型价格持久化。
 - 支持 QuotaProvider 插件协议和 Gemini CLI legacy adapter。
-- 内建 OAuth 模型策略，可按 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi OAuth 套餐排除模型。
+- 内建 OAuth 账号策略，可按 xAI、Codex、Claude、Gemini CLI、Antigravity 和 Kimi OAuth 套餐配置模型排除与账号路由属性。
 - 启动时在内存中强制必要 upstream 配置；仅修改 YAML 中已存在的键，禁止自动新增键。
 - 支持后端账号巡检调度器和执行器，巡检探测前可刷新 token。
-- 支持统一路由策略与请求状态保护 API。
+- 支持统一调度策略与请求状态保护 API。
 - 支持 Komari agent 可选启动。
-- 代理池与 OAuth 模型策略直接编译进所有 Pro 二进制，包括 `_no-plugin` 产物；其配置持久化在 usage SQLite，不写入 `config.yaml`。
+- 代理池与 OAuth 账号策略直接编译进所有 Pro 二进制，包括 `_no-plugin` 产物；其配置持久化在 usage SQLite，不写入 `config.yaml` 或认证文件。
 - 将 `/` 跳转到 `/management.html`。
 - 增强 `/healthz` 返回信息。
 
@@ -82,15 +82,16 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 
 - 新增 `/monitoring` 请求监控页面。
 - 新增 `/account-inspection` 账号巡检页面。
-- 新增 `/routing` 路由策略页面。
+- 新增 `/routing` 调度策略页面。
 - 新增 `/proxy-pool` 代理池页面，负责节点配置、连通性测试、运行统计和全局代理接管/恢复。
-- 新增 `/oauth-model-policy` 可视化配置页，按提供商和 OAuth 套餐编辑模型排除规则、自定义套餐、回退策略和套餐探测缓存。
+- 新增 `/oauth-policy` 可视化配置页，按提供商和 OAuth 套餐编辑模型排除、前缀、优先级、调度权重、自定义套餐和回退策略；旧 `/oauth-model-policy` 自动重定向。
 - 请求量、成功率、延迟、token 和成本统计。
 - 模型价格 SQLite 持久化。
 - quota cache SQLite 持久化。
 - 配额卡片缓存时间显示和单卡刷新。
 - 对接后端账号巡检，负责运行控制、状态轮询、结果展示和操作确认。
 - 认证文件页面可显示巡检写入的 `last_error` 健康消息。
+- 认证文件账号卡片支持固定到当前 `auth_index` 的真实模型连接测试，展示模型输出、耗时和上游错误详情。
 - 账号巡检结果表格的刷新/重检操作会反馈令牌刷新结果或重检后的业务判定。
 - 账号禁用、启用、删除建议与执行。
 - 多语言文案补丁。
@@ -139,6 +140,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 /v0/management/usage
 /v0/management/usage/*
 /v0/management/quota/fetch
+/v0/management/auth-files/test
 /v0/management/account-inspection/*
 /v0/management/routing-policy
 /v0/management/routing-policy/*
@@ -150,11 +152,11 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 
 账号巡检只由后端执行。管理端负责配置调度、启动和控制巡检、轮询状态/进度/结果，通过 WebSocket/WSS 接收日志和实时状态，并确认手动操作。后端自动动作支持连续确认门槛，quota cache 会记录解析器版本和返回结构 hash，便于上游字段变化时排查。
 
-管理端新增一级“路由策略”页面，统一配置 upstream 路由、会话粘性、重试、账号切换、冷却和配额回退，并为 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi 提供按 HTTP 状态码触发的请求保护策略。提供商保护只显示当前已有 API 配置或凭据的提供商。保护功能默认关闭；可先使用 `observe` 模式观察命中情况，再切换到 `enforce` 自动禁用。自动解除只作用于本策略禁用的账号，不会覆盖用户手动禁用状态。
+管理端新增一级“调度策略”页面，统一配置 upstream 路由、会话粘性、重试、账号切换、冷却和配额回退，并为 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi 提供按 HTTP 状态码触发的请求保护策略。提供商保护只显示当前已有 API 配置或凭据的提供商。保护功能默认关闭；可先使用 `observe` 模式观察命中情况，再切换到 `enforce` 自动禁用。自动解除只作用于本策略禁用的账号，不会覆盖用户手动禁用状态。
 
 后端巡检时，如果认证记录本来已经进入正常刷新窗口，会在配额/账号探测前尝试刷新 token。巡检刷新路径会跳过 API key 账号、未到刷新窗口的账号，以及仍受 `NextRefreshAfter` 限制的账号；disabled 账号允许刷新。刷新成功后使用刷新后的 auth 继续探测；刷新失败时保留该账号，并跳过该账号本次探测。
 
-后端启动时会在内存中强制 `usage-statistics-enabled=true` 和 `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro`。只有对应 YAML 键已经存在且值不一致时才会修改；缺失键不会新增。请求保护设置保存在 `usage.sqlite`，不写入 upstream `config.yaml`。
+后端启动时会在内存中强制 `usage-statistics-enabled=true` 和 Pro 管理面板仓库。只有对应 YAML 键已经存在且值不一致时才会修改；缺失键不会新增。请求保护设置保存在 `usage.sqlite`，不写入上游 `config.yaml`。
 
 如果只使用 upstream 后端，管理端中的请求监控、SQLite 持久化、模型价格、后端账号巡检和路由保护等功能会显示错误或空数据。
 
@@ -170,8 +172,6 @@ Workflow：
 
 Release 版本号以 upstream core 版本为准，并追加 `-pro` 后缀。
 
-该 workflow 除定时检查和手动触发外，也会在 `main` 分支的 core 定制层发生变化时运行。代码 push 会强制重建，即使 upstream core tag 未变化。
-
 示例：
 
 ```text
@@ -183,11 +183,12 @@ v<core-version>-pro
 1. 检查 upstream `router-for-me/CLIProxyAPI` 最新 release。
 2. 计算 Pro release tag，例如 `v<core-version>-pro`。
 3. checkout upstream core 和 upstream management 最新 release。
-4. 应用 core patch 并运行全量 Go 测试，构建并推送多架构 Docker 镜像。
-5. 应用 management 定制层，运行定制测试、前端测试和 lint，构建单文件 `management.html`。
-6. 创建或更新当前仓库的 GitHub Release，并上传 `management.html`。
-7. release notes 记录 core upstream、management upstream 和定制提交的版本映射。
-8. 清理旧 workflow runs。
+4. 固定 `router-for-me/models` 提交，并在发布前验证和正式构建中先写入同一份 `models.json`、再应用 core patch；验证通过后构建 Pro 二进制资产。默认桌面/Linux 包启用 CGO 并支持动态库插件，`_no-plugin` 包保留 CGO-free 静态便携构建。
+5. 复用已构建的 Linux 资产，通过 `Dockerfile.runtime` 组装并推送多架构 Docker 镜像。
+6. 在 management 发布前校验中应用定制层并完成测试、lint、类型检查和单文件构建，后续步骤直接复用已验证的 `management.html`。
+7. 创建或更新当前仓库的 GitHub Release，并上传二进制、`checksums.txt` 和 `management.html`。
+8. release notes 同时包含 core upstream 和 management upstream 的版本映射与 release notes。
+9. 执行 WebDAV usage 备份、Render 部署触发、Telegram 通知和 workflow run 清理。
 
 Docker 镜像 tag 使用 Pro release tag：
 
@@ -196,7 +197,18 @@ latest
 v<core-version>-pro
 ```
 
-Docker 构建参数中 `CLIPROXY_VERSION` 用于选择 upstream core tag，`CLIPROXY_BUILD_VERSION` 用于写入 Pro runtime 版本号，因此镜像显示的版本是 `v<core-version>-pro`，但源码仍来自 upstream `v<core-version>`。镜像使用 CGO-enabled Debian 构建并支持动态库插件。本项目不发布独立平台二进制；GitHub Release 只承载管理面板资产 `management.html`。
+Docker 构建参数中 `CLIPROXY_VERSION` 用于选择 upstream core tag，`CLIPROXY_BUILD_VERSION` 用于写入 Pro runtime 版本号。
+
+二进制资产平台和压缩格式与 upstream CLIProxyAPI 保持一致，版本号使用 Pro release tag，因此资产名前缀保持为 `CLIProxyAPI`。默认桌面/Linux 包支持动态库插件；`_no-plugin` 包用于静态或受限环境。Docker 镜像对齐 upstream，使用 CGO-enabled Debian 构建并支持动态库插件：
+
+```text
+CLIProxyAPI_<core-version>-pro_<os>_<arch>.<archive>
+CLIProxyAPI_<core-version>-pro_<os>_<arch>_no-plugin.<archive>
+checksums.txt
+management.html
+```
+
+归档内 README 使用本仓库的 `README.md` 和 `README_EN.md`。
 
 ### Management 资产更新
 
@@ -206,20 +218,19 @@ Workflow：
 .github/workflows/release-management.yml
 ```
 
-该 workflow 不再创建独立 release。它会在 management upstream 更新、management 定制层 push、latest release 缺少 `management.html`，或手动触发时重建资产，并上传覆盖到当前仓库 latest release。
+该 workflow 不再创建独立 release。它会在 management upstream 更新、latest release 缺少 `management.html`，或手动触发时重建资产，并上传覆盖到当前仓库 latest release。
 
 流程概览：
 
 1. 检查 upstream `router-for-me/Cli-Proxy-API-Management-Center` 最新 release。
 2. 读取当前仓库 latest release notes 中记录的 management upstream 版本。
-3. 如果 management upstream 更新、management 定制层发生 push，或 latest release 缺少 `management.html`，则 checkout management upstream 最新 release。
-4. 应用 `cliproxyapi-pro-management` 定制层。
-5. 执行定制测试、`bun run test`、`bun run lint` 和 `bun run build`；Bun 版本读取 upstream `package.json`。
-6. 将 `dist/index.html` 重命名为 `management.html`。
-7. 上传覆盖当前 latest release 中的 `management.html`。
-8. 更新 release notes 中的 management 版本映射和 release notes。
+3. 如果 management upstream 更新，或 latest release 缺少 `management.html`，则 checkout management upstream 最新 release。
+4. 在同一校验 job 中应用 `cliproxyapi-pro-management` 定制层，执行测试、lint、类型检查和正式版本构建；Bun 版本读取 upstream `package.json`。
+5. 将校验通过的 `dist/index.html` 重命名为 `management.html` 并保存为 workflow artifact。
+6. 发布 job 直接下载该已验证 artifact，上传覆盖当前 latest release 中的 `management.html`，不再重复安装依赖和构建。
+7. 更新 release notes 中的 management 版本映射和 release notes。
 
-这样 `remote-management.panel-github-repository=https://github.com/kkkk24juastin/CLIProxyAPI-Pro` 仍然可以通过 GitHub `/releases/latest` 获取到最新 `management.html`。
+这样 `remote-management.panel-github-repository=https://github.com/ssfun/CLIProxyAPI-Pro` 仍然可以通过 GitHub `/releases/latest` 获取到最新 `management.html`。
 
 ## 本地构建
 

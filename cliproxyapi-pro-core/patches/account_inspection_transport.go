@@ -76,7 +76,7 @@ func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth
 			return accountInspectionHTTPResult{}, err
 		}
 		defer resp.Body.Close()
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 		return accountInspectionHTTPResult{StatusCode: resp.StatusCode, Body: string(raw), Header: resp.Header.Clone()}, nil
 	}
 	client := &http.Client{Timeout: time.Duration(timeoutMS) * time.Millisecond, Transport: s.h.apiCallTransport(auth)}
@@ -85,7 +85,7 @@ func (s *accountInspectionScheduler) apiCall(ctx context.Context, auth *coreauth
 		return accountInspectionHTTPResult{}, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 	return accountInspectionHTTPResult{StatusCode: resp.StatusCode, Body: string(raw), Header: resp.Header.Clone()}, nil
 }
 
@@ -360,7 +360,7 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 	}
 	payload, windows, used := proinspection.BuildCodexWindows(resp.Body)
 	isQuota := isQuotaHTTPStatus(resp.StatusCode) || strings.Contains(strings.ToLower(resp.Body), "quota exhausted") || strings.Contains(strings.ToLower(resp.Body), "limit reached") || strings.Contains(strings.ToLower(resp.Body), "payment_required")
-	if used != nil && *used >= float64(settings.UsedPercentThreshold) {
+	if used != nil && *used >= settings.UsedPercentThreshold {
 		isQuota = true
 	}
 	if payload != nil && len(windows) > 0 {
@@ -478,12 +478,6 @@ func (s *accountInspectionScheduler) inspectXAICLI(ctx context.Context, account 
 	monthlyBilling, monthlyResp, monthlyErr := s.fetchXAIBillingSummary(ctx, account, settings, xaiBillingURL(), headers)
 	status := proinspection.FirstNonZeroStatus(monthlyResp.StatusCode, weeklyResp.StatusCode)
 	billing := proquota.MergeXAIBillingSummaries(weeklyBilling, monthlyBilling)
-	if planType, known := proquota.XAIPlanTypeFromBillingBody(monthlyResp.StatusCode, monthlyResp.Body); known {
-		if billing == nil {
-			billing = proquota.EmptyXAIBillingSummary()
-		}
-		billing["planType"] = planType
-	}
 	if billing == nil {
 		if isQuotaHTTPStatus(weeklyResp.StatusCode) || proinspection.IsXAIQuotaFailure(weeklyResp.Body) {
 			return quotaUnavailableDecision(account, "xAI 额度不可用，建议禁用账号", weeklyResp.Body), status, nil
@@ -497,9 +491,6 @@ func (s *accountInspectionScheduler) inspectXAICLI(ctx context.Context, account 
 		if proinspection.IsAccountErrorStatus(monthlyResp.StatusCode) {
 			return proinspection.WithHTTPErrorDetail(authErrorDecision(account, monthlyResp.StatusCode), monthlyResp.Body), status, nil
 		}
-	}
-	billing = mergeCachedXAIFreeQuota(ctx, account, billing)
-	if billing == nil {
 		if weeklyErr != nil {
 			return accountInspectionDecision{}, status, weeklyErr
 		}
@@ -507,6 +498,37 @@ func (s *accountInspectionScheduler) inspectXAICLI(ctx context.Context, account 
 			return accountInspectionDecision{}, status, monthlyErr
 		}
 		return accountInspectionDecision{}, status, fmt.Errorf("empty xai billing config")
+	}
+	if planType, known := xaiPlanTypeFromAccessToken(account.Auth); known {
+		billing["planType"] = planType
+	} else if planType, known := proquota.XAIPlanTypeFromBillingBody(monthlyResp.StatusCode, monthlyResp.Body); known {
+		billing["planType"] = planType
+	}
+	billing = mergeCachedXAIFreeQuota(ctx, account, billing)
+
+	// Free 套餐的 token 额度不在 billing 响应中，只能从一次真实 Responses
+	// 请求的 x-ratelimit-* 响应头或 free-usage-exhausted 错误体获得。该采样是
+	// 巡检的固定额度步骤，不依赖可选的“深度检测”开关；开启深度检测时复用同一
+	// 次请求做健康分类，避免重复消耗额度。
+	var freeProbe *xaiResponsesProbeOutcome
+	if strings.EqualFold(strings.TrimSpace(stringFromAny(billing["planType"])), "free") {
+		model := strings.TrimSpace(settings.XAIDeepProbeModel)
+		if model == "" {
+			model = "grok-4.5"
+		}
+		s.appendLog("info", fmt.Sprintf("%s xAI 免费额度探测开始：%s", account.identity(), model))
+		outcome := s.runXAIResponsesProbe(ctx, account, settings, model, settings.XAIDeepProbeEnabled)
+		freeProbe = &outcome
+		if outcome.freeQuota != nil {
+			billing["freeQuota"] = outcome.freeQuota
+			if outcome.resp.StatusCode != 0 {
+				status = intPtr(outcome.resp.StatusCode)
+			}
+		} else if outcome.err != nil {
+			s.appendLog("warning", fmt.Sprintf("%s xAI 免费额度探测失败，保留 billing 与历史快照：%s", account.identity(), outcome.err.Error()))
+		} else if firstMap(billing, "freeQuota", "free_quota") == nil {
+			s.appendLog("warning", fmt.Sprintf("%s xAI 免费额度探测未返回限额明细", account.identity()))
+		}
 	}
 	used := proquota.XAISummaryUsedPercent(billing)
 	s.persistQuotaState(ctx, account, quotaSuccessState(map[string]any{
@@ -517,9 +539,40 @@ func (s *accountInspectionScheduler) inspectXAICLI(ctx context.Context, account 
 	}))
 	decision := quotaDecision(account, used, billing != nil, settings.UsedPercentThreshold)
 	if settings.XAIDeepProbeEnabled && proinspection.ShouldDeepProbe(decision) {
+		if freeProbe != nil {
+			return s.applyXAIDeepProbeOutcome(ctx, account, decision, status, *freeProbe)
+		}
 		return s.applyXAIDeepProbe(ctx, account, settings, decision, status)
 	}
 	return decision, status, nil
+}
+
+type xaiResponsesProbeOutcome struct {
+	resp      accountInspectionHTTPResult
+	status    accountInspectionDeepProbeStatus
+	message   string
+	err       error
+	freeQuota map[string]any
+}
+
+func (s *accountInspectionScheduler) runXAIResponsesProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, model string, classifyDeep bool) xaiResponsesProbeOutcome {
+	var freeQuota map[string]any
+	task := func() (accountInspectionHTTPResult, error) {
+		result, requestErr := s.apiCall(ctx, account.Auth, http.MethodPost, xaiResponsesURL(account.Auth), xaiDeepProbeHeaders(account.Auth), proinspection.BuildXAIDeepProbeBody(model), settings.Timeout)
+		if !xaiInspectionUsingAPI(account.Auth) {
+			if observed := observeAccountXAIQuota(ctx, account, model, result); observed != nil {
+				freeQuota = observed
+			}
+		}
+		return result, requestErr
+	}
+	if !classifyDeep {
+		resp, requestErr := s.withRetry(ctx, settings.Retries, task)
+		status, message := classifyXAIDeepProbeResponse(resp)
+		return xaiResponsesProbeOutcome{resp: resp, status: status, message: message, err: requestErr, freeQuota: freeQuota}
+	}
+	resp, status, message, err := runXAIDeepProbeWithRetry(ctx, settings.Retries, accountInspectionXAIRetryDelay, task)
+	return xaiResponsesProbeOutcome{resp: resp, status: status, message: message, err: err, freeQuota: freeQuota}
 }
 
 func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, decision accountInspectionDecision, quotaStatus *int) (accountInspectionDecision, *int, error) {
@@ -531,19 +584,16 @@ func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, acco
 		return decision, quotaStatus, nil
 	}
 
-	release, err := s.acquireXAIDeepProbe(ctx)
-	if err != nil {
-		return decision, quotaStatus, err
-	}
-	defer release()
-
 	s.appendLog("info", fmt.Sprintf("%s xAI 深度检测开始：%s", account.identity(), model))
-	resp, status, message, err := runXAIDeepProbeWithRetry(ctx, settings.Retries, accountInspectionXAIRetryDelay, func() (accountInspectionHTTPResult, error) {
-		return s.apiCall(ctx, account.Auth, http.MethodPost, xaiResponsesURL(account.Auth), xaiDeepProbeHeaders(account.Auth), proinspection.BuildXAIDeepProbeBody(model), settings.Timeout)
-	})
-	if !xaiInspectionUsingAPI(account.Auth) {
-		observeAccountXAIQuota(ctx, account, model, resp)
-	}
+	outcome := s.runXAIResponsesProbe(ctx, account, settings, model, true)
+	return s.applyXAIDeepProbeOutcome(ctx, account, decision, quotaStatus, outcome)
+}
+
+func (s *accountInspectionScheduler) applyXAIDeepProbeOutcome(ctx context.Context, account accountInspectionAccount, decision accountInspectionDecision, quotaStatus *int, outcome xaiResponsesProbeOutcome) (accountInspectionDecision, *int, error) {
+	resp := outcome.resp
+	status := outcome.status
+	message := outcome.message
+	err := outcome.err
 	var probeStatus *int
 	if resp.StatusCode != 0 {
 		probeStatus = intPtr(resp.StatusCode)
@@ -596,21 +646,6 @@ func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, acco
 		decision.DeepProbeError = message
 		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测临时异常：%s", account.identity(), message))
 		return decision, probeStatus, nil
-	}
-}
-
-func (s *accountInspectionScheduler) acquireXAIDeepProbe(ctx context.Context) (func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	s.xaiDeepProbeOnce.Do(func() {
-		s.xaiDeepProbeGate = make(chan struct{}, 1)
-	})
-	select {
-	case s.xaiDeepProbeGate <- struct{}{}:
-		return func() { <-s.xaiDeepProbeGate }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
 }
 

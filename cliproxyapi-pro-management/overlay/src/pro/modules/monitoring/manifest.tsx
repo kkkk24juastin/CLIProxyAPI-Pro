@@ -1,4 +1,4 @@
-import { IconSidebarMonitor } from '@/components/ui/icons';
+import { IconSidebarMonitor } from '@/pro/icons';
 import type { ProModuleManifest } from '@/pro/manifest';
 import { MonitoringCenterPage } from './MonitoringCenterPage';
 

@@ -13,104 +13,14 @@
   );
 }
 
-.pageHeader {
-  display: flex;
-  align-items: flex-start;
-  gap: $spacing-lg;
-}
-
-.headerCopy {
-  min-width: 0;
-}
-
-.titleRow {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.pageTitle {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 28px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.subtitle {
-  margin: 8px 0 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.modeBadge,
 .providerTag,
-.actionTag,
-.tabCount {
+.actionTag {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border-color);
   border-radius: 999px;
   white-space: nowrap;
-}
-
-.modeBadge {
-  gap: 5px;
-  min-height: 28px;
-  padding: 3px 9px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.modeEnforce {
-  border-color: color-mix(in srgb, $warning-color 45%, var(--border-color));
-  background: color-mix(in srgb, $warning-color 10%, var(--bg-primary));
-  color: $warning-color;
-}
-
-.viewTabs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2px;
-  width: min(100%, 620px);
-  padding: 2px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-}
-
-.viewTab {
-  @include button-reset;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 38px;
-  padding: 0 12px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.viewTabActive {
-  border-color: var(--text-primary);
-  background: var(--text-primary);
-  color: var(--bg-primary);
-}
-
-.tabCount {
-  min-width: 20px;
-  min-height: 20px;
-  padding: 0 6px;
-  border-color: currentColor;
-  font-size: 11px;
 }
 
 .sectionStack {
@@ -504,29 +414,9 @@
   color: var(--text-secondary);
 }
 
-.runtimeDetailModal {
-  color: var(--text-primary);
-}
-
-.runtimeDetailPanel {
-  display: grid;
-  gap: 14px;
-  padding: 2px 0 4px;
-}
-
 .runtimeDetailModalActions {
   display: flex;
   justify-content: flex-end;
-}
-
-.runtimeDetailOverview {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-secondary);
 }
 
 .runtimeDetailOverviewTop {
@@ -536,82 +426,6 @@
   gap: 8px;
 }
 
-.runtimeDetailOverviewTop > span:last-child {
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.runtimeDetailOverview strong {
-  min-width: 0;
-  color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 650;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.runtimeDetailGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
-  border-radius: 8px;
-}
-
-.runtimeDetailItem {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
-  padding: 9px 12px;
-  background: var(--bg-primary);
-}
-
-.runtimeDetailItem + .runtimeDetailItem {
-  border-top: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
-}
-
-.runtimeDetailItem span,
-.runtimeReasonBlock > span {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.runtimeDetailItem strong {
-  min-width: 0;
-  max-width: 72%;
-  color: var(--text-primary);
-  font-family: $font-mono;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.35;
-  text-align: right;
-  overflow-wrap: anywhere;
-}
-
-.runtimeReasonBlock {
-  display: grid;
-  gap: 6px;
-}
-
-.runtimeReasonMessage {
-  max-height: min(440px, 48vh);
-  overflow: auto;
-  margin: 0;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 86%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-secondary) 58%, var(--bg-primary));
-  color: var(--text-primary);
-  font-family: $font-mono;
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 
 .table {
   width: 100%;
@@ -724,10 +538,9 @@
   }
 
   .protectionMaster {
-    flex-direction: column;
+    align-items: flex-start;
   }
 
-  .viewTabs,
   .fieldGrid,
   .fieldGridThree,
   .toggleGrid,
@@ -736,10 +549,6 @@
   .providerToggles {
     grid-template-columns: 1fr;
     width: 100%;
-  }
-
-  .viewTab {
-    min-height: 36px;
   }
 
   .panel,

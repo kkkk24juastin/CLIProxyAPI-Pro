@@ -26,11 +26,11 @@ export interface ModelPriceTier extends ModelPriceRate {
 
 export interface ModelPriceRule {
   id?: number;
-  provider: string;
   model: string;
   base: ModelPriceRate;
   tiers?: ModelPriceTier[];
   serviceTiers?: Record<string, ModelPriceRate>;
+  speeds?: Record<string, ModelPriceRate>;
   source?: string;
   sourceProvider?: string;
   sourceModel?: string;
@@ -91,6 +91,15 @@ export interface ModelPriceSyncChange {
   after?: ModelPriceRule;
 }
 
+export interface ModelsDevPriceSearchItem {
+  provider: string;
+  providerName?: string;
+  model: string;
+  modelName?: string;
+  lastUpdated?: string;
+  rule: ModelPriceRule;
+}
+
 export interface UsageTokens {
   input_tokens?: number;
   output_tokens?: number;
@@ -104,6 +113,24 @@ export interface UsageTokens {
   total_tokens?: number;
 }
 
+export interface UsageTokenBreakdown {
+  schema_version: number;
+  quality: string;
+  total_tokens: number;
+  input: {
+    total_tokens: number;
+    uncached_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+  };
+  output: {
+    total_tokens: number;
+    non_reasoning_tokens: number;
+    reasoning_tokens: number;
+  };
+  unclassified_tokens: number;
+}
+
 export interface UsageCostBreakdown {
   ruleId: number;
   ruleVersion: number;
@@ -113,6 +140,16 @@ export interface UsageCostBreakdown {
   contextTokens: number;
   contextTierSize: number;
   serviceTier: string;
+  requestedServiceTier: string;
+  effectiveServiceTier: string;
+  matchedServiceTier: string;
+  serviceTierSource?: 'response' | 'request_fallback' | 'codex_oauth_request' | 'none';
+  speed: string;
+  requestedSpeed: string;
+  effectiveSpeed: string;
+  matchedSpeed: string;
+  speedSource?: 'response' | 'request_fallback' | 'none';
+  pricingMode?: 'base' | 'context' | 'service_tier' | 'speed';
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -131,6 +168,12 @@ export interface UsageDetail {
   source: string;
   auth_index: string | number | null;
   api_key_hash?: string;
+  api_key_policy_id?: string;
+  profile_id?: string;
+  profile_name_snapshot?: string;
+  policy_mode?: string;
+  requested_model?: string;
+  effective_model?: string;
   provider?: string;
   executor_type?: string;
   alias?: string;
@@ -145,12 +188,19 @@ export interface UsageDetail {
   error_message?: string;
   upstream_request_id?: string;
   retry_after?: string;
+  attempt_index?: number;
   stream?: boolean;
   reasoning_effort?: string;
   service_tier?: string;
+  effective_service_tier?: string;
+  speed?: string;
+  effective_speed?: string;
   estimated_cost?: number;
   price_rule_id?: number;
   cost_breakdown?: UsageCostBreakdown;
+  accounting_version?: number;
+  accounting_quality?: string;
+  token_breakdown?: UsageTokenBreakdown;
   tokens: UsageTokens;
   failed: boolean;
   __modelName?: string;
@@ -336,6 +386,35 @@ const readTokens = (detail: Record<string, unknown>): UsageTokens => {
   };
 };
 
+const normalizeUsageTokenBreakdown = (value: unknown): UsageTokenBreakdown | undefined => {
+  if (!isRecord(value)) return undefined;
+  const input = isRecord(value.input) ? value.input : {};
+  const output = isRecord(value.output) ? value.output : {};
+  const number = (snakeKey: string, camelKey: string, source: Record<string, unknown> = value) =>
+    toFiniteNumber(source[snakeKey] ?? source[camelKey]);
+  const schemaVersion = number('schema_version', 'schemaVersion');
+  const qualityRaw = value.quality;
+  const quality = typeof qualityRaw === 'string' ? qualityRaw.trim() : '';
+  if (schemaVersion <= 0 && !quality) return undefined;
+  return {
+    schema_version: schemaVersion,
+    quality,
+    total_tokens: number('total_tokens', 'totalTokens'),
+    input: {
+      total_tokens: number('total_tokens', 'totalTokens', input),
+      uncached_tokens: number('uncached_tokens', 'uncachedTokens', input),
+      cache_read_tokens: number('cache_read_tokens', 'cacheReadTokens', input),
+      cache_write_tokens: number('cache_write_tokens', 'cacheWriteTokens', input),
+    },
+    output: {
+      total_tokens: number('total_tokens', 'totalTokens', output),
+      non_reasoning_tokens: number('non_reasoning_tokens', 'nonReasoningTokens', output),
+      reasoning_tokens: number('reasoning_tokens', 'reasoningTokens', output),
+    },
+    unclassified_tokens: number('unclassified_tokens', 'unclassifiedTokens'),
+  };
+};
+
 const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undefined => {
   let raw = value;
   if (typeof raw === 'string') {
@@ -355,6 +434,10 @@ const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undef
   const hasCostFields = ['totalCost', 'total_cost', 'inputCost', 'input_cost', 'outputCost', 'output_cost']
     .some((key) => raw[key] !== undefined);
   if (!hasCostFields) return undefined;
+  const rawPricingMode = readString('pricingMode', 'pricing_mode');
+  const pricingMode = rawPricingMode === 'base' || rawPricingMode === 'context' || rawPricingMode === 'service_tier' || rawPricingMode === 'speed'
+    ? rawPricingMode
+    : undefined;
 
   return {
     ruleId: readNumber('ruleId', 'rule_id'),
@@ -365,6 +448,22 @@ const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undef
     contextTokens: readNumber('contextTokens', 'context_tokens'),
     contextTierSize: readNumber('contextTierSize', 'context_tier_size'),
     serviceTier: readString('serviceTier', 'service_tier'),
+    requestedServiceTier: readString('requestedServiceTier', 'requested_service_tier') || readString('serviceTier', 'service_tier'),
+    effectiveServiceTier: readString('effectiveServiceTier', 'effective_service_tier'),
+    matchedServiceTier: readString('matchedServiceTier', 'matched_service_tier'),
+    serviceTierSource: (() => {
+      const source = readString('serviceTierSource', 'service_tier_source');
+      return source === 'response' || source === 'request_fallback' || source === 'codex_oauth_request' || source === 'none' ? source : undefined;
+    })(),
+    speed: readString('speed', 'speed'),
+    requestedSpeed: readString('requestedSpeed', 'requested_speed') || readString('speed', 'speed'),
+    effectiveSpeed: readString('effectiveSpeed', 'effective_speed'),
+    matchedSpeed: readString('matchedSpeed', 'matched_speed'),
+    speedSource: (() => {
+      const source = readString('speedSource', 'speed_source');
+      return source === 'response' || source === 'request_fallback' || source === 'none' ? source : undefined;
+    })(),
+    pricingMode,
     inputTokens: readNumber('inputTokens', 'input_tokens'),
     outputTokens: readNumber('outputTokens', 'output_tokens'),
     cacheReadTokens: readNumber('cacheReadTokens', 'cache_read_tokens'),
@@ -411,6 +510,8 @@ const buildUsageDetail = (
   const statusCode = extractNonNegativeNumberField(detailRaw, ['status_code']);
   const estimatedCost = extractNonNegativeNumberField(detailRaw, ['estimated_cost', 'estimatedCost']);
   const priceRuleID = extractNonNegativeNumberField(detailRaw, ['price_rule_id', 'priceRuleId']);
+  const attemptIndex = extractNonNegativeNumberField(detailRaw, ['attempt_index', 'attemptIndex']);
+  const accountingVersion = extractNonNegativeNumberField(detailRaw, ['accounting_version', 'accountingVersion']);
 
   const provider = typeof detailRaw.provider === 'string' ? detailRaw.provider.trim() : undefined;
   const executorType = typeof detailRaw.executor_type === 'string'
@@ -436,6 +537,36 @@ const buildUsageDetail = (
       ? detailRaw.api_key_hash
       : typeof detailRaw.apiKeyHash === 'string'
         ? detailRaw.apiKeyHash
+        : undefined,
+    api_key_policy_id: typeof detailRaw.api_key_policy_id === 'string'
+      ? detailRaw.api_key_policy_id.trim()
+      : typeof detailRaw.apiKeyPolicyId === 'string'
+        ? detailRaw.apiKeyPolicyId.trim()
+        : undefined,
+    profile_id: typeof detailRaw.profile_id === 'string'
+      ? detailRaw.profile_id.trim()
+      : typeof detailRaw.profileId === 'string'
+        ? detailRaw.profileId.trim()
+        : undefined,
+    profile_name_snapshot: typeof detailRaw.profile_name_snapshot === 'string'
+      ? detailRaw.profile_name_snapshot.trim()
+      : typeof detailRaw.profileNameSnapshot === 'string'
+        ? detailRaw.profileNameSnapshot.trim()
+        : undefined,
+    policy_mode: typeof detailRaw.policy_mode === 'string'
+      ? detailRaw.policy_mode.trim()
+      : typeof detailRaw.policyMode === 'string'
+        ? detailRaw.policyMode.trim()
+        : undefined,
+    requested_model: typeof detailRaw.requested_model === 'string'
+      ? detailRaw.requested_model.trim()
+      : typeof detailRaw.requestedModel === 'string'
+        ? detailRaw.requestedModel.trim()
+        : undefined,
+    effective_model: typeof detailRaw.effective_model === 'string'
+      ? detailRaw.effective_model.trim()
+      : typeof detailRaw.effectiveModel === 'string'
+        ? detailRaw.effectiveModel.trim()
         : undefined,
     provider: provider || undefined,
     executor_type: executorType || undefined,
@@ -479,6 +610,7 @@ const buildUsageDetail = (
       : typeof detailRaw.retryAfter === 'string'
         ? detailRaw.retryAfter
         : undefined,
+    attempt_index: attemptIndex ?? undefined,
     stream: detailRaw.stream === true,
     reasoning_effort: typeof detailRaw.reasoning_effort === 'string'
       ? detailRaw.reasoning_effort
@@ -490,9 +622,33 @@ const buildUsageDetail = (
       : typeof detailRaw.serviceTier === 'string'
         ? detailRaw.serviceTier
         : undefined,
+    effective_service_tier: typeof detailRaw.effective_service_tier === 'string'
+      ? detailRaw.effective_service_tier
+      : typeof detailRaw.effectiveServiceTier === 'string'
+        ? detailRaw.effectiveServiceTier
+        : undefined,
+    speed: typeof detailRaw.speed === 'string'
+      ? detailRaw.speed
+      : typeof detailRaw.requestSpeed === 'string'
+        ? detailRaw.requestSpeed
+        : undefined,
+    effective_speed: typeof detailRaw.effective_speed === 'string'
+      ? detailRaw.effective_speed
+      : typeof detailRaw.effectiveSpeed === 'string'
+        ? detailRaw.effectiveSpeed
+        : undefined,
     estimated_cost: estimatedCost ?? undefined,
     price_rule_id: priceRuleID ?? undefined,
     cost_breakdown: normalizeUsageCostBreakdown(detailRaw.cost_breakdown ?? detailRaw.costBreakdown),
+    accounting_version: accountingVersion ?? undefined,
+    accounting_quality: typeof detailRaw.accounting_quality === 'string'
+      ? detailRaw.accounting_quality
+      : typeof detailRaw.accountingQuality === 'string'
+        ? detailRaw.accountingQuality
+        : undefined,
+    token_breakdown: normalizeUsageTokenBreakdown(
+      detailRaw.token_breakdown ?? detailRaw.tokenBreakdown
+    ),
     tokens: readTokens(detailRaw),
     failed: detailRaw.failed === true,
     __modelName: modelName,
@@ -679,6 +835,13 @@ export async function loadModelPriceSyncState(): Promise<ModelPriceSyncState> {
     ...state,
     unmatchedModels: Array.isArray(state.unmatchedModels) ? state.unmatchedModels : [],
   };
+}
+
+export async function searchModelsDevPrices(query: string, limit = 20): Promise<ModelsDevPriceSearchItem[]> {
+  const payload = await apiClient.get<{ items?: ModelsDevPriceSearchItem[] }>('/usage/model-prices/models-dev/search', {
+    params: { q: query.trim(), limit },
+  });
+  return Array.isArray(payload?.items) ? payload.items : [];
 }
 
 export async function recalculateModelPriceHistory(all = false): Promise<number> {

@@ -84,6 +84,23 @@ func firstNonNilError(values ...error) error {
 	return nil
 }
 
+func accountInspectionHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly),
+		errors.Is(err, errAccountInspectionResultStale),
+		errors.Is(err, errAccountInspectionAlreadyRunning):
+		return http.StatusConflict
+	case errors.Is(err, proinspection.ErrPaused):
+		return http.StatusLocked
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	case errors.Is(err, context.Canceled):
+		return http.StatusRequestTimeout
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 func (s *accountInspectionScheduler) snapshotForRequest(c *gin.Context) gin.H {
 	return s.snapshotWithOptions(accountInspectionRequestSnapshotOptions(c))
 }
@@ -109,6 +126,7 @@ func (s *accountInspectionScheduler) streamStatusLocked(options accountInspectio
 	if options.IncludeDetails {
 		healthCounts = s.healthCountsLocked()
 	}
+	s.status.RunSettings = s.lastRunSettings
 	return proinspection.ProjectStatus(s.status, healthCounts, options, accountInspectionMaxResultPageSize, accountInspectionMaxLogPageSize)
 }
 
@@ -258,11 +276,32 @@ func (h *Handler) RegisterAccountInspectionRoutes(group *gin.RouterGroup) {
 	group.POST("/account-inspection/run", h.RunAccountInspection)
 	group.POST("/account-inspection/quota-refresh", h.RunAccountQuotaRefresh)
 	group.POST("/account-inspection/inspect-one", h.InspectOneAccount)
+	group.POST("/account-inspection/inspect-many", h.InspectManyAccounts)
 	group.POST("/account-inspection/refresh-token", h.RefreshAccountInspectionToken)
 	group.POST("/account-inspection/pause", h.PauseAccountInspection)
 	group.POST("/account-inspection/resume", h.ResumeAccountInspection)
 	group.POST("/account-inspection/stop", h.StopAccountInspection)
 	group.POST("/account-inspection/actions", h.ExecuteAccountInspectionActions)
+}
+
+func (h *Handler) InspectManyAccounts(c *gin.Context) {
+	scheduler := schedulerForHandler(h)
+	if scheduler == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account inspection scheduler unavailable"})
+		return
+	}
+	var request accountInspectionManyRequest
+	if err := c.ShouldBindJSON(&request); err != nil || len(request.Items) == 0 || len(request.Items) > 500 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	outcomes, err := scheduler.inspectMany(c.Request.Context(), request.Items)
+	snapshot := scheduler.snapshotForRequest(c)
+	if err != nil {
+		c.JSON(accountInspectionHTTPStatus(err), gin.H{"error": err.Error(), "outcomes": outcomes, "schedule": snapshot["schedule"], "status": snapshot["status"]})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"outcomes": outcomes, "schedule": snapshot["schedule"], "status": snapshot["status"]})
 }
 
 func (h *Handler) GetAccountInspectionSchedule(c *gin.Context) {
@@ -288,7 +327,7 @@ func (h *Handler) PutAccountInspectionSchedule(c *gin.Context) {
 	if err := probackup.Default.ExecuteWrite(c.Request.Context(), func(context.Context) error {
 		return scheduler.update(schedule)
 	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(accountInspectionHTTPStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, scheduler.snapshotForRequest(c))
@@ -433,11 +472,7 @@ func (h *Handler) ExecuteAccountInspectionActions(c *gin.Context) {
 	outcomes, err := scheduler.executeManualActions(c.Request.Context(), request.Items)
 	snapshot := scheduler.snapshotForRequest(c)
 	if err != nil {
-		statusCode := http.StatusInternalServerError
-		if errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) || errors.Is(err, errAccountInspectionResultStale) {
-			statusCode = http.StatusConflict
-		}
-		c.JSON(statusCode, gin.H{
+		c.JSON(accountInspectionHTTPStatus(err), gin.H{
 			"error":    err.Error(),
 			"outcomes": outcomes,
 			"summary":  proinspection.SummarizeActionOutcomes(outcomes),

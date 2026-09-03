@@ -1,17 +1,39 @@
 import type { XaiBillingSummary, XaiFreeQuotaSummary } from '@/types';
 
 export const XAI_SUPERGROK_LIMIT_CENTS = 15_000;
-export const XAI_X_PREMIUM_PLUS_LIMIT_CENTS = 20_000;
 export const XAI_SUPERGROK_HEAVY_LIMIT_CENTS = 150_000;
 export const XAI_FREE_QUOTA_PROBE_URL = 'https://cli-chat-proxy.grok.com/v1/responses';
 
 export type XaiNormalizedPlanType =
   | 'free'
   | 'supergrok'
+  | 'x-basic'
+  | 'x-premium'
   | 'x-premium-plus'
   | 'supergrok-heavy'
+  | 'supergrok-lite'
   | 'paid'
   | 'paid-unknown';
+
+const XAI_PLAN_TYPES: readonly XaiNormalizedPlanType[] = [
+  'free',
+  'supergrok',
+  'x-basic',
+  'x-premium',
+  'x-premium-plus',
+  'supergrok-heavy',
+  'supergrok-lite',
+  'paid',
+  'paid-unknown',
+];
+
+export const normalizeXaiPlanType = (value: unknown): XaiNormalizedPlanType | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase().replace(/_/g, '-');
+  return XAI_PLAN_TYPES.includes(normalized as XaiNormalizedPlanType)
+    ? (normalized as XaiNormalizedPlanType)
+    : undefined;
+};
 
 export const resolveXaiPlanType = (
   monthlyLimitCents: number | null,
@@ -20,7 +42,6 @@ export const resolveXaiPlanType = (
   if (!monthlyBillingKnown) return undefined;
   if (monthlyLimitCents === null || monthlyLimitCents === 0) return 'free';
   if (monthlyLimitCents === XAI_SUPERGROK_LIMIT_CENTS) return 'supergrok';
-  if (monthlyLimitCents === XAI_X_PREMIUM_PLUS_LIMIT_CENTS) return 'x-premium-plus';
   if (monthlyLimitCents === XAI_SUPERGROK_HEAVY_LIMIT_CENTS) return 'supergrok-heavy';
   return monthlyLimitCents > 0 ? 'paid-unknown' : undefined;
 };

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -67,5 +68,13 @@ func TestShouldObserveXAIQuotaOnlyForCLIChatProxy(t *testing.T) {
 				t.Fatalf("shouldObserveXAIQuota() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWithXAIQuotaObserverLeavesNonXAIContextUnchanged(t *testing.T) {
+	ctx := context.Background()
+	got := withXAIQuotaObserver(ctx, &cliproxyauth.Auth{Provider: "codex"}, "gpt-5")
+	if got != ctx {
+		t.Fatal("non-xAI request received an upstream response observer")
 	}
 }
