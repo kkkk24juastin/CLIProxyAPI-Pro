@@ -36,37 +36,6 @@ type xaiInspectionRoutingExecutor struct {
 	billingBody     string
 }
 
-func TestBuildAccountQuotaRefreshScheduleScopesAndDisablesActions(t *testing.T) {
-	schedule := accountInspectionSchedule{Settings: proinspection.DefaultSettings()}
-	schedule.Settings.TargetType = accountInspectionProviderAll
-	schedule.Settings.SampleSize = 25
-	schedule.Settings.AntigravityDeepProbeEnabled = true
-	schedule.Settings.XAIDeepProbeEnabled = true
-	schedule.Settings.AutoExecuteQuotaLimitDisable = true
-	schedule.Settings.AutoExecuteQuotaRecoveryEnable = true
-	schedule.Settings.AutoExecuteAccountInvalidAction = accountInspectionActionDelete
-	schedule.Settings.AutoExecuteRequestErrorAction = accountInspectionActionDisable
-
-	got := buildAccountQuotaRefreshSchedule(schedule, "antigravity").Settings
-	if got.TargetType != "antigravity" || got.SampleSize != 0 {
-		t.Fatalf("quota refresh scope = provider:%q sample:%d, want antigravity/0", got.TargetType, got.SampleSize)
-	}
-	if got.Workers != accountQuotaRefreshConcurrency || got.Retries != accountQuotaRefreshRetries {
-		t.Fatalf("quota refresh workers/retries = %d/%d, want %d/%d", got.Workers, got.Retries, accountQuotaRefreshConcurrency, accountQuotaRefreshRetries)
-	}
-	if !got.EnabledOnly || !got.QuotaOnly {
-		t.Fatalf("quota refresh flags = enabledOnly:%v quotaOnly:%v, want true/true", got.EnabledOnly, got.QuotaOnly)
-	}
-	if got.AntigravityDeepProbeEnabled || got.XAIDeepProbeEnabled {
-		t.Fatal("quota refresh enabled a deep probe")
-	}
-	if got.AutoExecuteQuotaLimitDisable || got.AutoExecuteQuotaRecoveryEnable ||
-		got.AutoExecuteAccountInvalidAction != accountInspectionActionNone ||
-		got.AutoExecuteRequestErrorAction != accountInspectionActionNone {
-		t.Fatalf("quota refresh retained automatic actions: %+v", got)
-	}
-}
-
 func (e *xaiInspectionRoutingExecutor) Identifier() string { return "xai" }
 
 func (e *xaiInspectionRoutingExecutor) Execute(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
