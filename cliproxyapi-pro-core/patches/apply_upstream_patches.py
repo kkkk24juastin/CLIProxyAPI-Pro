@@ -3857,7 +3857,7 @@ replace_once(
 
 replace_once(
     ROOT / 'internal/pluginhost/host_callbacks.go',
-    '''\tstreamCtx, cancel := context.WithCancel(ctx)
+    '''\tstreamCtx, cancel := newStreamContext(ctx)
 \tresp, errDo := h.newHTTPClient(nil).DoStream(streamCtx, httpReq)
 \tif errDo != nil {
 \t\tcancel()
@@ -3877,7 +3877,7 @@ replace_once(
 \t\tStreamID:   streamID,
 \t})
 ''',
-    '''\tstreamCtx, cancel := context.WithCancel(ctx)
+    '''\tstreamCtx, cancel := newStreamContext(ctx)
 \tcancelOwned := true
 \tdefer func() {
 \t\tif cancelOwned {
@@ -3912,7 +3912,7 @@ replace_once(
 
 replace_once(
     ROOT / 'internal/pluginhost/host_model_stream_callbacks.go',
-    '''\tstreamCtx, cancel := context.WithCancel(context.WithoutCancel(callbackCtx))
+    '''\tstreamCtx, cancel := newStreamContext(context.WithoutCancel(callbackCtx))
 \tstream, errMsg := executor.ExecuteModelStream(streamCtx, modelExecutionRequestFromPlugin(req.HostModelExecutionRequest, skipPluginID))
 \tif errMsg != nil {
 \t\tcancel()
@@ -3937,7 +3937,7 @@ replace_once(
 \t\tStreamID:   streamID,
 \t})
 ''',
-    '''\tstreamCtx, cancel := context.WithCancel(context.WithoutCancel(callbackCtx))
+    '''\tstreamCtx, cancel := newStreamContext(context.WithoutCancel(callbackCtx))
 \tcancelOwned := true
 \tdefer func() {
 \t\tif cancelOwned {
