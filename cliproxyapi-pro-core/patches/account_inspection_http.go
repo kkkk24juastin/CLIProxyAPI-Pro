@@ -274,7 +274,6 @@ func (h *Handler) RegisterAccountInspectionRoutes(group *gin.RouterGroup) {
 	group.PATCH("/account-inspection/schedule", h.PutAccountInspectionSchedule)
 	group.GET("/account-inspection/status", h.GetAccountInspectionStatus)
 	group.POST("/account-inspection/run", h.RunAccountInspection)
-	group.POST("/account-inspection/quota-refresh", h.RunAccountQuotaRefresh)
 	group.POST("/account-inspection/inspect-one", h.InspectOneAccount)
 	group.POST("/account-inspection/inspect-many", h.InspectManyAccounts)
 	group.POST("/account-inspection/refresh-token", h.RefreshAccountInspectionToken)
@@ -340,29 +339,6 @@ func (h *Handler) RunAccountInspection(c *gin.Context) {
 		return
 	}
 	if err := scheduler.startRun(true); err != nil {
-		c.JSON(http.StatusConflict, scheduler.snapshotForRequest(c))
-		return
-	}
-	c.JSON(http.StatusAccepted, scheduler.snapshotForRequest(c))
-}
-
-func (h *Handler) RunAccountQuotaRefresh(c *gin.Context) {
-	scheduler := schedulerForHandler(h)
-	if scheduler == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account inspection scheduler unavailable"})
-		return
-	}
-	var request accountQuotaRefreshRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-		return
-	}
-	provider := strings.ToLower(strings.TrimSpace(request.Provider))
-	if _, ok := accountInspectionSupportedProviders[provider]; !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported quota provider"})
-		return
-	}
-	if err := scheduler.startQuotaRefresh(provider); err != nil {
 		c.JSON(http.StatusConflict, scheduler.snapshotForRequest(c))
 		return
 	}
