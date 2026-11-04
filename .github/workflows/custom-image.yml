@@ -1,0 +1,182 @@
+name: Build custom panel image
+
+# Rebuilds the Pro management panel with custom/apply_channel_name.py on top of
+# the latest ssfun/CLIProxyAPI-Pro release, publishes management.html as a
+# release in this repository (for CPA's automatic panel updates), and pushes an
+# image that is the upstream sfun/cliproxyapi-pro image with only that panel
+# file replaced. The backend binary is untouched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if this upstream release + patch was already published
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: '30 */6 * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'custom/**'
+      - '.github/workflows/custom-image.yml'
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: custom-image
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: ssfun/CLIProxyAPI-Pro
+  MANAGEMENT_REPO: router-for-me/Cli-Proxy-API-Management-Center
+  BASE_IMAGE: sfun/cliproxyapi-pro
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: self
+
+      - name: Resolve upstream release
+        id: up
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || 'false' }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo "${UPSTREAM_REPO}" --json tagName --jq '.tagName')"
+          body="$(gh release view "${tag}" --repo "${UPSTREAM_REPO}" --json body --jq '.body')"
+          field() { printf '%s\n' "${body}" | sed -n "s/^- $1: //p" | head -n 1; }
+          management_sha="$(field 'Management upstream commit')"
+          customization_sha="$(field 'Customization commit')"
+          management_version="$(field 'Management build version')"
+          for v in management_sha customization_sha management_version; do
+            if [ -z "${!v}" ]; then echo "Could not parse ${v} from ${UPSTREAM_REPO} ${tag}" >&2; exit 1; fi
+          done
+          patch_hash="$(sha256sum self/custom/apply_channel_name.py | cut -c1-8)"
+          out_tag="${tag}-name.${patch_hash}"
+          skip=false
+          if [ "${FORCE}" != "true" ] && gh release view "${out_tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            skip=true
+          fi
+          owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "tag=${tag}"
+            echo "management_sha=${management_sha}"
+            echo "customization_sha=${customization_sha}"
+            echo "management_version=${management_version}"
+            echo "out_tag=${out_tag}"
+            echo "image=ghcr.io/${owner}/cliproxyapi-pro"
+            echo "skip=${skip}"
+          } | tee -a "${GITHUB_OUTPUT}"
+
+      - name: Checkout management upstream
+        if: steps.up.outputs.skip != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.MANAGEMENT_REPO }}
+          ref: ${{ steps.up.outputs.management_sha }}
+          path: mc
+
+      - name: Checkout Pro customizations
+        if: steps.up.outputs.skip != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ steps.up.outputs.customization_sha }}
+          path: pro
+
+      - name: Set up Bun
+        if: steps.up.outputs.skip != 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: mc/package.json
+
+      - name: Apply customizations
+        if: steps.up.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          bash pro/cliproxyapi-pro-management/apply.sh mc
+          python3 self/custom/apply_channel_name.py mc
+
+      - name: Verify and build management.html
+        if: steps.up.outputs.skip != 'true'
+        working-directory: mc
+        env:
+          VERSION: ${{ steps.up.outputs.management_version }}-name
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run type-check
+          bun run lint
+          bun run test
+          bun run build
+          mv dist/index.html ../management.html
+          sha256sum ../management.html
+
+      - name: Publish panel release
+        if: steps.up.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUT_TAG: ${{ steps.up.outputs.out_tag }}
+          TAG: ${{ steps.up.outputs.tag }}
+          MSHA: ${{ steps.up.outputs.management_sha }}
+          CSHA: ${{ steps.up.outputs.customization_sha }}
+        run: |
+          set -euo pipefail
+          notes="Pro management panel ${TAG} with channel-name patch (custom/apply_channel_name.py @ ${GITHUB_SHA}).
+
+          - Upstream Pro release: ${TAG}
+          - Management upstream commit: ${MSHA}
+          - Pro customization commit: ${CSHA}
+          - Image: ${{ steps.up.outputs.image }}:${OUT_TAG}"
+          if gh release view "${OUT_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${OUT_TAG}" management.html --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "${OUT_TAG}" management.html --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" --title "${OUT_TAG}" --notes "${notes}" --latest
+          fi
+
+      - name: Prepare image context
+        if: steps.up.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p image
+          mv management.html image/management.html
+          printf 'ARG BASE\nFROM ${BASE}\nCOPY management.html /CLIProxyAPI/static/management.html\n' > image/Dockerfile
+
+      - name: Set up Docker Buildx
+        if: steps.up.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        if: steps.up.outputs.skip != 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push image
+        if: steps.up.outputs.skip != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./image
+          platforms: linux/amd64,linux/arm64
+          build-args: BASE=${{ env.BASE_IMAGE }}:${{ steps.up.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=CLIProxyAPI Pro (${{ steps.up.outputs.tag }}) with channel-name management panel
+          tags: |
+            ${{ steps.up.outputs.image }}:latest
+            ${{ steps.up.outputs.image }}:${{ steps.up.outputs.tag }}
+            ${{ steps.up.outputs.image }}:${{ steps.up.outputs.out_tag }}
+          push: true
