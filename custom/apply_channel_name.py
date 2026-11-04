@@ -72,6 +72,20 @@ def main() -> None:
          "displayName: item.prefix?.trim() || resolveGroupName(item) || `${label} #${index + 1}`,", 1),
     ])
 
+    # The Pro core forces management.panel-github-repository back to the upstream
+    # repository on every start, so the panel's "check update" button would
+    # replace this patched panel with the upstream one. Panel updates come from
+    # the image instead; the button reports "unchanged" without calling the API.
+    patch(root, "pro/system/ManagementVersionTileExtension.tsx", [
+        ("      const result = await checkManagementPanelUpdate();\n",
+         "      // Patched panel is shipped in the image; never fetch the upstream panel.\n"
+         "      const result: Awaited<ReturnType<typeof checkManagementPanelUpdate>> = await Promise.resolve({\n"
+         "        status: 'custom-image',\n"
+         "        updated: false,\n"
+         "        sha256: '',\n"
+         "      });\n", 1),
+    ])
+
     patch(root, "features/providers/components/ProviderResourceTable.tsx", [
         ("        <span className={styles.primaryName}>{r.apiKeyPreview ?? '—'}</span>\n"
          "        {r.authIndex ? <span className={styles.primarySub}>auth: {r.authIndex}</span> : null}\n",

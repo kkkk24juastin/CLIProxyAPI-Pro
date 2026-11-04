@@ -7,6 +7,7 @@
 1. `services/api/transformers.ts`：v8 配置里每个 Key 的字段是 `auth_index`，原解析只读 `auth-index`，导致请求日志无法对应回渠道。改为两种写法都读。
 2. `pro/modules/monitoring/features/sourceResolver.ts`：API Key 类渠道在监控/实时日志中显示 v8 分组的 `name`（设置了 `prefix` 时仍优先显示 prefix）。
 3. `features/providers/components/ProviderResourceTable.tsx`：渠道列表主标题显示分组 `name`，Key 预览移到副标题。
+4. `pro/system/ManagementVersionTileExtension.tsx`：系统页「检查更新」按钮不再请求后端拉取面板（见下方说明），直接提示无更新。
 
 每处替换都校验命中次数，上游代码变动时构建会直接失败，不会静默生成不同的面板。
 
@@ -14,7 +15,17 @@
 
 每 6 小时检查 ssfun/CLIProxyAPI-Pro 最新 Release，按其中记录的 Management 与定制 commit 精确复现，叠加本补丁后：
 
-- 发布 `management.html` 到本仓库 Release（供 CPA 自动更新面板，`management.panel-github-repository` 指向本仓库）
+- 发布 `management.html` 到本仓库 Release（构建产物存档）
 - 推送镜像 `ghcr.io/kkkk24juastin/cliproxyapi-pro:{latest,<上游tag>}`，即 `sfun/cliproxyapi-pro:<上游tag>` 仅替换面板文件
 
 原仓库的 CI / 发布流程已从本 fork 移除（它们依赖原作者的 Docker Hub 密钥）。
+
+## 部署注意
+
+Pro 后端每次启动都会把 `management.panel-github-repository` 强制改回 `ssfun/CLIProxyAPI-Pro`，
+所以面板无法通过该配置从本仓库更新。部署时需要：
+
+- 镜像使用 `ghcr.io/kkkk24juastin/cliproxyapi-pro:latest`
+- 配置 `management.disable-auto-update-panel: true`，阻止后端定时拉取上游面板覆盖本面板
+
+面板随镜像更新：拉取新镜像并重建容器即可。
